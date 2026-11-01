@@ -73,7 +73,14 @@ class WorkbookClient:
             raise UnknownOutcome(self.pending_operation)
         if self.info.get("readonly"):
             raise APIError(403,{"code":"READ_ONLY","message":"Workbook is open read-only; request was not sent","outcome":"rejected"})
-        request = {"action": action, "sheet": sheet, "operation_id": operation_id or str(uuid.uuid4()),
+        operation=str(uuid.uuid4()) if operation_id is None else operation_id
+        if not isinstance(operation,str) or not operation or len(operation)>100:
+            raise ValueError("operation_id must be 1-100 characters of text; request was not sent")
+        try:
+            operation.encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise ValueError("operation_id must be valid Unicode text; request was not sent") from error
+        request = {"action": action, "sheet": sheet, "operation_id": operation,
                    "expected_state": self.state, **arguments}
         # Invalid local input has no unknown network outcome.
         if len(json.dumps(request,allow_nan=False).encode())>4*1024*1024:

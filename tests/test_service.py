@@ -181,11 +181,44 @@ class ServiceTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         book.apply("edit",cells=[{"row":1,"col":1,"source":"x"*(4*1024*1024)}])
                     self.assertIsNone(book.pending_operation)
+                    for operation in ("",0,False,[],{},"x"*101,"\ud800"):
+                        with self.subTest(operation_id=operation):
+                            with self.assertRaises(ValueError): book.apply("edit",operation_id=operation,cells=[])
+                            self.assertIsNone(book.pending_operation)
             with client.open(path,readonly=True) as book:
                 with patch.object(client,"request",side_effect=AssertionError("Read-only mutation must not be sent")):
                     with self.assertRaises(APIError) as failure: book.set(1,1,"7")
                     self.assertEqual(failure.exception.body["code"],"READ_ONLY")
                     self.assertIsNone(book.pending_operation)
+
+    def test_invalid_mutations_keep_durable_failure_receipts_and_release_sdk_writes(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            with client.open(Path(temp)/"invalid-mutations.dhwb",create=True) as book:
+                book.apply("edit",cells=[{"row":1,"col":1,"source":"original","style":{"bold":True}},
+                                         {"row":1,"col":2,"source":"1"}])
+                invalid=[
+                    ("edit",{"cells":[{"row":2,"col":1,"source":"partial"},{"row":1,"col":1,"style":None}]}),
+                    ("sheet_reorder",{"order":[{}]}),
+                    ("paste",{"row":2,"col":1,"rows":[[{"source":None,"input_kind":"auto"}]]}),
+                    ("paste",{"row":2,"col":1,"origin_row":"bad","rows":[[{"source":"=B1","input_kind":"formula"}]]}),
+                    ("fill",{"r1":1,"r2":2,"c1":2,"c2":2,"mode":"series","step":10**500}),
+                    ("edit",{"cells":[{"row":2,"col":1,"source":"\ud800"}]}),
+                    ("edit",{"label":{},"cells":[{"row":2,"col":1,"source":"bad label"}]}),
+                    ("edit",{"sheet":{},"cells":[{"row":2,"col":1,"source":"bad sheet"}]}),
+                    ("paste",{"row":2,"col":1,"mode":"values","rows":[[{"value":{"nested":"object"}}]]}),
+                ]
+                for index,(action,arguments) in enumerate(invalid):
+                    with self.subTest(action=action,arguments=arguments):
+                        before=book.read(r2=2,c2=2)["cells"]
+                        with self.assertRaises(APIError) as failure: book.apply(action,**arguments)
+                        error=failure.exception
+                        self.assertEqual(error.status,400)
+                        self.assertEqual(error.body["outcome"],"rolled_back")
+                        self.assertIn(error.body["code"],("INVALID_ARGUMENT","INVALID_STYLE"))
+                        self.assertIsNone(book.pending_operation)
+                        self.assertEqual(book.outcome(error.body["operation_id"]),error.body)
+                        self.assertEqual(book.read(r2=2,c2=2)["cells"],before)
+                        book.set(3,1,str(index))
 
     def test_receipts_with_url_delimiters_are_retrievable(self):
         with tempfile.TemporaryDirectory() as temp, LocalService() as client:

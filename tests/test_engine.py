@@ -169,6 +169,41 @@ class EngineTests(unittest.TestCase):
         self.edit((2,1,"9"))
         self.assertEqual(self.cells()[(2,1)]["value"],9)
 
+    def test_unexpected_failure_has_a_durable_rollback_receipt_and_is_not_reexecuted(self):
+        self.edit((1,1,"before"))
+        before=self.cells()
+        apply_edit=self.book.apply_edit
+        request={"action":"edit","operation_id":"unexpected-failure","expected_state":self.book.info()["state"],
+                 "cells":[{"row":1,"col":1,"source":"after"},{"row":2,"col":1,"source":"partial"}]}
+        def fail_after_edits(*args,**kwargs):
+            apply_edit(*args,**kwargs)
+            raise RuntimeError("Injected failure after data changes")
+        self.book.apply_edit=fail_after_edits
+        try:
+            with self.assertLogs("datahorizon.engine",level="ERROR"):
+                with self.assertRaises(EngineError) as failure: self.book.mutate(request)
+        finally:
+            self.book.apply_edit=apply_edit
+        self.assertEqual(failure.exception.body["code"],"INTERNAL_ERROR")
+        self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+        self.assertEqual(failure.exception.body,self.book.operation("unexpected-failure"))
+        self.assertFalse(self.book.db.in_transaction)
+        self.assertEqual(self.cells(),before)
+        with self.assertRaises(EngineError) as replay: self.book.mutate(request)
+        self.assertEqual(replay.exception.body,failure.exception.body)
+        self.assertEqual(self.cells(),before)
+
+    def test_long_integer_inputs_keep_the_exact_numeric_boundary(self):
+        zeros="0"*5000
+        self.edit((1,1,zeros+"7"),(1,2,"=A1+1"),(2,1,zeros+"9007199254740991"))
+        cells=self.cells()
+        self.assertEqual(cells[(1,1)]["value"],7)
+        self.assertEqual(cells[(1,2)]["value"],8)
+        self.assertEqual(cells[(2,1)]["value"],9007199254740991)
+        with self.assertRaises(EngineError) as failure: self.edit((3,1,zeros+"9007199254740992"))
+        self.assertEqual(failure.exception.body["code"],"PRECISION")
+        self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+
     def test_direct_edit_stale_write_and_history_gap(self):
         self.edit((1, 1, "7"), (1, 2, "=A1*2"))
         state = self.book.state()

@@ -453,6 +453,7 @@ void MainWindow::submit(QJsonObject operation) {
     const auto defaults=targetContext();
     for (auto field=defaults.begin(); field!=defaults.end(); ++field)
         if (!operation.contains(field.key())) operation[field.key()]=field.value();
+    captureGridDraft(false);
     if (!resolveDraft()) return;
     if (!matchesTarget(operation)) {
         issue("Reviewed inputs changed. Review the target and state again before submitting."); return;

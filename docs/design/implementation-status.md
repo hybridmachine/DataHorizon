@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 65 Python tests and 34 Qt contract cases.
+The review regression suite includes 68 Python tests and 35 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -238,3 +238,16 @@ without creating a pending write. Failure injection covers admission cleanup;
 a Qt socket fixture checks generic-error recovery records and blocked editing.
 This completes the two further authorized cycles. Final fixes are validated
 without requesting another review.
+
+The user authorized two further cycles. Cycle 10 published no inline issues but
+identified validation paths that rolled back without durable failure receipts,
+leaving the SDK pending indefinitely. Malformed styles, ordering, clipboard
+sources/values/origins, series steps, labels, sheet identifiers and Unicode now
+return explicit validation failures. Unexpected failures after admission also
+record a durable rollback receipt after savepoint rollback; replay does not
+execute the request again. Invalid operation IDs fail SDK preflight. Long
+integer sources retain the exact numeric boundary without Python's integer-text
+conversion limit. An independent Qt regression found that range actions could
+commit before resolving an active cell draft. Common submission now captures
+that draft first: Cancel submits nothing and leaves the input editable. The
+long-input regression now exercises actual editor commit signals.

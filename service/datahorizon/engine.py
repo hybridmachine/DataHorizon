@@ -5,6 +5,7 @@ from functools import cmp_to_key
 import hashlib
 import io
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -112,7 +113,7 @@ def typed(item):
             raise EngineError("INVALID_INPUT", "Invalid number") from error
         require(math.isfinite(value), "INVALID_INPUT", "Numbers must be finite")
         if re.fullmatch(r"[+-]?\d+", source):
-            require(abs(int(source)) <= 9_007_199_254_740_991, "PRECISION", "Enter large integers as Text")
+            require(abs(value) <= 9_007_199_254_740_991, "PRECISION", "Enter large integers as Text")
         kind = "number"
     else:
         kind, value = "text", source
@@ -230,6 +231,7 @@ class Workbook:
                     "storage": "stored", "calculation": "evaluated_on_read", "format_version": 1}
 
     def sheet(self, sheet):
+        require(isinstance(sheet,str) and bool(sheet), "INVALID_ARGUMENT", "Sheet must be a nonempty name or ID")
         row = self.db.execute("SELECT id FROM sheets WHERE id=? OR name=? COLLATE NOCASE", (sheet, sheet)).fetchone()
         require(row is not None, "SHEET_NOT_FOUND", "Sheet does not exist", 404)
         return row[0]
@@ -351,7 +353,8 @@ class Workbook:
                 if "source" in edit:
                     item.update(source=edit["source"], kind=edit.get("kind", "auto"))
                 if "style" in edit:
-                    item["style"] = validate_style(edit["style"] if edit.get("replace_style") else {**item["style"], **edit["style"]})
+                    style=validate_style(edit["style"])
+                    item["style"] = style if edit.get("replace_style") else validate_style({**item["style"], **style})
                 # Text format affects subsequent entry, never retypes an existing
                 # number/formula merely because its presentation changed.
                 if not preserve_inputs and "source" in edit and item["source"] != "" and item["kind"] == "auto" and item["style"].get("format") == "text":
@@ -409,6 +412,10 @@ class Workbook:
         require(isinstance(request, dict), "INVALID_ARGUMENT", "Operation must be an object")
         operation = request.get("operation_id")
         require(isinstance(operation, str) and len(operation) <= 100 and bool(operation), "OPERATION_ID", "An operation_id is required")
+        try:
+            operation.encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise EngineError("OPERATION_ID","operation_id must be valid Unicode text") from error
         fingerprint = hashlib.sha256(encoded(request).encode()).hexdigest()
         with self.lock:
             try:
@@ -446,6 +453,11 @@ class Workbook:
                 # The writer lock closes the check/write race with independent tools.
                 self.refresh()
                 require(request.get("expected_state") == self.state(), "STALE_STATE", "Workbook changed. Refresh and review the edit before retrying", 409)
+                try:
+                    json.dumps(request,ensure_ascii=False,allow_nan=False).encode("utf-8")
+                except UnicodeEncodeError as error:
+                    raise EngineError("INVALID_ARGUMENT","Request text must be valid Unicode") from error
+                require("label" not in request or isinstance(request["label"],str),"INVALID_ARGUMENT","Operation label must be text")
                 kind = request.get("action")
                 structural = kind.startswith("sheet_") if isinstance(kind, str) else False
                 sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
@@ -457,6 +469,8 @@ class Workbook:
                     require(sum(len(row) for row in rows) <= MAX_CELLS, "LIMIT", "Paste exceeds 10,000 cells")
                     start_row = integer(request.get("row"), 1, MAX_ROWS, "row")
                     start_col = integer(request.get("col"), 1, MAX_COLS, "col")
+                    origin_row=integer(request.get("origin_row",start_row),1,MAX_ROWS,"origin_row")
+                    origin_col=integer(request.get("origin_col",start_col),1,MAX_COLS,"origin_col")
                     mode = request.get("mode", "all")
                     require(mode in ("all", "values", "formats"), "INVALID_ARGUMENT", "Unknown paste mode")
                     edits = []
@@ -484,12 +498,14 @@ class Workbook:
                                     require(value.get("kind") != "formula" or "value" in value,
                                             "CALCULATION_ERROR", "Formula clipboard cells require a calculated value")
                                     stored = value.get("value", source)
+                                    require(isinstance(stored,(str,int,float,bool,type(None))),"INVALID_ARGUMENT","Clipboard values must be scalar")
                                     source = "" if stored is None else ("TRUE" if stored is True else "FALSE" if stored is False else str(stored))
                                     input_kind = "null" if stored is None else "boolean" if type(stored) is bool else "number" if isinstance(stored, (int, float)) else "text"
                                 else:
+                                    require(isinstance(source,str),"INVALID_ARGUMENT","Clipboard source must be text")
                                     input_kind = value.get("input_kind", "text")
                                     if input_kind in ("auto", "formula") and source.startswith("="):
-                                        source = translate(source, start_row-request.get("origin_row", start_row), start_col-request.get("origin_col", start_col))
+                                        source = translate(source, start_row-origin_row, start_col-origin_col)
                                 if not edit.get("clear_input"):
                                     edit.update(source=source, kind=input_kind)
                             if mode != "values":
@@ -506,7 +522,12 @@ class Workbook:
                         seed = typed(source)
                         require(seed and seed["kind"] == "number", "INVALID_ARGUMENT", "Numeric series requires a numeric top-left seed")
                         step = request.get("step", 1)
-                        require(type(step) in (int, float) and math.isfinite(step), "INVALID_ARGUMENT", "Series step must be finite")
+                        require(type(step) in (int,float),"INVALID_ARGUMENT","Series step must be finite")
+                        try:
+                            step=float(step)
+                        except OverflowError as error:
+                            raise EngineError("INVALID_ARGUMENT","Series step must be finite") from error
+                        require(math.isfinite(step), "INVALID_ARGUMENT", "Series step must be finite")
                     for row in range(r1, r2+1):
                         for col in range(c1, c2+1):
                             item = dict(source) if source else None
@@ -586,7 +607,8 @@ class Workbook:
                 elif kind == "sheet_reorder":
                     order = request.get("order")
                     current = [row[0] for row in self.db.execute("SELECT id FROM sheets")]
-                    require(isinstance(order, list) and len(order) == len(current) and set(order) == set(current), "INVALID_ARGUMENT", "Order must contain each sheet ID once")
+                    require(isinstance(order, list) and all(isinstance(item,str) for item in order)
+                            and len(order) == len(current) and set(order) == set(current), "INVALID_ARGUMENT", "Order must contain each sheet ID once")
                     self.db.executemany("UPDATE sheets SET position=? WHERE id=?", enumerate(order))
                 elif kind == "sheet_delete":
                     target = self.sheet(request.get("sheet"))
@@ -628,9 +650,6 @@ class Workbook:
                     raise EngineError("OUTCOME_UNKNOWN","Data may have committed; reconcile the durable receipt",500,"unknown",operation_id=operation) from error
                 if not self.db.in_transaction:
                     raise EngineError("OUTCOME_UNKNOWN","Transaction outcome requires receipt lookup",500,"unknown",operation_id=operation) from error
-                if not isinstance(error,(EngineError,HookFailure,FormulaError,sqlite3.Error)):
-                    self.db.execute("ROLLBACK")
-                    raise
                 try:
                     # Keep the writer lock while reverting data and reserving
                     # this ID's failed outcome. Another service cannot steal it.
@@ -648,6 +667,10 @@ class Workbook:
                 elif isinstance(error, (HookFailure, FormulaError, sqlite3.Error)):
                     failure=EngineError("HOOK_FAILED" if isinstance(error, HookFailure) else "OPERATION_FAILED",
                                         str(error),409,"rolled_back",operation_id=operation)
+                else:
+                    logging.getLogger(__name__).exception("Managed operation failed before commit")
+                    failure=EngineError("INTERNAL_ERROR","Operation rolled back; inspect service diagnostics",
+                                        500,"rolled_back",operation_id=operation)
                 failure.body["http_status"]=failure.status
                 try:
                     self.db.execute("INSERT INTO operations VALUES(?,?,?)",(operation,fingerprint,encoded(failure.body)))

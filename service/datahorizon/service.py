@@ -66,7 +66,7 @@ def openapi():
             "style":{"type":"object","description":"Supported preview style properties; see compatibility-v0.md"},
             "clear":{"type":"boolean"},"clear_input":{"type":"boolean"},"replace_style":{"type":"boolean"}}},
         "OperationRequest": {"type":"object","required":["operation_id","expected_state","action"],"properties":{
-            "operation_id":{"type":"string","description":"Generate and preserve before sending; reconcile lost responses by this ID"},
+            "operation_id":{"type":"string","minLength":1,"maxLength":100,"description":"Valid Unicode text; generate and preserve before sending, then reconcile lost responses by this ID"},
             "expected_state":{"type":"string","description":"State from the reviewed workbook; stale writes roll back"},
             "sheet":{"type":"string"},"action":{"type":"string","enum":CAPABILITIES["operations"]},
             "cells":{"type":"array","maxItems":MAX_CELLS,"items":{"$ref":"#/components/schemas/CellEdit"}},

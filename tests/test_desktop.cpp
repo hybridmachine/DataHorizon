@@ -236,6 +236,29 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
         QCOMPARE(grid->currentIndex(),model->index(0,0)); QCOMPARE(source->text(),QString("-2")); QVERIFY(source->isModified());
     }
+    void cancellingARangeActionPreservesTheActiveCellDraftBeforeMutation() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("range-draft.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *model=window.model(); auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source");
+        QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(0,0)),5000);
+        grid->edit(model->index(0,0)); QPointer<QLineEdit> editor=grid->findChild<QLineEdit *>(); QVERIFY(editor);
+        QTest::keyClicks(editor,"retained input");
+        QAction *bold=nullptr; for(auto *action:window.findChildren<QAction *>()) if(action->text()=="Bold") bold=action;
+        QVERIFY(bold); QSignalSpy changed(&window,&MainWindow::operationFinished); QString question;
+        answerNextDialog(QMessageBox::Cancel,&question); bold->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!question.isEmpty(),5000);
+        QCOMPARE(changed.count(),0); QCOMPARE(opened.count(),1);
+        QCOMPARE(source->text(),QString("retained input")); QVERIFY(source->isModified()); QVERIFY(source->isEnabled());
+        QTRY_VERIFY_WITH_TIMEOUT(editor.isNull(),3000);
+        QTest::keyClick(source,Qt::Key_Escape); bold->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,0)),5000);
+        QVERIFY(model->cell(model->index(0,0))["style"].toObject()["bold"].toBool());
+        QCOMPARE(model->cell(model->index(0,0))["source"].toString(),QString());
+    }
     void failedStartupCanClose() {
         const auto original=qgetenv("DATAHORIZON_PYTHON");
         qputenv("DATAHORIZON_PYTHON","/nonexistent/datahorizon-python");
@@ -258,12 +281,11 @@ private slots:
         auto *model=window.model(); auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source");
         QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0),Qt::EditRole).toString(),original,5000);
         QTRY_COMPARE_WITH_TIMEOUT(source->text(),original,5000);
-        auto *editor=grid->itemDelegate()->createEditor(grid->viewport(),QStyleOptionViewItem{},model->index(0,0));
-        grid->itemDelegate()->setEditorData(editor,model->index(0,0));
-        auto *line=qobject_cast<QLineEdit *>(editor); QVERIFY(line); QCOMPARE(line->text(),original);
-        line->setCursorPosition(line->text().size()); line->insert("z");
-        grid->itemDelegate()->setModelData(editor,model,model->index(0,0)); delete editor;
+        grid->edit(model->index(0,0)); QPointer<QLineEdit> editor=grid->findChild<QLineEdit *>(); QVERIFY(editor);
+        QCOMPARE(editor->text(),original);
+        editor->setCursorPosition(editor->text().size()); editor->insert("z"); QTest::keyClick(editor,Qt::Key_Return);
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(editor.isNull(),3000); grid->setCurrentIndex(model->index(0,0));
         QTRY_COMPARE_WITH_TIMEOUT(source->text(),original+"z",5000);
         source->setModified(true); QTest::keyClick(source,Qt::Key_Return);
         QTRY_COMPARE_WITH_TIMEOUT(changed.count(),3,10000);
