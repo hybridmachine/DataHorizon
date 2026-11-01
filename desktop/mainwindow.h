@@ -57,7 +57,9 @@ private:
     void changeSheet(int index);
     void syncSource();
     bool resolveDraft();
-    void submitDraft();
+    void submitDraft(bool advance = false, int direction = 1);
+    QJsonObject enterDestination(const QModelIndex &index, int direction) const;
+    void applyEnterNavigation();
     void restartService();
     QString recoveryDirectory() const;
     bool preserveUnknownOperation();
@@ -85,6 +87,7 @@ private:
     QJsonObject m_listSpec;
     QJsonObject m_draftTarget;
     QJsonObject m_recoveredDraft;
+    QJsonObject m_enterRequest, m_enterNavigation;
     QString m_draftSubmissionId;
     bool m_restoreDraft = false, m_draftNeedsReview = false;
     QString m_pendingId;

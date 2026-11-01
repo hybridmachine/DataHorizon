@@ -141,6 +141,101 @@ private slots:
         QCOMPARE(model->data(model->index(0,1)).toString(),QString("16"));
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("nonnegative"));
     }
+    void closingWindowRequiresExplicitDiscardOfAnActiveCellDraft() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("close-draft.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source");
+        QTRY_VERIFY_WITH_TIMEOUT(window.model()->sourceReady(window.model()->index(0,0)),5000);
+        grid->edit(window.model()->index(0,0)); QPointer<QLineEdit> editor=grid->findChild<QLineEdit *>(); QVERIFY(editor);
+        QTest::keyClicks(editor,"unsubmitted input");
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        answerNextDialog(QMessageBox::No);
+        QVERIFY(!window.close());
+        QCOMPARE(source->text(),QString("unsubmitted input")); QVERIFY(source->isModified());
+        QCOMPARE(changed.count(),0); QTRY_VERIFY_WITH_TIMEOUT(editor.isNull(),3000);
+        answerNextDialog(QMessageBox::Yes); QVERIFY(window.close());
+    }
+    void openingWorkbookRequiresExplicitDiscardOfAnActiveCellDraft() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("first.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source");
+        QTRY_VERIFY_WITH_TIMEOUT(window.model()->sourceReady(window.model()->index(0,0)),5000);
+        const auto original=window.model()->workbook();
+        grid->edit(window.model()->index(0,0)); QPointer<QLineEdit> editor=grid->findChild<QLineEdit *>(); QVERIFY(editor);
+        QTest::keyClicks(editor,"unsubmitted input");
+        const auto second=temp.filePath("second.dhwb");
+        answerNextDialog(QMessageBox::No); window.openBook(second,true);
+        QCOMPARE(window.model()->workbook(),original); QCOMPARE(opened.count(),1); QVERIFY(!QFile::exists(second));
+        QCOMPARE(source->text(),QString("unsubmitted input")); QVERIFY(source->isModified());
+        QTRY_VERIFY_WITH_TIMEOUT(editor.isNull(),3000);
+        answerNextDialog(QMessageBox::Yes); window.openBook(second,true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QVERIFY(window.model()->workbook()!=original);
+    }
+    void enterAdvancesAfterCommitAndSaveKeepsTheCurrentCell() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("enter.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *model=window.model(); auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source");
+        QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        source->setFocus(); QTest::keyClicks(source,"7"); QTest::keyClick(source,Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QCOMPARE(grid->currentIndex(),model->index(1,0));
+        QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(1,0)),5000);
+        grid->edit(model->index(1,0)); QPointer<QLineEdit> editor=grid->findChild<QLineEdit *>(); QVERIFY(editor);
+        QTest::keyClicks(editor,"8"); QTest::keyClick(editor,Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QCOMPARE(grid->currentIndex(),model->index(2,0)); QTRY_VERIFY_WITH_TIMEOUT(editor.isNull(),3000);
+        QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        source->setFocus(); QTest::keyClicks(source,"9"); QTest::keyClick(source,Qt::Key_Return,Qt::ShiftModifier);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QCOMPARE(grid->currentIndex(),model->index(1,0));
+        QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        source->setFocus(); source->selectAll(); QTest::keyClicks(source,"10");
+        window.findChild<QAction *>("saveAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
+        QCOMPARE(grid->currentIndex(),model->index(1,0));
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(1,0)).toString(),QString("10"),5000);
+        grid->setCurrentIndex(model->index(1048575,0)); QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        source->setFocus(); QTest::keyClicks(source,"11"); QTest::keyClick(source,Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);
+        QCOMPARE(grid->currentIndex(),model->index(1048575,0));
+        const QJsonArray sort{QJsonObject{{"col",1},{"descending",true}}};
+        window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"sort",sort}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),7,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000); QCOMPARE(model->sourceRow(0),1);
+        source->setFocus(); source->selectAll(); QTest::keyClicks(source,"6"); QTest::keyClick(source,Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),8,10000);
+        QCOMPARE(model->sourceRow(grid->currentIndex().row()),2);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(grid->currentIndex()).toString(),QString("9"),5000);
+    }
+    void rejectedEnterKeepsItsCellAndDraft() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        options.handler=QString(DATAHORIZON_FIXTURES)+"/validation_hook.py";
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("enter-rejected.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *model=window.model(); auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source");
+        QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        source->setFocus(); QTest::keyClicks(source,"-1"); QTest::keyClick(source,Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QCOMPARE(grid->currentIndex(),model->index(0,0)); QCOMPARE(source->text(),QString("-1")); QVERIFY(source->isModified());
+        QTest::keyClick(source,Qt::Key_Escape);
+        QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(0,0)),5000);
+        grid->edit(model->index(0,0)); QPointer<QLineEdit> editor=grid->findChild<QLineEdit *>(); QVERIFY(editor);
+        QTest::keyClicks(editor,"-2"); QTest::keyClick(editor,Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QCOMPARE(grid->currentIndex(),model->index(0,0)); QCOMPARE(source->text(),QString("-2")); QVERIFY(source->isModified());
+    }
     void failedStartupCanClose() {
         const auto original=qgetenv("DATAHORIZON_PYTHON");
         qputenv("DATAHORIZON_PYTHON","/nonexistent/datahorizon-python");

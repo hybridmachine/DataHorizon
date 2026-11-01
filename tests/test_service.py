@@ -64,6 +64,22 @@ class ServiceTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)["cells"][0]["value"], 20.5)
 
+    def test_open_requires_boolean_flags_before_creating_or_leasing_a_workbook(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            for field in ("create","readonly"):
+                for index,invalid in enumerate(("false","true",0,1,None,[],{})):
+                    path=Path(temp)/f"{field}-{index}.dhwb"
+                    with self.subTest(field=field,value=invalid):
+                        with self.assertRaises(APIError) as failure:
+                            client.request("/v1/open",{"path":str(path),"create":True,field:invalid})
+                        self.assertEqual(failure.exception.body["code"],"INVALID_ARGUMENT")
+                        self.assertFalse(path.exists())
+            with client.open(Path(temp)/"valid.dhwb",create=True) as book:
+                with self.assertRaises(APIError) as failure:
+                    client.request("/v1/open",{"path":book.info["path"],"readonly":"false"})
+                self.assertEqual(failure.exception.body["code"],"INVALID_ARGUMENT")
+                book.set(1,1,"7")
+
     def test_client_handles_release_without_closing_other_clients(self):
         with tempfile.TemporaryDirectory() as temp, LocalService() as client:
             path=Path(temp)/"leases.dhwb"

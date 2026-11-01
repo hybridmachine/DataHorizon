@@ -72,6 +72,31 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(EngineError):
             self.apply("sheet_rename", name="Renamed")
 
+    def test_sheet_reference_detection_ignores_formula_strings_and_preserves_quoted_names(self):
+        self.edit((1,1,'="Not a reference!"'),(2,1,'="Escaped ""!"" text"'))
+        self.apply("sheet_rename",name='A"B')
+        self.apply("sheet_duplicate",sheet='A"B',name="Copy")
+        self.apply("sheet_delete",sheet="Copy")
+        self.assertEqual(self.book.read('A"B',{"r2":1,"c2":1})["cells"][0]["value"],"Not a reference!")
+        self.apply("sheet_add",name="Other")
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":'''='A"B'!A1+"tail"'''}])
+        with self.assertRaises(EngineError) as failure:
+            self.apply("sheet_rename",sheet='A"B',name="Renamed")
+        self.assertEqual(failure.exception.body["code"],"REFERENCE_TRANSFORM_UNAVAILABLE")
+
+    def test_edit_boolean_flags_reject_truthy_strings_and_numbers_atomically(self):
+        self.edit((1,1,"7"))
+        before=self.book.read("Sheet1",{"r2":2,"c2":1})["cells"]
+        for flag in ("clear","clear_input","replace_style"):
+            for invalid in ("false",0,1,None,[],{}):
+                with self.subTest(flag=flag,value=invalid):
+                    with self.assertRaises(EngineError) as failure:
+                        self.apply(cells=[{"row":2,"col":1,"source":"9"},
+                                          {"row":1,"col":1,flag:invalid,"style":{"italic":True}}])
+                    self.assertEqual(failure.exception.body["code"],"INVALID_ARGUMENT")
+                    self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+                    self.assertEqual(self.book.read("Sheet1",{"r2":2,"c2":1})["cells"],before)
+
     def test_atomic_validation_and_undo_redo(self):
         with self.assertRaises(EngineError):
             self.apply(cells=[{"row": 1, "col": 1, "source": "7"},

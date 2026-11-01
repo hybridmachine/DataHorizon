@@ -16,7 +16,7 @@ import traceback
 from urllib.parse import unquote, urlsplit
 import uuid
 
-from .engine import EngineError, MAX_CELLS, Workbook, encoded, require
+from .engine import EngineError, MAX_CELLS, Workbook, boolean, encoded, require
 
 CAPABILITIES = {
     "api_version": 1, "format_version": 1, "max_operation_cells": MAX_CELLS,
@@ -64,7 +64,7 @@ def openapi():
             "row":scalar,"col":scalar,"source":{"type":"string","maxLength":65536},
             "kind":{"type":"string","enum":["auto","formula","text","number","boolean","null"]},
             "style":{"type":"object","description":"Supported preview style properties; see compatibility-v0.md"},
-            "clear":{"type":"boolean"}}},
+            "clear":{"type":"boolean"},"clear_input":{"type":"boolean"},"replace_style":{"type":"boolean"}}},
         "OperationRequest": {"type":"object","required":["operation_id","expected_state","action"],"properties":{
             "operation_id":{"type":"string","description":"Generate and preserve before sending; reconcile lost responses by this ID"},
             "expected_state":{"type":"string","description":"State from the reviewed workbook; stale writes roll back"},
@@ -144,17 +144,18 @@ class Service(ThreadingHTTPServer):
             return CAPABILITIES
         if method == "POST" and path == "/v1/open":
             require(isinstance(body.get("path"), str) and bool(body["path"]), "INVALID_PATH", "A server-local workbook path is required")
+            create, readonly = boolean(body.get("create", False), "create"), boolean(body.get("readonly", False), "readonly")
             path = Path(body["path"]).expanduser().resolve()
             with self.registry_lock:
                 require(len(self.workbooks)<128,"HANDLE_LIMIT","Release unused workbook handles before opening more",409)
                 for book in list(self.workbooks.values()):
                     if book.path == path:
-                        require(not body.get("create"), "FILE_EXISTS", "Workbook already exists", 409)
-                        require(book.readonly == bool(body.get("readonly")), "OPEN_MODE_CONFLICT", "Workbook is already open in a different mode", 409)
+                        require(not create, "FILE_EXISTS", "Workbook already exists", 409)
+                        require(book.readonly == readonly, "OPEN_MODE_CONFLICT", "Workbook is already open in a different mode", 409)
                         handle=str(uuid.uuid4()); self.workbooks[handle]=book
                         return {**book.info(), "id": handle, "workbook_id": book.id}
                 require(len(set(self.workbooks.values()))<8,"WORKBOOK_LIMIT","Close unused workbooks before opening more",409)
-                book = Workbook(path, create=bool(body.get("create")), readonly=bool(body.get("readonly")), handler=self.handler)
+                book = Workbook(path, create=create, readonly=readonly, handler=self.handler)
                 handle = str(uuid.uuid4())
                 self.workbooks[handle] = book
                 return {**book.info(), "id": handle, "workbook_id": book.id}

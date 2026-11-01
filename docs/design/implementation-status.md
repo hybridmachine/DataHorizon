@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 58 Python tests and 29 Qt contract cases.
+The review regression suite includes 61 Python tests and 33 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -213,3 +213,15 @@ Cancel preserves its input without submitting an import. CSV file reads are
 bounded during reading as well as by the initial size check. The reproduced
 race now cancels with no mutation. This completes the two further authorized
 cycles; final fixes are validated without requesting an eighth review.
+
+The user then authorized two further cycles. Cycle 8 published no inline issues
+but named omitted findings about reference detection, Enter navigation and
+boolean validation. Confirmed fixes distinguish literal exclamation marks from
+sheet references while retaining restrictions on real quoted references;
+reject non-boolean open and clear/style flags without creating files or
+partially editing cells; and move Enter/Shift+Enter selection only after a
+confirmed commit. Save keeps its cell, rejection retains its target and draft,
+and sorted-list navigation follows the originally intended next source row.
+An independent regression also reproduced closing over an active in-cell draft
+without a discard prompt. Open and Close now capture those drafts and preserve
+them visibly when discard is declined. The regression suite covers both paths.

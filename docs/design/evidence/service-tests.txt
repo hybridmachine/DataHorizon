@@ -12,6 +12,7 @@ test_cut_rejects_special_paste_before_mutating (test_engine.EngineTests.test_cut
 test_digit_bearing_function_names_are_not_translated_as_cell_references (test_engine.EngineTests.test_digit_bearing_function_names_are_not_translated_as_cell_references) ... ok
 test_direct_edit_stale_write_and_history_gap (test_engine.EngineTests.test_direct_edit_stale_write_and_history_gap) ... ok
 test_display_replacement_preserves_text_and_rejects_numeric_conversion (test_engine.EngineTests.test_display_replacement_preserves_text_and_rejects_numeric_conversion) ... ok
+test_edit_boolean_flags_reject_truthy_strings_and_numbers_atomically (test_engine.EngineTests.test_edit_boolean_flags_reject_truthy_strings_and_numbers_atomically) ... ok
 test_extreme_references_and_range_comparisons_are_cell_errors (test_engine.EngineTests.test_extreme_references_and_range_comparisons_are_cell_errors) ... ok
 test_failed_receipt_keeps_writer_lock_until_outcome_is_recorded (test_engine.EngineTests.test_failed_receipt_keeps_writer_lock_until_outcome_is_recorded) ... ok
 test_failed_receipt_reconciles_without_reexecuting_code (test_engine.EngineTests.test_failed_receipt_reconciles_without_reexecuting_code) ... ok
@@ -34,6 +35,7 @@ test_receipt_rechecked_after_writer_lock_without_reclassifying_outcome (test_eng
 test_receipt_storage_failure_retains_unknown_outcome_and_releases_transaction (test_engine.EngineTests.test_receipt_storage_failure_retains_unknown_outcome_and_releases_transaction) ... ok
 test_sheet_add_and_duplicate_append_after_deleting_middle_sheet (test_engine.EngineTests.test_sheet_add_and_duplicate_append_after_deleting_middle_sheet) ... ok
 test_sheet_duplicate_order_and_coalesced_noop (test_engine.EngineTests.test_sheet_duplicate_order_and_coalesced_noop) ... ok
+test_sheet_reference_detection_ignores_formula_strings_and_preserves_quoted_names (test_engine.EngineTests.test_sheet_reference_detection_ignores_formula_strings_and_preserves_quoted_names) ... ok
 test_snapshot_reads_refresh_after_external_commit_at_begin (test_engine.EngineTests.test_snapshot_reads_refresh_after_external_commit_at_begin) ... ok
 test_styled_blank_and_explicit_empty_text_remain_distinct (test_engine.EngineTests.test_styled_blank_and_explicit_empty_text_remain_distinct) ... ok
 test_sum_overflow_cannot_be_hidden_by_comparison_or_condition (test_engine.EngineTests.test_sum_overflow_cannot_be_hidden_by_comparison_or_condition) ... ok
@@ -53,11 +55,12 @@ test_invalid_cli_addresses_return_structured_errors (test_service.ServiceTests.t
 test_loopback_startup_does_not_depend_on_hostname_resolution (test_service.ServiceTests.test_loopback_startup_does_not_depend_on_hostname_resolution) ... ok
 test_lost_reply_exposes_id_and_blocks_further_sdk_writes (test_service.ServiceTests.test_lost_reply_exposes_id_and_blocks_further_sdk_writes) ... ok
 test_missing_receipt_and_failed_lookup_keep_the_pending_outcome_unknown (test_service.ServiceTests.test_missing_receipt_and_failed_lookup_keep_the_pending_outcome_unknown) ... ok
+test_open_requires_boolean_flags_before_creating_or_leasing_a_workbook (test_service.ServiceTests.test_open_requires_boolean_flags_before_creating_or_leasing_a_workbook) ... ok
 test_receipt_lookup_survives_owned_service_restart (test_service.ServiceTests.test_receipt_lookup_survives_owned_service_restart) ... ok
 test_receipts_with_url_delimiters_are_retrievable (test_service.ServiceTests.test_receipts_with_url_delimiters_are_retrievable) ... ok
 test_rest_sdk_cli_share_managed_path (test_service.ServiceTests.test_rest_sdk_cli_share_managed_path) ... ok
 
 ----------------------------------------------------------------------
-Ran 58 tests in 5.444s
+Ran 61 tests in 5.308s
 
 OK

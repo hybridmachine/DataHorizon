@@ -22,6 +22,9 @@ input before applying it. A rejected draft remains available for correction.
 This includes in-cell edits: rejection restores them in the formula bar, and
 service interruption captures an active editor before reopening resets the grid.
 An unresolved formula-bar draft prevents opening a second in-cell editor.
+Open and Close capture an active in-cell draft before deciding whether to
+discard it. Declining discard keeps the input visible in the formula bar and
+leaves the current workbook open.
 If the original sheet is unavailable, retain the input visibly as a draft and
 reject applying it to another sheet. New edits require explicitly discarding the
 unavailable-target draft first; Cancel retains it for copying.
@@ -54,6 +57,11 @@ An active in-cell draft must be resolved before import starts.
 
 ## Values and references
 
+JSON boolean request fields require `true` or `false`; strings, numbers and
+null are rejected without coercion. Open validates its create/read-only flags
+before creating a file or allocating a handle. Invalid cell clear/style flags
+roll back their entire managed operation.
+
 Addresses are one-based A1, at most 1,048,576 rows and 16,384 columns. Sparse
 storage does not promise that every dense workbook within that address space is
 practical. Raw input, typed value, formula, format, and display are distinct.
@@ -85,6 +93,9 @@ being enabled. Sorting freeform cells with formulas is initially restricted;
 record identity and reference-safe sorting require M5 evidence. Filtered paste
 is disabled until stable-target semantics are implemented. These restrictions
 are visible capability limits, not placeholder successful operations.
+Exclamation marks inside formula string literals do not constitute sheet
+references. Quoted sheet names still retain their following reference separator;
+incomplete quoted formulas are handled conservatively.
 
 ## Undo, lists and code
 
@@ -155,7 +166,12 @@ not achieved performance claims; missing measurements block milestone closure.
 
 ## Focus and unavailable states
 
-Enter submits and advances; Escape cancels the cell editor. The formula bar
+Enter submits and advances one visible row only after acknowledgement;
+Shift+Enter moves in the opposite direction, within the sheet boundary. Save
+commits without moving. Rejection or an unknown outcome retains the original
+cell and draft. In a sorted/filtered list, capture the next visible source row
+before editing and select it after refresh if it remains visible. Escape
+cancels the cell editor. The formula bar
 shows source and returns focus to the grid after submission. The address field
 validates before jumping. Native shortcuts use Qt standard key sequences.
 Loading cells show an ellipsis and are not editable. Pending mutations lock

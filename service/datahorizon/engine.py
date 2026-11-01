@@ -14,7 +14,7 @@ import threading
 import time
 import uuid
 
-from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, translate
+from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, has_sheet_reference, translate
 from .hooks import HookFailure, invoke
 
 MAX_CELLS = 10_000
@@ -51,6 +51,11 @@ def require(condition, code, message, status=400):
 def integer(value, lower, upper, name):
     require(type(value) is int and lower <= value <= upper,
             "INVALID_ARGUMENT", f"{name} must be an integer from {lower} to {upper}")
+    return value
+
+
+def boolean(value, name):
+    require(type(value) is bool, "INVALID_ARGUMENT", f"{name} must be boolean")
     return value
 
 
@@ -155,6 +160,7 @@ EXPECTED_SCHEMA = expected_schema()
 
 class Workbook:
     def __init__(self, path, create=False, readonly=False, handler=None):
+        create, readonly = boolean(create, "create"), boolean(readonly, "readonly")
         self.path = Path(path).expanduser().resolve()
         self.readonly, self.handler = readonly, handler
         self.lock = threading.RLock()
@@ -331,6 +337,8 @@ class Workbook:
         require(isinstance(edits, list) and 0 < len(edits) <= MAX_CELLS, "LIMIT", "Provide 1 to 10,000 edits")
         for edit in edits:
             require(isinstance(edit, dict), "INVALID_ARGUMENT", "Each cell edit must be an object")
+            for flag in ("clear", "clear_input", "replace_style"):
+                boolean(edit.get(flag, False), flag)
             row, col = edit.get("row"), edit.get("col")
             integer(row, 1, MAX_ROWS, "row")
             integer(col, 1, MAX_COLS, "col")
@@ -653,7 +661,11 @@ class Workbook:
                 "INVALID_NAME", "Sheet name must be 1-31 characters without []:*?/\\! or control characters")
 
     def has_cross_sheet_formulas(self):
-        return self.db.execute("SELECT 1 FROM cells WHERE source LIKE '=%!%' AND kind IN ('auto','formula') LIMIT 1").fetchone() is not None
+        for source, in self.db.execute("SELECT source FROM cells WHERE source LIKE '=%!%' AND kind IN ('auto','formula')"):
+            require(time.monotonic() <= self.deadline, "TIMEOUT", "Operation exceeded its time budget")
+            if has_sheet_reference(source):
+                return True
+        return False
 
     def list_view(self, sheet, args):
         """An explicit list is a presentation projection over stable source rows."""

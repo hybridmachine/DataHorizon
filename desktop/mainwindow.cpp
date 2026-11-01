@@ -58,6 +58,7 @@ public:
         connect(this,&QAbstractItemDelegate::closeEditor,this,[clear](QWidget *editor,QAbstractItemDelegate::EndEditHint){clear(editor);});
     }
     std::function<bool()> canEdit;
+    std::function<void(const QModelIndex &,int)> enterPressed;
     QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const override {
         if (canEdit && !canEdit()) return nullptr;
         auto *editor = QStyledItemDelegate::createEditor(parent, option, index);
@@ -78,6 +79,20 @@ public:
         emit closeEditor(editor,QAbstractItemDelegate::RevertModelCache);
         return draft;
     }
+protected:
+    bool eventFilter(QObject *object, QEvent *event) override {
+        if (object==m_editor && event->type()==QEvent::KeyPress) {
+            const auto *key=static_cast<QKeyEvent *>(event);
+            if (key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter) {
+                if (enterPressed) enterPressed(m_index,key->modifiers().testFlag(Qt::ShiftModifier)?-1:1);
+                QPointer<QLineEdit> editor=m_editor;
+                emit commitData(editor);
+                if (editor) emit closeEditor(editor,QAbstractItemDelegate::NoHint);
+                return true;
+            }
+        }
+        return QStyledItemDelegate::eventFilter(object,event);
+    }
 private:
     mutable QPointer<QLineEdit> m_editor;
     mutable QPersistentModelIndex m_index;
@@ -94,6 +109,7 @@ MainWindow::MainWindow(const StartupOptions &options, QWidget *parent)
     m_service.setObjectName("ownedService");
     buildUi();
     connect(m_model, &SheetModel::editRequested, this, [this](int row, int col, const QString &source, const QString &kind) {
+        const auto destination=m_enterRequest; m_enterRequest={};
         if (m_busy || m_unknown) return;
         const QJsonObject target{{"workbook",m_info["id"]},{"sheet",m_model->sheet()},{"state",m_info["state"]},
                                  {"row",row},{"col",col},{"input_kind",kind},{"source",source},{"needs_review",false}};
@@ -101,7 +117,10 @@ MainWindow::MainWindow(const StartupOptions &options, QWidget *parent)
         QJsonObject cell{{"row", row}, {"col", col}, {"source", source}, {"kind",kind}};
         submit({{"action", "edit"}, {"label", "Edit cell"}, {"cells", QJsonArray{cell}},
                 {"workbook",target["workbook"]},{"sheet",target["sheet"]},{"expected_state",target["state"]}});
-        if (!m_pendingId.isEmpty()) { m_recoveredDraft=target; m_draftSubmissionId=m_pendingId; }
+        if (!m_pendingId.isEmpty()) {
+            m_recoveredDraft=target; m_draftSubmissionId=m_pendingId;
+            if (!destination.isEmpty()) { m_enterNavigation=destination; m_enterNavigation["operation_id"]=m_pendingId; }
+        }
     });
     connect(m_model, &SheetModel::issue, this, &MainWindow::issue);
     connect(m_model, &SheetModel::externalChange, this, [this] {
@@ -255,6 +274,8 @@ void MainWindow::buildUi() {
     layout->addLayout(formula);
     m_grid = new QTableView; m_grid->setObjectName("grid"); m_grid->setAccessibleName(tr("Spreadsheet")); m_grid->setModel(m_model);
     auto *delegate=new CellDelegate(m_grid); delegate->canEdit=[this]{return !m_source->isModified();};
+    delegate->enterPressed=[this](const QModelIndex &index,int direction){m_enterRequest=enterDestination(index,direction);};
+    connect(delegate,&QAbstractItemDelegate::closeEditor,this,[this]{m_enterRequest={};});
     m_grid->setItemDelegate(delegate);
     m_grid->setSelectionMode(QAbstractItemView::ContiguousSelection);
     m_grid->setSelectionBehavior(QAbstractItemView::SelectItems);
@@ -351,6 +372,7 @@ void MainWindow::startService() {
     connect(&m_service, &QProcess::errorOccurred, this, [this] { issue("Service startup failed: " + m_service.errorString()); });
     connect(&m_service, &QProcess::finished, this, [this](int, QProcess::ExitStatus) {
         if (m_shuttingDown) return;
+        m_enterRequest={}; m_enterNavigation={};
         captureGridDraft();
         m_unknown = !m_pendingId.isEmpty(); setBusy(true, "Service stopped • Restart local service or close the window");
         if (m_unknown) preserveUnknownOperation();
@@ -370,10 +392,12 @@ void MainWindow::newBook() {
 
 void MainWindow::openBook(const QString &path, bool create, bool readonly) {
     if (m_busy || m_unknown) return;
+    captureGridDraft(false);
     if (m_source->isModified() || !m_recoveredDraft.isEmpty()) {
         if (QMessageBox::question(this,tr("Discard editor draft?"),tr("Discard the unsubmitted formula-bar draft before opening another workbook? Stored edits remain in the current workbook."))!=QMessageBox::Yes) return;
         m_source->setModified(false); clearRecoveredDraft();
     }
+    m_enterRequest={}; m_enterNavigation={};
     setBusy(true, "Opening workbook…");
     m_client->request("/v1/open", {{"path", path}, {"create", create}, {"readonly", readonly}}, [this](QJsonObject info, QString error) {
         if (!error.isEmpty()) { setBusy(false, "Open failed"); issue(error); return; }
@@ -406,7 +430,7 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     setWindowTitle(QFileInfo(info["path"].toString()).fileName() + " — DataHorizon development preview");
     syncSource();
     if (m_restoreDraft) restoreRecoveredDraft();
-    if (!m_listSpec.isEmpty()) applyList(); else emit workbookReady();
+    if (!m_listSpec.isEmpty()) applyList(); else { applyEnterNavigation(); emit workbookReady(); }
     if (m_saveMode) QTimer::singleShot(0,this,[this]{save(m_saveMode==2);});
 }
 
@@ -444,6 +468,7 @@ void MainWindow::submit(QJsonObject operation) {
         const bool invalidAcknowledgement = error.isEmpty() && !RestClient::validReceipt(result, m_pendingId, true);
         if (invalidAcknowledgement) error = "Invalid mutation acknowledgement; reconcile its operation ID";
         if (!error.isEmpty()) {
+            m_enterNavigation={};
             const auto outcome = result["outcome"].toString();
             if (!invalidAcknowledgement && (outcome == "rolled_back" || outcome == "rejected")
                 && result["code"].isString() && !result["code"].toString().isEmpty() && result["message"].isString()
@@ -465,6 +490,7 @@ void MainWindow::submit(QJsonObject operation) {
             }
             emit operationFinished(false); return;
         }
+        if (m_enterNavigation["operation_id"].toString()==operationId) m_enterNavigation["ready"]=true;
         if (m_draftSubmissionId==operationId) clearRecoveredDraft();
         clearRecoveryRecord(); m_pendingId.clear(); m_unknown = false; m_info["state"] = result["state"];
         refresh(); emit operationFinished(true);
@@ -562,7 +588,22 @@ void MainWindow::syncSource() {
     if (cell.contains("error")) m_status->setText(cell["display"].toString() + " • " + cell["error"].toString() + " • Input retained");
 }
 
-void MainWindow::submitDraft() {
+QJsonObject MainWindow::enterDestination(const QModelIndex &index, int direction) const {
+    const auto next=m_model->index(index.row()+direction,index.column());
+    if (!index.isValid() || !next.isValid()) return {};
+    return {{"workbook",m_info["id"]},{"sheet",m_model->sheet()},
+            {"row",m_model->sourceRow(next.row())+1},{"col",next.column()+1}};
+}
+
+void MainWindow::applyEnterNavigation() {
+    if (!m_enterNavigation["ready"].toBool()) return;
+    const auto target=m_enterNavigation; m_enterNavigation={};
+    if (target["workbook"]!=m_info["id"] || target["sheet"].toString()!=m_model->sheet() || m_source->isModified()) return;
+    const auto next=m_model->index(m_model->viewRow(target["row"].toInt()-1),target["col"].toInt()-1);
+    if (next.isValid()) { m_grid->setCurrentIndex(next); m_grid->scrollTo(next); syncSource(); }
+}
+
+void MainWindow::submitDraft(bool advance, int direction) {
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
     if (!m_grid->currentIndex().isValid() || m_draftTarget["row"].toInt()<1 || m_draftTarget["col"].toInt()<1) {
         issue("Select a cell with a loaded input before editing."); return;
@@ -573,6 +614,7 @@ void MainWindow::submitDraft() {
     }
     const auto draft=m_draftTarget;
     const auto source=m_source->text();
+    const auto destination=advance?enterDestination(m_grid->currentIndex(),direction):QJsonObject{};
     if (m_draftNeedsReview) {
         const auto target=m_model->index(m_draftTarget["row"].toInt()-1,m_draftTarget["col"].toInt()-1);
         if (!m_model->sourceReady(target)) { m_model->ensureSource(target); issue("Wait for the reopened cell input before reviewing the draft."); return; }
@@ -594,7 +636,10 @@ void MainWindow::submitDraft() {
     m_source->setModified(false);
     submit({{"action","edit"},{"label","Edit cell"},{"cells",QJsonArray{cell}},
             {"workbook",draft["workbook"]},{"sheet",draft["sheet"]},{"expected_state",draft["state"]}});
-    if (!m_pendingId.isEmpty()) m_draftSubmissionId=m_pendingId;
+    if (!m_pendingId.isEmpty()) {
+        m_draftSubmissionId=m_pendingId;
+        if (!destination.isEmpty()) { m_enterNavigation=destination; m_enterNavigation["operation_id"]=m_pendingId; }
+    }
     m_grid->setFocus();
 }
 
@@ -964,6 +1009,7 @@ void MainWindow::applyList() {
         if (!rows.isEmpty()) m_grid->setCurrentIndex(m_model->index(0, 0));
         setBusy(false, tr("List view • %1 / %2 records • Edits target original source rows • Clear list view to restore sheet")
             .arg(result["matching"].toInt()).arg(result["total"].toInt()));
+        applyEnterNavigation();
         syncSource(); emit workbookReady();
     });
 }
@@ -1011,6 +1057,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     if (!m_pendingId.isEmpty() || m_unknown || m_releasing) {
         issue("Wait for a known operation outcome before closing. Committed work remains in the native workbook."); event->ignore(); return;
     }
+    captureGridDraft(false);
     if (m_source->isModified() || !m_recoveredDraft.isEmpty()) {
         if (QMessageBox::question(this, tr("Discard editor draft?"), tr("Discard the unsubmitted formula-bar draft? Already stored edits remain in the workbook.")) != QMessageBox::Yes) { event->ignore(); return; }
         m_source->setModified(false); clearRecoveredDraft();
@@ -1024,8 +1071,14 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
-    if (object == m_source && event->type() == QEvent::KeyPress && static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
-        m_source->setModified(false); clearRecoveredDraft(); syncSource(); m_grid->setFocus(); return true;
+    if (object == m_source && event->type() == QEvent::KeyPress) {
+        const auto *key=static_cast<QKeyEvent *>(event);
+        if (key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter) {
+            submitDraft(true,key->modifiers().testFlag(Qt::ShiftModifier)?-1:1); return true;
+        }
+        if (key->key()==Qt::Key_Escape) {
+            m_source->setModified(false); clearRecoveredDraft(); syncSource(); m_grid->setFocus(); return true;
+        }
     }
     return QMainWindow::eventFilter(object, event);
 }

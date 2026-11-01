@@ -13,6 +13,7 @@ TOKEN = re.compile(
     r'(?P<name>[A-Za-z_][A-Za-z_0-9]*)|(?P<op><=|>=|<>|[+*/^(),:=<>-]))'
 )
 ADDRESS = re.compile(r"(\$?)([A-Za-z]{1,3})(\$?)([1-9][0-9]*)\Z")
+QUOTED_TOKEN = re.compile(r''' "(?:[^"]|"")*" | '(?:[^']|'')*' ''', re.VERBOSE)
 
 
 class FormulaError(Exception):
@@ -56,6 +57,26 @@ def split_ref(source):
     else:
         sheet = None
     return sheet, *coordinates(source)
+
+
+def has_sheet_reference(source):
+    """Ignore quoted strings/identifiers, but retain their following ! separator.
+
+    An incomplete quoted token stays conservative: an unclassified ! blocks
+    structural operations until the formula can be reviewed.
+    """
+    pos = 1
+    while pos < len(source):
+        if source[pos] == "!":
+            return True
+        if source[pos] in ("\"", "'"):
+            token = QUOTED_TOKEN.match(source, pos)
+            if not token:
+                return "!" in source[pos:]
+            pos = token.end()
+        else:
+            pos += 1
+    return False
 
 
 def translate(source, rows, cols):

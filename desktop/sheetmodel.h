@@ -21,6 +21,7 @@ public:
     void setProjection(const QList<int> &rows);
     bool projected() const { return m_projected; }
     int sourceRow(int row) const { return m_projected ? m_projection.value(row, -1) : row; }
+    int viewRow(int row) const { return m_projected ? int(m_projection.indexOf(row)) : row; }
     QJsonObject cell(const QModelIndex &index) const;
     bool loaded(const QModelIndex &index) const;
     bool sourceReady(const QModelIndex &index) const;
