@@ -1,4 +1,5 @@
 import json
+from contextlib import closing
 from http.client import IncompleteRead
 import os
 from pathlib import Path
@@ -171,7 +172,7 @@ class ServiceTests(unittest.TestCase):
     def test_direct_cli_honors_readonly_and_returns_structured_sqlite_errors(self):
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/"direct.db"
-            with sqlite3.connect(path) as direct:
+            with closing(sqlite3.connect(path)) as direct,direct:
                 direct.execute("CREATE TABLE data(value)")
                 direct.execute("INSERT INTO data VALUES(7)")
             def run(sql,file=path):
