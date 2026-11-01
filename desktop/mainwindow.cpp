@@ -816,28 +816,45 @@ void MainWindow::paste(bool valuesOnly, bool formatsOnly) {
 }
 
 void MainWindow::importCsv() {
-    if (m_busy || m_info.isEmpty()) return;
+    if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
     if (m_model->projected()) { issue("Clear the list view before importing CSV."); return; }
+    const auto target=csvImportTarget(); if (target.isEmpty()) return;
+    captureGridDraft(false);
+    if (!resolveDraft()) return;
+    if (!matchesTarget(target) || m_model->projected()) { issue("CSV import target changed; import cancelled."); return; }
     auto path = QFileDialog::getOpenFileName(this, tr("Import UTF-8 CSV at selected cell"), {}, tr("CSV (*.csv)"));
     if (path.isEmpty()) return;
-    QFile file(path); if (!file.open(QIODevice::ReadOnly) || file.size() > 3*1024*1024) { issue("CSV must be readable and smaller than 3 MiB."); return; }
-    auto bytes = file.readAll(); auto text = QString::fromUtf8(bytes);
+    if (!matchesTarget(target) || m_model->projected()) { issue("CSV import target changed; import cancelled."); return; }
+    constexpr int maxBytes=3*1024*1024;
+    QFile file(path); if (!file.open(QIODevice::ReadOnly) || file.size() > maxBytes) { issue("CSV must be readable and at most 3 MiB."); return; }
+    const auto bytes=file.read(maxBytes+1);
+    if (file.error()!=QFileDevice::NoError || bytes.size()>maxBytes) { issue("CSV must be readable and at most 3 MiB."); return; }
+    auto text = QString::fromUtf8(bytes);
     if (text.toUtf8() != bytes) { issue("CSV is not valid UTF-8. Convert its encoding before importing."); return; }
-    importCsvText(text);
+    importCsvText(text,target);
 }
 
-void MainWindow::importCsvText(const QString &text) {
-    if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected() || !resolveDraft()) return;
+QJsonObject MainWindow::csvImportTarget() const {
     const auto start = m_grid->currentIndex();
-    if (!start.isValid()) return;
-    const auto workbook=m_info["id"].toString(), sheet=m_model->sheet(), state=m_info["state"].toString();
+    if (!start.isValid()) return {};
     const int row=m_model->sourceRow(start.row())+1, col=start.column()+1;
     const auto targetName=QFileInfo(m_info["path"].toString()).fileName()+" / "+m_tabs->tabText(m_tabs->currentIndex())
         +"!"+SheetModel::columnName(col)+QString::number(row);
-    auto validTarget=[this,workbook,sheet,state]{return m_info["id"].toString()==workbook && m_model->sheet()==sheet
-        && m_info["state"].toString()==state && !m_model->projected();};
+    return targetContext({{"row",row},{"col",col},{"name",targetName}});
+}
+
+void MainWindow::importCsvText(const QString &text, QJsonObject target) {
+    if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected()) return;
+    if (target.isEmpty()) target=csvImportTarget();
+    if (target.isEmpty()) return;
+    captureGridDraft(false);
+    if (!resolveDraft()) return;
+    auto validTarget=[this,target]{return matchesTarget(target) && !m_model->projected();};
+    if (!validTarget()) { issue("CSV import target changed; import cancelled."); return; }
+    const int row=target["row"].toInt(), col=target["col"].toInt();
+    const auto targetName=target["name"].toString();
     setBusy(true,"Previewing CSV for "+targetName);
-    m_client->request("/v1/import/csv/preview", {{"csv", text}}, [this,row,col,targetName,validTarget](QJsonObject preview, QString error) {
+    m_client->request("/v1/import/csv/preview", {{"csv", text}}, [this,row,col,targetName,validTarget,target](QJsonObject preview, QString error) {
         if (!error.isEmpty() || !validTarget()) { setBusy(false); issue(error.isEmpty()?"CSV import target changed; import cancelled.":error); return; }
         QStringList lines;
         const auto rows = preview["rows"].toArray();
@@ -853,7 +870,8 @@ void MainWindow::importCsvText(const QString &text) {
             auto values = rows[r].toArray();
             for (int c=0; c<values.size(); ++c) edits.append(QJsonObject{{"row", row+r}, {"col", col+c}, {"source", values[c]}, {"kind", "text"}});
         }
-        submit({{"action", "edit"}, {"label", "Import CSV"}, {"cells", edits}});
+        submit({{"action", "edit"}, {"label", "Import CSV"}, {"cells", edits},
+                {"workbook",target["workbook"]},{"sheet",target["sheet"]},{"expected_state",target["expected_state"]}});
     });
 }
 

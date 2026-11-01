@@ -47,6 +47,10 @@ Workbook, sheet and state are captured before a confirmation or input dialog,
 and checked again after any editor-draft resolution. A background refresh cannot
 retarget a confirmed deletion, sheet change, fill, format or export. Changed
 inputs require a new review rather than silently using the newly selected sheet.
+CSV import captures its workbook, sheet, state and destination cell before
+resolving an editor draft or opening the file picker. Those preconditions remain
+explicit through preview, confirmation and submission; a changed target cancels.
+An active in-cell draft must be resolved before import starts.
 
 ## Values and references
 

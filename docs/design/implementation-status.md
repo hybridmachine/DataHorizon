@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 58 Python tests and 27 Qt contract cases.
+The review regression suite includes 58 Python tests and 29 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -201,3 +201,15 @@ Cycle 6 also includes a recovery regression for a draft whose original sheet was
 while the service was stopped. Its input remains visible and modified after
 reopening; submission cannot use the fallback sheet, and later edits require an
 explicit discard. The draft stays available for copying until that choice.
+
+Cycle 7 posted no new inline issues, but its summary raised a critical CSV
+import-target race and editing/resource concerns. A two-service regression
+reproduced a CSV import into another sheet after the original sheet was removed
+while the file picker was open. Imports now capture workbook, sheet, state and
+coordinates before draft resolution and file selection, validate them after
+each modal step, and pass them explicitly through preview and submission.
+An active in-cell draft is retained for Save/Discard/Cancel before import starts;
+Cancel preserves its input without submitting an import. CSV file reads are
+bounded during reading as well as by the initial size check. The reproduced
+race now cancels with no mutation. This completes the two further authorized
+cycles; final fixes are validated without requesting an eighth review.

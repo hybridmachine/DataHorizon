@@ -112,6 +112,11 @@ nothing. Numeric, boolean and formula results require stored-source replacement.
 CSV import previews UTF-8 comma-separated text and imports it atomically as Text.
 Dates, encodings, column typing and spreadsheet interchange remain incomplete.
 Export is an explicit values-only selected snapshot and blocks on formula errors.
+CSV import captures its destination before the file picker and checks it again
+after file selection and confirmation. A refreshed or removed sheet cancels the
+import; an active cell draft must first be saved, discarded or cancelled. File
+reads are limited to 3 MiB even if a file grows after its initial size check.
+
 Export cannot overwrite the open native workbook, including paths that identify
 the same file through a filesystem alias. CSV previews are capped at 10,000
 records and 10,000 fields; exports are capped by the complete 4-MiB JSON response.

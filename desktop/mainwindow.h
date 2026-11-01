@@ -22,7 +22,7 @@ public:
     ~MainWindow() override;
     void openBook(const QString &path, bool create = false, bool readonly = false);
     void submit(QJsonObject operation);
-    void importCsvText(const QString &text);
+    void importCsvText(const QString &text, QJsonObject target = {});
     void exportCsvTo(const QString &path, QJsonObject target = {});
     void showList(QJsonObject scope);
     static bool isRecoveryPath(QString path);
@@ -49,6 +49,7 @@ private:
     void paste(bool valuesOnly = false, bool formatsOnly = false);
     void format(const QJsonObject &style, QJsonObject target = {});
     void importCsv();
+    QJsonObject csvImportTarget() const;
     void exportCsv();
     void listDialog();
     void applyList();

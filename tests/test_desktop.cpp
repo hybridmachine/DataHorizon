@@ -9,15 +9,20 @@
 #include <QRegularExpression>
 #include <QLabel>
 #include <QSignalSpy>
+#include <QScopeGuard>
 #include <QTableView>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QAbstractButton>
+#include <QPushButton>
 #include <QAbstractItemDelegate>
 #include <QClipboard>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileDialog>
 #include <QDir>
+#include <QDialogButtonBox>
+#include <QElapsedTimer>
 #include <QJsonDocument>
 #include <QMessageBox>
 #include <QMimeData>
@@ -214,6 +219,82 @@ private slots:
         QCOMPARE(changed.count(),1);
         window.openBook(path); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
         QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("ID"),5000);
+    }
+    void csvImportResolvesActiveCellDraftBeforePreview() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("import-draft.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source");
+        QTRY_VERIFY_WITH_TIMEOUT(window.model()->sourceReady(window.model()->index(0,0)),5000);
+        grid->edit(window.model()->index(0,0)); QPointer<QLineEdit> editor=grid->findChild<QLineEdit *>(); QVERIFY(editor);
+        QTest::keyClicks(editor,"retained input");
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        answerNextDialog(QMessageBox::Cancel); window.importCsvText("replacement");
+        QCOMPARE(changed.count(),0); QCOMPARE(opened.count(),1);
+        QCOMPARE(source->text(),QString("retained input")); QVERIFY(source->isModified());
+        QTRY_VERIFY_WITH_TIMEOUT(editor.isNull(),3000);
+    }
+    void csvFileSelectionCannotRetargetAfterExternalSheetDeletion() {
+        const bool originalDialogs=QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs,true);
+        const auto restoreDialogs=qScopeGuard([originalDialogs]{QApplication::setAttribute(Qt::AA_DontUseNativeDialogs,originalDialogs);});
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        const auto csvPath=temp.filePath("input.csv"); QFile csv(csvPath); QVERIFY(csv.open(QIODevice::WriteOnly));
+        csv.write("wrong sheet"); csv.close();
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        const auto path=temp.filePath("import-file-target.dhwb");
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","sheet_add"},{"name","Other"}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        const auto original=window.model()->sheet();
+        MainWindow writer(options); QSignalSpy writerReady(&writer,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(writerReady.count(),1,10000);
+        QSignalSpy writerOpened(&writer,&MainWindow::workbookReady); writer.openBook(path);
+        QTRY_COMPARE_WITH_TIMEOUT(writerOpened.count(),1,10000);
+        bool pickerOpened=false,refreshed=false,fileChosen=false;
+        QElapsedTimer elapsed; elapsed.start();
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        connect(&writer,&MainWindow::workbookReady,&window,[&]{window.model()->externalChange();});
+        connect(&window,&MainWindow::workbookReady,&window,[&]{
+            if(window.model()->sheet()==original) return;
+            refreshed=true;
+            if(auto *dialog=qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) {
+                dialog->setDirectory(temp.path()); dialog->selectFile("input.csv");
+            }
+        });
+        QTimer dialogs; dialogs.setInterval(10);
+        connect(&dialogs,&QTimer::timeout,&window,[&]{
+            if(auto *dialog=qobject_cast<QFileDialog *>(QApplication::activeModalWidget());dialog && !pickerOpened) {
+                pickerOpened=true; writer.submit({{"action","sheet_delete"}});
+            }
+            if(auto *dialog=qobject_cast<QFileDialog *>(QApplication::activeModalWidget());dialog && refreshed && !fileChosen) {
+                if(auto *name=dialog->findChild<QLineEdit *>("fileNameEdit")) name->setText(csvPath);
+                auto *buttons=dialog->findChild<QDialogButtonBox *>();
+                if(auto *open=buttons?buttons->button(QDialogButtonBox::Open):nullptr;open && open->isEnabled()) {
+                    fileChosen=true; open->click();
+                }
+            }
+            if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                if(auto *yes=box->button(QMessageBox::Yes)) yes->click();
+                else if(auto *ok=box->button(QMessageBox::Ok)) ok->click();
+            }
+            if(elapsed.elapsed()>15000)
+                if(auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget())) dialog->reject();
+        });
+        dialogs.start();
+        QAction *import=nullptr;
+        for(auto *action:window.findChildren<QAction *>()) if(action->text()=="Import CSV…") import=action;
+        QVERIFY(import); import->trigger();
+        QVERIFY(pickerOpened); QVERIFY(refreshed); QVERIFY(fileChosen);
+        auto *issues=window.findChild<QPlainTextEdit *>();
+        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("CSV import target changed") || changed.count()>0,10000);
+        QCOMPARE(changed.count(),0);
+        QVERIFY(issues->toPlainText().contains("CSV import target changed"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);
+        QCOMPARE(window.model()->data(window.model()->index(0,0)).toString(),QString());
     }
     void cutSpecialPasteDoesNotMoveInputs() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
