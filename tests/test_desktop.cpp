@@ -527,6 +527,13 @@ private slots:
         grid->setCurrentIndex(model->index(2,1)); grid->edit(model->index(2,1));
         QPointer<QLineEdit> editor=grid->findChild<QLineEdit *>(); QVERIFY(editor);
         editor->selectAll(); QTest::keyClicks(editor,"00124");
+        answerNextDialog(QMessageBox::Cancel);
+        for(auto *action:window.findChildren<QAction *>()) if(action->text()=="Refresh stored data") action->trigger();
+        QCOMPARE(source->text(),QString("00124")); QVERIFY(source->isModified());
+        QTest::keyClick(source,Qt::Key_Escape);
+        QTRY_VERIFY_WITH_TIMEOUT(editor.isNull(),3000);
+        grid->edit(model->index(2,1)); editor=grid->findChild<QLineEdit *>(); QVERIFY(editor);
+        editor->selectAll(); QTest::keyClicks(editor,"00124");
         auto *process=window.findChild<QProcess *>("ownedService"); process->kill();
         QTRY_COMPARE_WITH_TIMEOUT(process->state(),QProcess::NotRunning,5000);
         QTRY_COMPARE_WITH_TIMEOUT(source->text(),QString("00124"),5000); QVERIFY(source->isModified());
@@ -550,9 +557,47 @@ private slots:
         QSignalSpy changed(&window,&MainWindow::operationFinished);
         window.submit({{"action","replace_all"},{"r1",1},{"r2",1},{"c1",1},{"c2",1},{"needle","new"},{"replacement","wrong"},{"expected_state",reviewed},{"sheet",sheet}});
         window.submit({{"action","edit"},{"sheet","different-sheet"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","wrong"}}}}});
+        window.submit({{"action","edit"},{"workbook","different-workbook"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","wrong"}}}}});
         QCOMPARE(changed.count(),0);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Reviewed inputs changed"));
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("new"),5000);
+    }
+    void sheetDeletionConfirmationCannotSwitchToAnotherSheetAfterRefresh() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        const auto path=temp.filePath("confirmed-sheet.dhwb");
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","sheet_add"},{"name","Other"}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        window.submit({{"action","sheet_add"},{"name","Third"}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        const auto original=window.model()->sheet();
+        MainWindow writer(options); QSignalSpy writerReady(&writer,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(writerReady.count(),1,10000);
+        QSignalSpy writerOpened(&writer,&MainWindow::workbookReady); writer.openBook(path);
+        QTRY_COMPARE_WITH_TIMEOUT(writerOpened.count(),1,10000);
+        bool refreshed=false,confirmed=false;
+        connect(&writer,&MainWindow::workbookReady,&window,[&]{window.model()->externalChange();});
+        connect(&window,&MainWindow::workbookReady,&window,[&]{
+            if(window.model()->sheet()==original) return;
+            refreshed=true;
+            if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                confirmed=true; box->button(QMessageBox::Yes)->click();
+            }
+        });
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        QTimer::singleShot(0,&writer,[&]{writer.submit({{"action","sheet_delete"}});});
+        QTimer::singleShot(10000,&window,[]{
+            if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) box->button(QMessageBox::No)->click();
+        });
+        QAction *remove=nullptr;
+        for(auto *action:window.findChildren<QAction *>()) if(action->text()=="Delete sheet…") remove=action;
+        QVERIFY(remove); remove->trigger();
+        QVERIFY(refreshed); QVERIFY(confirmed);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Reviewed inputs changed"),5000);
+        QCOMPARE(changed.count(),0);
+        auto *tabs=window.findChild<QTabBar *>("sheets"); QCOMPARE(tabs->count(),2);
+        QCOMPARE(tabs->tabText(0),QString("Other")); QCOMPARE(tabs->tabText(1),QString("Third"));
     }
 private:
     static void answerNextDialog(QMessageBox::StandardButton button, QString *message=nullptr) {

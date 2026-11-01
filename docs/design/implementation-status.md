@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 55 Python tests and 23 Qt contract cases.
+The review regression suite includes 55 Python tests and 24 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -177,3 +177,13 @@ That image exposed the upstream
 in Python HTTPServer startup. The loopback service now binds numerically and
 sets its fixed local server name without DNS; a regression denies hostname lookup
 during construction. Startup and test timeouts are unchanged.
+
+Additional review cycle 5 named a confirmation-target race despite posting no
+inline issues. Desktop operations now capture workbook, sheet and state before
+their dialogs and retain those preconditions through editor resolution and
+submission. Sheet management, numeric fill, formatting, CSV export, list review
+and recovered-draft confirmation use the captured context. A real two-service
+regression removes the original sheet while its deletion dialog is open,
+refreshes the desktop to another sheet, confirms the old dialog, and verifies
+that no new deletion is submitted. This completes the two newly authorized
+cycles; final fixes are validated without requesting another review.

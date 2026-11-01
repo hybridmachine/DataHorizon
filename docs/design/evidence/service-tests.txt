@@ -55,6 +55,6 @@ test_receipts_with_url_delimiters_are_retrievable (test_service.ServiceTests.tes
 test_rest_sdk_cli_share_managed_path (test_service.ServiceTests.test_rest_sdk_cli_share_managed_path) ... ok
 
 ----------------------------------------------------------------------
-Ran 55 tests in 5.306s
+Ran 55 tests in 5.300s
 
 OK

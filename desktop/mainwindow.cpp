@@ -50,7 +50,13 @@ bool sameFile(const QString &left, const QString &right) {
 
 class CellDelegate : public QStyledItemDelegate {
 public:
-    using QStyledItemDelegate::QStyledItemDelegate;
+    explicit CellDelegate(QObject *parent) : QStyledItemDelegate(parent) {
+        auto clear=[this](QWidget *editor) {
+            if (editor==m_editor) { m_editor.clear(); m_index=QPersistentModelIndex{}; }
+        };
+        connect(this,&QAbstractItemDelegate::commitData,this,clear);
+        connect(this,&QAbstractItemDelegate::closeEditor,this,[clear](QWidget *editor,QAbstractItemDelegate::EndEditHint){clear(editor);});
+    }
     std::function<bool()> canEdit;
     QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const override {
         if (canEdit && !canEdit()) return nullptr;
@@ -88,11 +94,13 @@ MainWindow::MainWindow(const StartupOptions &options, QWidget *parent)
     m_service.setObjectName("ownedService");
     buildUi();
     connect(m_model, &SheetModel::editRequested, this, [this](int row, int col, const QString &source, const QString &kind) {
-        if (m_busy || m_unknown || !resolveDraft()) return;
+        if (m_busy || m_unknown) return;
         const QJsonObject target{{"workbook",m_info["id"]},{"sheet",m_model->sheet()},{"state",m_info["state"]},
                                  {"row",row},{"col",col},{"input_kind",kind},{"source",source},{"needs_review",false}};
+        if (!resolveDraft()) return;
         QJsonObject cell{{"row", row}, {"col", col}, {"source", source}, {"kind",kind}};
-        submit({{"action", "edit"}, {"label", "Edit cell"}, {"cells", QJsonArray{cell}}});
+        submit({{"action", "edit"}, {"label", "Edit cell"}, {"cells", QJsonArray{cell}},
+                {"workbook",target["workbook"]},{"sheet",target["sheet"]},{"expected_state",target["state"]}});
         if (!m_pendingId.isEmpty()) { m_recoveredDraft=target; m_draftSubmissionId=m_pendingId; }
     });
     connect(m_model, &SheetModel::issue, this, &MainWindow::issue);
@@ -168,11 +176,12 @@ void MainWindow::buildUi() {
     add(edit, tr("Paste formats only"), {}, [this] { paste(false, true); });
     add(edit, tr("Clear contents"), QKeySequence(Qt::Key_Delete), [this] {
         auto range = selectedRange(); if (range.isEmpty()) return;
+        auto command=targetContext(range);
         QJsonArray cells;
         for (int r = range["r1"].toInt(); r <= range["r2"].toInt(); ++r)
             for (int c = range["c1"].toInt(); c <= range["c2"].toInt(); ++c)
                 cells.append(QJsonObject{{"row", r}, {"col", c}, {"source", ""}});
-        submit({{"action", "edit"}, {"label", "Clear contents"}, {"cells", cells}});
+        command["action"]="edit"; command["label"]="Clear contents"; command["cells"]=cells; submit(command);
     });
     add(edit, tr("Fill from top-left"), QKeySequence(tr("Ctrl+D")), [this] {
         auto command = selectedRange(); if (command.isEmpty()) return;
@@ -181,6 +190,7 @@ void MainWindow::buildUi() {
     add(edit, tr("Fill numeric series…"), {}, [this] {
         if (m_busy) return;
         auto command = selectedRange(); if (command.isEmpty()) return;
+        command=targetContext(command);
         bool ok; auto step = QInputDialog::getDouble(this,tr("Numeric series"),tr("Step, in row-major order"),1,-1e12,1e12,4,&ok);
         if (ok) { command["action"]="fill"; command["mode"]="series"; command["step"]=step; command["label"]="Fill series"; submit(command); }
     });
@@ -197,23 +207,28 @@ void MainWindow::buildUi() {
         add(formatMenu, tr("Align %1").arg(align), {}, [this, align] { format({{"align", align}}); });
     add(formatMenu, tr("Cell background…"), {}, [this] {
         if (m_busy) return;
+        auto target=selectedRange(); if (target.isEmpty()) return;
+        target=targetContext(target);
         auto color = QColorDialog::getColor(Qt::white, this);
-        if (color.isValid()) format({{"background", color.name()}});
+        if (color.isValid()) format({{"background", color.name()}},target);
     });
     add(sheetMenu, tr("Add sheet…"), {}, [this] {
         if (m_busy) return;
+        auto command=targetContext({{"action","sheet_add"}});
         bool ok; auto name = QInputDialog::getText(this, tr("Add sheet"), tr("Name"), QLineEdit::Normal, "Sheet2", &ok);
-        if (ok) submit({{"action", "sheet_add"}, {"name", name}});
+        if (ok) { command["name"]=name; submit(command); }
     });
     add(sheetMenu, tr("Rename sheet…"), {}, [this] {
         if (m_busy) return;
+        auto command=targetContext({{"action","sheet_rename"}});
         bool ok; auto name = QInputDialog::getText(this, tr("Rename sheet"), tr("Name"), QLineEdit::Normal, m_tabs->tabText(m_tabs->currentIndex()), &ok);
-        if (ok) submit({{"action", "sheet_rename"}, {"name", name}});
+        if (ok) { command["name"]=name; submit(command); }
     });
     add(sheetMenu, tr("Duplicate sheet…"), {}, [this] {
         if (m_busy) return;
+        auto command=targetContext({{"action","sheet_duplicate"}});
         bool ok; auto name = QInputDialog::getText(this,tr("Duplicate sheet"),tr("New name"),QLineEdit::Normal,m_tabs->tabText(m_tabs->currentIndex())+" copy",&ok);
-        if (ok) submit({{"action","sheet_duplicate"},{"name",name}});
+        if (ok) { command["name"]=name; submit(command); }
     });
     add(sheetMenu, tr("Move sheet left"), {}, [this] {
         int index=m_tabs->currentIndex(); if(m_busy || index<=0) return;
@@ -221,8 +236,10 @@ void MainWindow::buildUi() {
         submit({{"action","sheet_reorder"},{"order",QJsonArray::fromStringList(ids)}});
     });
     add(sheetMenu, tr("Delete sheet…"), {}, [this] {
-        if (!m_busy && QMessageBox::question(this, tr("Delete sheet"), tr("Delete this sheet and its cells? This action clears Undo history.")) == QMessageBox::Yes)
-            submit({{"action", "sheet_delete"}});
+        if (m_busy || m_info.isEmpty()) return;
+        const auto command=targetContext({{"action","sheet_delete"}});
+        if (QMessageBox::question(this, tr("Delete sheet"), tr("Delete this sheet and its cells? This action clears Undo history.")) == QMessageBox::Yes)
+            submit(command);
     });
     add(dataMenu, tr("Sort / filter selected list…"), {}, [this] { listDialog(); }, true);
     add(dataMenu, tr("Clear list view"), {}, [this] { if (!m_busy) { m_listSpec = {}; refresh(); } }, true);
@@ -378,6 +395,7 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
         if (sheet["id"].toString() == oldSheet) current = index;
     }
     m_tabs->setCurrentIndex(current); m_tabs->blockSignals(false);
+    if (!oldSheet.isEmpty() && m_tabs->tabData(current).toString()!=oldSheet) m_listSpec={};
     m_model->bind(info["id"].toString(), m_tabs->tabData(current).toString(), info["state"].toString(), info["readonly"].toBool());
     m_grid->setCurrentIndex(m_model->index(previous.isValid() ? previous.row() : 0, previous.isValid() ? previous.column() : 0));
     m_undo->setText(info["undo"].isString() ? "Undo " + info["undo"].toString() : "Undo");
@@ -394,6 +412,7 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
 
 void MainWindow::refresh(const QString &selectSheet) {
     if (m_info.isEmpty() || m_unknown || m_refreshing) return;
+    captureGridDraft(false);
     if (!resolveDraft()) return;
     m_refreshing = true; setBusy(true, "Refreshing stored inputs…");
     const auto workbook=m_info["id"].toString();
@@ -407,11 +426,14 @@ void MainWindow::refresh(const QString &selectSheet) {
 
 void MainWindow::submit(QJsonObject operation) {
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
+    const auto defaults=targetContext();
+    for (auto field=defaults.begin(); field!=defaults.end(); ++field)
+        if (!operation.contains(field.key())) operation[field.key()]=field.value();
     if (!resolveDraft()) return;
-    if ((operation.contains("expected_state") && operation["expected_state"]!=m_info["state"])
-        || (operation.contains("sheet") && operation["sheet"].toString()!=m_model->sheet())) {
+    if (!matchesTarget(operation)) {
         issue("Reviewed inputs changed. Review the target and state again before submitting."); return;
     }
+    operation.remove("workbook");
     m_pendingId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     operation["operation_id"] = m_pendingId; operation["expected_state"] = m_info["state"];
     operation["sheet"] = m_model->sheet();
@@ -544,6 +566,8 @@ void MainWindow::submitDraft() {
         || m_draftTarget["state"] != m_info["state"]) {
         issue("The draft target changed. Copy the draft text or press Escape, then review the current cell before submitting."); return;
     }
+    const auto draft=m_draftTarget;
+    const auto source=m_source->text();
     if (m_draftNeedsReview) {
         const auto target=m_model->index(m_draftTarget["row"].toInt()-1,m_draftTarget["col"].toInt()-1);
         if (!m_model->sourceReady(target)) { m_model->ensureSource(target); issue("Wait for the reopened cell input before reviewing the draft."); return; }
@@ -553,13 +577,18 @@ void MainWindow::submitDraft() {
                 .arg(SheetModel::columnName(target.column()+1)).arg(target.row()+1).arg(current.left(256),m_source->text().left(256)),
             QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel);
         if (answer!=QMessageBox::Yes) return;
+        if (m_draftTarget!=draft || m_source->text()!=source || draft["workbook"]!=m_info["id"]
+            || draft["sheet"].toString()!=m_model->sheet() || draft["state"]!=m_info["state"]) {
+            issue("Reviewed draft inputs changed. Review the current target again before applying it."); return;
+        }
         m_draftNeedsReview=false;
     }
     m_recoveredDraft=m_draftTarget; m_recoveredDraft["source"]=m_source->text(); m_recoveredDraft["needs_review"]=false;
     auto cell = QJsonObject{{"row",m_draftTarget["row"]},{"col",m_draftTarget["col"]},{"source",m_source->text()},
                            {"kind",m_draftTarget["input_kind"]=="text"?"text":"auto"}};
     m_source->setModified(false);
-    submit({{"action","edit"},{"label","Edit cell"},{"cells",QJsonArray{cell}}});
+    submit({{"action","edit"},{"label","Edit cell"},{"cells",QJsonArray{cell}},
+            {"workbook",draft["workbook"]},{"sheet",draft["sheet"]},{"expected_state",draft["state"]}});
     if (!m_pendingId.isEmpty()) m_draftSubmissionId=m_pendingId;
     m_grid->setFocus();
 }
@@ -579,16 +608,16 @@ void MainWindow::clearRecoveredDraft() {
     m_recoveredDraft={}; m_restoreDraft=false; m_draftNeedsReview=false; m_draftSubmissionId.clear();
 }
 
-void MainWindow::captureGridDraft() {
+void MainWindow::captureGridDraft(bool needsReview) {
     if (!m_pendingId.isEmpty() || m_source->isModified()) return;
     auto *delegate=dynamic_cast<CellDelegate *>(m_grid->itemDelegate());
     const auto draft=delegate?delegate->takeDraft():QJsonObject{};
     if (draft.isEmpty()) return;
     m_draftTarget={{"workbook",m_info["id"]},{"sheet",m_model->sheet()},{"state",m_info["state"]},
                    {"row",m_model->sourceRow(draft["view_row"].toInt())+1},{"col",draft["col"]},{"input_kind",draft["input_kind"]}};
-    m_recoveredDraft=m_draftTarget; m_recoveredDraft["source"]=draft["source"]; m_recoveredDraft["needs_review"]=true;
+    m_recoveredDraft=m_draftTarget; m_recoveredDraft["source"]=draft["source"]; m_recoveredDraft["needs_review"]=needsReview;
     m_source->setText(draft["source"].toString()); m_source->setModified(true);
-    m_draftNeedsReview=true;
+    m_draftNeedsReview=needsReview;
 }
 
 void MainWindow::restoreRecoveredDraft() {
@@ -638,14 +667,27 @@ QJsonObject MainWindow::selectedRange() const {
     return {{"r1", range.top()+1}, {"c1", range.left()+1}, {"r2", range.bottom()+1}, {"c2", range.right()+1}};
 }
 
-void MainWindow::format(const QJsonObject &style) {
+QJsonObject MainWindow::targetContext(QJsonObject arguments) const {
+    arguments["workbook"]=m_info["id"]; arguments["sheet"]=m_model->sheet(); arguments["expected_state"]=m_info["state"];
+    return arguments;
+}
+
+bool MainWindow::matchesTarget(const QJsonObject &target) const {
+    return target["workbook"]==m_info["id"] && target["sheet"].toString()==m_model->sheet()
+        && target["expected_state"]==m_info["state"];
+}
+
+void MainWindow::format(const QJsonObject &style, QJsonObject target) {
     if (m_busy) return;
-    auto range = selectedRange(); if (range.isEmpty()) return;
+    if (target.isEmpty()) {
+        target=selectedRange(); if (target.isEmpty()) return;
+        target=targetContext(target);
+    }
     QJsonArray edits;
-    for (int row = range["r1"].toInt(); row <= range["r2"].toInt(); ++row)
-        for (int col = range["c1"].toInt(); col <= range["c2"].toInt(); ++col)
+    for (int row = target["r1"].toInt(); row <= target["r2"].toInt(); ++row)
+        for (int col = target["c1"].toInt(); col <= target["c2"].toInt(); ++col)
             edits.append(QJsonObject{{"row", row}, {"col", col}, {"style", style}});
-    submit({{"action", "edit"}, {"label", "Format cells"}, {"cells", edits}});
+    target["action"]="edit"; target["label"]="Format cells"; target["cells"]=edits; submit(target);
 }
 
 void MainWindow::saveCopy(bool firstSave) {
@@ -777,20 +819,27 @@ void MainWindow::importCsvText(const QString &text) {
 void MainWindow::exportCsv() {
     if (m_busy) return;
     auto range = selectedRange(); if (range.isEmpty()) return;
+    range=targetContext(range);
     if (QMessageBox::question(this, tr("CSV values export"), tr("Export selected values from one consistent input state? Formulas, styles, other sheets and native metadata are omitted. Blank, NULL and empty text all become empty fields. The native workbook is retained.")) != QMessageBox::Yes) return;
     auto path = QFileDialog::getSaveFileName(this, tr("Export CSV"), {}, tr("CSV (*.csv)")); if (path.isEmpty()) return;
-    exportCsvTo(path);
+    exportCsvTo(path,range);
 }
 
-void MainWindow::exportCsvTo(const QString &path) {
+void MainWindow::exportCsvTo(const QString &path, QJsonObject target) {
     if (m_busy || path.isEmpty()) return;
-    auto range = selectedRange(); if (range.isEmpty()) return;
+    if (target.isEmpty()) {
+        target=selectedRange(); if (target.isEmpty()) return;
+        target=targetContext(target);
+    }
+    if (!matchesTarget(target)) { issue("Reviewed export inputs changed. Review the selection again."); return; }
+    auto range=target; range.remove("workbook"); range.remove("expected_state");
     const auto workbookPath=m_info["path"].toString();
     if (sameFile(path,workbookPath)) { issue("CSV destination is the open native workbook. Choose a different file."); return; }
     range["sheet"] = m_model->sheet(); setBusy(true, "Exporting consistent values…");
-    m_client->request(base()+"/export/csv", range, [this, path, workbookPath](QJsonObject result, QString error) {
+    m_client->request(base()+"/export/csv", range, [this, path, workbookPath, target](QJsonObject result, QString error) {
         setBusy(false, error.isEmpty() ? "CSV snapshot ready" : "Export blocked");
         if (!error.isEmpty()) { issue(error); return; }
+        if (!matchesTarget(target) || result["state"]!=target["expected_state"]) { issue("Reviewed export inputs changed. Export cancelled."); return; }
         if (sameFile(path,workbookPath)) { issue("CSV destination resolves to the native workbook. Choose a different file."); return; }
         QSaveFile file(path);
         auto data = result["csv"].toString().toUtf8();
@@ -802,6 +851,7 @@ void MainWindow::exportCsvTo(const QString &path) {
 void MainWindow::listDialog() {
     if (m_busy || !resolveDraft()) return;
     auto scope = selectedRange(); if (scope.isEmpty()) return;
+    scope=targetContext(scope);
     QDialog dialog(this); dialog.setWindowTitle(tr("Declared list scope"));
     auto *form = new QFormLayout(&dialog);
     form->addRow(new QLabel(tr("Source rectangle: %1%2:%3%4\nSorting changes this view; original source rows remain stable.")
@@ -833,7 +883,13 @@ void MainWindow::listDialog() {
 }
 
 void MainWindow::showList(QJsonObject scope) {
-    if (m_busy || m_unknown || !resolveDraft()) return;
+    if (m_busy || m_unknown) return;
+    const auto defaults=targetContext();
+    for (auto field=defaults.begin(); field!=defaults.end(); ++field)
+        if (!scope.contains(field.key())) scope[field.key()]=field.value();
+    if (!resolveDraft()) return;
+    if (!matchesTarget(scope)) { issue("Reviewed list inputs changed. Review the scope again."); return; }
+    scope.remove("workbook"); scope.remove("expected_state"); scope.remove("sheet");
     m_listSpec=scope; applyList();
 }
 
@@ -856,7 +912,7 @@ void MainWindow::applyList() {
 void MainWindow::findDialog(bool replace) {
     if (m_busy) return;
     auto scope = selectedRange(); if (scope.isEmpty()) return;
-    scope["sheet"]=m_model->sheet(); scope["expected_state"]=m_info["state"];
+    scope=targetContext(scope);
     const auto workbook=m_info["id"].toString();
     bool ok;
     auto needle = QInputDialog::getText(this, tr("Find in selected rectangle"), tr("Case-sensitive text"), QLineEdit::Normal, {}, &ok);
@@ -867,7 +923,8 @@ void MainWindow::findDialog(bool replace) {
         || scope["sheet"].toString()!=m_model->sheet()) { issue("Search inputs changed. Refresh and review the scope again."); return; }
     scope["needle"] = needle; scope["field"] = field == tr("Displayed value") ? "display" : "source";
     setBusy(true, "Finding within declared scope…");
-    m_client->request(base()+"/find", scope, [this, scope, replace, workbook](QJsonObject result, QString error) mutable {
+    auto request=scope; request.remove("workbook");
+    m_client->request(base()+"/find", request, [this, scope, replace, workbook](QJsonObject result, QString error) mutable {
         if (m_info["id"].toString()!=workbook) return;
         setBusy(false);
         if (!error.isEmpty()) { issue(error); return; }

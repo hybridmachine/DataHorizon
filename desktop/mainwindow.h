@@ -23,7 +23,7 @@ public:
     void openBook(const QString &path, bool create = false, bool readonly = false);
     void submit(QJsonObject operation);
     void importCsvText(const QString &text);
-    void exportCsvTo(const QString &path);
+    void exportCsvTo(const QString &path, QJsonObject target = {});
     void showList(QJsonObject scope);
     static bool isRecoveryPath(QString path);
     SheetModel *model() const { return m_model; }
@@ -47,7 +47,7 @@ private:
     void save(bool copy);
     void copy(bool cut = false);
     void paste(bool valuesOnly = false, bool formatsOnly = false);
-    void format(const QJsonObject &style);
+    void format(const QJsonObject &style, QJsonObject target = {});
     void importCsv();
     void exportCsv();
     void listDialog();
@@ -63,8 +63,10 @@ private:
     void clearRecoveryRecord();
     void restoreRecoveredDraft();
     void clearRecoveredDraft();
-    void captureGridDraft();
+    void captureGridDraft(bool needsReview = true);
     QJsonObject selectedRange() const;
+    QJsonObject targetContext(QJsonObject arguments = {}) const;
+    bool matchesTarget(const QJsonObject &target) const;
     QString base() const;
     StartupOptions m_options;
     RestClient *m_client;

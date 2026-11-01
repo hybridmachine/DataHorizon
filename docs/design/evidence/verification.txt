@@ -1,6 +1,6 @@
-November 1, 2026 | additional review cycle 4 and macOS runner migration
+November 1, 2026 | additional review cycle 5 (second of two newly authorized cycles)
 ctest --test-dir build --output-on-failure
 
-desktop: passed (23 Qt contract cases plus initialization/cleanup)
+desktop: passed (24 Qt contract cases plus initialization/cleanup)
 service: passed (55 Python tests)
-Both suites passed; total CTest time: 15.74 seconds.
+Both suites passed; total CTest time: 16.30 seconds.

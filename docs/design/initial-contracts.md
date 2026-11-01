@@ -40,6 +40,10 @@ Missing receipts and failed receipt lookups preserve the unknown outcome and
 operation ID. Replacing a GUI transport session invalidates its earlier replies;
 pending mutations are reconciled against the reopened service. Reviewed bulk
 operations retain their original state and sheet preconditions through dialogs.
+Workbook, sheet and state are captured before a confirmation or input dialog,
+and checked again after any editor-draft resolution. A background refresh cannot
+retarget a confirmed deletion, sheet change, fill, format or export. Changed
+inputs require a new review rather than silently using the newly selected sheet.
 
 ## Values and references
 

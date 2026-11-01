@@ -65,6 +65,9 @@ for values-only or formats-only paste. Paste values retains destination styles
 and rejects error/pending calculation results. Copying an absent cell preserves
 blank semantics. CSV review remains bound to the workbook, sheet, address and
 state selected when the preview was requested.
+Sheet confirmations and other reviewed operations retain their original
+workbook, sheet and state. If a background refresh changes that context while a
+dialog is open, the operation stops and asks for a new review of the target.
 Rejected in-cell edits are restored in the formula bar for correction. An active
 in-cell draft survives a service interruption at its original coordinates and
 must be reviewed against reopened inputs before applying it.
