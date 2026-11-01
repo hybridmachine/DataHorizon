@@ -9,6 +9,7 @@ test_csv_numbers_round_trip_without_display_rounding (test_engine.EngineTests.te
 test_csv_snapshot_and_formula_error_block (test_engine.EngineTests.test_csv_snapshot_and_formula_error_block) ... ok
 test_cut_overlap_series_and_failed_destination (test_engine.EngineTests.test_cut_overlap_series_and_failed_destination) ... ok
 test_cut_rejects_special_paste_before_mutating (test_engine.EngineTests.test_cut_rejects_special_paste_before_mutating) ... ok
+test_digit_bearing_function_names_are_not_translated_as_cell_references (test_engine.EngineTests.test_digit_bearing_function_names_are_not_translated_as_cell_references) ... ok
 test_direct_edit_stale_write_and_history_gap (test_engine.EngineTests.test_direct_edit_stale_write_and_history_gap) ... ok
 test_display_replacement_preserves_text_and_rejects_numeric_conversion (test_engine.EngineTests.test_display_replacement_preserves_text_and_rejects_numeric_conversion) ... ok
 test_extreme_references_and_range_comparisons_are_cell_errors (test_engine.EngineTests.test_extreme_references_and_range_comparisons_are_cell_errors) ... ok
@@ -18,6 +19,7 @@ test_find_replace_scope_source_and_rollback (test_engine.EngineTests.test_find_r
 test_formula_errors_and_lazy_if (test_engine.EngineTests.test_formula_errors_and_lazy_if) ... ok
 test_full_paste_preserves_inputs_independently_of_text_format (test_engine.EngineTests.test_full_paste_preserves_inputs_independently_of_text_format) ... ok
 test_full_scope_list_projection_and_source_identity (test_engine.EngineTests.test_full_scope_list_projection_and_source_identity) ... ok
+test_history_uses_recorded_sheet_after_default_sheet_is_renamed_or_deleted (test_engine.EngineTests.test_history_uses_recorded_sheet_after_default_sheet_is_renamed_or_deleted) ... ok
 test_hooks_commit_rollback_direct_and_undo (test_engine.EngineTests.test_hooks_commit_rollback_direct_and_undo) ... ok
 test_idempotency_and_status (test_engine.EngineTests.test_idempotency_and_status) ... ok
 test_large_sheet_delete_rejects_before_cascade (test_engine.EngineTests.test_large_sheet_delete_rejects_before_cascade) ... ok
@@ -44,6 +46,7 @@ test_client_handles_release_without_closing_other_clients (test_service.ServiceT
 test_clipboard_read_uses_bulk_limit_in_one_consistent_state (test_service.ServiceTests.test_clipboard_read_uses_bulk_limit_in_one_consistent_state) ... ok
 test_csv_preview_bounds_blank_records_as_well_as_fields (test_service.ServiceTests.test_csv_preview_bounds_blank_records_as_well_as_fields) ... ok
 test_direct_cli_honors_readonly_and_returns_structured_sqlite_errors (test_service.ServiceTests.test_direct_cli_honors_readonly_and_returns_structured_sqlite_errors) ... ok
+test_direct_cli_represents_blobs_without_losing_other_sql_types (test_service.ServiceTests.test_direct_cli_represents_blobs_without_losing_other_sql_types) ... ok
 test_headless_cli_file_mode (test_service.ServiceTests.test_headless_cli_file_mode) ... ok
 test_incomplete_or_invalid_receipts_keep_pending_operation (test_service.ServiceTests.test_incomplete_or_invalid_receipts_keep_pending_operation) ... ok
 test_invalid_cli_addresses_return_structured_errors (test_service.ServiceTests.test_invalid_cli_addresses_return_structured_errors) ... ok
@@ -55,6 +58,6 @@ test_receipts_with_url_delimiters_are_retrievable (test_service.ServiceTests.tes
 test_rest_sdk_cli_share_managed_path (test_service.ServiceTests.test_rest_sdk_cli_share_managed_path) ... ok
 
 ----------------------------------------------------------------------
-Ran 55 tests in 5.300s
+Ran 58 tests in 5.480s
 
 OK

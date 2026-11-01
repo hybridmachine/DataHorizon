@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 55 Python tests and 24 Qt contract cases.
+The review regression suite includes 58 Python tests and 27 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -187,3 +187,17 @@ regression removes the original sheet while its deletion dialog is open,
 refreshes the desktop to another sheet, confirms the old dialog, and verifies
 that no new deletion is submitted. This completes the two newly authorized
 cycles; final fixes are validated without requesting another review.
+
+The user authorized another two review/fix cycles after cycle 5. Cycle 6
+returned four substantive findings. External and native clipboard payloads are
+now bounded before matrix construction; the REST client rejects oversized
+serialized requests locally with a known, asynchronous rejection. Direct SQL
+encodes BLOB results as typed base64 JSON. Undo/Redo resolves targets from
+recorded history without requiring a sheet named Sheet1. Formula tokenization
+distinguishes digit-bearing function names from cell references during
+evaluation and copying. Regressions cover each behavior.
+
+Cycle 6 also includes a recovery regression for a draft whose original sheet was removed
+while the service was stopped. Its input remains visible and modified after
+reopening; submission cannot use the fallback sheet, and later edits require an
+explicit discard. The draft stays available for copying until that choice.

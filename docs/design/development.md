@@ -130,6 +130,10 @@ stdin for bulk work; preserve its operation_id for outcome lookup. `direct-sql`
 is explicitly independent SQLite access and reports handlers=false.
 `--readonly` also applies to direct SQL: SQLite opens the existing file in
 read-only mode, and rejected writes return a structured JSON error.
+Direct SQL results encode SQLite BLOB values as
+`{"type":"blob","base64":"AAH/"}` (the example represents bytes `00 01 FF`).
+Other SQLite values keep their ordinary JSON scalar representation; nonfinite
+numbers are rejected with a structured error.
 
 The SDK raises `UnknownOutcome` with an `operation_id` if acknowledgement is
 lost, and blocks subsequent writes until `book.outcome(id)` reconciles it.

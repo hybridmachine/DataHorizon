@@ -22,6 +22,9 @@ input before applying it. A rejected draft remains available for correction.
 This includes in-cell edits: rejection restores them in the formula bar, and
 service interruption captures an active editor before reopening resets the grid.
 An unresolved formula-bar draft prevents opening a second in-cell editor.
+If the original sheet is unavailable, retain the input visibly as a draft and
+reject applying it to another sheet. New edits require explicitly discarding the
+unavailable-target draft first; Cancel retains it for copying.
 
 Each mutation requires a client-generated operation ID (UUID recommended, up to
 100 characters) and an expected state token.
@@ -82,6 +85,8 @@ are visible capability limits, not placeholder successful operations.
 ## Undo, lists and code
 
 Undo covers bounded cell/range inputs and formats, including generated edits.
+Undo/Redo uses the sheet IDs recorded in history, independently of the request's
+default sheet name or the current tab.
 It is a new managed operation, runs applicable rules, and may be rejected
 atomically. History is session-scoped, capped at 100 operations and 16 MiB,
 invalidated by
@@ -115,8 +120,11 @@ transactional code must avoid external effects. After-commit work is disabled.
 Ordinary operations are atomic, at most 10,000 target cells, 4 MiB request body,
 64 KiB cell source and 5 seconds engine time. There are no chunked commits in
 this tier. No partial-cancel claims are made: accepted writes run to their known
-outcome; long/chunked jobs remain unavailable. A viewport is at most 4,096 cells;
-the GUI retains at most 16 tiles of 32 by 16 cells. Its estimated cache budget is
+outcome; long/chunked jobs remain unavailable. Desktop paste checks raw clipboard
+bytes and cell counts before constructing its
+matrix, and serialized REST requests over 4 MiB are rejected before transmission.
+A viewport is at most 4,096 cells; the GUI retains at most 16 tiles of 32 by 16
+cells. Its estimated cache budget is
 14 MiB for tiles plus 2 MiB for complete editing inputs. GUI tiles request bounded
 128-character source/display previews with explicit omitted-source/value flags.
 An omitted input is loaded separately in full and must match the tile's state

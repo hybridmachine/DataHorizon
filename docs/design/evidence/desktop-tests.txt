@@ -2,7 +2,7 @@
 Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
 PASS   : DesktopTests::initTestCase()
 PASS   : DesktopTests::modelInvariants()
-QWARN  : DesktopTests::managedSupplies() qt.qpa.fonts: Populating font family aliases took 58 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost.
+QWARN  : DesktopTests::managedSupplies() qt.qpa.fonts: Populating font family aliases took 61 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost.
 QWARN  : DesktopTests::managedSupplies() This plugin does not support propagateSizeHints()
 QWARN  : DesktopTests::managedSupplies() This plugin does not support propagateSizeHints()
 QWARN  : DesktopTests::managedSupplies() This plugin does not support propagateSizeHints()
@@ -35,6 +35,11 @@ QWARN  : DesktopTests::cutSpecialPasteDoesNotMoveInputs() This plugin does not s
 QWARN  : DesktopTests::cutSpecialPasteDoesNotMoveInputs() This plugin does not support propagateSizeHints()
 QWARN  : DesktopTests::cutSpecialPasteDoesNotMoveInputs() This plugin does not support propagateSizeHints()
 PASS   : DesktopTests::cutSpecialPasteDoesNotMoveInputs()
+QWARN  : DesktopTests::clipboardLimitsRejectBeforeCellConstructionOrSubmission() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::clipboardLimitsRejectBeforeCellConstructionOrSubmission() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::clipboardLimitsRejectBeforeCellConstructionOrSubmission() This plugin does not support propagateSizeHints()
+PASS   : DesktopTests::clipboardLimitsRejectBeforeCellConstructionOrSubmission()
+PASS   : DesktopTests::oversizedRequestsHaveAnAsynchronousKnownRejectionWithoutNetworkAccess()
 PASS   : DesktopTests::invalidHttpAcknowledgementsAreErrors()
 PASS   : DesktopTests::windowsRecoveryPathsAreRecognized()
 QWARN  : DesktopTests::stoppedServiceCanRestartAndReopenStoredInputs() This plugin does not support propagateSizeHints()
@@ -90,6 +95,11 @@ QWARN  : DesktopTests::sheetDeletionConfirmationCannotSwitchToAnotherSheetAfterR
 QWARN  : DesktopTests::sheetDeletionConfirmationCannotSwitchToAnotherSheetAfterRefresh() This plugin does not support propagateSizeHints()
 QWARN  : DesktopTests::sheetDeletionConfirmationCannotSwitchToAnotherSheetAfterRefresh() This plugin does not support propagateSizeHints()
 PASS   : DesktopTests::sheetDeletionConfirmationCannotSwitchToAnotherSheetAfterRefresh()
+QWARN  : DesktopTests::missingDraftSheetRequiresExplicitDiscardBeforeNewEdits() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::missingDraftSheetRequiresExplicitDiscardBeforeNewEdits() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::missingDraftSheetRequiresExplicitDiscardBeforeNewEdits() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::missingDraftSheetRequiresExplicitDiscardBeforeNewEdits() This plugin does not support propagateSizeHints()
+PASS   : DesktopTests::missingDraftSheetRequiresExplicitDiscardBeforeNewEdits()
 PASS   : DesktopTests::cleanupTestCase()
-Totals: 26 passed, 0 failed, 0 skipped, 0 blacklisted, 10414ms
+Totals: 29 passed, 0 failed, 0 skipped, 0 blacklisted, 11693ms
 ********* Finished testing of DesktopTests *********

@@ -430,7 +430,7 @@ class Workbook:
                 require(request.get("expected_state") == self.state(), "STALE_STATE", "Workbook changed. Refresh and review the edit before retrying", 409)
                 kind = request.get("action")
                 structural = kind.startswith("sheet_") if isinstance(kind, str) else False
-                sheet = self.sheet(request.get("sheet", "Sheet1")) if not structural else None
+                sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
                 if kind == "edit":
                     self.apply_edit(sheet, request.get("cells"))
                 elif kind == "paste":

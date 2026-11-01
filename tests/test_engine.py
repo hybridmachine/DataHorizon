@@ -87,6 +87,29 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(EngineError):
             self.apply("redo")
 
+    def test_history_uses_recorded_sheet_after_default_sheet_is_renamed_or_deleted(self):
+        self.apply("sheet_rename",name="Renamed")
+        self.apply(sheet="Renamed",cells=[{"row":1,"col":1,"source":"7"}])
+        self.apply("undo")
+        self.assertEqual(self.book.read("Renamed",{"r2":1,"c2":1})["cells"],[])
+        self.apply("redo")
+        self.assertEqual(self.book.read("Renamed",{"r2":1,"c2":1})["cells"][0]["value"],7)
+        self.apply("sheet_add",name="Other")
+        self.apply("sheet_delete",sheet="Renamed")
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"9"}])
+        self.apply("undo")
+        self.assertEqual(self.book.read("Other",{"r2":1,"c2":1})["cells"],[])
+        self.apply("redo")
+        self.assertEqual(self.book.read("Other",{"r2":1,"c2":1})["cells"][0]["value"],9)
+
+    def test_digit_bearing_function_names_are_not_translated_as_cell_references(self):
+        self.edit((1,1,"=LOG10(B1)"),(2,1,"=LOG10 (B1)"),(3,1,"=IF(FALSE,LOG10(B1),7)"))
+        cells=self.cells()
+        self.assertEqual([cells[(row,1)]["display"] for row in (1,2)],["#NAME?"]*2)
+        self.assertEqual(cells[(3,1)]["value"],7)
+        self.assertEqual(translate("=LOG10(A1)+LOG10",1,0),"=LOG10(A2)+LOG11")
+        self.assertEqual(translate("=LOG10 (A1)",1,0),"=LOG10 (A2)")
+
     def test_idempotency_and_status(self):
         request = {"action": "edit", "sheet": "Sheet1", "operation_id": "lost-response",
                    "expected_state": self.book.state(), "cells": [{"row": 1, "col": 1, "source": "7"}]}

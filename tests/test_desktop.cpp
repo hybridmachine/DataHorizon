@@ -233,6 +233,49 @@ private slots:
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Cut supports full paste only"));
         QCOMPARE(model->data(model->index(0,0)).toString(),QString("source")); QCOMPARE(model->data(model->index(0,1)).toString(),QString("destination"));
     }
+    void clipboardLimitsRejectBeforeCellConstructionOrSubmission() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("clipboard-limit.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","retained"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model(); auto *grid=window.findChild<QTableView *>("grid");
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("retained"),5000);
+        grid->setCurrentIndex(model->index(0,0)); grid->setFocus();
+        QAction *paste=nullptr;
+        for(auto *action:window.findChildren<QAction *>()) if(action->shortcut().matches(QKeySequence::Paste)==QKeySequence::ExactMatch) paste=action;
+        QVERIFY(paste);
+        auto *issues=window.findChild<QPlainTextEdit *>(); QSignalSpy changed(&window,&MainWindow::operationFinished);
+        auto reject=[&](QMimeData *mime,const QString &message) {
+            issues->clear(); QApplication::clipboard()->setMimeData(mime); paste->trigger();
+            return issues->toPlainText().contains(message) && changed.count()==0;
+        };
+        auto *largeText=new QMimeData; largeText->setText(QString(4*1024*1024+1,'x'));
+        QVERIFY(reject(largeText,"4 MiB"));
+        auto *manyFields=new QMimeData; manyFields->setText(QString(10000,'\t'));
+        QVERIFY(reject(manyFields,"10,000-cell"));
+        auto *largeNative=new QMimeData; largeNative->setData("application/x-datahorizon-cells",QByteArray(4*1024*1024+1,'x'));
+        QVERIFY(reject(largeNative,"4 MiB"));
+        QJsonArray row; for(int i=0;i<10001;++i) row.append(QJsonObject{{"source","x"}});
+        auto *manyNative=new QMimeData;
+        manyNative->setData("application/x-datahorizon-cells",QJsonDocument(QJsonObject{{"rows",QJsonArray{row}}}).toJson(QJsonDocument::Compact));
+        QVERIFY(reject(manyNative,"10,000-cell"));
+        QCOMPARE(model->data(model->index(0,0)).toString(),QString("retained"));
+    }
+    void oversizedRequestsHaveAnAsynchronousKnownRejectionWithoutNetworkAccess() {
+        QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost,0));
+        QSignalSpy connections(&server,&QTcpServer::newConnection);
+        RestClient client; client.configure("http://127.0.0.1:"+QString::number(server.serverPort()),"token");
+        bool called=false; QJsonObject receipt; QString message;
+        client.request("/operations",{{"operation_id","oversized"},{"input",QString(4*1024*1024,'x')}},
+                       [&](QJsonObject result,QString error){called=true;receipt=result;message=error;});
+        QVERIFY(!called);
+        QTRY_VERIFY_WITH_TIMEOUT(called,3000);
+        QVERIFY(message.contains("4 MiB")); QVERIFY(RestClient::validReceipt(receipt,"oversized"));
+        QCOMPARE(receipt["outcome"].toString(),QString("rejected")); QCOMPARE(connections.count(),0);
+    }
     void invalidHttpAcknowledgementsAreErrors() {
         QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost,0));
         QByteArray payload;
@@ -598,6 +641,43 @@ private slots:
         QCOMPARE(changed.count(),0);
         auto *tabs=window.findChild<QTabBar *>("sheets"); QCOMPARE(tabs->count(),2);
         QCOMPARE(tabs->tabText(0),QString("Other")); QCOMPARE(tabs->tabText(1),QString("Third"));
+    }
+    void missingDraftSheetRequiresExplicitDiscardBeforeNewEdits() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        const auto path=temp.filePath("missing-draft-sheet.dhwb");
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","sheet_add"},{"name","Other"}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",3},{"col",2},{"source","old"},{"kind","text"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source");
+        grid->setCurrentIndex(window.model()->index(2,1)); QTRY_COMPARE_WITH_TIMEOUT(source->text(),QString("old"),5000);
+        source->setFocus(); source->selectAll(); QTest::keyClicks(source,"retained draft");
+        const auto original=window.model()->sheet(); auto *process=window.findChild<QProcess *>("ownedService"); process->kill();
+        QTRY_COMPARE_WITH_TIMEOUT(process->state(),QProcess::NotRunning,5000);
+        {
+            MainWindow writer(options); QSignalSpy writerReady(&writer,&MainWindow::serviceReady);
+            QTRY_COMPARE_WITH_TIMEOUT(writerReady.count(),1,10000);
+            QSignalSpy writerOpened(&writer,&MainWindow::workbookReady); writer.openBook(path);
+            QTRY_COMPARE_WITH_TIMEOUT(writerOpened.count(),1,10000);
+            writer.submit({{"action","sheet_delete"}}); QTRY_COMPARE_WITH_TIMEOUT(writerOpened.count(),2,10000);
+        }
+        window.findChild<QAction *>("restartServiceAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QVERIFY(window.model()->sheet()!=original);
+        QCOMPARE(source->text(),QString("retained draft")); QVERIFY(source->isModified());
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        source->returnPressed(); QCOMPARE(changed.count(),0);
+        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("The draft target changed"));
+        answerNextDialog(QMessageBox::Cancel);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","new"}}}}});
+        QCOMPARE(changed.count(),0); QCOMPARE(source->text(),QString("retained draft"));
+        QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000); QTest::keyClick(source,Qt::Key_Escape);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","new"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("new"),5000);
     }
 private:
     static void answerNextDialog(QMessageBox::StandardButton button, QString *message=nullptr) {

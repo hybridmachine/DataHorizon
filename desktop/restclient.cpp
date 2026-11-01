@@ -15,12 +15,21 @@ void RestClient::configure(const QString &url, const QString &token) {
 }
 
 void RestClient::request(const QString &path, const QJsonObject &body, Callback callback, bool post) {
+    const auto generation=m_generation;
+    const auto payload=post ? QJsonDocument(body).toJson(QJsonDocument::Compact) : QByteArray();
+    if (payload.size()>4*1024*1024) {
+        QJsonObject rejected{{"code","REQUEST_LIMIT"},{"message","Request exceeds the 4 MiB limit. Reduce the selection or input size."},{"outcome","rejected"}};
+        if (body.contains("operation_id")) rejected["operation_id"]=body["operation_id"];
+        QTimer::singleShot(0,this,[this,generation,rejected,callback=std::move(callback)] {
+            if (generation==m_generation) callback(rejected,rejected["message"].toString());
+        });
+        return;
+    }
     QNetworkRequest request{QUrl(m_url + path)};
     request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setTransferTimeout(15000);
-    auto *reply = post ? m_network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact)) : m_network.get(request);
-    const auto generation=m_generation;
+    auto *reply = post ? m_network.post(request, payload) : m_network.get(request);
     connect(reply, &QNetworkReply::finished, this, [this,reply,generation,callback = std::move(callback)] {
         if (generation!=m_generation) { reply->deleteLater(); return; }
         QJsonParseError parseError;

@@ -1,6 +1,7 @@
 """Managed CLI. Local file mode starts a headless REST service."""
 
 import argparse
+import base64
 from contextlib import closing, nullcontext
 import json
 import os
@@ -10,6 +11,12 @@ import sys
 
 from .client import APIError, Client, LocalService
 from .formula import FormulaError, coordinates
+
+
+def sql_json_value(value):
+    if isinstance(value, bytes):
+        return {"type": "blob", "base64": base64.b64encode(value).decode("ascii")}
+    raise TypeError(f"Unsupported SQL result type: {type(value).__name__}")
 
 
 def main():
@@ -44,7 +51,8 @@ def main():
             target = path.as_uri()+"?mode=ro" if args.readonly else str(path)
             with closing(sqlite3.connect(target, uri=args.readonly)) as db, db:
                 cursor = db.execute(args.sql)
-                print(json.dumps({"mode": "direct", "handlers": False, "rows": cursor.fetchall()}))
+                print(json.dumps({"mode": "direct", "handlers": False, "rows": cursor.fetchall()},
+                                 default=sql_json_value, allow_nan=False))
             return
         context = nullcontext(Client(args.url, os.environ["DATAHORIZON_TOKEN"])) if args.url else LocalService(args.handler)
         with context as client:
@@ -63,7 +71,7 @@ def main():
                 else:
                     result = book.outcome(args.operation_id)
                 print(json.dumps(result, allow_nan=False))
-    except (APIError, OSError, ValueError, KeyError, RuntimeError, FormulaError, sqlite3.Error) as error:
+    except (APIError, OSError, ValueError, TypeError, KeyError, RuntimeError, FormulaError, sqlite3.Error) as error:
         code = "INVALID_ADDRESS" if isinstance(error, FormulaError) else "READ_ONLY" if getattr(error,"sqlite_errorcode",None)==sqlite3.SQLITE_READONLY else "CLIENT_ERROR"
         fallback = {"code": code, "message": str(error), "outcome": "rejected"}
         print(json.dumps(getattr(error, "body", fallback)), file=sys.stderr)

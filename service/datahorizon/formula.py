@@ -7,7 +7,7 @@ import time
 MAX_ROWS, MAX_COLS = 1_048_576, 16_384
 REF = r"(?:(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z_0-9]*)!)?\$?[A-Za-z]{1,3}\$?[1-9][0-9]*"
 TOKEN = re.compile(
-    rf'\s*(?:(?P<ref>{REF})(?![A-Za-z_0-9])|'
+    rf'\s*(?:(?P<ref>{REF})(?![A-Za-z_0-9]|\s*\()|'
     r'(?P<number>(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)|'
     r'(?P<string>"(?:[^"]|"")*")|(?P<error>\#REF!)|'
     r'(?P<name>[A-Za-z_][A-Za-z_0-9]*)|(?P<op><=|>=|<>|[+*/^(),:=<>-]))'

@@ -208,6 +208,17 @@ class ServiceTests(unittest.TestCase):
                     client.request("/v1/import/csv/preview",{"csv":csv})
                 self.assertEqual(failure.exception.body["code"],"LIMIT")
 
+    def test_direct_cli_represents_blobs_without_losing_other_sql_types(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"blob.db"
+            with closing(sqlite3.connect(path)):
+                pass
+            result=subprocess.run([sys.executable,"-m","datahorizon.cli","--readonly",str(path),"direct-sql",
+                                   "SELECT X'0001FF', X'', NULL, 7, 1.5, 'text'"],capture_output=True,text=True,timeout=10)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(json.loads(result.stdout)["rows"],[[{"type":"blob","base64":"AAH/"},
+                                                                  {"type":"blob","base64":""},None,7,1.5,"text"]])
+
     def test_missing_receipt_and_failed_lookup_keep_the_pending_outcome_unknown(self):
         with tempfile.TemporaryDirectory() as temp,LocalService() as client:
             book=client.open(Path(temp)/"missing-receipt.dhwb",create=True)

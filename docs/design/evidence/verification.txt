@@ -1,6 +1,6 @@
-November 1, 2026 | additional review cycle 5 (second of two newly authorized cycles)
+November 1, 2026 | additional review cycle 6 (first of two newly authorized cycles)
 ctest --test-dir build --output-on-failure
 
-desktop: passed (24 Qt contract cases plus initialization/cleanup)
-service: passed (55 Python tests)
-Both suites passed; total CTest time: 16.30 seconds.
+desktop: passed (27 Qt contract cases plus initialization/cleanup)
+service: passed (58 Python tests)
+Both suites passed; total CTest time: 17.85 seconds.

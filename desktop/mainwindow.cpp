@@ -553,6 +553,11 @@ void MainWindow::syncSource() {
         m_draftTarget = {{"workbook", m_info["id"]}, {"sheet", m_model->sheet()}, {"state", m_info["state"]},
                          {"row", m_model->sourceRow(index.row())+1}, {"col", index.column()+1}, {"input_kind",m_model->cell(index)["input_kind"]}};
     }
+    if (m_source->isModified() && m_draftTarget["sheet"].toString()!=m_model->sheet()) {
+        m_address->setText(SheetModel::columnName(m_draftTarget["col"].toInt())+QString::number(m_draftTarget["row"].toInt()));
+        m_status->setText("Draft target unavailable • Copy the retained input or press Escape to discard it");
+        return;
+    }
     auto cell = m_model->cell(index);
     if (cell.contains("error")) m_status->setText(cell["display"].toString() + " • " + cell["error"].toString() + " • Input retained");
 }
@@ -623,12 +628,20 @@ void MainWindow::captureGridDraft(bool needsReview) {
 void MainWindow::restoreRecoveredDraft() {
     m_restoreDraft=false;
     const auto sheet=m_recoveredDraft["sheet"].toString();
+    auto retainUnavailable=[this,sheet] {
+        m_draftTarget={{"workbook",m_info["id"]},{"sheet",sheet},{"state",m_info["state"]},
+                       {"row",m_recoveredDraft["row"]},{"col",m_recoveredDraft["col"]},{"input_kind",m_recoveredDraft["input_kind"]}};
+        m_source->setText(m_recoveredDraft["source"].toString()); m_source->setModified(true);
+        m_draftNeedsReview=true;
+        m_status->setText("Draft target unavailable • Copy the retained input or press Escape to discard it");
+    };
     if (sheet!=m_model->sheet()) {
+        retainUnavailable();
         issue("The original draft sheet is unavailable. Copy this retained draft before discarding it:\n"+m_recoveredDraft["source"].toString());
         return;
     }
     const auto target=m_model->index(m_recoveredDraft["row"].toInt()-1,m_recoveredDraft["col"].toInt()-1);
-    if (!target.isValid()) { issue("The recovered draft target is unavailable; the draft remains retained."); return; }
+    if (!target.isValid()) { retainUnavailable(); issue("The recovered draft target is unavailable; the draft remains retained."); return; }
     {
         QSignalBlocker blocker(m_grid->selectionModel()); m_grid->setCurrentIndex(target); m_grid->scrollTo(target);
     }
@@ -753,10 +766,24 @@ void MainWindow::paste(bool valuesOnly, bool formatsOnly) {
     const auto *mime = QApplication::clipboard()->mimeData();
     if (!mime || !m_grid->currentIndex().isValid()) return;
     QJsonObject command;
-    if (mime->hasFormat("application/x-datahorizon-cells")) command = QJsonDocument::fromJson(mime->data("application/x-datahorizon-cells")).object();
+    constexpr int maxBytes=4*1024*1024, maxCells=10000;
+    if (mime->hasFormat("application/x-datahorizon-cells")) {
+        const auto bytes=mime->data("application/x-datahorizon-cells");
+        if (bytes.size()>maxBytes) { issue("Clipboard exceeds the 4 MiB limit. Copy a smaller selection."); return; }
+        QJsonParseError error;
+        const auto document=QJsonDocument::fromJson(bytes,&error);
+        if (error.error!=QJsonParseError::NoError || !document.isObject()) { issue("Invalid native clipboard data."); return; }
+        command=document.object();
+    }
     else {
         QJsonArray rows;
-        auto text = mime->text(); if (text.endsWith('\n')) text.chop(1);
+        auto text = mime->text();
+        if (text.size()>maxBytes || text.toUtf8().size()>maxBytes) { issue("Clipboard exceeds the 4 MiB limit. Copy a smaller selection."); return; }
+        if (text.endsWith('\n')) text.chop(1);
+        int cells=1;
+        for (auto character:text) {
+            if ((character=='\t' || character=='\n') && ++cells>maxCells) { issue("Clipboard exceeds the 10,000-cell limit. Copy a smaller selection."); return; }
+        }
         for (auto line : text.split('\n')) {
             if (line.endsWith('\r')) line.chop(1);
             QJsonArray row;
@@ -765,8 +792,22 @@ void MainWindow::paste(bool valuesOnly, bool formatsOnly) {
         }
         command["rows"] = rows;
     }
+    if (command.contains("rows") || !command["cut"].toBool()) {
+        if (!command["rows"].isArray()) { issue("Invalid native clipboard rows."); return; }
+        int cells=0;
+        const auto rows=command["rows"].toArray();
+        if (rows.size()>maxCells) { issue("Clipboard exceeds the 10,000-cell limit. Copy a smaller selection."); return; }
+        for (const auto &row:rows) {
+            if (!row.isArray()) { issue("Invalid native clipboard rows."); return; }
+            cells+=row.toArray().size();
+            if (cells>maxCells) { issue("Clipboard exceeds the 10,000-cell limit. Copy a smaller selection."); return; }
+        }
+    }
     if(command["cut"].toBool()) {
         if (valuesOnly || formatsOnly) { issue("Cut supports full paste only. Use Copy for values-only or formats-only paste."); return; }
+        const qint64 rows=qint64(command["r2"].toInt())-command["r1"].toInt()+1;
+        const qint64 cols=qint64(command["c2"].toInt())-command["c1"].toInt()+1;
+        if (rows>maxCells || cols>maxCells || (rows>0 && cols>0 && rows*cols>maxCells)) { issue("Clipboard exceeds the 10,000-cell limit. Copy a smaller selection."); return; }
         if(command["source_workbook"]!=m_info["id"] || command["source_sheet"].toString()!=m_model->sheet()) { issue("Cut currently supports a move within the same sheet. Use Copy for other sheets or workbooks."); return; }
         command["action"]="move"; command["label"]="Move cells";
     } else { command["action"] = "paste"; command["label"] = "Paste cells"; }
