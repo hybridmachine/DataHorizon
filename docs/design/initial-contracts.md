@@ -30,6 +30,9 @@ reply is outcome unknown: look up the ID before submitting any new write. A
 missing receipt is not proof that an in-flight operation failed. Calculation is
 evaluated against the current read transaction; no persisted cached result is
 trusted on reopen. Follow-up side effects are unavailable in the initial tier.
+Recognized transaction failures roll back operation changes to a savepoint and
+retain the writer lock until their failure receipt commits. Receipt-storage or
+unconfirmed-rollback failures return an unknown outcome requiring reconciliation.
 
 ## Values and references
 
@@ -49,7 +52,8 @@ intent. Cells stored with automatic typing continue to infer types on entry.
 The first formula tier is +, -, *, /, ^, unary signs, parentheses, comparisons,
 cell and rectangular range references, quoted/unquoted cross-sheet references,
 SUM and lazy IF. Absolute components survive copy/fill; relative components move.
-SUM ignores text and blank cells; scalar arithmetic accepts numbers, booleans
+SUM ignores text and blank cells and rejects non-finite intermediate totals;
+scalar arithmetic accepts numbers, booleans
 and blanks, and rejects text. Errors retain source. Cycles are errors. Evaluation
 is bounded by cell, depth, range, and time budgets. Unsupported functions return
 #NAME?; external links, names, arrays, volatile and Python functions are deferred.
@@ -79,6 +83,8 @@ they never guess a record boundary from the viewport. Blank cells are retained.
 The first list implementation is a full-scope presentation projection over
 source row coordinates. Single-cell edits retain those targets; range operations
 require clearing the projection. Persistent record IDs remain M5/M8 work.
+Full paste restores stored input kind and presentation independently; applying
+a Text number format to a numeric source does not retype its copied value.
 An empty projection has no editor target. Display replacement changes only Text,
 preserves its typing/escape and skips identical replacements. Changing numeric,
 boolean or formula displays requires editing their stored source instead.

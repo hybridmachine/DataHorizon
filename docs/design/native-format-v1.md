@@ -47,11 +47,12 @@ The schema comparison deliberately restricts SQL rather than accepting writes
 whose actual effects cannot yet be captured. Ordinary cell writes remain
 independent of registering application functions or Python callbacks.
 
-Committed receipts share the data transaction. Failed operations roll back and
-return an explicit error; confirmed transactional failures attempt a separate
-durable failure receipt. A crash or storage failure in that gap can still leave
-an unknown ID. Rejected requests before transaction admission need not have a
-receipt. Do not treat a missing
+Committed receipts share the data transaction. Recognized failures roll back
+operation changes to a savepoint while retaining the original writer lock, then
+commit the failure receipt before returning a rolled-back outcome. Another
+service cannot claim the ID between data rollback and receipt storage. An
+unconfirmed rollback or receipt-storage failure returns an unknown outcome.
+Rejected requests before transaction admission need not have a receipt. Do not treat a missing
 receipt as proof of rollback. The GUI locks further writes until a successful
 lookup reconciles an unknown outcome. Session handles differ from workbook UUIDs
 so a snapshot copy can be opened alongside its source.

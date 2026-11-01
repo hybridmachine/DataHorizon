@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 49 Python tests and 20 Qt contract cases.
+The review regression suite includes 53 Python tests and 20 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -149,3 +149,13 @@ recovered drafts retain explicit Text typing; range/clipboard byte limits count
 the complete JSON envelope and array separators; non-finite numeric literals
 become #NUM! before scalar operations can consume them, while lazy IF retains
 its selected-branch semantics. Boundary and editor regressions cover these cases.
+
+Additional review cycle 3 also published no inline issues, but named omitted
+concerns about overflow, pasted values and receipt consistency. Reproductions
+confirmed three defects and targeted fixes: SUM rejects overflowing intermediate
+totals before callers can hide them; full paste preserves stored input kinds
+independently of Text formatting; failure receipts commit under the original
+writer lock after savepoint rollback, preventing another service from claiming
+the ID in between. Receipt-storage failure injection verifies an unknown outcome
+and transaction cleanup. This completes the three additional review/fix cycles;
+the final fixes are validated without requesting a fourth review.

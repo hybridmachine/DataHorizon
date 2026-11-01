@@ -515,6 +515,69 @@ class EngineTests(unittest.TestCase):
         self.assertEqual([cells[(row,1)]["display"] for row in range(1,4)],["#NUM!"]*3)
         self.assertEqual([cells[(row,1)]["value"] for row in (4,5)],[7,7])
 
+    def test_sum_overflow_cannot_be_hidden_by_comparison_or_condition(self):
+        self.edit((1,1,"=SUM(1e308,1e308)>0"),(2,1,"=IF(SUM(1e308,1e308),7,0)"),
+                  (3,1,"=SUM(1e308,1e308,-1e308)"),(4,1,"=IF(FALSE,SUM(1e308,1e308),7)"))
+        cells=self.cells()
+        self.assertEqual([cells[(row,1)]["display"] for row in range(1,4)],["#NUM!"]*3)
+        self.assertEqual(cells[(4,1)]["value"],7)
+
+    def test_full_paste_preserves_inputs_independently_of_text_format(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"7"},{"row":2,"col":1,"source":"'00123"},
+                          {"row":3,"col":1,"source":"=A1+1"},{"row":4,"col":1,"source":"0001","kind":"text"}])
+        self.apply(cells=[{"row":row,"col":1,"style":{"format":"text"}} for row in range(1,5)])
+        original=self.book.read("Sheet1",{"r2":4,"c2":1})["cells"]
+        self.apply("paste",row=1,col=2,origin_row=1,origin_col=1,rows=[[cell] for cell in original])
+        copied=[c for c in self.book.read("Sheet1",{"r2":4,"c2":2})["cells"] if c["col"]==2]
+        self.assertEqual([c["value"] for c in copied],[7,"00123",8,"0001"])
+        self.assertEqual([c["input_kind"] for c in copied],[c["input_kind"] for c in original])
+        self.assertEqual([c["style"] for c in copied],[c["style"] for c in original])
+        self.assertEqual(copied[1]["source"],"'00123")
+        self.assertEqual(copied[2]["source"],"=B1+1")
+
+    def test_failed_receipt_keeps_writer_lock_until_outcome_is_recorded(self):
+        operation="rollback-receipt-race"
+        with closing(Workbook(self.path)) as contender:
+            contender.db.execute("PRAGMA busy_timeout=0")
+            other={"action":"edit","sheet":"Sheet1","operation_id":operation,"expected_state":contender.info()["state"],
+                   "cells":[{"row":1,"col":1,"source":"9"}]}
+            attempts=[]
+            def race(sql):
+                if sql.startswith("INSERT INTO operations") and not attempts:
+                    attempts.append("started")
+                    try: attempts.append(contender.mutate(other)["outcome"])
+                    except sqlite3.OperationalError: attempts.append("locked")
+            self.book.db.set_trace_callback(race)
+            try:
+                with self.assertRaises(EngineError) as failure:
+                    self.book.mutate({**other,"expected_state":self.book.info()["state"],
+                                      "cells":[{"row":1,"col":1,"source":"invalid","kind":"number"}]})
+            finally:
+                self.book.db.set_trace_callback(None)
+            self.assertEqual(attempts,["started","locked"])
+            self.assertEqual(failure.exception.body,self.book.operation(operation))
+            self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+            self.assertEqual(self.cells(),{})
+            with self.assertRaises(EngineError) as reused:
+                contender.mutate(other)
+            self.assertEqual(reused.exception.body["code"],"OPERATION_ID_REUSED")
+
+    def test_receipt_storage_failure_retains_unknown_outcome_and_releases_transaction(self):
+        self.edit((1,1,"7"))
+        self.book.db.set_authorizer(lambda action,table,*args: sqlite3.SQLITE_DENY
+                                   if action==sqlite3.SQLITE_INSERT and table=="operations" else sqlite3.SQLITE_OK)
+        try:
+            with self.assertRaises(EngineError) as failure:
+                self.edit((1,1,"9"))
+        finally:
+            self.book.db.set_authorizer(None)
+        self.assertEqual(failure.exception.body["outcome"],"unknown")
+        self.assertEqual(failure.exception.body["code"],"OUTCOME_UNKNOWN")
+        self.assertFalse(self.book.db.in_transaction)
+        self.assertEqual(self.cells()[(1,1)]["value"],7)
+        self.edit((1,1,"8"))
+        self.assertEqual(self.cells()[(1,1)]["value"],8)
+
 
 if __name__ == "__main__":
     unittest.main()

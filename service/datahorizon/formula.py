@@ -274,6 +274,8 @@ class Calculator:
                     for item in value if isinstance(value, list) else [value]:
                         if isinstance(item, (int, float)) and not isinstance(item, bool):
                             total += item
+                            if not math.isfinite(total):
+                                raise FormulaError("#NUM!", "SUM exceeds the finite numeric range")
                 return total
             raise FormulaError("#NAME?", f"Unsupported function or arity: {name}")
         if kind == "binary":

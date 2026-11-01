@@ -20,6 +20,8 @@ this tier. Overlong or out-of-grid reference rows are #REF!; these errors remain
 local to the formula cell and do not fail the rest of a viewport.
 Non-finite literals such as `1e9999` produce #NUM! when evaluated, including as
 comparison operands or IF conditions. Lazy IF still skips unselected branches.
+SUM rejects overflow as it accumulates, including when used inside a comparison
+or condition; a caller cannot hide a non-finite subtotal behind a finite result.
 
 References support A1, $A1, A$1 and $A$1, rectangles and quoted sheet names such
 as `'Other sheet'!A1`. Quoted sheet names escape an apostrophe by doubling it.
@@ -74,6 +76,9 @@ Cut rejects values-only and formats-only paste; Copy supports both. Absent
 clipboard cells clear inputs while values-only paste retains destination styles;
 explicit empty Text remains text. Values-only paste rejects formula errors or
 pending results atomically.
+Full paste preserves stored input kinds independently of copied number formats;
+a number displayed with Text formatting remains a number, and apostrophe-escaped
+Text retains its escape and displayed value.
 The grid and formula bar preserve explicitly typed Text during edits, including
 CSV-imported identifiers and formula-looking text. Automatic entry remains
 available for cells stored with automatic typing.

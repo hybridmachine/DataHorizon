@@ -327,7 +327,7 @@ class Workbook:
             else:
                 self.pending[key] = {"sheet": sheet, "row": row, "col": col, "before": original, "after": item}
 
-    def apply_edit(self, sheet, edits):
+    def apply_edit(self, sheet, edits, *, preserve_inputs=False):
         require(isinstance(edits, list) and 0 < len(edits) <= MAX_CELLS, "LIMIT", "Provide 1 to 10,000 edits")
         for edit in edits:
             require(isinstance(edit, dict), "INVALID_ARGUMENT", "Each cell edit must be an object")
@@ -346,9 +346,9 @@ class Workbook:
                     item["style"] = validate_style(edit["style"] if edit.get("replace_style") else {**item["style"], **edit["style"]})
                 # Text format affects subsequent entry, never retypes an existing
                 # number/formula merely because its presentation changed.
-                if "source" in edit and item["source"] != "" and item["kind"] == "auto" and item["style"].get("format") == "text":
+                if not preserve_inputs and "source" in edit and item["source"] != "" and item["kind"] == "auto" and item["style"].get("format") == "text":
                     item["kind"] = "text"
-                elif "source" in edit and item["kind"] == "auto" and isinstance(item["source"], str) and item["source"].startswith("="):
+                elif not preserve_inputs and "source" in edit and item["kind"] == "auto" and isinstance(item["source"], str) and item["source"].startswith("="):
                     item["kind"] = "formula"
             self.put(sheet, row, col, item)
 
@@ -422,6 +422,7 @@ class Workbook:
                 return receipt
             in_transaction = True
             try:
+                self.db.execute("SAVEPOINT operation_changes")
                 # The writer lock closes the check/write race with independent tools.
                 self.refresh()
                 require(request.get("expected_state") == self.state(), "STALE_STATE", "Workbook changed. Refresh and review the edit before retrying", 409)
@@ -475,7 +476,7 @@ class Workbook:
                                 edit["style"] = value.get("style", {})
                                 edit["replace_style"] = True
                             edits.append(edit)
-                    self.apply_edit(sheet, edits)
+                    self.apply_edit(sheet, edits, preserve_inputs=mode=="all")
                 elif kind == "fill":
                     r1, c1, r2, c2 = rectangle(request)
                     source = self.raw(sheet, r1, c1)
@@ -605,25 +606,38 @@ class Workbook:
             except Exception as error:
                 if not in_transaction:
                     raise EngineError("OUTCOME_UNKNOWN","Data may have committed; reconcile the durable receipt",500,"unknown",operation_id=operation) from error
-                if in_transaction and self.db.in_transaction:
-                    self.db.execute("ROLLBACK")
-                elif in_transaction:
+                if not self.db.in_transaction:
                     raise EngineError("OUTCOME_UNKNOWN","Transaction outcome requires receipt lookup",500,"unknown",operation_id=operation) from error
+                if not isinstance(error,(EngineError,HookFailure,FormulaError,sqlite3.Error)):
+                    self.db.execute("ROLLBACK")
+                    raise
+                try:
+                    # Keep the writer lock while reverting data and reserving
+                    # this ID's failed outcome. Another service cannot steal it.
+                    self.db.execute("ROLLBACK TO operation_changes")
+                    self.db.execute("RELEASE operation_changes")
+                except sqlite3.Error as rollback_error:
+                    try:
+                        if self.db.in_transaction: self.db.execute("ROLLBACK")
+                    except sqlite3.Error:
+                        pass
+                    raise EngineError("OUTCOME_UNKNOWN","Rollback could not be confirmed; reconcile the operation ID",500,"unknown",operation_id=operation) from rollback_error
                 if isinstance(error, EngineError):
                     error.body.update(outcome="rolled_back", operation_id=operation)
                     failure=error
                 elif isinstance(error, (HookFailure, FormulaError, sqlite3.Error)):
                     failure=EngineError("HOOK_FAILED" if isinstance(error, HookFailure) else "OPERATION_FAILED",
                                         str(error),409,"rolled_back",operation_id=operation)
-                else:
-                    raise
-                # A separate receipt transaction follows confirmed rollback. A
-                # crash/storage failure in this gap still leaves outcome unknown.
                 failure.body["http_status"]=failure.status
                 try:
                     self.db.execute("INSERT INTO operations VALUES(?,?,?)",(operation,fingerprint,encoded(failure.body)))
-                except sqlite3.Error:
-                    pass  # Preserve the known rollback response, never claim a receipt exists.
+                    self.db.execute("COMMIT")
+                except sqlite3.Error as receipt_error:
+                    try:
+                        if self.db.in_transaction: self.db.execute("ROLLBACK")
+                    except sqlite3.Error:
+                        pass
+                    raise EngineError("OUTCOME_UNKNOWN","Data changes were rolled back but the receipt could not be confirmed; reconcile the operation ID",500,"unknown",operation_id=operation) from receipt_error
                 raise failure
 
     @staticmethod
