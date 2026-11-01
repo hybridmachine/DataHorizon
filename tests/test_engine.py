@@ -11,7 +11,7 @@ import unittest
 import uuid
 
 from datahorizon.engine import EngineError, Workbook, encoded
-from datahorizon.formula import coordinates, translate
+from datahorizon.formula import coordinates, has_sheet_reference, translate
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -95,6 +95,31 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(EngineError) as failure:
             self.apply("sheet_rename",sheet='A"B',name="Renamed")
         self.assertEqual(failure.exception.body["code"],"REFERENCE_TRANSFORM_UNAVAILABLE")
+
+    def test_copied_broken_reference_does_not_block_sheet_operations(self):
+        self.edit((2,1,"=A1"))
+        self.apply("paste",row=1,col=1,origin_row=2,origin_col=1,
+                   rows=[[self.cells()[(2,1)]]])
+        self.assertEqual(self.cells()[(1,1)]["source"],"=#REF!")
+        self.assertEqual(self.cells()[(1,1)]["display"],"#REF!")
+        self.apply("sheet_rename",name="Renamed")
+        self.apply("sheet_duplicate",sheet="Renamed",name="Copy")
+        self.apply("sheet_delete",sheet="Renamed")
+        copied=self.book.read("Copy",{"r2":1,"c2":1})["cells"][0]
+        self.assertEqual(copied["source"],"=#REF!")
+        self.assertEqual(copied["display"],"#REF!")
+
+    def test_sheet_reference_detection_distinguishes_error_literals_and_separators(self):
+        for error in ("#REF!","#DIV/0!","#VALUE!","#NAME?","#NUM!","#N/A",
+                      "#NULL!","#CYCLE!","#LIMIT!"):
+            with self.subTest(error=error):
+                self.assertFalse(has_sheet_reference("="+error))
+                self.assertFalse(has_sheet_reference("=IF(TRUE,1,"+error+")"))
+                self.assertTrue(has_sheet_reference("="+error+"+Other!A1"))
+        for source in ("='Other sheet'!A1+#REF!","=Other!#REF!","=Unknown!",
+                       '=IF(TRUE,"text!",Other!A1)',"='Incomplete!"):
+            with self.subTest(source=source):
+                self.assertTrue(has_sheet_reference(source))
 
     def test_edit_boolean_flags_reject_truthy_strings_and_numbers_atomically(self):
         self.edit((1,1,"7"))

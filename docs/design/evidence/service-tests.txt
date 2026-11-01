@@ -3,6 +3,7 @@ test_atomic_validation_and_undo_redo (test_engine.EngineTests.test_atomic_valida
 test_blank_comparisons_never_fail_the_viewport (test_engine.EngineTests.test_blank_comparisons_never_fail_the_viewport) ... ok
 test_bounded_reads_and_operations (test_engine.EngineTests.test_bounded_reads_and_operations) ... ok
 test_coalesced_input_with_style_change_does_not_dispatch_handler (test_engine.EngineTests.test_coalesced_input_with_style_change_does_not_dispatch_handler) ... ok
+test_copied_broken_reference_does_not_block_sheet_operations (test_engine.EngineTests.test_copied_broken_reference_does_not_block_sheet_operations) ... ok
 test_cross_sheet_absolute_and_text_references (test_engine.EngineTests.test_cross_sheet_absolute_and_text_references) ... ok
 test_csv_export_limits_complete_serialized_json_response (test_engine.EngineTests.test_csv_export_limits_complete_serialized_json_response) ... ok
 test_csv_numbers_round_trip_without_display_rounding (test_engine.EngineTests.test_csv_numbers_round_trip_without_display_rounding) ... ok
@@ -37,6 +38,7 @@ test_receipt_storage_failure_retains_unknown_outcome_and_releases_transaction (t
 test_runtime_formula_recursion_is_a_limit_error (test_engine.EngineTests.test_runtime_formula_recursion_is_a_limit_error) ... ok
 test_sheet_add_and_duplicate_append_after_deleting_middle_sheet (test_engine.EngineTests.test_sheet_add_and_duplicate_append_after_deleting_middle_sheet) ... ok
 test_sheet_duplicate_order_and_coalesced_noop (test_engine.EngineTests.test_sheet_duplicate_order_and_coalesced_noop) ... ok
+test_sheet_reference_detection_distinguishes_error_literals_and_separators (test_engine.EngineTests.test_sheet_reference_detection_distinguishes_error_literals_and_separators) ... ok
 test_sheet_reference_detection_ignores_formula_strings_and_preserves_quoted_names (test_engine.EngineTests.test_sheet_reference_detection_ignores_formula_strings_and_preserves_quoted_names) ... ok
 test_snapshot_reads_refresh_after_external_commit_at_begin (test_engine.EngineTests.test_snapshot_reads_refresh_after_external_commit_at_begin) ... ok
 test_styled_blank_and_explicit_empty_text_remain_distinct (test_engine.EngineTests.test_styled_blank_and_explicit_empty_text_remain_distinct) ... ok
@@ -71,6 +73,6 @@ test_retry_waiting_for_writer_keeps_pending_until_original_commit_is_reconciled 
 test_unmatched_error_responses_never_clear_pending_operation (test_service.ServiceTests.test_unmatched_error_responses_never_clear_pending_operation) ... ok
 
 ----------------------------------------------------------------------
-Ran 71 tests in 5.918s
+Ran 73 tests in 6.085s
 
 OK

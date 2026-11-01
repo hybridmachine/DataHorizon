@@ -14,6 +14,7 @@ TOKEN = re.compile(
 )
 ADDRESS = re.compile(r"(\$?)([A-Za-z]{1,3})(\$?)([1-9][0-9]*)\Z")
 QUOTED_TOKEN = re.compile(r''' "(?:[^"]|"")*" | '(?:[^']|'')*' ''', re.VERBOSE)
+ERROR_LITERAL = re.compile(r"#(?:REF!|DIV/0!|VALUE!|NAME\?|NUM!|N/A|NULL!|CYCLE!|LIMIT!)", re.IGNORECASE)
 
 
 class FormulaError(Exception):
@@ -60,7 +61,7 @@ def split_ref(source):
 
 
 def has_sheet_reference(source):
-    """Ignore quoted strings/identifiers, but retain their following ! separator.
+    """Ignore error literals and quotes, retaining a quoted sheet's separator.
 
     An incomplete quoted token stays conservative: an unclassified ! blocks
     structural operations until the formula can be reviewed.
@@ -69,7 +70,9 @@ def has_sheet_reference(source):
     while pos < len(source):
         if source[pos] == "!":
             return True
-        if source[pos] in ("\"", "'"):
+        if source[pos] == "#" and (token := ERROR_LITERAL.match(source, pos)):
+            pos = token.end()
+        elif source[pos] in ("\"", "'"):
             token = QUOTED_TOKEN.match(source, pos)
             if not token:
                 return "!" in source[pos:]

@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 71 Python tests and 36 Qt contract cases.
+The review regression suite includes 73 Python tests and 36 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -263,3 +263,12 @@ leases remain valid. Runtime formula recursion is #LIMIT!, with unrelated cells
 still calculated in the same viewport. Installed native smoke and the complete
 suite verify the final behavior. This completes the two further authorized
 cycles; final fixes are validated without requesting another review.
+
+The user authorized two further cycles. Cycle 12 published no inline issues but
+identified formula error literals being mistaken for cross-sheet references. A
+copy/paste regression reproduced #REF! unexpectedly blocking sheet rename,
+duplication and deletion. Reference detection now skips known formula error
+literals while retaining restrictions for real sheet separators and unclassified
+exclamation marks. The regression verifies all three operations preserve the
+broken formula and its error. Additional cases cover errors inside expressions,
+quoted names and actual sheet references adjacent to error literals.

@@ -84,7 +84,10 @@ The grid and formula bar preserve explicitly typed Text during edits, including
 CSV-imported identifiers and formula-looking text. Automatic entry remains
 available for cells stored with automatic typing.
 Sheet rename/delete/duplicate reject cross-sheet references until their full
-reference transformation is implemented. Row/column insertion/deletion, freeze,
+reference transformation is implemented. Literal exclamation marks in strings
+and formula error tokens such as #REF! are not sheet separators; copied broken
+references retain their error without blocking these operations.
+Row/column insertion/deletion, freeze,
 hide/unhide, wrap, borders, fit-column sampling and saved view state are deferred.
 
 Lists are explicit presentation projections over source row coordinates, capped
