@@ -18,4 +18,5 @@ public:
 private:
     QNetworkAccessManager m_network;
     QString m_url, m_token;
+    quint64 m_generation = 0;
 };

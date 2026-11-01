@@ -9,6 +9,7 @@
 RestClient::RestClient(QObject *parent) : QObject(parent), m_network(this) {}
 
 void RestClient::configure(const QString &url, const QString &token) {
+    ++m_generation;
     m_url = url;
     m_token = token;
 }
@@ -19,12 +20,17 @@ void RestClient::request(const QString &path, const QJsonObject &body, Callback 
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setTransferTimeout(15000);
     auto *reply = post ? m_network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact)) : m_network.get(request);
-    connect(reply, &QNetworkReply::finished, this, [reply, callback = std::move(callback)] {
+    const auto generation=m_generation;
+    connect(reply, &QNetworkReply::finished, this, [this,reply,generation,callback = std::move(callback)] {
+        if (generation!=m_generation) { reply->deleteLater(); return; }
         QJsonParseError parseError;
         const auto document = QJsonDocument::fromJson(reply->readAll(), &parseError);
         auto object = document.object();
-        auto error = reply->error() == QNetworkReply::NoError ? QString{} :
-            object.value("message").toString(reply->errorString());
+        QString error;
+        if (reply->error()!=QNetworkReply::NoError) {
+            error=object.value("message").toString();
+            if (error.isEmpty()) error=reply->errorString();
+        }
         if (error.isEmpty() && (parseError.error != QJsonParseError::NoError || !document.isObject()))
             error = "Invalid JSON acknowledgement: expected an object";
         callback(object, error);

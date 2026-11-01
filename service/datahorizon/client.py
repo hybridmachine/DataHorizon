@@ -99,7 +99,7 @@ class WorkbookClient:
         try:
             receipt=self.client.request(self.base + "/operations/" + quote(operation_id, safe=""))
             self.validate_receipt(receipt, operation_id)
-        except (OSError, ValueError, HTTPException) as error:
+        except (APIError, OSError, ValueError, HTTPException) as error:
             raise UnknownOutcome(operation_id, str(error)) from error
         if operation_id==self.pending_operation and receipt.get("outcome") in ("committed","rejected","rolled_back"):
             self.pending_operation=None

@@ -61,6 +61,9 @@ for values-only or formats-only paste. Paste values retains destination styles
 and rejects error/pending calculation results. Copying an absent cell preserves
 blank semantics. CSV review remains bound to the workbook, sheet, address and
 state selected when the preview was requested.
+Rejected in-cell edits are restored in the formula bar for correction. An active
+in-cell draft survives a service interruption at its original coordinates and
+must be reviewed against reopened inputs before applying it.
 Copy/Cut supports up to 10,000 selected cells in one consistent read, subject to
 the 4-MiB response limit. Oversized clipboard reads fail without replacing the
 clipboard; select a smaller range. Viewport previews are never clipboard data.

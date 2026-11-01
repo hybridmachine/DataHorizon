@@ -19,6 +19,9 @@ receipts before any retry; a missing receipt remains unknown.
 An unsubmitted formula-bar draft survives an owned-service restart at its original
 sheet and coordinates. Reopening requires review against the current stored
 input before applying it. A rejected draft remains available for correction.
+This includes in-cell edits: rejection restores them in the formula bar, and
+service interruption captures an active editor before reopening resets the grid.
+An unresolved formula-bar draft prevents opening a second in-cell editor.
 
 Each mutation requires a client-generated operation ID (UUID recommended, up to
 100 characters) and an expected state token.
@@ -33,6 +36,10 @@ trusted on reopen. Follow-up side effects are unavailable in the initial tier.
 Recognized transaction failures roll back operation changes to a savepoint and
 retain the writer lock until their failure receipt commits. Receipt-storage or
 unconfirmed-rollback failures return an unknown outcome requiring reconciliation.
+Missing receipts and failed receipt lookups preserve the unknown outcome and
+operation ID. Replacing a GUI transport session invalidates its earlier replies;
+pending mutations are reconciled against the reopened service. Reviewed bulk
+operations retain their original state and sheet preconditions through dialogs.
 
 ## Values and references
 

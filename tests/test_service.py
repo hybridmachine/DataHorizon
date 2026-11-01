@@ -200,6 +200,28 @@ class ServiceTests(unittest.TestCase):
                     client.request("/v1/import/csv/preview",{"csv":csv})
                 self.assertEqual(failure.exception.body["code"],"LIMIT")
 
+    def test_missing_receipt_and_failed_lookup_keep_the_pending_outcome_unknown(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            book=client.open(Path(temp)/"missing-receipt.dhwb",create=True)
+            original=client.request
+            operation="not-admitted"
+            def lose_request(path,body=None):
+                if path.endswith("/operations"): raise ConnectionError("Connection lost before admission was confirmed")
+                return original(path,body)
+            client.request=lose_request
+            with self.assertRaises(UnknownOutcome):
+                book.apply("edit",operation_id=operation,cells=[{"row":1,"col":1,"source":"7"}])
+            client.request=original
+            with self.assertRaises(APIError) as missing:
+                client.request(book.base+"/operations/"+operation)
+            self.assertEqual(missing.exception.body["outcome"],"unknown")
+            self.assertEqual(missing.exception.body["operation_id"],operation)
+            with self.assertRaises(UnknownOutcome) as lookup:
+                book.outcome(operation)
+            self.assertEqual(lookup.exception.operation_id,operation)
+            self.assertEqual(book.pending_operation,operation)
+            with self.assertRaises(UnknownOutcome): book.set(1,1,"8")
+
 
 if __name__ == "__main__":
     unittest.main()

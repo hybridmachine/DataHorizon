@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 53 Python tests and 20 Qt contract cases.
+The review regression suite includes 54 Python tests and 23 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -157,5 +157,15 @@ totals before callers can hide them; full paste preserves stored input kinds
 independently of Text formatting; failure receipts commit under the original
 writer lock after savepoint rollback, preventing another service from claiming
 the ID in between. Receipt-storage failure injection verifies an unknown outcome
-and transaction cleanup. This completes the three additional review/fix cycles;
-the final fixes are validated without requesting a fourth review.
+and transaction cleanup. The first three-cycle limit was reached here; the user
+subsequently authorized two more cycles with the same cosmetic-only stopping rule.
+
+Additional review cycle 4 published no inline issues, but named moderate
+concerns about asynchronous state, edit recovery and transport errors. Targeted
+fixes discard callbacks from replaced transport sessions, retain rejected and
+interrupted in-cell drafts for correction/review at their original coordinates,
+preserve reviewed state/sheet preconditions through submission, and report HTTP
+failures even when their JSON message is empty. Missing receipts return an
+unknown outcome with the operation ID; failed SDK lookups retain the pending
+operation. Delayed socket replies, HTTP failures, restart/rejection recovery and
+stale reviewed-operation regressions exercise these paths.

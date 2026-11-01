@@ -24,6 +24,8 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
+#include <QPointer>
+#include <QPersistentModelIndex>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -49,11 +51,31 @@ bool sameFile(const QString &left, const QString &right) {
 class CellDelegate : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
+    std::function<bool()> canEdit;
     QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const override {
+        if (canEdit && !canEdit()) return nullptr;
         auto *editor = QStyledItemDelegate::createEditor(parent, option, index);
-        if (auto *line = qobject_cast<QLineEdit *>(editor)) line->setMaxLength(65536);
+        if (auto *line = qobject_cast<QLineEdit *>(editor)) {
+            line->setMaxLength(65536); m_editor=line; m_index=index;
+            m_original=index.data(Qt::EditRole).toString();
+            const auto *model=qobject_cast<const SheetModel *>(index.model());
+            m_inputKind=model?model->cell(index)["input_kind"].toString("auto"):QString("auto");
+        }
         return editor;
     }
+    QJsonObject takeDraft() {
+        if (!m_editor || !m_index.isValid()) return {};
+        QJsonObject draft;
+        if (m_editor->text()!=m_original)
+            draft={{"view_row",m_index.row()},{"col",m_index.column()+1},{"source",m_editor->text()},{"input_kind",m_inputKind}};
+        auto *editor=m_editor.data(); m_editor.clear(); m_index=QPersistentModelIndex{};
+        emit closeEditor(editor,QAbstractItemDelegate::RevertModelCache);
+        return draft;
+    }
+private:
+    mutable QPointer<QLineEdit> m_editor;
+    mutable QPersistentModelIndex m_index;
+    mutable QString m_original, m_inputKind;
 };
 }
 
@@ -66,8 +88,12 @@ MainWindow::MainWindow(const StartupOptions &options, QWidget *parent)
     m_service.setObjectName("ownedService");
     buildUi();
     connect(m_model, &SheetModel::editRequested, this, [this](int row, int col, const QString &source, const QString &kind) {
+        if (m_busy || m_unknown || !resolveDraft()) return;
+        const QJsonObject target{{"workbook",m_info["id"]},{"sheet",m_model->sheet()},{"state",m_info["state"]},
+                                 {"row",row},{"col",col},{"input_kind",kind},{"source",source},{"needs_review",false}};
         QJsonObject cell{{"row", row}, {"col", col}, {"source", source}, {"kind",kind}};
         submit({{"action", "edit"}, {"label", "Edit cell"}, {"cells", QJsonArray{cell}}});
+        if (!m_pendingId.isEmpty()) { m_recoveredDraft=target; m_draftSubmissionId=m_pendingId; }
     });
     connect(m_model, &SheetModel::issue, this, &MainWindow::issue);
     connect(m_model, &SheetModel::externalChange, this, [this] {
@@ -211,7 +237,8 @@ void MainWindow::buildUi() {
     formula->addWidget(m_address); formula->addWidget(new QLabel("fx")); formula->addWidget(m_source, 1);
     layout->addLayout(formula);
     m_grid = new QTableView; m_grid->setObjectName("grid"); m_grid->setAccessibleName(tr("Spreadsheet")); m_grid->setModel(m_model);
-    m_grid->setItemDelegate(new CellDelegate(m_grid));
+    auto *delegate=new CellDelegate(m_grid); delegate->canEdit=[this]{return !m_source->isModified();};
+    m_grid->setItemDelegate(delegate);
     m_grid->setSelectionMode(QAbstractItemView::ContiguousSelection);
     m_grid->setSelectionBehavior(QAbstractItemView::SelectItems);
     m_grid->horizontalHeader()->setDefaultSectionSize(110);
@@ -307,6 +334,7 @@ void MainWindow::startService() {
     connect(&m_service, &QProcess::errorOccurred, this, [this] { issue("Service startup failed: " + m_service.errorString()); });
     connect(&m_service, &QProcess::finished, this, [this](int, QProcess::ExitStatus) {
         if (m_shuttingDown) return;
+        captureGridDraft();
         m_unknown = !m_pendingId.isEmpty(); setBusy(true, "Service stopped • Restart local service or close the window");
         if (m_unknown) preserveUnknownOperation();
         issue(m_unknown ? "The local service exited. Operation outcome is unknown: "+m_pendingId
@@ -380,6 +408,10 @@ void MainWindow::refresh(const QString &selectSheet) {
 void MainWindow::submit(QJsonObject operation) {
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
     if (!resolveDraft()) return;
+    if ((operation.contains("expected_state") && operation["expected_state"]!=m_info["state"])
+        || (operation.contains("sheet") && operation["sheet"].toString()!=m_model->sheet())) {
+        issue("Reviewed inputs changed. Review the target and state again before submitting."); return;
+    }
     m_pendingId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     operation["operation_id"] = m_pendingId; operation["expected_state"] = m_info["state"];
     operation["sheet"] = m_model->sheet();
@@ -545,6 +577,18 @@ bool MainWindow::resolveDraft() {
 
 void MainWindow::clearRecoveredDraft() {
     m_recoveredDraft={}; m_restoreDraft=false; m_draftNeedsReview=false; m_draftSubmissionId.clear();
+}
+
+void MainWindow::captureGridDraft() {
+    if (!m_pendingId.isEmpty() || m_source->isModified()) return;
+    auto *delegate=dynamic_cast<CellDelegate *>(m_grid->itemDelegate());
+    const auto draft=delegate?delegate->takeDraft():QJsonObject{};
+    if (draft.isEmpty()) return;
+    m_draftTarget={{"workbook",m_info["id"]},{"sheet",m_model->sheet()},{"state",m_info["state"]},
+                   {"row",m_model->sourceRow(draft["view_row"].toInt())+1},{"col",draft["col"]},{"input_kind",draft["input_kind"]}};
+    m_recoveredDraft=m_draftTarget; m_recoveredDraft["source"]=draft["source"]; m_recoveredDraft["needs_review"]=true;
+    m_source->setText(draft["source"].toString()); m_source->setModified(true);
+    m_draftNeedsReview=true;
 }
 
 void MainWindow::restoreRecoveredDraft() {
@@ -812,17 +856,23 @@ void MainWindow::applyList() {
 void MainWindow::findDialog(bool replace) {
     if (m_busy) return;
     auto scope = selectedRange(); if (scope.isEmpty()) return;
+    scope["sheet"]=m_model->sheet(); scope["expected_state"]=m_info["state"];
+    const auto workbook=m_info["id"].toString();
     bool ok;
     auto needle = QInputDialog::getText(this, tr("Find in selected rectangle"), tr("Case-sensitive text"), QLineEdit::Normal, {}, &ok);
     if (!ok || needle.isEmpty()) return;
     auto field = QInputDialog::getItem(this, tr("Search field"), tr("Search"), {tr("Stored input / formula source"), tr("Displayed value")}, 0, false, &ok);
     if (!ok) return;
-    scope["needle"] = needle; scope["field"] = field == tr("Displayed value") ? "display" : "source"; scope["sheet"] = m_model->sheet();
+    if (m_busy || workbook!=m_info["id"].toString() || scope["expected_state"]!=m_info["state"]
+        || scope["sheet"].toString()!=m_model->sheet()) { issue("Search inputs changed. Refresh and review the scope again."); return; }
+    scope["needle"] = needle; scope["field"] = field == tr("Displayed value") ? "display" : "source";
     setBusy(true, "Finding within declared scope…");
-    m_client->request(base()+"/find", scope, [this, scope, replace](QJsonObject result, QString error) mutable {
+    m_client->request(base()+"/find", scope, [this, scope, replace, workbook](QJsonObject result, QString error) mutable {
+        if (m_info["id"].toString()!=workbook) return;
         setBusy(false);
         if (!error.isEmpty()) { issue(error); return; }
-        if (result["state"] != m_info["state"]) { issue("Search inputs changed. Refresh and review the scope again."); return; }
+        if (result["state"] != scope["expected_state"] || result["state"]!=m_info["state"]
+            || scope["sheet"].toString()!=m_model->sheet()) { issue("Search inputs changed. Refresh and review the scope again."); return; }
         QStringList locations; for (const auto &value : result["matches"].toArray()) locations.append(value.toObject()["address"].toString());
         issue(tr("%1 matching cells: %2%3").arg(result["count"].toInt()).arg(locations.join(", ")).arg(result["truncated"].toBool() ? " (first 500 shown)" : ""));
         if (!replace || result["count"].toInt() == 0) return;

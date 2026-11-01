@@ -48,11 +48,12 @@ test_headless_cli_file_mode (test_service.ServiceTests.test_headless_cli_file_mo
 test_incomplete_or_invalid_receipts_keep_pending_operation (test_service.ServiceTests.test_incomplete_or_invalid_receipts_keep_pending_operation) ... ok
 test_invalid_cli_addresses_return_structured_errors (test_service.ServiceTests.test_invalid_cli_addresses_return_structured_errors) ... ok
 test_lost_reply_exposes_id_and_blocks_further_sdk_writes (test_service.ServiceTests.test_lost_reply_exposes_id_and_blocks_further_sdk_writes) ... ok
+test_missing_receipt_and_failed_lookup_keep_the_pending_outcome_unknown (test_service.ServiceTests.test_missing_receipt_and_failed_lookup_keep_the_pending_outcome_unknown) ... ok
 test_receipt_lookup_survives_owned_service_restart (test_service.ServiceTests.test_receipt_lookup_survives_owned_service_restart) ... ok
 test_receipts_with_url_delimiters_are_retrievable (test_service.ServiceTests.test_receipts_with_url_delimiters_are_retrievable) ... ok
 test_rest_sdk_cli_share_managed_path (test_service.ServiceTests.test_rest_sdk_cli_share_managed_path) ... ok
 
 ----------------------------------------------------------------------
-Ran 53 tests in 5.084s
+Ran 54 tests in 5.292s
 
 OK

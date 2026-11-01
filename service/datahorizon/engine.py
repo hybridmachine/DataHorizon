@@ -380,7 +380,9 @@ class Workbook:
     def operation(self, operation_id):
         with self.lock:
             row = self.db.execute("SELECT result FROM operations WHERE id=?", (operation_id,)).fetchone()
-            require(row is not None, "OUTCOME_UNKNOWN", "No durable receipt. Do not assume rollback or repeat the operation", 404)
+            if row is None:
+                raise EngineError("OUTCOME_UNKNOWN", "No durable receipt. Do not assume rollback or repeat the operation",
+                                  404,"unknown",operation_id=operation_id)
             return json.loads(row[0])
 
     def recorded_operation(self, operation, fingerprint):

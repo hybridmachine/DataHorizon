@@ -63,6 +63,7 @@ private:
     void clearRecoveryRecord();
     void restoreRecoveredDraft();
     void clearRecoveredDraft();
+    void captureGridDraft();
     QJsonObject selectedRange() const;
     QString base() const;
     StartupOptions m_options;

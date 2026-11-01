@@ -11,6 +11,7 @@
 #include <QSignalSpy>
 #include <QTableView>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QAbstractButton>
 #include <QAbstractItemDelegate>
 #include <QClipboard>
@@ -22,6 +23,7 @@
 #include <QMimeData>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QNetworkReply>
 #include <QTabBar>
 #include <QTimer>
 #include <QStyleOptionViewItem>
@@ -125,6 +127,11 @@ private slots:
         QVERIFY(model->setData(model->index(0,0),"-1",Qt::EditRole));
         QTRY_COMPARE_WITH_TIMEOUT(changed.count(),2,10000);
         QVERIFY(!changed[1][0].toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(opened.count()>=3,10000);
+        auto *source=window.findChild<QLineEdit *>("source");
+        QTRY_COMPARE_WITH_TIMEOUT(source->text(),QString("-1"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        QVERIFY(source->isModified());
         QCOMPARE(model->data(model->index(0,0)).toString(),QString("8"));
         QCOMPARE(model->data(model->index(0,1)).toString(),QString("16"));
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("nonnegative"));
@@ -229,13 +236,14 @@ private slots:
     void invalidHttpAcknowledgementsAreErrors() {
         QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost,0));
         QByteArray payload;
+        QByteArray status="200 OK";
         connect(&server,&QTcpServer::newConnection,this,[&]{
             auto *socket=server.nextPendingConnection();
             connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
-            connect(socket,&QTcpSocket::readyRead,socket,[socket,&payload]{
+            connect(socket,&QTcpSocket::readyRead,socket,[socket,&payload,&status]{
                 auto request=socket->property("request").toByteArray()+socket->readAll(); socket->setProperty("request",request);
                 if(!request.contains("\r\n\r\n")) return;
-                socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(payload.size())+"\r\n\r\n"+payload);
+                socket->write("HTTP/1.1 "+status+"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(payload.size())+"\r\n\r\n"+payload);
                 socket->disconnectFromHost();
             });
         });
@@ -247,6 +255,10 @@ private slots:
             if(body!="{}") QVERIFY(!error.isEmpty());
             QVERIFY(!RestClient::validReceipt(result,"operation",true));
         }
+        status="500 Server Error"; payload="{\"message\":\"\"}";
+        bool failed=false; QString transportError;
+        client.request("/failure",{},[&](QJsonObject,QString error){failed=true;transportError=error;},false);
+        QTRY_VERIFY_WITH_TIMEOUT(failed,3000); QVERIFY(!transportError.isEmpty());
         QJsonObject receipt{{"operation_id","operation"},{"outcome","committed"},{"state","state:1"},{"changed_cells",0}};
         QVERIFY(RestClient::validReceipt(receipt,"operation",true));
         QVERIFY(!RestClient::validReceipt(receipt,"other",true)); receipt.remove("state"); QVERIFY(!RestClient::validReceipt(receipt,"operation",true));
@@ -472,6 +484,75 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
         QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(1,0)).toString(),QString("7"),5000);
         QCOMPARE(model->cell(model->index(1,0))["kind"].toString(),QString("number"));
+    }
+    void previousTransportSessionRepliesCannotReachCurrentUi() {
+        QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost,0));
+        QPointer<QTcpSocket> delayed;
+        auto reply=[](QTcpSocket *socket,const QByteArray &body){
+            socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(body.size())+"\r\n\r\n"+body);
+            socket->disconnectFromHost();
+        };
+        connect(&server,&QTcpServer::newConnection,this,[&]{
+            auto *socket=server.nextPendingConnection(); connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
+            connect(socket,&QTcpSocket::readyRead,socket,[&,socket]{
+                auto request=socket->property("request").toByteArray()+socket->readAll(); socket->setProperty("request",request);
+                if(!request.contains("\r\n\r\n") || socket->property("handled").toBool()) return;
+                socket->setProperty("handled",true);
+                if(request.startsWith("GET /old ")) delayed=socket;
+                else reply(socket,"{\"value\":\"current\"}");
+            });
+        });
+        RestClient client; const auto url="http://127.0.0.1:"+QString::number(server.serverPort()); client.configure(url,"old-token");
+        QSignalSpy replies(client.findChild<QNetworkAccessManager *>(),&QNetworkAccessManager::finished);
+        bool staleCallback=false,currentCallback=false;
+        client.request("/old",{},[&](QJsonObject,QString){staleCallback=true;},false);
+        QTRY_VERIFY_WITH_TIMEOUT(delayed,3000);
+        client.configure(url,"new-token");
+        client.request("/new",{},[&](QJsonObject result,QString error){currentCallback=error.isEmpty() && result["value"]=="current";},false);
+        QTRY_VERIFY_WITH_TIMEOUT(currentCallback,3000);
+        reply(delayed,"{\"value\":\"stale\"}");
+        QTRY_COMPARE_WITH_TIMEOUT(replies.count(),2,3000);
+        QVERIFY(!staleCallback);
+    }
+    void inCellDraftSurvivesServiceRestartAtItsOriginalTarget() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("inline-draft.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",3},{"col",2},{"source","old"},{"kind","text"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model(); auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source");
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(2,1)).toString(),QString("old"),5000);
+        grid->setCurrentIndex(model->index(2,1)); grid->edit(model->index(2,1));
+        QPointer<QLineEdit> editor=grid->findChild<QLineEdit *>(); QVERIFY(editor);
+        editor->selectAll(); QTest::keyClicks(editor,"00124");
+        auto *process=window.findChild<QProcess *>("ownedService"); process->kill();
+        QTRY_COMPARE_WITH_TIMEOUT(process->state(),QProcess::NotRunning,5000);
+        QTRY_COMPARE_WITH_TIMEOUT(source->text(),QString("00124"),5000); QVERIFY(source->isModified());
+        window.findChild<QAction *>("restartServiceAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000); QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        QCOMPARE(grid->currentIndex(),model->index(2,1)); QCOMPARE(source->text(),QString("00124"));
+        answerNextDialog(QMessageBox::Yes); QTest::keyClick(source,Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(2,1)).toString(),QString("00124"),5000);
+        QCOMPARE(model->cell(model->index(2,1))["kind"].toString(),QString("text"));
+    }
+    void reviewedOperationsCannotSilentlyUseNewStateOrSheet() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("reviewed-target.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        const auto reviewed=window.model()->state(), sheet=window.model()->sheet();
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","new"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        window.submit({{"action","replace_all"},{"r1",1},{"r2",1},{"c1",1},{"c2",1},{"needle","new"},{"replacement","wrong"},{"expected_state",reviewed},{"sheet",sheet}});
+        window.submit({{"action","edit"},{"sheet","different-sheet"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","wrong"}}}}});
+        QCOMPARE(changed.count(),0);
+        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Reviewed inputs changed"));
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("new"),5000);
     }
 private:
     static void answerNextDialog(QMessageBox::StandardButton button, QString *message=nullptr) {
