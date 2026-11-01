@@ -121,11 +121,13 @@ security sandboxes, and transactional code must not perform external effects.
 ## Install smoke and measurements
 
 ```sh
-cmake --install build --prefix build/package
+cmake --install build --prefix "$PWD/build/package"
 PYTHONPATH=service python3 tests/benchmark.py
 ```
 
-The install step deploys Qt and copies service sources. Python is a separately
+The install step deploys Qt and copies service sources. Use an absolute install
+prefix: Qt 6.8 deployment requires an absolute path when writing qt.conf on Linux
+and Windows. Python is a separately
 installed dependency, not a bundled runtime. The resulting package is a local
 development artifact, not a signed/notarized or clean-machine-qualified release.
 GUI GPLv3 text is in desktop/COPYING. Other component licensing remains open;

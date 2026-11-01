@@ -26,13 +26,13 @@ jobs:
           cache: true
           setup-python: false
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/build/package"
       - name: Build
         run: cmake --build build --config Release --parallel 2
       - name: Contract and desktop tests
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Install smoke
-        run: cmake --install build --config Release --prefix build/package
+        run: cmake --install build --config Release
       - name: Run installed application
         if: runner.os != 'Linux'
         run: python tests/package_smoke.py build/package
