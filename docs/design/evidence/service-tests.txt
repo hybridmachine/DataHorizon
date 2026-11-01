@@ -41,6 +41,7 @@ test_styled_blank_and_explicit_empty_text_remain_distinct (test_engine.EngineTes
 test_sum_overflow_cannot_be_hidden_by_comparison_or_condition (test_engine.EngineTests.test_sum_overflow_cannot_be_hidden_by_comparison_or_condition) ... ok
 test_supplies_and_reopen (test_engine.EngineTests.test_supplies_and_reopen) ... ok
 test_typed_blank_null_empty_text_and_format (test_engine.EngineTests.test_typed_blank_null_empty_text_and_format) ... ok
+test_unconfirmed_admission_releases_its_transaction_and_keeps_the_id (test_engine.EngineTests.test_unconfirmed_admission_releases_its_transaction_and_keeps_the_id) ... ok
 test_unsupported_sql_and_trigger_schema_fail_closed (test_engine.EngineTests.test_unsupported_sql_and_trigger_schema_fail_closed) ... ok
 test_values_paste_rejects_formula_errors_atomically (test_engine.EngineTests.test_values_paste_rejects_formula_errors_atomically) ... ok
 test_cli_apply_accepts_complete_operation_with_sheet (test_service.ServiceTests.test_cli_apply_accepts_complete_operation_with_sheet) ... ok
@@ -52,6 +53,7 @@ test_direct_cli_represents_blobs_without_losing_other_sql_types (test_service.Se
 test_headless_cli_file_mode (test_service.ServiceTests.test_headless_cli_file_mode) ... ok
 test_incomplete_or_invalid_receipts_keep_pending_operation (test_service.ServiceTests.test_incomplete_or_invalid_receipts_keep_pending_operation) ... ok
 test_invalid_cli_addresses_return_structured_errors (test_service.ServiceTests.test_invalid_cli_addresses_return_structured_errors) ... ok
+test_local_write_preconditions_do_not_create_pending_operations (test_service.ServiceTests.test_local_write_preconditions_do_not_create_pending_operations) ... ok
 test_loopback_startup_does_not_depend_on_hostname_resolution (test_service.ServiceTests.test_loopback_startup_does_not_depend_on_hostname_resolution) ... ok
 test_lost_reply_exposes_id_and_blocks_further_sdk_writes (test_service.ServiceTests.test_lost_reply_exposes_id_and_blocks_further_sdk_writes) ... ok
 test_missing_receipt_and_failed_lookup_keep_the_pending_outcome_unknown (test_service.ServiceTests.test_missing_receipt_and_failed_lookup_keep_the_pending_outcome_unknown) ... ok
@@ -59,8 +61,10 @@ test_open_requires_boolean_flags_before_creating_or_leasing_a_workbook (test_ser
 test_receipt_lookup_survives_owned_service_restart (test_service.ServiceTests.test_receipt_lookup_survives_owned_service_restart) ... ok
 test_receipts_with_url_delimiters_are_retrievable (test_service.ServiceTests.test_receipts_with_url_delimiters_are_retrievable) ... ok
 test_rest_sdk_cli_share_managed_path (test_service.ServiceTests.test_rest_sdk_cli_share_managed_path) ... ok
+test_retry_waiting_for_writer_keeps_pending_until_original_commit_is_reconciled (test_service.ServiceTests.test_retry_waiting_for_writer_keeps_pending_until_original_commit_is_reconciled) ... ok
+test_unmatched_error_responses_never_clear_pending_operation (test_service.ServiceTests.test_unmatched_error_responses_never_clear_pending_operation) ... ok
 
 ----------------------------------------------------------------------
-Ran 61 tests in 5.308s
+Ran 65 tests in 5.677s
 
 OK

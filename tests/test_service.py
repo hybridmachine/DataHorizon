@@ -7,12 +7,13 @@ import subprocess
 import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from datahorizon.client import APIError, LocalService, UnknownOutcome
+from datahorizon.client import APIError, Client, LocalService, UnknownOutcome
 from datahorizon.service import Service
 
 
@@ -113,6 +114,78 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(book.read(r2=1,c2=1)["cells"][0]["value"],7)
             book.set(1,1,"8")
             self.assertEqual(book.read(r2=1,c2=1)["cells"][0]["value"],8)
+
+    def test_retry_waiting_for_writer_keeps_pending_until_original_commit_is_reconciled(self):
+        with tempfile.TemporaryDirectory() as temp,Service() as original,Service() as retry:
+            servers=(original,retry)
+            servers_running=[threading.Thread(target=server.serve_forever,kwargs={"poll_interval":0.02},daemon=True) for server in servers]
+            for thread in servers_running: thread.start()
+            release=threading.Event(); writing=threading.Event(); results=[]; failures=[]
+            writer=None
+            try:
+                clients=[Client(f"http://127.0.0.1:{server.server_port}",server.token) for server in servers]
+                first=clients[0].open(Path(temp)/"retry.dhwb",create=True)
+                second=clients[1].open(first.info["path"])
+                retry.workbooks[second.info["id"]].db.execute("PRAGMA busy_timeout=30")
+                def hold_commit(sql):
+                    if sql=="COMMIT":
+                        writing.set(); release.wait(5)
+                original.workbooks[first.info["id"]].db.set_trace_callback(hold_commit)
+                operation="concurrent-retry"
+                cells=[{"row":1,"col":1,"source":"7"}]
+                state=first.state
+                def write():
+                    try: results.append(first.apply("edit",operation_id=operation,cells=cells))
+                    except Exception as error: failures.append(error)
+                writer=threading.Thread(target=write,daemon=True); writer.start()
+                self.assertTrue(writing.wait(5),"Original operation never reached its uncommitted receipt")
+                with self.assertRaises(UnknownOutcome):
+                    second.apply("edit",operation_id=operation,expected_state=state,cells=cells)
+                self.assertEqual(second.pending_operation,operation)
+                with self.assertRaises(UnknownOutcome): second.set(2,1,"wrong")
+                with self.assertRaises(UnknownOutcome): second.outcome(operation)
+                self.assertEqual(second.pending_operation,operation)
+                release.set(); writer.join(5)
+                self.assertFalse(writer.is_alive()); self.assertEqual(failures,[])
+                self.assertEqual(second.outcome(operation),results[0])
+                self.assertIsNone(second.pending_operation)
+                self.assertEqual(second.read(r2=1,c2=1)["cells"][0]["value"],7)
+                second.set(2,1,"9")
+                first.close(); second.close()
+            finally:
+                release.set()
+                if writer is not None: writer.join(5)
+                for server in servers: server.shutdown()
+                for thread in servers_running: thread.join(3)
+
+    def test_unmatched_error_responses_never_clear_pending_operation(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            original=client.request
+            for index,identity in enumerate((None,"different-operation")):
+                book=client.open(Path(temp)/f"generic-error-{index}.dhwb",create=True)
+                body={"code":"STORAGE_ERROR","message":"database is locked","outcome":"rejected"}
+                if identity is not None: body["operation_id"]=identity
+                def reject(path,request=None):
+                    if path.endswith("/operations"): raise APIError(409,body)
+                    return original(path,request)
+                with patch.object(client,"request",side_effect=reject):
+                    with self.assertRaises(UnknownOutcome) as failure: book.set(1,1,"7")
+                self.assertEqual(book.pending_operation,failure.exception.operation_id)
+                with self.assertRaises(UnknownOutcome): book.set(2,1,"wrong")
+
+    def test_local_write_preconditions_do_not_create_pending_operations(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            path=Path(temp)/"preflight.dhwb"
+            with client.open(path,create=True) as book:
+                with patch.object(client,"request",side_effect=AssertionError("Local rejection must not send a request")):
+                    with self.assertRaises(ValueError):
+                        book.apply("edit",cells=[{"row":1,"col":1,"source":"x"*(4*1024*1024)}])
+                    self.assertIsNone(book.pending_operation)
+            with client.open(path,readonly=True) as book:
+                with patch.object(client,"request",side_effect=AssertionError("Read-only mutation must not be sent")):
+                    with self.assertRaises(APIError) as failure: book.set(1,1,"7")
+                    self.assertEqual(failure.exception.body["code"],"READ_ONLY")
+                    self.assertIsNone(book.pending_operation)
 
     def test_receipts_with_url_delimiters_are_retrievable(self):
         with tempfile.TemporaryDirectory() as temp, LocalService() as client:

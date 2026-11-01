@@ -482,6 +482,40 @@ private slots:
         QVERIFY(RestClient::validReceipt(receipt,"operation",true));
         QVERIFY(!RestClient::validReceipt(receipt,"other",true)); receipt.remove("state"); QVERIFY(!RestClient::validReceipt(receipt,"operation",true));
     }
+    void genericMutationRejectionKeepsThePendingOperation() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        options.recoveryDirectory=temp.filePath("recovery");
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("generic-rejection.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.model()->sourceReady(window.model()->index(0,0)),5000);
+        QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost,0)); int mutations=0;
+        connect(&server,&QTcpServer::newConnection,this,[&]{
+            auto *socket=server.nextPendingConnection(); connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
+            connect(socket,&QTcpSocket::readyRead,socket,[&,socket]{
+                const auto request=socket->property("request").toByteArray()+socket->readAll(); socket->setProperty("request",request);
+                if(!request.contains("\r\n\r\n") || socket->property("handled").toBool()) return;
+                socket->setProperty("handled",true);
+                const bool mutation=request.startsWith("POST ") && request.contains("/operations HTTP/");
+                if(mutation) ++mutations;
+                const QByteArray body=mutation
+                    ? "{\"code\":\"STORAGE_ERROR\",\"message\":\"database is locked\",\"outcome\":\"rejected\"}"
+                    : "{\"code\":\"OUTCOME_UNKNOWN\",\"message\":\"No confirmed receipt\",\"outcome\":\"unknown\"}";
+                socket->write("HTTP/1.1 409 Conflict\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(body.size())+"\r\n\r\n"+body);
+                socket->disconnectFromHost();
+            });
+        });
+        window.findChild<RestClient *>()->configure("http://127.0.0.1:"+QString::number(server.serverPort()),"token");
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        const QJsonObject operation{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}}}}};
+        window.submit(operation); QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,5000); QVERIFY(!changed[0][0].toBool());
+        QVERIFY(window.findChild<QLabel *>("storageStatus")->text().contains("Outcome unknown"));
+        QVERIFY(!(window.model()->flags(window.model()->index(0,0))&Qt::ItemIsEditable));
+        window.submit(operation); QCOMPARE(mutations,1);
+        QDir recovery(options.recoveryDirectory); QCOMPARE(recovery.entryList({"operation-*.json"},QDir::Files).size(),1);
+        answerNextDialog(QMessageBox::Yes); QVERIFY(window.close());
+    }
     void windowsRecoveryPathsAreRecognized() {
         QVERIFY(MainWindow::isRecoveryPath("C:\\Users\\test\\DataHorizon\\recovery\\untitled.dhwb"));
         QVERIFY(MainWindow::isRecoveryPath("/tmp/recovery/untitled.dhwb"));

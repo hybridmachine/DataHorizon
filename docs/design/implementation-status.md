@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 61 Python tests and 33 Qt contract cases.
+The review regression suite includes 65 Python tests and 34 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -225,3 +225,16 @@ and sorted-list navigation follows the originally intended next source row.
 An independent regression also reproduced closing over an active in-cell draft
 without a discard prompt. Open and Close now capture those drafts and preserve
 them visibly when discard is declined. The regression suite covers both paths.
+
+Cycle 9 posted no new inline issues but identified a critical retry/admission
+race. A real two-service regression pauses the original transaction before
+commit, makes an identical retry time out on the writer lock, and verifies that
+the SDK stays pending until the original commit is reconciled. Unconfirmed
+admission failures now return the operation ID with an unknown outcome and
+release any acquired transaction. Desktop and SDK mutation errors need a
+matching terminal operation ID before unlocking writes; a generic rejection is
+insufficient. Local SDK read-only and size checks fail before transmission
+without creating a pending write. Failure injection covers admission cleanup;
+a Qt socket fixture checks generic-error recovery records and blocked editing.
+This completes the two further authorized cycles. Final fixes are validated
+without requesting another review.

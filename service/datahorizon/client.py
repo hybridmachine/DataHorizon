@@ -71,9 +71,13 @@ class WorkbookClient:
     def apply(self, action, sheet="Sheet1", operation_id=None, **arguments):
         if self.pending_operation:
             raise UnknownOutcome(self.pending_operation)
+        if self.info.get("readonly"):
+            raise APIError(403,{"code":"READ_ONLY","message":"Workbook is open read-only; request was not sent","outcome":"rejected"})
         request = {"action": action, "sheet": sheet, "operation_id": operation_id or str(uuid.uuid4()),
                    "expected_state": self.state, **arguments}
-        json.dumps(request,allow_nan=False)  # Invalid local input has no unknown network outcome.
+        # Invalid local input has no unknown network outcome.
+        if len(json.dumps(request,allow_nan=False).encode())>4*1024*1024:
+            raise ValueError("Request exceeds the 4 MiB limit; request was not sent")
         self.pending_operation=request["operation_id"]
         try:
             response = self.client.request(self.base + "/operations", request)
@@ -82,7 +86,7 @@ class WorkbookClient:
             if (error.body.get("outcome") in ("rejected","rolled_back")
                     and isinstance(error.body.get("code"), str) and error.body["code"]
                     and isinstance(error.body.get("message"), str)
-                    and error.body.get("operation_id",request["operation_id"]) == request["operation_id"]):
+                    and error.body.get("operation_id") == request["operation_id"]):
                 self.pending_operation=None
                 raise
             raise UnknownOutcome(request["operation_id"],str(error)) from error

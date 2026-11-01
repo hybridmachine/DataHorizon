@@ -411,25 +411,35 @@ class Workbook:
         require(isinstance(operation, str) and len(operation) <= 100 and bool(operation), "OPERATION_ID", "An operation_id is required")
         fingerprint = hashlib.sha256(encoded(request).encode()).hexdigest()
         with self.lock:
-            receipt = self.recorded_operation(operation, fingerprint)
-            if receipt is not None:
-                return receipt
-            require(not self.readonly, "READ_ONLY", "Workbook is open read-only", 403)
-            self.refresh()
-            self.changes, self.pending = {}, {}
-            self.change_bytes = 0
-            self.deadline = time.monotonic() + 5
-            self.db.execute("BEGIN IMMEDIATE")
-            # A different service may have committed this ID while we waited
-            # for the writer lock. Replay outside new-operation rollback handling.
             try:
                 receipt = self.recorded_operation(operation, fingerprint)
-            except Exception:
-                self.db.execute("ROLLBACK")
-                raise
-            if receipt is not None:
-                self.db.execute("ROLLBACK")
-                return receipt
+                if receipt is not None:
+                    return receipt
+                require(not self.readonly, "READ_ONLY", "Workbook is open read-only", 403)
+                self.refresh()
+                self.changes, self.pending = {}, {}
+                self.change_bytes = 0
+                self.deadline = time.monotonic() + 5
+                self.db.execute("BEGIN IMMEDIATE")
+                # A different service may have committed this ID while we waited
+                # for the writer lock. Replay outside new-operation rollback handling.
+                receipt = self.recorded_operation(operation, fingerprint)
+                if receipt is not None:
+                    self.db.execute("ROLLBACK")
+                    return receipt
+            except Exception as error:
+                if self.db.in_transaction:
+                    try: self.db.execute("ROLLBACK")
+                    except sqlite3.Error: pass
+                if isinstance(error, EngineError):
+                    if error.body.get("operation_id") != operation:
+                        # A request refusal is not proof that another request
+                        # using this ID cannot still commit.
+                        error.body.update(outcome="unknown", operation_id=operation)
+                    raise
+                raise EngineError("OUTCOME_UNKNOWN", f"Operation admission was not confirmed: {error}. Reconcile the operation ID",
+                                  409 if isinstance(error,(OSError,sqlite3.Error)) else 500,
+                                  "unknown",operation_id=operation) from error
             in_transaction = True
             try:
                 self.db.execute("SAVEPOINT operation_changes")

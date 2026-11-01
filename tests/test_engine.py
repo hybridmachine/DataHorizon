@@ -147,6 +147,28 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(raised.exception.body["code"], "OPERATION_ID_REUSED")
         self.assertEqual(self.cells()[(1, 1)]["value"], 7)
 
+    def test_unconfirmed_admission_releases_its_transaction_and_keeps_the_id(self):
+        recorded=self.book.recorded_operation
+        def fail_inside_admission(operation,fingerprint):
+            if self.book.db.in_transaction:
+                raise ValueError("Injected failure after acquiring the writer lock")
+            return recorded(operation,fingerprint)
+        self.book.recorded_operation=fail_inside_admission
+        try:
+            with self.assertRaises(EngineError) as failure:
+                self.apply(operation_id="unconfirmed-admission",cells=[{"row":1,"col":1,"source":"7"}])
+        finally:
+            self.book.recorded_operation=recorded
+        self.assertEqual(failure.exception.body["outcome"],"unknown")
+        self.assertEqual(failure.exception.body["operation_id"],"unconfirmed-admission")
+        self.assertFalse(self.book.db.in_transaction)
+        self.assertEqual(self.cells(),{})
+        with self.assertRaises(EngineError) as missing:
+            self.book.operation("unconfirmed-admission")
+        self.assertEqual(missing.exception.body["outcome"],"unknown")
+        self.edit((2,1,"9"))
+        self.assertEqual(self.cells()[(2,1)]["value"],9)
+
     def test_direct_edit_stale_write_and_history_gap(self):
         self.edit((1, 1, "7"), (1, 2, "=A1*2"))
         state = self.book.state()
@@ -488,7 +510,7 @@ class EngineTests(unittest.TestCase):
                     with self.assertRaises(EngineError) as failure:
                         retry.mutate(retry_request)
                     self.assertEqual(failure.exception.body["code"],"OPERATION_ID_REUSED" if outcome=="reused" else "INVALID_INPUT")
-                    self.assertEqual(failure.exception.body["outcome"],"rejected" if outcome=="reused" else "rolled_back")
+                    self.assertEqual(failure.exception.body["outcome"],"unknown" if outcome=="reused" else "rolled_back")
                 self.assertFalse(retry.db.in_transaction)
                 self.assertEqual(retry.operation(request["operation_id"]),recorded[0])
 
@@ -594,7 +616,7 @@ class EngineTests(unittest.TestCase):
                 if sql.startswith("INSERT INTO operations") and not attempts:
                     attempts.append("started")
                     try: attempts.append(contender.mutate(other)["outcome"])
-                    except sqlite3.OperationalError: attempts.append("locked")
+                    except EngineError as error: attempts.append(error.body)
             self.book.db.set_trace_callback(race)
             try:
                 with self.assertRaises(EngineError) as failure:
@@ -602,7 +624,11 @@ class EngineTests(unittest.TestCase):
                                       "cells":[{"row":1,"col":1,"source":"invalid","kind":"number"}]})
             finally:
                 self.book.db.set_trace_callback(None)
-            self.assertEqual(attempts,["started","locked"])
+            self.assertEqual(len(attempts),2)
+            self.assertEqual(attempts[0],"started")
+            self.assertEqual(attempts[1]["outcome"],"unknown")
+            self.assertEqual(attempts[1]["operation_id"],operation)
+            self.assertIn("locked",attempts[1]["message"])
             self.assertEqual(failure.exception.body,self.book.operation(operation))
             self.assertEqual(failure.exception.body["outcome"],"rolled_back")
             self.assertEqual(self.cells(),{})

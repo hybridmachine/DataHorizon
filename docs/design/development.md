@@ -142,9 +142,15 @@ numbers are rejected with a structured error.
 
 The SDK raises `UnknownOutcome` with an `operation_id` if acknowledgement is
 lost, and blocks subsequent writes until `book.outcome(id)` reconciles it.
-Missing receipts remain unknown; no automatic mutation retry occurs. Confirmed
-transaction failures retain the writer lock while rolling back data changes and
-committing their failure receipt. An unconfirmed receipt remains unknown and
+Missing receipts remain unknown; no automatic mutation retry occurs.
+Retries that fail before writer-lock admission also remain unknown, since the
+original request can still commit. A transmitted mutation needs a terminal
+response carrying its matching operation ID before desktop/SDK writes resume;
+generic HTTP rejection alone cannot clear it. The SDK rejects read-only writes
+and requests over 4 MiB locally before creating a pending operation.
+
+Confirmed transaction failures retain the writer lock while rolling back data
+changes and committing their failure receipt. An unconfirmed receipt remains unknown and
 requires lookup before retry. Workbook clients
 can be context managers or closed explicitly to release their service handle;
 other clients' handles remain valid. The service caps open engines and handles.

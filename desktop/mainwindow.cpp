@@ -472,7 +472,7 @@ void MainWindow::submit(QJsonObject operation) {
             const auto outcome = result["outcome"].toString();
             if (!invalidAcknowledgement && (outcome == "rolled_back" || outcome == "rejected")
                 && result["code"].isString() && !result["code"].toString().isEmpty() && result["message"].isString()
-                && (!result.contains("operation_id") || result["operation_id"].toString() == m_pendingId)) {
+                && result["operation_id"].toString() == m_pendingId) {
                 m_saveMode = 0;
                 clearRecoveryRecord(); m_pendingId.clear(); m_unknown=false;
                 const bool restoreDraft=m_draftSubmissionId==operationId && !m_recoveredDraft.isEmpty();

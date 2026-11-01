@@ -43,7 +43,15 @@ Recognized transaction failures roll back operation changes to a savepoint and
 retain the writer lock until their failure receipt commits. Receipt-storage or
 unconfirmed-rollback failures return an unknown outcome requiring reconciliation.
 Missing receipts and failed receipt lookups preserve the unknown outcome and
-operation ID. Replacing a GUI transport session invalidates its earlier replies;
+operation ID.
+For transmitted mutations, only a terminal response with the matching operation
+ID can clear a client's pending write. Generic request rejections and errors
+before writer-lock admission leave the operation unknown: another request with
+that ID may still commit. Admission failures retain the ID and release any
+acquired transaction. A reused ID with different content requires receipt
+lookup for the original operation. Local read-only and size checks reject before
+transmission without creating a pending write.
+Replacing a GUI transport session invalidates its earlier replies;
 pending mutations are reconciled against the reopened service. Reviewed bulk
 operations retain their original state and sheet preconditions through dialogs.
 Workbook, sheet and state are captured before a confirmation or input dialog,
