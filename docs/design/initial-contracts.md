@@ -13,6 +13,9 @@ waits for acknowledgement; Save a copy uses SQLite backup, never a live-file
 copy. Untitled workbooks live in the user's application-data recovery directory
 until explicitly removed. First Save creates a permanent snapshot and continues
 there; the recovery source remains available. Closing waits for pending writes.
+An unknown outcome permits a warned exit only after preserving the workbook
+path and operation ID in a client recovery record. Restart/reopen reconciles
+receipts before any retry; a missing receipt remains unknown.
 
 Each mutation requires a client-generated operation ID (UUID recommended, up to
 100 characters) and an expected state token.

@@ -88,6 +88,8 @@ def typed(item):
     value = source
     if kind == "null":
         value = None
+    elif kind == "auto" and source == "":
+        kind, value = "blank", None
     elif kind == "text":
         kind = "text"
     elif kind == "auto" and source.startswith("'"):
@@ -120,6 +122,18 @@ def display(value, style):
     if isinstance(value, (float, int)):
         return f"{value:.2f}" if style.get("format") == "fixed2" else format(value, ".15g")
     return str(value)
+
+
+def interchange_text(value):
+    if type(value) is float:
+        return str(int(value)) if value.is_integer() and abs(value) <= 9_007_199_254_740_991 else repr(value)
+    return display(value, {})
+
+
+def input_signature(item):
+    if item is None or (item["kind"] == "auto" and item["source"] == ""):
+        return None
+    return item["kind"], item["source"]
 
 
 def schema_signature(db):
@@ -294,9 +308,9 @@ class Workbook:
         else:
             self.db.execute("INSERT INTO cells VALUES(?,?,?,?,?,?) ON CONFLICT(sheet_id,row,col) DO UPDATE SET source=excluded.source,kind=excluded.kind,style=excluded.style",
                             (*key, item["source"], item["kind"], encoded(item["style"])))
-        if (before or {}).get("source") != (item or {}).get("source") or (before or {}).get("kind") != (item or {}).get("kind"):
+        if key in self.pending or input_signature(before) != input_signature(item):
             original = self.pending.get(key, {}).get("before", before)
-            if original == item:
+            if input_signature(original) == input_signature(item):
                 self.pending.pop(key, None)
             else:
                 self.pending[key] = {"sheet": sheet, "row": row, "col": col, "before": original, "after": item}
@@ -312,13 +326,15 @@ class Workbook:
             if edit.get("clear"):
                 item = None
             else:
+                if edit.get("clear_input"):
+                    item.update(source="", kind="auto")
                 if "source" in edit:
                     item.update(source=edit["source"], kind=edit.get("kind", "auto"))
                 if "style" in edit:
                     item["style"] = validate_style(edit["style"] if edit.get("replace_style") else {**item["style"], **edit["style"]})
                 # Text format affects subsequent entry, never retypes an existing
                 # number/formula merely because its presentation changed.
-                if "source" in edit and item["kind"] == "auto" and item["style"].get("format") == "text":
+                if "source" in edit and item["source"] != "" and item["kind"] == "auto" and item["style"].get("format") == "text":
                     item["kind"] = "text"
                 elif "source" in edit and item["kind"] == "auto" and isinstance(item["source"], str) and item["source"].startswith("="):
                     item["kind"] = "formula"
@@ -400,9 +416,22 @@ class Workbook:
                             require(isinstance(value, dict), "INVALID_ARGUMENT", "Paste cells must be objects")
                             row, col = start_row + dr, start_col + dc
                             edit = {"row": row, "col": col}
+                            if not value or value.get("kind") == "blank":
+                                if mode == "all":
+                                    if not value:
+                                        edits.append({**edit, "clear": True})
+                                        continue
+                                    edit["clear_input"] = True
+                                elif mode == "values":
+                                    edits.append({**edit, "clear_input": True})
+                                    continue
                             if mode != "formats":
                                 source = value.get("source", "")
                                 if mode == "values":
+                                    require("error" not in value and value.get("calculation") not in ("error", "pending"),
+                                            "CALCULATION_ERROR", "Values-only paste cannot discard a formula error or pending result")
+                                    require(value.get("kind") != "formula" or "value" in value,
+                                            "CALCULATION_ERROR", "Formula clipboard cells require a calculated value")
                                     stored = value.get("value", source)
                                     source = "" if stored is None else ("TRUE" if stored is True else "FALSE" if stored is False else str(stored))
                                     input_kind = "null" if stored is None else "boolean" if type(stored) is bool else "number" if isinstance(stored, (int, float)) else "text"
@@ -410,7 +439,8 @@ class Workbook:
                                     input_kind = value.get("input_kind", "text")
                                     if input_kind in ("auto", "formula") and source.startswith("="):
                                         source = translate(source, start_row-request.get("origin_row", start_row), start_col-request.get("origin_col", start_col))
-                                edit.update(source=source, kind=input_kind)
+                                if not edit.get("clear_input"):
+                                    edit.update(source=source, kind=input_kind)
                             if mode != "values":
                                 edit["style"] = value.get("style", {})
                                 edit["replace_style"] = True
@@ -436,6 +466,7 @@ class Workbook:
                                 item["source"] = translate(item["source"], row-r1, col-c1)
                             self.put(sheet, row, col, item)
                 elif kind == "move":
+                    require(request.get("mode", "all") == "all", "UNSUPPORTED_PASTE_MODE", "Cut supports full paste only; use Copy for special paste")
                     r1, c1, r2, c2 = rectangle(request)
                     require(request.get("cut_state") == self.state(), "STALE_CUT", "Cut source changed. Copy or cut the range again", 409)
                     require(self.db.execute("SELECT 1 FROM cells WHERE source LIKE '=%' AND kind IN ('auto','formula') LIMIT 1").fetchone() is None,
@@ -697,7 +728,7 @@ class Workbook:
                 for row in range(r1, r2+1):
                     # Values export uses canonical text, independent of number format.
                     row_output = io.StringIO(newline="")
-                    csv.writer(row_output).writerow([display(calc.cell(sheet, row, col), {}) for col in range(c1, c2+1)])
+                    csv.writer(row_output).writerow([interchange_text(calc.cell(sheet, row, col)) for col in range(c1, c2+1)])
                     text = row_output.getvalue()
                     output_bytes += len(text.encode())
                     require(output_bytes <= 4*1024*1024, "LIMIT", "CSV response exceeds 4 MiB; export a smaller selection")

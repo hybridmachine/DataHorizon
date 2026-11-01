@@ -1,4 +1,5 @@
 import json
+from http.client import IncompleteRead
 import os
 from pathlib import Path
 import subprocess
@@ -83,6 +84,64 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(book.read(r2=1,c2=1)["cells"][0]["value"],7)
             book.set(1,1,"8")
             self.assertEqual(book.read(r2=1,c2=1)["cells"][0]["value"],8)
+
+    def test_receipts_with_url_delimiters_are_retrievable(self):
+        with tempfile.TemporaryDirectory() as temp, LocalService() as client:
+            with client.open(Path(temp)/"ids.dhwb",create=True) as book:
+                for operation_id in ("batch/1?name=é#%", "literal%2Fsegment"):
+                    response=book.apply("edit",operation_id=operation_id,cells=[{"row":1,"col":1,"source":operation_id}])
+                    self.assertEqual(book.outcome(operation_id),response)
+
+    def test_incomplete_or_invalid_receipts_keep_pending_operation(self):
+        with tempfile.TemporaryDirectory() as temp, LocalService() as client:
+            book=client.open(Path(temp)/"invalid-receipts.dhwb",create=True)
+            original=client.request
+            for invalid in ("truncated",None,[],{},"wrong_id","missing_state"):
+                with self.subTest(reply=invalid):
+                    def break_receipt(path,body=None):
+                        result=original(path,body)
+                        if not path.endswith("/operations"):
+                            return result
+                        if invalid == "truncated":
+                            raise IncompleteRead(b'{"operation_id":',100)
+                        if invalid == "wrong_id":
+                            return {**result,"operation_id":"wrong"}
+                        if invalid == "missing_state":
+                            result.pop("state")
+                            return result
+                        return invalid
+                    client.request=break_receipt
+                    with self.assertRaises(UnknownOutcome) as unknown:
+                        book.set(1,1,"7")
+                    self.assertEqual(book.pending_operation,unknown.exception.operation_id)
+                    with self.assertRaises(UnknownOutcome):
+                        book.set(1,1,"8")
+                    client.request=original
+                    self.assertEqual(book.outcome(unknown.exception.operation_id)["outcome"],"committed")
+            book.close()
+
+    def test_cli_apply_accepts_complete_operation_with_sheet(self):
+        with tempfile.TemporaryDirectory() as temp, LocalService() as client:
+            path=Path(temp)/"apply.dhwb"
+            with client.open(path,create=True) as book:
+                book.apply("sheet_add",name="Other")
+                request={"action":"edit","sheet":"Other","operation_id":"cli/apply","expected_state":book.state,
+                         "cells":[{"row":1,"col":1,"source":"7"}]}
+                result=subprocess.run([sys.executable,"-m","datahorizon.cli","--url",client.url,str(path),"apply"],
+                                      input=json.dumps(request),env={**os.environ,"DATAHORIZON_TOKEN":client.token},capture_output=True,text=True,timeout=10)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(book.read(sheet="Other",r2=1,c2=1)["cells"][0]["value"],7)
+
+    def test_receipt_lookup_survives_owned_service_restart(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"restart.dhwb"
+            with LocalService() as client:
+                book=client.open(path,create=True)
+                receipt=book.set(1,1,"7")
+            with LocalService() as client:
+                with client.open(path) as reopened:
+                    self.assertEqual(reopened.outcome(receipt["operation_id"]),receipt)
+                    self.assertEqual(reopened.read(r2=1,c2=1)["cells"][0]["value"],7)
 
 
 if __name__ == "__main__":

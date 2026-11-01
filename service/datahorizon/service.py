@@ -12,7 +12,7 @@ import sqlite3
 import sys
 import threading
 import traceback
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 import uuid
 
 from .engine import EngineError, MAX_CELLS, Workbook, encoded, require
@@ -188,7 +188,7 @@ class Service(ThreadingHTTPServer):
         if method == "POST" and suffix == ["operations"]:
             return book.mutate(body)
         if method == "GET" and len(suffix) == 2 and suffix[0] == "operations":
-            return book.operation(suffix[1])
+            return book.operation(unquote(suffix[1]))
         if method == "POST" and suffix == ["snapshot"]:
             require(isinstance(body.get("path"), str), "INVALID_PATH", "Snapshot path is required")
             return book.snapshot(body["path"])

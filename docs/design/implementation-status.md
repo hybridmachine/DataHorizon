@@ -29,13 +29,13 @@ formula source; values export contains 20.5. Formatting renders 20.50.
 | Increment | Evidence and scope | Remaining before full milestone closure |
 | --- | --- | --- |
 | M0 | [Initial contracts](initial-contracts.md), [compatibility](compatibility-v0.md), [native schema](native-format-v1.md), keyboard/state rules and numeric budgets recorded | Resolve deferred cases at their named milestones; no claim that historical PDFs have been regenerated |
-| M1 | Qt 6.12/C++17 builds locally; stdlib SQLite/HTTP and spawned brokered workers exercised; sparse/dense/long-text/large-disk measurements recorded | Comparative production framework/capture experiments, formula chains, GUI input/scroll measurements and Windows/Linux results |
-| M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle | All-platform packaging evidence; restart/unknown-failure recovery and broader failure injection; service lifecycle hardening |
+| M1 | Qt 6.12/C++17 builds locally; stdlib SQLite/HTTP and spawned brokered workers exercised; sparse/dense/long-text/large-disk measurements recorded | Comparative production framework/capture experiments, formula chains, GUI input/scroll measurements and Windows/Linux performance measurements |
+| M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle; restart/reopen and warned unknown-outcome recovery | Broader failure injection, clean-machine packaging evidence and service lifecycle hardening |
 | M3 | Typed entry, A1 limits, SUM/IF/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
 | M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations | Row/column reference transforms, unrestricted cut/rename/duplicate/delete, hook-aware structure events, wrap/borders/freeze/hide, dimensions/view persistence and platform conventions |
 | M5 | Explicit full-scope projected lists, stable source row edits, multikey sort/filter, scoped source/display find/replace, text CSV preview and snapshot export | Persistent record identities/list definitions, filtered range semantics, column typing/date/encoding controls, progress/cancellation and large jobs |
 | M6 | Native snapshots/recovery, read-only opens, conservative external refresh and bounded CSV | XLSX/ODS import/export fixtures and conversion reports, comprehensive disk/permission/crash recovery, bundled runtime, follow-up execution semantics |
-| M7 | Automated local macOS tests and visual screenshot; local install smoke; CI matrix configured | CI has not run here. Windows/Linux native behavior, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
+| M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
 | M8 | Shared engine and REST boundaries retained; unsupported APIs reject explicitly | Relational schema/tooling, proven managed SQL capture, workbook code/macros/functions/packages, remote TLS/mTLS/password access and additional wireframes |
 
 Later-stage facilities in this preview are bounded development slices. They do
@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The local suite passes 24 Python tests and four Qt contract cases.
+The review regression suite includes 35 Python tests and 12 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -88,13 +88,15 @@ apply to the measured workload, not all possible active workbook combinations.
 application, managed edit and calculation using an ephemeral workbook. Python
 remains separately installed. This is an install smoke, not clean-machine or
 distribution qualification. CI describes Windows/macOS/Linux build/test/install
-jobs but has not been pushed or run from this workspace.
+jobs. The first hosted green matrix is recorded in
+[PR #1](https://github.com/hybridmachine/DataHorizon/pull/1), following commit
+08d1d81's absolute Qt deployment prefix correction.
 The installed smoke uses the bundled native platform plugin (Cocoa here);
 Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
-Finish the remaining M1 measurements and run the platform matrix. Resolve the
+Finish the remaining M1 measurements and extend platform acceptance. Resolve the
 M4 structural reference/identity contracts with destructive-operation fixtures
 before enabling those controls. Then finish list/CSV typing and explicit jobs,
 followed by independent XLSX/ODS fidelity stages and failure recovery. Full
@@ -107,3 +109,17 @@ is silently run outside hooks. Ordinary external SQLite cell changes are tested
 and intentionally supported; reserved schema/metadata changes are rejected on
 managed refresh. Proving capture for triggers/cascades/upsert/replace is still
 required before the first managed SQL mutation can be exposed.
+
+## Review corrections — November 1, 2026
+
+All 16 initial review findings have targeted fixes and regression coverage:
+CSV previews capture and validate their original target; service crashes permit
+restart/reconciliation or warned exit with a durable client record; editors
+preserve long sources and drafts; Windows recovery paths normalize separators;
+Cut rejects special paste modes; malformed/truncated receipts retain operation
+IDs and block further writes; CLI apply accepts the JSON sheet; receipt paths
+encode/decode opaque operation IDs; style-only changes preserve blank inputs
+and coalesce events by input; clipboard blanks and formula errors retain their
+semantics; CSV numbers round-trip; and blank comparisons remain cell-local.
+Late mutation/lookup callbacks are associated with their captured operation ID,
+and metadata refreshes cannot overwrite a reopened workbook's handle.

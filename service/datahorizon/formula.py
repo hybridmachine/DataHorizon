@@ -276,6 +276,12 @@ class Calculator:
             op = node[1]
             left, right = self.evaluate(node[2], sheet), self.evaluate(node[3], sheet)
             if op in ("=", "<>", "<", ">", "<=", ">="):
+                if left is None and (right is None or isinstance(right, (int, float))):
+                    left = 0
+                    if right is None:
+                        right = 0
+                elif right is None and isinstance(left, (int, float)):
+                    right = 0
                 if type(left) != type(right) and not (
                         isinstance(left, (float, int)) and isinstance(right, (float, int))):
                     raise FormulaError("#VALUE!", "Comparison types differ")

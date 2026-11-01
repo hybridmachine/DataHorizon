@@ -1,9 +1,6 @@
-Test project /Users/btabone/source/DataHorizon/build
-    Start 1: desktop
-1/2 Test #1: desktop ..........................   Passed    2.25 sec
-    Start 2: service
-2/2 Test #2: service ..........................   Passed    4.06 sec
+November 1, 2026 | macOS local review regressions
+ctest --test-dir build --output-on-failure
 
-100% tests passed out of 2
-
-Total Test time (real) =   6.31 sec
+desktop: passed (12 Qt contract cases plus initialization/cleanup)
+service: passed (35 Python tests)
+Both suites passed; total CTest time: 9.08 seconds.

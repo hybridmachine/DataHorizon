@@ -1,8 +1,13 @@
+test_absent_clipboard_cells_clear_inputs_without_creating_text (test_engine.EngineTests.test_absent_clipboard_cells_clear_inputs_without_creating_text) ... ok
 test_atomic_validation_and_undo_redo (test_engine.EngineTests.test_atomic_validation_and_undo_redo) ... ok
+test_blank_comparisons_never_fail_the_viewport (test_engine.EngineTests.test_blank_comparisons_never_fail_the_viewport) ... ok
 test_bounded_reads_and_operations (test_engine.EngineTests.test_bounded_reads_and_operations) ... ok
+test_coalesced_input_with_style_change_does_not_dispatch_handler (test_engine.EngineTests.test_coalesced_input_with_style_change_does_not_dispatch_handler) ... ok
 test_cross_sheet_absolute_and_text_references (test_engine.EngineTests.test_cross_sheet_absolute_and_text_references) ... ok
+test_csv_numbers_round_trip_without_display_rounding (test_engine.EngineTests.test_csv_numbers_round_trip_without_display_rounding) ... ok
 test_csv_snapshot_and_formula_error_block (test_engine.EngineTests.test_csv_snapshot_and_formula_error_block) ... ok
 test_cut_overlap_series_and_failed_destination (test_engine.EngineTests.test_cut_overlap_series_and_failed_destination) ... ok
+test_cut_rejects_special_paste_before_mutating (test_engine.EngineTests.test_cut_rejects_special_paste_before_mutating) ... ok
 test_direct_edit_stale_write_and_history_gap (test_engine.EngineTests.test_direct_edit_stale_write_and_history_gap) ... ok
 test_failed_receipt_reconciles_without_reexecuting_code (test_engine.EngineTests.test_failed_receipt_reconciles_without_reexecuting_code) ... ok
 test_find_replace_scope_source_and_rollback (test_engine.EngineTests.test_find_replace_scope_source_and_rollback) ... ok
@@ -15,15 +20,21 @@ test_missing_and_timeout_hook_fail_closed (test_engine.EngineTests.test_missing_
 test_paste_relative_references_values_and_atomicity (test_engine.EngineTests.test_paste_relative_references_values_and_atomicity) ... ok
 test_readonly_schema_and_backup (test_engine.EngineTests.test_readonly_schema_and_backup) ... ok
 test_sheet_duplicate_order_and_coalesced_noop (test_engine.EngineTests.test_sheet_duplicate_order_and_coalesced_noop) ... ok
+test_styled_blank_and_explicit_empty_text_remain_distinct (test_engine.EngineTests.test_styled_blank_and_explicit_empty_text_remain_distinct) ... ok
 test_supplies_and_reopen (test_engine.EngineTests.test_supplies_and_reopen) ... ok
 test_typed_blank_null_empty_text_and_format (test_engine.EngineTests.test_typed_blank_null_empty_text_and_format) ... ok
 test_unsupported_sql_and_trigger_schema_fail_closed (test_engine.EngineTests.test_unsupported_sql_and_trigger_schema_fail_closed) ... ok
+test_values_paste_rejects_formula_errors_atomically (test_engine.EngineTests.test_values_paste_rejects_formula_errors_atomically) ... ok
+test_cli_apply_accepts_complete_operation_with_sheet (test_service.ServiceTests.test_cli_apply_accepts_complete_operation_with_sheet) ... ok
 test_client_handles_release_without_closing_other_clients (test_service.ServiceTests.test_client_handles_release_without_closing_other_clients) ... ok
 test_headless_cli_file_mode (test_service.ServiceTests.test_headless_cli_file_mode) ... ok
+test_incomplete_or_invalid_receipts_keep_pending_operation (test_service.ServiceTests.test_incomplete_or_invalid_receipts_keep_pending_operation) ... ok
 test_lost_reply_exposes_id_and_blocks_further_sdk_writes (test_service.ServiceTests.test_lost_reply_exposes_id_and_blocks_further_sdk_writes) ... ok
+test_receipt_lookup_survives_owned_service_restart (test_service.ServiceTests.test_receipt_lookup_survives_owned_service_restart) ... ok
+test_receipts_with_url_delimiters_are_retrievable (test_service.ServiceTests.test_receipts_with_url_delimiters_are_retrievable) ... ok
 test_rest_sdk_cli_share_managed_path (test_service.ServiceTests.test_rest_sdk_cli_share_managed_path) ... ok
 
 ----------------------------------------------------------------------
-Ran 24 tests in 3.910s
+Ran 35 tests in 4.470s
 
 OK

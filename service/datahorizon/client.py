@@ -1,6 +1,7 @@
 """Thin Python REST SDK. It never opens a workbook database."""
 
 import json
+from http.client import HTTPException
 from collections import deque
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import sys
 import threading
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from urllib.parse import quote
 import uuid
 
 
@@ -42,6 +44,8 @@ class Client:
                 body = json.load(error)
             finally:
                 error.close()
+            if not isinstance(body, dict):
+                raise ValueError("Invalid JSON error response")
             raise APIError(error.code, body) from error
 
     def open(self, path, create=False, readonly=False):
@@ -73,12 +77,16 @@ class WorkbookClient:
         self.pending_operation=request["operation_id"]
         try:
             response = self.client.request(self.base + "/operations", request)
+            self.validate_receipt(response, request["operation_id"], committed=True)
         except APIError as error:
-            if error.body.get("outcome") in ("rejected","rolled_back"):
+            if (error.body.get("outcome") in ("rejected","rolled_back")
+                    and isinstance(error.body.get("code"), str) and error.body["code"]
+                    and isinstance(error.body.get("message"), str)
+                    and error.body.get("operation_id",request["operation_id"]) == request["operation_id"]):
                 self.pending_operation=None
                 raise
             raise UnknownOutcome(request["operation_id"],str(error)) from error
-        except (OSError,ValueError) as error:
+        except (OSError, ValueError, HTTPException) as error:
             raise UnknownOutcome(request["operation_id"],str(error)) from error
         self.pending_operation=None
         self.state = response["state"]
@@ -88,11 +96,25 @@ class WorkbookClient:
         return self.apply("edit", sheet, cells=[{"row": row, "col": col, "source": str(source), "kind": kind}])
 
     def outcome(self, operation_id):
-        receipt=self.client.request(self.base + "/operations/" + operation_id)
+        try:
+            receipt=self.client.request(self.base + "/operations/" + quote(operation_id, safe=""))
+            self.validate_receipt(receipt, operation_id)
+        except (OSError, ValueError, HTTPException) as error:
+            raise UnknownOutcome(operation_id, str(error)) from error
         if operation_id==self.pending_operation and receipt.get("outcome") in ("committed","rejected","rolled_back"):
             self.pending_operation=None
             self.refresh()
         return receipt
+
+    @staticmethod
+    def validate_receipt(receipt, operation_id, committed=False):
+        if not isinstance(receipt, dict) or receipt.get("operation_id") != operation_id:
+            raise ValueError("Invalid operation receipt or mismatched operation ID")
+        if receipt.get("outcome") == "committed":
+            if not isinstance(receipt.get("state"), str) or not receipt["state"] or type(receipt.get("changed_cells")) is not int or receipt["changed_cells"] < 0:
+                raise ValueError("Invalid committed operation receipt")
+        elif committed or receipt.get("outcome") not in ("rejected", "rolled_back") or not isinstance(receipt.get("code"), str) or not receipt["code"] or not isinstance(receipt.get("message"), str):
+            raise ValueError("Invalid operation outcome")
 
     def close(self):
         if self.pending_operation:

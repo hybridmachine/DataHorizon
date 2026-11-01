@@ -4,6 +4,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QTimer>
+#include <cmath>
 
 RestClient::RestClient(QObject *parent) : QObject(parent), m_network(this) {}
 
@@ -19,10 +20,25 @@ void RestClient::request(const QString &path, const QJsonObject &body, Callback 
     request.setTransferTimeout(15000);
     auto *reply = post ? m_network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact)) : m_network.get(request);
     connect(reply, &QNetworkReply::finished, this, [reply, callback = std::move(callback)] {
-        auto object = QJsonDocument::fromJson(reply->readAll()).object();
-        const auto error = reply->error() == QNetworkReply::NoError ? QString{} :
+        QJsonParseError parseError;
+        const auto document = QJsonDocument::fromJson(reply->readAll(), &parseError);
+        auto object = document.object();
+        auto error = reply->error() == QNetworkReply::NoError ? QString{} :
             object.value("message").toString(reply->errorString());
+        if (error.isEmpty() && (parseError.error != QJsonParseError::NoError || !document.isObject()))
+            error = "Invalid JSON acknowledgement: expected an object";
         callback(object, error);
         reply->deleteLater();
     });
+}
+
+bool RestClient::validReceipt(const QJsonObject &receipt, const QString &operation, bool committedOnly) {
+    if (receipt["operation_id"].toString() != operation || operation.isEmpty()) return false;
+    if (receipt["outcome"] == "committed") {
+        const auto count = receipt["changed_cells"];
+        return receipt["state"].isString() && !receipt["state"].toString().isEmpty() && count.isDouble()
+            && count.toDouble() >= 0 && std::isfinite(count.toDouble()) && std::floor(count.toDouble()) == count.toDouble();
+    }
+    return !committedOnly && (receipt["outcome"] == "rolled_back" || receipt["outcome"] == "rejected")
+        && receipt["code"].isString() && !receipt["code"].toString().isEmpty() && receipt["message"].isString();
 }

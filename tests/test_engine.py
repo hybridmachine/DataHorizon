@@ -1,4 +1,6 @@
 import json
+import csv
+import io
 from contextlib import closing
 from pathlib import Path
 import sqlite3
@@ -298,6 +300,69 @@ class EngineTests(unittest.TestCase):
             self.book.mutate(request)
         self.assertEqual(failure.exception.body,receipt)
         self.assertEqual(self.cells(),{})
+
+    def test_styled_blank_and_explicit_empty_text_remain_distinct(self):
+        self.edit((1,2,"=A1+1"))
+        self.book.handler=FIXTURES/"missing.py"
+        self.apply(cells=[{"row":1,"col":1,"style":{"bold":True,"format":"fixed2"}}])
+        self.assertEqual(self.cells()[(1,1)]["kind"],"blank")
+        self.assertEqual(self.cells()[(1,2)]["value"],1)
+        self.book.handler=None
+        self.apply(cells=[{"row":1,"col":1,"source":"","kind":"text"}])
+        self.assertEqual(self.cells()[(1,2)]["display"],"#VALUE!")
+        self.apply(cells=[{"row":1,"col":1,"source":"","style":{"format":"text"}}])
+        self.assertEqual(self.cells()[(1,2)]["value"],1)
+
+    def test_coalesced_input_with_style_change_does_not_dispatch_handler(self):
+        self.edit((1,1,"3"))
+        self.book.handler=FIXTURES/"missing.py"
+        self.apply(cells=[{"row":1,"col":1,"source":"4","style":{"bold":True}},
+                          {"row":1,"col":1,"source":"3"}])
+        self.assertEqual(self.cells()[(1,1)]["value"],3)
+        self.assertTrue(self.cells()[(1,1)]["style"]["bold"])
+        self.apply("undo")
+        self.assertEqual(self.cells()[(1,1)]["style"],{})
+
+    def test_absent_clipboard_cells_clear_inputs_without_creating_text(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"5","style":{"format":"text","bold":True}},
+                          {"row":1,"col":2,"source":"=A1+1"}])
+        self.apply("paste",row=1,col=1,mode="values",rows=[[{}]])
+        self.assertEqual(self.cells()[(1,2)]["value"],1)
+        self.assertEqual(self.cells()[(1,1)]["style"],{"format":"text","bold":True})
+        self.apply("paste",row=1,col=1,rows=[[{}]])
+        self.assertNotIn((1,1),self.cells())
+        self.apply("paste",row=1,col=1,mode="values",rows=[[{"source":"","input_kind":"text","value":""}]])
+        self.assertEqual(self.cells()[(1,1)]["kind"],"text")
+        self.assertEqual(self.cells()[(1,2)]["display"],"#VALUE!")
+
+    def test_values_paste_rejects_formula_errors_atomically(self):
+        self.edit((1,1,"5"),(1,2,"=1/0"))
+        error=self.cells()[(1,2)]
+        with self.assertRaises(EngineError):
+            self.apply("paste",row=1,col=1,mode="values",rows=[[{"value":7},error]])
+        self.assertEqual(self.cells()[(1,1)]["value"],5)
+        self.assertEqual(self.cells()[(1,2)]["display"],"#DIV/0!")
+
+    def test_cut_rejects_special_paste_before_mutating(self):
+        self.edit((1,1,"source"),(1,2,"destination"))
+        for mode in ("values","formats"):
+            with self.subTest(mode=mode), self.assertRaises(EngineError):
+                self.apply("move",r1=1,c1=1,r2=1,c2=1,row=1,col=2,mode=mode,cut_state=self.book.state())
+        self.assertEqual([self.cells()[(1,c)]["value"] for c in (1,2)],["source","destination"])
+
+    def test_csv_numbers_round_trip_without_display_rounding(self):
+        values=[9007199254740991,1.2345678901234567,1e100]
+        self.edit(*[(1,i+1,str(value)) for i,value in enumerate(values)])
+        exported=self.book.csv_export("Sheet1",{"c2":3})["csv"]
+        self.assertEqual([float(value) for value in next(csv.reader(io.StringIO(exported)))],values)
+
+    def test_blank_comparisons_never_fail_the_viewport(self):
+        for index,(op,expected) in enumerate((("<",False),("<=",True),(">",False),(">=",True),("=",True),("<>",False)),1):
+            self.edit((2,index,f"=A1{op}B1"))
+            self.assertEqual(self.cells()[(2,index)]["value"],expected)
+        self.edit((3,1,'=A1<"text"'),(3,2,"7"))
+        self.assertEqual(self.cells()[(3,1)]["display"],"#VALUE!")
+        self.assertEqual(self.cells()[(3,2)]["value"],7)
 
 
 if __name__ == "__main__":

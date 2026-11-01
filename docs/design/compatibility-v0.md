@@ -10,8 +10,11 @@ current read transaction. Work remains before a complete everyday preview.
 supported. Power is right-associative and binds more tightly than unary signs
 (`-2^2` is -4). Numbers use finite binary64. Overflow/nonreal results are #NUM!;
 division by zero is #DIV/0!. Text is not implicitly converted to a number in
-arithmetic; blanks become zero and booleans become 0/1. Mixed-type comparisons
-are errors, except numeric/boolean comparison. Text comparison is case-sensitive.
+arithmetic; blanks become zero and booleans become 0/1. Comparisons of blank with
+blank or numeric/boolean values use zero for the blank operand. Other mixed-type
+comparisons are errors. Text comparison is case-sensitive. Formatting an empty
+auto cell does not turn it into empty Text; explicitly entered empty Text remains
+distinct and retains text coercion rules.
 
 References support A1, $A1, A$1 and $A$1, rectangles and quoted sheet names such
 as `'Other sheet'!A1`. Quoted sheet names escape an apostrophe by doubling it.
@@ -49,7 +52,8 @@ CSV is UTF-8, comma-separated in the GUI, with quote handling through the Python
 CSV parser. The API accepts another single-character delimiter. Import preview
 is bounded by 10,000 cells and must be reviewed. GUI import keeps all columns
 Text; per-column numeric/date conversions and encoding controls remain M5 work.
-Exports are consistent values snapshots. Empty text, NULL and absence all map to
+Exports use round-trip-safe numeric text rather than the grid's display rounding.
+Empty text, NULL and absence all map to
 an empty CSV field; this loss is inherent in the initial values-only tier.
 Native snapshot copies preserve the distinction. TSV clipboard input currently
 uses literal tab/newline separation; embedded delimiters require CSV import.
@@ -61,6 +65,10 @@ explicit numeric series, cell/range Undo/Redo, source-preserving styles, bounded
 sheet duplication/reorder, and limited rename/delete. Cut is an atomic same-sheet
 move only when no formula source exists anywhere in the workbook. Structure
 operations clear Undo/Redo and are restricted with active required handlers.
+Cut rejects values-only and formats-only paste; Copy supports both. Absent
+clipboard cells clear inputs while values-only paste retains destination styles;
+explicit empty Text remains text. Values-only paste rejects formula errors or
+pending results atomically.
 Sheet rename/delete/duplicate reject cross-sheet references until their full
 reference transformation is implemented. Row/column insertion/deletion, freeze,
 hide/unhide, wrap, borders, fit-column sampling and saved view state are deferred.

@@ -48,13 +48,28 @@ are rejected, even if a native save dialog offers an overwrite confirmation.
 Save submits a formula-bar draft and continues once its storage outcome is known.
 
 Enter submits the cell/source editor, Escape cancels its draft, and the address
-field jumps to A1 coordinates. The grid fetches bounded tiles, showing an
+field jumps to A1 coordinates. Changing a draft's cell or sheet asks whether to
+Save, Discard or Cancel; losing focus alone retains the draft. Both source editors
+preserve valid sources up to the service's 64-KiB limit. The grid fetches bounded
+tiles, showing an
 ellipsis until loaded. Select a rectangle for paste, fill, styles, CSV, search
 or a declared list. Copy retains formulas in the application's clipboard format;
 external applications receive displayed TSV. Cut retains its source until an
 atomic managed Paste commits; it is restricted to the same sheet in workbooks
-without formulas. An expired Cut is rejected. Paste values retains destination
-styles. The API additionally supports formats-only paste.
+without formulas. An expired Cut is rejected. Cut supports full paste; use Copy
+for values-only or formats-only paste. Paste values retains destination styles
+and rejects error/pending calculation results. Copying an absent cell preserves
+blank semantics. CSV review remains bound to the workbook, sheet, address and
+state selected when the preview was requested.
+
+If the owned service stops, File > Restart local service reopens stored inputs
+and looks up any pending operation receipt without repeating hooks. Unknown
+outcomes continue to block edits. The user may explicitly close after a warning;
+the application first saves a private JSON record containing the workbook path
+and operation ID under the application-data recovery directory. Reopen the
+workbook and use CLI `outcome ID` or the API receipt lookup before retrying. A
+missing receipt remains unknown; closing never claims rollback or discards
+already stored data.
 
 For Supplies, enter these inputs (blank row 5):
 

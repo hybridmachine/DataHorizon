@@ -14,6 +14,7 @@ public:
     void configure(const QString &url, const QString &token);
     void request(const QString &path, const QJsonObject &body, Callback callback, bool post = true);
     QString url() const { return m_url; }
+    static bool validReceipt(const QJsonObject &receipt, const QString &operation, bool committedOnly = false);
 private:
     QNetworkAccessManager m_network;
     QString m_url, m_token;

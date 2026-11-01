@@ -54,7 +54,9 @@ def main():
                     result = book.set(row, col, args.source, args.sheet, args.kind)
                 elif args.command == "apply":
                     request = json.load(sys.stdin)
-                    result = book.apply(request.pop("action"), args.sheet, **request)
+                    if not isinstance(request, dict):
+                        raise ValueError("Operation JSON must be an object")
+                    result = book.apply(request.pop("action"), request.pop("sheet", args.sheet), **request)
                 else:
                     result = book.outcome(args.operation_id)
                 print(json.dumps(result, allow_nan=False))
