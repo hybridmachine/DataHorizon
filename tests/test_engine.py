@@ -364,6 +364,59 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.cells()[(3,1)]["display"],"#VALUE!")
         self.assertEqual(self.cells()[(3,2)]["value"],7)
 
+    def test_display_replacement_preserves_text_and_rejects_numeric_conversion(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"'00123"},
+                          {"row":2,"col":1,"source":"1.2345","style":{"format":"fixed2"}},
+                          {"row":3,"col":1,"source":"item3"}])
+        self.apply("replace_all",r1=1,r2=1,c1=1,c2=1,field="display",needle="3",replacement="4")
+        self.assertEqual(self.cells()[(1,1)]["source"],"'00124")
+        self.assertEqual(self.cells()[(1,1)]["value"],"00124")
+        receipt=self.apply("replace_all",r1=2,r2=2,c1=1,c2=1,field="display",needle="1",replacement="1")
+        self.assertEqual(receipt["changed_cells"],0)
+        self.assertEqual(self.cells()[(2,1)]["source"],"1.2345")
+        with self.assertRaises(EngineError) as failure:
+            self.apply("replace_all",r1=1,r2=3,c1=1,c2=1,field="display",needle="1",replacement="9")
+        self.assertEqual(failure.exception.body["code"],"DISPLAY_REPLACEMENT_UNSUPPORTED")
+        self.assertEqual(self.cells()[(1,1)]["value"],"00124")
+        self.assertEqual(self.cells()[(2,1)]["value"],1.2345)
+        self.apply("replace_all",r1=3,r2=3,c1=1,c2=1,field="display",needle="item",replacement="")
+        self.assertEqual(self.cells()[(3,1)]["kind"],"text")
+        self.assertEqual(self.cells()[(3,1)]["value"],"3")
+
+    def test_large_sheet_delete_rejects_before_cascade(self):
+        self.apply("sheet_add",name="Large")
+        sheet=self.book.sheet("Large")
+        with closing(sqlite3.connect(self.path)) as direct, direct:
+            direct.executemany("INSERT INTO cells(sheet_id,row,col,source) VALUES(?,?,1,'data')",((sheet,row) for row in range(1,10002)))
+        with self.assertRaises(EngineError) as failure:
+            self.apply("sheet_delete",sheet="Large")
+        self.assertEqual(failure.exception.body["code"],"LIMIT")
+        self.assertEqual(self.book.db.execute("SELECT count(*) FROM cells WHERE sheet_id=?",(sheet,)).fetchone()[0],10001)
+        self.assertEqual(self.book.sheet("Large"),sheet)
+
+    def test_extreme_references_and_range_comparisons_are_cell_errors(self):
+        self.edit((1,2,"1"),(1,3,"=A"+"9"*5000),(2,3,"=(A1:A2)<(B1:B2)"),(3,3,"7"))
+        cells=self.cells()
+        self.assertEqual(cells[(1,3)]["display"],"#REF!")
+        self.assertEqual(cells[(2,3)]["display"],"#VALUE!")
+        self.assertEqual(cells[(3,3)]["value"],7)
+
+    def test_large_text_viewports_are_bounded_previews_with_full_cell_reads(self):
+        source="x"*64000
+        self.apply(cells=[{"row":row,"col":1,"source":source,"kind":"text"} for row in range(1,33)])
+        with self.assertRaises(EngineError) as failure:
+            self.book.read("Sheet1",{"r1":1,"r2":32,"c1":1,"c2":16})
+        self.assertEqual(failure.exception.body["code"],"READ_LIMIT")
+        preview=self.book.read("Sheet1",{"r1":1,"r2":32,"c1":1,"c2":16,"preview":True})
+        self.assertLess(len(json.dumps(preview)),100000)
+        self.assertTrue(all(cell["source_omitted"] and cell["value_omitted"] for cell in preview["cells"]))
+        full=self.book.read("Sheet1",{"r1":32,"r2":32,"c1":1,"c2":1})
+        self.assertEqual(full["state"],preview["state"])
+        self.assertEqual(full["cells"][0]["source"],source)
+        for mode in ("all","values"):
+            with self.subTest(mode=mode),self.assertRaises(EngineError):
+                self.apply("paste",row=40,col=1,mode=mode,rows=[[preview["cells"][0]]])
+
 
 if __name__ == "__main__":
     unittest.main()

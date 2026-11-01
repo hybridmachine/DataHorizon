@@ -19,7 +19,7 @@ from .engine import EngineError, MAX_CELLS, Workbook, encoded, require
 
 CAPABILITIES = {
     "api_version": 1, "format_version": 1, "max_operation_cells": MAX_CELLS,
-    "max_viewport_cells": 4096, "max_request_bytes": 4 * 1024 * 1024,
+    "max_viewport_cells": 4096, "max_clipboard_cells":MAX_CELLS, "max_request_bytes": 4 * 1024 * 1024,
     "formulas": ["arithmetic", "references", "SUM", "IF"],
     "operations": ["edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete"],
     "interchange": ["csv"], "managed_sql": False, "remote_binding": False,
@@ -33,6 +33,7 @@ ROUTES = {
     "/v1/import/csv/preview": ("post", "Parse CSV as text for explicit import review"),
     "/v1/workbooks/{workbook}": ("get", "Workbook state and sheets"),
     "/v1/workbooks/{workbook}/range": ("post", "Bounded consistent viewport read"),
+    "/v1/workbooks/{workbook}/clipboard": ("post", "Consistent full-source clipboard read, at most 10,000 cells and 4 MiB"),
     "/v1/workbooks/{workbook}/list": ("post", "Explicit full-scope sorted/filtered list projection"),
     "/v1/workbooks/{workbook}/find": ("post", "Find in a declared source or display scope"),
     "/v1/workbooks/{workbook}/operations": ("post", "Atomic managed operation"),
@@ -54,6 +55,7 @@ def openapi():
             "create":{"type":"boolean","default":False},"readonly":{"type":"boolean","default":False}},
             "example":{"path":"/tmp/example.dhwb","create":True}},
         "RangeRequest": {"type":"object","properties":{
+            "preview":{"type":"boolean","default":False,"description":"Bounded display/input previews; omitted input/value fields are explicitly flagged and cannot be pasted as full data"},
             "sheet":{"type":"string","default":"Sheet1"},"r1":scalar,"c1":scalar,"r2":scalar,"c2":scalar,
             "rows":{"type":"array","maxItems":256,"items":scalar,"description":"Optional explicit source rows for projections"}},
             "example":{"sheet":"Sheet1","r1":1,"c1":1,"r2":32,"c2":16}},
@@ -82,7 +84,7 @@ def openapi():
                                    "409": {"description": "Conflict or rolled-back operation"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = "OpenRequest" if path == "/v1/open" else "RangeRequest" if path.endswith("/range") else "OperationRequest" if path.endswith("/operations") else None
+            name = "OpenRequest" if path == "/v1/open" else "RangeRequest" if path.endswith(("/range","/clipboard")) else "OperationRequest" if path.endswith("/operations") else None
             schema = {"$ref":"#/components/schemas/"+name} if name else {"type":"object"}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
         for status in ("400","409"):
@@ -181,6 +183,8 @@ class Service(ThreadingHTTPServer):
             return {**book.info(), "id": parts[2], "workbook_id": book.id}
         if method == "POST" and suffix == ["range"]:
             return book.read(body.get("sheet", "Sheet1"), body)
+        if method == "POST" and suffix == ["clipboard"]:
+            return book.read(body.get("sheet", "Sheet1"), {**body,"preview":False},limit=MAX_CELLS)
         if method == "POST" and suffix == ["list"]:
             return book.list_view(body.get("sheet", "Sheet1"), body)
         if method == "POST" and suffix == ["find"]:

@@ -5,6 +5,8 @@
 #include <QAction>
 #include <QJsonArray>
 #include <QLineEdit>
+#include <QItemSelectionModel>
+#include <QRegularExpression>
 #include <QLabel>
 #include <QSignalSpy>
 #include <QTableView>
@@ -284,11 +286,150 @@ private slots:
         QCOMPARE(QFileInfo(info["workbook_path"].toString()).canonicalFilePath(),QFileInfo(path).canonicalFilePath()); QVERIFY(!info["operation_id"].toString().isEmpty());
         answerNextDialog(QMessageBox::Yes); QVERIFY(window.close()); QVERIFY(QFile::exists(recordPath));
     }
+    void initialWorkbookIsOpenedOnlyOnceAcrossServiceRestart() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        const auto first=temp.filePath("first.dhwb"), second=temp.filePath("second.dhwb");
+        {
+            MainWindow seed(options); QSignalSpy ready(&seed,&MainWindow::serviceReady);
+            QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+            QSignalSpy opened(&seed,&MainWindow::workbookReady); seed.openBook(first,true);
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        }
+        options.initialWorkbook=first;
+        MainWindow window(options); window.show();
+        QSignalSpy opened(&window,&MainWindow::workbookReady); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.openBook(second,true); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","second workbook"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        auto *process=window.findChild<QProcess *>("ownedService"); process->kill();
+        QTRY_COMPARE_WITH_TIMEOUT(process->state(),QProcess::NotRunning,5000);
+        window.findChild<QAction *>("restartServiceAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("second workbook"),5000);
+        QVERIFY(window.windowTitle().contains("second.dhwb"));
+    }
+    void restartPreservesDraftAndRequiresReviewOfReopenedInput() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        const auto path=temp.filePath("draft-restart.dhwb");
+        MainWindow window(options); window.show();
+        QSignalSpy ready(&window,&MainWindow::serviceReady); QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",3},{"col",2},{"source","old input"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source");
+        grid->setCurrentIndex(window.model()->index(2,1));
+        QTRY_COMPARE_WITH_TIMEOUT(source->text(),QString("old input"),5000);
+        source->setFocus(); source->selectAll(); QTest::keyClicks(source,"retained draft");
+        auto *process=window.findChild<QProcess *>("ownedService"); process->kill();
+        QTRY_COMPARE_WITH_TIMEOUT(process->state(),QProcess::NotRunning,5000);
+        QCOMPARE(source->text(),QString("retained draft"));
+        {
+            MainWindow writer(options); QSignalSpy writerReady(&writer,&MainWindow::serviceReady);
+            QTRY_COMPARE_WITH_TIMEOUT(writerReady.count(),1,10000);
+            QSignalSpy writerOpened(&writer,&MainWindow::workbookReady); writer.openBook(path);
+            QTRY_COMPARE_WITH_TIMEOUT(writerOpened.count(),1,10000);
+            writer.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",3},{"col",2},{"source","changed while stopped"}}}}});
+            QTRY_COMPARE_WITH_TIMEOUT(writerOpened.count(),2,10000);
+        }
+        window.findChild<QAction *>("restartServiceAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),2,10000); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        QCOMPARE(grid->currentIndex(),window.model()->index(2,1)); QCOMPARE(source->text(),QString("retained draft")); QVERIFY(source->isModified());
+        QSignalSpy changed(&window,&MainWindow::operationFinished); QString reviewText;
+        answerNextDialog(QMessageBox::Cancel,&reviewText); QTest::keyClick(source,Qt::Key_Return);
+        QVERIFY(reviewText.contains("changed while stopped")); QVERIFY(reviewText.contains("B3"));
+        QCOMPARE(changed.count(),0); QCOMPARE(source->text(),QString("retained draft"));
+        answerNextDialog(QMessageBox::Yes); QTest::keyClick(source,Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(2,1)).toString(),QString("retained draft"),5000);
+    }
+    void emptyListHasNoEditorTarget() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); const auto path=temp.filePath("empty-list.dhwb"); window.openBook(path,true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","original"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *source=window.findChild<QLineEdit *>("source"); QTRY_COMPARE_WITH_TIMEOUT(source->text(),QString("original"),5000);
+        window.showList({{"r1",1},{"r2",1},{"c1",1},{"c2",1},{"header",false},{"filters",QJsonArray{QJsonObject{{"col",1},{"op","="},{"value","no match"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QCOMPARE(window.model()->rowCount(),0); QVERIFY(!source->isEnabled()); QVERIFY(source->text().isEmpty());
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        source->setText("hidden edit"); source->setModified(true); source->returnPressed();
+        QCOMPARE(changed.count(),0);
+        source->setModified(false); window.openBook(path); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("original"),5000);
+    }
+    void copyAndCutSupportTenThousandCellSelections() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("bulk-copy.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","start"}},QJsonObject{{"row",10000},{"col",1},{"source","tail"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model(); auto *grid=window.findChild<QTableView *>("grid");
+        QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,0)),5000);
+        grid->setCurrentIndex(model->index(0,0));
+        grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(9999,0)),QItemSelectionModel::ClearAndSelect); grid->setFocus();
+        QApplication::clipboard()->clear();
+        for(auto *action:window.findChildren<QAction *>()) if(action->shortcut()==QKeySequence(QKeySequence::Copy)) action->trigger();
+        auto clipboard=[] {const auto *mime=QApplication::clipboard()->mimeData(); return mime?QJsonDocument::fromJson(mime->data("application/x-datahorizon-cells")).object():QJsonObject{};};
+        QTRY_COMPARE_WITH_TIMEOUT(clipboard()["rows"].toArray().size(),10000,5000);
+        QCOMPARE(clipboard()["rows"].toArray().last().toArray().first().toObject()["source"].toString(),QString("tail"));
+        for(auto *action:window.findChildren<QAction *>()) if(action->shortcut()==QKeySequence(QKeySequence::Cut)) action->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(clipboard()["cut"].toBool(),5000);
+        QCOMPARE(clipboard()["rows"].toArray().size(),10000);
+        QCOMPARE(model->data(model->index(0,0)).toString(),QString("start"));
+    }
+    void longTextTilesRemainEditableWithoutOversizedReads() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("long-tile.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        const QString text(64000,'x'); QJsonArray cells;
+        for(int row=1;row<=32;++row) cells.append(QJsonObject{{"row",row},{"col",1},{"source",text},{"kind","text"}});
+        window.submit({{"action","edit"},{"cells",cells}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model(); auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source");
+        QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(31,0)),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(31,0),Qt::EditRole).toString(),text,5000);
+        grid->setCurrentIndex(model->index(31,0)); QTRY_COMPARE_WITH_TIMEOUT(source->text(),text,5000);
+        QVERIFY(model->flags(model->index(31,0))&Qt::ItemIsEditable);
+        source->setFocus(); source->setCursorPosition(source->text().size()); QTest::keyClicks(source,"y"); QTest::keyClick(source,Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(31,0),Qt::EditRole).toString(),text+"y",5000);
+        QVERIFY(!window.findChild<QPlainTextEdit *>()->toPlainText().contains("READ_LIMIT"));
+    }
+    void fullSourceReplyMustMatchViewportState() {
+        QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost,0));
+        connect(&server,&QTcpServer::newConnection,this,[&]{
+            auto *socket=server.nextPendingConnection(); connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
+            connect(socket,&QTcpSocket::readyRead,socket,[socket]{
+                const auto request=socket->property("request").toByteArray()+socket->readAll(); socket->setProperty("request",request);
+                const int split=request.indexOf("\r\n\r\n"); if(split<0) return;
+                const auto length=QRegularExpression("Content-Length: ([0-9]+)",QRegularExpression::CaseInsensitiveOption).match(QString::fromLatin1(request.left(split))).captured(1).toInt();
+                if(request.size()<split+4+length) return;
+                const bool preview=QJsonDocument::fromJson(request.mid(split+4,length)).object()["preview"].toBool();
+                const auto body=QJsonDocument(QJsonObject{{"state",preview?"state:1":"state:2"},{"sheet","sheet"},
+                    {"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source",preview?"preview":"different input"},{"source_omitted",preview},{"display","preview"}}}}}).toJson();
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(body.size())+"\r\n\r\n"+body); socket->disconnectFromHost();
+            });
+        });
+        RestClient client; client.configure("http://127.0.0.1:"+QString::number(server.serverPort()),"test");
+        SheetModel model(&client,nullptr,32,16); model.bind("book","sheet","state:1",false); QSignalSpy changed(&model,&SheetModel::externalChange);
+        model.data(model.index(0,0)); QTRY_VERIFY_WITH_TIMEOUT(model.loaded(model.index(0,0)),3000);
+        model.ensureSource(model.index(0,0)); QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,3000);
+        QVERIFY(!model.sourceReady(model.index(0,0))); QVERIFY(!(model.flags(model.index(0,0))&Qt::ItemIsEditable));
+    }
 private:
-    static void answerNextDialog(QMessageBox::StandardButton button) {
+    static void answerNextDialog(QMessageBox::StandardButton button, QString *message=nullptr) {
         auto *timer=new QTimer(qApp); timer->setInterval(10);
-        connect(timer,&QTimer::timeout,timer,[timer,button]{
+        connect(timer,&QTimer::timeout,timer,[timer,button,message]{
             if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                if(message) *message=box->text();
                 if(auto *target=box->button(button)) { timer->stop(); target->click(); timer->deleteLater(); }
             }
         });

@@ -51,8 +51,8 @@ Enter submits the cell/source editor, Escape cancels its draft, and the address
 field jumps to A1 coordinates. Changing a draft's cell or sheet asks whether to
 Save, Discard or Cancel; losing focus alone retains the draft. Both source editors
 preserve valid sources up to the service's 64-KiB limit. The grid fetches bounded
-tiles, showing an
-ellipsis until loaded. Select a rectangle for paste, fill, styles, CSV, search
+display previews, showing an ellipsis until loaded, and loads complete long
+inputs separately before enabling editing. Select a rectangle for paste, fill, styles, CSV, search
 or a declared list. Copy retains formulas in the application's clipboard format;
 external applications receive displayed TSV. Cut retains its source until an
 atomic managed Paste commits; it is restricted to the same sheet in workbooks
@@ -61,10 +61,16 @@ for values-only or formats-only paste. Paste values retains destination styles
 and rejects error/pending calculation results. Copying an absent cell preserves
 blank semantics. CSV review remains bound to the workbook, sheet, address and
 state selected when the preview was requested.
+Copy/Cut supports up to 10,000 selected cells in one consistent read, subject to
+the 4-MiB response limit. Oversized clipboard reads fail without replacing the
+clipboard; select a smaller range. Viewport previews are never clipboard data.
 
 If the owned service stops, File > Restart local service reopens stored inputs
 and looks up any pending operation receipt without repeating hooks. Unknown
-outcomes continue to block edits. The user may explicitly close after a warning;
+outcomes continue to block edits. Unsubmitted formula-bar drafts retain their
+original sheet and coordinates; review the reopened input before applying the
+draft. Restart reopens the current workbook, including when the application was
+launched with a different workbook path. The user may explicitly close after a warning;
 the application first saves a private JSON record containing the workbook path
 and operation ID under the application-data recovery directory. Reopen the
 workbook and use CLI `outcome ID` or the API receipt lookup before retrying. A
@@ -90,8 +96,9 @@ numbers. Single-cell edits use those coordinates; range operations require
 clearing the projection. After an edit, an active filter is reevaluated.
 
 Find/Replace All is case-sensitive within the selected rectangle, against source
-or displayed values. The Issues dock shows counts and locations. Formula results
-cannot be overwritten through displayed-value replacement; use formula source.
+or displayed values. The Issues dock shows counts and locations. Display
+replacement preserves Text typing and leading zeros; identical replacements do
+nothing. Numeric, boolean and formula results require stored-source replacement.
 CSV import previews UTF-8 comma-separated text and imports it atomically as Text.
 Dates, encodings, column typing and spreadsheet interchange remain incomplete.
 Export is an explicit values-only selected snapshot and blocks on formula errors.

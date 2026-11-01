@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 35 Python tests and 12 Qt contract cases.
+The review regression suite includes 41 Python tests and 18 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -123,3 +123,13 @@ and coalesce events by input; clipboard blanks and formula errors retain their
 semantics; CSV numbers round-trip; and blank comparisons remain cell-local.
 Late mutation/lookup callbacks are associated with their captured operation ID,
 and metadata refreshes cannot overwrite a reopened workbook's handle.
+
+The next 11 review findings also have regression coverage: display replacement
+preserves Text and rejects implicit numeric/formula conversion; the initial
+command-line workbook opens once; restart preserves drafts at their original
+coordinates for explicit review; empty lists have no editor target; Copy/Cut
+supports 10,000 cells through a consistent clipboard resource; bounded viewport
+previews and state-checked full-input reads keep long cells editable; invalid
+CLI addresses produce JSON errors; sheet deletion checks the cell budget before
+cascading; extreme references and range comparisons remain cell-local errors;
+and the SDK parity test now verifies an actual HOOK_FAILED rollback after refresh.

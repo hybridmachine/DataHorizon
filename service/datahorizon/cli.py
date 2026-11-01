@@ -8,7 +8,7 @@ import sqlite3
 import sys
 
 from .client import APIError, Client, LocalService
-from .formula import coordinates
+from .formula import FormulaError, coordinates
 
 
 def main():
@@ -36,6 +36,8 @@ def main():
     direct.add_argument("sql")
     args = parser.parse_args()
     try:
+        if args.command in ("read", "set"):
+            row, col = coordinates(args.address)
         if args.command == "direct-sql":
             with closing(sqlite3.connect(args.file)) as db, db:
                 cursor = db.execute(args.sql)
@@ -47,10 +49,8 @@ def main():
                 if args.command in ("create", "info"):
                     result = book.info
                 elif args.command == "read":
-                    row, col = coordinates(args.address)
                     result = book.read(args.sheet, row, col, row, col)
                 elif args.command == "set":
-                    row, col = coordinates(args.address)
                     result = book.set(row, col, args.source, args.sheet, args.kind)
                 elif args.command == "apply":
                     request = json.load(sys.stdin)
@@ -60,8 +60,9 @@ def main():
                 else:
                     result = book.outcome(args.operation_id)
                 print(json.dumps(result, allow_nan=False))
-    except (APIError, OSError, ValueError, KeyError, RuntimeError) as error:
-        print(json.dumps(getattr(error, "body", {"code": "CLIENT_ERROR", "message": str(error)})), file=sys.stderr)
+    except (APIError, OSError, ValueError, KeyError, RuntimeError, FormulaError) as error:
+        fallback = {"code": "INVALID_ADDRESS" if isinstance(error, FormulaError) else "CLIENT_ERROR", "message": str(error), "outcome": "rejected"}
+        print(json.dumps(getattr(error, "body", fallback)), file=sys.stderr)
         sys.exit(1)
 
 

@@ -40,6 +40,8 @@ def coordinates(source):
     col = 0
     for char in match[2].upper():
         col = col * 26 + ord(char) - 64
+    if len(match[4]) > len(str(MAX_ROWS)):
+        raise FormulaError("#REF!", "Address exceeds the supported grid")
     row = int(match[4])
     if row > MAX_ROWS or col > MAX_COLS:
         raise FormulaError("#REF!", "Address exceeds the supported grid")
@@ -275,6 +277,8 @@ class Calculator:
         if kind == "binary":
             op = node[1]
             left, right = self.evaluate(node[2], sheet), self.evaluate(node[3], sheet)
+            if isinstance(left, list) or isinstance(right, list):
+                raise FormulaError("#VALUE!", "Array expressions are unsupported; use a range-aware function")
             if op in ("=", "<>", "<", ">", "<=", ">="):
                 if left is None and (right is None or isinstance(right, (int, float))):
                     left = 0

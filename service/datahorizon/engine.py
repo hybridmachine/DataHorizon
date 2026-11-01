@@ -245,18 +245,20 @@ class Workbook:
                 raise FormulaError("#REF!", "Referenced sheet does not exist") from error
         return Calculator(lambda s, r, c: typed(self.raw(s, r, c)), resolve, seconds)
 
-    def read(self, sheet, args):
+    def read(self, sheet, args, *, limit=4096):
+        preview=args.get("preview",False)
+        require(type(preview) is bool, "INVALID_ARGUMENT", "preview must be boolean")
         if "rows" in args:
             selected = args["rows"]
             require(isinstance(selected, list) and 0 < len(selected) <= 256, "LIMIT", "Provide 1-256 source rows")
             for row in selected:
                 integer(row, 1, MAX_ROWS, "source row")
             c1, c2 = integer(args.get("c1", 1), 1, MAX_COLS, "c1"), integer(args.get("c2", 16), 1, MAX_COLS, "c2")
-            require(c2 >= c1 and len(selected)*(c2-c1+1) <= 4096, "LIMIT", "Viewport exceeds 4096 cells")
+            require(c2 >= c1 and len(selected)*(c2-c1+1) <= limit, "LIMIT", f"Read exceeds {limit} cells")
             r1, r2 = min(selected), max(selected)
             row_clause, row_parameters = "row IN (" + ",".join("?" for _ in selected) + ")", selected
         else:
-            r1, c1, r2, c2 = rectangle(args, 4096)
+            r1, c1, r2, c2 = rectangle(args, limit)
             row_clause, row_parameters = "row BETWEEN ? AND ?", [r1, r2]
         with self.lock:
             self.refresh()
@@ -276,6 +278,14 @@ class Workbook:
                         result.update(value=value, display=display(value, item["style"]), calculation="current")
                     except FormulaError as error:
                         result.update(value=None, display=error.code, error=str(error), calculation="error")
+                    if preview:
+                        if len(source)>128:
+                            result.update(source=source[:128], source_omitted=True)
+                        if isinstance(result["value"],str):
+                            result.update(value=None, value_omitted=True)
+                        for field in ("display","error"):
+                            if field in result and len(result[field])>128:
+                                result[field]=result[field][:128]+"…"
                     response_bytes += len(encoded(result).encode())
                     require(response_bytes <= 4 * 1024 * 1024, "READ_LIMIT", "Viewport exceeds 4 MiB; request a smaller range")
                     cells.append(result)
@@ -416,6 +426,8 @@ class Workbook:
                             require(isinstance(value, dict), "INVALID_ARGUMENT", "Paste cells must be objects")
                             row, col = start_row + dr, start_col + dc
                             edit = {"row": row, "col": col}
+                            require(mode != "all" or not value.get("source_omitted"), "INCOMPLETE_CLIPBOARD", "Use a full clipboard read, not a viewport source preview")
+                            require(mode != "values" or not value.get("value_omitted"), "INCOMPLETE_CLIPBOARD", "Use calculated clipboard values, not viewport previews")
                             if not value or value.get("kind") == "blank":
                                 if mode == "all":
                                     if not value:
@@ -491,10 +503,17 @@ class Workbook:
                     matches = self.matches(sheet, request)
                     for match in matches:
                         item = self.raw(sheet, match["row"], match["col"])
-                        require(request.get("field", "source") != "display" or typed(item)["kind"] != "formula",
-                                "FORMULA_REPLACEMENT", "Displayed formula results cannot be replaced. Search formula source instead")
                         source = match["text"] if request.get("field") == "display" else item["source"]
-                        item["source"] = source.replace(request["needle"], replacement)
+                        replaced = source.replace(request["needle"], replacement)
+                        if replaced == source:
+                            continue
+                        if request.get("field") == "display":
+                            require(typed(item)["kind"] == "text", "DISPLAY_REPLACEMENT_UNSUPPORTED", "Only text displays can be replaced without conversion. Search stored input for numbers, booleans or formulas")
+                            if item["kind"] == "auto" and item["source"].startswith("'"):
+                                replaced = "'"+replaced
+                            else:
+                                item["kind"] = "text"
+                        item["source"] = replaced
                         self.put(sheet, match["row"], match["col"], item)
                 elif kind in ("undo", "redo"):
                     stack = self.undo if kind == "undo" else self.redo
@@ -535,6 +554,8 @@ class Workbook:
                     require(self.db.execute("SELECT count(*) FROM sheets").fetchone()[0] > 1, "LAST_SHEET", "Cannot delete the last sheet")
                     require(not self.has_cross_sheet_formulas(), "REFERENCED_SHEET", "Delete is unavailable while cross-sheet formulas exist")
                     require(not self.handler, "UNSUPPORTED_HOOK_SCOPE", "Sheet deletion with an activated required handler needs a structure-event contract")
+                    count=self.db.execute("SELECT count(*) FROM (SELECT 1 FROM cells WHERE sheet_id=? LIMIT ?)",(target,MAX_CELLS+1)).fetchone()[0]
+                    require(count<=MAX_CELLS,"LIMIT","Sheet deletion exceeds 10,000 cells; a large-job deletion is not available")
                     self.db.execute("DELETE FROM sheets WHERE id=?", (target,))
                 else:
                     raise EngineError("UNSUPPORTED_OPERATION", f"Operation is not available: {kind}")

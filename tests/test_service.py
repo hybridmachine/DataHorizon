@@ -25,8 +25,11 @@ class ServiceTests(unittest.TestCase):
                                      env=env, capture_output=True, text=True, timeout=10)
                 self.assertEqual(run.returncode, 0, run.stderr)
                 self.assertEqual(book.read(r2=1, c2=2)["cells"][1]["value"], 18)
-                with self.assertRaises(APIError):
+                book.refresh()
+                with self.assertRaises(APIError) as rejected:
                     book.set(1, 1, "-1")
+                self.assertEqual(rejected.exception.body["code"],"HOOK_FAILED")
+                self.assertEqual(rejected.exception.body["outcome"],"rolled_back")
                 book.refresh()
                 self.assertEqual(book.read(r2=1, c2=2)["cells"][0]["value"], 9)
                 with self.assertRaises(HTTPError) as raised:
@@ -142,6 +145,27 @@ class ServiceTests(unittest.TestCase):
                 with client.open(path) as reopened:
                     self.assertEqual(reopened.outcome(receipt["operation_id"]),receipt)
                     self.assertEqual(reopened.read(r2=1,c2=1)["cells"][0]["value"],7)
+
+    def test_invalid_cli_addresses_return_structured_errors(self):
+        with tempfile.TemporaryDirectory() as temp:
+            for command in (["read","XFE1"],["set","A0","7"],["read","A"+"9"*5000]):
+                with self.subTest(command=command[0]):
+                    result=subprocess.run([sys.executable,"-m","datahorizon.cli",str(Path(temp)/"unused.dhwb"),*command],capture_output=True,text=True,timeout=10)
+                    self.assertEqual(result.returncode,1)
+                    self.assertEqual(json.loads(result.stderr)["code"],"INVALID_ADDRESS")
+                    self.assertNotIn("Traceback",result.stderr)
+
+    def test_clipboard_read_uses_bulk_limit_in_one_consistent_state(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            with client.open(Path(temp)/"clipboard.dhwb",create=True) as book:
+                book.set(10000,1,"tail")
+                with self.assertRaises(APIError):
+                    book.read(r2=4097,c2=1)
+                clipboard=client.request(book.base+"/clipboard",{"r1":1,"r2":10000,"c1":1,"c2":1})
+                self.assertEqual(clipboard["state"],book.state)
+                self.assertEqual(clipboard["cells"][0]["source"],"tail")
+                with self.assertRaises(APIError):
+                    client.request(book.base+"/clipboard",{"r2":10001,"c2":1})
 
 
 if __name__ == "__main__":

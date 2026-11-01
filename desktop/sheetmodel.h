@@ -23,6 +23,8 @@ public:
     int sourceRow(int row) const { return m_projected ? m_projection.value(row, -1) : row; }
     QJsonObject cell(const QModelIndex &index) const;
     bool loaded(const QModelIndex &index) const;
+    bool sourceReady(const QModelIndex &index) const;
+    void ensureSource(const QModelIndex &index) const;
     QString workbook() const { return m_workbook; }
     QString sheet() const { return m_sheet; }
     QString state() const { return m_state; }
@@ -43,6 +45,8 @@ private:
     int m_rows, m_cols;
     bool m_projected = false;
     QList<int> m_projection;
-    mutable QCache<quint64, Tile> m_cache{16*1024*1024};
+    mutable QCache<quint64, Tile> m_cache{14*1024*1024};
+    mutable QCache<quint64, QString> m_sources{2*1024*1024};
+    mutable QSet<quint64> m_sourceLoading;
     mutable QSet<quint64> m_loading;
 };

@@ -68,6 +68,10 @@ MainWindow::MainWindow(const StartupOptions &options, QWidget *parent)
         if (!m_busy && !m_refreshing) { issue("Independent changes detected. Inputs refreshed; prior Undo history is unavailable."); refresh(); }
     });
     connect(m_model, &SheetModel::tileLoaded, this, &MainWindow::syncSource);
+    if (!m_options.initialWorkbook.isEmpty()) {
+        m_options.automaticWorkbook=false;
+        connect(this,&MainWindow::serviceReady,this,[this]{openBook(m_options.initialWorkbook);},Qt::SingleShotConnection);
+    }
     QTimer::singleShot(0, this, &MainWindow::startService);
 }
 
@@ -315,9 +319,9 @@ void MainWindow::newBook() {
 
 void MainWindow::openBook(const QString &path, bool create, bool readonly) {
     if (m_busy || m_unknown) return;
-    if (m_source->isModified()) {
+    if (m_source->isModified() || !m_recoveredDraft.isEmpty()) {
         if (QMessageBox::question(this,tr("Discard editor draft?"),tr("Discard the unsubmitted formula-bar draft before opening another workbook? Stored edits remain in the current workbook."))!=QMessageBox::Yes) return;
-        m_source->setModified(false);
+        m_source->setModified(false); clearRecoveredDraft();
     }
     setBusy(true, "Opening workbook…");
     m_client->request("/v1/open", {{"path", path}, {"create", create}, {"readonly", readonly}}, [this](QJsonObject info, QString error) {
@@ -328,7 +332,8 @@ void MainWindow::openBook(const QString &path, bool create, bool readonly) {
 }
 
 void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet) {
-    const auto oldSheet = selectSheet.isEmpty() ? m_model->sheet() : selectSheet;
+    const auto oldSheet = m_restoreDraft ? m_recoveredDraft["sheet"].toString() : selectSheet.isEmpty() ? m_model->sheet() : selectSheet;
+    if (m_restoreDraft) m_listSpec={};
     const auto previous = m_grid->currentIndex();
     m_info = info;
     m_tabs->blockSignals(true);
@@ -348,6 +353,7 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     m_redo->setEnabled(info["redo"].isString() && !info["readonly"].toBool());
     setWindowTitle(QFileInfo(info["path"].toString()).fileName() + " — DataHorizon development preview");
     syncSource();
+    if (m_restoreDraft) restoreRecoveredDraft();
     if (!m_listSpec.isEmpty()) applyList(); else emit workbookReady();
     if (m_saveMode) QTimer::singleShot(0,this,[this]{save(m_saveMode==2);});
 }
@@ -384,9 +390,14 @@ void MainWindow::submit(QJsonObject operation) {
                 && (!result.contains("operation_id") || result["operation_id"].toString() == m_pendingId)) {
                 m_saveMode = 0;
                 clearRecoveryRecord(); m_pendingId.clear(); m_unknown=false;
+                const bool restoreDraft=m_draftSubmissionId==operationId && !m_recoveredDraft.isEmpty();
+                if (restoreDraft) {
+                    m_draftSubmissionId.clear(); m_restoreDraft=true;
+                    if (result["code"]=="STALE_STATE") m_recoveredDraft["needs_review"]=true;
+                }
                 const bool stopped=m_options.url.isEmpty() && m_service.state()==QProcess::NotRunning;
                 setBusy(stopped, stopped ? "Service stopped • Edit rejected • Restart local service" : outcome == "rolled_back" ? "Rolled back • No cells changed" : "Rejected • No cells changed"); issue(error);
-                if (result["code"] == "STALE_STATE") refresh();
+                if (result["code"] == "STALE_STATE" || restoreDraft) refresh();
             } else {
                 m_unknown = true; setBusy(true, "Outcome unknown • Reconcile before editing");
                 preserveUnknownOperation();
@@ -394,6 +405,7 @@ void MainWindow::submit(QJsonObject operation) {
             }
             emit operationFinished(false); return;
         }
+        if (m_draftSubmissionId==operationId) clearRecoveredDraft();
         clearRecoveryRecord(); m_pendingId.clear(); m_unknown = false; m_info["state"] = result["state"];
         refresh(); emit operationFinished(true);
     });
@@ -406,6 +418,10 @@ void MainWindow::reconcile() {
         if(m_pendingId!=operationId) return;
         if (!error.isEmpty()) { issue("Outcome remains unknown for " + m_pendingId + ". " + error); return; }
         if (!RestClient::validReceipt(result, m_pendingId)) { issue("Unrecognized operation receipt; editing remains stopped."); return; }
+        if (m_draftSubmissionId==operationId) {
+            if (result["outcome"]=="committed") clearRecoveredDraft();
+            else { m_draftSubmissionId.clear(); m_restoreDraft=true; m_recoveredDraft["needs_review"]=true; }
+        }
         clearRecoveryRecord(); m_pendingId.clear(); m_unknown = false;
         issue(result["outcome"]=="committed" ? "Reconciled committed operation without repeating Python handlers." : "Reconciled rollback without repeating Python handlers: "+result["message"].toString());
         refresh();
@@ -422,7 +438,7 @@ bool MainWindow::preserveUnknownOperation() {
     if (!QDir().mkpath(dir)) { issue("Cannot create operation recovery directory: "+dir); return false; }
     if (m_recoveryRecord.isEmpty()) m_recoveryRecord=dir+"/operation-"+QUuid::createUuid().toString(QUuid::WithoutBraces)+".json";
     QSaveFile file(m_recoveryRecord);
-    const auto data=QJsonDocument(QJsonObject{{"workbook_path",m_info["path"]},{"operation_id",m_pendingId},{"outcome","unknown"},
+    const auto data=QJsonDocument(QJsonObject{{"workbook_path",m_info["path"]},{"operation_id",m_pendingId},{"outcome","unknown"},{"editor_draft",m_recoveredDraft},
         {"instructions","Reopen the workbook and look up this operation ID before retrying any mutation."}}).toJson();
     if (!file.open(QIODevice::WriteOnly)) { issue(file.errorString()); return false; }
     file.setPermissions(QFileDevice::ReadOwner|QFileDevice::WriteOwner);
@@ -437,7 +453,12 @@ void MainWindow::clearRecoveryRecord() {
 
 void MainWindow::restartService() {
     if (!m_options.url.isEmpty()) { issue("Restart the independently running service separately; this window does not own it."); return; }
-    if (m_service.state()!=QProcess::NotRunning || !resolveDraft()) return;
+    if (m_service.state()!=QProcess::NotRunning) return;
+    if (m_source->isModified()) {
+        m_recoveredDraft=m_draftTarget; m_recoveredDraft["source"]=m_source->text(); m_recoveredDraft["needs_review"]=true;
+        m_source->setModified(false);
+    }
+    if (!m_recoveredDraft.isEmpty()) { m_restoreDraft=true; m_recoveredDraft["needs_review"]=true; }
     m_restartPath=m_info["path"].toString();
     m_refreshing=false;
     setBusy(true,"Restarting local service…");
@@ -446,7 +467,7 @@ void MainWindow::restartService() {
 
 void MainWindow::setBusy(bool busy, const QString &message) {
     m_busy = busy; m_model->setBusy(busy); m_toolbar->setEnabled(!busy); m_tabs->setEnabled(!busy);
-    m_source->setEnabled(!busy && !m_info["readonly"].toBool());
+    syncSource();
     if (!message.isEmpty()) m_status->setText(message);
 }
 
@@ -456,10 +477,18 @@ void MainWindow::issue(const QString &message) {
 }
 
 void MainWindow::syncSource() {
-    auto index = m_grid->currentIndex(); if (!index.isValid()) return;
-    m_source->setEnabled(!m_busy && !m_info["readonly"].toBool() && m_model->loaded(index));
+    auto index = m_grid->currentIndex();
+    if (!index.isValid()) {
+        m_source->clear(); m_source->setModified(false); m_source->setEnabled(false); m_draftTarget={}; m_address->clear();
+        return;
+    }
+    m_model->ensureSource(index);
+    const bool ready=m_model->sourceReady(index);
+    m_source->setEnabled(!m_busy && !m_info["readonly"].toBool() && ready);
     m_address->setText(SheetModel::columnName(index.column()+1) + QString::number(m_model->sourceRow(index.row())+1));
     if (!m_source->isModified()) {
+        if (!ready) { m_source->clear(); m_source->setModified(false); m_draftTarget={}; m_source->setPlaceholderText("Loading cell input…"); return; }
+        m_source->setPlaceholderText(tr("Value or formula"));
         m_source->setText(m_model->cell(index)["source"].toString()); m_source->setModified(false);
         m_draftTarget = {{"workbook", m_info["id"]}, {"sheet", m_model->sheet()}, {"state", m_info["state"]},
                          {"row", m_model->sourceRow(index.row())+1}, {"col", index.column()+1}};
@@ -470,13 +499,29 @@ void MainWindow::syncSource() {
 
 void MainWindow::submitDraft() {
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
+    if (!m_grid->currentIndex().isValid() || m_draftTarget["row"].toInt()<1 || m_draftTarget["col"].toInt()<1) {
+        issue("Select a cell with a loaded input before editing."); return;
+    }
     if (m_draftTarget["workbook"] != m_info["id"] || m_draftTarget["sheet"].toString() != m_model->sheet()
         || m_draftTarget["state"] != m_info["state"]) {
         issue("The draft target changed. Copy the draft text or press Escape, then review the current cell before submitting."); return;
     }
+    if (m_draftNeedsReview) {
+        const auto target=m_model->index(m_draftTarget["row"].toInt()-1,m_draftTarget["col"].toInt()-1);
+        if (!m_model->sourceReady(target)) { m_model->ensureSource(target); issue("Wait for the reopened cell input before reviewing the draft."); return; }
+        const auto current=m_model->cell(target)["source"].toString();
+        const auto answer=QMessageBox::question(this,tr("Review recovered draft"),
+            tr("The workbook was reopened. Current input at %1%2:\n%3\n\nApply the recovered draft to this cell?\n%4")
+                .arg(SheetModel::columnName(target.column()+1)).arg(target.row()+1).arg(current.left(256),m_source->text().left(256)),
+            QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel);
+        if (answer!=QMessageBox::Yes) return;
+        m_draftNeedsReview=false;
+    }
+    m_recoveredDraft=m_draftTarget; m_recoveredDraft["source"]=m_source->text(); m_recoveredDraft["needs_review"]=false;
     auto cell = QJsonObject{{"row",m_draftTarget["row"]},{"col",m_draftTarget["col"]},{"source",m_source->text()}};
     m_source->setModified(false);
     submit({{"action","edit"},{"label","Edit cell"},{"cells",QJsonArray{cell}}});
+    if (!m_pendingId.isEmpty()) m_draftSubmissionId=m_pendingId;
     m_grid->setFocus();
 }
 
@@ -486,9 +531,32 @@ bool MainWindow::resolveDraft() {
         tr("Save or discard the draft for %1%2 before changing its target?")
             .arg(SheetModel::columnName(m_draftTarget["col"].toInt())).arg(m_draftTarget["row"].toInt()),
         QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel);
-    if (answer == QMessageBox::Discard) { m_source->setModified(false); return true; }
+    if (answer == QMessageBox::Discard) { m_source->setModified(false); clearRecoveredDraft(); return true; }
     if (answer == QMessageBox::Save) submitDraft();
     return false;
+}
+
+void MainWindow::clearRecoveredDraft() {
+    m_recoveredDraft={}; m_restoreDraft=false; m_draftNeedsReview=false; m_draftSubmissionId.clear();
+}
+
+void MainWindow::restoreRecoveredDraft() {
+    m_restoreDraft=false;
+    const auto sheet=m_recoveredDraft["sheet"].toString();
+    if (sheet!=m_model->sheet()) {
+        issue("The original draft sheet is unavailable. Copy this retained draft before discarding it:\n"+m_recoveredDraft["source"].toString());
+        return;
+    }
+    const auto target=m_model->index(m_recoveredDraft["row"].toInt()-1,m_recoveredDraft["col"].toInt()-1);
+    if (!target.isValid()) { issue("The recovered draft target is unavailable; the draft remains retained."); return; }
+    {
+        QSignalBlocker blocker(m_grid->selectionModel()); m_grid->setCurrentIndex(target); m_grid->scrollTo(target);
+    }
+    syncSource();
+    m_draftTarget={{"workbook",m_info["id"]},{"sheet",sheet},{"state",m_info["state"]},{"row",target.row()+1},{"col",target.column()+1}};
+    m_source->setText(m_recoveredDraft["source"].toString()); m_source->setModified(true);
+    m_draftNeedsReview=m_recoveredDraft["needs_review"].toBool();
+    m_status->setText(m_draftNeedsReview ? "Recovered draft • Review against reopened input before applying" : "Rejected edit • Draft restored for correction");
 }
 
 bool MainWindow::isRecoveryPath(QString path) {
@@ -561,7 +629,7 @@ void MainWindow::copy(bool cut) {
     auto range = selectedRange(); if (range.isEmpty()) return;
     range["sheet"] = m_model->sheet();
     const auto sourceWorkbook = m_info["id"].toString();
-    m_client->request(base()+"/range", range, [this, range, cut, sourceWorkbook](QJsonObject result, QString error) {
+    m_client->request(base()+"/clipboard", range, [this, range, cut, sourceWorkbook](QJsonObject result, QString error) {
         if (!error.isEmpty()) { issue(error); return; }
         QHash<quint64, QJsonObject> cells;
         for (const auto &cell : result["cells"].toArray()) { auto c = cell.toObject(); cells.insert((quint64(c["row"].toInt()) << 32) | quint32(c["col"].toInt()), c); }
@@ -700,7 +768,12 @@ void MainWindow::listDialog() {
     if (sort->currentIndex()) keys.append(QJsonObject{{"col", sortCol->value()}, {"descending", sort->currentIndex()==2}});
     if (sort2->currentIndex()) keys.append(QJsonObject{{"col", sortCol2->value()}, {"descending", sort2->currentIndex()==2}});
     scope["header"] = header->isChecked(); scope["filters"] = filters; scope["sort"] = keys;
-    m_listSpec = scope; applyList();
+    showList(scope);
+}
+
+void MainWindow::showList(QJsonObject scope) {
+    if (m_busy || m_unknown || !resolveDraft()) return;
+    m_listSpec=scope; applyList();
 }
 
 void MainWindow::applyList() {
@@ -755,9 +828,9 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     if (!m_pendingId.isEmpty() || m_unknown || m_releasing) {
         issue("Wait for a known operation outcome before closing. Committed work remains in the native workbook."); event->ignore(); return;
     }
-    if (m_source->isModified()) {
+    if (m_source->isModified() || !m_recoveredDraft.isEmpty()) {
         if (QMessageBox::question(this, tr("Discard editor draft?"), tr("Discard the unsubmitted formula-bar draft? Already stored edits remain in the workbook.")) != QMessageBox::Yes) { event->ignore(); return; }
-        m_source->setModified(false);
+        m_source->setModified(false); clearRecoveredDraft();
     }
     if (!m_options.url.isEmpty() && !m_info.isEmpty() && !m_released) {
         m_releasing=true; event->ignore();
@@ -769,7 +842,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
     if (object == m_source && event->type() == QEvent::KeyPress && static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
-        m_source->setModified(false); syncSource(); m_grid->setFocus(); return true;
+        m_source->setModified(false); clearRecoveredDraft(); syncSource(); m_grid->setFocus(); return true;
     }
     return QMainWindow::eventFilter(object, event);
 }

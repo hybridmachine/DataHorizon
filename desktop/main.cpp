@@ -16,11 +16,12 @@ int main(int argc, char **argv) {
     parser.addPositionalArgument("workbook", "Native workbook to open"); parser.process(app);
     StartupOptions options; options.url = parser.value("connect"); options.token = qEnvironmentVariable("DATAHORIZON_TOKEN"); options.handler = parser.value("handler");
     const auto files = parser.positionalArguments(); const bool smoke=parser.isSet("smoke-test"); options.automaticWorkbook = files.isEmpty() && !smoke;
+    if (!smoke && !files.isEmpty()) options.initialWorkbook=files.first();
     QTemporaryDir smokeDirectory;
     bool smokeSubmitted=false;
     MainWindow window(options);
     if (smoke) {
-        QObject::connect(&window,&MainWindow::serviceReady,&window,[&]{window.openBook(smokeDirectory.filePath("smoke.dhwb"),true);});
+        QObject::connect(&window,&MainWindow::serviceReady,&window,[&]{window.openBook(smokeDirectory.filePath("smoke.dhwb"),true);},Qt::SingleShotConnection);
         QObject::connect(&window,&MainWindow::workbookReady,&window,[&]{
             if(smokeSubmitted) return;
             smokeSubmitted=true;
@@ -33,6 +34,6 @@ int main(int argc, char **argv) {
             if(smokeSubmitted && window.model()->data(window.model()->index(0,0)).toString()=="20.5") app.exit(0);
         });
         timer->start(); QTimer::singleShot(20000,&app,[&]{app.exit(2);});
-    } else if (!files.isEmpty()) QObject::connect(&window, &MainWindow::serviceReady, &window, [&] { window.openBook(files.first()); });
+    }
     window.show(); return app.exec();
 }

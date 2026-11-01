@@ -15,6 +15,9 @@ blank or numeric/boolean values use zero for the blank operand. Other mixed-type
 comparisons are errors. Text comparison is case-sensitive. Formatting an empty
 auto cell does not turn it into empty Text; explicitly entered empty Text remains
 distinct and retains text coercion rules.
+Binary operations on ranges are #VALUE! because array expressions are outside
+this tier. Overlong or out-of-grid reference rows are #REF!; these errors remain
+local to the formula cell and do not fail the rest of a viewport.
 
 References support A1, $A1, A$1 and $A$1, rectangles and quoted sheet names such
 as `'Other sheet'!A1`. Quoted sheet names escape an apostrophe by doubling it.
@@ -83,5 +86,8 @@ blocked. Persistent lists and a stable record-ID schema are later work.
 
 Find supports case-sensitive literal substring search over source or display,
 returning a count and first 500 locations in row-major order. Replace All runs
-in one managed transaction. Displayed formula results cannot be replaced.
+in one managed transaction. Display replacement supports Text only and preserves
+its type and apostrophe escape. Unchanged replacements do not rewrite inputs.
+Use source replacement for numbers, booleans and formulas; their displays may
+be rounded or derived.
 Regular expressions and case-folded replacement are not implemented.

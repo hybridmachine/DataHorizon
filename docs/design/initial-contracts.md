@@ -16,6 +16,9 @@ there; the recovery source remains available. Closing waits for pending writes.
 An unknown outcome permits a warned exit only after preserving the workbook
 path and operation ID in a client recovery record. Restart/reopen reconciles
 receipts before any retry; a missing receipt remains unknown.
+An unsubmitted formula-bar draft survives an owned-service restart at its original
+sheet and coordinates. Reopening requires review against the current stored
+input before applying it. A rejected draft remains available for correction.
 
 Each mutation requires a client-generated operation ID (UUID recommended, up to
 100 characters) and an expected state token.
@@ -69,6 +72,9 @@ they never guess a record boundary from the viewport. Blank cells are retained.
 The first list implementation is a full-scope presentation projection over
 source row coordinates. Single-cell edits retain those targets; range operations
 require clearing the projection. Persistent record IDs remain M5/M8 work.
+An empty projection has no editor target. Display replacement changes only Text,
+preserves its typing/escape and skips identical replacements. Changing numeric,
+boolean or formula displays requires editing their stored source instead.
 
 Only a service operator can explicitly activate a trusted Python file. Workbook
 metadata and imports cannot activate code. A separate Python worker receives a
@@ -86,8 +92,15 @@ Ordinary operations are atomic, at most 10,000 target cells, 4 MiB request body,
 64 KiB cell source and 5 seconds engine time. There are no chunked commits in
 this tier. No partial-cancel claims are made: accepted writes run to their known
 outcome; long/chunked jobs remain unavailable. A viewport is at most 4,096 cells;
-the GUI retains at most 16 tiles of 32 by 16 cells and an estimated 16 MiB cache.
-Viewport response payloads are limited to 4 MiB. Formula evaluation permits
+the GUI retains at most 16 tiles of 32 by 16 cells. Its estimated cache budget is
+14 MiB for tiles plus 2 MiB for complete editing inputs. GUI tiles request bounded
+128-character source/display previews with explicit omitted-source/value flags.
+An omitted input is loaded separately in full and must match the tile's state
+before editing is enabled; preview inputs/values cannot be pasted as complete
+data. Full reads remain the default for REST/SDK callers. Copy/Cut uses one
+consistent clipboard read supporting 10,000 selected cells. Both range and
+clipboard response payloads are limited to 4 MiB. Sheet deletion rejects more
+than 10,000 stored cells before its cascade. Formula evaluation permits
 10,000 referenced cells, 128 dependency levels and 0.25 seconds per viewport.
 
 M1 reference hardware is the available Apple Silicon macOS host, SSD, at least

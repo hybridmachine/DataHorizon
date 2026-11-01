@@ -13,7 +13,7 @@ class QLabel;
 class QPlainTextEdit;
 class QToolBar;
 
-struct StartupOptions { QString url, token, handler, recoveryDirectory; bool automaticWorkbook = true; };
+struct StartupOptions { QString url, token, handler, recoveryDirectory, initialWorkbook; bool automaticWorkbook = true; };
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -23,6 +23,7 @@ public:
     void openBook(const QString &path, bool create = false, bool readonly = false);
     void submit(QJsonObject operation);
     void importCsvText(const QString &text);
+    void showList(QJsonObject scope);
     static bool isRecoveryPath(QString path);
     SheetModel *model() const { return m_model; }
 signals:
@@ -59,6 +60,8 @@ private:
     QString recoveryDirectory() const;
     bool preserveUnknownOperation();
     void clearRecoveryRecord();
+    void restoreRecoveredDraft();
+    void clearRecoveredDraft();
     QJsonObject selectedRange() const;
     QString base() const;
     StartupOptions m_options;
@@ -76,6 +79,9 @@ private:
     QJsonObject m_info;
     QJsonObject m_listSpec;
     QJsonObject m_draftTarget;
+    QJsonObject m_recoveredDraft;
+    QString m_draftSubmissionId;
+    bool m_restoreDraft = false, m_draftNeedsReview = false;
     QString m_pendingId;
     QString m_restartPath, m_recoveryRecord;
     bool m_busy = true, m_unknown = false, m_refreshing = false;
