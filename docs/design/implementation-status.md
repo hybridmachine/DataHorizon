@@ -169,3 +169,6 @@ failures even when their JSON message is empty. Missing receipts return an
 unknown outcome with the operation ID; failed SDK lookups retain the pending
 operation. Delayed socket replies, HTTP failures, restart/rejection recovery and
 stale reviewed-operation regressions exercise these paths.
+The CI rerun encountered GitHub's macOS 14 retirement brownout before checkout;
+the matrix now uses `macos-15`, following the
+[runner retirement notice](https://github.com/actions/runner-images/issues/13518).

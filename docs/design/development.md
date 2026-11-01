@@ -22,6 +22,8 @@ On Windows/Linux run the generated DataHorizon executable; set the Qt prefix to
 the selected kit. Test execution needs permission to bind loopback sockets.
 CTest uses Qt's offscreen platform for desktop tests. These tests do not
 replace native-platform keyboard, accessibility or installer acceptance.
+Hosted macOS CI uses `macos-15`; GitHub's `macos-14` image entered retirement
+brownouts and is scheduled for removal on November 2, 2026.
 
 The desktop launches a private, authenticated loopback service using the Python
 interpreter found by CMake. DATAHORIZON_PYTHON overrides it. Normal grid operations
