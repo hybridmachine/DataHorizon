@@ -105,7 +105,8 @@ Qt::ItemFlags SheetModel::flags(const QModelIndex &index) const {
 
 bool SheetModel::setData(const QModelIndex &index, const QVariant &value, int role) {
     if (role != Qt::EditRole || !(flags(index) & Qt::ItemIsEditable)) return false;
-    emit editRequested(sourceRow(index.row())+1, index.column()+1, value.toString());
+    const auto kind=cell(index)["input_kind"]=="text"?QString("text"):QString("auto");
+    emit editRequested(sourceRow(index.row())+1, index.column()+1, value.toString(),kind);
     return true;
 }
 

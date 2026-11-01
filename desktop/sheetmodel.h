@@ -30,7 +30,7 @@ public:
     QString state() const { return m_state; }
     static QString columnName(int oneBased);
 signals:
-    void editRequested(int row, int col, QString source);
+    void editRequested(int row, int col, QString source, QString kind);
     void issue(QString message);
     void externalChange();
     void tileLoaded();

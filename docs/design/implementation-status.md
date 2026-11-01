@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 47 Python tests and 19 Qt contract cases.
+The review regression suite includes 49 Python tests and 20 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -142,3 +142,10 @@ new and duplicated sheets append after position gaps; list/search/export reads
 refresh external state within their read transactions; CSV limits include the
 serialized response and blank-record count. Regressions inject commits at the
 receipt-lookup/writer-lock and initial-refresh/read-transaction boundaries.
+
+Additional review cycle 2 published no inline issues, but its summary named
+three unpublished concerns. All three were reproduced and fixed: GUI edits and
+recovered drafts retain explicit Text typing; range/clipboard byte limits count
+the complete JSON envelope and array separators; non-finite numeric literals
+become #NUM! before scalar operations can consume them, while lazy IF retains
+its selected-branch semantics. Boundary and editor regressions cover these cases.

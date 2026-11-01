@@ -267,7 +267,9 @@ class Workbook:
                 # Refresh again after establishing the read snapshot.
                 self.refresh()
                 sheet, calc = self.sheet(sheet), self.calculator()
-                cells, response_bytes = [], 0
+                cells = []
+                response = {"cells":cells, "state":self.state(), "sheet":sheet, "range":[r1,c1,r2,c2]}
+                response_bytes = len(encoded(response).encode())
                 for row, col, source, kind, style in self.db.execute(
                         "SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? AND " + row_clause + " AND col BETWEEN ? AND ? ORDER BY row,col",
                         (sheet, *row_parameters, c1, c2)):
@@ -286,10 +288,10 @@ class Workbook:
                         for field in ("display","error"):
                             if field in result and len(result[field])>128:
                                 result[field]=result[field][:128]+"…"
-                    response_bytes += len(encoded(result).encode())
-                    require(response_bytes <= 4 * 1024 * 1024, "READ_LIMIT", "Viewport exceeds 4 MiB; request a smaller range")
+                    response_bytes += len(encoded(result).encode()) + int(bool(cells))
+                    require(response_bytes <= 4 * 1024 * 1024, "READ_LIMIT", "Read response exceeds 4 MiB; request a smaller range")
                     cells.append(result)
-                return {"cells": cells, "state": self.state(), "sheet": sheet, "range": [r1, c1, r2, c2]}
+                return response
             finally:
                 self.db.execute("ROLLBACK")
 

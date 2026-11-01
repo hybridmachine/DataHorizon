@@ -42,6 +42,9 @@ absent cell. Numbers use finite IEEE-754 binary64 for calculation; integers are
 accepted only within the exact JSON interoperability range. Decimal/currency
 accounting and Excel date serials are not supported. Entry uses an invariant
 decimal point; CSV defaults to text and requires a deliberate typing choice.
+GUI edits preserve explicitly typed Text, including leading-zero and
+formula-looking inputs. Recovered formula-bar drafts retain their original Text
+intent. Cells stored with automatic typing continue to infer types on entry.
 
 The first formula tier is +, -, *, /, ^, unary signs, parentheses, comparisons,
 cell and rectangular range references, quoted/unquoted cross-sheet references,
@@ -50,6 +53,8 @@ SUM ignores text and blank cells; scalar arithmetic accepts numbers, booleans
 and blanks, and rejects text. Errors retain source. Cycles are errors. Evaluation
 is bounded by cell, depth, range, and time budgets. Unsupported functions return
 #NAME?; external links, names, arrays, volatile and Python functions are deferred.
+An evaluated non-finite numeric literal is #NUM! before comparison, branching
+or arithmetic can consume it; an unselected IF branch remains unevaluated.
 
 Sheet rename, duplication and deletion reject cross-sheet formulas until their
 reference transformer is proven. Structural row/column changes and
@@ -101,7 +106,8 @@ An omitted input is loaded separately in full and must match the tile's state
 before editing is enabled; preview inputs/values cannot be pasted as complete
 data. Full reads remain the default for REST/SDK callers. Copy/Cut uses one
 consistent clipboard read supporting 10,000 selected cells. Both range and
-clipboard response payloads are limited to 4 MiB. Sheet deletion rejects more
+clipboard response payloads, including their JSON envelope and separators, are
+limited to 4 MiB. Sheet deletion rejects more
 than 10,000 stored cells before its cascade. Formula evaluation permits
 10,000 referenced cells, 128 dependency levels and 0.25 seconds per viewport.
 CSV previews allow at most 10,000 records as well as 10,000 fields; blank records

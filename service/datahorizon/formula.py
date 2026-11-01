@@ -236,6 +236,8 @@ class Calculator:
         self.check()
         kind = node[0]
         if kind == "literal":
+            if isinstance(node[1],(int,float)) and not math.isfinite(node[1]):
+                raise FormulaError("#NUM!", "Numeric literal exceeds the finite range")
             return node[1]
         if kind == "error":
             raise FormulaError(node[1])

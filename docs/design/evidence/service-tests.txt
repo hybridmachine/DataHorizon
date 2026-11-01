@@ -22,7 +22,9 @@ test_large_sheet_delete_rejects_before_cascade (test_engine.EngineTests.test_lar
 test_large_text_viewports_are_bounded_previews_with_full_cell_reads (test_engine.EngineTests.test_large_text_viewports_are_bounded_previews_with_full_cell_reads) ... ok
 test_long_text_viewport_and_export_are_bounded (test_engine.EngineTests.test_long_text_viewport_and_export_are_bounded) ... ok
 test_missing_and_timeout_hook_fail_closed (test_engine.EngineTests.test_missing_and_timeout_hook_fail_closed) ... ok
+test_nonfinite_literals_are_errors_before_scalar_operations (test_engine.EngineTests.test_nonfinite_literals_are_errors_before_scalar_operations) ... ok
 test_paste_relative_references_values_and_atomicity (test_engine.EngineTests.test_paste_relative_references_values_and_atomicity) ... ok
+test_read_response_limit_includes_envelope_and_array_separators (test_engine.EngineTests.test_read_response_limit_includes_envelope_and_array_separators) ... ok
 test_readonly_schema_and_backup (test_engine.EngineTests.test_readonly_schema_and_backup) ... ok
 test_receipt_rechecked_after_writer_lock_without_reclassifying_outcome (test_engine.EngineTests.test_receipt_rechecked_after_writer_lock_without_reclassifying_outcome) ... ok
 test_sheet_add_and_duplicate_append_after_deleting_middle_sheet (test_engine.EngineTests.test_sheet_add_and_duplicate_append_after_deleting_middle_sheet) ... ok
@@ -47,6 +49,6 @@ test_receipts_with_url_delimiters_are_retrievable (test_service.ServiceTests.tes
 test_rest_sdk_cli_share_managed_path (test_service.ServiceTests.test_rest_sdk_cli_share_managed_path) ... ok
 
 ----------------------------------------------------------------------
-Ran 47 tests in 5.001s
+Ran 49 tests in 5.055s
 
 OK

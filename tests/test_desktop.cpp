@@ -315,7 +315,7 @@ private slots:
         QSignalSpy ready(&window,&MainWindow::serviceReady); QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
         QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,true);
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
-        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",3},{"col",2},{"source","old input"}}}}});
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",3},{"col",2},{"source","old input"},{"kind","text"}}}}});
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
         auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source");
         grid->setCurrentIndex(window.model()->index(2,1));
@@ -343,6 +343,7 @@ private slots:
         answerNextDialog(QMessageBox::Yes); QTest::keyClick(source,Qt::Key_Return);
         QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(2,1)).toString(),QString("retained draft"),5000);
+        QCOMPARE(window.model()->cell(window.model()->index(2,1))["input_kind"].toString(),QString("text"));
     }
     void emptyListHasNoEditorTarget() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
@@ -447,6 +448,30 @@ private slots:
         QFile output(csv); QVERIFY(output.open(QIODevice::ReadOnly)); QCOMPARE(output.readAll(),QByteArray("7\r\n"));
         window.openBook(path); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
         QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("7"),5000);
+    }
+    void guiEditsPreserveExplicitTextWhileAutoCellsStillInferTypes() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("typed-text.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","00123"},{"kind","text"}},
+                                                          QJsonObject{{"row",2},{"col",1},{"source","auto text"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model(); auto *source=window.findChild<QLineEdit *>("source");
+        QTRY_COMPARE_WITH_TIMEOUT(source->text(),QString("00123"),5000);
+        source->setFocus(); source->selectAll(); QTest::keyClicks(source,"00124"); QTest::keyClick(source,Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("00124"),5000);
+        QCOMPARE(model->cell(model->index(0,0))["kind"].toString(),QString("text"));
+        QVERIFY(model->setData(model->index(0,0),"=1+1",Qt::EditRole));
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("=1+1"),5000);
+        QCOMPARE(model->cell(model->index(0,0))["kind"].toString(),QString("text"));
+        QVERIFY(model->setData(model->index(1,0),"7",Qt::EditRole));
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(1,0)).toString(),QString("7"),5000);
+        QCOMPARE(model->cell(model->index(1,0))["kind"].toString(),QString("number"));
     }
 private:
     static void answerNextDialog(QMessageBox::StandardButton button, QString *message=nullptr) {

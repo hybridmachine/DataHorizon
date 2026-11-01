@@ -65,8 +65,8 @@ MainWindow::MainWindow(const StartupOptions &options, QWidget *parent)
     m_service.setParent(this);
     m_service.setObjectName("ownedService");
     buildUi();
-    connect(m_model, &SheetModel::editRequested, this, [this](int row, int col, const QString &source) {
-        QJsonObject cell{{"row", row}, {"col", col}, {"source", source}};
+    connect(m_model, &SheetModel::editRequested, this, [this](int row, int col, const QString &source, const QString &kind) {
+        QJsonObject cell{{"row", row}, {"col", col}, {"source", source}, {"kind",kind}};
         submit({{"action", "edit"}, {"label", "Edit cell"}, {"cells", QJsonArray{cell}}});
     });
     connect(m_model, &SheetModel::issue, this, &MainWindow::issue);
@@ -497,7 +497,7 @@ void MainWindow::syncSource() {
         m_source->setPlaceholderText(tr("Value or formula"));
         m_source->setText(m_model->cell(index)["source"].toString()); m_source->setModified(false);
         m_draftTarget = {{"workbook", m_info["id"]}, {"sheet", m_model->sheet()}, {"state", m_info["state"]},
-                         {"row", m_model->sourceRow(index.row())+1}, {"col", index.column()+1}};
+                         {"row", m_model->sourceRow(index.row())+1}, {"col", index.column()+1}, {"input_kind",m_model->cell(index)["input_kind"]}};
     }
     auto cell = m_model->cell(index);
     if (cell.contains("error")) m_status->setText(cell["display"].toString() + " • " + cell["error"].toString() + " • Input retained");
@@ -524,7 +524,8 @@ void MainWindow::submitDraft() {
         m_draftNeedsReview=false;
     }
     m_recoveredDraft=m_draftTarget; m_recoveredDraft["source"]=m_source->text(); m_recoveredDraft["needs_review"]=false;
-    auto cell = QJsonObject{{"row",m_draftTarget["row"]},{"col",m_draftTarget["col"]},{"source",m_source->text()}};
+    auto cell = QJsonObject{{"row",m_draftTarget["row"]},{"col",m_draftTarget["col"]},{"source",m_source->text()},
+                           {"kind",m_draftTarget["input_kind"]=="text"?"text":"auto"}};
     m_source->setModified(false);
     submit({{"action","edit"},{"label","Edit cell"},{"cells",QJsonArray{cell}}});
     if (!m_pendingId.isEmpty()) m_draftSubmissionId=m_pendingId;
@@ -559,7 +560,8 @@ void MainWindow::restoreRecoveredDraft() {
         QSignalBlocker blocker(m_grid->selectionModel()); m_grid->setCurrentIndex(target); m_grid->scrollTo(target);
     }
     syncSource();
-    m_draftTarget={{"workbook",m_info["id"]},{"sheet",sheet},{"state",m_info["state"]},{"row",target.row()+1},{"col",target.column()+1}};
+    m_draftTarget={{"workbook",m_info["id"]},{"sheet",sheet},{"state",m_info["state"]},{"row",target.row()+1},{"col",target.column()+1},
+                   {"input_kind",m_recoveredDraft["input_kind"]}};
     m_source->setText(m_recoveredDraft["source"].toString()); m_source->setModified(true);
     m_draftNeedsReview=m_recoveredDraft["needs_review"].toBool();
     m_status->setText(m_draftNeedsReview ? "Recovered draft • Review against reopened input before applying" : "Rejected edit • Draft restored for correction");

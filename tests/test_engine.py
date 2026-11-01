@@ -9,7 +9,7 @@ import time
 import unittest
 import uuid
 
-from datahorizon.engine import EngineError, Workbook
+from datahorizon.engine import EngineError, Workbook, encoded
 from datahorizon.formula import coordinates, translate
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -491,6 +491,29 @@ class EngineTests(unittest.TestCase):
         result=self.book.csv_export("Sheet1",{"r2":8})
         self.assertLessEqual(len(json.dumps(result).encode()),4*1024*1024)
         self.assertEqual(result["csv"],(source+"\r\n")*8)
+
+    def test_read_response_limit_includes_envelope_and_array_separators(self):
+        source="x"*21750
+        self.apply(cells=[{"row":row,"col":1,"source":source,"kind":"text"} for row in range(1,65)])
+        args={"r2":64,"c2":1}
+        baseline=self.book.read("Sheet1",args)
+        limit=4*1024*1024
+        size=len(encoded(baseline).encode())
+        self.assertLessEqual(size,limit)
+        extra=(limit-size)//3+1  # Full Text replies carry source, value and display.
+        self.apply(cells=[{"row":1,"col":1,"source":source+"x"*extra,"kind":"text"}])
+        for cell_limit in (4096,10000):
+            with self.subTest(limit=cell_limit),self.assertRaises(EngineError) as failure:
+                self.book.read("Sheet1",args,limit=cell_limit)
+            self.assertEqual(failure.exception.body["code"],"READ_LIMIT")
+        self.assertLess(len(encoded(self.book.read("Sheet1",{**args,"preview":True})).encode()),limit)
+
+    def test_nonfinite_literals_are_errors_before_scalar_operations(self):
+        self.edit((1,1,"=1e9999>0"),(2,1,"=IF(1e9999,7,0)"),(3,1,"=1e9999^0"),
+                  (4,1,"=IF(FALSE,1e9999,7)"),(5,1,"7"))
+        cells=self.cells()
+        self.assertEqual([cells[(row,1)]["display"] for row in range(1,4)],["#NUM!"]*3)
+        self.assertEqual([cells[(row,1)]["value"] for row in (4,5)],[7,7])
 
 
 if __name__ == "__main__":
