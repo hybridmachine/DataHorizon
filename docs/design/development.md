@@ -102,6 +102,9 @@ nothing. Numeric, boolean and formula results require stored-source replacement.
 CSV import previews UTF-8 comma-separated text and imports it atomically as Text.
 Dates, encodings, column typing and spreadsheet interchange remain incomplete.
 Export is an explicit values-only selected snapshot and blocks on formula errors.
+Export cannot overwrite the open native workbook, including paths that identify
+the same file through a filesystem alias. CSV previews are capped at 10,000
+records and 10,000 fields; exports are capped by the complete 4-MiB JSON response.
 
 ## CLI and Python
 
@@ -115,6 +118,8 @@ File mode starts an owned service and executes through REST. `--url` attaches
 to a service and reads DATAHORIZON_TOKEN. `apply` accepts a JSON operation from
 stdin for bulk work; preserve its operation_id for outcome lookup. `direct-sql`
 is explicitly independent SQLite access and reports handlers=false.
+`--readonly` also applies to direct SQL: SQLite opens the existing file in
+read-only mode, and rejected writes return a structured JSON error.
 
 The SDK raises `UnknownOutcome` with an `operation_id` if acknowledgement is
 lost, and blocks subsequent writes until `book.outcome(id)` reconciles it.

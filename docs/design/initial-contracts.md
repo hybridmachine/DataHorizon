@@ -23,7 +23,9 @@ input before applying it. A rejected draft remains available for correction.
 Each mutation requires a client-generated operation ID (UUID recommended, up to
 100 characters) and an expected state token.
 Receipts deduplicate the entire committed operation. Reusing an ID for different
-content is rejected. Rejected and rolled-back responses are explicit. A lost
+content is rejected. Receipt lookup is repeated under the SQLite writer lock
+before validating a new operation, so concurrent retries preserve the recorded
+outcome. Rejected and rolled-back responses are explicit. A lost
 reply is outcome unknown: look up the ID before submitting any new write. A
 missing receipt is not proof that an in-flight operation failed. Calculation is
 evaluated against the current read transaction; no persisted cached result is
@@ -102,6 +104,10 @@ consistent clipboard read supporting 10,000 selected cells. Both range and
 clipboard response payloads are limited to 4 MiB. Sheet deletion rejects more
 than 10,000 stored cells before its cascade. Formula evaluation permits
 10,000 referenced cells, 128 dependency levels and 0.25 seconds per viewport.
+CSV previews allow at most 10,000 records as well as 10,000 fields; blank records
+count toward the record limit. The CSV export limit covers the complete encoded
+JSON response, including escaped characters and metadata. Export destinations
+that identify the current native workbook are rejected before any file write.
 
 M1 reference hardware is the available Apple Silicon macOS host, SSD, at least
 8 GiB RAM; record actual OS/CPU in evidence. Target warm p95 viewport and distant

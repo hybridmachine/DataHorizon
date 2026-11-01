@@ -159,6 +159,7 @@ class Service(ThreadingHTTPServer):
             rows, count = [], 0
             try:
                 for row in csv.reader(io.StringIO(text, newline=""), delimiter=delimiter, strict=True):
+                    require(len(rows) < MAX_CELLS, "LIMIT", "CSV preview/import exceeds 10,000 records")
                     count += len(row)
                     require(count <= MAX_CELLS, "LIMIT", "CSV preview/import exceeds 10,000 cells")
                     rows.append(row)

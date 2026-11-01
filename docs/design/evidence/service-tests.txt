@@ -4,6 +4,7 @@ test_blank_comparisons_never_fail_the_viewport (test_engine.EngineTests.test_bla
 test_bounded_reads_and_operations (test_engine.EngineTests.test_bounded_reads_and_operations) ... ok
 test_coalesced_input_with_style_change_does_not_dispatch_handler (test_engine.EngineTests.test_coalesced_input_with_style_change_does_not_dispatch_handler) ... ok
 test_cross_sheet_absolute_and_text_references (test_engine.EngineTests.test_cross_sheet_absolute_and_text_references) ... ok
+test_csv_export_limits_complete_serialized_json_response (test_engine.EngineTests.test_csv_export_limits_complete_serialized_json_response) ... ok
 test_csv_numbers_round_trip_without_display_rounding (test_engine.EngineTests.test_csv_numbers_round_trip_without_display_rounding) ... ok
 test_csv_snapshot_and_formula_error_block (test_engine.EngineTests.test_csv_snapshot_and_formula_error_block) ... ok
 test_cut_overlap_series_and_failed_destination (test_engine.EngineTests.test_cut_overlap_series_and_failed_destination) ... ok
@@ -23,7 +24,10 @@ test_long_text_viewport_and_export_are_bounded (test_engine.EngineTests.test_lon
 test_missing_and_timeout_hook_fail_closed (test_engine.EngineTests.test_missing_and_timeout_hook_fail_closed) ... ok
 test_paste_relative_references_values_and_atomicity (test_engine.EngineTests.test_paste_relative_references_values_and_atomicity) ... ok
 test_readonly_schema_and_backup (test_engine.EngineTests.test_readonly_schema_and_backup) ... ok
+test_receipt_rechecked_after_writer_lock_without_reclassifying_outcome (test_engine.EngineTests.test_receipt_rechecked_after_writer_lock_without_reclassifying_outcome) ... ok
+test_sheet_add_and_duplicate_append_after_deleting_middle_sheet (test_engine.EngineTests.test_sheet_add_and_duplicate_append_after_deleting_middle_sheet) ... ok
 test_sheet_duplicate_order_and_coalesced_noop (test_engine.EngineTests.test_sheet_duplicate_order_and_coalesced_noop) ... ok
+test_snapshot_reads_refresh_after_external_commit_at_begin (test_engine.EngineTests.test_snapshot_reads_refresh_after_external_commit_at_begin) ... ok
 test_styled_blank_and_explicit_empty_text_remain_distinct (test_engine.EngineTests.test_styled_blank_and_explicit_empty_text_remain_distinct) ... ok
 test_supplies_and_reopen (test_engine.EngineTests.test_supplies_and_reopen) ... ok
 test_typed_blank_null_empty_text_and_format (test_engine.EngineTests.test_typed_blank_null_empty_text_and_format) ... ok
@@ -32,6 +36,8 @@ test_values_paste_rejects_formula_errors_atomically (test_engine.EngineTests.tes
 test_cli_apply_accepts_complete_operation_with_sheet (test_service.ServiceTests.test_cli_apply_accepts_complete_operation_with_sheet) ... ok
 test_client_handles_release_without_closing_other_clients (test_service.ServiceTests.test_client_handles_release_without_closing_other_clients) ... ok
 test_clipboard_read_uses_bulk_limit_in_one_consistent_state (test_service.ServiceTests.test_clipboard_read_uses_bulk_limit_in_one_consistent_state) ... ok
+test_csv_preview_bounds_blank_records_as_well_as_fields (test_service.ServiceTests.test_csv_preview_bounds_blank_records_as_well_as_fields) ... ok
+test_direct_cli_honors_readonly_and_returns_structured_sqlite_errors (test_service.ServiceTests.test_direct_cli_honors_readonly_and_returns_structured_sqlite_errors) ... ok
 test_headless_cli_file_mode (test_service.ServiceTests.test_headless_cli_file_mode) ... ok
 test_incomplete_or_invalid_receipts_keep_pending_operation (test_service.ServiceTests.test_incomplete_or_invalid_receipts_keep_pending_operation) ... ok
 test_invalid_cli_addresses_return_structured_errors (test_service.ServiceTests.test_invalid_cli_addresses_return_structured_errors) ... ok
@@ -41,6 +47,6 @@ test_receipts_with_url_delimiters_are_retrievable (test_service.ServiceTests.tes
 test_rest_sdk_cli_share_managed_path (test_service.ServiceTests.test_rest_sdk_cli_share_managed_path) ... ok
 
 ----------------------------------------------------------------------
-Ran 41 tests in 4.839s
+Ran 47 tests in 5.001s
 
 OK

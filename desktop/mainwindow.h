@@ -23,6 +23,7 @@ public:
     void openBook(const QString &path, bool create = false, bool readonly = false);
     void submit(QJsonObject operation);
     void importCsvText(const QString &text);
+    void exportCsvTo(const QString &path);
     void showList(QJsonObject scope);
     static bool isRecoveryPath(QString path);
     SheetModel *model() const { return m_model; }

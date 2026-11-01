@@ -38,8 +38,14 @@
 #include <QToolBar>
 #include <QUuid>
 #include <QVBoxLayout>
+#include <filesystem>
 
 namespace {
+bool sameFile(const QString &left, const QString &right) {
+    std::error_code error;
+    return std::filesystem::equivalent(QFileInfo(left).filesystemFilePath(), QFileInfo(right).filesystemFilePath(), error);
+}
+
 class CellDelegate : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
@@ -727,10 +733,19 @@ void MainWindow::exportCsv() {
     auto range = selectedRange(); if (range.isEmpty()) return;
     if (QMessageBox::question(this, tr("CSV values export"), tr("Export selected values from one consistent input state? Formulas, styles, other sheets and native metadata are omitted. Blank, NULL and empty text all become empty fields. The native workbook is retained.")) != QMessageBox::Yes) return;
     auto path = QFileDialog::getSaveFileName(this, tr("Export CSV"), {}, tr("CSV (*.csv)")); if (path.isEmpty()) return;
+    exportCsvTo(path);
+}
+
+void MainWindow::exportCsvTo(const QString &path) {
+    if (m_busy || path.isEmpty()) return;
+    auto range = selectedRange(); if (range.isEmpty()) return;
+    const auto workbookPath=m_info["path"].toString();
+    if (sameFile(path,workbookPath)) { issue("CSV destination is the open native workbook. Choose a different file."); return; }
     range["sheet"] = m_model->sheet(); setBusy(true, "Exporting consistent values…");
-    m_client->request(base()+"/export/csv", range, [this, path](QJsonObject result, QString error) {
+    m_client->request(base()+"/export/csv", range, [this, path, workbookPath](QJsonObject result, QString error) {
         setBusy(false, error.isEmpty() ? "CSV snapshot ready" : "Export blocked");
         if (!error.isEmpty()) { issue(error); return; }
+        if (sameFile(path,workbookPath)) { issue("CSV destination resolves to the native workbook. Choose a different file."); return; }
         QSaveFile file(path);
         auto data = result["csv"].toString().toUtf8();
         if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit()) issue("CSV destination failed: " + file.errorString());

@@ -381,20 +381,26 @@ class Workbook:
             require(row is not None, "OUTCOME_UNKNOWN", "No durable receipt. Do not assume rollback or repeat the operation", 404)
             return json.loads(row[0])
 
+    def recorded_operation(self, operation, fingerprint):
+        existing = self.db.execute("SELECT fingerprint,result FROM operations WHERE id=?", (operation,)).fetchone()
+        if existing is None:
+            return None
+        require(existing[0] == fingerprint, "OPERATION_ID_REUSED", "Operation ID was used with different arguments", 409)
+        receipt = json.loads(existing[1])
+        if receipt["outcome"] != "committed":
+            error = EngineError(receipt["code"],receipt["message"],receipt.get("http_status",409),receipt["outcome"])
+            error.body=receipt
+            raise error
+        return receipt
+
     def mutate(self, request):
         require(isinstance(request, dict), "INVALID_ARGUMENT", "Operation must be an object")
         operation = request.get("operation_id")
         require(isinstance(operation, str) and len(operation) <= 100 and bool(operation), "OPERATION_ID", "An operation_id is required")
         fingerprint = hashlib.sha256(encoded(request).encode()).hexdigest()
         with self.lock:
-            existing = self.db.execute("SELECT fingerprint,result FROM operations WHERE id=?", (operation,)).fetchone()
-            if existing:
-                require(existing[0] == fingerprint, "OPERATION_ID_REUSED", "Operation ID was used with different arguments", 409)
-                receipt = json.loads(existing[1])
-                if receipt["outcome"] != "committed":
-                    error = EngineError(receipt["code"],receipt["message"],receipt.get("http_status",409),receipt["outcome"])
-                    error.body=receipt
-                    raise error
+            receipt = self.recorded_operation(operation, fingerprint)
+            if receipt is not None:
                 return receipt
             require(not self.readonly, "READ_ONLY", "Workbook is open read-only", 403)
             self.refresh()
@@ -402,6 +408,16 @@ class Workbook:
             self.change_bytes = 0
             self.deadline = time.monotonic() + 5
             self.db.execute("BEGIN IMMEDIATE")
+            # A different service may have committed this ID while we waited
+            # for the writer lock. Replay outside new-operation rollback handling.
+            try:
+                receipt = self.recorded_operation(operation, fingerprint)
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+            if receipt is not None:
+                self.db.execute("ROLLBACK")
+                return receipt
             in_transaction = True
             try:
                 # The writer lock closes the check/write race with independent tools.
@@ -525,7 +541,7 @@ class Workbook:
                 elif kind == "sheet_add":
                     name = request.get("name", "Sheet")
                     self.check_name(name)
-                    self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (str(uuid.uuid4()), name, self.db.execute("SELECT count(*) FROM sheets").fetchone()[0]))
+                    self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (str(uuid.uuid4()), name, self.db.execute("SELECT coalesce(max(position),-1)+1 FROM sheets").fetchone()[0]))
                 elif kind == "sheet_rename":
                     target = self.sheet(request.get("sheet"))
                     self.check_name(request.get("name"))
@@ -541,7 +557,7 @@ class Workbook:
                     require(count <= MAX_CELLS, "LIMIT", "Sheet duplication exceeds 10,000 cells")
                     require(not self.has_cross_sheet_formulas(), "REFERENCE_TRANSFORM_UNAVAILABLE", "Duplicate is unavailable while cross-sheet formulas exist")
                     new = str(uuid.uuid4())
-                    self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (new, request["name"], self.db.execute("SELECT count(*) FROM sheets").fetchone()[0]))
+                    self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (new, request["name"], self.db.execute("SELECT coalesce(max(position),-1)+1 FROM sheets").fetchone()[0]))
                     for row, col, source, input_kind, style in self.db.execute("SELECT row,col,source,kind,style FROM cells WHERE sheet_id=?", (target,)):
                         self.put(new, row, col, {"source":source, "kind":input_kind, "style":json.loads(style)})
                 elif kind == "sheet_reorder":
@@ -628,6 +644,7 @@ class Workbook:
             self.refresh()
             self.db.execute("BEGIN")
             try:
+                self.refresh()
                 sheet, calc = self.sheet(sheet), self.calculator(seconds=2)
                 criteria, keys = args.get("filters", []), args.get("sort", [])
                 require(isinstance(criteria, list) and len(criteria) <= 8 and isinstance(keys, list) and len(keys) <= 8,
@@ -715,6 +732,7 @@ class Workbook:
             self.refresh()
             self.db.execute("BEGIN")
             try:
+                self.refresh()
                 matches = self.matches(self.sheet(sheet), args)
                 return {"matches": [{**match, "text":match["text"][:256]} for match in matches[:500]], "count": len(matches), "state": self.state(), "truncated": len(matches) > 500}
             finally:
@@ -743,20 +761,24 @@ class Workbook:
             self.refresh()
             self.db.execute("BEGIN")
             try:
+                self.refresh()
                 sheet, calc = self.sheet(sheet), self.calculator(seconds=2)
                 output = io.StringIO(newline="")
-                output_bytes = 0
+                result = {"csv":"", "state":self.state(),
+                          "report":["Values only; formulas, styles, code and native metadata are omitted.",
+                                    "Blank, NULL and empty text all become empty CSV fields."]}
+                output_bytes = len(encoded(result).encode())
                 for row in range(r1, r2+1):
                     # Values export uses canonical text, independent of number format.
                     row_output = io.StringIO(newline="")
                     csv.writer(row_output).writerow([interchange_text(calc.cell(sheet, row, col)) for col in range(c1, c2+1)])
                     text = row_output.getvalue()
-                    output_bytes += len(text.encode())
+                    output_bytes += len(encoded(text).encode())-2  # Exclude each string's enclosing quotes.
                     require(output_bytes <= 4*1024*1024, "LIMIT", "CSV response exceeds 4 MiB; export a smaller selection")
                     output.write(text)
-                return {"csv": output.getvalue(), "state": self.state(),
-                        "report": ["Values only; formulas, styles, code and native metadata are omitted.",
-                                   "Blank, NULL and empty text all become empty CSV fields."]}
+                result["csv"] = output.getvalue()
+                require(len(encoded(result).encode()) <= 4*1024*1024, "LIMIT", "CSV response exceeds 4 MiB; export a smaller selection")
+                return result
             except FormulaError as error:
                 raise EngineError("CALCULATION_ERROR", f"Export blocked: {error}") from error
             finally:

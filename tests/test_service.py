@@ -3,6 +3,7 @@ from http.client import IncompleteRead
 import os
 from pathlib import Path
 import subprocess
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -166,6 +167,37 @@ class ServiceTests(unittest.TestCase):
                 self.assertEqual(clipboard["cells"][0]["source"],"tail")
                 with self.assertRaises(APIError):
                     client.request(book.base+"/clipboard",{"r2":10001,"c2":1})
+
+    def test_direct_cli_honors_readonly_and_returns_structured_sqlite_errors(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"direct.db"
+            with sqlite3.connect(path) as direct:
+                direct.execute("CREATE TABLE data(value)")
+                direct.execute("INSERT INTO data VALUES(7)")
+            def run(sql,file=path):
+                return subprocess.run([sys.executable,"-m","datahorizon.cli","--readonly",str(file),"direct-sql",sql],capture_output=True,text=True,timeout=10)
+            for sql in ("UPDATE data SET value=9","DELETE FROM data"):
+                rejected=run(sql)
+                self.assertEqual(rejected.returncode,1)
+                error=json.loads(rejected.stderr)
+                self.assertEqual(error["code"],"READ_ONLY")
+                self.assertEqual(error["outcome"],"rejected")
+            selected=run("SELECT value FROM data")
+            self.assertEqual(selected.returncode,0,selected.stderr)
+            self.assertEqual(json.loads(selected.stdout)["rows"],[[7]])
+            missing=path.with_name("missing.db")
+            self.assertEqual(run("SELECT 1",missing).returncode,1)
+            self.assertFalse(missing.exists())
+
+    def test_csv_preview_bounds_blank_records_as_well_as_fields(self):
+        with LocalService() as client:
+            accepted=client.request("/v1/import/csv/preview",{"csv":"\n"*10000})
+            self.assertEqual(len(accepted["rows"]),10000)
+            self.assertEqual(accepted["cells"],0)
+            for csv in ("\n"*10001,"value\n"+"\n"*10000):
+                with self.assertRaises(APIError) as failure:
+                    client.request("/v1/import/csv/preview",{"csv":csv})
+                self.assertEqual(failure.exception.body["code"],"LIMIT")
 
 
 if __name__ == "__main__":

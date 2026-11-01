@@ -69,6 +69,10 @@ QWARN  : DesktopTests::longTextTilesRemainEditableWithoutOversizedReads() This p
 QWARN  : DesktopTests::longTextTilesRemainEditableWithoutOversizedReads() This plugin does not support propagateSizeHints()
 PASS   : DesktopTests::longTextTilesRemainEditableWithoutOversizedReads()
 PASS   : DesktopTests::fullSourceReplyMustMatchViewportState()
+QWARN  : DesktopTests::csvExportCannotReplaceNativeWorkbookOrItsAlias() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::csvExportCannotReplaceNativeWorkbookOrItsAlias() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::csvExportCannotReplaceNativeWorkbookOrItsAlias() This plugin does not support propagateSizeHints()
+PASS   : DesktopTests::csvExportCannotReplaceNativeWorkbookOrItsAlias()
 PASS   : DesktopTests::cleanupTestCase()
-Totals: 20 passed, 0 failed, 0 skipped, 0 blacklisted, 8973ms
+Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 9310ms
 ********* Finished testing of DesktopTests *********

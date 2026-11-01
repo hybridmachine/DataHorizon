@@ -417,6 +417,81 @@ class EngineTests(unittest.TestCase):
             with self.subTest(mode=mode),self.assertRaises(EngineError):
                 self.apply("paste",row=40,col=1,mode=mode,rows=[[preview["cells"][0]]])
 
+    def test_receipt_rechecked_after_writer_lock_without_reclassifying_outcome(self):
+        for outcome in ("committed","rolled_back","reused"):
+            with self.subTest(outcome=outcome),closing(Workbook(self.path)) as retry:
+                request={"action":"edit","sheet":"Sheet1","operation_id":"race-"+outcome,
+                         "expected_state":self.book.info()["state"],
+                         "cells":[{"row":1,"col":1,"source":"invalid" if outcome=="rolled_back" else outcome,
+                                   "kind":"number" if outcome=="rolled_back" else "text"}]}
+                retry_request={**request,"label":"different"} if outcome=="reused" else request
+                recorded=[]
+                def commit_between_lookup_and_lock(sql):
+                    if sql=="BEGIN IMMEDIATE" and not recorded:
+                        try:
+                            recorded.append(self.book.mutate(request))
+                        except EngineError as error:
+                            recorded.append(error.body)
+                retry.db.set_trace_callback(commit_between_lookup_and_lock)
+                if outcome=="committed":
+                    self.assertEqual(retry.mutate(retry_request),recorded[0])
+                    self.assertEqual(recorded[0]["outcome"],"committed")
+                else:
+                    with self.assertRaises(EngineError) as failure:
+                        retry.mutate(retry_request)
+                    self.assertEqual(failure.exception.body["code"],"OPERATION_ID_REUSED" if outcome=="reused" else "INVALID_INPUT")
+                    self.assertEqual(failure.exception.body["outcome"],"rejected" if outcome=="reused" else "rolled_back")
+                self.assertFalse(retry.db.in_transaction)
+                self.assertEqual(retry.operation(request["operation_id"]),recorded[0])
+
+    def test_sheet_add_and_duplicate_append_after_deleting_middle_sheet(self):
+        for name in ("Middle","Last"):
+            self.apply("sheet_add",name=name)
+        self.apply("sheet_delete",sheet="Middle")
+        self.apply("sheet_add",name="Added")
+        self.apply("sheet_duplicate",sheet="Sheet1",name="Copy")
+        self.assertEqual([s["name"] for s in self.book.info()["sheets"]],["Sheet1","Last","Added","Copy"])
+        positions=[row[0] for row in self.book.db.execute("SELECT position FROM sheets")]
+        self.assertEqual(len(positions),len(set(positions)))
+
+    def test_snapshot_reads_refresh_after_external_commit_at_begin(self):
+        for method in ("list_view","find","csv_export"):
+            with self.subTest(method=method):
+                self.edit((1,1,"old"))
+                old_state=self.book.info()["state"]
+                changed=[]
+                def external_commit(sql):
+                    if sql=="BEGIN" and not changed:
+                        with closing(sqlite3.connect(self.path)) as direct,direct:
+                            direct.execute("UPDATE cells SET source='new' WHERE row=1 AND col=1")
+                        changed.append(True)
+                self.book.db.set_trace_callback(external_commit)
+                try:
+                    result=getattr(self.book,method)("Sheet1",{"r2":1,"c2":1,"needle":"new",
+                        "filters":[{"col":1,"op":"=","value":"new"}]})
+                finally:
+                    self.book.db.set_trace_callback(None)
+                self.assertTrue(changed)
+                self.assertNotEqual(result["state"],old_state)
+                self.assertEqual(result["state"],self.book.info()["state"])
+                self.assertEqual(self.book.undo,[])
+                if method=="list_view": self.assertEqual(result["rows"],[1])
+                elif method=="find": self.assertEqual(result["count"],1)
+                else: self.assertEqual(result["csv"],"new\r\n")
+
+    def test_csv_export_limits_complete_serialized_json_response(self):
+        sheet=self.book.sheet("Sheet1")
+        source="é"*30000
+        with closing(sqlite3.connect(self.path)) as direct,direct:
+            direct.executemany("INSERT INTO cells(sheet_id,row,col,source,kind) VALUES(?,?,1,?,'text')",
+                               ((sheet,row,source) for row in range(1,65)))
+        with self.assertRaises(EngineError) as failure:
+            self.book.csv_export("Sheet1",{"r2":64})
+        self.assertEqual(failure.exception.body["code"],"LIMIT")
+        result=self.book.csv_export("Sheet1",{"r2":8})
+        self.assertLessEqual(len(json.dumps(result).encode()),4*1024*1024)
+        self.assertEqual(result["csv"],(source+"\r\n")*8)
+
 
 if __name__ == "__main__":
     unittest.main()

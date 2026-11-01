@@ -4,6 +4,7 @@ import argparse
 from contextlib import closing, nullcontext
 import json
 import os
+from pathlib import Path
 import sqlite3
 import sys
 
@@ -39,7 +40,9 @@ def main():
         if args.command in ("read", "set"):
             row, col = coordinates(args.address)
         if args.command == "direct-sql":
-            with closing(sqlite3.connect(args.file)) as db, db:
+            path = Path(args.file).expanduser().resolve()
+            target = path.as_uri()+"?mode=ro" if args.readonly else str(path)
+            with closing(sqlite3.connect(target, uri=args.readonly)) as db, db:
                 cursor = db.execute(args.sql)
                 print(json.dumps({"mode": "direct", "handlers": False, "rows": cursor.fetchall()}))
             return
@@ -60,8 +63,9 @@ def main():
                 else:
                     result = book.outcome(args.operation_id)
                 print(json.dumps(result, allow_nan=False))
-    except (APIError, OSError, ValueError, KeyError, RuntimeError, FormulaError) as error:
-        fallback = {"code": "INVALID_ADDRESS" if isinstance(error, FormulaError) else "CLIENT_ERROR", "message": str(error), "outcome": "rejected"}
+    except (APIError, OSError, ValueError, KeyError, RuntimeError, FormulaError, sqlite3.Error) as error:
+        code = "INVALID_ADDRESS" if isinstance(error, FormulaError) else "READ_ONLY" if getattr(error,"sqlite_errorcode",None)==sqlite3.SQLITE_READONLY else "CLIENT_ERROR"
+        fallback = {"code": code, "message": str(error), "outcome": "rejected"}
         print(json.dumps(getattr(error, "body", fallback)), file=sys.stderr)
         sys.exit(1)
 

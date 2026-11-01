@@ -1,6 +1,6 @@
-November 1, 2026 | macOS local review regressions
+November 1, 2026 | additional review cycle 1
 ctest --test-dir build --output-on-failure
 
-desktop: passed (18 Qt contract cases plus initialization/cleanup)
-service: passed (41 Python tests)
-Both suites passed; total CTest time: 14.01 seconds.
+desktop: passed (19 Qt contract cases plus initialization/cleanup)
+service: passed (47 Python tests)
+Both suites passed; total CTest time: 14.86 seconds.

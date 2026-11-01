@@ -424,6 +424,30 @@ private slots:
         model.ensureSource(model.index(0,0)); QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,3000);
         QVERIFY(!model.sourceReady(model.index(0,0))); QVERIFY(!(model.flags(model.index(0,0))&Qt::ItemIsEditable));
     }
+    void csvExportCannotReplaceNativeWorkbookOrItsAlias() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        const auto path=temp.filePath("retained.dhwb");
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model(); auto *grid=window.findChild<QTableView *>("grid");
+        QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,0)),5000);
+        grid->setCurrentIndex(model->index(0,0));
+        window.exportCsvTo(path); window.exportCsvTo(temp.path()+"/./retained.dhwb");
+#ifdef Q_OS_UNIX
+        const auto alias=temp.filePath("alias.csv"); QVERIFY(QFile::link(path,alias)); window.exportCsvTo(alias);
+#endif
+        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("destination is the open native workbook"));
+        QFile retained(path); QVERIFY(retained.open(QIODevice::ReadOnly)); QCOMPARE(retained.read(16),QByteArray("SQLite format 3\0",16)); retained.close();
+        const auto csv=temp.filePath("values.csv"); window.exportCsvTo(csv);
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(csv),5000);
+        QFile output(csv); QVERIFY(output.open(QIODevice::ReadOnly)); QCOMPARE(output.readAll(),QByteArray("7\r\n"));
+        window.openBook(path); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("7"),5000);
+    }
 private:
     static void answerNextDialog(QMessageBox::StandardButton button, QString *message=nullptr) {
         auto *timer=new QTimer(qApp); timer->setInterval(10);

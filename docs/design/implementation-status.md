@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 41 Python tests and 18 Qt contract cases.
+The review regression suite includes 47 Python tests and 19 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -133,3 +133,12 @@ previews and state-checked full-input reads keep long cells editable; invalid
 CLI addresses produce JSON errors; sheet deletion checks the cell budget before
 cascading; extreme references and range comparisons remain cell-local errors;
 and the SDK parity test now verifies an actual HOOK_FAILED rollback after refresh.
+
+Additional review cycle 1 addressed seven substantive findings. CSV export
+rejects the current native workbook and its aliases; direct SQL honors explicit
+read-only mode and returns structured storage errors; receipt deduplication is
+rechecked under the writer lock without misclassifying an existing outcome;
+new and duplicated sheets append after position gaps; list/search/export reads
+refresh external state within their read transactions; CSV limits include the
+serialized response and blank-record count. Regressions inject commits at the
+receipt-lookup/writer-lock and initial-refresh/read-transaction boundaries.
