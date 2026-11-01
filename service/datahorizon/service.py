@@ -8,6 +8,7 @@ import io
 import json
 from pathlib import Path
 import secrets
+from socketserver import TCPServer
 import sqlite3
 import sys
 import threading
@@ -125,6 +126,12 @@ class Service(ThreadingHTTPServer):
         self.token, self.handler = token or secrets.token_urlsafe(32), handler
         self.workbooks, self.registry_lock = {}, threading.RLock()
         super().__init__(("127.0.0.1", port), RequestHandler)
+
+    def server_bind(self):
+        # HTTPServer resolves a hostname here; a numeric loopback service has
+        # no use for reverse DNS, which can block startup on macOS runners.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = "localhost", self.server_address[1]
 
     def server_close(self):
         super().server_close()

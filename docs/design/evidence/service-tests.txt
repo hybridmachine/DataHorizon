@@ -47,6 +47,7 @@ test_direct_cli_honors_readonly_and_returns_structured_sqlite_errors (test_servi
 test_headless_cli_file_mode (test_service.ServiceTests.test_headless_cli_file_mode) ... ok
 test_incomplete_or_invalid_receipts_keep_pending_operation (test_service.ServiceTests.test_incomplete_or_invalid_receipts_keep_pending_operation) ... ok
 test_invalid_cli_addresses_return_structured_errors (test_service.ServiceTests.test_invalid_cli_addresses_return_structured_errors) ... ok
+test_loopback_startup_does_not_depend_on_hostname_resolution (test_service.ServiceTests.test_loopback_startup_does_not_depend_on_hostname_resolution) ... ok
 test_lost_reply_exposes_id_and_blocks_further_sdk_writes (test_service.ServiceTests.test_lost_reply_exposes_id_and_blocks_further_sdk_writes) ... ok
 test_missing_receipt_and_failed_lookup_keep_the_pending_outcome_unknown (test_service.ServiceTests.test_missing_receipt_and_failed_lookup_keep_the_pending_outcome_unknown) ... ok
 test_receipt_lookup_survives_owned_service_restart (test_service.ServiceTests.test_receipt_lookup_survives_owned_service_restart) ... ok
@@ -54,6 +55,6 @@ test_receipts_with_url_delimiters_are_retrievable (test_service.ServiceTests.tes
 test_rest_sdk_cli_share_managed_path (test_service.ServiceTests.test_rest_sdk_cli_share_managed_path) ... ok
 
 ----------------------------------------------------------------------
-Ran 54 tests in 5.292s
+Ran 55 tests in 5.306s
 
 OK

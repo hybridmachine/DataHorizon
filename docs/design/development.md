@@ -24,6 +24,8 @@ CTest uses Qt's offscreen platform for desktop tests. These tests do not
 replace native-platform keyboard, accessibility or installer acceptance.
 Hosted macOS CI uses `macos-15`; GitHub's `macos-14` image entered retirement
 brownouts and is scheduled for removal on November 2, 2026.
+The numeric loopback service binds without reverse-DNS lookup, avoiding the
+macOS runner's slow hostname-resolution path without increasing startup budgets.
 
 The desktop launches a private, authenticated loopback service using the Python
 interpreter found by CMake. DATAHORIZON_PYTHON overrides it. Normal grid operations

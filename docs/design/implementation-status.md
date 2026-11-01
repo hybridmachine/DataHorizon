@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 54 Python tests and 23 Qt contract cases.
+The review regression suite includes 55 Python tests and 23 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -172,3 +172,8 @@ stale reviewed-operation regressions exercise these paths.
 The CI rerun encountered GitHub's macOS 14 retirement brownout before checkout;
 the matrix now uses `macos-15`, following the
 [runner retirement notice](https://github.com/actions/runner-images/issues/13518).
+That image exposed the upstream
+[slow reverse-DNS lookup](https://github.com/actions/setup-python/issues/1223)
+in Python HTTPServer startup. The loopback service now binds numerically and
+sets its fixed local server name without DNS; a regression denies hostname lookup
+during construction. Startup and test timeouts are unchanged.

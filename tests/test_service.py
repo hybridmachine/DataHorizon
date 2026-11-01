@@ -8,13 +8,21 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from datahorizon.client import APIError, LocalService, UnknownOutcome
+from datahorizon.service import Service
 
 
 class ServiceTests(unittest.TestCase):
+    def test_loopback_startup_does_not_depend_on_hostname_resolution(self):
+        with patch("socket.getfqdn",side_effect=AssertionError("Loopback startup must not resolve hostnames")),Service() as server:
+            self.assertEqual(server.server_name,"localhost")
+            self.assertEqual(server.server_address[0],"127.0.0.1")
+            self.assertGreater(server.server_port,0)
+
     def test_rest_sdk_cli_share_managed_path(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "parity.dhwb"
