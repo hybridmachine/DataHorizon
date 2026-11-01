@@ -356,9 +356,9 @@ void MainWindow::refresh(const QString &selectSheet) {
     if (m_info.isEmpty() || m_unknown || m_refreshing) return;
     if (!resolveDraft()) return;
     m_refreshing = true; setBusy(true, "Refreshing stored inputs…");
-    const auto workbook=m_info["id"];
+    const auto workbook=m_info["id"].toString();
     m_client->request(base(), {}, [this, selectSheet, workbook](QJsonObject info, QString error) {
-        if (m_info["id"]!=workbook) return;
+        if (m_info["id"].toString()!=workbook) return;
         m_refreshing = false;
         if (!error.isEmpty()) { setBusy(true, "Refresh failed • Editing stopped"); issue(error); return; }
         acceptInfo(info, selectSheet);
