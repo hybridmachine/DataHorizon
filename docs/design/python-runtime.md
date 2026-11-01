@@ -4,6 +4,13 @@ Status: agreed role for user code and managed/direct boundary; proposed event
 names, lifecycle, and runtime API. Examples describe future behavior, not an
 implemented API.
 
+The development service now supports an explicitly operator-activated trusted
+`on_change` file in a spawned worker. Its get/value/set broker joins the parent
+transaction, enforces time/round budgets, and fails closed. See
+[initial contracts](initial-contracts.md) and [development guide](development.md).
+Other event families, portable workbook modules, macros, custom functions,
+follow-up jobs and remote code activation remain unimplemented.
+
 ## Programming surfaces
 
 | Surface | Purpose |

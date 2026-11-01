@@ -1,0 +1,41 @@
+name: Development build and contracts
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          cache: true
+          setup-python: false
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --config Release --parallel 2
+      - name: Contract and desktop tests
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Install smoke
+        run: cmake --install build --config Release --prefix build/package
+      - name: Run installed application
+        if: runner.os != 'Linux'
+        run: python tests/package_smoke.py build/package
+      - name: Run installed application under Xvfb
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python tests/package_smoke.py build/package

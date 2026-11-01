@@ -1,0 +1,29 @@
+test_atomic_validation_and_undo_redo (test_engine.EngineTests.test_atomic_validation_and_undo_redo) ... ok
+test_bounded_reads_and_operations (test_engine.EngineTests.test_bounded_reads_and_operations) ... ok
+test_cross_sheet_absolute_and_text_references (test_engine.EngineTests.test_cross_sheet_absolute_and_text_references) ... ok
+test_csv_snapshot_and_formula_error_block (test_engine.EngineTests.test_csv_snapshot_and_formula_error_block) ... ok
+test_cut_overlap_series_and_failed_destination (test_engine.EngineTests.test_cut_overlap_series_and_failed_destination) ... ok
+test_direct_edit_stale_write_and_history_gap (test_engine.EngineTests.test_direct_edit_stale_write_and_history_gap) ... ok
+test_failed_receipt_reconciles_without_reexecuting_code (test_engine.EngineTests.test_failed_receipt_reconciles_without_reexecuting_code) ... ok
+test_find_replace_scope_source_and_rollback (test_engine.EngineTests.test_find_replace_scope_source_and_rollback) ... ok
+test_formula_errors_and_lazy_if (test_engine.EngineTests.test_formula_errors_and_lazy_if) ... ok
+test_full_scope_list_projection_and_source_identity (test_engine.EngineTests.test_full_scope_list_projection_and_source_identity) ... ok
+test_hooks_commit_rollback_direct_and_undo (test_engine.EngineTests.test_hooks_commit_rollback_direct_and_undo) ... ok
+test_idempotency_and_status (test_engine.EngineTests.test_idempotency_and_status) ... ok
+test_long_text_viewport_and_export_are_bounded (test_engine.EngineTests.test_long_text_viewport_and_export_are_bounded) ... ok
+test_missing_and_timeout_hook_fail_closed (test_engine.EngineTests.test_missing_and_timeout_hook_fail_closed) ... ok
+test_paste_relative_references_values_and_atomicity (test_engine.EngineTests.test_paste_relative_references_values_and_atomicity) ... ok
+test_readonly_schema_and_backup (test_engine.EngineTests.test_readonly_schema_and_backup) ... ok
+test_sheet_duplicate_order_and_coalesced_noop (test_engine.EngineTests.test_sheet_duplicate_order_and_coalesced_noop) ... ok
+test_supplies_and_reopen (test_engine.EngineTests.test_supplies_and_reopen) ... ok
+test_typed_blank_null_empty_text_and_format (test_engine.EngineTests.test_typed_blank_null_empty_text_and_format) ... ok
+test_unsupported_sql_and_trigger_schema_fail_closed (test_engine.EngineTests.test_unsupported_sql_and_trigger_schema_fail_closed) ... ok
+test_client_handles_release_without_closing_other_clients (test_service.ServiceTests.test_client_handles_release_without_closing_other_clients) ... ok
+test_headless_cli_file_mode (test_service.ServiceTests.test_headless_cli_file_mode) ... ok
+test_lost_reply_exposes_id_and_blocks_further_sdk_writes (test_service.ServiceTests.test_lost_reply_exposes_id_and_blocks_further_sdk_writes) ... ok
+test_rest_sdk_cli_share_managed_path (test_service.ServiceTests.test_rest_sdk_cli_share_managed_path) ... ok
+
+----------------------------------------------------------------------
+Ran 24 tests in 3.910s
+
+OK

@@ -2,6 +2,12 @@
 
 Status: agreed access boundary; proposed component and execution design.
 
+The local development implementation and its explicit restrictions are documented
+in [initial contracts](initial-contracts.md), [native format v1](native-format-v1.md)
+and [implementation status](implementation-status.md). The lifecycle below is
+the target contract; only `on_change` transactional workers are implemented so
+far. After-commit work, managed SQL and general code authoring remain unavailable.
+
 ## Components
 
 ```mermaid

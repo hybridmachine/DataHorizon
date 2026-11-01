@@ -1,0 +1,49 @@
+{
+  "reference_date": "2026-10-31",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "architecture": "arm64",
+  "python": "3.14.6",
+  "sqlite": "3.53.4",
+  "cpu_count": 8,
+  "dataset": {
+    "stored_cells": 390001,
+    "shape": "100k sparse cells, 100x100 dense cells, 280k 1-KiB text cells"
+  },
+  "transport": "authenticated loopback REST",
+  "cold_viewport": {
+    "samples": 1,
+    "median_ms": 1.202,
+    "p95_ms": 1.202
+  },
+  "warm_viewport": {
+    "samples": 100,
+    "median_ms": 0.829,
+    "p95_ms": 1.082
+  },
+  "distant_viewport": {
+    "samples": 100,
+    "median_ms": 0.815,
+    "p95_ms": 1.031
+  },
+  "edit_acknowledgement": {
+    "samples": 100,
+    "median_ms": 0.932,
+    "p95_ms": 2.798
+  },
+  "dense_viewport": {
+    "samples": 100,
+    "median_ms": 5.955,
+    "p95_ms": 6.401
+  },
+  "large_disk_viewport": {
+    "samples": 100,
+    "median_ms": 1.253,
+    "p95_ms": 1.495
+  },
+  "database_bytes": 1318125568,
+  "driver_peak_rss_bytes": 42450944,
+  "limitations": [
+    "No Windows/Linux, cold OS cache, scrolling/input-stall, frozen panes or formula-chain qualification."
+  ],
+  "service_peak_rss_bytes": 97452032
+}

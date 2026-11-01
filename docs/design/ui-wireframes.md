@@ -4,6 +4,10 @@ Status: Draft 0.1, October 31, 2026. Static interaction proposals for review;
 these screens do not describe an implemented application or an approved release
 scope. Qt Widgets with C++ remains the selected GUI stack.
 
+Implementation has since begun by explicit instruction. These remain historical
+wireframes; [initial contracts](initial-contracts.md) resolve selected proposals
+and [implementation status](implementation-status.md) records actual behavior.
+
 The [wireframe PDF](../../output/pdf/datahorizon-ui-wireframes.pdf) contains 18
 landscape pages. It follows the [everyday spreadsheet user stories](../../output/pdf/datahorizon-everyday-spreadsheet-user-stories.pdf),
 including their Supplies sample session. The PDF has selectable text, vector

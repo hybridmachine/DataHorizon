@@ -1,0 +1,711 @@
+"""SQLite transaction owner. All managed clients enter through these operations."""
+
+import csv
+from functools import cmp_to_key
+import hashlib
+import io
+import json
+import math
+import os
+from pathlib import Path
+import re
+import sqlite3
+import threading
+import time
+import uuid
+
+from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, translate
+from .hooks import HookFailure, invoke
+
+MAX_CELLS = 10_000
+SCHEMA = """
+CREATE TABLE dh_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ format_version INTEGER NOT NULL, workbook_id TEXT NOT NULL, revision INTEGER NOT NULL);
+CREATE TABLE sheets (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+ position INTEGER NOT NULL);
+CREATE TABLE cells (sheet_id TEXT NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+ row INTEGER NOT NULL CHECK(row BETWEEN 1 AND 1048576),
+ col INTEGER NOT NULL CHECK(col BETWEEN 1 AND 16384),
+ source TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'auto',
+ style TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(sheet_id,row,col)) WITHOUT ROWID;
+CREATE TABLE operations (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result TEXT NOT NULL);
+"""
+
+
+def encoded(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+class EngineError(Exception):
+    def __init__(self, code, message, status=400, outcome="rejected", **details):
+        super().__init__(message)
+        self.status = status
+        self.body = {"code": code, "message": message, "outcome": outcome, **details}
+
+
+def require(condition, code, message, status=400):
+    if not condition:
+        raise EngineError(code, message, status)
+
+
+def integer(value, lower, upper, name):
+    require(type(value) is int and lower <= value <= upper,
+            "INVALID_ARGUMENT", f"{name} must be an integer from {lower} to {upper}")
+    return value
+
+
+def rectangle(args, limit=MAX_CELLS):
+    r1, c1 = integer(args.get("r1", 1), 1, MAX_ROWS, "r1"), integer(args.get("c1", 1), 1, MAX_COLS, "c1")
+    r2, c2 = integer(args.get("r2", r1), r1, MAX_ROWS, "r2"), integer(args.get("c2", c1), c1, MAX_COLS, "c2")
+    require((r2-r1+1)*(c2-c1+1) <= limit, "LIMIT", f"Range exceeds {limit} cells")
+    return r1, c1, r2, c2
+
+
+def validate_style(style):
+    require(isinstance(style, dict), "INVALID_STYLE", "Style must be an object")
+    allowed = {"format", "bold", "italic", "align", "background"}
+    require(not set(style) - allowed, "UNSUPPORTED_STYLE", "Unsupported style property")
+    for key, value in style.items():
+        if key == "format":
+            require(value in ("general", "text", "fixed2"), "UNSUPPORTED_STYLE", "Unsupported number format")
+        elif key == "align":
+            require(value in ("left", "center", "right"), "INVALID_STYLE", "Invalid alignment")
+        elif key == "background":
+            require(isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value), "INVALID_STYLE", "Expected #RRGGBB")
+        else:
+            require(type(value) is bool, "INVALID_STYLE", f"{key} must be boolean")
+    return style
+
+
+def typed(item):
+    if item is None:
+        return None
+    source, kind, style = item["source"], item["kind"], item["style"]
+    require(isinstance(source, str) and len(source.encode()) <= 65_536,
+            "INVALID_INPUT", "Cell source must be text no larger than 64 KiB")
+    require(kind in ("auto", "text", "number", "boolean", "null", "formula"), "INVALID_INPUT", "Unknown input kind")
+    validate_style(style)
+    value = source
+    if kind == "null":
+        value = None
+    elif kind == "text":
+        kind = "text"
+    elif kind == "auto" and source.startswith("'"):
+        kind, value = "text", source[1:]
+    elif kind == "formula" or (kind == "auto" and source.startswith("=")):
+        require(source.startswith("="), "INVALID_INPUT", "Formula source must start with =")
+        kind, value = "formula", None
+    elif kind == "boolean" or (kind == "auto" and source.upper() in ("TRUE", "FALSE")):
+        require(source.upper() in ("TRUE", "FALSE"), "INVALID_INPUT", "Boolean source must be TRUE or FALSE")
+        kind, value = "boolean", source.upper() == "TRUE"
+    elif kind == "number" or (kind == "auto" and re.fullmatch(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", source)):
+        try:
+            value = float(source)
+        except ValueError as error:
+            raise EngineError("INVALID_INPUT", "Invalid number") from error
+        require(math.isfinite(value), "INVALID_INPUT", "Numbers must be finite")
+        if re.fullmatch(r"[+-]?\d+", source):
+            require(abs(int(source)) <= 9_007_199_254_740_991, "PRECISION", "Enter large integers as Text")
+        kind = "number"
+    else:
+        kind, value = "text", source
+    return {**item, "kind": kind, "value": value}
+
+
+def display(value, style):
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (float, int)):
+        return f"{value:.2f}" if style.get("format") == "fixed2" else format(value, ".15g")
+    return str(value)
+
+
+def schema_signature(db):
+    return [(row[0], row[1], row[2]) for row in db.execute(
+        "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name")]
+
+
+def expected_schema():
+    db = sqlite3.connect(":memory:")
+    try:
+        db.executescript(SCHEMA)
+        return schema_signature(db)
+    finally:
+        db.close()
+
+
+EXPECTED_SCHEMA = expected_schema()
+
+
+class Workbook:
+    def __init__(self, path, create=False, readonly=False, handler=None):
+        self.path = Path(path).expanduser().resolve()
+        self.readonly, self.handler = readonly, handler
+        self.lock = threading.RLock()
+        self.undo, self.redo = [], []
+        self.epoch = str(uuid.uuid4())
+        if create:
+            # Exclusive creation never truncates an existing workbook.
+            fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.close(fd)
+        require(self.path.is_file(), "NOT_FOUND", "Workbook file does not exist", 404)
+        self.db = None
+        try:
+            self.db = sqlite3.connect(self.path.as_uri() + ("?mode=ro" if readonly else "?mode=rw"),
+                                      uri=True, isolation_level=None, check_same_thread=False, timeout=1)
+            self.db.execute("PRAGMA foreign_keys=ON")
+            self.db.execute("PRAGMA synchronous=FULL")
+            if create:
+                self.db.executescript(SCHEMA)
+                self.db.execute("BEGIN IMMEDIATE")
+                self.db.execute("INSERT INTO dh_meta VALUES(1,1,?,0)", (str(uuid.uuid4()),))
+                self.db.execute("INSERT INTO sheets VALUES(?,?,0)", (str(uuid.uuid4()), "Sheet1"))
+                self.db.execute("COMMIT")
+            self.validate()
+            require(self.db.execute("PRAGMA quick_check").fetchone()[0] == "ok", "CORRUPT", "SQLite integrity check failed")
+            self.id = self.db.execute("SELECT workbook_id FROM dh_meta").fetchone()[0]
+            self.version = self.data_version()
+        except Exception:
+            if self.db is not None:
+                self.db.close()
+            if create:
+                self.path.unlink(missing_ok=True)
+            raise
+
+    def close(self):
+        self.db.close()
+
+    def validate(self):
+        require(schema_signature(self.db) == EXPECTED_SCHEMA,
+                "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
+        meta = self.db.execute("SELECT format_version,revision FROM dh_meta WHERE singleton=1").fetchall()
+        require(len(meta) == 1 and meta[0][0] == 1 and type(meta[0][1]) is int and meta[0][1] >= 0,
+                "FORMAT_VERSION", "Unsupported or invalid native format", 409)
+        require(self.db.execute("SELECT count(*) FROM sheets").fetchone()[0] > 0,
+                "INVALID_FORMAT", "Workbook must contain a sheet", 409)
+
+    def data_version(self):
+        return self.db.execute("PRAGMA data_version").fetchone()[0]
+
+    def refresh(self):
+        current = self.data_version()
+        if current != self.version:
+            self.validate()
+            self.version, self.epoch = current, str(uuid.uuid4())
+            self.undo.clear()
+            self.redo.clear()
+
+    def state(self):
+        revision = self.db.execute("SELECT revision FROM dh_meta").fetchone()[0]
+        return f"{self.epoch}:{revision}"
+
+    def info(self):
+        with self.lock:
+            self.refresh()
+            return {"id": self.id, "path": str(self.path), "state": self.state(), "readonly": self.readonly,
+                    "sheets": [{"id": s, "name": n} for s, n in self.db.execute("SELECT id,name FROM sheets ORDER BY position,id")],
+                    "undo": self.undo[-1][0] if self.undo else None, "redo": self.redo[-1][0] if self.redo else None,
+                    "storage": "stored", "calculation": "evaluated_on_read", "format_version": 1}
+
+    def sheet(self, sheet):
+        row = self.db.execute("SELECT id FROM sheets WHERE id=? OR name=? COLLATE NOCASE", (sheet, sheet)).fetchone()
+        require(row is not None, "SHEET_NOT_FOUND", "Sheet does not exist", 404)
+        return row[0]
+
+    def raw(self, sheet, row, col):
+        data = self.db.execute("SELECT source,kind,style FROM cells WHERE sheet_id=? AND row=? AND col=?", (sheet, row, col)).fetchone()
+        if data is None:
+            return None
+        try:
+            return {"source": data[0], "kind": data[1], "style": json.loads(data[2])}
+        except (ValueError, TypeError) as error:
+            raise EngineError("INVALID_INPUT", "Invalid externally stored cell metadata") from error
+
+    def calculator(self, seconds=0.25):
+        def resolve(name):
+            try:
+                return self.sheet(name)
+            except EngineError as error:
+                raise FormulaError("#REF!", "Referenced sheet does not exist") from error
+        return Calculator(lambda s, r, c: typed(self.raw(s, r, c)), resolve, seconds)
+
+    def read(self, sheet, args):
+        if "rows" in args:
+            selected = args["rows"]
+            require(isinstance(selected, list) and 0 < len(selected) <= 256, "LIMIT", "Provide 1-256 source rows")
+            for row in selected:
+                integer(row, 1, MAX_ROWS, "source row")
+            c1, c2 = integer(args.get("c1", 1), 1, MAX_COLS, "c1"), integer(args.get("c2", 16), 1, MAX_COLS, "c2")
+            require(c2 >= c1 and len(selected)*(c2-c1+1) <= 4096, "LIMIT", "Viewport exceeds 4096 cells")
+            r1, r2 = min(selected), max(selected)
+            row_clause, row_parameters = "row IN (" + ",".join("?" for _ in selected) + ")", selected
+        else:
+            r1, c1, r2, c2 = rectangle(args, 4096)
+            row_clause, row_parameters = "row BETWEEN ? AND ?", [r1, r2]
+        with self.lock:
+            self.refresh()
+            self.db.execute("BEGIN")
+            try:
+                # Refresh again after establishing the read snapshot.
+                self.refresh()
+                sheet, calc = self.sheet(sheet), self.calculator()
+                cells, response_bytes = [], 0
+                for row, col, source, kind, style in self.db.execute(
+                        "SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? AND " + row_clause + " AND col BETWEEN ? AND ? ORDER BY row,col",
+                        (sheet, *row_parameters, c1, c2)):
+                    item = typed({"source": source, "kind": kind, "style": json.loads(style)})
+                    result = {"row": row, "col": col, "source": source, "input_kind": kind, "kind": item["kind"], "style": item["style"]}
+                    try:
+                        value = calc.cell(sheet, row, col) if item["kind"] == "formula" else item["value"]
+                        result.update(value=value, display=display(value, item["style"]), calculation="current")
+                    except FormulaError as error:
+                        result.update(value=None, display=error.code, error=str(error), calculation="error")
+                    response_bytes += len(encoded(result).encode())
+                    require(response_bytes <= 4 * 1024 * 1024, "READ_LIMIT", "Viewport exceeds 4 MiB; request a smaller range")
+                    cells.append(result)
+                return {"cells": cells, "state": self.state(), "sheet": sheet, "range": [r1, c1, r2, c2]}
+            finally:
+                self.db.execute("ROLLBACK")
+
+    def put(self, sheet, row, col, item):
+        integer(row, 1, MAX_ROWS, "row")
+        integer(col, 1, MAX_COLS, "col")
+        if item is not None:
+            typed(item)
+            if item == {"source": "", "kind": "auto", "style": {}}:
+                item = None
+        key = (sheet, row, col)
+        before = self.raw(*key)
+        if time.monotonic() > self.deadline:
+            raise EngineError("TIMEOUT", "Operation exceeded its time budget")
+        if before == item:
+            return
+        if key not in self.changes:
+            require(len(self.changes) < MAX_CELLS, "LIMIT", "Operation including Python edits exceeds 10,000 changed cells")
+            self.changes[key] = [before, item]
+        else:
+            self.changes[key][1] = item
+        self.change_bytes += len(encoded([before, item]).encode())
+        require(self.change_bytes <= 8 * 1024 * 1024, "LIMIT", "Operation before/after history exceeds 8 MiB")
+        if item is None:
+            self.db.execute("DELETE FROM cells WHERE sheet_id=? AND row=? AND col=?", key)
+        else:
+            self.db.execute("INSERT INTO cells VALUES(?,?,?,?,?,?) ON CONFLICT(sheet_id,row,col) DO UPDATE SET source=excluded.source,kind=excluded.kind,style=excluded.style",
+                            (*key, item["source"], item["kind"], encoded(item["style"])))
+        if (before or {}).get("source") != (item or {}).get("source") or (before or {}).get("kind") != (item or {}).get("kind"):
+            original = self.pending.get(key, {}).get("before", before)
+            if original == item:
+                self.pending.pop(key, None)
+            else:
+                self.pending[key] = {"sheet": sheet, "row": row, "col": col, "before": original, "after": item}
+
+    def apply_edit(self, sheet, edits):
+        require(isinstance(edits, list) and 0 < len(edits) <= MAX_CELLS, "LIMIT", "Provide 1 to 10,000 edits")
+        for edit in edits:
+            require(isinstance(edit, dict), "INVALID_ARGUMENT", "Each cell edit must be an object")
+            row, col = edit.get("row"), edit.get("col")
+            integer(row, 1, MAX_ROWS, "row")
+            integer(col, 1, MAX_COLS, "col")
+            item = self.raw(sheet, row, col) or {"source": "", "kind": "auto", "style": {}}
+            if edit.get("clear"):
+                item = None
+            else:
+                if "source" in edit:
+                    item.update(source=edit["source"], kind=edit.get("kind", "auto"))
+                if "style" in edit:
+                    item["style"] = validate_style(edit["style"] if edit.get("replace_style") else {**item["style"], **edit["style"]})
+                # Text format affects subsequent entry, never retypes an existing
+                # number/formula merely because its presentation changed.
+                if "source" in edit and item["kind"] == "auto" and item["style"].get("format") == "text":
+                    item["kind"] = "text"
+                elif "source" in edit and item["kind"] == "auto" and isinstance(item["source"], str) and item["source"].startswith("="):
+                    item["kind"] = "formula"
+            self.put(sheet, row, col, item)
+
+    def run_hooks(self, operation):
+        if not self.handler:
+            return
+        for _ in range(16):
+            if not self.pending:
+                return
+            batch = [self.pending[key] for key in sorted(self.pending)]
+            self.pending = {}
+
+            def dispatch(method, args):
+                sheet = self.sheet(args["sheet"])
+                row, col = args["row"], args["col"]
+                integer(row, 1, MAX_ROWS, "row")
+                integer(col, 1, MAX_COLS, "col")
+                if method == "get":
+                    return self.raw(sheet, row, col)
+                if method == "value":
+                    return self.calculator().cell(sheet, row, col)
+                require(method == "set", "INVALID_HOOK", "Unknown handler context method")
+                self.apply_edit(sheet, [{**args, "row": row, "col": col}])
+                return None
+
+            invoke(self.handler, batch, operation, dispatch, self.deadline)
+        require(not self.pending, "HOOK_RECURSION", "Required handler exceeded 16 change rounds")
+
+    def operation(self, operation_id):
+        with self.lock:
+            row = self.db.execute("SELECT result FROM operations WHERE id=?", (operation_id,)).fetchone()
+            require(row is not None, "OUTCOME_UNKNOWN", "No durable receipt. Do not assume rollback or repeat the operation", 404)
+            return json.loads(row[0])
+
+    def mutate(self, request):
+        require(isinstance(request, dict), "INVALID_ARGUMENT", "Operation must be an object")
+        operation = request.get("operation_id")
+        require(isinstance(operation, str) and len(operation) <= 100 and bool(operation), "OPERATION_ID", "An operation_id is required")
+        fingerprint = hashlib.sha256(encoded(request).encode()).hexdigest()
+        with self.lock:
+            existing = self.db.execute("SELECT fingerprint,result FROM operations WHERE id=?", (operation,)).fetchone()
+            if existing:
+                require(existing[0] == fingerprint, "OPERATION_ID_REUSED", "Operation ID was used with different arguments", 409)
+                receipt = json.loads(existing[1])
+                if receipt["outcome"] != "committed":
+                    error = EngineError(receipt["code"],receipt["message"],receipt.get("http_status",409),receipt["outcome"])
+                    error.body=receipt
+                    raise error
+                return receipt
+            require(not self.readonly, "READ_ONLY", "Workbook is open read-only", 403)
+            self.refresh()
+            self.changes, self.pending = {}, {}
+            self.change_bytes = 0
+            self.deadline = time.monotonic() + 5
+            self.db.execute("BEGIN IMMEDIATE")
+            in_transaction = True
+            try:
+                # The writer lock closes the check/write race with independent tools.
+                self.refresh()
+                require(request.get("expected_state") == self.state(), "STALE_STATE", "Workbook changed. Refresh and review the edit before retrying", 409)
+                kind = request.get("action")
+                structural = kind.startswith("sheet_") if isinstance(kind, str) else False
+                sheet = self.sheet(request.get("sheet", "Sheet1")) if not structural else None
+                if kind == "edit":
+                    self.apply_edit(sheet, request.get("cells"))
+                elif kind == "paste":
+                    rows = request.get("rows")
+                    require(isinstance(rows, list) and len(rows) > 0 and all(isinstance(row, list) for row in rows), "INVALID_ARGUMENT", "Paste rows must be a nonempty matrix")
+                    require(sum(len(row) for row in rows) <= MAX_CELLS, "LIMIT", "Paste exceeds 10,000 cells")
+                    start_row = integer(request.get("row"), 1, MAX_ROWS, "row")
+                    start_col = integer(request.get("col"), 1, MAX_COLS, "col")
+                    mode = request.get("mode", "all")
+                    require(mode in ("all", "values", "formats"), "INVALID_ARGUMENT", "Unknown paste mode")
+                    edits = []
+                    for dr, values in enumerate(rows):
+                        for dc, value in enumerate(values):
+                            require(isinstance(value, dict), "INVALID_ARGUMENT", "Paste cells must be objects")
+                            row, col = start_row + dr, start_col + dc
+                            edit = {"row": row, "col": col}
+                            if mode != "formats":
+                                source = value.get("source", "")
+                                if mode == "values":
+                                    stored = value.get("value", source)
+                                    source = "" if stored is None else ("TRUE" if stored is True else "FALSE" if stored is False else str(stored))
+                                    input_kind = "null" if stored is None else "boolean" if type(stored) is bool else "number" if isinstance(stored, (int, float)) else "text"
+                                else:
+                                    input_kind = value.get("input_kind", "text")
+                                    if input_kind in ("auto", "formula") and source.startswith("="):
+                                        source = translate(source, start_row-request.get("origin_row", start_row), start_col-request.get("origin_col", start_col))
+                                edit.update(source=source, kind=input_kind)
+                            if mode != "values":
+                                edit["style"] = value.get("style", {})
+                                edit["replace_style"] = True
+                            edits.append(edit)
+                    self.apply_edit(sheet, edits)
+                elif kind == "fill":
+                    r1, c1, r2, c2 = rectangle(request)
+                    source = self.raw(sheet, r1, c1)
+                    mode = request.get("mode", "copy")
+                    require(mode in ("copy", "series"), "INVALID_ARGUMENT", "Fill mode must be copy or series")
+                    if mode == "series":
+                        seed = typed(source)
+                        require(seed and seed["kind"] == "number", "INVALID_ARGUMENT", "Numeric series requires a numeric top-left seed")
+                        step = request.get("step", 1)
+                        require(type(step) in (int, float) and math.isfinite(step), "INVALID_ARGUMENT", "Series step must be finite")
+                    for row in range(r1, r2+1):
+                        for col in range(c1, c2+1):
+                            item = dict(source) if source else None
+                            if mode == "series":
+                                item["source"] = str(seed["value"] + step*((row-r1)*(c2-c1+1)+col-c1))
+                                item["kind"] = "number"
+                            elif item and typed(item)["kind"] == "formula":
+                                item["source"] = translate(item["source"], row-r1, col-c1)
+                            self.put(sheet, row, col, item)
+                elif kind == "move":
+                    r1, c1, r2, c2 = rectangle(request)
+                    require(request.get("cut_state") == self.state(), "STALE_CUT", "Cut source changed. Copy or cut the range again", 409)
+                    require(self.db.execute("SELECT 1 FROM cells WHERE source LIKE '=%' AND kind IN ('auto','formula') LIMIT 1").fetchone() is None,
+                            "REFERENCE_TRANSFORM_UNAVAILABLE", "Cut is unavailable while the workbook contains formulas; use Copy")
+                    dest_row, dest_col = request.get("row"), request.get("col")
+                    integer(dest_row, 1, MAX_ROWS-(r2-r1), "destination row")
+                    integer(dest_col, 1, MAX_COLS-(c2-c1), "destination column")
+                    sources, source_bytes = [], 0
+                    for row in range(r1,r2+1):
+                        for col in range(c1,c2+1):
+                            item=self.raw(sheet,row,col)
+                            source_bytes+=len(encoded(item).encode())
+                            require(source_bytes<=4*1024*1024,"LIMIT","Cut source exceeds 4 MiB; select a smaller range")
+                            sources.append((row,col,item))
+                    for row, col, _ in sources:
+                        self.put(sheet, row, col, None)
+                    for row, col, item in sources:
+                        self.put(sheet, dest_row+row-r1, dest_col+col-c1, item)
+                elif kind == "replace_all":
+                    replacement = request.get("replacement")
+                    require(isinstance(replacement, str), "INVALID_ARGUMENT", "Replacement must be text")
+                    matches = self.matches(sheet, request)
+                    for match in matches:
+                        item = self.raw(sheet, match["row"], match["col"])
+                        require(request.get("field", "source") != "display" or typed(item)["kind"] != "formula",
+                                "FORMULA_REPLACEMENT", "Displayed formula results cannot be replaced. Search formula source instead")
+                        source = match["text"] if request.get("field") == "display" else item["source"]
+                        item["source"] = source.replace(request["needle"], replacement)
+                        self.put(sheet, match["row"], match["col"], item)
+                elif kind in ("undo", "redo"):
+                    stack = self.undo if kind == "undo" else self.redo
+                    require(bool(stack), "NO_HISTORY", f"Nothing to {kind}")
+                    for key, (before, after) in stack[-1][1].items():
+                        wanted, current = (before, after) if kind == "undo" else (after, before)
+                        require(self.raw(*key) == current, "HISTORY_CONFLICT", "Undo target changed", 409)
+                        self.put(*key, wanted)
+                elif kind == "sheet_add":
+                    name = request.get("name", "Sheet")
+                    self.check_name(name)
+                    self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (str(uuid.uuid4()), name, self.db.execute("SELECT count(*) FROM sheets").fetchone()[0]))
+                elif kind == "sheet_rename":
+                    target = self.sheet(request.get("sheet"))
+                    self.check_name(request.get("name"))
+                    # Renaming referenced sheets is restricted until a token-based
+                    # transformer supports all declared syntax.
+                    require(not self.has_cross_sheet_formulas(), "REFERENCE_TRANSFORM_UNAVAILABLE", "Rename is unavailable while cross-sheet formulas exist")
+                    self.db.execute("UPDATE sheets SET name=? WHERE id=?", (request["name"], target))
+                elif kind == "sheet_duplicate":
+                    target = self.sheet(request.get("sheet"))
+                    self.check_name(request.get("name"))
+                    require(not self.handler, "UNSUPPORTED_HOOK_SCOPE", "Sheet duplication with required handlers needs a structure-event contract")
+                    count = self.db.execute("SELECT count(*) FROM cells WHERE sheet_id=?", (target,)).fetchone()[0]
+                    require(count <= MAX_CELLS, "LIMIT", "Sheet duplication exceeds 10,000 cells")
+                    require(not self.has_cross_sheet_formulas(), "REFERENCE_TRANSFORM_UNAVAILABLE", "Duplicate is unavailable while cross-sheet formulas exist")
+                    new = str(uuid.uuid4())
+                    self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (new, request["name"], self.db.execute("SELECT count(*) FROM sheets").fetchone()[0]))
+                    for row, col, source, input_kind, style in self.db.execute("SELECT row,col,source,kind,style FROM cells WHERE sheet_id=?", (target,)):
+                        self.put(new, row, col, {"source":source, "kind":input_kind, "style":json.loads(style)})
+                elif kind == "sheet_reorder":
+                    order = request.get("order")
+                    current = [row[0] for row in self.db.execute("SELECT id FROM sheets")]
+                    require(isinstance(order, list) and len(order) == len(current) and set(order) == set(current), "INVALID_ARGUMENT", "Order must contain each sheet ID once")
+                    self.db.executemany("UPDATE sheets SET position=? WHERE id=?", enumerate(order))
+                elif kind == "sheet_delete":
+                    target = self.sheet(request.get("sheet"))
+                    require(self.db.execute("SELECT count(*) FROM sheets").fetchone()[0] > 1, "LAST_SHEET", "Cannot delete the last sheet")
+                    require(not self.has_cross_sheet_formulas(), "REFERENCED_SHEET", "Delete is unavailable while cross-sheet formulas exist")
+                    require(not self.handler, "UNSUPPORTED_HOOK_SCOPE", "Sheet deletion with an activated required handler needs a structure-event contract")
+                    self.db.execute("DELETE FROM sheets WHERE id=?", (target,))
+                else:
+                    raise EngineError("UNSUPPORTED_OPERATION", f"Operation is not available: {kind}")
+                self.run_hooks(operation)
+                self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1]}
+                self.db.execute("UPDATE dh_meta SET revision=revision+1")
+                result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": len(self.changes)}
+                self.db.execute("INSERT INTO operations VALUES(?,?,?)", (operation, fingerprint, encoded(result)))
+                self.db.execute("COMMIT")
+                in_transaction = False
+                if structural:
+                    self.undo.clear()
+                    self.redo.clear()
+                elif kind == "undo":
+                    label, _, _ = self.undo.pop()
+                    reversed_changes = {key: [pair[1], pair[0]] for key, pair in self.changes.items()}
+                    self.redo.append((label, reversed_changes, self.history_cost(reversed_changes)))
+                elif kind == "redo":
+                    label, _, _ = self.redo.pop()
+                    self.undo.append((label, self.changes, self.history_cost(self.changes)))
+                else:
+                    self.redo.clear()
+                    if self.changes:
+                        self.undo.append((request.get("label", kind.title()), self.changes, self.history_cost(self.changes)))
+                        self.undo = self.undo[-100:]
+                while sum(entry[2] for entry in self.undo + self.redo) > 16*1024*1024:
+                    (self.undo if self.undo else self.redo).pop(0)
+                return result
+            except Exception as error:
+                if not in_transaction:
+                    raise EngineError("OUTCOME_UNKNOWN","Data may have committed; reconcile the durable receipt",500,"unknown",operation_id=operation) from error
+                if in_transaction and self.db.in_transaction:
+                    self.db.execute("ROLLBACK")
+                elif in_transaction:
+                    raise EngineError("OUTCOME_UNKNOWN","Transaction outcome requires receipt lookup",500,"unknown",operation_id=operation) from error
+                if isinstance(error, EngineError):
+                    error.body.update(outcome="rolled_back", operation_id=operation)
+                    failure=error
+                elif isinstance(error, (HookFailure, FormulaError, sqlite3.Error)):
+                    failure=EngineError("HOOK_FAILED" if isinstance(error, HookFailure) else "OPERATION_FAILED",
+                                        str(error),409,"rolled_back",operation_id=operation)
+                else:
+                    raise
+                # A separate receipt transaction follows confirmed rollback. A
+                # crash/storage failure in this gap still leaves outcome unknown.
+                failure.body["http_status"]=failure.status
+                try:
+                    self.db.execute("INSERT INTO operations VALUES(?,?,?)",(operation,fingerprint,encoded(failure.body)))
+                except sqlite3.Error:
+                    pass  # Preserve the known rollback response, never claim a receipt exists.
+                raise failure
+
+    @staticmethod
+    def history_cost(changes):
+        # Compute once per receipt; never serialize all prior history for each edit.
+        return len(encoded([[key, *values] for key, values in changes.items()]).encode())
+
+    @staticmethod
+    def check_name(name):
+        require(isinstance(name, str) and 0 < len(name) <= 31 and not re.search(r"[\[\]:*?/\\!\x00-\x1f]", name),
+                "INVALID_NAME", "Sheet name must be 1-31 characters without []:*?/\\! or control characters")
+
+    def has_cross_sheet_formulas(self):
+        return self.db.execute("SELECT 1 FROM cells WHERE source LIKE '=%!%' AND kind IN ('auto','formula') LIMIT 1").fetchone() is not None
+
+    def list_view(self, sheet, args):
+        """An explicit list is a presentation projection over stable source rows."""
+        r1, c1, r2, c2 = rectangle(args)
+        with self.lock:
+            self.refresh()
+            self.db.execute("BEGIN")
+            try:
+                sheet, calc = self.sheet(sheet), self.calculator(seconds=2)
+                criteria, keys = args.get("filters", []), args.get("sort", [])
+                require(isinstance(criteria, list) and len(criteria) <= 8 and isinstance(keys, list) and len(keys) <= 8,
+                        "INVALID_ARGUMENT", "At most eight filters and sort keys are supported")
+                for criterion in criteria:
+                    integer(criterion.get("col"), c1, c2, "filter column")
+                    require(criterion.get("op") in ("=", "<>", ">", "<", ">=", "<=", "contains"), "INVALID_ARGUMENT", "Unsupported filter comparison")
+                    require(isinstance(criterion.get("value"), (str, float, int, bool, type(None))), "INVALID_ARGUMENT", "Filter value must be scalar")
+                for key in keys:
+                    integer(key.get("col"), c1, c2, "sort column")
+                    require(type(key.get("descending", False)) is bool, "INVALID_ARGUMENT", "Sort direction must be boolean")
+                require(type(args.get("header", False)) is bool, "INVALID_ARGUMENT", "Header must be explicit boolean")
+                first = r1 + int(args.get("header", False))
+                rows, cache = [], {}
+
+                def value(row, col):
+                    if (row, col) not in cache:
+                        cache[row, col] = calc.cell(sheet, row, col)
+                    return cache[row, col]
+
+                def accepts(row, criterion):
+                    left, right, op = value(row, criterion["col"]), criterion.get("value"), criterion["op"]
+                    if op == "contains":
+                        return isinstance(left, str) and isinstance(right, str) and right in left
+                    same_type = type(left) == type(right) or (type(left) in (int, float) and type(right) in (int, float))
+                    if not same_type:
+                        return op == "<>"
+                    if op in ("<", ">", "<=", ">=") and left is None:
+                        return False
+                    return {"=": lambda: left == right, "<>": lambda: left != right,
+                            ">": lambda: left > right, "<": lambda: left < right,
+                            ">=": lambda: left >= right, "<=": lambda: left <= right}[op]()
+
+                for row in range(first, r2+1):
+                    if all(accepts(row, criterion) for criterion in criteria):
+                        rows.append(row)
+
+                def sort_value(value):
+                    rank = 0 if value is None else 1 if type(value) in (int, float) else 2 if isinstance(value, str) else 3
+                    return rank, "" if value is None else value
+
+                def compare(left, right):
+                    for key in keys:
+                        a, b = sort_value(value(left, key["col"])), sort_value(value(right, key["col"]))
+                        comparison = (a > b) - (a < b)
+                        if comparison:
+                            return -comparison if key.get("descending") else comparison
+                    return left-right
+
+                if keys:
+                    rows.sort(key=cmp_to_key(compare))
+                count = len(rows)
+                if args.get("header"):
+                    rows.insert(0, r1)
+                return {"rows": rows, "matching": count, "total": max(0, r2-first+1), "state": self.state(),
+                        "scope": [r1, c1, r2, c2], "semantics": "presentation_only; edits target original row coordinates"}
+            except FormulaError as error:
+                raise EngineError("CALCULATION_ERROR", f"List evaluation blocked: {error}") from error
+            finally:
+                self.db.execute("ROLLBACK")
+
+    def matches(self, sheet, args):
+        r1, c1, r2, c2 = rectangle(args)
+        needle, field = args.get("needle"), args.get("field", "source")
+        require(isinstance(needle, str) and bool(needle), "INVALID_ARGUMENT", "Find text must be nonempty")
+        require(field in ("source", "display"), "INVALID_ARGUMENT", "Search field must be source or display")
+        calc, matches, match_bytes = self.calculator(seconds=2), [], 0
+        for row, col, source, kind, style in self.db.execute(
+                "SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? ORDER BY row,col",
+                (sheet, r1, r2, c1, c2)):
+            text = source
+            if field == "display":
+                try:
+                    text = display(calc.cell(sheet, row, col), json.loads(style))
+                except FormulaError as error:
+                    text = error.code
+            if needle in text:
+                match_bytes += len(text.encode())
+                require(match_bytes <= 8*1024*1024, "LIMIT", "Matched source/display data exceeds 8 MiB; narrow the search scope")
+                matches.append({"row": row, "col": col, "address": address(row, col), "text": text})
+        return matches
+
+    def find(self, sheet, args):
+        with self.lock:
+            self.refresh()
+            self.db.execute("BEGIN")
+            try:
+                matches = self.matches(self.sheet(sheet), args)
+                return {"matches": [{**match, "text":match["text"][:256]} for match in matches[:500]], "count": len(matches), "state": self.state(), "truncated": len(matches) > 500}
+            finally:
+                self.db.execute("ROLLBACK")
+
+    def snapshot(self, path):
+        with self.lock:
+            destination = Path(path).expanduser().resolve()
+            require(destination != self.path, "SAME_FILE", "Choose a different path")
+            fd = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.close(fd)
+            try:
+                target = sqlite3.connect(destination)
+                try:
+                    self.db.backup(target)
+                finally:
+                    target.close()
+            except Exception:
+                destination.unlink(missing_ok=True)
+                raise
+            return {"path": str(destination), "outcome": "committed"}
+
+    def csv_export(self, sheet, args):
+        r1, c1, r2, c2 = rectangle(args)
+        with self.lock:
+            self.refresh()
+            self.db.execute("BEGIN")
+            try:
+                sheet, calc = self.sheet(sheet), self.calculator(seconds=2)
+                output = io.StringIO(newline="")
+                output_bytes = 0
+                for row in range(r1, r2+1):
+                    # Values export uses canonical text, independent of number format.
+                    row_output = io.StringIO(newline="")
+                    csv.writer(row_output).writerow([display(calc.cell(sheet, row, col), {}) for col in range(c1, c2+1)])
+                    text = row_output.getvalue()
+                    output_bytes += len(text.encode())
+                    require(output_bytes <= 4*1024*1024, "LIMIT", "CSV response exceeds 4 MiB; export a smaller selection")
+                    output.write(text)
+                return {"csv": output.getvalue(), "state": self.state(),
+                        "report": ["Values only; formulas, styles, code and native metadata are omitted.",
+                                   "Blank, NULL and empty text all become empty CSV fields."]}
+            except FormulaError as error:
+                raise EngineError("CALCULATION_ERROR", f"Export blocked: {error}") from error
+            finally:
+                self.db.execute("ROLLBACK")

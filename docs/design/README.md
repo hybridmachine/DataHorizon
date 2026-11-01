@@ -2,7 +2,9 @@
 
 Initial design: 2026-10-31. This directory captures the product direction and
 access contract agreed during the initial discussion, followed by implementation
-proposals. It describes intended behavior; no application has been implemented.
+proposals. Implementation was authorized on October 31, 2026. The
+[implementation status](implementation-status.md) distinguishes working local
+behavior from the remaining plan; historical PDFs describe intended behavior.
 
 ## Vision
 
@@ -44,14 +46,19 @@ applications, and AI agents through REST.
     and Linux.
 11. **GUI license.** License the GUI under GPLv3. Licensing for the service,
     SDK, and other components remains undecided.
-12. **Wireframes before implementation.** Develop UI wireframes from the
-    everyday spreadsheet stories first. Current work is design and documentation;
-    application code, scaffolding, and executable prototypes are on hold.
+12. **Wireframes before implementation.** Everyday spreadsheet stories and
+    wireframes preceded the explicit instruction to start implementation.
+    Follow the plan and record evidence before claiming milestone completion.
 
 ## Document map
 
 | Document | Contents |
 | --- | --- |
+| [Implementation status](implementation-status.md) | Current local evidence, milestone gaps and next dependencies |
+| [Development guide](development.md) | Build/run, API, CLI, Python, Supplies and package smoke |
+| [Initial contracts](initial-contracts.md) | M0 persistence, values, operations, budgets and explicit exclusions |
+| [Native format v1](native-format-v1.md) | Actual development schema and callback-free direct SQLite access |
+| [Compatibility tier 0](compatibility-v0.md) | Implemented formulas, formatting, interchange and editing limits |
 | [Architecture](architecture.md) | Components, execution paths, transactions, external edits, and recovery |
 | [Data model](data-model.md) | Proposed sheets/tables/views model, identity, types, formulas, and native storage |
 | [Python runtime](python-runtime.md) | Workbook code, event lifecycle, transaction context, batches, and failures |
@@ -89,8 +96,9 @@ features. Examples in future documents must remain illustrations, not built-in
 application requirements.
 
 Qt Widgets/C++ is selected for the GUI. The detailed grid design, REST framework,
-SQLite binding, physical schema, Python process model, formula implementation,
-and detailed compatibility tiers remain open.
+advanced physical schema and production service/Python arrangements remain
+open. The development tier uses stdlib HTTP/sqlite3, spawned brokered workers,
+a bounded QTableView model, and the documented experimental native format v1.
 Concurrent multiuser editing and complete Excel feature parity are not initial
 release promises. The architecture should leave room for future capabilities
 without treating them as already designed.

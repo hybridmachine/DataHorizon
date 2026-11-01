@@ -1,0 +1,109 @@
+# Implementation status
+
+Execution started October 31, 2026 after the explicit instruction to execute the
+plan. The design-only hold is superseded for this work. This is a working local
+development preview, not completion of the full M0–M8 plan or a release.
+
+## Current result
+
+The Qt Widgets/C++ desktop runs against an authenticated localhost Python REST
+service. The shared engine owns SQLite transactions, source typing, formulas,
+history, operation receipts and explicitly activated Python handlers. The CLI
+and thin Python client use the same REST resources. The GUI has no SQLite access.
+
+Native create/open/read-only, recovery files, automatic storage, first Save and
+consistent snapshot copies are implemented. Range operations include paste
+(all/values/formats), relative formula translation, bounded Cut/Paste, fill,
+numeric series and cell history. Sheet add/rename/duplicate/reorder/delete are
+available with documented reference and handler restrictions. Styles preserve
+source and types. Explicit list projections support multikey sorting and filters
+over the entire declared scope, stable source-coordinate edits, counts and clear.
+Scoped find/replace and UTF-8 CSV are implemented within the declared tier.
+
+The Supplies arithmetic is verified: amounts 7, 5, 6; total 18; Pen quantity 6
+produces 7.5 and total 20.5. Quantity >2 returns Pen and Folder. Reopen retains
+formula source; values export contains 20.5. Formatting renders 20.50.
+
+## Milestone ledger
+
+| Increment | Evidence and scope | Remaining before full milestone closure |
+| --- | --- | --- |
+| M0 | [Initial contracts](initial-contracts.md), [compatibility](compatibility-v0.md), [native schema](native-format-v1.md), keyboard/state rules and numeric budgets recorded | Resolve deferred cases at their named milestones; no claim that historical PDFs have been regenerated |
+| M1 | Qt 6.12/C++17 builds locally; stdlib SQLite/HTTP and spawned brokered workers exercised; sparse/dense/long-text/large-disk measurements recorded | Comparative production framework/capture experiments, formula chains, GUI input/scroll measurements and Windows/Linux results |
+| M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle | All-platform packaging evidence; restart/unknown-failure recovery and broader failure injection; service lifecycle hardening |
+| M3 | Typed entry, A1 limits, SUM/IF/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
+| M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations | Row/column reference transforms, unrestricted cut/rename/duplicate/delete, hook-aware structure events, wrap/borders/freeze/hide, dimensions/view persistence and platform conventions |
+| M5 | Explicit full-scope projected lists, stable source row edits, multikey sort/filter, scoped source/display find/replace, text CSV preview and snapshot export | Persistent record identities/list definitions, filtered range semantics, column typing/date/encoding controls, progress/cancellation and large jobs |
+| M6 | Native snapshots/recovery, read-only opens, conservative external refresh and bounded CSV | XLSX/ODS import/export fixtures and conversion reports, comprehensive disk/permission/crash recovery, bundled runtime, follow-up execution semantics |
+| M7 | Automated local macOS tests and visual screenshot; local install smoke; CI matrix configured | CI has not run here. Windows/Linux native behavior, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
+| M8 | Shared engine and REST boundaries retained; unsupported APIs reject explicitly | Relational schema/tooling, proven managed SQL capture, workbook code/macros/functions/packages, remote TLS/mTLS/password access and additional wireframes |
+
+Later-stage facilities in this preview are bounded development slices. They do
+not waive the dependencies or completion criteria in the implementation plan.
+
+## Evidence
+
+Build: CMake 4.4.2, Apple Clang 17, Qt 6.12.0, Python 3.14.6, Apple Silicon,
+macOS 26.6.2. Sources build with compiler warnings enabled. Tests exercise
+actual REST and child processes; no substitute in-process GUI database path is
+used. The automated suite includes:
+
+- Atomic multi-cell validation, hook-generated edits, required load/timeout
+  failures, rollback, no-op change coalescing, Undo/Redo and source retention.
+- Durable operation deduplication/status, external source edits without handler
+  replay, stale-write rejection, schema/trigger rejection, read-only access and
+  consistent snapshot copies.
+- Formula errors/recovery, lazy IF, absolute/cross-sheet references, bounded
+  distant reads and long-text/calculation/export limits.
+- Range offsets, overlapping moves, rejected Cut destination retaining its
+  source, numeric series, sheet duplication/order, source-preserving styles,
+  full list scope, projected targets and scoped Replace All.
+- REST/SDK/CLI parity with the same required handler, authentication/origin
+  rejection, CSV preview, headless file CLI and independent client handles.
+- Qt model invariants on a bounded instance; actual Supplies edits, source-bar
+  Save/Escape, Undo, formatted results, projected source targets, far-address
+  navigation, required-hook rejection and a closable startup failure.
+
+The local suite passes 24 Python tests and four Qt contract cases.
+[Python test output](evidence/service-tests.txt),
+[desktop test output](evidence/desktop-tests.txt),
+[desktop process resources](evidence/desktop-resources.txt), and
+[rendered Supplies window](evidence/desktop-supplies.png) are saved locally.
+The [combined CTest result](evidence/verification.txt) and
+[installed native-app smoke result](evidence/package-smoke.txt) are also recorded.
+The screenshot uses Qt's offscreen platform and does not certify native platform
+appearance. Qt warnings about offscreen size hints are expected test output.
+
+[Benchmark JSON](evidence/local-benchmark.json) records a 390,001-cell dataset:
+100k sparse cells, 10k dense cells and 280k one-KiB text cells. Its SQLite disk
+size exceeds the declared 256 MiB service memory target. Warm/distant/dense/disk
+viewports and edit acknowledgement use 100 authenticated REST requests each.
+The report includes driver/service peak RSS and explicit missing measurements.
+These results do not promise an unlimited workbook or every dense address-space
+shape. The cache has both tile-count and estimated-byte limits; memory targets
+apply to the measured workload, not all possible active workbook combinations.
+
+`cmake --install build --prefix build/package` deploys Qt and service sources.
+`python3 tests/package_smoke.py build/package` exercises a real installed native
+application, managed edit and calculation using an ephemeral workbook. Python
+remains separately installed. This is an install smoke, not clean-machine or
+distribution qualification. CI describes Windows/macOS/Linux build/test/install
+jobs but has not been pushed or run from this workspace.
+The installed smoke uses the bundled native platform plugin (Cocoa here);
+Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
+
+## Next dependencies
+
+Finish the remaining M1 measurements and run the platform matrix. Resolve the
+M4 structural reference/identity contracts with destructive-operation fixtures
+before enabling those controls. Then finish list/CSV typing and explicit jobs,
+followed by independent XLSX/ODS fidelity stages and failure recovery. Full
+desktop acceptance and licensing/runtime distribution decisions precede a
+public preview. M8 remains a later set of independently designed increments.
+
+Managed SQL support matrix for this tier: SELECT/DDL/DML/PRAGMA/ATTACH/transaction
+control through an application SQL resource are all unavailable. No statement
+is silently run outside hooks. Ordinary external SQLite cell changes are tested
+and intentionally supported; reserved schema/metadata changes are rejected on
+managed refresh. Proving capture for triggers/cascades/upsert/replace is still
+required before the first managed SQL mutation can be exposed.

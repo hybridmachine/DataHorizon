@@ -1,6 +1,10 @@
-# Local operating-system files
 .DS_Store
 Thumbs.db
-
-# Temporary document-generation and rendering files
 /tmp/
+build*/
+.venv/
+__pycache__/
+*.py[cod]
+*.dhwb
+*.dhwb-wal
+*.dhwb-shm

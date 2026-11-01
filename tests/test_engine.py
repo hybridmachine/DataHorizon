@@ -1,0 +1,304 @@
+import json
+from contextlib import closing
+from pathlib import Path
+import sqlite3
+import tempfile
+import time
+import unittest
+import uuid
+
+from datahorizon.engine import EngineError, Workbook
+from datahorizon.formula import coordinates, translate
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+class EngineTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.path = Path(self.temp.name) / "test.dhwb"
+        self.book = Workbook(self.path, create=True)
+
+    def tearDown(self):
+        self.book.close()
+        self.temp.cleanup()
+
+    def apply(self, action="edit", **args):
+        return self.book.mutate({"action": action, "sheet": "Sheet1", "operation_id": str(uuid.uuid4()),
+                                 "expected_state": self.book.info()["state"], **args})
+
+    def edit(self, *cells):
+        return self.apply(cells=[{"row": row, "col": col, "source": source} for row, col, source in cells])
+
+    def cells(self, **args):
+        return {(c["row"], c["col"]): c for c in self.book.read("Sheet1", {"r2": 8, "c2": 8, **args})["cells"]}
+
+    def test_supplies_and_reopen(self):
+        self.edit((2, 2, "2"), (2, 3, "3.5"), (2, 4, "=B2*C2"),
+                  (3, 2, "4"), (3, 3, "1.25"), (4, 2, "3"), (4, 3, "2"), (6, 4, "=SUM(D2:D4)"))
+        self.apply("fill", r1=2, c1=4, r2=4, c2=4)
+        cells = self.cells()
+        self.assertEqual([cells[(r, 4)]["value"] for r in (2, 3, 4, 6)], [7, 5, 6, 18])
+        self.edit((3, 2, "6"))
+        self.assertEqual(self.cells()[(6, 4)]["value"], 20.5)
+        self.book.close()
+        self.book = Workbook(self.path)
+        self.assertEqual(self.cells()[(6, 4)]["value"], 20.5)
+        self.assertEqual(self.cells()[(3, 4)]["source"], "=B3*C3")
+
+    def test_formula_errors_and_lazy_if(self):
+        self.edit((1, 1, "=SUUM(B1:B2)"), (1, 2, "=IF(TRUE,7,1/0)"),
+                  (2, 1, "=A2"), (3, 1, "=1/0"), (4, 1, "=-2^2"), (5, 1, '=SUM("text",2,3)'))
+        cells = self.cells()
+        self.assertEqual(cells[(1, 1)]["display"], "#NAME?")
+        self.assertEqual(cells[(1, 2)]["value"], 7)
+        self.assertEqual(cells[(2, 1)]["display"], "#CYCLE!")
+        self.assertEqual(cells[(3, 1)]["display"], "#DIV/0!")
+        self.assertEqual(cells[(4, 1)]["value"], -4)
+        self.assertEqual(cells[(5, 1)]["value"], 5)
+        self.edit((1, 1, "=SUM(B1:B2)"))
+        self.assertEqual(self.cells()[(1, 1)]["value"], 7)
+
+    def test_cross_sheet_absolute_and_text_references(self):
+        self.apply("sheet_add", name="Other sheet")
+        self.book.mutate({"action": "edit", "sheet": "Other sheet", "operation_id": str(uuid.uuid4()),
+                          "expected_state": self.book.state(), "cells": [{"row": 1, "col": 1, "source": "9"}]})
+        self.edit((1, 1, "='Other sheet'!$A$1+1"))
+        self.assertEqual(self.cells()[(1, 1)]["value"], 10)
+        self.assertEqual(translate('=A1+$B1+C$1+$D$1+IF(TRUE,"A1",0)', 2, 3),
+                         '=D3+$B3+F$1+$D$1+IF(TRUE,"A1",0)')
+        with self.assertRaises(EngineError):
+            self.apply("sheet_rename", name="Renamed")
+
+    def test_atomic_validation_and_undo_redo(self):
+        with self.assertRaises(EngineError):
+            self.apply(cells=[{"row": 1, "col": 1, "source": "7"},
+                              {"row": 1, "col": 2, "source": "nan", "kind": "number"}])
+        self.assertEqual(self.cells(), {})
+        self.edit((1, 1, "7"), (2, 1, "8"))
+        self.apply("undo")
+        self.assertEqual(self.cells(), {})
+        self.apply("redo")
+        self.assertEqual(self.cells()[(2, 1)]["value"], 8)
+        self.apply("undo")
+        self.edit((3, 1, "9"))
+        with self.assertRaises(EngineError):
+            self.apply("redo")
+
+    def test_idempotency_and_status(self):
+        request = {"action": "edit", "sheet": "Sheet1", "operation_id": "lost-response",
+                   "expected_state": self.book.state(), "cells": [{"row": 1, "col": 1, "source": "7"}]}
+        first = self.book.mutate(request)
+        self.assertEqual(self.book.mutate(request), first)
+        self.assertEqual(self.book.operation("lost-response"), first)
+        request["cells"][0]["source"] = "8"
+        with self.assertRaises(EngineError) as raised:
+            self.book.mutate(request)
+        self.assertEqual(raised.exception.body["code"], "OPERATION_ID_REUSED")
+        self.assertEqual(self.cells()[(1, 1)]["value"], 7)
+
+    def test_direct_edit_stale_write_and_history_gap(self):
+        self.edit((1, 1, "7"), (1, 2, "=A1*2"))
+        state = self.book.state()
+        with closing(sqlite3.connect(self.path)) as direct, direct:
+            direct.execute("UPDATE cells SET source='9' WHERE row=1 AND col=1")
+        with self.assertRaises(EngineError) as raised:
+            self.book.mutate({"action": "edit", "sheet": "Sheet1", "operation_id": "stale", "expected_state": state,
+                              "cells": [{"row": 1, "col": 1, "source": "8"}]})
+        self.assertEqual(raised.exception.body["code"], "STALE_STATE")
+        self.assertEqual(self.cells()[(1, 2)]["value"], 18)
+        self.assertIsNone(self.book.info()["undo"])
+
+    def test_readonly_schema_and_backup(self):
+        self.edit((1, 1, "7"))
+        copy = Path(self.temp.name) / "copy.dhwb"
+        self.book.snapshot(copy)
+        with self.assertRaises(FileExistsError):
+            self.book.snapshot(copy)
+        read = Workbook(copy, readonly=True)
+        try:
+            self.assertEqual(read.read("Sheet1", {})["cells"][0]["value"], 7)
+            with self.assertRaises(EngineError):
+                read.mutate({"action": "edit", "operation_id": "readonly"})
+        finally:
+            read.close()
+        with closing(sqlite3.connect(self.path)) as direct, direct:
+            direct.execute("ALTER TABLE cells ADD COLUMN bad TEXT")
+        with self.assertRaises(EngineError) as raised:
+            self.book.info()
+        self.assertEqual(raised.exception.body["code"], "SCHEMA_CHANGED")
+
+    def test_typed_blank_null_empty_text_and_format(self):
+        self.apply(cells=[{"row": 1, "col": 1, "source": "00123", "kind": "text"},
+                          {"row": 1, "col": 2, "source": "", "kind": "text"},
+                          {"row": 1, "col": 3, "source": "", "kind": "null"},
+                          {"row": 1, "col": 4, "source": "7", "style": {"format": "fixed2", "bold": True}}])
+        cells = self.cells()
+        self.assertEqual(cells[(1, 1)]["value"], "00123")
+        self.assertEqual(cells[(1, 2)]["value"], "")
+        self.assertIsNone(cells[(1, 3)]["value"])
+        self.assertNotIn((1, 5), cells)
+        self.assertEqual(cells[(1, 4)]["display"], "7.00")
+        self.edit((2, 1, "=1+2"))
+        self.apply(cells=[{"row":2,"col":1,"style":{"format":"text"}}])
+        self.assertEqual(self.cells()[(2,1)]["value"],3)
+        self.assertEqual(self.cells()[(2,1)]["source"],"=1+2")
+        self.apply(cells=[{"row":3,"col":1,"style":{"format":"text"}}])
+        self.edit((3,1,"00123"))
+        self.assertEqual(self.cells()[(3,1)]["value"],"00123")
+        with self.assertRaises(EngineError):
+            self.edit((4, 1, "9007199254740993"))
+
+    def test_bounded_reads_and_operations(self):
+        with self.assertRaises(EngineError):
+            self.book.read("Sheet1", {"r2": 4097})
+        with self.assertRaises(EngineError):
+            self.apply("fill", r2=10001)
+        self.assertEqual(coordinates("XFD1048576"), (1048576, 16384))
+        self.edit((1_048_576, 16_384, "far"))
+        self.assertEqual(self.cells(r1=1_048_576, r2=1_048_576, c1=16_384, c2=16_384)[(1_048_576,16_384)]["value"], "far")
+
+    def test_hooks_commit_rollback_direct_and_undo(self):
+        self.book.handler = FIXTURES / "validation_hook.py"
+        self.edit((1, 1, "7"))
+        self.assertEqual(self.cells()[(1, 2)]["value"], 14)
+        with self.assertRaises(EngineError) as raised:
+            self.edit((1, 1, "-1"), (3, 1, "99"))
+        self.assertEqual(raised.exception.body["outcome"], "rolled_back")
+        self.assertEqual(self.cells()[(1, 1)]["value"], 7)
+        self.assertNotIn((3, 1), self.cells())
+        with closing(sqlite3.connect(self.path)) as direct, direct:
+            direct.execute("UPDATE cells SET source='10' WHERE row=1 AND col=1")
+        self.assertEqual(self.cells()[(1, 2)]["value"], 14)
+
+    def test_missing_and_timeout_hook_fail_closed(self):
+        self.book.handler = FIXTURES / "missing.py"
+        with self.assertRaises(EngineError):
+            self.edit((1, 1, "7"))
+        self.assertEqual(self.cells(), {})
+        self.book.handler = FIXTURES / "timeout_hook.py"
+        started = time.monotonic()
+        with self.assertRaises(EngineError):
+            self.edit((1, 1, "7"))
+        self.assertLess(time.monotonic() - started, 3.5)
+        self.assertEqual(self.cells(), {})
+
+    def test_csv_snapshot_and_formula_error_block(self):
+        self.edit((1, 1, "'00123"), (1, 2, "=7+13.5"))
+        result = self.book.csv_export("Sheet1", {"r2": 1, "c2": 2})
+        self.assertEqual(result["csv"], "00123,20.5\r\n")
+        self.edit((1, 2, "=SUUM(A1)"))
+        with self.assertRaises(EngineError):
+            self.book.csv_export("Sheet1", {"c2": 2})
+
+    def test_paste_relative_references_values_and_atomicity(self):
+        self.edit((1, 1, "3"))
+        self.apply("paste", row=2, col=2, origin_row=1, origin_col=2,
+                   rows=[[{"source": "=A1+$A$1", "input_kind": "auto", "value": 6}]])
+        self.assertEqual(self.cells()[(2,2)]["source"], "=A2+$A$1")
+        self.apply("paste", row=3, col=2, mode="values", rows=[[{"source": "=A1", "value": 3}]])
+        self.assertEqual(self.cells()[(3,2)]["value"], 3)
+        with self.assertRaises(EngineError):
+            self.apply("paste", row=1_048_576, col=1, rows=[[{"source": "x"}], [{"source": "y"}]])
+        self.assertNotIn((1_048_576,1), self.cells(r1=1_048_576, r2=1_048_576))
+
+    def test_full_scope_list_projection_and_source_identity(self):
+        self.edit((1,1,"Item"), (1,2,"Quantity"), (2,1,"Notebook"), (2,2,"2"),
+                  (3,1,"Pen"), (3,2,"6"), (4,1,"Folder"), (4,2,"3"))
+        scope = {"r1":1, "c1":1, "r2":4, "c2":2, "header":True,
+                 "filters":[{"col":2, "op":">", "value":2}], "sort":[{"col":2, "descending":True}]}
+        result = self.book.list_view("Sheet1", scope)
+        self.assertEqual(result["rows"], [1,3,4])
+        self.assertEqual((result["matching"], result["total"]), (2,3))
+        self.assertEqual(self.cells()[(2,1)]["value"], "Notebook")
+        self.edit((3,2,"1"))
+        self.assertEqual(self.book.list_view("Sheet1", scope)["rows"], [1,4])
+        scope["filters"] = []
+        self.assertEqual(self.book.list_view("Sheet1", scope)["rows"], [1,4,2,3])
+        projected = self.book.read("Sheet1", {"rows":[4,2], "c1":1, "c2":2})
+        self.assertEqual(len(projected["cells"]), 4)
+
+    def test_find_replace_scope_source_and_rollback(self):
+        self.edit((1,1,"Pen"), (2,1,"Pen"), (3,1,"=SUM(1,2)"))
+        args = {"r1":1,"r2":1,"c1":1,"c2":1,"needle":"Pen"}
+        self.assertEqual(self.book.find("Sheet1", args)["count"], 1)
+        self.apply("replace_all", **args, replacement="Pencil")
+        self.assertEqual(self.cells()[(1,1)]["value"], "Pencil")
+        self.assertEqual(self.cells()[(2,1)]["value"], "Pen")
+        with self.assertRaises(EngineError):
+            self.apply("replace_all", r1=3, r2=3, c1=1, c2=1, needle="3", field="display", replacement="4")
+        self.assertEqual(self.cells()[(3,1)]["source"], "=SUM(1,2)")
+
+    def test_cut_overlap_series_and_failed_destination(self):
+        self.edit((1,3,"original"))
+        self.book.handler = FIXTURES / "validation_hook.py"
+        with self.assertRaises(EngineError):
+            self.apply("move", r1=1,c1=3,r2=1,c2=3,row=1,col=1,cut_state=self.book.state())
+        self.assertEqual(self.cells()[(1,3)]["value"], "original")
+        self.assertNotIn((1,1), self.cells())
+        self.book.handler = None
+        self.edit((2,1,"3"))
+        self.apply("fill",r1=2,c1=1,r2=2,c2=3,mode="series",step=2)
+        self.assertEqual([self.cells()[(2,c)]["value"] for c in (1,2,3)],[3,5,7])
+        self.apply("move",r1=2,c1=1,r2=2,c2=3,row=2,col=2,cut_state=self.book.state())
+        self.assertNotIn((2,1),self.cells())
+        self.assertEqual([self.cells()[(2,c)]["value"] for c in (2,3,4)],[3,5,7])
+        self.apply("undo")
+        self.assertEqual([self.cells()[(2,c)]["value"] for c in (1,2,3)],[3,5,7])
+
+    def test_sheet_duplicate_order_and_coalesced_noop(self):
+        self.edit((2,1,"3"),(2,2,"=A2*2"))
+        self.apply("sheet_duplicate",name="Copy")
+        self.assertEqual(self.book.read("Copy",{"r2":2,"c2":2})["cells"][1]["value"],6)
+        ids=[s["id"] for s in self.book.info()["sheets"]]
+        self.apply("sheet_reorder",order=list(reversed(ids)))
+        self.assertEqual(self.book.info()["sheets"][0]["name"],"Copy")
+        self.book.handler = FIXTURES / "missing.py"
+        # Coalescing back to the original value must not invoke a change handler.
+        self.apply(cells=[{"row":2,"col":1,"source":"4"},{"row":2,"col":1,"source":"3"}])
+        self.assertEqual(self.cells()[(2,1)]["value"],3)
+
+    def test_unsupported_sql_and_trigger_schema_fail_closed(self):
+        with self.assertRaises(EngineError) as error:
+            self.apply("sql",sql="UPDATE cells SET source='bypass'")
+        self.assertEqual(error.exception.body["code"],"UNSUPPORTED_OPERATION")
+        with closing(sqlite3.connect(self.path)) as direct, direct:
+            direct.execute("INSERT INTO cells(sheet_id,row,col,source) SELECT id,1,1,'external' FROM sheets")
+        self.assertEqual(self.cells()[(1,1)]["value"],"external")
+        with closing(sqlite3.connect(self.path)) as direct, direct:
+            direct.execute("CREATE TRIGGER unsupported AFTER UPDATE ON cells BEGIN SELECT 1; END")
+        with self.assertRaises(EngineError) as error:
+            self.edit((1,1,"managed"))
+        self.assertEqual(error.exception.body["code"],"SCHEMA_CHANGED")
+
+    def test_long_text_viewport_and_export_are_bounded(self):
+        sheet=self.book.info()["sheets"][0]["id"]
+        with closing(sqlite3.connect(self.path)) as direct, direct:
+            direct.executemany("INSERT INTO cells(sheet_id,row,col,source,kind) VALUES(?,?,1,?,'text')",
+                               ((sheet,row,"x"*64000) for row in range(1,140)))
+        with self.assertRaises(EngineError):
+            self.book.read("Sheet1",{"r2":70})
+        with self.assertRaises(EngineError):
+            self.book.csv_export("Sheet1",{"r2":70})
+        with self.assertRaises(EngineError):
+            self.book.find("Sheet1",{"r2":139,"needle":"x"})
+        self.edit((1,2,"=SUM(A1:A139)"))
+        self.assertEqual(self.cells()[(1,2)]["display"],"#LIMIT!")
+
+    def test_failed_receipt_reconciles_without_reexecuting_code(self):
+        self.book.handler=FIXTURES/"validation_hook.py"
+        request={"action":"edit","sheet":"Sheet1","operation_id":"failed-response","expected_state":self.book.state(),
+                 "cells":[{"row":1,"col":1,"source":"-1"}]}
+        with self.assertRaises(EngineError):
+            self.book.mutate(request)
+        receipt=self.book.operation("failed-response")
+        self.assertEqual(receipt["outcome"],"rolled_back")
+        self.book.handler=None
+        with self.assertRaises(EngineError) as failure:
+            self.book.mutate(request)
+        self.assertEqual(failure.exception.body,receipt)
+        self.assertEqual(self.cells(),{})
+
+
+if __name__ == "__main__":
+    unittest.main()

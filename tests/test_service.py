@@ -1,0 +1,89 @@
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+from datahorizon.client import APIError, LocalService, UnknownOutcome
+
+
+class ServiceTests(unittest.TestCase):
+    def test_rest_sdk_cli_share_managed_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "parity.dhwb"
+            with LocalService(Path(__file__).parent / "fixtures" / "validation_hook.py") as client:
+                book = client.open(path, create=True)
+                book.set(1, 1, "8")
+                self.assertEqual(book.read(r2=1, c2=2)["cells"][1]["value"], 16)
+                env = {**os.environ, "DATAHORIZON_TOKEN": client.token}
+                run = subprocess.run([sys.executable, "-m", "datahorizon.cli", "--url", client.url, str(path), "set", "A1", "9"],
+                                     env=env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertEqual(book.read(r2=1, c2=2)["cells"][1]["value"], 18)
+                with self.assertRaises(APIError):
+                    book.set(1, 1, "-1")
+                book.refresh()
+                self.assertEqual(book.read(r2=1, c2=2)["cells"][0]["value"], 9)
+                with self.assertRaises(HTTPError) as raised:
+                    urlopen(client.url + "/v1/capabilities")
+                self.assertEqual(raised.exception.code, 401)
+                raised.exception.close()
+                request = Request(client.url + "/v1/capabilities", headers={"Authorization": "Bearer " + client.token, "Origin": "https://example.com"})
+                with self.assertRaises(HTTPError) as raised:
+                    urlopen(request)
+                self.assertEqual(raised.exception.code, 403)
+                raised.exception.close()
+                with urlopen(client.url + "/openapi.json") as response:
+                    self.assertEqual(json.load(response)["openapi"], "3.0.3")
+                preview = client.request("/v1/import/csv/preview", {"csv": "ID,Formula\n00123,=1+1"})
+                self.assertEqual(preview["rows"][1], ["00123", "=1+1"])
+
+    def test_headless_cli_file_mode(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = str(Path(temp) / "cli.dhwb")
+            for command in (["create"], ["set", "A1", "=SUM(7,13.5)"], ["read", "A1"]):
+                result = subprocess.run([sys.executable, "-m", "datahorizon.cli", path, *command], capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["cells"][0]["value"], 20.5)
+
+    def test_client_handles_release_without_closing_other_clients(self):
+        with tempfile.TemporaryDirectory() as temp, LocalService() as client:
+            path=Path(temp)/"leases.dhwb"
+            first=client.open(path,create=True)
+            second=client.open(path)
+            self.assertNotEqual(first.info["id"],second.info["id"])
+            first.close()
+            second.set(1,1,"7")
+            self.assertEqual(second.read(r2=1,c2=1)["cells"][0]["value"],7)
+            second.close()
+            with client.open(path) as reopened:
+                self.assertEqual(reopened.read(r2=1,c2=1)["cells"][0]["value"],7)
+
+    def test_lost_reply_exposes_id_and_blocks_further_sdk_writes(self):
+        with tempfile.TemporaryDirectory() as temp, LocalService() as client:
+            book=client.open(Path(temp)/"lost.dhwb",create=True)
+            original=client.request
+            def lose_acknowledgement(path,body=None):
+                result=original(path,body)
+                if path.endswith("/operations"):
+                    raise ConnectionError("Acknowledgement discarded after server commit")
+                return result
+            client.request=lose_acknowledgement
+            with self.assertRaises(UnknownOutcome) as unknown:
+                book.set(1,1,"7")
+            operation_id=unknown.exception.operation_id
+            with self.assertRaises(UnknownOutcome):
+                book.set(1,1,"8")
+            client.request=original
+            self.assertEqual(book.outcome(operation_id)["outcome"],"committed")
+            self.assertEqual(book.read(r2=1,c2=1)["cells"][0]["value"],7)
+            book.set(1,1,"8")
+            self.assertEqual(book.read(r2=1,c2=1)["cells"][0]["value"],8)
+
+
+if __name__ == "__main__":
+    unittest.main()

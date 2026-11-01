@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: GPL-3.0-only
+#pragma once
+
+#include "restclient.h"
+#include <QAbstractTableModel>
+#include <QCache>
+#include <QSet>
+
+class SheetModel : public QAbstractTableModel {
+    Q_OBJECT
+public:
+    explicit SheetModel(RestClient *client, QObject *parent = nullptr, int rows = 1048576, int cols = 16384);
+    int rowCount(const QModelIndex &parent = {}) const override;
+    int columnCount(const QModelIndex &parent = {}) const override;
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+    QVariant headerData(int section, Qt::Orientation orientation, int role) const override;
+    Qt::ItemFlags flags(const QModelIndex &index) const override;
+    bool setData(const QModelIndex &index, const QVariant &value, int role) override;
+    void bind(const QString &workbook, const QString &sheet, const QString &state, bool readonly);
+    void setBusy(bool value);
+    void setProjection(const QList<int> &rows);
+    bool projected() const { return m_projected; }
+    int sourceRow(int row) const { return m_projected ? m_projection.value(row, -1) : row; }
+    QJsonObject cell(const QModelIndex &index) const;
+    bool loaded(const QModelIndex &index) const;
+    QString workbook() const { return m_workbook; }
+    QString sheet() const { return m_sheet; }
+    QString state() const { return m_state; }
+    static QString columnName(int oneBased);
+signals:
+    void editRequested(int row, int col, QString source);
+    void issue(QString message);
+    void externalChange();
+    void tileLoaded();
+private:
+    struct Tile { QHash<int, QJsonObject> cells; };
+    void fetch(int tileRow, int tileCol) const;
+    static quint64 tileKey(int tileRow, int tileCol);
+    RestClient *m_client;
+    QString m_workbook, m_sheet, m_state;
+    bool m_readonly = true, m_busy = false;
+    int m_generation = 0;
+    int m_rows, m_cols;
+    bool m_projected = false;
+    QList<int> m_projection;
+    mutable QCache<quint64, Tile> m_cache{16*1024*1024};
+    mutable QSet<quint64> m_loading;
+};
