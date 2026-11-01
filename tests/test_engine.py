@@ -4,6 +4,7 @@ import io
 from contextlib import closing
 from pathlib import Path
 import sqlite3
+import sys
 import tempfile
 import time
 import unittest
@@ -47,6 +48,17 @@ class EngineTests(unittest.TestCase):
         self.book = Workbook(self.path)
         self.assertEqual(self.cells()[(6, 4)]["value"], 20.5)
         self.assertEqual(self.cells()[(3, 4)]["source"], "=B3*C3")
+
+    def test_runtime_formula_recursion_is_a_limit_error(self):
+        self.edit(*[(row,1,"="+"+"*20+f"A{row+1}") for row in range(1,61)],(61,1,"1"))
+        previous=sys.getrecursionlimit()
+        try:
+            sys.setrecursionlimit(400)
+            result=self.book.read("Sheet1",{"r2":61,"c2":1})
+        finally:
+            sys.setrecursionlimit(previous)
+        self.assertEqual(result["cells"][0]["display"],"#LIMIT!")
+        self.assertEqual(result["cells"][-1]["value"],1)
 
     def test_formula_errors_and_lazy_if(self):
         self.edit((1, 1, "=SUUM(B1:B2)"), (1, 2, "=IF(TRUE,7,1/0)"),

@@ -3,7 +3,6 @@
 import json
 from http.client import HTTPException
 from collections import deque
-import os
 from pathlib import Path
 import queue
 import subprocess
@@ -143,11 +142,10 @@ class LocalService:
     """Owns only the child service it started; external services are never stopped."""
 
     def __init__(self, handler=None):
-        command = [sys.executable, "-m", "datahorizon.service"]
+        command = [sys.executable, "-I", "-B", "-X", "utf8", str(Path(__file__).resolve().with_name("launch.py"))]
         if handler:
             command += ["--handler", str(handler)]
-        environment = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1]) + os.pathsep + os.environ.get("PYTHONPATH", "")}
-        self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
+        self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
         self.diagnostics = deque(maxlen=40)
         self._diagnostics_thread=threading.Thread(target=lambda:self.diagnostics.extend(iter(self.process.stderr.readline,"")),daemon=True)
         self._diagnostics_thread.start()
@@ -158,7 +156,7 @@ class LocalService:
             self.client = Client(info["url"], info["token"])
         except Exception:
             self.close()
-            raise RuntimeError("Local service failed to start; run python -m datahorizon.service for diagnostics") from None
+            raise RuntimeError("Local service failed to start; inspect its diagnostics and configured Python interpreter") from None
 
     def close(self):
         if self.process.poll() is None:

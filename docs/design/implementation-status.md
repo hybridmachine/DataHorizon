@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 68 Python tests and 35 Qt contract cases.
+The review regression suite includes 71 Python tests and 36 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -251,3 +251,15 @@ conversion limit. An independent Qt regression found that range actions could
 commit before resolving an active cell draft. Common submission now captures
 that draft first: Cancel submits nothing and leaves the input editable. The
 long-input regression now exercises actual editor commit signals.
+
+Cycle 11 posted no inline issues but raised service-launch security, formula
+correctness and resource-lifecycle concerns. Marker-file regressions reproduced
+owned services importing code from the working directory and ambient
+PYTHONPATH before any handler activation. Desktop and SDK launch by absolute
+trusted path in Python isolated mode; hostile-directory tests also verify
+explicit required hooks still execute normally. Failed opens now publish no
+unreturned handle and close a new engine if metadata loading fails; existing
+leases remain valid. Runtime formula recursion is #LIMIT!, with unrelated cells
+still calculated in the same viewport. Installed native smoke and the complete
+suite verify the final behavior. This completes the two further authorized
+cycles; final fixes are validated without requesting another review.

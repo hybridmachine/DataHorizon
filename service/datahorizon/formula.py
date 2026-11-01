@@ -239,8 +239,12 @@ class Calculator:
                 raise FormulaError("#NUM!", "Non-finite result")
             self.cache[key] = result
             return result
-        except (OverflowError, RecursionError):
-            error = FormulaError("#NUM!", "Numeric or nesting overflow")
+        except OverflowError:
+            error = FormulaError("#NUM!", "Numeric overflow")
+            self.cache[key] = error
+            raise error
+        except RecursionError:
+            error = FormulaError("#LIMIT!", "Calculation nesting limit exceeded")
             self.cache[key] = error
             raise error
         except FormulaError as error:

@@ -38,7 +38,8 @@ ranges, structured references, external workbooks and 3D ranges are unsupported.
 Double-quoted strings and TRUE/FALSE are supported. Unsupported function or
 arity is #NAME?. Invalid syntax/coercion is #VALUE!; broken addresses are #REF!,
 cycles are #CYCLE!, and resource exhaustion
-is #LIMIT!. Errors retain editable source and never become an invented value.
+is #LIMIT!, including runtime recursion exhaustion. Numeric overflow remains
+#NUM!. Errors retain editable source and never become an invented value.
 An export with any selected formula error is blocked. Evaluation budgets include
 AST work as well as referenced cells, so not every 10,000-cell dependency shape
 fits the initial limit. Recalculation is synchronous and bounded; there are no

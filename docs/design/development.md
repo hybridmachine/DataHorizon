@@ -31,9 +31,15 @@ The desktop launches a private, authenticated loopback service using the Python
 interpreter found by CMake. DATAHORIZON_PYTHON overrides it. Normal grid operations
 use REST; the GUI never opens SQLite. It only terminates a service it started.
 The service remains useful without a desktop.
+Owned desktop and SDK services invoke an absolute trusted launcher with
+[Python isolated mode](https://docs.python.org/3.13/using/cmdline.html#cmdoption-I).
+The launcher adds only the resolved service installation root to the interpreter's
+paths; the working directory and ambient `PYTHONPATH` cannot select service
+modules. Choose a trusted interpreter and install handler dependencies in its
+environment. Startup uses UTF-8 streams and disables bytecode writes.
 
 ```sh
-PYTHONPATH=service python3 -m datahorizon.service
+python3 -I -B -X utf8 "$PWD/service/datahorizon/launch.py"
 ```
 
 The first stdout line contains the service URL and bearer token. Keep it private.

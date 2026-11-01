@@ -14,6 +14,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from datahorizon.client import APIError, Client, LocalService, UnknownOutcome
+from datahorizon.engine import EngineError, Workbook
 from datahorizon.service import Service
 
 
@@ -56,6 +57,50 @@ class ServiceTests(unittest.TestCase):
                     self.assertEqual(json.load(response)["openapi"], "3.0.3")
                 preview = client.request("/v1/import/csv/preview", {"csv": "ID,Formula\n00123,=1+1"})
                 self.assertEqual(preview["rows"][1], ["00123", "=1+1"])
+
+    def test_owned_service_ignores_working_directory_and_pythonpath_modules(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp); previous=Path.cwd(); handler=Path(__file__).resolve().parent/"fixtures"/"validation_hook.py"
+            for attack in ("cwd","pythonpath"):
+                with self.subTest(attack=attack):
+                    work=root/attack; work.mkdir(); ambient=work/"ambient"; ambient.mkdir()
+                    marker=work/"executed"
+                    payload=f"from pathlib import Path\nPath({str(marker)!r}).write_text('untrusted import')\nraise RuntimeError('untrusted import')\n"
+                    if attack=="cwd":
+                        package=work/"datahorizon"; package.mkdir(); (package/"__init__.py").write_text(payload)
+                    else:
+                        (ambient/"json.py").write_text(payload)
+                    try:
+                        os.chdir(work)
+                        with patch.dict(os.environ,{"PYTHONPATH":str(ambient)+os.pathsep}):
+                            try: owned=LocalService(handler)
+                            except RuntimeError:
+                                self.assertFalse(marker.exists(),"Owned service imported an ambient module")
+                                raise
+                            with owned as client:
+                                self.assertFalse(marker.exists())
+                                self.assertEqual(client.request("/v1/capabilities")["api_version"],1)
+                                with client.open(work/"trusted.dhwb",create=True) as book:
+                                    book.set(1,1,"7")
+                                    self.assertEqual(book.read(r2=1,c2=2)["cells"][1]["value"],14)
+                    finally:
+                        os.chdir(previous)
+
+    def test_failed_open_does_not_publish_a_handle_or_leak_an_engine(self):
+        with tempfile.TemporaryDirectory() as temp,Service() as server:
+            path=Path(temp)/"failed-open.dhwb"; created=[]
+            def construct(*args,**kwargs):
+                book=Workbook(*args,**kwargs); created.append(book); return book
+            with patch("datahorizon.service.Workbook",side_effect=construct),patch.object(Workbook,"info",side_effect=EngineError("TEST_FAILURE","Injected metadata failure")):
+                with self.assertRaises(EngineError): server.dispatch("POST","/v1/open",{"path":str(path),"create":True})
+            self.assertEqual(server.workbooks,{})
+            with self.assertRaises(sqlite3.ProgrammingError): created[0].db.execute("SELECT 1")
+            info=server.dispatch("POST","/v1/open",{"path":str(path)})
+            book=server.workbooks[info["id"]]
+            with patch.object(book,"info",side_effect=EngineError("TEST_FAILURE","Injected metadata failure")):
+                with self.assertRaises(EngineError): server.dispatch("POST","/v1/open",{"path":str(path)})
+            self.assertEqual(list(server.workbooks),[info["id"]])
+            self.assertEqual(book.db.execute("SELECT 1").fetchone()[0],1)
 
     def test_headless_cli_file_mode(self):
         with tempfile.TemporaryDirectory() as temp:

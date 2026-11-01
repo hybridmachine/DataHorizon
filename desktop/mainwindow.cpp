@@ -342,13 +342,10 @@ void MainWindow::startService() {
     m_service.disconnect(this);
     m_startup.clear();
     m_client->configure({},{});
-    auto env = QProcessEnvironment::systemEnvironment();
     auto servicePath = QCoreApplication::applicationDirPath()+"/../Resources/service";
     if (!QDir(servicePath).exists()) servicePath = QCoreApplication::applicationDirPath()+"/../share/datahorizon/service";
     if (!QDir(servicePath).exists()) servicePath = QString::fromUtf8(DATAHORIZON_SERVICE_DIR);
-    env.insert("PYTHONPATH", servicePath + QDir::listSeparator() + env.value("PYTHONPATH"));
-    env.insert("PYTHONDONTWRITEBYTECODE", "1");
-    m_service.setProcessEnvironment(env);
+    m_service.setProcessEnvironment(QProcessEnvironment::systemEnvironment());
     connect(&m_service, &QProcess::readyReadStandardOutput, this, [this] {
         if(!m_client->url().isEmpty()) { m_service.readAllStandardOutput(); return; }
         m_startup += m_service.readAllStandardOutput();
@@ -379,7 +376,7 @@ void MainWindow::startService() {
         issue(m_unknown ? "The local service exited. Operation outcome is unknown: "+m_pendingId
                         : "The local service exited. Restart it to reopen stored data; unsubmitted drafts are retained.");
     });
-    QStringList args{"-m", "datahorizon.service"};
+    QStringList args{"-I", "-B", "-X", "utf8", QFileInfo(servicePath+"/datahorizon/launch.py").absoluteFilePath()};
     if (!m_options.handler.isEmpty()) args << "--handler" << m_options.handler;
     m_service.start(qEnvironmentVariable("DATAHORIZON_PYTHON", DATAHORIZON_PYTHON), args);
 }

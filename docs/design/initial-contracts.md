@@ -31,6 +31,10 @@ If the original sheet is unavailable, retain the input visibly as a draft and
 reject applying it to another sheet. New edits require explicitly discarding the
 unavailable-target draft first; Cancel retains it for copying.
 
+Open publishes a handle after metadata loading succeeds. Failed opens close an
+unreturned engine and consume no new handle. A native file whose creation has
+already committed remains available for reopening after a metadata-load failure.
+
 Each mutation requires a client-generated operation ID (UUID recommended,
 1–100 characters of valid Unicode text) and an expected state token. The SDK
 rejects invalid IDs before transmission or pending-write tracking.
@@ -133,6 +137,10 @@ An empty projection has no editor target. Display replacement changes only Text,
 preserves its typing/escape and skips identical replacements. Changing numeric,
 boolean or formula displays requires editing their stored source instead.
 
+Owned desktop/SDK services use an absolute trusted launcher in Python isolated
+mode. Only the resolved service installation root joins the interpreter's paths;
+ambient working-directory modules and `PYTHONPATH` cannot select service code.
+Handler dependencies belong to the selected interpreter environment.
 Only a service operator can explicitly activate a trusted Python file. Workbook
 metadata and imports cannot activate code. A separate Python worker receives a
 transaction-aware broker context; reads and edits join the parent transaction.

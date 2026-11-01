@@ -152,13 +152,19 @@ class Service(ThreadingHTTPServer):
                     if book.path == path:
                         require(not create, "FILE_EXISTS", "Workbook already exists", 409)
                         require(book.readonly == readonly, "OPEN_MODE_CONFLICT", "Workbook is already open in a different mode", 409)
+                        info=book.info()
                         handle=str(uuid.uuid4()); self.workbooks[handle]=book
-                        return {**book.info(), "id": handle, "workbook_id": book.id}
+                        return {**info, "id": handle, "workbook_id": book.id}
                 require(len(set(self.workbooks.values()))<8,"WORKBOOK_LIMIT","Close unused workbooks before opening more",409)
                 book = Workbook(path, create=create, readonly=readonly, handler=self.handler)
+                try:
+                    info=book.info()
+                except BaseException:
+                    book.close()
+                    raise
                 handle = str(uuid.uuid4())
                 self.workbooks[handle] = book
-                return {**book.info(), "id": handle, "workbook_id": book.id}
+                return {**info, "id": handle, "workbook_id": book.id}
         if method == "POST" and path == "/v1/import/csv/preview":
             text = body.get("csv")
             delimiter = body.get("delimiter", ",")

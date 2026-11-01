@@ -259,6 +259,31 @@ private slots:
         QVERIFY(model->cell(model->index(0,0))["style"].toObject()["bold"].toBool());
         QCOMPARE(model->cell(model->index(0,0))["source"].toString(),QString());
     }
+    void ownedServiceIgnoresAmbientPythonModules() {
+        QTemporaryDir temp;
+        const auto previous=QDir::currentPath(); const auto pythonpath=qgetenv("PYTHONPATH");
+        const auto restore=qScopeGuard([previous,pythonpath]{
+            QDir::setCurrent(previous);
+            if(pythonpath.isNull()) qunsetenv("PYTHONPATH"); else qputenv("PYTHONPATH",pythonpath);
+        });
+        QVERIFY(QDir().mkpath(temp.filePath("datahorizon")));
+        QFile package(temp.filePath("datahorizon/__init__.py")); QVERIFY(package.open(QIODevice::WriteOnly));
+        package.write("from pathlib import Path\nPath(__file__).with_name('executed').write_text('untrusted import')\nraise RuntimeError('untrusted import')\n"); package.close();
+        QFile module(temp.filePath("json.py")); QVERIFY(module.open(QIODevice::WriteOnly));
+        module.write("from pathlib import Path\nPath(__file__).with_name('json-executed').write_text('untrusted import')\nraise RuntimeError('untrusted import')\n"); module.close();
+        QVERIFY(QDir::setCurrent(temp.path())); qputenv("PYTHONPATH",(temp.path()+QDir::listSeparator()).toUtf8());
+        StartupOptions options; options.automaticWorkbook=false; options.handler=QString(DATAHORIZON_FIXTURES)+"/validation_hook.py";
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_VERIFY_WITH_TIMEOUT(ready.count()==1 || QFile::exists(temp.filePath("datahorizon/executed")) || QFile::exists(temp.filePath("json-executed")),10000);
+        QVERIFY(!QFile::exists(temp.filePath("datahorizon/executed"))); QVERIFY(!QFile::exists(temp.filePath("json-executed")));
+        QCOMPARE(ready.count(),1);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("trusted.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14"),5000);
+        QVERIFY(!QFile::exists(temp.filePath("datahorizon/executed"))); QVERIFY(!QFile::exists(temp.filePath("json-executed")));
+    }
     void failedStartupCanClose() {
         const auto original=qgetenv("DATAHORIZON_PYTHON");
         qputenv("DATAHORIZON_PYTHON","/nonexistent/datahorizon-python");
