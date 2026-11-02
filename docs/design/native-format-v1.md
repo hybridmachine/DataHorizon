@@ -43,6 +43,12 @@ calculation cache. There is no replay of historical changes.
 Only the exact v1 schema is accepted. Additional tables, schema edits, triggers,
 metadata changes or newer versions require reopening a compatible file; the
 preview does not attempt repair. User tables and managed SQL are later work.
+Validation requires workbook/sheet UUIDs, valid sheet names, distinct nonnegative
+integer display positions, and no orphaned cell references. External changes to
+the workbook UUID are rejected by an existing engine. Independent connections
+still choose foreign-key enforcement themselves; invalid stored relationships
+are detected when managed access validates the workbook. Save a copy validates
+the copied catalog, relationships and schema before acknowledging success.
 The schema comparison deliberately restricts SQL rather than accepting writes
 whose actual effects cannot yet be captured. Ordinary cell writes remain
 independent of registering application functions or Python callbacks.

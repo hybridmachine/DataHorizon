@@ -1,11 +1,13 @@
 import json
 import csv
 import io
+import itertools
 from contextlib import closing
 from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import uuid
@@ -19,6 +21,87 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class EngineTests(unittest.TestCase):
+    def test_formula_preflight_sql_obeys_the_operation_deadline(self):
+        sheet=self.book.info()["sheets"][0]["id"]
+        with closing(sqlite3.connect(self.path)) as direct,direct:
+            direct.executemany("INSERT INTO cells(sheet_id,row,col,source) VALUES(?,?,1,'7')",
+                               ((sheet,row) for row in range(1,100001)))
+        self.book.info()
+        for action,args in (("sheet_rename",{"name":"Renamed"}),
+                            ("move",{"r1":1,"c1":1,"row":100001,"col":1,"cut_state":self.book.state()})):
+            clock=itertools.count()
+            with self.subTest(action=action):
+                with patch("datahorizon.engine.time.monotonic",side_effect=lambda:next(clock)):
+                    with self.assertRaises(EngineError) as failure: self.apply(action,sheet=sheet,**args)
+                self.assertEqual(failure.exception.body["code"],"TIMEOUT")
+                self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+                self.assertEqual(self.book.operation(failure.exception.body["operation_id"]),failure.exception.body)
+        self.assertEqual(self.book.info()["sheets"][0]["name"],"Sheet1")
+        self.assertEqual(self.book.db.execute("SELECT row FROM cells ORDER BY row DESC LIMIT 1").fetchone()[0],100000)
+
+    def test_native_catalog_and_foreign_keys_are_validated(self):
+        for sql,args in (("INSERT INTO cells(sheet_id,row,col) VALUES('missing',1,1)",()),
+                         ("UPDATE sheets SET id=NULL",()),
+                         ("UPDATE sheets SET name=?",("bad/name",)),
+                         ("UPDATE sheets SET name=?",(b"invalid text",)),
+                         ("UPDATE sheets SET position=-1",()),
+                         ("UPDATE dh_meta SET workbook_id='invalid'",())):
+            with self.subTest(sql=sql),closing(sqlite3.connect(self.path)) as direct:
+                direct.execute("BEGIN"); direct.execute(sql,args); direct.commit()
+                with self.assertRaises(EngineError) as failure:
+                    with closing(Workbook(self.path)): pass
+                self.assertEqual(failure.exception.body["code"],"INVALID_FORMAT")
+                # Restore the exact initial catalog for the next invalid fixture.
+                direct.execute("DELETE FROM cells"); direct.execute("DELETE FROM sheets")
+                direct.execute("INSERT INTO sheets VALUES(?,?,0)",(str(uuid.uuid4()),"Sheet1"))
+                direct.execute("UPDATE dh_meta SET workbook_id=?",(self.book.id,)); direct.commit()
+        with closing(sqlite3.connect(self.path)) as direct,direct:
+            direct.execute("UPDATE dh_meta SET workbook_id=?",(str(uuid.uuid4()),))
+        with self.assertRaises(EngineError) as failure: self.book.info()
+        self.assertEqual(failure.exception.body["code"],"INVALID_FORMAT")
+
+    def test_snapshot_validates_the_copied_catalog_and_schema(self):
+        destination=Path(self.temp.name)/"incompatible-copy.dhwb"; original=self.book.db
+        class ChangedDuringBackup:
+            def backup(self,target,**kwargs):
+                original.backup(target,**kwargs)
+                target.execute("CREATE TRIGGER injected AFTER UPDATE ON cells BEGIN SELECT 1; END")
+        with patch.object(self.book,"db",ChangedDuringBackup()):
+            with self.assertRaises(EngineError) as failure: self.book.snapshot(destination)
+        self.assertEqual(failure.exception.body["code"],"SCHEMA_CHANGED")
+        self.assertTrue(destination.is_file())
+        self.assertEqual(self.book.info()["sheets"][0]["name"],"Sheet1")
+
+    def test_snapshot_busy_wait_has_a_deadline_and_preserves_its_destination(self):
+        destination=Path(self.temp.name)/"busy-copy.dhwb"
+        direct=sqlite3.connect(self.path,check_same_thread=False,isolation_level=None)
+        direct.execute("BEGIN EXCLUSIVE")
+        release=threading.Timer(0.4,lambda:direct.execute("ROLLBACK")); release.start()
+        try:
+            with patch("datahorizon.engine.SNAPSHOT_SECONDS",0.05,create=True):
+                with self.assertRaises(EngineError) as failure: self.book.snapshot(destination)
+            self.assertEqual(failure.exception.body["code"],"TIMEOUT")
+            self.assertTrue(destination.is_file())
+        finally:
+            release.join(); direct.close()
+
+    def test_projected_read_column_defaults_match_rectangular_reads(self):
+        self.edit((7,20,"target"),(7,21,"other"))
+        for args in ({"rows":[7],"c1":20},{"rows":[7],"c1":20,"c2":20}):
+            result=self.book.read("Sheet1",args)
+            self.assertEqual(result["range"],[7,20,7,20])
+            self.assertEqual([cell["value"] for cell in result["cells"]],["target"])
+        self.assertEqual(self.book.read("Sheet1",{"rows":[7]})["range"],[7,1,7,1])
+
+    def test_alternate_numeric_spellings_cannot_bypass_integer_precision(self):
+        for source in ("9007199254740993.0","9007199254740993e0"," 9007199254740993 ","9_007_199_254_740_993"):
+            with self.subTest(source=source):
+                with self.assertRaises(EngineError) as failure:
+                    self.apply(cells=[{"row":1,"col":1,"source":source,"kind":"number"}])
+                self.assertIn(failure.exception.body["code"],("PRECISION","INVALID_INPUT"))
+                self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+        self.assertNotIn((1,1),self.cells())
+
     def test_history_budget_includes_labels_through_undo_and_redo(self):
         with patch("datahorizon.engine.MAX_HISTORY_BYTES",1024,create=True):
             for value in ("7","9"):
@@ -37,6 +120,7 @@ class EngineTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as direct,direct:
             direct.executemany("INSERT INTO cells(sheet_id,row,col,source) VALUES(?,?,1,'7')",
                                ((sheet,row) for row in range(1,100001)))
+        self.book.info()  # Complete external validation before measuring duplication.
         steps=0
         def work_limit():
             nonlocal steps
@@ -79,7 +163,7 @@ class EngineTests(unittest.TestCase):
     def test_failed_snapshot_preserves_another_writers_replacement(self):
         self.edit((1,1,"7")); destination=Path(self.temp.name)/"snapshot.dhwb"; moved=Path(self.temp.name)/"owned.dhwb"
         class FailingBackup:
-            def backup(self,target):
+            def backup(self,target,**kwargs):
                 target.close(); destination.rename(moved); destination.write_bytes(b"another writer's file")
                 raise OSError("Injected backup failure")
         with patch.object(self.book,"db",FailingBackup()):
@@ -105,8 +189,8 @@ class EngineTests(unittest.TestCase):
         self.edit((1,1,"7")); destination=Path(self.temp.name)/"snapshot.dhwb"; moved=Path(self.temp.name)/"completed.dhwb"
         original=self.book.db
         class ReplacingBackup:
-            def backup(self,target):
-                original.backup(target); target.close(); destination.rename(moved); destination.write_bytes(b"replacement")
+            def backup(self,target,**kwargs):
+                original.backup(target,**kwargs); target.close(); destination.rename(moved); destination.write_bytes(b"replacement")
         with patch.object(self.book,"db",ReplacingBackup()):
             with self.assertRaises(EngineError) as failure: self.book.snapshot(destination)
         self.assertEqual(failure.exception.body["code"],"FILE_CHANGED")

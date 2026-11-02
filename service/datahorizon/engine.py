@@ -1,6 +1,7 @@
 """SQLite transaction owner. All managed clients enter through these operations."""
 
 import csv
+from contextlib import contextmanager
 from functools import cmp_to_key
 import hashlib
 import io
@@ -21,6 +22,8 @@ from .hooks import HookFailure, invoke
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
 MAX_REVISION = 2**63-1
+SNAPSHOT_SECONDS = 5
+NUMBER_SOURCE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 SCHEMA = """
 CREATE TABLE dh_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  format_version INTEGER NOT NULL, workbook_id TEXT NOT NULL, revision INTEGER NOT NULL);
@@ -49,6 +52,37 @@ class EngineError(Exception):
 def require(condition, code, message, status=400):
     if not condition:
         raise EngineError(code, message, status)
+
+
+@contextmanager
+def sql_deadline(db, deadline):
+    expired = False
+    def check():
+        nonlocal expired
+        expired = time.monotonic() > deadline
+        return int(expired)
+    db.set_progress_handler(check,1000)
+    try:
+        require(not check(),"TIMEOUT","Operation exceeded its time budget")
+        yield
+        require(not check(),"TIMEOUT","Operation exceeded its time budget")
+    except sqlite3.Error as error:
+        if expired:
+            raise EngineError("TIMEOUT","Operation exceeded its time budget") from error
+        raise
+    finally:
+        # Rollback and durable receipt recording must remain possible on timeout.
+        db.set_progress_handler(None,0)
+
+
+def valid_uuid(value):
+    if not isinstance(value,str):
+        return False
+    try:
+        uuid.UUID(value)
+        return True
+    except ValueError:
+        return False
 
 
 def _reserve_destination(path):
@@ -128,13 +162,14 @@ def typed(item):
     elif kind == "boolean" or (kind == "auto" and source.upper() in ("TRUE", "FALSE")):
         require(source.upper() in ("TRUE", "FALSE"), "INVALID_INPUT", "Boolean source must be TRUE or FALSE")
         kind, value = "boolean", source.upper() == "TRUE"
-    elif kind == "number" or (kind == "auto" and re.fullmatch(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", source)):
+    elif kind == "number" or (kind == "auto" and re.fullmatch(NUMBER_SOURCE, source)):
+        require(re.fullmatch(NUMBER_SOURCE,source),"INVALID_INPUT","Numbers require invariant decimal notation without spaces or separators")
         try:
             value = float(source)
         except ValueError as error:
             raise EngineError("INVALID_INPUT", "Invalid number") from error
         require(math.isfinite(value), "INVALID_INPUT", "Numbers must be finite")
-        if re.fullmatch(r"[+-]?\d+", source):
+        if re.fullmatch(r"[+-]?\d+(?:\.0*)?(?:[eE][+-]?0+)?", source):
             require(abs(value) <= 9_007_199_254_740_991, "PRECISION", "Enter large integers as Text")
         kind = "number"
     else:
@@ -222,14 +257,30 @@ class Workbook:
     def close(self):
         self.db.close()
 
-    def validate(self):
-        require(schema_signature(self.db) == EXPECTED_SCHEMA,
-                "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
-        meta = self.db.execute("SELECT format_version,revision FROM dh_meta WHERE singleton=1").fetchall()
-        require(len(meta) == 1 and meta[0][0] == 1 and type(meta[0][1]) is int and meta[0][1] >= 0,
-                "FORMAT_VERSION", "Unsupported or invalid native format", 409)
-        require(self.db.execute("SELECT count(*) FROM sheets").fetchone()[0] > 0,
-                "INVALID_FORMAT", "Workbook must contain a sheet", 409)
+    def validate(self, db=None, *, deadline=None):
+        db = self.db if db is None else db
+        deadline = time.monotonic()+5 if deadline is None else deadline
+        with sql_deadline(db,deadline):
+            require(schema_signature(db) == EXPECTED_SCHEMA,
+                    "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
+            meta = db.execute("SELECT format_version,revision,workbook_id FROM dh_meta WHERE singleton=1").fetchall()
+            require(len(meta) == 1 and meta[0][0] == 1 and type(meta[0][1]) is int and meta[0][1] >= 0,
+                    "FORMAT_VERSION", "Unsupported or invalid native format", 409)
+            require(valid_uuid(meta[0][2]) and (not hasattr(self,"id") or meta[0][2] == self.id),
+                    "INVALID_FORMAT","Invalid or changed workbook identity",409)
+            positions = set()
+            for sheet_id,name,position in db.execute("SELECT id,name,position FROM sheets"):
+                require(time.monotonic()<=deadline,"TIMEOUT","Workbook validation exceeded its time budget")
+                require(valid_uuid(sheet_id) and type(position) is int and position>=0 and position not in positions,
+                        "INVALID_FORMAT","Invalid sheet identity or display position",409)
+                try:
+                    self.check_name(name)
+                except EngineError as error:
+                    raise EngineError("INVALID_FORMAT","Invalid native sheet name",409) from error
+                positions.add(position)
+            require(bool(positions),"INVALID_FORMAT","Workbook must contain a sheet",409)
+            require(db.execute("PRAGMA foreign_key_check").fetchone() is None,
+                    "INVALID_FORMAT","Native workbook contains orphaned cell references",409)
 
     def data_version(self):
         return self.db.execute("PRAGMA data_version").fetchone()[0]
@@ -285,7 +336,8 @@ class Workbook:
             require(isinstance(selected, list) and 0 < len(selected) <= 256, "LIMIT", "Provide 1-256 source rows")
             for row in selected:
                 integer(row, 1, MAX_ROWS, "source row")
-            c1, c2 = integer(args.get("c1", 1), 1, MAX_COLS, "c1"), integer(args.get("c2", 16), 1, MAX_COLS, "c2")
+            c1 = integer(args.get("c1",1),1,MAX_COLS,"c1")
+            c2 = integer(args.get("c2",c1),c1,MAX_COLS,"c2")
             require(c2 >= c1 and len(selected)*(c2-c1+1) <= limit, "LIMIT", f"Read exceeds {limit} cells")
             r1, r2 = min(selected), max(selected)
             row_clause, row_parameters = "row IN (" + ",".join("?" for _ in selected) + ")", selected
@@ -567,8 +619,9 @@ class Workbook:
                     require(request.get("mode", "all") == "all", "UNSUPPORTED_PASTE_MODE", "Cut supports full paste only; use Copy for special paste")
                     r1, c1, r2, c2 = rectangle(request)
                     require(request.get("cut_state") == self.state(), "STALE_CUT", "Cut source changed. Copy or cut the range again", 409)
-                    require(self.db.execute("SELECT 1 FROM cells WHERE source LIKE '=%' AND kind IN ('auto','formula') LIMIT 1").fetchone() is None,
-                            "REFERENCE_TRANSFORM_UNAVAILABLE", "Cut is unavailable while the workbook contains formulas; use Copy")
+                    with sql_deadline(self.db,self.deadline):
+                        require(self.db.execute("SELECT 1 FROM cells WHERE source LIKE '=%' AND kind IN ('auto','formula') LIMIT 1").fetchone() is None,
+                                "REFERENCE_TRANSFORM_UNAVAILABLE", "Cut is unavailable while the workbook contains formulas; use Copy")
                     dest_row, dest_col = request.get("row"), request.get("col")
                     integer(dest_row, 1, MAX_ROWS-(r2-r1), "destination row")
                     integer(dest_col, 1, MAX_COLS-(c2-c1), "destination column")
@@ -721,10 +774,11 @@ class Workbook:
                 "INVALID_NAME", "Sheet name must be 1-31 characters without []:*?/\\! or control characters")
 
     def has_cross_sheet_formulas(self):
-        for source, in self.db.execute("SELECT source FROM cells WHERE source LIKE '=%!%' AND kind IN ('auto','formula')"):
-            require(time.monotonic() <= self.deadline, "TIMEOUT", "Operation exceeded its time budget")
-            if has_sheet_reference(source):
-                return True
+        with sql_deadline(self.db,self.deadline):
+            for source, in self.db.execute("SELECT source FROM cells WHERE source LIKE '=%!%' AND kind IN ('auto','formula')"):
+                require(time.monotonic() <= self.deadline, "TIMEOUT", "Operation exceeded its time budget")
+                if has_sheet_reference(source):
+                    return True
         return False
 
     def list_view(self, sheet, args):
@@ -831,13 +885,18 @@ class Workbook:
 
     def snapshot(self, path):
         with self.lock:
+            deadline = time.monotonic()+SNAPSHOT_SECONDS
             destination = Path(path).expanduser().resolve()
             require(destination != self.path, "SAME_FILE", "Choose a different path")
             identity = _reserve_destination(destination)
             target = sqlite3.connect(destination.as_uri()+"?mode=rw",uri=True)
             try:
                 _verify_destination(destination,identity)
-                self.db.backup(target)
+                def progress(*_):
+                    require(time.monotonic()<=deadline,"TIMEOUT","Snapshot exceeded its time budget; the destination is preserved for inspection")
+                self.db.backup(target,pages=256,progress=progress,sleep=0.01)
+                _verify_destination(destination,identity)
+                self.validate(target,deadline=deadline)
                 _verify_destination(destination,identity)
             finally:
                 target.close()

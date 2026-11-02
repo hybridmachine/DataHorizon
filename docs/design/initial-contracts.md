@@ -90,8 +90,12 @@ storage does not promise that every dense workbook within that address space is
 practical. Raw input, typed value, formula, format, and display are distinct.
 Auto entry recognizes finite decimal numbers and TRUE/FALSE; ISO dates remain
 text. Text entry preserves 00123. Explicit empty text and NULL differ from an
-absent cell. Numbers use finite IEEE-754 binary64 for calculation; integers are
-accepted only within the exact JSON interoperability range. Decimal/currency
+absent cell. Numbers use finite IEEE-754 binary64 for calculation. Plain integer
+spellings, including a zero decimal suffix or zero exponent, must fit the exact
+JSON interoperability range. Other decimal/scientific inputs use binary64
+rounding; identifiers requiring exact digits must use Text. Explicit Number
+input uses the same invariant decimal grammar as auto entry, without spaces or
+digit separators. Decimal/currency
 accounting and Excel date serials are not supported. Entry uses an invariant
 decimal point; CSV defaults to text and requires a deliberate typing choice.
 GUI edits preserve explicitly typed Text, including leading-zero and
@@ -161,7 +165,13 @@ transactional code must avoid external effects. After-commit work is disabled.
 ## Jobs, limits and evidence
 
 Ordinary operations are atomic, at most 10,000 target cells, 4 MiB request body,
-64 KiB cell source and 5 seconds engine time. There are no chunked commits in
+64 KiB cell source and 5 seconds engine time. Formula preflight queries check
+that deadline inside SQLite even when no matching cells are returned, and remove
+the interrupt handler before rollback/receipt recording. Snapshot backup and
+validation also have a five-second budget, including busy retries. A timed-out
+copy preserves its destination for inspection. These deadlines are cooperative
+checks between SQLite instructions/backup steps, not hard cancellation of a
+blocked operating-system I/O call. There are no chunked commits in
 this tier. No partial-cancel claims are made: accepted writes run to their known
 outcome; long/chunked jobs remain unavailable. Desktop paste checks raw clipboard
 bytes and cell counts before constructing its

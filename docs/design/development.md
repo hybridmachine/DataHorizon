@@ -69,6 +69,9 @@ automatically. Save a copy creates a consistent snapshot at a new path. First
 Save on an untitled file switches to the permanent copy; the recovery source
 remains accessible through File > Recovery workbooks. Existing destinations
 are rejected, even if a native save dialog offers an overwrite confirmation.
+Copying includes validation of the copied native catalog and relationships and
+has a five-second cooperative budget, including busy retries. A failed or timed
+out destination is preserved for inspection; choose a new path to retry.
 Save submits a formula-bar draft and continues once its storage outcome is known.
 
 Enter submits the cell/source editor, Escape cancels its draft, and the address

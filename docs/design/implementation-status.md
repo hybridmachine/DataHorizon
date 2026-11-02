@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 105 Python tests and 38 Qt contract cases.
+The review regression suite includes 111 Python tests and 38 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -376,3 +376,21 @@ are published; malformed native metadata releases fresh engines and reservations
 without consuming handles or closing an existing client engine. All three
 regressions fail on the previous head and pass with these fixes, including a
 100,000-cell fixture checked against a bounded SQLite instruction budget.
+
+Cycle 23 published no inline issues but identified uninterruptible formula
+preflight scans and native validation, copy, projected-read and numeric-input
+risks. SQLite progress handlers now enforce formula-scan deadlines even when
+queries return no rows; handlers are removed before rollback and receipt storage.
+Validation checks workbook/sheet UUIDs, names, display positions and foreign-key
+relationships, including external changes to an active workbook identity.
+Snapshots use bounded backup steps with a busy-retry deadline and validate the
+actual copied schema/catalog/relationships before acknowledging success. Failed
+destinations remain available for inspection. Explicit projected reads default
+to their requested starting column, like rectangular reads. Number entry uses
+the invariant decimal grammar and applies integer precision checks to zero
+decimal suffixes and zero exponents as well as plain integers; other floating
+notation retains documented binary64 rounding. Regressions reproduce the old
+failures and verify durable timeout rollback, real SQLite backup contention,
+invalid external catalogs, incompatible copies and source-preserving rejection.
+All four newly authorized cycles are complete. Final fixes are validated and
+pushed without requesting a fifth external review.
