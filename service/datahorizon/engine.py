@@ -332,6 +332,14 @@ class Workbook:
                 raise FormulaError("#REF!", "Referenced sheet does not exist") from error
         return Calculator(lambda s, r, c: typed(self.raw(s, r, c)), resolve, seconds)
 
+    def range_cells(self, sheet, rows, c1, c2, deadline):
+        for row in rows:
+            require(time.monotonic()<=deadline,"TIMEOUT","Range query exceeded its time budget")
+            # Row equality lets the primary key bound the column scan as well.
+            yield from self.db.execute(
+                "SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? AND row=? AND col BETWEEN ? AND ? ORDER BY col",
+                (sheet,row,c1,c2))
+
     def read(self, sheet, args, *, limit=4096):
         preview=args.get("preview",False)
         require(type(preview) is bool, "INVALID_ARGUMENT", "preview must be boolean")
@@ -344,42 +352,43 @@ class Workbook:
             c2 = integer(args.get("c2",c1),c1,MAX_COLS,"c2")
             require(c2 >= c1 and len(selected)*(c2-c1+1) <= limit, "LIMIT", f"Read exceeds {limit} cells")
             r1, r2 = min(selected), max(selected)
-            row_clause, row_parameters = "row IN (" + ",".join("?" for _ in selected) + ")", selected
+            rows = sorted(set(selected))
         else:
             r1, c1, r2, c2 = rectangle(args, limit)
-            row_clause, row_parameters = "row BETWEEN ? AND ?", [r1, r2]
+            rows = range(r1,r2+1)
         with self.lock:
-            self.refresh()
+            deadline = time.monotonic()+2
+            self.refresh(deadline=deadline)
             self.db.execute("BEGIN")
             try:
                 # Refresh again after establishing the read snapshot.
-                self.refresh()
-                sheet, calc = self.sheet(sheet), self.calculator()
-                cells = []
-                response = {"cells":cells, "state":self.state(), "sheet":sheet, "range":[r1,c1,r2,c2]}
-                response_bytes = len(encoded(response).encode())
-                for row, col, source, kind, style in self.db.execute(
-                        "SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? AND " + row_clause + " AND col BETWEEN ? AND ? ORDER BY row,col",
-                        (sheet, *row_parameters, c1, c2)):
-                    item = typed({"source": source, "kind": kind, "style": json.loads(style)})
-                    result = {"row": row, "col": col, "source": source, "input_kind": kind, "kind": item["kind"], "style": item["style"]}
-                    try:
-                        value = calc.cell(sheet, row, col) if item["kind"] == "formula" else item["value"]
-                        result.update(value=value, display=display(value, item["style"]), calculation="current")
-                    except FormulaError as error:
-                        result.update(value=None, display=error.code, error=str(error), calculation="error")
-                    if preview:
-                        if len(source)>128:
-                            result.update(source=source[:128], source_omitted=True)
-                        if isinstance(result["value"],str):
-                            result.update(value=None, value_omitted=True)
-                        for field in ("display","error"):
-                            if field in result and len(result[field])>128:
-                                result[field]=result[field][:128]+"…"
-                    response_bytes += len(encoded(result).encode()) + int(bool(cells))
-                    require(response_bytes <= 4 * 1024 * 1024, "READ_LIMIT", "Read response exceeds 4 MiB; request a smaller range")
-                    cells.append(result)
-                return response
+                self.refresh(deadline=deadline)
+                with sql_deadline(self.db,deadline):
+                    sheet, calc = self.sheet(sheet), self.calculator()
+                    cells = []
+                    response = {"cells":cells, "state":self.state(), "sheet":sheet, "range":[r1,c1,r2,c2]}
+                    response_bytes = len(encoded(response).encode())
+                    for row, col, source, kind, style in self.range_cells(sheet,rows,c1,c2,deadline):
+                        require(time.monotonic()<=deadline,"TIMEOUT","Read exceeded its time budget")
+                        item = typed({"source": source, "kind": kind, "style": json.loads(style)})
+                        result = {"row": row, "col": col, "source": source, "input_kind": kind, "kind": item["kind"], "style": item["style"]}
+                        try:
+                            value = calc.cell(sheet, row, col) if item["kind"] == "formula" else item["value"]
+                            result.update(value=value, display=display(value, item["style"]), calculation="current")
+                        except FormulaError as error:
+                            result.update(value=None, display=error.code, error=str(error), calculation="error")
+                        if preview:
+                            if len(source)>128:
+                                result.update(source=source[:128], source_omitted=True)
+                            if isinstance(result["value"],str):
+                                result.update(value=None, value_omitted=True)
+                            for field in ("display","error"):
+                                if field in result and len(result[field])>128:
+                                    result[field]=result[field][:128]+"…"
+                        response_bytes += len(encoded(result).encode()) + int(bool(cells))
+                        require(response_bytes <= 4 * 1024 * 1024, "READ_LIMIT", "Read response exceeds 4 MiB; request a smaller range")
+                        cells.append(result)
+                    return response
             finally:
                 self.db.execute("ROLLBACK")
 
@@ -873,9 +882,7 @@ class Workbook:
         deadline = time.monotonic()+2 if deadline is None else deadline
         calc, matches, match_bytes = self.calculator(seconds=min(2,max(0,deadline-time.monotonic()))), [], 0
         with sql_deadline(self.db,deadline):
-            for row, col, source, kind, style in self.db.execute(
-                    "SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? ORDER BY row,col",
-                    (sheet, r1, r2, c1, c2)):
+            for row, col, source, kind, style in self.range_cells(sheet,range(r1,r2+1),c1,c2,deadline):
                 require(time.monotonic()<=deadline,"TIMEOUT","Search exceeded its time budget")
                 text = source
                 if field == "display":

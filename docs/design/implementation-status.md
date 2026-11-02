@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 116 Python tests and 38 Qt contract cases.
+The review regression suite includes 119 Python tests and 38 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -425,3 +425,15 @@ Open, external refresh and copying reject these values without changing the
 invalid external data. New regressions fail on the previous engine and pass for
 post-hook expiry, expiry during receipt preparation, empty-match SQL scans and
 fractional row/column values, alongside all existing rollback/copy tests.
+
+Cycle 26 identified row-range queries scanning unrelated stored columns for
+narrow viewports and searches. A shared iterator now uses primary-key probes
+with row equality and bounded column ranges for each source row, retaining one
+transaction and row-major ordering. Projected source rows remain sorted and
+deduplicated. Reads have a two-second engine/SQL budget, including validation,
+and timeouts release the read snapshot. A 60,000-cell wide-sheet regression
+fits a bounded SQLite instruction budget for narrow reads, projected reads,
+Find and Replace All, while the old scans exceed it. A concurrent WAL writer
+used only in a regression commits between row probes: the current read remains
+consistent and the next read refreshes its state and values. This does not add a
+WAL sidecar portability claim to the native format.

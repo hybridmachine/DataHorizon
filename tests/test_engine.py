@@ -21,6 +21,86 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class EngineTests(unittest.TestCase):
+    def test_multirow_read_keeps_one_snapshot_during_external_commit(self):
+        self.edit((1,1,"7"),(2,1,"8")); events=[]; probes=0
+        with closing(sqlite3.connect(self.path)) as direct:
+            self.assertEqual(direct.execute("PRAGMA journal_mode=WAL").fetchone()[0],"wal")
+            before=self.book.info()["state"]
+            def external_commit(sql):
+                nonlocal probes
+                if sql.startswith("SELECT row,col,source,kind,style FROM cells"):
+                    probes+=1
+                    if probes==2:
+                        try:
+                            with direct: direct.execute("UPDATE cells SET source='9'")
+                            events.append("committed")
+                        except Exception as error:
+                            events.append(error)
+            self.book.db.set_trace_callback(external_commit)
+            try:
+                result=self.book.read("Sheet1",{"r2":2})
+            finally:
+                self.book.db.set_trace_callback(None)
+            self.assertEqual(events,["committed"])
+            self.assertEqual([cell["value"] for cell in result["cells"]],[7,8])
+            self.assertEqual(result["state"],before)
+            refreshed=self.book.read("Sheet1",{"r2":2})
+            self.assertEqual([cell["value"] for cell in refreshed["cells"]],[9,9])
+            self.assertNotEqual(refreshed["state"],before)
+
+    def test_narrow_reads_and_searches_do_not_scan_unrelated_columns(self):
+        sheet=self.book.info()["sheets"][0]["id"]
+        with closing(sqlite3.connect(self.path)) as direct,direct:
+            direct.executemany("INSERT INTO cells(sheet_id,row,col,source) VALUES(?,?,?,'padding')",
+                               ((sheet,row,col) for row in range(1,31) for col in range(1,2001)))
+            direct.executemany("INSERT INTO cells(sheet_id,row,col,source) VALUES(?,?,2001,'needle')",((sheet,row) for row in (3,17,29)))
+        self.book.info(); original=self.book.db
+        class QueryBudget:
+            def __init__(self): self.steps=0; self.exhausted=False
+            def __getattr__(self,name): return getattr(original,name)
+            def set_progress_handler(self,callback,interval):
+                if callback is None:
+                    return original.set_progress_handler(None,0)
+                def measure():
+                    self.steps+=interval
+                    if self.steps>=20000 and not self.exhausted:
+                        self.exhausted=True
+                        return 1
+                    return callback()
+                original.set_progress_handler(measure,interval)
+        scope={"r2":30,"c1":2001,"c2":2001}
+        for action in ("read","projected","find","replace_all"):
+            budget=QueryBudget(); budget.set_progress_handler(lambda:0,1000)
+            try:
+                with self.subTest(action=action),patch.object(self.book,"db",budget):
+                    if action in ("read","projected"):
+                        args=scope if action=="read" else {"rows":[29,3,17,29],"c1":2001,"c2":2001}
+                        result=self.book.read("Sheet1",args)
+                        self.assertEqual([(c["row"],c["col"],c["source"]) for c in result["cells"]],[(row,2001,"needle") for row in (3,17,29)])
+                    elif action=="find":
+                        self.assertEqual([m["row"] for m in self.book.find("Sheet1",{**scope,"needle":"needle"})["matches"]],[3,17,29])
+                    else:
+                        self.assertEqual(self.apply("replace_all",**scope,needle="needle",replacement="changed")["changed_cells"],3)
+                    self.assertFalse(budget.exhausted)
+            finally:
+                original.set_progress_handler(None,0)
+        self.assertEqual(original.execute("SELECT count(*) FROM cells WHERE source='padding'").fetchone()[0],60000)
+        self.assertEqual(original.execute("SELECT row,col FROM cells WHERE source='changed' ORDER BY row").fetchall(),[(3,2001),(17,2001),(29,2001)])
+
+    def test_viewport_deadline_releases_its_read_snapshot(self):
+        self.edit((1,1,"7"),(2,1,"8")); clock=[0]
+        def expire_during_query(sql):
+            if sql.startswith("SELECT row,col,source,kind,style FROM cells"): clock[0]=3
+        self.book.db.set_trace_callback(expire_during_query)
+        try:
+            with patch("datahorizon.engine.time.monotonic",side_effect=lambda:clock[0]):
+                with self.assertRaises(EngineError) as failure: self.book.read("Sheet1",{"r2":2})
+        finally:
+            self.book.db.set_trace_callback(None)
+        self.assertEqual(failure.exception.body["code"],"TIMEOUT")
+        self.assertFalse(self.book.db.in_transaction)
+        self.assertEqual([cell["value"] for cell in self.book.read("Sheet1",{"r2":2})["cells"]],[7,8])
+
     def test_operation_deadline_expires_after_hooks_without_committing(self):
         self.edit((1,1,"7")); revision=self.book.db.execute("SELECT revision FROM dh_meta").fetchone()[0]
         for action,args in (("edit",{"cells":[{"row":1,"col":1,"source":"9"}]}),("sheet_add",{"name":"Late"})):

@@ -169,7 +169,7 @@ Ordinary operations are atomic, at most 10,000 target cells, 4 MiB request body,
 that deadline inside SQLite even when no matching cells are returned, and remove
 the interrupt handler before rollback/receipt recording. Managed validation uses
 the remaining operation budget. Checks after hooks and immediately before COMMIT
-prevent a successful receipt from being committed after the budget has expired.
+reject operations whose budget is already expired.
 Replace All uses that same deadline for SQL and display evaluation; standalone
 Find has a two-second search budget. Snapshot backup and
 validation also have a five-second budget, including busy retries. A timed-out
@@ -180,7 +180,12 @@ this tier. No partial-cancel claims are made: accepted writes run to their known
 outcome; long/chunked jobs remain unavailable. Desktop paste checks raw clipboard
 bytes and cell counts before constructing its
 matrix, and serialized REST requests over 4 MiB are rejected before transmission.
-A viewport is at most 4,096 cells; the GUI retains at most 16 tiles of 32 by 16
+A viewport is at most 4,096 cells. Range/clipboard reads have a two-second engine
+budget, including validation and SQL. Reads, Find and Replace All probe each
+source row with indexed row-equality/column-range bounds instead of scanning
+unrelated stored columns. All probes share one SQLite transaction and snapshot; results
+retain row-major order, with projected source rows sorted and deduplicated.
+The GUI retains at most 16 tiles of 32 by 16
 cells. Its estimated cache budget is
 14 MiB for tiles plus 2 MiB for complete editing inputs. GUI tiles request bounded
 128-character source/display previews with explicit omitted-source/value flags.

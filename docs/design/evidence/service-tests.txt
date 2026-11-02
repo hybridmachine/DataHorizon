@@ -37,6 +37,8 @@ test_list_criteria_members_are_validated_before_access (test_engine.EngineTests.
 test_long_integer_inputs_keep_the_exact_numeric_boundary (test_engine.EngineTests.test_long_integer_inputs_keep_the_exact_numeric_boundary) ... ok
 test_long_text_viewport_and_export_are_bounded (test_engine.EngineTests.test_long_text_viewport_and_export_are_bounded) ... ok
 test_missing_and_timeout_hook_fail_closed (test_engine.EngineTests.test_missing_and_timeout_hook_fail_closed) ... ok
+test_multirow_read_keeps_one_snapshot_during_external_commit (test_engine.EngineTests.test_multirow_read_keeps_one_snapshot_during_external_commit) ... ok
+test_narrow_reads_and_searches_do_not_scan_unrelated_columns (test_engine.EngineTests.test_narrow_reads_and_searches_do_not_scan_unrelated_columns) ... ok
 test_native_catalog_and_foreign_keys_are_validated (test_engine.EngineTests.test_native_catalog_and_foreign_keys_are_validated) ... ok
 test_nonfinite_literals_are_errors_before_scalar_operations (test_engine.EngineTests.test_nonfinite_literals_are_errors_before_scalar_operations) ... ok
 test_operation_deadline_expires_after_hooks_without_committing (test_engine.EngineTests.test_operation_deadline_expires_after_hooks_without_committing) ... ok
@@ -72,6 +74,7 @@ test_unexpected_failure_has_a_durable_rollback_receipt_and_is_not_reexecuted (te
 test_unidentifiable_snapshot_destination_fails_before_backup (test_engine.EngineTests.test_unidentifiable_snapshot_destination_fails_before_backup) ... ok
 test_unsupported_sql_and_trigger_schema_fail_closed (test_engine.EngineTests.test_unsupported_sql_and_trigger_schema_fail_closed) ... ok
 test_values_paste_rejects_formula_errors_atomically (test_engine.EngineTests.test_values_paste_rejects_formula_errors_atomically) ... ok
+test_viewport_deadline_releases_its_read_snapshot (test_engine.EngineTests.test_viewport_deadline_releases_its_read_snapshot) ... ok
 test_cli_apply_accepts_complete_operation_with_sheet (test_service.ServiceTests.test_cli_apply_accepts_complete_operation_with_sheet) ... ok
 test_cli_broken_stdout_preserves_committed_receipts (test_service.ServiceTests.test_cli_broken_stdout_preserves_committed_receipts) ... ok
 test_cli_preserves_a_committed_receipt_when_handle_release_fails (test_service.ServiceTests.test_cli_preserves_a_committed_receipt_when_handle_release_fails) ... ok
@@ -116,6 +119,6 @@ test_slow_workbook_open_and_close_do_not_block_unrelated_reads (test_service.Ser
 test_unmatched_error_responses_never_clear_pending_operation (test_service.ServiceTests.test_unmatched_error_responses_never_clear_pending_operation) ... ok
 
 ----------------------------------------------------------------------
-Ran 116 tests in 10.193s
+Ran 119 tests in 10.150s
 
 OK
