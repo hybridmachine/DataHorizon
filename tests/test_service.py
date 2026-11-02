@@ -16,13 +16,75 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from datahorizon.client import APIError, CleanupError, Client, LocalService, UnknownOutcome, WorkbookClient
+from datahorizon.client import APIError, CleanupError, Client, LocalService, MetadataRefreshError, UnknownOutcome, WorkbookClient
 from datahorizon import cli
 from datahorizon.engine import EngineError, Workbook
 from datahorizon.service import Service
 
 
 class ServiceTests(unittest.TestCase):
+    def test_context_can_close_after_a_confirmed_receipt_needs_metadata_refresh(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            path=Path(temp)/"confirmed.dhwb"; book=client.open(path,create=True); original=client.request
+            def lose(path,body=None):
+                result=original(path,body)
+                if path.endswith("/operations"): raise ConnectionError("Acknowledgement discarded")
+                return result
+            with patch.object(client,"request",side_effect=lose):
+                with self.assertRaises(UnknownOutcome) as lost: book.set(1,1,"7")
+            operation=lost.exception.operation_id
+            def fail_metadata(path,body=None):
+                if path==book.base: raise ConnectionError("Metadata unavailable")
+                return original(path,body)
+            with patch.object(client,"request",side_effect=fail_metadata):
+                with self.assertRaises(MetadataRefreshError) as failure:
+                    with book: book.outcome(operation)
+            self.assertEqual(failure.exception.receipt["outcome"],"committed")
+            with client.open(path) as reopened:
+                self.assertEqual(reopened.outcome(operation),failure.exception.receipt)
+                self.assertEqual(reopened.read(r2=1,c2=1)["cells"][0]["value"],7)
+
+    def test_confirmed_outcomes_survive_failed_metadata_refresh_and_block_new_writes(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            original=client.request
+            for outcome in ("committed","rolled_back"):
+                for failure in ("http","malformed"):
+                    with self.subTest(outcome=outcome,failure=failure):
+                        book=client.open(Path(temp)/f"{outcome}-{failure}.dhwb",create=True)
+                        def lose(path,body=None):
+                            if path.endswith("/operations"):
+                                try: original(path,body)
+                                except APIError: pass
+                                raise ConnectionError("Acknowledgement discarded")
+                            return original(path,body)
+                        cells=[{"row":1,"col":1,"source":"7"} if outcome=="committed" else {"row":1,"col":1,"style":None}]
+                        with patch.object(client,"request",side_effect=lose):
+                            with self.assertRaises(UnknownOutcome) as lost:
+                                book.apply("edit",cells=cells)
+                        operation=lost.exception.operation_id
+                        def fail_metadata(path,body=None):
+                            if path==book.base:
+                                if failure=="malformed": return {"id":"wrong-handle","state":"invalid"}
+                                raise APIError(503,{"code":"METADATA_FAILED","message":"Injected refresh failure","outcome":"rejected"})
+                            return original(path,body)
+                        with patch.object(client,"request",side_effect=fail_metadata):
+                            with self.assertRaises(MetadataRefreshError) as refresh:
+                                book.outcome(operation)
+                        receipt=refresh.exception.receipt
+                        self.assertEqual(receipt["operation_id"],operation)
+                        self.assertEqual(receipt["outcome"],outcome)
+                        self.assertEqual(refresh.exception.body["outcome"],outcome)
+                        self.assertEqual(book.pending_operation,operation)
+                        with patch.object(client,"request",side_effect=AssertionError("A pending refresh must not send another write")):
+                            with self.assertRaises(MetadataRefreshError): book.set(2,1,"wrong")
+                        def recover(path,body=None):
+                            self.assertNotIn("/operations/",path,"A confirmed immutable receipt must not need another lookup")
+                            return original(path,body)
+                        with patch.object(client,"request",side_effect=recover):
+                            self.assertEqual(book.outcome(operation),receipt)
+                        self.assertIsNone(book.pending_operation)
+                        book.set(2,1,"9"); book.close()
+
     def test_concurrent_opens_of_one_path_share_a_single_engine(self):
         with tempfile.TemporaryDirectory() as temp,Service() as server:
             path=str(Path(temp)/"shared.dhwb")

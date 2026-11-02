@@ -56,6 +56,8 @@ test_client_handles_release_without_closing_other_clients (test_service.ServiceT
 test_clipboard_read_uses_bulk_limit_in_one_consistent_state (test_service.ServiceTests.test_clipboard_read_uses_bulk_limit_in_one_consistent_state) ... ok
 test_concurrent_opens_of_one_path_share_a_single_engine (test_service.ServiceTests.test_concurrent_opens_of_one_path_share_a_single_engine) ... ok
 test_concurrent_opens_reserve_engine_capacity_before_slow_construction (test_service.ServiceTests.test_concurrent_opens_reserve_engine_capacity_before_slow_construction) ... ok
+test_confirmed_outcomes_survive_failed_metadata_refresh_and_block_new_writes (test_service.ServiceTests.test_confirmed_outcomes_survive_failed_metadata_refresh_and_block_new_writes) ... ok
+test_context_can_close_after_a_confirmed_receipt_needs_metadata_refresh (test_service.ServiceTests.test_context_can_close_after_a_confirmed_receipt_needs_metadata_refresh) ... ok
 test_csv_preview_bounds_blank_records_as_well_as_fields (test_service.ServiceTests.test_csv_preview_bounds_blank_records_as_well_as_fields) ... ok
 test_direct_cli_honors_readonly_and_returns_structured_sqlite_errors (test_service.ServiceTests.test_direct_cli_honors_readonly_and_returns_structured_sqlite_errors) ... ok
 test_direct_cli_owns_cte_mutations_until_output_can_be_serialized (test_service.ServiceTests.test_direct_cli_owns_cte_mutations_until_output_can_be_serialized) ... ok
@@ -86,6 +88,6 @@ test_slow_workbook_open_and_close_do_not_block_unrelated_reads (test_service.Ser
 test_unmatched_error_responses_never_clear_pending_operation (test_service.ServiceTests.test_unmatched_error_responses_never_clear_pending_operation) ... ok
 
 ----------------------------------------------------------------------
-Ran 86 tests in 8.792s
+Ran 88 tests in 8.796s
 
 OK

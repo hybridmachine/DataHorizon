@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 86 Python tests and 37 Qt contract cases.
+The review regression suite includes 88 Python tests and 37 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -324,3 +324,11 @@ engine/handle capacity during slow opens. Slow metadata, construction and close
 regressions fail against the prior code and pass with independent reads kept
 available. Parallel opens respect the engine cap and concurrent opens of one
 file share one engine; releasing one handle preserves the other client.
+
+Cycle 18 published no inline issues but identified metadata refresh after receipt
+confirmation replacing a committed result with a generic rejection and clearing
+its pending ID. The SDK now preserves the receipt in MetadataRefreshError and
+blocks further writes until valid metadata refreshes. Retrying reconciliation
+uses the already confirmed receipt; closing a handle after a known outcome is
+safe. Regressions cover committed and rolled-back outcomes, HTTP and malformed
+metadata failures, guarded writes, successful recovery and context cleanup.

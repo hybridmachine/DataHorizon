@@ -202,6 +202,12 @@ the body succeeds but cleanup fails, the SDK raises `CleanupError` with
 `phase=cleanup` and the last confirmed receipt in `body["last_operation"]`, when
 available. This error does not reject earlier operations. Pending unknown writes
 retain their `UnknownOutcome` guard instead of being relabeled as cleanup errors.
+If receipt confirmation succeeds but workbook metadata cannot refresh, the SDK
+raises `MetadataRefreshError`. Its `receipt`, operation ID and outcome remain
+available; writes stay blocked until `refresh()` or `outcome(id)` refreshes valid
+metadata. Retrying `outcome(id)` reuses the immutable confirmed receipt. Closing
+the handle is also safe once its operation outcome is known. A failed metadata
+refresh never turns a committed receipt into a rejected or unknown mutation.
 
 ```python
 from datahorizon.client import LocalService

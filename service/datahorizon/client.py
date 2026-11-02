@@ -37,6 +37,17 @@ class CleanupError(RuntimeError):
             self.body["last_operation"]=dict(receipt)
 
 
+class MetadataRefreshError(RuntimeError):
+    """The operation outcome is known; workbook metadata still needs refresh."""
+
+    def __init__(self, receipt, error):
+        super().__init__("Confirmed operation outcome; workbook metadata refresh is required: "+str(error))
+        self.receipt=dict(receipt)
+        self.operation_id=receipt["operation_id"]
+        self.body={"code":"REFRESH_FAILED","phase":"metadata_refresh","message":str(self),
+                   "operation_id":self.operation_id,"outcome":receipt["outcome"],"receipt":self.receipt}
+
+
 def _exit_context(owner, error):
     try:
         owner.close()
@@ -97,10 +108,17 @@ class WorkbookClient:
         self.state = info["state"]
         self.pending_operation = None
         self._last_receipt = None
+        self._refresh_receipt = None
 
     def refresh(self):
-        self.info = self.client.request(self.base)
-        self.state = self.info["state"]
+        info = self.client.request(self.base)
+        if (not isinstance(info,dict) or info.get("id")!=self.info["id"]
+                or not isinstance(info.get("state"),str) or not info["state"]):
+            raise ValueError("Invalid workbook metadata response")
+        self.info, self.state = info, info["state"]
+        if self._refresh_receipt is not None:
+            self.pending_operation=None
+            self._refresh_receipt=None
         return self.info
 
     def read(self, sheet="Sheet1", r1=1, c1=1, r2=32, c2=16):
@@ -108,6 +126,8 @@ class WorkbookClient:
 
     def apply(self, action, sheet="Sheet1", operation_id=None, **arguments):
         if self.pending_operation:
+            if self._refresh_receipt is not None:
+                raise MetadataRefreshError(self._refresh_receipt,"Refresh before sending another mutation")
             raise UnknownOutcome(self.pending_operation)
         if self.info.get("readonly"):
             raise APIError(403,{"code":"READ_ONLY","message":"Workbook is open read-only; request was not sent","outcome":"rejected"})
@@ -147,15 +167,21 @@ class WorkbookClient:
         return self.apply("edit", sheet, cells=[{"row": row, "col": col, "source": str(source), "kind": kind}])
 
     def outcome(self, operation_id):
-        try:
-            receipt=self.client.request(self.base + "/operations/" + quote(operation_id, safe=""))
-            self.validate_receipt(receipt, operation_id)
-        except (APIError, OSError, ValueError, HTTPException) as error:
-            raise UnknownOutcome(operation_id, str(error)) from error
+        if operation_id==self.pending_operation and self._refresh_receipt is not None:
+            receipt=dict(self._refresh_receipt)
+        else:
+            try:
+                receipt=self.client.request(self.base + "/operations/" + quote(operation_id, safe=""))
+                self.validate_receipt(receipt, operation_id)
+            except (APIError, OSError, ValueError, HTTPException) as error:
+                raise UnknownOutcome(operation_id, str(error)) from error
         if operation_id==self.pending_operation and receipt.get("outcome") in ("committed","rejected","rolled_back"):
-            self.pending_operation=None
             self._last_receipt=dict(receipt)
-            self.refresh()
+            self._refresh_receipt=dict(receipt)
+            try:
+                self.refresh()
+            except Exception as error:
+                raise MetadataRefreshError(receipt,error) from error
         return receipt
 
     @staticmethod
@@ -169,9 +195,12 @@ class WorkbookClient:
             raise ValueError("Invalid operation outcome")
 
     def close(self):
-        if self.pending_operation:
+        if self.pending_operation and self._refresh_receipt is None:
             raise UnknownOutcome(self.pending_operation)
-        return self.client.request(self.base + "/close", {})
+        response=self.client.request(self.base + "/close", {})
+        self.pending_operation=None
+        self._refresh_receipt=None
+        return response
 
     def __enter__(self):
         return self
