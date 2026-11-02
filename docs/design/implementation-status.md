@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 88 Python tests and 37 Qt contract cases.
+The review regression suite includes 92 Python tests and 37 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -332,3 +332,15 @@ blocks further writes until valid metadata refreshes. Retrying reconciliation
 uses the already confirmed receipt; closing a handle after a known outcome is
 safe. Regressions cover committed and rolled-back outcomes, HTTP and malformed
 metadata failures, guarded writes, successful recovery and context cleanup.
+
+Cycle 19 published no inline issues but identified a critical output failure
+that could relabel a committed CLI write as rejected without its ID. Output is
+now flushed within an explicit reporting phase; failures preserve the confirmed
+receipt and ID on stderr and suppress a second interpreter-shutdown flush.
+Broken-pipe regressions cover buffered/unbuffered output, simultaneous cleanup
+failure and direct SQL commits. The review log also pointed to receipt lookup
+bookkeeping and boolean arithmetic: queried receipts now remain available in SDK
+cleanup diagnostics, and unary signs follow the documented numeric 0/1 coercion
+instead of returning a boolean that SUM would ignore. Both have regressions.
+This completes all four newly authorized cycles; final fixes are validated
+without requesting another external review.

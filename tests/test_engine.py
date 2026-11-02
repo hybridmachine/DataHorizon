@@ -73,6 +73,18 @@ class EngineTests(unittest.TestCase):
         self.edit((1, 1, "=SUM(B1:B2)"))
         self.assertEqual(self.cells()[(1, 1)]["value"], 7)
 
+    def test_unary_boolean_arithmetic_uses_numeric_zero_and_one(self):
+        self.edit((1,1,"TRUE"),(1,2,"=+TRUE"),(1,3,"=+FALSE"),(1,4,"=SUM(+TRUE,+A1)"),
+                  (2,2,"=-FALSE"),(2,3,"=SUM(TRUE,A1)"))
+        cells=self.cells()
+        self.assertEqual(cells[(1,2)]["value"],1)
+        self.assertIs(type(cells[(1,2)]["value"]),int)
+        self.assertEqual(cells[(1,2)]["display"],"1")
+        self.assertEqual(cells[(1,3)]["display"],"0")
+        self.assertEqual(cells[(1,4)]["value"],2)
+        self.assertEqual(cells[(2,2)]["display"],"0")
+        self.assertEqual(cells[(2,3)]["value"],0)
+
     def test_cross_sheet_absolute_and_text_references(self):
         self.apply("sheet_add", name="Other sheet")
         self.book.mutate({"action": "edit", "sheet": "Other sheet", "operation_id": str(uuid.uuid4()),

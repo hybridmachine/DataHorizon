@@ -175,8 +175,8 @@ class WorkbookClient:
                 self.validate_receipt(receipt, operation_id)
             except (APIError, OSError, ValueError, HTTPException) as error:
                 raise UnknownOutcome(operation_id, str(error)) from error
+        self._last_receipt=dict(receipt)
         if operation_id==self.pending_operation and receipt.get("outcome") in ("committed","rejected","rolled_back"):
-            self._last_receipt=dict(receipt)
             self._refresh_receipt=dict(receipt)
             try:
                 self.refresh()

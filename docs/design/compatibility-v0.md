@@ -10,7 +10,10 @@ current read transaction. Work remains before a complete everyday preview.
 supported. Power is right-associative and binds more tightly than unary signs
 (`-2^2` is -4). Numbers use finite binary64. Overflow/nonreal results are #NUM!;
 division by zero is #DIV/0!. Text is not implicitly converted to a number in
-arithmetic; blanks become zero and booleans become 0/1. Comparisons of blank with
+arithmetic; blanks become zero and booleans become 0/1. Numeric arithmetic
+includes unary signs, so `+TRUE` is numeric 1 in this tier;
+SUM can consume that number while still ignoring unconverted boolean arguments.
+Comparisons of blank with
 blank or numeric/boolean values use zero for the blank operand. Other mixed-type
 comparisons are errors. Text comparison is case-sensitive. Formatting an empty
 auto cell does not turn it into empty Text; explicitly entered empty Text remains

@@ -194,7 +194,9 @@ class Parser:
 def numeric(value):
     if value is None:
         return 0
-    if isinstance(value, (int, float, bool)):
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
         return value
     raise FormulaError("#VALUE!", "Arithmetic requires numeric inputs")
 

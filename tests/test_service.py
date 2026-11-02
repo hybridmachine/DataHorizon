@@ -23,6 +23,63 @@ from datahorizon.service import Service
 
 
 class ServiceTests(unittest.TestCase):
+    def test_sdk_cleanup_keeps_a_receipt_queried_without_a_pending_write(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            path=Path(temp)/"lookup.dhwb"
+            with client.open(path,create=True) as writer: receipt=writer.set(1,1,"7")
+            book=client.open(path); original=client.request
+            def fail_close(path,body=None):
+                if path.endswith("/close"): raise ConnectionError("Injected cleanup failure")
+                return original(path,body)
+            with patch.object(client,"request",side_effect=fail_close):
+                with self.assertRaises(CleanupError) as failure:
+                    with book: self.assertEqual(book.outcome(receipt["operation_id"]),receipt)
+            self.assertEqual(failure.exception.body["last_operation"],receipt)
+            book.close()
+
+    def test_cli_broken_stdout_preserves_committed_receipts(self):
+        with tempfile.TemporaryDirectory() as temp,Service() as server:
+            serving=threading.Thread(target=server.serve_forever,kwargs={"poll_interval":0.02},daemon=True); serving.start()
+            url=f"http://127.0.0.1:{server.server_port}"; client=Client(url,server.token)
+            book=client.open(Path(temp)/"output.dhwb",create=True); dispatch=server.dispatch
+            try:
+                for mode in ("buffered","unbuffered","cleanup"):
+                    with self.subTest(mode=mode):
+                        def fail_close(method,path,body):
+                            if mode=="cleanup" and path.endswith("/close"):
+                                raise EngineError("RELEASE_FAILED","Injected cleanup failure",503)
+                            return dispatch(method,path,body)
+                        env={**os.environ,"DATAHORIZON_TOKEN":server.token}; env.pop("PYTHONUNBUFFERED",None)
+                        if mode=="unbuffered": env["PYTHONUNBUFFERED"]="1"
+                        with patch.object(server,"dispatch",side_effect=fail_close):
+                            process=subprocess.Popen([sys.executable,"-m","datahorizon.cli","--url",url,book.info["path"],"set","A1","7"],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+                            process.stdout.close(); process.stdout=None
+                            _,stderr=process.communicate(timeout=10)
+                        self.assertEqual(process.returncode,1,stderr)
+                        error=json.loads(stderr)
+                        self.assertEqual(error["code"],"OUTPUT_FAILED")
+                        self.assertEqual(error["phase"],"output")
+                        self.assertEqual(error["outcome"],"committed")
+                        self.assertEqual(book.outcome(error["operation_id"]),error["receipt"])
+                        self.assertEqual(book.read(r2=1,c2=1)["cells"][0]["value"],7)
+                        if mode=="cleanup": self.assertEqual(error["cleanup_errors"][0]["phase"],"cleanup")
+            finally:
+                server.shutdown(); serving.join(3)
+
+    def test_direct_cli_broken_stdout_reports_the_confirmed_commit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"direct-output.db"
+            with closing(sqlite3.connect(path)) as db,db: db.execute("CREATE TABLE data(value)")
+            process=subprocess.Popen([sys.executable,"-m","datahorizon.cli",str(path),"direct-sql","INSERT INTO data VALUES(7) RETURNING value"],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+            process.stdout.close(); process.stdout=None
+            _,stderr=process.communicate(timeout=10)
+            self.assertEqual(process.returncode,1,stderr)
+            error=json.loads(stderr)
+            self.assertEqual(error["phase"],"output"); self.assertEqual(error["outcome"],"committed")
+            self.assertEqual(error["mode"],"direct"); self.assertFalse(error["handlers"])
+            with closing(sqlite3.connect(path)) as db:
+                self.assertEqual(db.execute("SELECT value FROM data").fetchall(),[(7,)])
+
     def test_context_can_close_after_a_confirmed_receipt_needs_metadata_refresh(self):
         with tempfile.TemporaryDirectory() as temp,LocalService() as client:
             path=Path(temp)/"confirmed.dhwb"; book=client.open(path,create=True); original=client.request

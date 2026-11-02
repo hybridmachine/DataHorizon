@@ -177,6 +177,10 @@ a separate `CLEANUP_FAILED` diagnostic on stderr. For mutations, that diagnostic
 retains `operation_id` and `operation_outcome`; it never reports the confirmed
 write as rejected. An unconfirmed acknowledgement still exits with an unknown
 outcome and its operation ID, so scripts must reconcile before another write.
+Output failures use `OUTPUT_FAILED` with `phase=output` and a nonzero exit. For a
+confirmed mutation, stderr retains its operation ID, known outcome and receipt;
+a failed pipe does not mean the write rolled back. Direct SQL reports its
+confirmed commit and direct mode without inventing a managed operation ID.
 
 The SDK raises `UnknownOutcome` with an `operation_id` if acknowledgement is
 lost, and blocks subsequent writes until `book.outcome(id)` reconciles it.

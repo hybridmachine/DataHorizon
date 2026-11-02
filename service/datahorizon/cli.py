@@ -52,6 +52,37 @@ def direct_sql_result(db, sql):
     return output
 
 
+def emit_result(output, result, command, cleanup=None):
+    try:
+        # Flush here so a buffered pipe failure remains inside outcome handling.
+        print(output,flush=True)
+    except (OSError,ValueError) as error:
+        # Avoid a second failed stdout flush at interpreter shutdown corrupting
+        # the structured diagnostic or replacing the exit status with 120.
+        try:
+            target=sys.stdout.fileno()
+            descriptor=os.open(os.devnull,os.O_WRONLY)
+            if descriptor!=target:
+                try: os.dup2(descriptor,target)
+                finally: os.close(descriptor)
+        except (OSError,ValueError,AttributeError):
+            pass
+        diagnostic={"code":"OUTPUT_FAILED","phase":"output","message":str(error)}
+        if isinstance(result,dict) and "operation_id" in result:
+            diagnostic.update(operation_id=result["operation_id"],outcome=result["outcome"],receipt=result)
+        elif command=="direct-sql":
+            diagnostic.update(outcome="committed",mode="direct",handlers=False)
+        elif command=="create":
+            diagnostic.update(outcome="committed",path=result["path"],workbook_id=result.get("workbook_id"))
+        if cleanup is not None: diagnostic["cleanup_errors"]=[cleanup]
+        try: print(json.dumps(diagnostic),file=sys.stderr,flush=True)
+        except OSError: pass  # Neither output channel is available; still fail.
+        raise SystemExit(1)
+    if cleanup is not None:
+        try: print(json.dumps(cleanup),file=sys.stderr,flush=True)
+        except OSError: raise SystemExit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", help="Attach to an existing localhost REST service")
@@ -88,7 +119,7 @@ def main():
                 output=direct_sql_result(db,args.sql)
                 releasing=True
             releasing=False
-            print(output)
+            emit_result(output,result,args.command)
             return
         context = nullcontext(Client(args.url, os.environ["DATAHORIZON_TOKEN"])) if args.url else LocalService(args.handler)
         with context as client:
@@ -109,7 +140,7 @@ def main():
                 output=json.dumps(result, allow_nan=False)
                 releasing=True
         releasing=False
-        print(output)
+        emit_result(output,result,args.command)
     except (APIError, OSError, HTTPException, ValueError, TypeError, KeyError, RuntimeError, FormulaError, sqlite3.Error) as error:
         if releasing:
             # Cleanup cannot replace a completed command's result or invite a
@@ -117,8 +148,7 @@ def main():
             diagnostic={"code":"CLEANUP_FAILED","phase":"cleanup","message":str(error)}
             if isinstance(result,dict) and "operation_id" in result:
                 diagnostic.update(operation_id=result["operation_id"],operation_outcome=result.get("outcome"))
-            print(output)
-            print(json.dumps(diagnostic),file=sys.stderr)
+            emit_result(output,result,args.command,cleanup=diagnostic)
             return
         code = "INVALID_ADDRESS" if isinstance(error, FormulaError) else "READ_ONLY" if getattr(error,"sqlite_errorcode",None)==sqlite3.SQLITE_READONLY else "CLIENT_ERROR"
         fallback = {"code": code, "message": str(error), "outcome": "rejected"}
