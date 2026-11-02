@@ -24,6 +24,7 @@ test_failed_snapshot_preserves_another_writers_replacement (test_engine.EngineTe
 test_find_replace_scope_source_and_rollback (test_engine.EngineTests.test_find_replace_scope_source_and_rollback) ... ok
 test_formula_errors_and_lazy_if (test_engine.EngineTests.test_formula_errors_and_lazy_if) ... ok
 test_formula_preflight_sql_obeys_the_operation_deadline (test_engine.EngineTests.test_formula_preflight_sql_obeys_the_operation_deadline) ... ok
+test_fractional_native_coordinates_are_rejected_without_repair (test_engine.EngineTests.test_fractional_native_coordinates_are_rejected_without_repair) ... ok
 test_full_paste_preserves_inputs_independently_of_text_format (test_engine.EngineTests.test_full_paste_preserves_inputs_independently_of_text_format) ... ok
 test_full_scope_list_projection_and_source_identity (test_engine.EngineTests.test_full_scope_list_projection_and_source_identity) ... ok
 test_history_budget_includes_labels_through_undo_and_redo (test_engine.EngineTests.test_history_budget_includes_labels_through_undo_and_redo) ... ok
@@ -38,6 +39,8 @@ test_long_text_viewport_and_export_are_bounded (test_engine.EngineTests.test_lon
 test_missing_and_timeout_hook_fail_closed (test_engine.EngineTests.test_missing_and_timeout_hook_fail_closed) ... ok
 test_native_catalog_and_foreign_keys_are_validated (test_engine.EngineTests.test_native_catalog_and_foreign_keys_are_validated) ... ok
 test_nonfinite_literals_are_errors_before_scalar_operations (test_engine.EngineTests.test_nonfinite_literals_are_errors_before_scalar_operations) ... ok
+test_operation_deadline_expires_after_hooks_without_committing (test_engine.EngineTests.test_operation_deadline_expires_after_hooks_without_committing) ... ok
+test_operation_deadline_expires_during_receipt_preparation (test_engine.EngineTests.test_operation_deadline_expires_during_receipt_preparation) ... ok
 test_oversized_sheet_duplication_rejects_with_bounded_database_work (test_engine.EngineTests.test_oversized_sheet_duplication_rejects_with_bounded_database_work) ... ok
 test_paste_relative_references_values_and_atomicity (test_engine.EngineTests.test_paste_relative_references_values_and_atomicity) ... ok
 test_projected_read_column_defaults_match_rectangular_reads (test_engine.EngineTests.test_projected_read_column_defaults_match_rectangular_reads) ... ok
@@ -45,6 +48,7 @@ test_read_response_limit_includes_envelope_and_array_separators (test_engine.Eng
 test_readonly_schema_and_backup (test_engine.EngineTests.test_readonly_schema_and_backup) ... ok
 test_receipt_rechecked_after_writer_lock_without_reclassifying_outcome (test_engine.EngineTests.test_receipt_rechecked_after_writer_lock_without_reclassifying_outcome) ... ok
 test_receipt_storage_failure_retains_unknown_outcome_and_releases_transaction (test_engine.EngineTests.test_receipt_storage_failure_retains_unknown_outcome_and_releases_transaction) ... ok
+test_replace_without_matches_obeys_the_transaction_deadline (test_engine.EngineTests.test_replace_without_matches_obeys_the_transaction_deadline) ... ok
 test_revision_exhaustion_rolls_back_without_corrupting_the_native_format (test_engine.EngineTests.test_revision_exhaustion_rolls_back_without_corrupting_the_native_format) ... ok
 test_runtime_formula_recursion_is_a_limit_error (test_engine.EngineTests.test_runtime_formula_recursion_is_a_limit_error) ... ok
 test_sheet_add_and_duplicate_append_after_deleting_middle_sheet (test_engine.EngineTests.test_sheet_add_and_duplicate_append_after_deleting_middle_sheet) ... ok
@@ -112,6 +116,6 @@ test_slow_workbook_open_and_close_do_not_block_unrelated_reads (test_service.Ser
 test_unmatched_error_responses_never_clear_pending_operation (test_service.ServiceTests.test_unmatched_error_responses_never_clear_pending_operation) ... ok
 
 ----------------------------------------------------------------------
-Ran 112 tests in 10.431s
+Ran 116 tests in 10.193s
 
 OK

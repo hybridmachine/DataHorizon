@@ -21,6 +21,69 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class EngineTests(unittest.TestCase):
+    def test_operation_deadline_expires_after_hooks_without_committing(self):
+        self.edit((1,1,"7")); revision=self.book.db.execute("SELECT revision FROM dh_meta").fetchone()[0]
+        for action,args in (("edit",{"cells":[{"row":1,"col":1,"source":"9"}]}),("sheet_add",{"name":"Late"})):
+            clock=[0]
+            def finish_late(_): clock[0]=6
+            request={"action":action,"sheet":"Sheet1","operation_id":str(uuid.uuid4()),"expected_state":self.book.state(),**args}
+            with self.subTest(action=action):
+                with patch("datahorizon.engine.time.monotonic",side_effect=lambda:clock[0]),patch.object(self.book,"run_hooks",side_effect=finish_late):
+                    with self.assertRaises(EngineError) as failure: self.book.mutate(request)
+                self.assertEqual(failure.exception.body["code"],"TIMEOUT")
+                self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+                self.assertEqual(self.book.operation(request["operation_id"]),failure.exception.body)
+                self.assertEqual(self.book.db.execute("SELECT revision FROM dh_meta").fetchone()[0],revision)
+                self.assertEqual(self.cells()[(1,1)]["value"],7)
+                self.assertEqual([s["name"] for s in self.book.info()["sheets"]],["Sheet1"])
+
+    def test_operation_deadline_expires_during_receipt_preparation(self):
+        self.edit((1,1,"7")); clock=[0]
+        def delay_receipt(sql):
+            if sql.startswith("INSERT INTO operations"): clock[0]=6
+        self.book.db.set_trace_callback(delay_receipt)
+        try:
+            with patch("datahorizon.engine.time.monotonic",side_effect=lambda:clock[0]):
+                with self.assertRaises(EngineError) as failure: self.edit((1,1,"9"))
+        finally:
+            self.book.db.set_trace_callback(None)
+        self.assertEqual(failure.exception.body["code"],"TIMEOUT")
+        self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+        self.assertEqual(self.book.operation(failure.exception.body["operation_id"]),failure.exception.body)
+        self.assertEqual(self.cells()[(1,1)]["value"],7)
+
+    def test_replace_without_matches_obeys_the_transaction_deadline(self):
+        sheet=self.book.info()["sheets"][0]["id"]
+        with closing(sqlite3.connect(self.path)) as direct,direct:
+            direct.executemany("INSERT INTO cells(sheet_id,row,col,source) VALUES(?,?,1,'value')",((sheet,row) for row in range(1,10001)))
+        self.book.info(); clock=itertools.count()
+        with patch("datahorizon.engine.time.monotonic",side_effect=lambda:next(clock)):
+            with self.assertRaises(EngineError) as failure:
+                self.apply("replace_all",r2=10000,c1=16384,c2=16384,needle="absent",replacement="new")
+        self.assertEqual(failure.exception.body["code"],"TIMEOUT")
+        self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+        self.assertEqual(self.book.operation(failure.exception.body["operation_id"]),failure.exception.body)
+        self.assertEqual(self.book.db.execute("SELECT DISTINCT source FROM cells").fetchall(),[("value",)])
+
+    def test_fractional_native_coordinates_are_rejected_without_repair(self):
+        self.edit((3,1,"7")); sheet=self.book.info()["sheets"][0]["id"]
+        for row,col in ((1.5,1),(1,1.5)):
+            with self.subTest(row=row,col=col):
+                with closing(sqlite3.connect(self.path)) as direct,direct:
+                    direct.execute("INSERT INTO cells(sheet_id,row,col,source) VALUES(?,?,?,'invalid')",(sheet,row,col))
+                with self.assertRaises(EngineError) as reopened:
+                    with closing(Workbook(self.path)): pass
+                self.assertEqual(reopened.exception.body["code"],"INVALID_FORMAT")
+                with self.assertRaises(EngineError) as refreshed: self.book.info()
+                self.assertEqual(refreshed.exception.body["code"],"INVALID_FORMAT")
+                destination=Path(self.temp.name)/f"fraction-{row}-{col}.dhwb"
+                with self.assertRaises(EngineError) as copied: self.book.snapshot(destination)
+                self.assertEqual(copied.exception.body["code"],"INVALID_FORMAT")
+                self.assertEqual(self.book.db.execute("SELECT source FROM cells WHERE row=? AND col=?",(row,col)).fetchone()[0],"invalid")
+                with closing(sqlite3.connect(self.path)) as direct,direct:
+                    direct.execute("DELETE FROM cells WHERE row=? AND col=?",(row,col))
+                self.assertEqual(self.cells()[(3,1)]["value"],7)
+
     def test_sheet_position_exhaustion_rolls_back_and_reorder_recovers(self):
         self.edit((1,1,"7"))
         with closing(sqlite3.connect(self.path)) as direct,direct:

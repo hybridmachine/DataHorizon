@@ -167,7 +167,11 @@ transactional code must avoid external effects. After-commit work is disabled.
 Ordinary operations are atomic, at most 10,000 target cells, 4 MiB request body,
 64 KiB cell source and 5 seconds engine time. Formula preflight queries check
 that deadline inside SQLite even when no matching cells are returned, and remove
-the interrupt handler before rollback/receipt recording. Snapshot backup and
+the interrupt handler before rollback/receipt recording. Managed validation uses
+the remaining operation budget. Checks after hooks and immediately before COMMIT
+prevent a successful receipt from being committed after the budget has expired.
+Replace All uses that same deadline for SQL and display evaluation; standalone
+Find has a two-second search budget. Snapshot backup and
 validation also have a five-second budget, including busy retries. A timed-out
 copy preserves its destination for inspection. These deadlines are cooperative
 checks between SQLite instructions/backup steps, not hard cancellation of a

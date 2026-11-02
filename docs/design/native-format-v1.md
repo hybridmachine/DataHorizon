@@ -12,6 +12,10 @@ engine; independent connections choose their own enforcement settings.
 | `operations` | Operation ID, request digest and committed receipt | Reserved |
 
 Coordinates are one-based and constrained to 1,048,576 rows by 16,384 columns.
+Managed validation also checks the stored SQLite types: INTEGER affinity and
+BETWEEN constraints alone can admit fractional coordinates. Noninteger or
+out-of-range coordinates are rejected on open, external refresh and copy
+validation. No rounding, deletion or other automatic repair is performed.
 Sheet IDs come from `sheets.id`; no Python callback is needed for cell insertion.
 Name matching follows SQLite's ASCII NOCASE collation in this development tier.
 `source` is UTF-8 text, limited by managed entry to 64 KiB. `kind` is `auto`,

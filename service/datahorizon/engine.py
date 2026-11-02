@@ -282,14 +282,17 @@ class Workbook:
             require(bool(positions),"INVALID_FORMAT","Workbook must contain a sheet",409)
             require(db.execute("PRAGMA foreign_key_check").fetchone() is None,
                     "INVALID_FORMAT","Native workbook contains orphaned cell references",409)
+            require(db.execute("SELECT 1 FROM cells WHERE typeof(row)<>'integer' OR typeof(col)<>'integer' OR row NOT BETWEEN 1 AND ? OR col NOT BETWEEN 1 AND ? LIMIT 1",
+                               (MAX_ROWS,MAX_COLS)).fetchone() is None,
+                    "INVALID_FORMAT","Native cells require integer coordinates within the supported grid",409)
 
     def data_version(self):
         return self.db.execute("PRAGMA data_version").fetchone()[0]
 
-    def refresh(self):
+    def refresh(self, *, deadline=None):
         current = self.data_version()
         if current != self.version:
-            self.validate()
+            self.validate(deadline=deadline)
             self.version, self.epoch = current, str(uuid.uuid4())
             self.undo.clear()
             self.redo.clear()
@@ -500,10 +503,10 @@ class Workbook:
                 if receipt is not None:
                     return receipt
                 require(not self.readonly, "READ_ONLY", "Workbook is open read-only", 403)
-                self.refresh()
+                self.deadline = time.monotonic() + 5
+                self.refresh(deadline=self.deadline)
                 self.changes, self.pending = {}, {}
                 self.change_bytes = 0
-                self.deadline = time.monotonic() + 5
                 self.db.execute("BEGIN IMMEDIATE")
                 # A different service may have committed this ID while we waited
                 # for the writer lock. Replay outside new-operation rollback handling.
@@ -528,7 +531,7 @@ class Workbook:
             try:
                 self.db.execute("SAVEPOINT operation_changes")
                 # The writer lock closes the check/write race with independent tools.
-                self.refresh()
+                self.refresh(deadline=self.deadline)
                 require(request.get("expected_state") == self.state(), "STALE_STATE", "Workbook changed. Refresh and review the edit before retrying", 409)
                 require(self.db.execute("SELECT revision FROM dh_meta").fetchone()[0]<MAX_REVISION,
                         "REVISION_LIMIT","Workbook revision limit reached; edits are unavailable without a format migration",409)
@@ -640,7 +643,7 @@ class Workbook:
                 elif kind == "replace_all":
                     replacement = request.get("replacement")
                     require(isinstance(replacement, str), "INVALID_ARGUMENT", "Replacement must be text")
-                    matches = self.matches(sheet, request)
+                    matches = self.matches(sheet, request, deadline=self.deadline)
                     for match in matches:
                         item = self.raw(sheet, match["row"], match["col"])
                         source = match["text"] if request.get("field") == "display" else item["source"]
@@ -701,10 +704,12 @@ class Workbook:
                 else:
                     raise EngineError("UNSUPPORTED_OPERATION", f"Operation is not available: {kind}")
                 self.run_hooks(operation)
+                require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
                 self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1]}
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
                 result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": len(self.changes)}
                 self.db.execute("INSERT INTO operations VALUES(?,?,?)", (operation, fingerprint, encoded(result)))
+                require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
                 self.db.execute("COMMIT")
                 in_transaction = False
                 if structural:
@@ -860,25 +865,28 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
-    def matches(self, sheet, args):
+    def matches(self, sheet, args, *, deadline=None):
         r1, c1, r2, c2 = rectangle(args)
         needle, field = args.get("needle"), args.get("field", "source")
         require(isinstance(needle, str) and bool(needle), "INVALID_ARGUMENT", "Find text must be nonempty")
         require(field in ("source", "display"), "INVALID_ARGUMENT", "Search field must be source or display")
-        calc, matches, match_bytes = self.calculator(seconds=2), [], 0
-        for row, col, source, kind, style in self.db.execute(
-                "SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? ORDER BY row,col",
-                (sheet, r1, r2, c1, c2)):
-            text = source
-            if field == "display":
-                try:
-                    text = display(calc.cell(sheet, row, col), json.loads(style))
-                except FormulaError as error:
-                    text = error.code
-            if needle in text:
-                match_bytes += len(text.encode())
-                require(match_bytes <= 8*1024*1024, "LIMIT", "Matched source/display data exceeds 8 MiB; narrow the search scope")
-                matches.append({"row": row, "col": col, "address": address(row, col), "text": text})
+        deadline = time.monotonic()+2 if deadline is None else deadline
+        calc, matches, match_bytes = self.calculator(seconds=min(2,max(0,deadline-time.monotonic()))), [], 0
+        with sql_deadline(self.db,deadline):
+            for row, col, source, kind, style in self.db.execute(
+                    "SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? ORDER BY row,col",
+                    (sheet, r1, r2, c1, c2)):
+                require(time.monotonic()<=deadline,"TIMEOUT","Search exceeded its time budget")
+                text = source
+                if field == "display":
+                    try:
+                        text = display(calc.cell(sheet, row, col), json.loads(style))
+                    except FormulaError as error:
+                        text = error.code
+                if needle in text:
+                    match_bytes += len(text.encode())
+                    require(match_bytes <= 8*1024*1024, "LIMIT", "Matched source/display data exceeds 8 MiB; narrow the search scope")
+                    matches.append({"row": row, "col": col, "address": address(row, col), "text": text})
         return matches
 
     def find(self, sheet, args):

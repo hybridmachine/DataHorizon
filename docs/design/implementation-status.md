@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 112 Python tests and 38 Qt contract cases.
+The review regression suite includes 116 Python tests and 38 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -412,3 +412,16 @@ limit. The duplicate run passed in 38.62 seconds; desktop suites took about
 suite budgets, retaining per-operation, hook and request deadlines. Other
 platforms retain their existing CTest limits; local reconfiguration confirms
 90/45 seconds. The platform-specific settings are covered by the Windows CI job.
+
+Cycle 25 published no inline issues but identified missing deadline checks before
+commit and fractional native coordinates. The engine now budgets validation with
+the parent operation, checks after hooks and immediately before COMMIT, and gives
+Replace All the remaining budget for SQL/search evaluation. Standalone Find has
+a two-second budget, including SQL scans that return no rows. Expiry rolls back
+the data and provisional success receipt while preserving a durable timeout
+receipt. Native validation checks coordinate storage types and bounds so REAL
+coordinates accepted by SQLite affinity cannot become inaccessible grid cells.
+Open, external refresh and copying reject these values without changing the
+invalid external data. New regressions fail on the previous engine and pass for
+post-hook expiry, expiry during receipt preparation, empty-match SQL scans and
+fractional row/column values, alongside all existing rollback/copy tests.
