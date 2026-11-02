@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 75 Python tests and 37 Qt contract cases.
+The review regression suite includes 78 Python tests and 37 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -283,3 +283,14 @@ as receipts and preserve pending mutation IDs. Tests cover SDK/CLI edits with
 ambient proxies, HTTP redirect variants and a Qt redirect carrying a forged
 rollback receipt. This completes the two further authorized cycles; final fixes
 are validated without requesting another review.
+
+The user authorized two further cycles. Cycle 14 published no inline issues but
+identified unhandled HTTP failures, premature SQL output and incomplete API
+operation schemas. A truncated real HTTP reply now produces a structured CLI
+error. Direct SQL serializes within its transaction and prints rows only after
+successful commit; a held SQLite read lock reproduces commit failure without
+false success output, and serialization failure still rolls back. OpenAPI now
+defines every action's arguments and required fields, typed POST bodies, bounds
+and examples; the explorer selects action examples. Integration tests execute
+all advertised operation examples with current IDs/state, and the specification
+is checked with an OpenAPI validator.

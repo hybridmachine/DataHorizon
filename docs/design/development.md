@@ -44,6 +44,13 @@ python3 -I -B -X utf8 "$PWD/service/datahorizon/launch.py"
 
 The first stdout line contains the service URL and bearer token. Keep it private.
 `/docs` is an interactive local explorer; `/openapi.json` describes the API.
+The [OpenAPI 3.0](https://spec.openapis.org/oas/v3.0.3.html) operation request uses
+action-specific schemas and examples for every advertised mutation. Select an
+operation in the explorer to load its example. Replace placeholder operation IDs,
+state tokens, cut state and sheet IDs with values from the reviewed workbook;
+Undo/Redo need current history, and named sheets in examples must exist first.
+Schemas document individual field bounds; the engine also checks combined cell
+and byte budgets, ordered ranges, current state and reference/hook restrictions.
 Supply the bearer token in the explorer or SDK. External binding is disabled.
 The GUI can attach using `DataHorizon --connect http://127.0.0.1:PORT` with the
 DATAHORIZON_TOKEN environment variable. Attached services survive GUI shutdown.
@@ -152,6 +159,11 @@ Direct SQL results encode SQLite BLOB values as
 `{"type":"blob","base64":"AAH/"}` (the example represents bytes `00 01 FF`).
 Other SQLite values keep their ordinary JSON scalar representation; nonfinite
 numbers are rejected with a structured error.
+Direct SQL prepares its JSON output within the transaction and prints results
+only after commit succeeds. Commit or serialization failure returns an error
+without printing successful rows. Truncated or malformed HTTP responses also
+return structured CLI errors; transmitted mutations retain unknown outcomes
+through the SDK receipt contract.
 
 The SDK raises `UnknownOutcome` with an `operation_id` if acknowledgement is
 lost, and blocks subsequent writes until `book.outcome(id)` reconciles it.

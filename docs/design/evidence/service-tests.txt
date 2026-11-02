@@ -50,10 +50,12 @@ test_unexpected_failure_has_a_durable_rollback_receipt_and_is_not_reexecuted (te
 test_unsupported_sql_and_trigger_schema_fail_closed (test_engine.EngineTests.test_unsupported_sql_and_trigger_schema_fail_closed) ... ok
 test_values_paste_rejects_formula_errors_atomically (test_engine.EngineTests.test_values_paste_rejects_formula_errors_atomically) ... ok
 test_cli_apply_accepts_complete_operation_with_sheet (test_service.ServiceTests.test_cli_apply_accepts_complete_operation_with_sheet) ... ok
+test_cli_reports_truncated_http_reads_as_json (test_service.ServiceTests.test_cli_reports_truncated_http_reads_as_json) ... ok
 test_client_handles_release_without_closing_other_clients (test_service.ServiceTests.test_client_handles_release_without_closing_other_clients) ... ok
 test_clipboard_read_uses_bulk_limit_in_one_consistent_state (test_service.ServiceTests.test_clipboard_read_uses_bulk_limit_in_one_consistent_state) ... ok
 test_csv_preview_bounds_blank_records_as_well_as_fields (test_service.ServiceTests.test_csv_preview_bounds_blank_records_as_well_as_fields) ... ok
 test_direct_cli_honors_readonly_and_returns_structured_sqlite_errors (test_service.ServiceTests.test_direct_cli_honors_readonly_and_returns_structured_sqlite_errors) ... ok
+test_direct_cli_reports_results_only_after_commit (test_service.ServiceTests.test_direct_cli_reports_results_only_after_commit) ... ok
 test_direct_cli_represents_blobs_without_losing_other_sql_types (test_service.ServiceTests.test_direct_cli_represents_blobs_without_losing_other_sql_types) ... ok
 test_failed_open_does_not_publish_a_handle_or_leak_an_engine (test_service.ServiceTests.test_failed_open_does_not_publish_a_handle_or_leak_an_engine) ... ok
 test_headless_cli_file_mode (test_service.ServiceTests.test_headless_cli_file_mode) ... ok
@@ -65,6 +67,7 @@ test_loopback_startup_does_not_depend_on_hostname_resolution (test_service.Servi
 test_lost_reply_exposes_id_and_blocks_further_sdk_writes (test_service.ServiceTests.test_lost_reply_exposes_id_and_blocks_further_sdk_writes) ... ok
 test_missing_receipt_and_failed_lookup_keep_the_pending_outcome_unknown (test_service.ServiceTests.test_missing_receipt_and_failed_lookup_keep_the_pending_outcome_unknown) ... ok
 test_open_requires_boolean_flags_before_creating_or_leasing_a_workbook (test_service.ServiceTests.test_open_requires_boolean_flags_before_creating_or_leasing_a_workbook) ... ok
+test_openapi_action_examples_execute_every_advertised_operation (test_service.ServiceTests.test_openapi_action_examples_execute_every_advertised_operation) ... ok
 test_owned_service_ignores_working_directory_and_pythonpath_modules (test_service.ServiceTests.test_owned_service_ignores_working_directory_and_pythonpath_modules) ... ok
 test_receipt_lookup_survives_owned_service_restart (test_service.ServiceTests.test_receipt_lookup_survives_owned_service_restart) ... ok
 test_receipts_with_url_delimiters_are_retrievable (test_service.ServiceTests.test_receipts_with_url_delimiters_are_retrievable) ... ok
@@ -75,6 +78,6 @@ test_sdk_never_follows_service_redirects (test_service.ServiceTests.test_sdk_nev
 test_unmatched_error_responses_never_clear_pending_operation (test_service.ServiceTests.test_unmatched_error_responses_never_clear_pending_operation) ... ok
 
 ----------------------------------------------------------------------
-Ran 75 tests in 6.165s
+Ran 78 tests in 6.753s
 
 OK

@@ -1,5 +1,6 @@
 import json
-from contextlib import closing
+import io
+from contextlib import closing, redirect_stderr, redirect_stdout
 from http.client import IncompleteRead
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
@@ -16,11 +17,93 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from datahorizon.client import APIError, Client, LocalService, UnknownOutcome, WorkbookClient
+from datahorizon import cli
 from datahorizon.engine import EngineError, Workbook
 from datahorizon.service import Service
 
 
 class ServiceTests(unittest.TestCase):
+    def test_openapi_action_examples_execute_every_advertised_operation(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            spec=client.request("/openapi.json")
+            schemas=spec["components"]["schemas"]
+            operation=schemas["OperationRequest"]
+            mapping=operation["discriminator"]["mapping"]
+            self.assertEqual(set(mapping),set(client.request("/v1/capabilities")["operations"]))
+            self.assertEqual({item["$ref"] for item in operation["oneOf"]},set(mapping.values()))
+            for path,methods in spec["paths"].items():
+                if "post" in methods:
+                    schema=methods["post"]["requestBody"]["content"]["application/json"]["schema"]
+                    self.assertIn(schema["$ref"].rsplit("/",1)[-1],schemas,path)
+            with client.open(Path(temp)/"examples.dhwb",create=True) as book:
+                sequence=("edit","paste","fill","move","replace_all","undo","redo", "sheet_add","sheet_rename","sheet_duplicate","sheet_reorder","sheet_delete")
+                self.assertEqual(set(sequence),set(mapping))
+                for action in sequence:
+                    with self.subTest(action=action):
+                        schema=schemas[mapping[action].rsplit("/",1)[-1]]
+                        request={**schema["example"],"operation_id":"openapi-"+action,"expected_state":book.state}
+                        self.assertEqual(request["action"],action)
+                        self.assertEqual(schema["properties"]["action"]["enum"],[action])
+                        self.assertTrue(set(schema["required"]).issubset(request))
+                        self.assertTrue(set(request).issubset(schema["properties"]))
+                        if action=="move": request["cut_state"]=book.state
+                        if action=="sheet_reorder": request["order"]=[sheet["id"] for sheet in reversed(book.info["sheets"])]
+                        result=client.request(book.base+"/operations",request)
+                        self.assertEqual(result["outcome"],"committed")
+                        book.refresh()
+
+    def test_direct_cli_reports_results_only_after_commit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"locked.db"
+            connect=sqlite3.connect
+            with closing(connect(path)) as setup,setup:
+                setup.execute("CREATE TABLE data(value)"); setup.execute("INSERT INTO data VALUES(1)")
+            with closing(connect(path)) as reader:
+                reader.execute("BEGIN"); reader.execute("SELECT * FROM data").fetchall()
+                stdout,stderr=io.StringIO(),io.StringIO()
+                def limited_connect(*args,**kwargs): return connect(*args,**{**kwargs,"timeout":0.02})
+                with patch.object(sys,"argv",["datahorizon",str(path),"direct-sql","INSERT INTO data VALUES(2) RETURNING value"]), \
+                        patch("datahorizon.cli.sqlite3.connect",side_effect=limited_connect),redirect_stdout(stdout),redirect_stderr(stderr):
+                    with self.assertRaises(SystemExit) as failure: cli.main()
+                self.assertEqual(failure.exception.code,1)
+                self.assertEqual(stdout.getvalue(),"")
+                self.assertEqual(json.loads(stderr.getvalue())["code"],"CLIENT_ERROR")
+                self.assertEqual(reader.execute("SELECT value FROM data").fetchall(),[(1,)])
+            run=subprocess.run([sys.executable,"-m","datahorizon.cli",str(path),"direct-sql","INSERT INTO data VALUES(3) RETURNING value"],capture_output=True,text=True,timeout=10)
+            self.assertEqual(run.returncode,0,run.stderr)
+            self.assertEqual(json.loads(run.stdout)["rows"],[[3]])
+            invalid=subprocess.run([sys.executable,"-m","datahorizon.cli",str(path),"direct-sql","UPDATE data SET value=1e999 RETURNING value"],capture_output=True,text=True,timeout=10)
+            self.assertEqual(invalid.returncode,1); self.assertEqual(invalid.stdout,"")
+            self.assertEqual(json.loads(invalid.stderr)["code"],"CLIENT_ERROR")
+            with closing(connect(path)) as reader:
+                self.assertEqual(reader.execute("SELECT value FROM data ORDER BY value").fetchall(),[(1,),(3,)])
+
+    def test_cli_reports_truncated_http_reads_as_json(self):
+        class Truncated(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length",0)))
+                result={"id":"test","state":"test"} if self.path=="/v1/open" else {"closed":True}
+                payload=json.dumps(result).encode()
+                self.send_response(200); self.send_header("Content-Type","application/json")
+                self.send_header("Content-Length",str(len(payload)+1000 if self.path.endswith("/range") else len(payload)))
+                self.end_headers(); self.wfile.write(payload)
+            def log_message(self,*args): pass
+        class Server(ThreadingHTTPServer):
+            def server_bind(self): TCPServer.server_bind(self)
+        with tempfile.TemporaryDirectory() as temp,Server(("127.0.0.1",0),Truncated) as server:
+            worker=threading.Thread(target=server.serve_forever,kwargs={"poll_interval":0.02},daemon=True); worker.start()
+            try:
+                run=subprocess.run([sys.executable,"-m","datahorizon.cli","--url",f"http://127.0.0.1:{server.server_address[1]}",str(Path(temp)/"test.dhwb"),"read","A1"],
+                                   env={**os.environ,"DATAHORIZON_TOKEN":"test"},capture_output=True,text=True,timeout=10)
+                self.assertEqual(run.returncode,1)
+                self.assertEqual(run.stdout,"")
+                error=json.loads(run.stderr)
+                self.assertEqual(error["code"],"CLIENT_ERROR")
+                self.assertEqual(error["outcome"],"rejected")
+                self.assertIn("bytes read",error["message"])
+            finally:
+                server.shutdown(); worker.join(3)
+
     def test_sdk_and_cli_bypass_ambient_proxies(self):
         intercepted=[]
         class Proxy(BaseHTTPRequestHandler):

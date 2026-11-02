@@ -3,6 +3,7 @@
 import argparse
 import base64
 from contextlib import closing, nullcontext
+from http.client import HTTPException
 import json
 import os
 from pathlib import Path
@@ -51,8 +52,9 @@ def main():
             target = path.as_uri()+"?mode=ro" if args.readonly else str(path)
             with closing(sqlite3.connect(target, uri=args.readonly)) as db, db:
                 cursor = db.execute(args.sql)
-                print(json.dumps({"mode": "direct", "handlers": False, "rows": cursor.fetchall()},
-                                 default=sql_json_value, allow_nan=False))
+                output=json.dumps({"mode": "direct", "handlers": False, "rows": cursor.fetchall()},
+                                  default=sql_json_value, allow_nan=False)
+            print(output)
             return
         context = nullcontext(Client(args.url, os.environ["DATAHORIZON_TOKEN"])) if args.url else LocalService(args.handler)
         with context as client:
@@ -71,7 +73,7 @@ def main():
                 else:
                     result = book.outcome(args.operation_id)
                 print(json.dumps(result, allow_nan=False))
-    except (APIError, OSError, ValueError, TypeError, KeyError, RuntimeError, FormulaError, sqlite3.Error) as error:
+    except (APIError, OSError, HTTPException, ValueError, TypeError, KeyError, RuntimeError, FormulaError, sqlite3.Error) as error:
         code = "INVALID_ADDRESS" if isinstance(error, FormulaError) else "READ_ONLY" if getattr(error,"sqlite_errorcode",None)==sqlite3.SQLITE_READONLY else "CLIENT_ERROR"
         fallback = {"code": code, "message": str(error), "outcome": "rejected"}
         print(json.dumps(getattr(error, "body", fallback)), file=sys.stderr)
