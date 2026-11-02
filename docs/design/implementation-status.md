@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 80 Python tests and 37 Qt contract cases.
+The review regression suite includes 81 Python tests and 37 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -305,3 +305,12 @@ Regressions verify CTE failure rollback, successful CTE and DDL writes, rejected
 transaction/administrative commands and the absence of created attachment or
 VACUUM files. This completes the two further authorized cycles; final fixes are
 validated without requesting another review.
+
+The user authorized up to four further cycles, stopping early for cosmetic-only
+feedback. Cycle 16 published no inline issues but raised post-commit cleanup
+failures being reported as rejected mutations without operation IDs. A real HTTP
+regression reproduced a committed CLI receipt followed by a contradictory error
+from handle release. The CLI now preserves the completed result and successful
+exit status while reporting cleanup separately with the mutation ID and outcome.
+Regressions cover HTTP, malformed-JSON and truncated cleanup failures, plus lost
+mutation acknowledgements that must retain an unknown outcome and nonzero exit.

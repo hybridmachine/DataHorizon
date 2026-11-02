@@ -23,6 +23,53 @@ from datahorizon.service import Service
 
 
 class ServiceTests(unittest.TestCase):
+    def test_cli_preserves_a_committed_receipt_when_handle_release_fails(self):
+        class ReleaseFailure(BaseHTTPRequestHandler):
+            def do_POST(self):
+                request=json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                status=200
+                if self.path=="/v1/open": result={"id":"test","state":"initial"}
+                elif self.path.endswith("/operations"):
+                    self.server.last_operation=request["operation_id"]
+                    result={"operation_id":request["operation_id"],"outcome":"committed","state":"updated","changed_cells":1}
+                else:
+                    status=503; result={"code":"RELEASE_FAILED","message":"Injected release failure","outcome":"rejected"}
+                payload=json.dumps(result).encode()
+                closing=self.path.endswith("/close")
+                if closing and self.server.failure=="json": status=200; payload=b'not-json'
+                truncated=(closing and self.server.failure=="truncated") or (self.path.endswith("/operations") and self.server.failure=="unknown")
+                if truncated: status=200
+                self.send_response(status)
+                self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(payload)+(1000 if truncated else 0)))
+                self.end_headers(); self.wfile.write(payload)
+            def log_message(self,*args): pass
+        class Server(ThreadingHTTPServer):
+            def server_bind(self): TCPServer.server_bind(self)
+        with tempfile.TemporaryDirectory() as temp,Server(("127.0.0.1",0),ReleaseFailure) as server:
+            worker=threading.Thread(target=server.serve_forever,kwargs={"poll_interval":0.02},daemon=True); worker.start()
+            try:
+                for failure in ("http","json","truncated","unknown"):
+                    with self.subTest(failure=failure):
+                        server.failure=failure
+                        run=subprocess.run([sys.executable,"-m","datahorizon.cli","--url",f"http://127.0.0.1:{server.server_address[1]}",str(Path(temp)/"test.dhwb"),"set","A1","7"],
+                                           env={**os.environ,"DATAHORIZON_TOKEN":"test"},capture_output=True,text=True,timeout=10)
+                        diagnostic=json.loads(run.stderr)
+                        if failure=="unknown":
+                            self.assertEqual(run.returncode,1); self.assertEqual(run.stdout,"")
+                            self.assertEqual(diagnostic["outcome"],"unknown")
+                            self.assertEqual(diagnostic["operation_id"],server.last_operation)
+                        else:
+                            self.assertEqual(run.returncode,0,run.stderr)
+                            receipt=json.loads(run.stdout)
+                            self.assertEqual(receipt["outcome"],"committed")
+                            self.assertEqual(diagnostic["code"],"CLEANUP_FAILED")
+                            self.assertEqual(diagnostic["phase"],"cleanup")
+                            self.assertEqual(diagnostic["operation_id"],receipt["operation_id"])
+                            self.assertEqual(diagnostic["operation_outcome"],"committed")
+                            self.assertNotIn("outcome",diagnostic)
+            finally:
+                server.shutdown(); worker.join(3)
+
     def test_direct_cli_owns_cte_mutations_until_output_can_be_serialized(self):
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/"cte.db"

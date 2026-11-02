@@ -50,6 +50,7 @@ test_unexpected_failure_has_a_durable_rollback_receipt_and_is_not_reexecuted (te
 test_unsupported_sql_and_trigger_schema_fail_closed (test_engine.EngineTests.test_unsupported_sql_and_trigger_schema_fail_closed) ... ok
 test_values_paste_rejects_formula_errors_atomically (test_engine.EngineTests.test_values_paste_rejects_formula_errors_atomically) ... ok
 test_cli_apply_accepts_complete_operation_with_sheet (test_service.ServiceTests.test_cli_apply_accepts_complete_operation_with_sheet) ... ok
+test_cli_preserves_a_committed_receipt_when_handle_release_fails (test_service.ServiceTests.test_cli_preserves_a_committed_receipt_when_handle_release_fails) ... ok
 test_cli_reports_truncated_http_reads_as_json (test_service.ServiceTests.test_cli_reports_truncated_http_reads_as_json) ... ok
 test_client_handles_release_without_closing_other_clients (test_service.ServiceTests.test_client_handles_release_without_closing_other_clients) ... ok
 test_clipboard_read_uses_bulk_limit_in_one_consistent_state (test_service.ServiceTests.test_clipboard_read_uses_bulk_limit_in_one_consistent_state) ... ok
@@ -80,6 +81,6 @@ test_sdk_never_follows_service_redirects (test_service.ServiceTests.test_sdk_nev
 test_unmatched_error_responses_never_clear_pending_operation (test_service.ServiceTests.test_unmatched_error_responses_never_clear_pending_operation) ... ok
 
 ----------------------------------------------------------------------
-Ran 80 tests in 7.990s
+Ran 81 tests in 8.859s
 
 OK

@@ -1,8 +1,6 @@
-November 1, 2026 | additional review cycle 15 (second of two newly authorized cycles)
+November 1, 2026 | additional review cycle 16 (first of up to four newly authorized cycles)
 ctest --test-dir build --output-on-failure
 
 desktop: passed (37 Qt contract cases plus initialization/cleanup)
-service: passed (80 Python tests)
-Both suites passed; total CTest time: 23.87 seconds.
-OpenAPI specification: validation passed with openapi-spec-validator.
-Explorer JavaScript: node --check and DOM selection checks passed.
+service: passed (81 Python tests)
+Both suites passed; total CTest time: 25.49 seconds.

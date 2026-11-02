@@ -171,6 +171,12 @@ Ordinary external SQLite connections remain unrestricted by this CLI policy.
 Truncated or malformed HTTP responses also
 return structured CLI errors; transmitted mutations retain unknown outcomes
 through the SDK receipt contract.
+Once a command has a valid result, later workbook/service cleanup failures do
+not replace it. The CLI returns success with the original JSON result and emits
+a separate `CLEANUP_FAILED` diagnostic on stderr. For mutations, that diagnostic
+retains `operation_id` and `operation_outcome`; it never reports the confirmed
+write as rejected. An unconfirmed acknowledgement still exits with an unknown
+outcome and its operation ID, so scripts must reconcile before another write.
 
 The SDK raises `UnknownOutcome` with an `operation_id` if acknowledgement is
 lost, and blocks subsequent writes until `book.outcome(id)` reconciles it.

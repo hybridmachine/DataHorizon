@@ -76,6 +76,8 @@ def main():
     direct = commands.add_parser("direct-sql", help="Explicit independent SQLite access; bypasses application behavior")
     direct.add_argument("sql")
     args = parser.parse_args()
+    releasing = False
+    result = None
     try:
         if args.command in ("read", "set"):
             row, col = coordinates(args.address)
@@ -84,6 +86,8 @@ def main():
             target = path.as_uri()+"?mode=ro" if args.readonly else str(path)
             with closing(sqlite3.connect(target, uri=args.readonly)) as db:
                 output=direct_sql_result(db,args.sql)
+                releasing=True
+            releasing=False
             print(output)
             return
         context = nullcontext(Client(args.url, os.environ["DATAHORIZON_TOKEN"])) if args.url else LocalService(args.handler)
@@ -102,8 +106,20 @@ def main():
                     result = book.apply(request.pop("action"), request.pop("sheet", args.sheet), **request)
                 else:
                     result = book.outcome(args.operation_id)
-                print(json.dumps(result, allow_nan=False))
+                output=json.dumps(result, allow_nan=False)
+                releasing=True
+        releasing=False
+        print(output)
     except (APIError, OSError, HTTPException, ValueError, TypeError, KeyError, RuntimeError, FormulaError, sqlite3.Error) as error:
+        if releasing:
+            # Cleanup cannot replace a completed command's result or invite a
+            # retry of an acknowledged mutation. Keep diagnostics separate.
+            diagnostic={"code":"CLEANUP_FAILED","phase":"cleanup","message":str(error)}
+            if isinstance(result,dict) and "operation_id" in result:
+                diagnostic.update(operation_id=result["operation_id"],operation_outcome=result.get("outcome"))
+            print(output)
+            print(json.dumps(diagnostic),file=sys.stderr)
+            return
         code = "INVALID_ADDRESS" if isinstance(error, FormulaError) else "READ_ONLY" if getattr(error,"sqlite_errorcode",None)==sqlite3.SQLITE_READONLY else "CLIENT_ERROR"
         fallback = {"code": code, "message": str(error), "outcome": "rejected"}
         print(json.dumps(getattr(error, "body", fallback)), file=sys.stderr)
