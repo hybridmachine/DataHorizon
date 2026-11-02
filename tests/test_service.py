@@ -23,6 +23,25 @@ from datahorizon.service import Service
 
 
 class ServiceTests(unittest.TestCase):
+    def test_sdk_confirmed_close_is_idempotent_and_blocks_local_use(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            path=Path(temp)/"closed-client.dhwb"
+            book=client.open(path,create=True); other=client.open(path)
+            with book:
+                receipt=book.set(1,1,"7")
+                self.assertEqual(book.close(),{"closed":True})
+                with patch.object(client,"request",side_effect=AssertionError("A closed handle must not send requests")):
+                    self.assertEqual(book.close(),{"closed":True})
+                    for request in (book.refresh,book.read,lambda:book.set(2,1,"wrong"),lambda:book.outcome(receipt["operation_id"]),book.__enter__):
+                        with self.assertRaisesRegex(ValueError,"closed"): request()
+                        self.assertIsNone(book.pending_operation)
+            other.refresh(); other.set(2,1,"8")
+            self.assertEqual([cell["value"] for cell in other.read(r2=2,c2=1)["cells"]],[7,8])
+            with patch.object(client,"request",return_value={"closed":False}):
+                with self.assertRaisesRegex(ValueError,"close acknowledgement"): other.close()
+            self.assertEqual(other.read(r2=1,c2=1)["cells"][0]["value"],7)
+            other.close()
+
     def test_sdk_cleanup_keeps_a_receipt_queried_without_a_pending_write(self):
         with tempfile.TemporaryDirectory() as temp,LocalService() as client:
             path=Path(temp)/"lookup.dhwb"

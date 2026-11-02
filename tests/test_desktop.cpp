@@ -39,6 +39,30 @@
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void listSaveRetainsItsSourceCellAfterResorting() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("list-save.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{
+            QJsonObject{{"row",1},{"col",1},{"source","10"}},QJsonObject{{"row",2},{"col",1},{"source","20"}},
+            QJsonObject{{"row",3},{"col",1},{"source","30"}},QJsonObject{{"row",2},{"col",2},{"source","original"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",2},{"sort",QJsonArray{QJsonObject{{"col",1},{"descending",true}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source"); auto *model=window.model();
+        grid->setCurrentIndex(model->index(1,1)); QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        source->setFocus(); source->selectAll(); QTest::keyClicks(source,"updated");
+        window.findChild<QAction *>("saveAction")->trigger(); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QCOMPARE(model->sourceRow(grid->currentIndex().row()),1); QCOMPARE(grid->currentIndex().column(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(grid->currentIndex()).toString(),QString("updated"),5000);
+        grid->setCurrentIndex(model->index(1,0)); QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        source->setFocus(); source->selectAll(); QTest::keyClicks(source,"5");
+        window.findChild<QAction *>("saveAction")->trigger(); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
+        QCOMPARE(model->sourceRow(grid->currentIndex().row()),1); QCOMPARE(grid->currentIndex(),model->index(2,0));
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(grid->currentIndex()).toString(),QString("5"),5000);
+    }
     void modelInvariants() {
         RestClient client;
         SheetModel model(&client, nullptr, 64, 32);

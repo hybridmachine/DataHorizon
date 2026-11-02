@@ -46,6 +46,10 @@ preview does not attempt repair. User tables and managed SQL are later work.
 The schema comparison deliberately restricts SQL rather than accepting writes
 whose actual effects cannot yet be captured. Ordinary cell writes remain
 independent of registering application functions or Python callbacks.
+Only the literal `sqlite_` internal prefix is excluded from the signature;
+similarly named user objects, such as `sqliteX...` triggers, are still rejected.
+The managed revision remains an integer from 0 through 2^63−1. At the maximum,
+new mutations roll back with `REVISION_LIMIT`; reads and snapshots remain usable.
 
 Committed receipts share the data transaction. Recognized failures roll back
 operation changes to a savepoint while retaining the original writer lock, then

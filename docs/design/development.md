@@ -196,6 +196,9 @@ changes and committing their failure receipt. An unconfirmed receipt remains unk
 requires lookup before retry. Workbook clients
 can be context managers or closed explicitly to release their service handle;
 other clients' handles remain valid. The service caps open engines and handles.
+A confirmed SDK close is idempotent. Closed clients reject later reads, refreshes,
+lookups and writes locally, without creating a pending mutation ID; open a new
+handle to continue. A malformed close acknowledgement does not mark it closed.
 Slow construction, metadata loading and close operations serialize only the
 same workbook path. The shared registry remains available for unrelated
 workbooks; concurrent opens reserve capacity and share one engine per path.

@@ -34,6 +34,8 @@ unavailable-target draft first; Cancel retains it for copying.
 Open publishes a handle after metadata loading succeeds. Failed opens close an
 unreturned engine and consume no new handle. A native file whose creation has
 already committed remains available for reopening after a metadata-load failure.
+Failed creation also preserves its destination for inspection, even if it may be
+incomplete. Automatic pathname deletion could remove another process's replacement.
 
 Each mutation requires a client-generated operation ID (UUID recommended,
 1–100 characters of valid Unicode text) and an expected state token. The SDK

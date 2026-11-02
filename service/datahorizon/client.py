@@ -109,8 +109,14 @@ class WorkbookClient:
         self.pending_operation = None
         self._last_receipt = None
         self._refresh_receipt = None
+        self._closed = False
+
+    def _ensure_open(self):
+        if self._closed:
+            raise ValueError("Workbook client is closed; request was not sent. Open a new client handle.")
 
     def refresh(self):
+        self._ensure_open()
         info = self.client.request(self.base)
         if (not isinstance(info,dict) or info.get("id")!=self.info["id"]
                 or not isinstance(info.get("state"),str) or not info["state"]):
@@ -122,9 +128,11 @@ class WorkbookClient:
         return self.info
 
     def read(self, sheet="Sheet1", r1=1, c1=1, r2=32, c2=16):
+        self._ensure_open()
         return self.client.request(self.base + "/range", {"sheet": sheet, "r1": r1, "c1": c1, "r2": r2, "c2": c2})
 
     def apply(self, action, sheet="Sheet1", operation_id=None, **arguments):
+        self._ensure_open()
         if self.pending_operation:
             if self._refresh_receipt is not None:
                 raise MetadataRefreshError(self._refresh_receipt,"Refresh before sending another mutation")
@@ -167,6 +175,7 @@ class WorkbookClient:
         return self.apply("edit", sheet, cells=[{"row": row, "col": col, "source": str(source), "kind": kind}])
 
     def outcome(self, operation_id):
+        self._ensure_open()
         if operation_id==self.pending_operation and self._refresh_receipt is not None:
             receipt=dict(self._refresh_receipt)
         else:
@@ -195,14 +204,20 @@ class WorkbookClient:
             raise ValueError("Invalid operation outcome")
 
     def close(self):
+        if self._closed:
+            return {"closed":True}
         if self.pending_operation and self._refresh_receipt is None:
             raise UnknownOutcome(self.pending_operation)
         response=self.client.request(self.base + "/close", {})
+        if not isinstance(response,dict) or response.get("closed") is not True:
+            raise ValueError("Invalid workbook close acknowledgement")
         self.pending_operation=None
         self._refresh_receipt=None
+        self._closed=True
         return response
 
     def __enter__(self):
+        self._ensure_open()
         return self
 
     def __exit__(self, _type, error, _traceback):

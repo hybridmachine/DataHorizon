@@ -407,6 +407,8 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     const auto oldSheet = m_restoreDraft ? m_recoveredDraft["sheet"].toString() : selectSheet.isEmpty() ? m_model->sheet() : selectSheet;
     if (m_restoreDraft) m_listSpec={};
     const auto previous = m_grid->currentIndex();
+    const int previousRow=previous.isValid()?m_model->sourceRow(previous.row()):0;
+    const int previousColumn=previous.isValid()?previous.column():0;
     m_info = info;
     m_tabs->blockSignals(true);
     while (m_tabs->count()) m_tabs->removeTab(0);
@@ -418,7 +420,7 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     m_tabs->setCurrentIndex(current); m_tabs->blockSignals(false);
     if (!oldSheet.isEmpty() && m_tabs->tabData(current).toString()!=oldSheet) m_listSpec={};
     m_model->bind(info["id"].toString(), m_tabs->tabData(current).toString(), info["state"].toString(), info["readonly"].toBool());
-    m_grid->setCurrentIndex(m_model->index(previous.isValid() ? previous.row() : 0, previous.isValid() ? previous.column() : 0));
+    m_grid->setCurrentIndex(m_model->index(previousRow,previousColumn));
     m_undo->setText(info["undo"].isString() ? "Undo " + info["undo"].toString() : "Undo");
     m_redo->setText(info["redo"].isString() ? "Redo " + info["redo"].toString() : "Redo");
     setBusy(false, info["readonly"].toBool() ? "Read-only • Calculations evaluated on read" : "Stored automatically • Calculations evaluated on read");
@@ -997,14 +999,17 @@ void MainWindow::showList(QJsonObject scope) {
 
 void MainWindow::applyList() {
     if (m_listSpec.isEmpty()) return;
+    const auto selected=m_grid->currentIndex();
+    const int selectedRow=selected.isValid()?m_model->sourceRow(selected.row()):-1;
+    const int selectedColumn=selected.isValid()?selected.column():0;
     auto request = m_listSpec; request["sheet"] = m_model->sheet(); setBusy(true, "Evaluating full list scope…");
-    m_client->request(base()+"/list", request, [this](QJsonObject result, QString error) {
+    m_client->request(base()+"/list", request, [this,selectedRow,selectedColumn](QJsonObject result, QString error) {
         if (!error.isEmpty() || result["state"] != m_info["state"]) {
             m_listSpec = {}; setBusy(false); issue(error.isEmpty() ? "List inputs changed. Refresh before applying the view again." : error); emit workbookReady(); return;
         }
         QList<int> rows; for (const auto &row : result["rows"].toArray()) rows.append(row.toInt()-1);
         m_model->setProjection(rows);
-        if (!rows.isEmpty()) m_grid->setCurrentIndex(m_model->index(0, 0));
+        if (!rows.isEmpty()) m_grid->setCurrentIndex(m_model->index(qMax(0,m_model->viewRow(selectedRow)),selectedColumn));
         setBusy(false, tr("List view • %1 / %2 records • Edits target original source rows • Clear list view to restore sheet")
             .arg(result["matching"].toInt()).arg(result["total"].toInt()));
         applyEnterNavigation();

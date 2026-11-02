@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 92 Python tests and 37 Qt contract cases.
+The review regression suite includes 97 Python tests and 38 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -344,3 +344,15 @@ cleanup diagnostics, and unary signs follow the documented numeric 0/1 coercion
 instead of returning a boolean that SUM would ignore. Both have regressions.
 This completes all four newly authorized cycles; final fixes are validated
 without requesting another external review.
+
+The user authorized up to four further cycles with the same cosmetic-only stop.
+Cycle 20 published no inline issues, but identified a schema-validation bypass,
+failed-create deletion, revision overflow, invalid list criteria and list focus.
+The schema signature now excludes only the literal sqlite_ prefix, so user
+triggers named sqliteX... cannot evade validation and bypass tracked writes.
+Failed creation preserves the destination, and a changed file identity is checked
+before schema initialization. Revision exhaustion rolls back with a durable
+failure instead of storing a floating-point revision. List criteria reject
+non-object members, and Save retains source row/column through a sorted-list
+refresh. An independent SDK regression also fixes confirmed-close idempotence
+and prevents requests or pending IDs after a client has closed.

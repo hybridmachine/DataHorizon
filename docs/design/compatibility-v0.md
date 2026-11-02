@@ -100,6 +100,9 @@ the GUI). Type order is blank, number, text, boolean; text comparison is
 case-sensitive. A list header is explicit. Filter edits can remove a record from
 the view; Clear restores the source sheet. Range operations on projections are
 blocked. Persistent lists and a stable record-ID schema are later work.
+Saving an edited cell keeps its source row and column selected through resorting
+while that row remains visible. If a filter removes it, select the first
+remaining row. Invalid non-object filter/sort criteria return a validation error.
 
 Find supports case-sensitive literal substring search over source or display,
 returning a count and first 500 locations in row-major order. Replace All runs

@@ -19,6 +19,7 @@ from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, has_
 from .hooks import HookFailure, invoke
 
 MAX_CELLS = 10_000
+MAX_REVISION = 2**63-1
 SCHEMA = """
 CREATE TABLE dh_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  format_version INTEGER NOT NULL, workbook_id TEXT NOT NULL, revision INTEGER NOT NULL);
@@ -144,7 +145,7 @@ def input_signature(item):
 
 def schema_signature(db):
     return [(row[0], row[1], row[2]) for row in db.execute(
-        "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name")]
+        "SELECT type,name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name")]
 
 
 def expected_schema():
@@ -167,15 +168,24 @@ class Workbook:
         self.lock = threading.RLock()
         self.undo, self.redo = [], []
         self.epoch = str(uuid.uuid4())
+        created_identity = None
         if create:
             # Exclusive creation never truncates an existing workbook.
             fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            os.close(fd)
+            try:
+                created = os.fstat(fd)
+                if created.st_ino:
+                    created_identity = (created.st_dev,created.st_ino)
+            finally:
+                os.close(fd)
         require(self.path.is_file(), "NOT_FOUND", "Workbook file does not exist", 404)
         self.db = None
         try:
             self.db = sqlite3.connect(self.path.as_uri() + ("?mode=ro" if readonly else "?mode=rw"),
                                       uri=True, isolation_level=None, check_same_thread=False, timeout=1)
+            if created_identity is not None:
+                current = self.path.lstat()
+                require((current.st_dev,current.st_ino)==created_identity,"FILE_CHANGED","The new workbook path was replaced during creation",409)
             self.db.execute("PRAGMA foreign_keys=ON")
             self.db.execute("PRAGMA synchronous=FULL")
             if create:
@@ -191,8 +201,8 @@ class Workbook:
         except Exception:
             if self.db is not None:
                 self.db.close()
-            if create:
-                self.path.unlink(missing_ok=True)
+            # A pathname check followed by unlink can race with replacement by
+            # another process. Preserve failed destinations for inspection.
             raise
 
     def close(self):
@@ -453,6 +463,8 @@ class Workbook:
                 # The writer lock closes the check/write race with independent tools.
                 self.refresh()
                 require(request.get("expected_state") == self.state(), "STALE_STATE", "Workbook changed. Refresh and review the edit before retrying", 409)
+                require(self.db.execute("SELECT revision FROM dh_meta").fetchone()[0]<MAX_REVISION,
+                        "REVISION_LIMIT","Workbook revision limit reached; edits are unavailable without a format migration",409)
                 try:
                     json.dumps(request,ensure_ascii=False,allow_nan=False).encode("utf-8")
                 except UnicodeEncodeError as error:
@@ -712,6 +724,7 @@ class Workbook:
                 criteria, keys = args.get("filters", []), args.get("sort", [])
                 require(isinstance(criteria, list) and len(criteria) <= 8 and isinstance(keys, list) and len(keys) <= 8,
                         "INVALID_ARGUMENT", "At most eight filters and sort keys are supported")
+                require(all(isinstance(item,dict) for item in criteria+keys),"INVALID_ARGUMENT","Each filter and sort key must be an object")
                 for criterion in criteria:
                     integer(criterion.get("col"), c1, c2, "filter column")
                     require(criterion.get("op") in ("=", "<>", ">", "<", ">=", "<=", "contains"), "INVALID_ARGUMENT", "Unsupported filter comparison")

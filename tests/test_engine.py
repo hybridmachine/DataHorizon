@@ -9,6 +9,7 @@ import tempfile
 import time
 import unittest
 import uuid
+from unittest.mock import patch
 
 from datahorizon.engine import EngineError, Workbook, encoded
 from datahorizon.formula import coordinates, has_sheet_reference, translate
@@ -17,6 +18,55 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class EngineTests(unittest.TestCase):
+    def test_sqlite_like_user_trigger_names_cannot_bypass_schema_validation(self):
+        self.edit((1,1,"7"))
+        with closing(sqlite3.connect(self.path)) as direct,direct:
+            direct.execute("CREATE TRIGGER sqliteXhidden AFTER UPDATE ON cells BEGIN INSERT OR REPLACE INTO cells(sheet_id,row,col,source) VALUES(new.sheet_id,2,1,'bypass'); END")
+        with self.assertRaises(EngineError) as failure: self.edit((1,1,"9"))
+        self.assertEqual(failure.exception.body["code"],"SCHEMA_CHANGED")
+        with closing(sqlite3.connect(self.path)) as direct:
+            self.assertEqual(direct.execute("SELECT row,source FROM cells ORDER BY row").fetchall(),[(1,"7")])
+        with self.assertRaises(EngineError) as reopened: Workbook(self.path)
+        self.assertEqual(reopened.exception.body["code"],"SCHEMA_CHANGED")
+
+    def test_failed_create_preserves_a_replacement_file(self):
+        path=Path(self.temp.name)/"new.dhwb"; moved=Path(self.temp.name)/"original.dhwb"
+        def replace_then_fail(book):
+            book.db.close()  # Permit replacement on Windows too.
+            path.rename(moved); path.write_bytes(b"replacement belongs to another writer")
+            raise EngineError("TEST_FAILURE","Injected creation failure")
+        with patch.object(Workbook,"validate",new=replace_then_fail):
+            with self.assertRaises(EngineError): Workbook(path,create=True)
+        self.assertEqual(path.read_bytes(),b"replacement belongs to another writer")
+        path.unlink()
+        with patch.object(Workbook,"validate",side_effect=EngineError("TEST_FAILURE","Injected failure")):
+            with self.assertRaises(EngineError): Workbook(path,create=True)
+        self.assertTrue(path.is_file())
+        with closing(Workbook(path)) as preserved:
+            self.assertEqual(preserved.info()["sheets"][0]["name"],"Sheet1")
+
+    def test_revision_exhaustion_rolls_back_without_corrupting_the_native_format(self):
+        self.edit((1,1,"7"))
+        with closing(sqlite3.connect(self.path)) as direct,direct:
+            direct.execute("UPDATE dh_meta SET revision=?",(2**63-1,))
+        with self.assertRaises(EngineError) as failure: self.edit((1,1,"9"))
+        self.assertEqual(failure.exception.body["code"],"REVISION_LIMIT")
+        self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+        self.assertEqual(self.book.operation(failure.exception.body["operation_id"]),failure.exception.body)
+        self.assertEqual(self.cells()[(1,1)]["value"],7)
+        self.book.close(); self.book=Workbook(self.path)
+        self.assertEqual(self.book.db.execute("SELECT revision FROM dh_meta").fetchone()[0],2**63-1)
+
+    def test_list_criteria_members_are_validated_before_access(self):
+        self.edit((1,1,"7"))
+        for field in ("filters","sort"):
+            for item in (None,"bad",7,[],True):
+                with self.subTest(field=field,item=item):
+                    with self.assertRaises(EngineError) as failure:
+                        self.book.list_view("Sheet1",{field:[item]})
+                    self.assertEqual(failure.exception.body["code"],"INVALID_ARGUMENT")
+        self.assertEqual(self.book.list_view("Sheet1",{})["rows"],[1])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.path = Path(self.temp.name) / "test.dhwb"
