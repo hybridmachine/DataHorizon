@@ -38,6 +38,11 @@ if(BUILD_TESTING)
     add_test(NAME service COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s tests -v)
     set_tests_properties(service PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/service" TIMEOUT 45)
+    if(WIN32)
+        # Allow the complete multi-process suites to finish on hosted Windows.
+        set_tests_properties(desktop PROPERTIES TIMEOUT 180)
+        set_tests_properties(service PROPERTIES TIMEOUT 120)
+    endif()
 endif()
 
 install(TARGETS DataHorizon BUNDLE DESTINATION . RUNTIME DESTINATION bin)

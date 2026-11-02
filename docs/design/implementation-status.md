@@ -404,3 +404,11 @@ durable POSITION_LIMIT rollback receipt. The maximum signed position remains
 valid; reordering compacts positions and permits appending again. The regression
 reproduces the corruption on the previous head and verifies both operations,
 receipt replay, unchanged data/catalog, valid reopening/copying and recovery.
+
+During the next review, Windows CI exposed a whole-suite runner timeout: all
+reported assertions passed, but the Python suite reached its 45-second CTest
+limit. The duplicate run passed in 38.62 seconds; desktop suites took about
+84 seconds against a 90-second limit. Windows now has 120/180-second Python/Qt
+suite budgets, retaining per-operation, hook and request deadlines. Other
+platforms retain their existing CTest limits; local reconfiguration confirms
+90/45 seconds. The platform-specific settings are covered by the Windows CI job.

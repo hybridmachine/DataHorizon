@@ -22,6 +22,10 @@ On Windows/Linux run the generated DataHorizon executable; set the Qt prefix to
 the selected kit. Test execution needs permission to bind loopback sockets.
 CTest uses Qt's offscreen platform for desktop tests. These tests do not
 replace native-platform keyboard, accessibility or installer acceptance.
+Whole-suite CTest limits are 180 seconds for desktop and 120 for Python on
+Windows, where hosted runs take roughly 84 and 39–45 seconds respectively.
+Other platforms retain 90/45-second suite limits. Per-operation, hook and
+individual request deadlines are independent of these test-runner limits.
 Hosted macOS CI uses `macos-15`; GitHub's `macos-14` image entered retirement
 brownouts and is scheduled for removal on November 2, 2026.
 The numeric loopback service binds without reverse-DNS lookup, avoiding the
