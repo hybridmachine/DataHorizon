@@ -19,6 +19,7 @@ from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, has_
 from .hooks import HookFailure, invoke
 
 MAX_CELLS = 10_000
+MAX_HISTORY_BYTES = 16*1024*1024
 MAX_REVISION = 2**63-1
 SCHEMA = """
 CREATE TABLE dh_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1),
@@ -622,7 +623,7 @@ class Workbook:
                     target = self.sheet(request.get("sheet"))
                     self.check_name(request.get("name"))
                     require(not self.handler, "UNSUPPORTED_HOOK_SCOPE", "Sheet duplication with required handlers needs a structure-event contract")
-                    count = self.db.execute("SELECT count(*) FROM cells WHERE sheet_id=?", (target,)).fetchone()[0]
+                    count = self.db.execute("SELECT count(*) FROM (SELECT 1 FROM cells WHERE sheet_id=? LIMIT ?)", (target,MAX_CELLS+1)).fetchone()[0]
                     require(count <= MAX_CELLS, "LIMIT", "Sheet duplication exceeds 10,000 cells")
                     require(not self.has_cross_sheet_formulas(), "REFERENCE_TRANSFORM_UNAVAILABLE", "Duplicate is unavailable while cross-sheet formulas exist")
                     new = str(uuid.uuid4())
@@ -658,16 +659,17 @@ class Workbook:
                 elif kind == "undo":
                     label, _, _ = self.undo.pop()
                     reversed_changes = {key: [pair[1], pair[0]] for key, pair in self.changes.items()}
-                    self.redo.append((label, reversed_changes, self.history_cost(reversed_changes)))
+                    self.redo.append((label, reversed_changes, self.history_cost(label,reversed_changes)))
                 elif kind == "redo":
                     label, _, _ = self.redo.pop()
-                    self.undo.append((label, self.changes, self.history_cost(self.changes)))
+                    self.undo.append((label, self.changes, self.history_cost(label,self.changes)))
                 else:
                     self.redo.clear()
                     if self.changes:
-                        self.undo.append((request.get("label", kind.title()), self.changes, self.history_cost(self.changes)))
+                        label = request.get("label",kind.title())
+                        self.undo.append((label, self.changes, self.history_cost(label,self.changes)))
                         self.undo = self.undo[-100:]
-                while sum(entry[2] for entry in self.undo + self.redo) > 16*1024*1024:
+                while sum(entry[2] for entry in self.undo + self.redo) > MAX_HISTORY_BYTES:
                     (self.undo if self.undo else self.redo).pop(0)
                 return result
             except Exception as error:
@@ -709,9 +711,9 @@ class Workbook:
                 raise failure
 
     @staticmethod
-    def history_cost(changes):
+    def history_cost(label,changes):
         # Compute once per receipt; never serialize all prior history for each edit.
-        return len(encoded([[key, *values] for key, values in changes.items()]).encode())
+        return len(encoded([label,[[key, *values] for key, values in changes.items()]]).encode())
 
     @staticmethod
     def check_name(name):

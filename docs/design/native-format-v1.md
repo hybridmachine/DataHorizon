@@ -66,5 +66,6 @@ transactions use BEGIN IMMEDIATE and SQLite synchronous FULL with the default
 rollback journal. No WAL sidecar portability claim is needed in this tier.
 Snapshots use the SQLite backup API into an exclusively created destination.
 The source is never overwritten by Save a copy. History is in service memory,
-at most 100 operations and 16 MiB of serialized cell changes; it does not survive
-a service restart or an external edit. Operation receipts remain in the file.
+at most 100 operations and 16 MiB of serialized labels and cell changes across
+Undo and Redo (excluding Python object overhead); it does not survive a service
+restart or an external edit. Operation receipts remain in the file.

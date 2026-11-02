@@ -23,6 +23,37 @@ from datahorizon.service import Service
 
 
 class ServiceTests(unittest.TestCase):
+    def test_open_rejects_non_json_metadata_before_publishing_a_handle(self):
+        with tempfile.TemporaryDirectory() as temp,Service() as server:
+            path=Path(temp)/"invalid-metadata.dhwb"; created=[]
+            with closing(Workbook(path,create=True)): pass
+            def rename(name):
+                with closing(sqlite3.connect(path)) as direct,direct:
+                    direct.execute("UPDATE sheets SET name=?",(name,))
+            def construct(*args,**kwargs):
+                book=Workbook(*args,**kwargs); created.append(book); return book
+            rename(b"not a JSON string")
+            with patch("datahorizon.service.Workbook",side_effect=construct):
+                for _ in range(2):
+                    with self.assertRaises(EngineError) as failure:
+                        server.dispatch("POST","/v1/open",{"path":str(path)})
+                    self.assertEqual(failure.exception.body["code"],"INVALID_FORMAT")
+                    self.assertEqual(server.workbooks,{})
+                    self.assertEqual(server._reserved_handles,0)
+                    self.assertEqual(server._opening,set())
+                    with self.assertRaises(sqlite3.ProgrammingError): created[-1].db.execute("SELECT 1")
+            rename("Sheet1")
+            info=server.dispatch("POST","/v1/open",{"path":str(path)})
+            book=server.workbooks[info["id"]]
+            for invalid in (None,{"invalid":object()}):
+                with patch.object(book,"info",return_value=invalid):
+                    with self.assertRaises(EngineError) as failure:
+                        server.dispatch("POST","/v1/open",{"path":str(path)})
+                self.assertEqual(failure.exception.body["code"],"INVALID_FORMAT")
+                self.assertEqual(list(server.workbooks),[info["id"]])
+                self.assertEqual(server._reserved_handles,0)
+                self.assertEqual(book.db.execute("SELECT 1").fetchone()[0],1)
+
     def test_sdk_confirmed_close_is_idempotent_and_blocks_local_use(self):
         with tempfile.TemporaryDirectory() as temp,LocalService() as client:
             path=Path(temp)/"closed-client.dhwb"

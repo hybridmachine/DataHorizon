@@ -19,6 +19,42 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class EngineTests(unittest.TestCase):
+    def test_history_budget_includes_labels_through_undo_and_redo(self):
+        with patch("datahorizon.engine.MAX_HISTORY_BYTES",1024,create=True):
+            for value in ("7","9"):
+                self.apply(cells=[{"row":1,"col":1,"source":value}],label=value*700)
+            self.apply("undo")
+            self.assertEqual(self.cells()[(1,1)]["value"],7)
+            self.assertEqual(self.book.info()["redo"],"9"*700)
+            with self.assertRaises(EngineError) as failure: self.apply("undo")
+            self.assertEqual(failure.exception.body["code"],"NO_HISTORY")
+            self.apply("redo")
+            self.assertEqual(self.cells()[(1,1)]["value"],9)
+            self.assertEqual(self.book.info()["undo"],"9"*700)
+
+    def test_oversized_sheet_duplication_rejects_with_bounded_database_work(self):
+        sheet=self.book.info()["sheets"][0]["id"]
+        with closing(sqlite3.connect(self.path)) as direct,direct:
+            direct.executemany("INSERT INTO cells(sheet_id,row,col,source) VALUES(?,?,1,'7')",
+                               ((sheet,row) for row in range(1,100001)))
+        steps=0
+        def work_limit():
+            nonlocal steps
+            steps+=1000
+            # Interrupt only once so rollback and receipt recording can finish.
+            return int(steps==120000)
+        self.book.db.set_progress_handler(work_limit,1000)
+        try:
+            with self.assertRaises(EngineError) as failure: self.apply("sheet_duplicate",name="Copy")
+        finally:
+            self.book.db.set_progress_handler(None,0)
+        self.assertEqual(failure.exception.body["code"],"LIMIT")
+        self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+        self.assertLess(steps,120000)
+        self.assertEqual(self.book.operation(failure.exception.body["operation_id"]),failure.exception.body)
+        self.assertEqual([s["name"] for s in self.book.info()["sheets"]],["Sheet1"])
+        self.assertEqual(self.book.db.execute("SELECT count(*) FROM cells").fetchone()[0],100000)
+
     def test_create_rejects_replacement_after_initialization(self):
         path=Path(self.temp.name)/"new-path.dhwb"; moved=Path(self.temp.name)/"created.dhwb"
         data_version=Workbook.data_version

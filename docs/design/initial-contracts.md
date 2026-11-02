@@ -126,9 +126,10 @@ Undo covers bounded cell/range inputs and formats, including generated edits.
 Undo/Redo uses the sheet IDs recorded in history, independently of the request's
 default sheet name or the current tab.
 It is a new managed operation, runs applicable rules, and may be rejected
-atomically. History is session-scoped, capped at 100 operations and 16 MiB,
-invalidated by
-external edits or unsupported structure changes. A new edit clears Redo.
+atomically. History is session-scoped, capped at 100 operations and 16 MiB of
+serialized labels and cell changes across Undo and Redo; this is a payload
+budget, not a bound on Python object overhead or process RSS. External edits or
+unsupported structure changes invalidate it. A new edit clears Redo.
 External effects are never represented as undoable. Structure history, external
 change gaps, and persistent history UI are deferred.
 

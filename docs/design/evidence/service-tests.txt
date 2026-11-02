@@ -24,6 +24,7 @@ test_find_replace_scope_source_and_rollback (test_engine.EngineTests.test_find_r
 test_formula_errors_and_lazy_if (test_engine.EngineTests.test_formula_errors_and_lazy_if) ... ok
 test_full_paste_preserves_inputs_independently_of_text_format (test_engine.EngineTests.test_full_paste_preserves_inputs_independently_of_text_format) ... ok
 test_full_scope_list_projection_and_source_identity (test_engine.EngineTests.test_full_scope_list_projection_and_source_identity) ... ok
+test_history_budget_includes_labels_through_undo_and_redo (test_engine.EngineTests.test_history_budget_includes_labels_through_undo_and_redo) ... ok
 test_history_uses_recorded_sheet_after_default_sheet_is_renamed_or_deleted (test_engine.EngineTests.test_history_uses_recorded_sheet_after_default_sheet_is_renamed_or_deleted) ... ok
 test_hooks_commit_rollback_direct_and_undo (test_engine.EngineTests.test_hooks_commit_rollback_direct_and_undo) ... ok
 test_idempotency_and_status (test_engine.EngineTests.test_idempotency_and_status) ... ok
@@ -34,6 +35,7 @@ test_long_integer_inputs_keep_the_exact_numeric_boundary (test_engine.EngineTest
 test_long_text_viewport_and_export_are_bounded (test_engine.EngineTests.test_long_text_viewport_and_export_are_bounded) ... ok
 test_missing_and_timeout_hook_fail_closed (test_engine.EngineTests.test_missing_and_timeout_hook_fail_closed) ... ok
 test_nonfinite_literals_are_errors_before_scalar_operations (test_engine.EngineTests.test_nonfinite_literals_are_errors_before_scalar_operations) ... ok
+test_oversized_sheet_duplication_rejects_with_bounded_database_work (test_engine.EngineTests.test_oversized_sheet_duplication_rejects_with_bounded_database_work) ... ok
 test_paste_relative_references_values_and_atomicity (test_engine.EngineTests.test_paste_relative_references_values_and_atomicity) ... ok
 test_read_response_limit_includes_envelope_and_array_separators (test_engine.EngineTests.test_read_response_limit_includes_envelope_and_array_separators) ... ok
 test_readonly_schema_and_backup (test_engine.EngineTests.test_readonly_schema_and_backup) ... ok
@@ -85,6 +87,7 @@ test_local_write_preconditions_do_not_create_pending_operations (test_service.Se
 test_loopback_startup_does_not_depend_on_hostname_resolution (test_service.ServiceTests.test_loopback_startup_does_not_depend_on_hostname_resolution) ... ok
 test_lost_reply_exposes_id_and_blocks_further_sdk_writes (test_service.ServiceTests.test_lost_reply_exposes_id_and_blocks_further_sdk_writes) ... ok
 test_missing_receipt_and_failed_lookup_keep_the_pending_outcome_unknown (test_service.ServiceTests.test_missing_receipt_and_failed_lookup_keep_the_pending_outcome_unknown) ... ok
+test_open_rejects_non_json_metadata_before_publishing_a_handle (test_service.ServiceTests.test_open_rejects_non_json_metadata_before_publishing_a_handle) ... ok
 test_open_requires_boolean_flags_before_creating_or_leasing_a_workbook (test_service.ServiceTests.test_open_requires_boolean_flags_before_creating_or_leasing_a_workbook) ... ok
 test_openapi_action_examples_execute_every_advertised_operation (test_service.ServiceTests.test_openapi_action_examples_execute_every_advertised_operation) ... ok
 test_owned_service_ignores_working_directory_and_pythonpath_modules (test_service.ServiceTests.test_owned_service_ignores_working_directory_and_pythonpath_modules) ... ok
@@ -102,6 +105,6 @@ test_slow_workbook_open_and_close_do_not_block_unrelated_reads (test_service.Ser
 test_unmatched_error_responses_never_clear_pending_operation (test_service.ServiceTests.test_unmatched_error_responses_never_clear_pending_operation) ... ok
 
 ----------------------------------------------------------------------
-Ran 102 tests in 9.389s
+Ran 105 tests in 11.691s
 
 OK

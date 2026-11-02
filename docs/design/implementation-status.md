@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 102 Python tests and 38 Qt contract cases.
+The review regression suite includes 105 Python tests and 38 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -365,3 +365,14 @@ opening it. Missing identities reject the operation before target initialization
 Creation also rechecks identity after initialization before returning its engine.
 Regressions replace paths before backup, after backup and during a failed backup,
 and verify foreign contents survive and a changed copy is not reported committed.
+
+Cycle 22 published no inline issues but identified omitted history costs, an
+unbounded duplication preflight under the writer lock, and failed-open handle
+publication. History budgets now include serialized labels through Undo/Redo;
+this is explicitly a payload budget rather than a Python RSS guarantee. Sheet
+duplication stops counting after 10,001 cells before rejecting oversized sheets.
+Open responses are assembled and checked for JSON serialization before handles
+are published; malformed native metadata releases fresh engines and reservations
+without consuming handles or closing an existing client engine. All three
+regressions fail on the previous head and pass with these fixes, including a
+100,000-cell fixture checked against a bounded SQLite instruction budget.

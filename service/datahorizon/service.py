@@ -250,15 +250,22 @@ class Service(ThreadingHTTPServer):
                 if fresh:
                     book = Workbook(path, create=create, readonly=readonly, handler=self.handler)
                 info = book.info()
+                handle = str(uuid.uuid4())
+                try:
+                    result = {**info,"id":handle,"workbook_id":book.id}
+                    # SQLite can store non-text metadata through direct access.
+                    # Prepare a serializable response before publishing its lease.
+                    encoded(result).encode()
+                except (TypeError,ValueError) as error:
+                    raise EngineError("INVALID_FORMAT","Workbook metadata cannot be represented by the REST interface",409) from error
                 with self.registry_lock:
                     require(not self._stopping,"SERVICE_STOPPING","Service is stopping",503)
-                    handle = str(uuid.uuid4())
                     self.workbooks[handle] = book
                     self._reserved_handles -= 1
                     if fresh:
                         self._opening.discard(path)
                     reserved = False
-                return {**info,"id":handle,"workbook_id":book.id}
+                return result
             except BaseException:
                 if fresh and book is not None:
                     book.close()
