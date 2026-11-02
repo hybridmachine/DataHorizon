@@ -161,7 +161,14 @@ Other SQLite values keep their ordinary JSON scalar representation; nonfinite
 numbers are rejected with a structured error.
 Direct SQL prepares its JSON output within the transaction and prints results
 only after commit succeeds. Commit or serialization failure returns an error
-without printing successful rows. Truncated or malformed HTTP responses also
+without printing successful rows. The CLI explicitly starts the transaction,
+including for `WITH`-prefixed writes and DDL, instead of relying on
+[Python's implicit transaction detection](https://docs.python.org/3.13/library/sqlite3.html#transaction-control-via-the-isolation-level-attribute).
+User transaction controls, savepoints, `PRAGMA`, `ATTACH` and `DETACH` return
+`UNSUPPORTED_DIRECT_SQL`; commands requiring autocommit, including `VACUUM`,
+also fail without execution. Use an independent SQLite tool for those commands.
+Ordinary external SQLite connections remain unrestricted by this CLI policy.
+Truncated or malformed HTTP responses also
 return structured CLI errors; transmitted mutations retain unknown outcomes
 through the SDK receipt contract.
 

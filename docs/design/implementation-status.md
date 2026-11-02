@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 78 Python tests and 37 Qt contract cases.
+The review regression suite includes 80 Python tests and 37 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -294,3 +294,14 @@ defines every action's arguments and required fields, typed POST bodies, bounds
 and examples; the explorer selects action examples. Integration tests execute
 all advertised operation examples with current IDs/state, and the specification
 is checked with an OpenAPI validator.
+
+Cycle 15 published one high-severity issue: WITH-prefixed direct SQL could commit
+before serialization failed because Python did not implicitly open a transaction.
+The CLI now explicitly owns the transaction through serialization and commit.
+A SQLite authorizer rejects user transaction controls, savepoints, PRAGMA and
+attachment commands; commands such as VACUUM that require autocommit fail in the
+owned transaction. An external SQLite tool remains available for administration.
+Regressions verify CTE failure rollback, successful CTE and DDL writes, rejected
+transaction/administrative commands and the absence of created attachment or
+VACUUM files. This completes the two further authorized cycles; final fixes are
+validated without requesting another review.

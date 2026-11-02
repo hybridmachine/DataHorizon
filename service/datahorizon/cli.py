@@ -20,6 +20,38 @@ def sql_json_value(value):
     raise TypeError(f"Unsupported SQL result type: {type(value).__name__}")
 
 
+def direct_sql_result(db, sql):
+    # Python's legacy implicit BEGIN detection does not cover WITH-prefixed
+    # writes or DDL. Own one transaction through result serialization/commit.
+    blocked = {sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT,
+               sqlite3.SQLITE_PRAGMA, sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH}
+    denied = False
+
+    def authorize(action, *_):
+        nonlocal denied
+        if action in blocked:
+            denied = True
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    with db:
+        db.execute("BEGIN")
+        db.set_authorizer(authorize)
+        try:
+            cursor = db.execute(sql)
+            output = json.dumps({"mode":"direct", "handlers":False, "rows":cursor.fetchall()},
+                                default=sql_json_value, allow_nan=False)
+        except sqlite3.DatabaseError as error:
+            if denied:
+                raise APIError(400, {"code":"UNSUPPORTED_DIRECT_SQL", "outcome":"rejected",
+                    "message":"Direct SQL owns its transaction; transaction controls, savepoints, PRAGMA, ATTACH and DETACH are unavailable. Use an independent SQLite tool for these commands."}) from error
+            raise
+        finally:
+            # The CLI's commit/rollback must remain allowed after user SQL.
+            db.set_authorizer(None)
+    return output
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", help="Attach to an existing localhost REST service")
@@ -50,10 +82,8 @@ def main():
         if args.command == "direct-sql":
             path = Path(args.file).expanduser().resolve()
             target = path.as_uri()+"?mode=ro" if args.readonly else str(path)
-            with closing(sqlite3.connect(target, uri=args.readonly)) as db, db:
-                cursor = db.execute(args.sql)
-                output=json.dumps({"mode": "direct", "handlers": False, "rows": cursor.fetchall()},
-                                  default=sql_json_value, allow_nan=False)
+            with closing(sqlite3.connect(target, uri=args.readonly)) as db:
+                output=direct_sql_result(db,args.sql)
             print(output)
             return
         context = nullcontext(Client(args.url, os.environ["DATAHORIZON_TOKEN"])) if args.url else LocalService(args.handler)

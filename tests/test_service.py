@@ -23,6 +23,45 @@ from datahorizon.service import Service
 
 
 class ServiceTests(unittest.TestCase):
+    def test_direct_cli_owns_cte_mutations_until_output_can_be_serialized(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"cte.db"
+            with closing(sqlite3.connect(path)) as setup,setup:
+                setup.execute("CREATE TABLE data(value)"); setup.execute("INSERT INTO data VALUES(1)")
+            def run(sql):
+                return subprocess.run([sys.executable,"-m","datahorizon.cli",str(path),"direct-sql",sql],capture_output=True,text=True,timeout=10)
+            failed=run("/* leading comment */ WITH selected AS (SELECT 1) UPDATE data SET value=1e999 RETURNING value")
+            self.assertEqual(failed.returncode,1); self.assertEqual(failed.stdout,"")
+            self.assertEqual(json.loads(failed.stderr)["outcome"],"rejected")
+            with closing(sqlite3.connect(path)) as reader:
+                self.assertEqual(reader.execute("SELECT value FROM data").fetchall(),[(1,)])
+            success=run("WITH selected(value) AS (SELECT 2) INSERT INTO data SELECT value FROM selected RETURNING value")
+            self.assertEqual(success.returncode,0,success.stderr)
+            self.assertEqual(json.loads(success.stdout)["rows"],[[2]])
+            for sql in ("CREATE TABLE extra(value)","ALTER TABLE extra ADD COLUMN note TEXT","DROP TABLE extra"):
+                result=run(sql); self.assertEqual(result.returncode,0,result.stderr)
+            with closing(sqlite3.connect(path)) as reader:
+                self.assertEqual(reader.execute("SELECT value FROM data ORDER BY value").fetchall(),[(1,),(2,)])
+
+    def test_direct_cli_rejects_commands_outside_its_owned_transaction(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"transaction.db"; attached=Path(temp)/"attached.db"; vacuum=Path(temp)/"vacuum.db"
+            with closing(sqlite3.connect(path)) as setup,setup:
+                setup.execute("CREATE TABLE data(value)"); setup.execute("INSERT INTO data VALUES(1)")
+            statements=("BEGIN","COMMIT","ROLLBACK","SAVEPOINT user_savepoint","RELEASE user_savepoint", "ROLLBACK TO user_savepoint",
+                        "PRAGMA journal_mode=WAL","ATTACH DATABASE '"+str(attached).replace("'","''")+"' AS other", "DETACH DATABASE main", "VACUUM", "VACUUM INTO '"+str(vacuum).replace("'","''")+"'")
+            for sql in statements:
+                with self.subTest(sql=sql):
+                    run=subprocess.run([sys.executable,"-m","datahorizon.cli",str(path),"direct-sql",sql],capture_output=True,text=True,timeout=10)
+                    self.assertEqual(run.returncode,1); self.assertEqual(run.stdout,"")
+                    error=json.loads(run.stderr)
+                    self.assertEqual(error["outcome"],"rejected")
+                    if not sql.startswith("VACUUM"): self.assertEqual(error["code"],"UNSUPPORTED_DIRECT_SQL")
+            self.assertFalse(attached.exists()); self.assertFalse(vacuum.exists())
+            with closing(sqlite3.connect(path)) as reader:
+                self.assertEqual(reader.execute("PRAGMA journal_mode").fetchone()[0],"delete")
+                self.assertEqual(reader.execute("SELECT value FROM data").fetchall(),[(1,)])
+
     def test_openapi_action_examples_execute_every_advertised_operation(self):
         with tempfile.TemporaryDirectory() as temp,LocalService() as client:
             spec=client.request("/openapi.json")
