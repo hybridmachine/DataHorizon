@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from urllib.parse import quote
 import uuid
 
@@ -27,19 +27,29 @@ class UnknownOutcome(RuntimeError):
         self.body={"code":"OUTCOME_UNKNOWN","message":message,"outcome":"unknown","operation_id":operation_id}
 
 
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, url):
+        return None
+
+
 class Client:
     def __init__(self, url, token):
         self.url, self.token = url.rstrip("/"), token
+        # Local bearer credentials and workbook payloads must stay on the
+        # configured connection, independently of ambient proxy settings.
+        self._opener = build_opener(ProxyHandler({}), _NoRedirect())
 
     def request(self, path, body=None):
         data = json.dumps(body, allow_nan=False).encode() if body is not None else None
         request = Request(self.url + path, data=data,
                           headers={"Authorization": "Bearer " + self.token, "Content-Type": "application/json"})
         try:
-            with urlopen(request, timeout=15) as response:
+            with self._opener.open(request, timeout=15) as response:
                 return json.load(response)
         except HTTPError as error:
             try:
+                if 300 <= error.code < 400:
+                    raise ValueError("Service redirects are not allowed") from error
                 body = json.load(error)
             finally:
                 error.close()

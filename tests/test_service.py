@@ -1,10 +1,12 @@
 import json
 from contextlib import closing
 from http.client import IncompleteRead
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
 import subprocess
 import sqlite3
+from socketserver import TCPServer
 import sys
 import tempfile
 import threading
@@ -13,12 +15,85 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from datahorizon.client import APIError, Client, LocalService, UnknownOutcome
+from datahorizon.client import APIError, Client, LocalService, UnknownOutcome, WorkbookClient
 from datahorizon.engine import EngineError, Workbook
 from datahorizon.service import Service
 
 
 class ServiceTests(unittest.TestCase):
+    def test_sdk_and_cli_bypass_ambient_proxies(self):
+        intercepted=[]
+        class Proxy(BaseHTTPRequestHandler):
+            def do_GET(self):
+                intercepted.append((self.path,self.headers.get("Authorization"),self.rfile.read(int(self.headers.get("Content-Length",0)))))
+                self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers()
+                self.wfile.write(b'{"proxy":true}')
+            do_POST=do_GET
+            def log_message(self,*args): pass
+        class Server(ThreadingHTTPServer):
+            def server_bind(self): TCPServer.server_bind(self)
+        with tempfile.TemporaryDirectory() as temp,Server(("127.0.0.1",0),Proxy) as proxy:
+            worker=threading.Thread(target=proxy.serve_forever,kwargs={"poll_interval":0.02},daemon=True); worker.start()
+            proxy_url=f"http://127.0.0.1:{proxy.server_address[1]}"
+            settings={name:proxy_url for name in ("http_proxy","HTTP_PROXY","https_proxy","HTTPS_PROXY","all_proxy","ALL_PROXY")}
+            settings.update(no_proxy="",NO_PROXY="")
+            try:
+                with patch.dict(os.environ,settings),patch("urllib.request._opener",None),LocalService() as client:
+                    capabilities=client.request("/v1/capabilities")
+                    self.assertEqual(len(intercepted),0,"A proxy received a localhost bearer token")
+                    self.assertEqual(capabilities["api_version"],1)
+                    path=Path(temp)/"private.dhwb"
+                    with client.open(path,create=True) as book:
+                        book.set(1,1,"private SDK contents")
+                        run=subprocess.run([sys.executable,"-m","datahorizon.cli","--url",client.url,str(path),"set","A1","private CLI contents"],
+                                           env={**os.environ,"DATAHORIZON_TOKEN":client.token},capture_output=True,text=True,timeout=10)
+                        self.assertEqual(run.returncode,0,run.stderr)
+                        self.assertEqual(book.read(r2=1,c2=1)["cells"][0]["value"],"private CLI contents")
+                    self.assertEqual(len(intercepted),0,"A proxy received credentials or workbook contents")
+            finally:
+                proxy.shutdown(); worker.join(3)
+
+    def test_sdk_never_follows_service_redirects(self):
+        intercepted=[]
+        class Receiver(BaseHTTPRequestHandler):
+            def do_GET(self):
+                intercepted.append(self.command)
+                self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers()
+                self.wfile.write(b'{}')
+            do_POST=do_GET
+            def log_message(self,*args): pass
+        class Server(ThreadingHTTPServer):
+            def server_bind(self): TCPServer.server_bind(self)
+        with Server(("127.0.0.1",0),Receiver) as receiver:
+            class Redirect(Receiver):
+                def do_GET(self):
+                    self.rfile.read(int(self.headers.get("Content-Length",0)))
+                    self.send_response(int(self.path[1:]) if self.path[1:].isdigit() else 307)
+                    self.send_header("Location",f"http://127.0.0.1:{receiver.server_address[1]}/capture")
+                    self.send_header("Content-Type","application/json"); self.end_headers()
+                    self.wfile.write(b'{"operation_id":"redirected-operation","outcome":"rolled_back","code":"FAKE","message":"Not a terminal receipt"}')
+                do_POST=do_GET
+            with Server(("127.0.0.1",0),Redirect) as origin:
+                servers=(origin,receiver)
+                workers=[threading.Thread(target=server.serve_forever,kwargs={"poll_interval":0.02},daemon=True) for server in servers]
+                for worker in workers: worker.start()
+                try:
+                    client=Client(f"http://127.0.0.1:{origin.server_address[1]}","redirect-test-token")
+                    for status in (301,302,303,307,308):
+                        for body in (None,{"private":"workbook contents"}):
+                            with self.subTest(status=status,body=body):
+                                with self.assertRaisesRegex(ValueError,"redirect"):
+                                    client.request(f"/{status}",body)
+                                self.assertEqual(len(intercepted),0)
+                    book=WorkbookClient(client,{"id":"test","state":"state"})
+                    with self.assertRaises(UnknownOutcome):
+                        book.apply("edit",operation_id="redirected-operation",cells=[{"row":1,"col":1,"source":"private"}])
+                    self.assertEqual(book.pending_operation,"redirected-operation")
+                    self.assertEqual(len(intercepted),0)
+                finally:
+                    for server in servers: server.shutdown()
+                    for worker in workers: worker.join(3)
+
     def test_loopback_startup_does_not_depend_on_hostname_resolution(self):
         with patch("socket.getfqdn",side_effect=AssertionError("Loopback startup must not resolve hostnames")),Service() as server:
             self.assertEqual(server.server_name,"localhost")

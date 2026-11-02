@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 73 Python tests and 36 Qt contract cases.
+The review regression suite includes 75 Python tests and 37 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -272,3 +272,14 @@ literals while retaining restrictions for real sheet separators and unclassified
 exclamation marks. The regression verifies all three operations preserve the
 broken formula and its error. Additional cases cover errors inside expressions,
 quoted names and actual sheet references adjacent to error literals.
+
+Cycle 13 published no inline issues but raised proxy-mediated exposure of local
+credentials and workbook contents. A capture-server regression confirmed the
+SDK sent its bearer token through an ambient HTTP proxy. The SDK and managed
+CLI now use a private proxy-disabled opener; Qt also explicitly disables proxies.
+Redirect regressions reproduced SDK credential forwarding and Qt forwarding of
+a redirected POST. Both transports now reject redirects, discard redirect bodies
+as receipts and preserve pending mutation IDs. Tests cover SDK/CLI edits with
+ambient proxies, HTTP redirect variants and a Qt redirect carrying a forged
+rollback receipt. This completes the two further authorized cycles; final fixes
+are validated without requesting another review.

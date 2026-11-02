@@ -47,6 +47,13 @@ The first stdout line contains the service URL and bearer token. Keep it private
 Supply the bearer token in the explorer or SDK. External binding is disabled.
 The GUI can attach using `DataHorizon --connect http://127.0.0.1:PORT` with the
 DATAHORIZON_TOKEN environment variable. Attached services survive GUI shutdown.
+Desktop, SDK and managed CLI requests use direct connections independently of
+system/application proxy settings and `*_proxy` environment variables. The SDK
+uses a private [proxy-disabled opener](https://docs.python.org/3.13/library/urllib.request.html#urllib.request.ProxyHandler);
+Qt sets [NoProxy](https://doc.qt.io/qt-6.8/qnetworkaccessmanager.html#setProxy).
+Clients reject service redirects instead of forwarding credentials or workbook
+payloads to another endpoint. A redirected mutation retains its pending ID for
+reconciliation; a redirect body cannot supply a terminal operation receipt.
 
 ## Everyday use
 

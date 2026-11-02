@@ -29,6 +29,7 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QNetworkReply>
+#include <QNetworkProxy>
 #include <QTabBar>
 #include <QTimer>
 #include <QStyleOptionViewItem>
@@ -498,6 +499,41 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(called,3000);
         QVERIFY(message.contains("4 MiB")); QVERIFY(RestClient::validReceipt(receipt,"oversized"));
         QCOMPARE(receipt["outcome"].toString(),QString("rejected")); QCOMPARE(connections.count(),0);
+    }
+    void localRequestsBypassProxiesAndNeverFollowRedirects() {
+        QTcpServer origin, proxy;
+        origin.setProxy(QNetworkProxy::NoProxy); proxy.setProxy(QNetworkProxy::NoProxy);
+        QVERIFY(origin.listen(QHostAddress::LocalHost,0)); QVERIFY(proxy.listen(QHostAddress::LocalHost,0));
+        QSignalSpy intercepted(&proxy,&QTcpServer::newConnection);
+        auto serve=[this](QTcpServer &server,const QByteArray &response) {
+            return connect(&server,&QTcpServer::newConnection,this,[&server,response] {
+                auto *socket=server.nextPendingConnection(); connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
+                connect(socket,&QTcpSocket::readyRead,socket,[socket,response] {
+                    auto request=socket->property("request").toByteArray()+socket->readAll(); socket->setProperty("request",request);
+                    const auto end=request.indexOf("\r\n\r\n"); if(end<0 || socket->property("handled").toBool()) return;
+                    const auto length=QRegularExpression("Content-Length: (\\d+)",QRegularExpression::CaseInsensitiveOption).match(QString::fromLatin1(request.left(end))).captured(1).toInt();
+                    if(request.size()<end+4+length) return;
+                    socket->setProperty("handled",true); socket->write(response); socket->disconnectFromHost();
+                });
+            });
+        };
+        serve(proxy,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{}");
+        const auto previous=QNetworkProxy::applicationProxy();
+        auto restore=qScopeGuard([previous]{QNetworkProxy::setApplicationProxy(previous);});
+        QNetworkProxy::setApplicationProxy(QNetworkProxy(QNetworkProxy::HttpProxy,"127.0.0.1",proxy.serverPort()));
+        RestClient client; client.configure("http://127.0.0.1:"+QString::number(origin.serverPort()),"private-test-token");
+        auto direct=serve(origin,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 11\r\n\r\n{\"ok\":true}");
+        bool done=false; QJsonObject result; QString error;
+        client.request("/direct",{},[&](QJsonObject value,QString message){result=value;error=message;done=true;},false);
+        QTRY_VERIFY_WITH_TIMEOUT(done,3000);
+        QCOMPARE(intercepted.count(),0); QVERIFY2(error.isEmpty(),qPrintable(error)); QVERIFY(result["ok"].toBool());
+        disconnect(direct);
+        const QByteArray fake="{\"operation_id\":\"redirected-operation\",\"outcome\":\"rolled_back\",\"code\":\"FAKE\",\"message\":\"Not a terminal receipt\"}";
+        serve(origin,"HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:"+QByteArray::number(proxy.serverPort())+"/capture\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(fake.size())+"\r\n\r\n"+fake);
+        done=false;
+        client.request("/redirect",{{"operation_id","redirected-operation"},{"private","workbook contents"}},[&](QJsonObject value,QString message){result=value;error=message;done=true;});
+        QTRY_VERIFY_WITH_TIMEOUT(done,3000);
+        QCOMPARE(intercepted.count(),0); QVERIFY(!error.isEmpty()); QVERIFY(result.isEmpty());
     }
     void invalidHttpAcknowledgementsAreErrors() {
         QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost,0));

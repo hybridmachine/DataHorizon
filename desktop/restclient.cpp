@@ -2,11 +2,15 @@
 #include "restclient.h"
 #include <QJsonDocument>
 #include <QNetworkReply>
+#include <QNetworkProxy>
 #include <QNetworkRequest>
 #include <QTimer>
 #include <cmath>
 
-RestClient::RestClient(QObject *parent) : QObject(parent), m_network(this) {}
+RestClient::RestClient(QObject *parent) : QObject(parent), m_network(this) {
+    m_network.setProxy(QNetworkProxy::NoProxy);
+    m_network.setRedirectPolicy(QNetworkRequest::ManualRedirectPolicy);
+}
 
 void RestClient::configure(const QString &url, const QString &token) {
     ++m_generation;
@@ -36,7 +40,11 @@ void RestClient::request(const QString &path, const QJsonObject &body, Callback 
         const auto document = QJsonDocument::fromJson(reply->readAll(), &parseError);
         auto object = document.object();
         QString error;
-        if (reply->error()!=QNetworkReply::NoError) {
+        const auto status=reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (status>=300 && status<400) {
+            object={};
+            error="Service redirects are not allowed";
+        } else if (reply->error()!=QNetworkReply::NoError) {
             error=object.value("message").toString();
             if (error.isEmpty()) error=reply->errorString();
         }
