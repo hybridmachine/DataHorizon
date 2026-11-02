@@ -22,6 +22,7 @@ from .hooks import HookFailure, invoke
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
 MAX_REVISION = 2**63-1
+MAX_SHEET_POSITION = 2**63-1
 SNAPSHOT_SECONDS = 5
 NUMBER_SOURCE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 SCHEMA = """
@@ -664,7 +665,7 @@ class Workbook:
                 elif kind == "sheet_add":
                     name = request.get("name", "Sheet")
                     self.check_name(name)
-                    self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (str(uuid.uuid4()), name, self.db.execute("SELECT coalesce(max(position),-1)+1 FROM sheets").fetchone()[0]))
+                    self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (str(uuid.uuid4()), name, self.next_sheet_position()))
                 elif kind == "sheet_rename":
                     target = self.sheet(request.get("sheet"))
                     self.check_name(request.get("name"))
@@ -680,7 +681,7 @@ class Workbook:
                     require(count <= MAX_CELLS, "LIMIT", "Sheet duplication exceeds 10,000 cells")
                     require(not self.has_cross_sheet_formulas(), "REFERENCE_TRANSFORM_UNAVAILABLE", "Duplicate is unavailable while cross-sheet formulas exist")
                     new = str(uuid.uuid4())
-                    self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (new, request["name"], self.db.execute("SELECT coalesce(max(position),-1)+1 FROM sheets").fetchone()[0]))
+                    self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (new, request["name"], self.next_sheet_position()))
                     for row, col, source, input_kind, style in self.db.execute("SELECT row,col,source,kind,style FROM cells WHERE sheet_id=?", (target,)):
                         self.put(new, row, col, {"source":source, "kind":input_kind, "style":json.loads(style)})
                 elif kind == "sheet_reorder":
@@ -772,6 +773,14 @@ class Workbook:
     def check_name(name):
         require(isinstance(name, str) and 0 < len(name) <= 31 and not re.search(r"[\[\]:*?/\\!\x00-\x1f]", name),
                 "INVALID_NAME", "Sheet name must be 1-31 characters without []:*?/\\! or control characters")
+
+    def next_sheet_position(self):
+        with sql_deadline(self.db,self.deadline):
+            position = self.db.execute("SELECT max(position) FROM sheets").fetchone()[0]
+        require(type(position) is int and 0<=position<MAX_SHEET_POSITION,
+                "POSITION_LIMIT","Reorder sheets before adding or duplicating another sheet; display positions are exhausted",409)
+        # Check in Python before addition: SQLite promotes integer overflow to REAL.
+        return position+1
 
     def has_cross_sheet_formulas(self):
         with sql_deadline(self.db,self.deadline):

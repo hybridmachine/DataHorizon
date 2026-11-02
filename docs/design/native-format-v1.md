@@ -56,6 +56,10 @@ Only the literal `sqlite_` internal prefix is excluded from the signature;
 similarly named user objects, such as `sqliteX...` triggers, are still rejected.
 The managed revision remains an integer from 0 through 2^63−1. At the maximum,
 new mutations roll back with `REVISION_LIMIT`; reads and snapshots remain usable.
+Sheet display positions also remain signed 64-bit integers. When the maximum
+position reaches 2^63−1, Add Sheet and Duplicate Sheet roll back with a durable
+`POSITION_LIMIT` receipt. Reordering the current sheets compacts positions and
+allows appending again. Existing data, reopening and snapshots remain usable.
 
 Committed receipts share the data transaction. Recognized failures roll back
 operation changes to a savepoint while retaining the original writer lock, then

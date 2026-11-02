@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 111 Python tests and 38 Qt contract cases.
+The review regression suite includes 112 Python tests and 38 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -394,3 +394,13 @@ failures and verify durable timeout rollback, real SQLite backup contention,
 invalid external catalogs, incompatible copies and source-preserving rejection.
 All four newly authorized cycles are complete. Final fixes are validated and
 pushed without requesting a fifth external review.
+
+The user authorized up to ten further review/fix cycles, stopping early when
+feedback is clean or cosmetic. Cycle 24 identified sheet-position overflow in
+Add Sheet and Duplicate Sheet: SQLite promoted the increment to REAL, allowing a
+commit that failed native validation later. Both insertions now share a checked
+Python integer increment under the writer lock and reject exhaustion with a
+durable POSITION_LIMIT rollback receipt. The maximum signed position remains
+valid; reordering compacts positions and permits appending again. The regression
+reproduces the corruption on the previous head and verifies both operations,
+receipt replay, unchanged data/catalog, valid reopening/copying and recovery.

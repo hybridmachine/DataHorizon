@@ -49,6 +49,7 @@ test_revision_exhaustion_rolls_back_without_corrupting_the_native_format (test_e
 test_runtime_formula_recursion_is_a_limit_error (test_engine.EngineTests.test_runtime_formula_recursion_is_a_limit_error) ... ok
 test_sheet_add_and_duplicate_append_after_deleting_middle_sheet (test_engine.EngineTests.test_sheet_add_and_duplicate_append_after_deleting_middle_sheet) ... ok
 test_sheet_duplicate_order_and_coalesced_noop (test_engine.EngineTests.test_sheet_duplicate_order_and_coalesced_noop) ... ok
+test_sheet_position_exhaustion_rolls_back_and_reorder_recovers (test_engine.EngineTests.test_sheet_position_exhaustion_rolls_back_and_reorder_recovers) ... ok
 test_sheet_reference_detection_distinguishes_error_literals_and_separators (test_engine.EngineTests.test_sheet_reference_detection_distinguishes_error_literals_and_separators) ... ok
 test_sheet_reference_detection_ignores_formula_strings_and_preserves_quoted_names (test_engine.EngineTests.test_sheet_reference_detection_ignores_formula_strings_and_preserves_quoted_names) ... ok
 test_snapshot_busy_wait_has_a_deadline_and_preserves_its_destination (test_engine.EngineTests.test_snapshot_busy_wait_has_a_deadline_and_preserves_its_destination) ... ok
@@ -111,6 +112,6 @@ test_slow_workbook_open_and_close_do_not_block_unrelated_reads (test_service.Ser
 test_unmatched_error_responses_never_clear_pending_operation (test_service.ServiceTests.test_unmatched_error_responses_never_clear_pending_operation) ... ok
 
 ----------------------------------------------------------------------
-Ran 111 tests in 10.109s
+Ran 112 tests in 10.431s
 
 OK

@@ -21,6 +21,34 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class EngineTests(unittest.TestCase):
+    def test_sheet_position_exhaustion_rolls_back_and_reorder_recovers(self):
+        self.edit((1,1,"7"))
+        with closing(sqlite3.connect(self.path)) as direct,direct:
+            direct.execute("UPDATE sheets SET position=?",(2**63-2,))
+        self.apply("sheet_add",name="Last")
+        catalog=self.book.db.execute("SELECT id,name,position,typeof(position) FROM sheets ORDER BY position").fetchall()
+        self.assertEqual([row[2:] for row in catalog],[(2**63-2,"integer"),(2**63-1,"integer")])
+        for action in ("sheet_add","sheet_duplicate"):
+            with self.subTest(action=action):
+                request={"action":action,"sheet":"Sheet1","name":"Overflow","operation_id":str(uuid.uuid4()),"expected_state":self.book.state()}
+                with self.assertRaises(EngineError) as failure: self.book.mutate(request)
+                self.assertEqual(failure.exception.body["code"],"POSITION_LIMIT")
+                self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+                self.assertEqual(self.book.operation(request["operation_id"]),failure.exception.body)
+                with self.assertRaises(EngineError) as retry: self.book.mutate(request)
+                self.assertEqual(retry.exception.body,failure.exception.body)
+                self.assertEqual(self.book.db.execute("SELECT id,name,position,typeof(position) FROM sheets ORDER BY position").fetchall(),catalog)
+        with closing(Workbook(self.path)) as reopened:
+            self.assertEqual(reopened.read("Sheet1",{})["cells"][0]["value"],7)
+        destination=Path(self.temp.name)/"position-limit-copy.dhwb"
+        self.book.snapshot(destination)
+        with closing(Workbook(destination)) as copied:
+            self.assertEqual(copied.read("Sheet1",{})["cells"][0]["value"],7)
+        self.apply("sheet_reorder",order=[row[0] for row in catalog])
+        self.apply("sheet_add",name="Added")
+        self.apply("sheet_duplicate",name="Copy")
+        self.assertEqual(self.book.db.execute("SELECT position FROM sheets ORDER BY position").fetchall(),[(0,),(1,),(2,),(3,)])
+
     def test_formula_preflight_sql_obeys_the_operation_deadline(self):
         sheet=self.book.info()["sheets"][0]["id"]
         with closing(sqlite3.connect(self.path)) as direct,direct:
