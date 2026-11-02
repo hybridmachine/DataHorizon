@@ -192,6 +192,16 @@ changes and committing their failure receipt. An unconfirmed receipt remains unk
 requires lookup before retry. Workbook clients
 can be context managers or closed explicitly to release their service handle;
 other clients' handles remain valid. The service caps open engines and handles.
+Slow construction, metadata loading and close operations serialize only the
+same workbook path. The shared registry remains available for unrelated
+workbooks; concurrent opens reserve capacity and share one engine per path.
+
+SDK context managers preserve a primary exception if cleanup also fails; its
+`cleanup_errors` details and exception notes report the secondary failure. When
+the body succeeds but cleanup fails, the SDK raises `CleanupError` with
+`phase=cleanup` and the last confirmed receipt in `body["last_operation"]`, when
+available. This error does not reject earlier operations. Pending unknown writes
+retain their `UnknownOutcome` guard instead of being relabeled as cleanup errors.
 
 ```python
 from datahorizon.client import LocalService

@@ -16,13 +16,163 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from datahorizon.client import APIError, Client, LocalService, UnknownOutcome, WorkbookClient
+from datahorizon.client import APIError, CleanupError, Client, LocalService, UnknownOutcome, WorkbookClient
 from datahorizon import cli
 from datahorizon.engine import EngineError, Workbook
 from datahorizon.service import Service
 
 
 class ServiceTests(unittest.TestCase):
+    def test_concurrent_opens_of_one_path_share_a_single_engine(self):
+        with tempfile.TemporaryDirectory() as temp,Service() as server:
+            path=str(Path(temp)/"shared.dhwb")
+            entered,release,second_done=threading.Event(),threading.Event(),threading.Event()
+            results=[]; errors=[]; construct=Workbook.__init__
+            def blocked(instance,*args,**kwargs):
+                if kwargs.get("create"):
+                    entered.set(); release.wait(8)
+                construct(instance,*args,**kwargs)
+            def open_book(create):
+                try: results.append(server.dispatch("POST","/v1/open",{"path":path,"create":create}))
+                except Exception as error: errors.append(error)
+                finally:
+                    if not create: second_done.set()
+            first=threading.Thread(target=open_book,args=(True,),daemon=True)
+            second=threading.Thread(target=open_book,args=(False,),daemon=True)
+            try:
+                with patch.object(Workbook,"__init__",new=blocked):
+                    first.start(); self.assertTrue(entered.wait(3)); second.start()
+                    self.assertFalse(second_done.wait(0.1),"Open bypassed an in-progress create of the same file")
+                    release.set(); first.join(5); second.join(5)
+                self.assertEqual(errors,[]); self.assertEqual(len(results),2)
+                self.assertNotEqual(results[0]["id"],results[1]["id"])
+                self.assertEqual(results[0]["workbook_id"],results[1]["workbook_id"])
+                self.assertEqual(len(set(server.workbooks.values())),1)
+                server.dispatch("POST","/v1/workbooks/"+results[0]["id"]+"/close",{})
+                self.assertEqual(server.dispatch("GET","/v1/workbooks/"+results[1]["id"],{})["id"],results[1]["id"])
+                server.dispatch("POST","/v1/workbooks/"+results[1]["id"]+"/close",{})
+                self.assertEqual(server.workbooks,{})
+            finally:
+                release.set()
+                if first.ident: first.join(5)
+                if second.ident: second.join(5)
+
+    def test_slow_workbook_open_and_close_do_not_block_unrelated_reads(self):
+        for phase in ("metadata","construct","close"):
+            with self.subTest(phase=phase),tempfile.TemporaryDirectory() as temp,Service() as server:
+                serving=threading.Thread(target=server.serve_forever,kwargs={"poll_interval":0.02},daemon=True); serving.start()
+                client=Client(f"http://127.0.0.1:{server.server_port}",server.token)
+                busy=client.open(Path(temp)/"busy.dhwb",create=True)
+                independent=client.open(Path(temp)/"independent.dhwb",create=True); independent.set(1,1,"7")
+                native=server.workbooks[busy.info["id"]]
+                entered,release,read_done=threading.Event(),threading.Event(),threading.Event()
+                errors=[]; reads=[]
+                def pause(): entered.set(); release.wait(8)
+                if phase=="construct":
+                    path=Path(temp)/"new.dhwb"; construct=Workbook.__init__
+                    def blocked(instance,*args,**kwargs):
+                        if Path(args[0]).resolve()==path.resolve(): pause()
+                        construct(instance,*args,**kwargs)
+                    patcher=patch.object(Workbook,"__init__",new=blocked)
+                    action=lambda:client.open(path,create=True)
+                else:
+                    method=native.info if phase=="metadata" else native.close
+                    def blocked(): pause(); return method()
+                    patcher=patch.object(native,"info" if phase=="metadata" else "close",side_effect=blocked)
+                    action=(lambda:client.open(busy.info["path"])) if phase=="metadata" else busy.close
+                def operate():
+                    try: action()
+                    except Exception as error: errors.append(error)
+                def read():
+                    try: reads.append(independent.read(r2=1,c2=1))
+                    except Exception as error: errors.append(error)
+                    finally: read_done.set()
+                operation=threading.Thread(target=operate,daemon=True); reader=threading.Thread(target=read,daemon=True)
+                try:
+                    with patcher:
+                        operation.start(); self.assertTrue(entered.wait(3))
+                        reader.start()
+                        responsive=read_done.wait(3)
+                        release.set(); operation.join(5); reader.join(5)
+                        self.assertTrue(responsive,"An unrelated workbook waited for slow open/close work")
+                        self.assertEqual(errors,[])
+                        self.assertEqual(reads[0]["cells"][0]["value"],7)
+                finally:
+                    release.set()
+                    if operation.ident: operation.join(5)
+                    if reader.ident: reader.join(5)
+                    server.shutdown(); serving.join(3)
+
+    def test_concurrent_opens_reserve_engine_capacity_before_slow_construction(self):
+        with tempfile.TemporaryDirectory() as temp,Service() as server:
+            existing=server.dispatch("POST","/v1/open",{"path":str(Path(temp)/"existing.dhwb"),"create":True})
+            entered,release=threading.Event(),threading.Event(); guard=threading.Lock()
+            successes=[]; failures=[]; constructing=0
+            construct=Workbook.__init__
+            def blocked(instance,*args,**kwargs):
+                nonlocal constructing
+                with guard:
+                    constructing+=1
+                    if constructing==7: entered.set()
+                release.wait(8); construct(instance,*args,**kwargs)
+            def open_book(index):
+                try: successes.append(server.dispatch("POST","/v1/open",{"path":str(Path(temp)/f"new-{index}.dhwb"),"create":True}))
+                except Exception as error: failures.append(error)
+            workers=[threading.Thread(target=open_book,args=(index,),daemon=True) for index in range(8)]
+            try:
+                with patch.object(Workbook,"__init__",new=blocked):
+                    for worker in workers: worker.start()
+                    self.assertTrue(entered.wait(3),"Unrelated constructors were serialized behind the registry")
+                    # Existing work remains available while all remaining engine slots are reserved.
+                    self.assertEqual(server.dispatch("GET","/v1/workbooks/"+existing["id"],{})["id"],existing["id"])
+                    release.set()
+                    for worker in workers: worker.join(5)
+                self.assertEqual(len(successes),7)
+                self.assertEqual(len(failures),1)
+                self.assertIsInstance(failures[0],EngineError)
+                self.assertEqual(failures[0].body["code"],"WORKBOOK_LIMIT")
+                self.assertEqual(len(set(server.workbooks.values())),8)
+            finally:
+                release.set()
+                for worker in workers:
+                    if worker.ident: worker.join(5)
+
+    def test_sdk_cleanup_keeps_the_last_confirmed_receipt(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            book=client.open(Path(temp)/"cleanup.dhwb",create=True)
+            original=client.request
+            def fail_close(path,body=None):
+                if path.endswith("/close"):
+                    raise APIError(503,{"code":"RELEASE_FAILED","message":"Injected cleanup failure","outcome":"rejected"})
+                return original(path,body)
+            with patch.object(client,"request",side_effect=fail_close):
+                with self.assertRaises(CleanupError) as failure:
+                    with book:
+                        receipt=book.set(1,1,"7")
+            self.assertEqual(failure.exception.body["phase"],"cleanup")
+            self.assertEqual(failure.exception.body["last_operation"],receipt)
+            self.assertNotIn("outcome",failure.exception.body)
+            self.assertEqual(book.outcome(receipt["operation_id"]),receipt)
+            book.close()
+
+    def test_sdk_cleanup_does_not_replace_a_durable_mutation_failure(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            book=client.open(Path(temp)/"rejected.dhwb",create=True)
+            original=client.request
+            def fail_close(path,body=None):
+                if path.endswith("/close"): raise ConnectionError("Injected cleanup failure")
+                return original(path,body)
+            with patch.object(client,"request",side_effect=fail_close):
+                with self.assertRaises(APIError) as failure:
+                    with book:
+                        book.apply("edit",cells=[{"row":1,"col":1,"style":None}])
+            error=failure.exception
+            self.assertEqual(error.body["code"],"INVALID_STYLE")
+            self.assertEqual(error.body["outcome"],"rolled_back")
+            self.assertEqual(book.outcome(error.body["operation_id"]),error.body)
+            self.assertEqual(error.cleanup_errors[0]["phase"],"cleanup")
+            book.close()
+
     def test_cli_preserves_a_committed_receipt_when_handle_release_fails(self):
         class ReleaseFailure(BaseHTTPRequestHandler):
             def do_POST(self):

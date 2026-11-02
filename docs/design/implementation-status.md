@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 81 Python tests and 37 Qt contract cases.
+The review regression suite includes 86 Python tests and 37 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -314,3 +314,13 @@ from handle release. The CLI now preserves the completed result and successful
 exit status while reporting cleanup separately with the mutation ID and outcome.
 Regressions cover HTTP, malformed-JSON and truncated cleanup failures, plus lost
 mutation acknowledgements that must retain an unknown outcome and nonzero exit.
+
+Cycle 17 published no inline issues but identified SDK context cleanup masking
+primary outcomes and shared registry locking stalling unrelated workbooks. SDK
+context exits now preserve the primary exception and attach cleanup details;
+cleanup-only failures use a separate error with the last confirmed receipt.
+The service uses per-path access gates and brief registry updates, with reserved
+engine/handle capacity during slow opens. Slow metadata, construction and close
+regressions fail against the prior code and pass with independent reads kept
+available. Parallel opens respect the engine cap and concurrent opens of one
+file share one engine; releasing one handle preserves the other client.

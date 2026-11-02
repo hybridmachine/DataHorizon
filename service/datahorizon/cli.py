@@ -122,7 +122,9 @@ def main():
             return
         code = "INVALID_ADDRESS" if isinstance(error, FormulaError) else "READ_ONLY" if getattr(error,"sqlite_errorcode",None)==sqlite3.SQLITE_READONLY else "CLIENT_ERROR"
         fallback = {"code": code, "message": str(error), "outcome": "rejected"}
-        print(json.dumps(getattr(error, "body", fallback)), file=sys.stderr)
+        body=dict(getattr(error, "body", fallback))
+        if getattr(error,"cleanup_errors",None): body["cleanup_errors"]=error.cleanup_errors
+        print(json.dumps(body), file=sys.stderr)
         sys.exit(1)
 
 

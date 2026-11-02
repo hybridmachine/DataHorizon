@@ -54,6 +54,8 @@ test_cli_preserves_a_committed_receipt_when_handle_release_fails (test_service.S
 test_cli_reports_truncated_http_reads_as_json (test_service.ServiceTests.test_cli_reports_truncated_http_reads_as_json) ... ok
 test_client_handles_release_without_closing_other_clients (test_service.ServiceTests.test_client_handles_release_without_closing_other_clients) ... ok
 test_clipboard_read_uses_bulk_limit_in_one_consistent_state (test_service.ServiceTests.test_clipboard_read_uses_bulk_limit_in_one_consistent_state) ... ok
+test_concurrent_opens_of_one_path_share_a_single_engine (test_service.ServiceTests.test_concurrent_opens_of_one_path_share_a_single_engine) ... ok
+test_concurrent_opens_reserve_engine_capacity_before_slow_construction (test_service.ServiceTests.test_concurrent_opens_reserve_engine_capacity_before_slow_construction) ... ok
 test_csv_preview_bounds_blank_records_as_well_as_fields (test_service.ServiceTests.test_csv_preview_bounds_blank_records_as_well_as_fields) ... ok
 test_direct_cli_honors_readonly_and_returns_structured_sqlite_errors (test_service.ServiceTests.test_direct_cli_honors_readonly_and_returns_structured_sqlite_errors) ... ok
 test_direct_cli_owns_cte_mutations_until_output_can_be_serialized (test_service.ServiceTests.test_direct_cli_owns_cte_mutations_until_output_can_be_serialized) ... ok
@@ -77,10 +79,13 @@ test_receipts_with_url_delimiters_are_retrievable (test_service.ServiceTests.tes
 test_rest_sdk_cli_share_managed_path (test_service.ServiceTests.test_rest_sdk_cli_share_managed_path) ... ok
 test_retry_waiting_for_writer_keeps_pending_until_original_commit_is_reconciled (test_service.ServiceTests.test_retry_waiting_for_writer_keeps_pending_until_original_commit_is_reconciled) ... ok
 test_sdk_and_cli_bypass_ambient_proxies (test_service.ServiceTests.test_sdk_and_cli_bypass_ambient_proxies) ... ok
+test_sdk_cleanup_does_not_replace_a_durable_mutation_failure (test_service.ServiceTests.test_sdk_cleanup_does_not_replace_a_durable_mutation_failure) ... ok
+test_sdk_cleanup_keeps_the_last_confirmed_receipt (test_service.ServiceTests.test_sdk_cleanup_keeps_the_last_confirmed_receipt) ... ok
 test_sdk_never_follows_service_redirects (test_service.ServiceTests.test_sdk_never_follows_service_redirects) ... ok
+test_slow_workbook_open_and_close_do_not_block_unrelated_reads (test_service.ServiceTests.test_slow_workbook_open_and_close_do_not_block_unrelated_reads) ... ok
 test_unmatched_error_responses_never_clear_pending_operation (test_service.ServiceTests.test_unmatched_error_responses_never_clear_pending_operation) ... ok
 
 ----------------------------------------------------------------------
-Ran 81 tests in 8.859s
+Ran 86 tests in 8.792s
 
 OK

@@ -27,6 +27,34 @@ class UnknownOutcome(RuntimeError):
         self.body={"code":"OUTCOME_UNKNOWN","message":message,"outcome":"unknown","operation_id":operation_id}
 
 
+class CleanupError(RuntimeError):
+    """Context cleanup failed; this does not reject earlier data operations."""
+
+    def __init__(self, error, receipt=None):
+        super().__init__(str(error))
+        self.body={"code":"CLEANUP_FAILED","phase":"cleanup","message":str(error)}
+        if receipt is not None:
+            self.body["last_operation"]=dict(receipt)
+
+
+def _exit_context(owner, error):
+    try:
+        owner.close()
+    except Exception as cleanup:
+        if isinstance(cleanup,UnknownOutcome):
+            if error is None:
+                raise
+            if isinstance(error,UnknownOutcome) and error.operation_id==cleanup.operation_id:
+                return False
+        failure=CleanupError(cleanup,getattr(owner,"_last_receipt",None))
+        if error is None:
+            raise failure from cleanup
+        # Preserve the original exception and durable receipt, including its ID.
+        error.add_note("Context cleanup also failed: "+str(cleanup))
+        error.cleanup_errors=[*getattr(error,"cleanup_errors",[]),failure.body]
+    return False
+
+
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, request, response, code, message, headers, url):
         return None
@@ -68,6 +96,7 @@ class WorkbookClient:
         self.base = "/v1/workbooks/" + info["id"]
         self.state = info["state"]
         self.pending_operation = None
+        self._last_receipt = None
 
     def refresh(self):
         self.info = self.client.request(self.base)
@@ -104,12 +133,14 @@ class WorkbookClient:
                     and isinstance(error.body.get("message"), str)
                     and error.body.get("operation_id") == request["operation_id"]):
                 self.pending_operation=None
+                self._last_receipt=dict(error.body)
                 raise
             raise UnknownOutcome(request["operation_id"],str(error)) from error
         except (OSError, ValueError, HTTPException) as error:
             raise UnknownOutcome(request["operation_id"],str(error)) from error
         self.pending_operation=None
         self.state = response["state"]
+        self._last_receipt=dict(response)
         return response
 
     def set(self, row, col, source, sheet="Sheet1", kind="auto"):
@@ -123,6 +154,7 @@ class WorkbookClient:
             raise UnknownOutcome(operation_id, str(error)) from error
         if operation_id==self.pending_operation and receipt.get("outcome") in ("committed","rejected","rolled_back"):
             self.pending_operation=None
+            self._last_receipt=dict(receipt)
             self.refresh()
         return receipt
 
@@ -144,8 +176,8 @@ class WorkbookClient:
     def __enter__(self):
         return self
 
-    def __exit__(self, *_):
-        self.close()
+    def __exit__(self, _type, error, _traceback):
+        return _exit_context(self,error)
 
 
 class LocalService:
@@ -183,5 +215,5 @@ class LocalService:
     def __enter__(self):
         return self.client
 
-    def __exit__(self, *_):
-        self.close()
+    def __exit__(self, _type, error, _traceback):
+        return _exit_context(self,error)

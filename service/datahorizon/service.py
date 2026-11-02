@@ -1,6 +1,7 @@
 """Authenticated loopback-only development REST service; no third-party runtime."""
 
 import argparse
+from contextlib import contextmanager
 import csv
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -141,14 +142,14 @@ def openapi():
         parameters = [{"name": name, "in": "path", "required": True, "schema": {"type": "string"}}
                       for name in ("workbook", "operation") if "{" + name + "}" in path]
         operation = {"summary": summary, "parameters": parameters,
-                     "responses": {"200": {"description": "JSON result"}, **{str(status):{"description":"Structured error; inspect outcome and operation_id before deciding whether a mutation finished"} for status in (400,401,403,404,409,413,500)}},
+                     "responses": {"200": {"description": "JSON result"}, **{str(status):{"description":"Structured error; inspect outcome and operation_id before deciding whether a mutation finished"} for status in (400,401,403,404,409,413,500,503)}},
                      "security": [{"localToken": []}]}
         if method == "post":
             name = "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "list":"ListRequest","find":"FindRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
-        for status in ("400","401","403","404","409","413","500"):
+        for status in ("400","401","403","404","409","413","500","503"):
             operation["responses"][status]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}
         if path.endswith("/operations"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Receipt"}}}
@@ -189,6 +190,9 @@ class Service(ThreadingHTTPServer):
     def __init__(self, port=0, token=None, handler=None):
         self.token, self.handler = token or secrets.token_urlsafe(32), handler
         self.workbooks, self.registry_lock = {}, threading.RLock()
+        self._path_locks, self._opening = {}, set()
+        self._reserved_handles = 0
+        self._stopping = False
         super().__init__(("127.0.0.1", port), RequestHandler)
 
     def server_bind(self):
@@ -199,36 +203,78 @@ class Service(ThreadingHTTPServer):
 
     def server_close(self):
         super().server_close()
-        for book in set(self.workbooks.values()):
-            with book.lock:
-                book.close()
+        with self.registry_lock:
+            self._stopping = True
+            books = set(self.workbooks.values())
+        for book in books:
+            with self._path_access(book.path):
+                with book.lock:
+                    book.close()
+                with self.registry_lock:
+                    self.workbooks = {handle:engine for handle,engine in self.workbooks.items() if engine is not book}
+
+    @contextmanager
+    def _path_access(self, path):
+        with self.registry_lock:
+            entry = self._path_locks.setdefault(path,[threading.RLock(),0])
+            entry[1] += 1
+        try:
+            # Never wait for a workbook while holding the shared registry.
+            with entry[0]:
+                yield
+        finally:
+            with self.registry_lock:
+                entry[1] -= 1
+                if not entry[1]:
+                    self._path_locks.pop(path)
+
+    def _open(self, body):
+        require(isinstance(body.get("path"), str) and bool(body["path"]), "INVALID_PATH", "A server-local workbook path is required")
+        create, readonly = boolean(body.get("create", False), "create"), boolean(body.get("readonly", False), "readonly")
+        path = Path(body["path"]).expanduser().resolve()
+        with self._path_access(path):
+            with self.registry_lock:
+                require(not self._stopping,"SERVICE_STOPPING","Service is stopping",503)
+                require(len(self.workbooks)+self._reserved_handles<128,"HANDLE_LIMIT","Release unused workbook handles before opening more",409)
+                book = next((book for book in self.workbooks.values() if book.path==path),None)
+                fresh = book is None
+                if fresh:
+                    require(len(set(self.workbooks.values()))+len(self._opening)<8,"WORKBOOK_LIMIT","Close unused workbooks before opening more",409)
+                    self._opening.add(path)
+                else:
+                    require(not create, "FILE_EXISTS", "Workbook already exists", 409)
+                    require(book.readonly == readonly, "OPEN_MODE_CONFLICT", "Workbook is already open in a different mode", 409)
+                self._reserved_handles += 1
+                reserved = True
+            try:
+                if fresh:
+                    book = Workbook(path, create=create, readonly=readonly, handler=self.handler)
+                info = book.info()
+                with self.registry_lock:
+                    require(not self._stopping,"SERVICE_STOPPING","Service is stopping",503)
+                    handle = str(uuid.uuid4())
+                    self.workbooks[handle] = book
+                    self._reserved_handles -= 1
+                    if fresh:
+                        self._opening.discard(path)
+                    reserved = False
+                return {**info,"id":handle,"workbook_id":book.id}
+            except BaseException:
+                if fresh and book is not None:
+                    book.close()
+                raise
+            finally:
+                if reserved:
+                    with self.registry_lock:
+                        self._reserved_handles -= 1
+                        if fresh:
+                            self._opening.discard(path)
 
     def dispatch(self, method, path, body):
         if method == "GET" and path == "/v1/capabilities":
             return CAPABILITIES
         if method == "POST" and path == "/v1/open":
-            require(isinstance(body.get("path"), str) and bool(body["path"]), "INVALID_PATH", "A server-local workbook path is required")
-            create, readonly = boolean(body.get("create", False), "create"), boolean(body.get("readonly", False), "readonly")
-            path = Path(body["path"]).expanduser().resolve()
-            with self.registry_lock:
-                require(len(self.workbooks)<128,"HANDLE_LIMIT","Release unused workbook handles before opening more",409)
-                for book in list(self.workbooks.values()):
-                    if book.path == path:
-                        require(not create, "FILE_EXISTS", "Workbook already exists", 409)
-                        require(book.readonly == readonly, "OPEN_MODE_CONFLICT", "Workbook is already open in a different mode", 409)
-                        info=book.info()
-                        handle=str(uuid.uuid4()); self.workbooks[handle]=book
-                        return {**info, "id": handle, "workbook_id": book.id}
-                require(len(set(self.workbooks.values()))<8,"WORKBOOK_LIMIT","Close unused workbooks before opening more",409)
-                book = Workbook(path, create=create, readonly=readonly, handler=self.handler)
-                try:
-                    info=book.info()
-                except BaseException:
-                    book.close()
-                    raise
-                handle = str(uuid.uuid4())
-                self.workbooks[handle] = book
-                return {**info, "id": handle, "workbook_id": book.id}
+            return self._open(body)
         if method == "POST" and path == "/v1/import/csv/preview":
             text = body.get("csv")
             delimiter = body.get("delimiter", ",")
@@ -251,15 +297,25 @@ class Service(ThreadingHTTPServer):
             book = self.workbooks.get(parts[2])
         require(book is not None, "NOT_FOUND", "Workbook is not open in this service", 404)
         suffix = parts[3:]
+        with self._path_access(book.path):
+            with self.registry_lock:
+                require(self.workbooks.get(parts[2]) is book,"NOT_FOUND","Workbook handle was released",404)
+            return self._dispatch_book(method,parts[2],book,suffix,body)
+
+    def _dispatch_book(self, method, handle, book, suffix, body):
         if method == "POST" and suffix == ["close"]:
             with self.registry_lock:
-                self.workbooks.pop(parts[2],None)
-                if book not in self.workbooks.values():
-                    with book.lock:
-                        book.close()
+                last = sum(engine is book for engine in self.workbooks.values())==1
+                if not last:
+                    self.workbooks.pop(handle)
+            if last:
+                with book.lock:
+                    book.close()
+                with self.registry_lock:
+                    self.workbooks.pop(handle)
             return {"closed":True}
         if method == "GET" and not suffix:
-            return {**book.info(), "id": parts[2], "workbook_id": book.id}
+            return {**book.info(), "id": handle, "workbook_id": book.id}
         if method == "POST" and suffix == ["range"]:
             return book.read(body.get("sheet", "Sheet1"), body)
         if method == "POST" and suffix == ["clipboard"]:
