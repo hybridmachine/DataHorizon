@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 97 Python tests and 38 Qt contract cases.
+The review regression suite includes 102 Python tests and 38 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -356,3 +356,12 @@ failure instead of storing a floating-point revision. List criteria reject
 non-object members, and Save retains source row/column through a sorted-list
 refresh. An independent SDK regression also fixes confirmed-close idempotence
 and prevents requests or pending IDs after a client has closed.
+
+Cycle 21 published no inline issues but found the same destructive cleanup
+pattern in snapshot failures. Failed copies now preserve their destination.
+Creation/copy share exclusive reservation and filesystem identity checks; copies
+check the destination before and after backup and use existing-file mode when
+opening it. Missing identities reject the operation before target initialization.
+Creation also rechecks identity after initialization before returning its engine.
+Regressions replace paths before backup, after backup and during a failed backup,
+and verify foreign contents survive and a changed copy is not reported committed.

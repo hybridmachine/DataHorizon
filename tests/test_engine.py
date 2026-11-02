@@ -10,6 +10,7 @@ import time
 import unittest
 import uuid
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from datahorizon.engine import EngineError, Workbook, encoded
 from datahorizon.formula import coordinates, has_sheet_reference, translate
@@ -18,6 +19,65 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class EngineTests(unittest.TestCase):
+    def test_create_rejects_replacement_after_initialization(self):
+        path=Path(self.temp.name)/"new-path.dhwb"; moved=Path(self.temp.name)/"created.dhwb"
+        data_version=Workbook.data_version
+        def replace_after_loading(book):
+            version=data_version(book); book.db.close(); path.rename(moved); path.write_bytes(b"foreign replacement")
+            return version
+        with patch.object(Workbook,"data_version",new=replace_after_loading):
+            with self.assertRaises(EngineError) as failure: Workbook(path,create=True)
+        self.assertEqual(failure.exception.body["code"],"FILE_CHANGED")
+        self.assertEqual(path.read_bytes(),b"foreign replacement")
+        with closing(Workbook(moved)) as created:
+            self.assertEqual(created.info()["sheets"][0]["name"],"Sheet1")
+
+    def test_unidentifiable_snapshot_destination_fails_before_backup(self):
+        self.edit((1,1,"7")); destination=Path(self.temp.name)/"unidentified.dhwb"
+        with patch("datahorizon.engine.os.fstat",return_value=SimpleNamespace(st_ino=0,st_dev=0)):
+            with self.assertRaises(EngineError) as failure: self.book.snapshot(destination)
+        self.assertEqual(failure.exception.body["code"],"FILE_IDENTITY_UNAVAILABLE")
+        self.assertEqual(destination.read_bytes(),b"")
+        self.assertEqual(self.cells()[(1,1)]["value"],7)
+
+    def test_failed_snapshot_preserves_another_writers_replacement(self):
+        self.edit((1,1,"7")); destination=Path(self.temp.name)/"snapshot.dhwb"; moved=Path(self.temp.name)/"owned.dhwb"
+        class FailingBackup:
+            def backup(self,target):
+                target.close(); destination.rename(moved); destination.write_bytes(b"another writer's file")
+                raise OSError("Injected backup failure")
+        with patch.object(self.book,"db",FailingBackup()):
+            with self.assertRaises(OSError): self.book.snapshot(destination)
+        self.assertEqual(destination.read_bytes(),b"another writer's file")
+        self.assertEqual(self.cells()[(1,1)]["value"],7)
+
+    def test_snapshot_rejects_replacement_before_backup_and_preserves_foreign_data(self):
+        self.edit((1,1,"7")); destination=Path(self.temp.name)/"snapshot.dhwb"; moved=Path(self.temp.name)/"reserved.dhwb"
+        connect=sqlite3.connect
+        def replace_then_connect(path,*args,**kwargs):
+            destination.rename(moved)
+            with closing(connect(destination)) as foreign,foreign:
+                foreign.execute("CREATE TABLE foreign_data(value)"); foreign.execute("INSERT INTO foreign_data VALUES('preserve')")
+            return connect(path,*args,**kwargs)
+        with patch("datahorizon.engine.sqlite3.connect",side_effect=replace_then_connect):
+            with self.assertRaises(EngineError) as failure: self.book.snapshot(destination)
+        self.assertEqual(failure.exception.body["code"],"FILE_CHANGED")
+        with closing(connect(destination)) as foreign:
+            self.assertEqual(foreign.execute("SELECT value FROM foreign_data").fetchall(),[("preserve",)])
+
+    def test_snapshot_rejects_replacement_after_backup_without_removing_it(self):
+        self.edit((1,1,"7")); destination=Path(self.temp.name)/"snapshot.dhwb"; moved=Path(self.temp.name)/"completed.dhwb"
+        original=self.book.db
+        class ReplacingBackup:
+            def backup(self,target):
+                original.backup(target); target.close(); destination.rename(moved); destination.write_bytes(b"replacement")
+        with patch.object(self.book,"db",ReplacingBackup()):
+            with self.assertRaises(EngineError) as failure: self.book.snapshot(destination)
+        self.assertEqual(failure.exception.body["code"],"FILE_CHANGED")
+        self.assertEqual(destination.read_bytes(),b"replacement")
+        with closing(Workbook(moved)) as copied:
+            self.assertEqual(copied.read("Sheet1",{})["cells"][0]["value"],7)
+
     def test_sqlite_like_user_trigger_names_cannot_bypass_schema_validation(self):
         self.edit((1,1,"7"))
         with closing(sqlite3.connect(self.path)) as direct,direct:

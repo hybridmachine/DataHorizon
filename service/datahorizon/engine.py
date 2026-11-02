@@ -50,6 +50,26 @@ def require(condition, code, message, status=400):
         raise EngineError(code, message, status)
 
 
+def _reserve_destination(path):
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        created = os.fstat(fd)
+        require(bool(created.st_ino),"FILE_IDENTITY_UNAVAILABLE","This filesystem cannot identify a reserved workbook destination; creation or copying is unavailable",409)
+        return (created.st_dev,created.st_ino)
+    finally:
+        os.close(fd)
+
+
+def _verify_destination(path, identity):
+    if identity is None:
+        return
+    try:
+        current = path.lstat()
+    except FileNotFoundError as error:
+        raise EngineError("FILE_CHANGED","The reserved workbook path was removed",409) from error
+    require((current.st_dev,current.st_ino)==identity,"FILE_CHANGED","The reserved workbook path was replaced",409)
+
+
 def integer(value, lower, upper, name):
     require(type(value) is int and lower <= value <= upper,
             "INVALID_ARGUMENT", f"{name} must be an integer from {lower} to {upper}")
@@ -171,21 +191,13 @@ class Workbook:
         created_identity = None
         if create:
             # Exclusive creation never truncates an existing workbook.
-            fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            try:
-                created = os.fstat(fd)
-                if created.st_ino:
-                    created_identity = (created.st_dev,created.st_ino)
-            finally:
-                os.close(fd)
+            created_identity = _reserve_destination(self.path)
         require(self.path.is_file(), "NOT_FOUND", "Workbook file does not exist", 404)
         self.db = None
         try:
             self.db = sqlite3.connect(self.path.as_uri() + ("?mode=ro" if readonly else "?mode=rw"),
                                       uri=True, isolation_level=None, check_same_thread=False, timeout=1)
-            if created_identity is not None:
-                current = self.path.lstat()
-                require((current.st_dev,current.st_ino)==created_identity,"FILE_CHANGED","The new workbook path was replaced during creation",409)
+            _verify_destination(self.path,created_identity)
             self.db.execute("PRAGMA foreign_keys=ON")
             self.db.execute("PRAGMA synchronous=FULL")
             if create:
@@ -198,6 +210,7 @@ class Workbook:
             require(self.db.execute("PRAGMA quick_check").fetchone()[0] == "ok", "CORRUPT", "SQLite integrity check failed")
             self.id = self.db.execute("SELECT workbook_id FROM dh_meta").fetchone()[0]
             self.version = self.data_version()
+            _verify_destination(self.path,created_identity)
         except Exception:
             if self.db is not None:
                 self.db.close()
@@ -818,17 +831,14 @@ class Workbook:
         with self.lock:
             destination = Path(path).expanduser().resolve()
             require(destination != self.path, "SAME_FILE", "Choose a different path")
-            fd = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            os.close(fd)
+            identity = _reserve_destination(destination)
+            target = sqlite3.connect(destination.as_uri()+"?mode=rw",uri=True)
             try:
-                target = sqlite3.connect(destination)
-                try:
-                    self.db.backup(target)
-                finally:
-                    target.close()
-            except Exception:
-                destination.unlink(missing_ok=True)
-                raise
+                _verify_destination(destination,identity)
+                self.db.backup(target)
+                _verify_destination(destination,identity)
+            finally:
+                target.close()
             return {"path": str(destination), "outcome": "committed"}
 
     def csv_export(self, sheet, args):
