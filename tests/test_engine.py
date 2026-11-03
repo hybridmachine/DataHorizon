@@ -626,6 +626,54 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(EngineError):
             self.apply("redo")
 
+    def test_unchanged_commits_preserve_redo_and_keep_durable_receipts(self):
+        hook=Path(self.temp.name)/"restore_input.py"
+        hook.write_text("def on_change(context, changes):\n"
+                        "    for change in changes:\n"
+                        "        if change['after']['source'] == 'temporary':\n"
+                        "            context.set(change['sheet'], change['row'], change['col'], 'before')\n")
+        for mode in ("coordinates", "identical", "coalesced", "hook"):
+            with self.subTest(mode=mode):
+                self.edit((1,1,"before")); self.edit((1,1,"after")); self.apply("undo")
+                undo,redo=list(self.book.undo),list(self.book.redo)
+                revision=self.book.db.execute("SELECT revision FROM dh_meta").fetchone()[0]
+                edits=[{"row":1,"col":1}]
+                if mode in ("identical","coalesced"):
+                    edits=[{"row":1,"col":1,"source":"before"}]
+                if mode=="coalesced":
+                    edits.insert(0,{"row":1,"col":1,"source":"temporary"})
+                if mode=="hook":
+                    self.book.handler=hook
+                    edits=[{"row":1,"col":1,"source":"temporary"}]
+                request={"action":"edit","cells":edits,"operation_id":str(uuid.uuid4()),
+                         "expected_state":self.book.info()["state"]}
+                try:
+                    receipt=self.book.mutate(request)
+                finally:
+                    self.book.handler=None
+                self.assertEqual(receipt["changed_cells"],0)
+                self.assertEqual(receipt["outcome"],"committed")
+                self.assertEqual(self.book.operation(request["operation_id"]),receipt)
+                self.assertEqual(self.book.mutate(request),receipt)
+                self.assertEqual(self.book.db.execute("SELECT revision FROM dh_meta").fetchone()[0],revision+1)
+                self.assertEqual(self.cells()[(1,1)]["source"],"before")
+                self.assertEqual(self.book.undo,undo)
+                self.assertEqual(self.book.redo,redo)
+                self.apply("redo")
+                self.assertEqual(self.cells()[(1,1)]["source"],"after")
+
+    def test_real_input_or_style_changes_still_clear_redo(self):
+        for edits in ([{"row":1,"col":1,"source":"different"}],
+                      [{"row":1,"col":1,"style":{"bold":True}}]):
+            with self.subTest(edits=edits):
+                self.edit((1,1,"before")); self.edit((1,1,"after")); self.apply("undo")
+                self.assertTrue(self.book.redo)
+                self.assertEqual(self.apply(cells=edits)["changed_cells"],1)
+                self.assertIsNone(self.book.info()["redo"])
+                with self.assertRaises(EngineError) as failure:
+                    self.apply("redo")
+                self.assertEqual(failure.exception.body["code"],"NO_HISTORY")
+
     def test_history_uses_recorded_sheet_after_default_sheet_is_renamed_or_deleted(self):
         self.apply("sheet_rename",name="Renamed")
         self.apply(sheet="Renamed",cells=[{"row":1,"col":1,"source":"7"}])

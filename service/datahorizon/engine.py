@@ -738,12 +738,11 @@ class Workbook:
                 elif kind == "redo":
                     label, _, _ = self.redo.pop()
                     self.undo.append((label, self.changes, self.history_cost(label,self.changes)))
-                else:
+                elif self.changes:
                     self.redo.clear()
-                    if self.changes:
-                        label = request.get("label",kind.title())
-                        self.undo.append((label, self.changes, self.history_cost(label,self.changes)))
-                        self.undo = self.undo[-100:]
+                    label = request.get("label",kind.title())
+                    self.undo.append((label, self.changes, self.history_cost(label,self.changes)))
+                    self.undo = self.undo[-100:]
                 while sum(entry[2] for entry in self.undo + self.redo) > MAX_HISTORY_BYTES:
                     (self.undo if self.undo else self.redo).pop(0)
                 return result

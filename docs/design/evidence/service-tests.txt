@@ -51,6 +51,7 @@ test_paste_relative_references_values_and_atomicity (test_engine.EngineTests.tes
 test_projected_read_column_defaults_match_rectangular_reads (test_engine.EngineTests.test_projected_read_column_defaults_match_rectangular_reads) ... ok
 test_read_response_limit_includes_envelope_and_array_separators (test_engine.EngineTests.test_read_response_limit_includes_envelope_and_array_separators) ... ok
 test_readonly_schema_and_backup (test_engine.EngineTests.test_readonly_schema_and_backup) ... ok
+test_real_input_or_style_changes_still_clear_redo (test_engine.EngineTests.test_real_input_or_style_changes_still_clear_redo) ... ok
 test_receipt_rechecked_after_writer_lock_without_reclassifying_outcome (test_engine.EngineTests.test_receipt_rechecked_after_writer_lock_without_reclassifying_outcome) ... ok
 test_receipt_storage_failure_retains_unknown_outcome_and_releases_transaction (test_engine.EngineTests.test_receipt_storage_failure_retains_unknown_outcome_and_releases_transaction) ... ok
 test_replace_all_rejects_expansion_before_allocating_the_result (test_engine.EngineTests.test_replace_all_rejects_expansion_before_allocating_the_result) ... ok
@@ -75,6 +76,7 @@ test_sum_overflow_cannot_be_hidden_by_comparison_or_condition (test_engine.Engin
 test_supplies_and_reopen (test_engine.EngineTests.test_supplies_and_reopen) ... ok
 test_typed_blank_null_empty_text_and_format (test_engine.EngineTests.test_typed_blank_null_empty_text_and_format) ... ok
 test_unary_boolean_arithmetic_uses_numeric_zero_and_one (test_engine.EngineTests.test_unary_boolean_arithmetic_uses_numeric_zero_and_one) ... ok
+test_unchanged_commits_preserve_redo_and_keep_durable_receipts (test_engine.EngineTests.test_unchanged_commits_preserve_redo_and_keep_durable_receipts) ... ok
 test_unconfirmed_admission_releases_its_transaction_and_keeps_the_id (test_engine.EngineTests.test_unconfirmed_admission_releases_its_transaction_and_keeps_the_id) ... ok
 test_unexpected_failure_has_a_durable_rollback_receipt_and_is_not_reexecuted (test_engine.EngineTests.test_unexpected_failure_has_a_durable_rollback_receipt_and_is_not_reexecuted) ... ok
 test_unidentifiable_snapshot_destination_fails_before_backup (test_engine.EngineTests.test_unidentifiable_snapshot_destination_fails_before_backup) ... ok
@@ -125,6 +127,6 @@ test_slow_workbook_open_and_close_do_not_block_unrelated_reads (test_service.Ser
 test_unmatched_error_responses_never_clear_pending_operation (test_service.ServiceTests.test_unmatched_error_responses_never_clear_pending_operation) ... ok
 
 ----------------------------------------------------------------------
-Ran 125 tests in 10.370s
+Ran 127 tests in 10.799s
 
 OK

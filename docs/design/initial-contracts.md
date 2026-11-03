@@ -139,7 +139,9 @@ It is a new managed operation, runs applicable rules, and may be rejected
 atomically. History is session-scoped, capped at 100 operations and 16 MiB of
 serialized labels and cell changes across Undo and Redo; this is a payload
 budget, not a bound on Python object overhead or process RSS. External edits or
-unsupported structure changes invalidate it. A new edit clears Redo.
+unsupported structure changes invalidate it. Nonstructural operations clear Redo
+only when stored cells actually change. No-op commits preserve Redo while still
+receiving durable receipts and a new state.
 External effects are never represented as undoable. Structure history, external
 change gaps, and persistent history UI are deferred.
 

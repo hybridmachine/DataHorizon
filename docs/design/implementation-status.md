@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 125 Python tests and 68 Qt contract cases.
+The review regression suite includes 127 Python tests and 68 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -479,3 +479,11 @@ Linux CI also exposed a disconnect fixture that held a transport retry forever;
 the proxy now simulates a persistent outage across retries while asserting one
 logical cleanup completion. A subsequent raw socket probe verifies that behavior
 on Qt versions that do not retry the initial request.
+
+Cycle 30 found no new desktop or formula issues, but the interface reviewer
+confirmed that unchanged-input no-op commits cleared Redo. Nonstructural history
+now clears Redo only for actual stored-cell changes after coalescing and hooks.
+The no-op still receives its durable receipt and one revision increment.
+Regressions cover row/column-only input, identical source, coalesced writes and
+a transactional hook restoring the original value, then verify Redo still
+restores the prior result. Real input/style changes still invalidate Redo.
