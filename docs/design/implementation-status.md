@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 121 Python tests and 46 Qt contract cases.
+The review regression suite includes 123 Python tests and 52 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -451,3 +451,17 @@ move source. Clipboard commands and observed clipboard changes now invalidate
 older responses before payload, status or error handling. Eight Qt scenarios
 cover both response orders and newer external/source-editor content, including
 stale error responses. The interface reviewer found no substantive issues.
+
+Cycle 28 local reviewers confirmed the prior fixes and found two further issues.
+SQLite LIKE treated embedded NUL as a terminator, allowing a later cross-sheet
+reference to bypass rename/delete/duplicate protection. A NUL-safe instr filter
+now finds candidate separators before the existing parser classification, still
+under its deadline. Tests cover managed/direct formula inputs, all three guarded
+operations, durable failures and literal-only exclamations on either side of NUL.
+An attached GUI could also submit edits after its server handle was released but
+before the close acknowledgement arrived. Releasing now holds the central busy
+lock across read completions; callbacks are fenced to their handle and service
+URL. Cleanup errors still permit the requested exit, and an older release cannot
+close a different newly opened handle. Six Qt cases cover delayed successful
+release, newer-state metadata, range reads, failed/disconnected cleanup and an
+in-flight Open, alongside existing draft and unknown-outcome close coverage.

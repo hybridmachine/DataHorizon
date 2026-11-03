@@ -410,6 +410,7 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     const auto previous = m_grid->currentIndex();
     const int previousRow=previous.isValid()?m_model->sourceRow(previous.row()):0;
     const int previousColumn=previous.isValid()?previous.column():0;
+    if (info["id"]!=m_info["id"]) m_released=false;
     m_info = info;
     m_tabs->blockSignals(true);
     while (m_tabs->count()) m_tabs->removeTab(0);
@@ -553,9 +554,10 @@ void MainWindow::restartService() {
 }
 
 void MainWindow::setBusy(bool busy, const QString &message) {
-    m_busy = busy; m_model->setBusy(busy); m_toolbar->setEnabled(!busy); m_tabs->setEnabled(!busy);
+    m_busy = busy || m_releasing;
+    m_model->setBusy(m_busy); m_toolbar->setEnabled(!m_busy); m_tabs->setEnabled(!m_busy);
     syncSource();
-    if (!message.isEmpty()) m_status->setText(message);
+    if (!message.isEmpty()) m_status->setText(m_releasing ? "Closing workbook…" : message);
 }
 
 void MainWindow::issue(const QString &message) {
@@ -1069,8 +1071,14 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         m_source->setModified(false); clearRecoveredDraft();
     }
     if (!m_options.url.isEmpty() && !m_info.isEmpty() && !m_released) {
-        m_releasing=true; event->ignore();
-        m_client->request(base()+"/close",{},[this](QJsonObject,QString){m_releasing=false;m_released=true;close();});
+        const auto workbook=m_info["id"].toString(), service=m_client->url();
+        m_releasing=true; setBusy(true,"Closing workbook…"); event->ignore();
+        m_client->request(base()+"/close",{},[this,workbook,service](QJsonObject,QString){
+            if (!m_releasing) return;
+            m_releasing=false;
+            if (m_info["id"].toString()!=workbook || m_client->url()!=service) { setBusy(false,"Current workbook remains open"); return; }
+            m_released=true; close();
+        });
         return;
     }
     event->accept();

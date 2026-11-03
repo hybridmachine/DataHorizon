@@ -538,6 +538,41 @@ class EngineTests(unittest.TestCase):
             self.apply("sheet_rename",sheet='A"B',name="Renamed")
         self.assertEqual(failure.exception.body["code"],"REFERENCE_TRANSFORM_UNAVAILABLE")
 
+    def test_sheet_reference_guard_detects_separator_after_literal_nul(self):
+        self.apply("sheet_add",name="Other")
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"9"}])
+        source='=IF(FALSE,"text\0literal",Other!A1)'
+        self.edit((1,1,source))
+        sheets=self.book.info()["sheets"]
+        for input_kind in ("formula","auto"):
+            if input_kind == "auto":
+                # Ordinary direct writes can also retain automatic formula input.
+                with closing(sqlite3.connect(self.path)) as direct,direct:
+                    direct.execute("UPDATE cells SET kind='auto' WHERE sheet_id=?",(self.book.sheet("Sheet1"),))
+            self.assertEqual(self.cells()[(1,1)]["value"],9)
+            for action,name,code in (("sheet_rename","Renamed","REFERENCE_TRANSFORM_UNAVAILABLE"),
+                                     ("sheet_delete",None,"REFERENCED_SHEET"),
+                                     ("sheet_duplicate","Copy","REFERENCE_TRANSFORM_UNAVAILABLE")):
+                with self.subTest(input_kind=input_kind,action=action):
+                    with self.assertRaises(EngineError) as failure:
+                        self.apply(action,sheet="Other",name=name)
+                    self.assertEqual(failure.exception.body["code"],code)
+                    self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+                    self.assertEqual(self.book.operation(failure.exception.body["operation_id"]),failure.exception.body)
+                    self.assertEqual(self.book.info()["sheets"],sheets)
+                    self.assertEqual(self.cells()[(1,1)]["source"],source)
+                    self.assertEqual(self.cells()[(1,1)]["value"],9)
+
+    def test_literal_exclamations_with_nul_allow_sheet_operations(self):
+        sources=['=IF(FALSE,"before\0!after",7)','="before!\0after"']
+        self.edit(*[(row,1,source) for row,source in enumerate(sources,1)])
+        self.apply("sheet_rename",name="Renamed")
+        self.apply("sheet_duplicate",sheet="Renamed",name="Copy")
+        self.apply("sheet_delete",sheet="Renamed")
+        copied=self.book.read("Copy",{"r2":2,"c2":1})["cells"]
+        self.assertEqual([cell["source"] for cell in copied],sources)
+        self.assertEqual([cell["value"] for cell in copied],[7,"before!\0after"])
+
     def test_copied_broken_reference_does_not_block_sheet_operations(self):
         self.edit((2,1,"=A1"))
         self.apply("paste",row=1,col=1,origin_row=2,origin_col=1,

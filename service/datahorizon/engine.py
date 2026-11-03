@@ -805,7 +805,8 @@ class Workbook:
 
     def has_cross_sheet_formulas(self):
         with sql_deadline(self.db,self.deadline):
-            for source, in self.db.execute("SELECT source FROM cells WHERE source LIKE '=%!%' AND kind IN ('auto','formula')"):
+            # LIKE stops at embedded NUL; instr still finds later separators.
+            for source, in self.db.execute("SELECT source FROM cells WHERE source LIKE '=%' AND instr(source,'!')>0 AND kind IN ('auto','formula')"):
                 require(time.monotonic() <= self.deadline, "TIMEOUT", "Operation exceeded its time budget")
                 if has_sheet_reference(source):
                     return True

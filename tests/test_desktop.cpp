@@ -74,6 +74,67 @@ private:
     QString m_state, m_sheet;
 };
 
+class DelayedCloseProxy : public QTcpServer {
+public:
+    struct Pending { QPointer<QTcpSocket> socket; QJsonObject result; QString error; };
+    Pending closeReply, metadataReply, rangeReply, openReply;
+    bool holdMetadata = false, holdRange = false, holdOpen = false;
+    QString closeFailure, closedHandle;
+    int mutations = 0, opens = 0, closes = 0, metadataReads = 0;
+    DelayedCloseProxy(const QJsonObject &service) : m_upstream(this) {
+        m_upstream.configure(service["url"].toString(),service["token"].toString());
+        connect(this,&QTcpServer::newConnection,this,[this] {
+            auto *socket=nextPendingConnection(); connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
+            connect(socket,&QTcpSocket::readyRead,socket,[this,socket] {
+                const auto request=socket->property("request").toByteArray()+socket->readAll(); socket->setProperty("request",request);
+                const auto end=request.indexOf("\r\n\r\n"); if(end<0 || socket->property("handled").toBool()) return;
+                const auto length=QRegularExpression("Content-Length: (\\d+)",QRegularExpression::CaseInsensitiveOption)
+                    .match(QString::fromLatin1(request.left(end))).captured(1).toInt();
+                if(request.size()<end+4+length) return;
+                socket->setProperty("handled",true);
+                const auto path=QString::fromLatin1(request.left(request.indexOf("\r\n")).split(' ').at(1));
+                const auto parts=path.split('/',Qt::SkipEmptyParts);
+                const bool post=request.startsWith("POST "), metadata=!post && parts.size()==3 && parts[1]=="workbooks";
+                if(path=="/v1/open") ++opens;
+                if(path.endsWith("/operations")) ++mutations;
+                if(metadata) ++metadataReads;
+                if(path.endsWith("/close")) {
+                    ++closes; closedHandle=parts[2];
+                    if(!closeFailure.isEmpty()) { closeReply={socket,{},"Close service unavailable"}; return; }
+                }
+                const QPointer<QTcpSocket> guarded=socket;
+                m_upstream.request(path,QJsonDocument::fromJson(request.mid(end+4)).object(),
+                    [this,guarded,path,metadata](QJsonObject result,QString error) {
+                        if(!guarded) return;
+                        Pending response{guarded,result,error};
+                        if(path.endsWith("/close") && error.isEmpty() && result["closed"].toBool()) closeReply=response;
+                        else if(path=="/v1/open" && holdOpen) openReply=response;
+                        else if(metadata && holdMetadata) metadataReply=response;
+                        else if(path.endsWith("/range") && holdRange) rangeReply=response;
+                        else send(response);
+                    },post);
+            });
+        });
+    }
+    void releaseClose() {
+        if(closeFailure=="disconnect") closeReply.socket->abort();
+        else send(closeReply);
+        closeReply={};
+    }
+    void releaseMetadata() { holdMetadata=false; send(metadataReply); }
+    void releaseRange() { holdRange=false; send(rangeReply); }
+    void releaseOpen() { holdOpen=false; send(openReply); }
+private:
+    static void send(const Pending &response) {
+        const auto body=QJsonDocument(response.error.isEmpty()?response.result:QJsonObject{{"code","UNAVAILABLE"},{"message",response.error}})
+            .toJson(QJsonDocument::Compact);
+        response.socket->write(QByteArray("HTTP/1.1 ")+(response.error.isEmpty()?"200 OK":"503 Service Unavailable")
+            +"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(body.size())+"\r\n\r\n"+body);
+        response.socket->disconnectFromHost();
+    }
+    RestClient m_upstream;
+};
+
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
@@ -240,6 +301,108 @@ private slots:
         answerNextDialog(QMessageBox::Yes); window.openBook(second,true);
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
         QVERIFY(window.model()->workbook()!=original);
+    }
+    void attachedHandleReleaseKeepsInteractionLocked_data() {
+        QTest::addColumn<QString>("pendingRead");
+        QTest::newRow("no-pending-read") << QString();
+        QTest::newRow("newer-metadata") << QString("metadata");
+        QTest::newRow("pending-range") << QString("range");
+    }
+    void attachedHandleReleaseKeepsInteractionLocked() {
+        QFETCH(QString,pendingRead);
+        QTemporaryDir temp; QJsonObject service; StartupOptions ownerOptions; ownerOptions.automaticWorkbook=false;
+        MainWindow owner(ownerOptions); observeOwnedServiceStartup(owner,service); QSignalSpy serviceReady(&owner,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceReady.count(),1,10000); QVERIFY(!service["token"].toString().isEmpty());
+        const auto path=temp.filePath("attached-release.dhwb");
+        QSignalSpy ownerOpened(&owner,&MainWindow::workbookReady); owner.openBook(path,true);
+        QTRY_COMPARE_WITH_TIMEOUT(ownerOpened.count(),1,10000);
+        owner.submit({{"action","sheet_add"},{"name","Other"}}); QTRY_COMPARE_WITH_TIMEOUT(ownerOpened.count(),2,10000);
+        DelayedCloseProxy proxy(service); QVERIFY(proxy.listen(QHostAddress::LocalHost,0));
+        StartupOptions options; options.automaticWorkbook=false; options.url="http://127.0.0.1:"+QString::number(proxy.serverPort());
+        options.token=service["token"].toString(); options.recoveryDirectory=temp.filePath("recovery");
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *model=window.model(); auto *source=window.findChild<QLineEdit *>("source"); auto *tabs=window.findChild<QTabBar *>("sheets");
+        QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        const auto handle=model->workbook(), sheet=model->sheet(), state=model->state();
+        if(pendingRead=="metadata") {
+            owner.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","independent change"}}}}});
+            QTRY_COMPARE_WITH_TIMEOUT(ownerOpened.count(),3,10000);
+            proxy.holdMetadata=true;
+            QAction *refresh=nullptr; for(auto *action:window.findChildren<QAction *>()) if(action->text()=="Refresh stored data") refresh=action;
+            QVERIFY(refresh); refresh->trigger(); QTRY_VERIFY_WITH_TIMEOUT(proxy.metadataReply.socket,3000);
+            QVERIFY(proxy.metadataReply.result["state"].toString()!=state);
+        } else if(pendingRead=="range") {
+            proxy.holdRange=true; model->data(model->index(64,0)); QTRY_VERIFY_WITH_TIMEOUT(proxy.rangeReply.socket,3000);
+        }
+        QVERIFY(!window.close()); QTRY_VERIFY_WITH_TIMEOUT(proxy.closeReply.socket,3000);
+        QVERIFY(proxy.closeReply.error.isEmpty()); QVERIFY(proxy.closeReply.result["closed"].toBool()); QCOMPARE(proxy.closedHandle,handle);
+        if(pendingRead=="metadata") {
+            proxy.releaseMetadata(); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,3000); QVERIFY(model->state()!=state);
+        } else if(pendingRead=="range") {
+            proxy.releaseRange(); QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(64,0)),3000);
+        }
+        QVERIFY(window.isVisible()); QVERIFY(!source->isEnabled()); QVERIFY(!tabs->isEnabled());
+        QVERIFY(!(model->flags(model->index(0,0))&Qt::ItemIsEditable));
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        source->returnPressed();
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","must not submit"}}}}});
+        const auto second=temp.filePath("must-not-open.dhwb"); window.openBook(second,true); tabs->setCurrentIndex(1);
+        QTest::qWait(50); QCOMPARE(proxy.mutations,0); QCOMPARE(changed.count(),0); QCOMPARE(proxy.opens,1);
+        QCOMPARE(model->sheet(),sheet); QVERIFY(!QFile::exists(second));
+        proxy.releaseClose(); QTRY_VERIFY_WITH_TIMEOUT(!window.isVisible(),3000); QCOMPARE(proxy.closes,1);
+        QCOMPARE(owner.findChild<QProcess *>("ownedService")->state(),QProcess::Running);
+        QVERIFY(QDir(options.recoveryDirectory).entryList({"operation-*.json"},QDir::Files).isEmpty());
+    }
+    void failedAttachedHandleCleanupStillCloses_data() {
+        QTest::addColumn<QString>("failure");
+        QTest::newRow("http-error") << QString("http");
+        QTest::newRow("disconnected-service") << QString("disconnect");
+    }
+    void failedAttachedHandleCleanupStillCloses() {
+        QFETCH(QString,failure);
+        QTemporaryDir temp; QJsonObject service; StartupOptions ownerOptions; ownerOptions.automaticWorkbook=false;
+        MainWindow owner(ownerOptions); observeOwnedServiceStartup(owner,service); QSignalSpy serviceReady(&owner,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceReady.count(),1,10000); QVERIFY(!service["token"].toString().isEmpty());
+        const auto path=temp.filePath("failed-close.dhwb");
+        QSignalSpy ownerOpened(&owner,&MainWindow::workbookReady); owner.openBook(path,true);
+        QTRY_COMPARE_WITH_TIMEOUT(ownerOpened.count(),1,10000);
+        DelayedCloseProxy proxy(service); proxy.closeFailure=failure; QVERIFY(proxy.listen(QHostAddress::LocalHost,0));
+        StartupOptions options; options.automaticWorkbook=false; options.url="http://127.0.0.1:"+QString::number(proxy.serverPort());
+        options.token=service["token"].toString(); options.recoveryDirectory=temp.filePath("recovery");
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *source=window.findChild<QLineEdit *>("source"); QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        QVERIFY(!window.close()); QTRY_VERIFY_WITH_TIMEOUT(proxy.closeReply.socket,3000); QVERIFY(!source->isEnabled());
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","must not submit"}}}}});
+        proxy.releaseClose(); QTRY_VERIFY_WITH_TIMEOUT(!window.isVisible(),3000);
+        QCOMPARE(proxy.mutations,0); QCOMPARE(proxy.closes,1); QCOMPARE(proxy.metadataReads,0);
+        QCOMPARE(owner.findChild<QProcess *>("ownedService")->state(),QProcess::Running);
+        QVERIFY(QDir(options.recoveryDirectory).entryList({"operation-*.json"},QDir::Files).isEmpty());
+    }
+    void releasedHandleCompletionCannotCloseANewerWorkbook() {
+        QTemporaryDir temp; QJsonObject service; StartupOptions ownerOptions; ownerOptions.automaticWorkbook=false;
+        MainWindow owner(ownerOptions); observeOwnedServiceStartup(owner,service); QSignalSpy serviceReady(&owner,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceReady.count(),1,10000); QVERIFY(!service["token"].toString().isEmpty());
+        DelayedCloseProxy proxy(service); QVERIFY(proxy.listen(QHostAddress::LocalHost,0));
+        StartupOptions options; options.automaticWorkbook=false; options.url="http://127.0.0.1:"+QString::number(proxy.serverPort());
+        options.token=service["token"].toString();
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("first-close-context.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *source=window.findChild<QLineEdit *>("source"); QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        const auto first=window.model()->workbook(); proxy.holdOpen=true;
+        window.openBook(temp.filePath("second-close-context.dhwb"),true); QTRY_VERIFY_WITH_TIMEOUT(proxy.openReply.socket,3000);
+        QVERIFY(!window.close()); QTRY_VERIFY_WITH_TIMEOUT(proxy.closeReply.socket,3000); QCOMPARE(proxy.closedHandle,first);
+        proxy.releaseOpen(); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,3000);
+        const auto second=window.model()->workbook(); QVERIFY(second!=first); QVERIFY(!source->isEnabled());
+        proxy.releaseClose(); QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000); QVERIFY(window.isVisible());
+        QCOMPARE(window.model()->workbook(),second);
+        QVERIFY(!window.close()); QTRY_VERIFY_WITH_TIMEOUT(proxy.closeReply.socket,3000); QCOMPARE(proxy.closedHandle,second);
+        proxy.releaseClose(); QTRY_VERIFY_WITH_TIMEOUT(!window.isVisible(),3000); QCOMPARE(proxy.mutations,0);
     }
     void enterAdvancesAfterCommitAndSaveKeepsTheCurrentCell() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
@@ -1129,6 +1292,15 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("new"),5000);
     }
 private:
+    static void observeOwnedServiceStartup(MainWindow &owner, QJsonObject &service) {
+        auto *process=owner.findChild<QProcess *>("ownedService");
+        connect(process,&QProcess::readyReadStandardOutput,process,[process,&service,bytes=QByteArray{}]() mutable {
+            if(!service.isEmpty()) return;
+            bytes+=process->peek(process->bytesAvailable());
+            const auto newline=bytes.indexOf('\n');
+            if(newline>=0) service=QJsonDocument::fromJson(bytes.left(newline)).object();
+        });
+    }
     static void answerNextDialog(QMessageBox::StandardButton button, QString *message=nullptr) {
         auto *timer=new QTimer(qApp); timer->setInterval(10);
         connect(timer,&QTimer::timeout,timer,[timer,button,message]{

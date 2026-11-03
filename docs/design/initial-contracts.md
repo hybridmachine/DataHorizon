@@ -27,6 +27,10 @@ transmission. Cancel preserves the draft and submits no range action.
 Open and Close capture an active in-cell draft before deciding whether to
 discard it. Declining discard keeps the input visible in the formula bar and
 leaves the current workbook open.
+An attached-service window locks editing and new workbook/sheet commands while its
+handle is being released. Late read completions cannot unlock it, and a release
+callback cannot close a different, newly opened handle. Cleanup failure still
+permits the requested exit without treating stored work as rejected.
 If the original sheet is unavailable, retain the input visibly as a draft and
 reject applying it to another sheet. New edits require explicitly discarding the
 unavailable-target draft first; Cancel retains it for copying.
@@ -121,8 +125,10 @@ record identity and reference-safe sorting require M5 evidence. Filtered paste
 is disabled until stable-target semantics are implemented. These restrictions
 are visible capability limits, not placeholder successful operations.
 Exclamation marks inside formula string literals do not constitute sheet
-references. Quoted sheet names still retain their following reference separator;
-incomplete quoted formulas are handled conservatively.
+references. Embedded NUL characters inside literals cannot hide a later
+cross-sheet separator from structural guards. Quoted sheet names still retain
+their following reference separator; incomplete quoted formulas are handled
+conservatively.
 
 ## Undo, lists and code
 

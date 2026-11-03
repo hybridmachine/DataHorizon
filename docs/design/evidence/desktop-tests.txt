@@ -1,7 +1,7 @@
 ********* Start testing of DesktopTests *********
 Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
 PASS   : DesktopTests::initTestCase()
-QWARN  : DesktopTests::listSaveRetainsItsSourceCellAfterResorting() qt.qpa.fonts: Populating font family aliases took 59 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost.
+QWARN  : DesktopTests::listSaveRetainsItsSourceCellAfterResorting() qt.qpa.fonts: Populating font family aliases took 53 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost.
 QWARN  : DesktopTests::listSaveRetainsItsSourceCellAfterResorting() This plugin does not support propagateSizeHints()
 QWARN  : DesktopTests::listSaveRetainsItsSourceCellAfterResorting() This plugin does not support propagateSizeHints()
 QWARN  : DesktopTests::listSaveRetainsItsSourceCellAfterResorting() This plugin does not support propagateSizeHints()
@@ -26,6 +26,25 @@ QWARN  : DesktopTests::openingWorkbookRequiresExplicitDiscardOfAnActiveCellDraft
 QWARN  : DesktopTests::openingWorkbookRequiresExplicitDiscardOfAnActiveCellDraft() This plugin does not support propagateSizeHints()
 QWARN  : DesktopTests::openingWorkbookRequiresExplicitDiscardOfAnActiveCellDraft() This plugin does not support propagateSizeHints()
 PASS   : DesktopTests::openingWorkbookRequiresExplicitDiscardOfAnActiveCellDraft()
+QWARN  : DesktopTests::attachedHandleReleaseKeepsInteractionLocked(no-pending-read) This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::attachedHandleReleaseKeepsInteractionLocked(no-pending-read) This plugin does not support propagateSizeHints()
+PASS   : DesktopTests::attachedHandleReleaseKeepsInteractionLocked(no-pending-read)
+QWARN  : DesktopTests::attachedHandleReleaseKeepsInteractionLocked(newer-metadata) This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::attachedHandleReleaseKeepsInteractionLocked(newer-metadata) This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::attachedHandleReleaseKeepsInteractionLocked(newer-metadata) This plugin does not support propagateSizeHints()
+PASS   : DesktopTests::attachedHandleReleaseKeepsInteractionLocked(newer-metadata)
+QWARN  : DesktopTests::attachedHandleReleaseKeepsInteractionLocked(pending-range) This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::attachedHandleReleaseKeepsInteractionLocked(pending-range) This plugin does not support propagateSizeHints()
+PASS   : DesktopTests::attachedHandleReleaseKeepsInteractionLocked(pending-range)
+QWARN  : DesktopTests::failedAttachedHandleCleanupStillCloses(http-error) This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::failedAttachedHandleCleanupStillCloses(http-error) This plugin does not support propagateSizeHints()
+PASS   : DesktopTests::failedAttachedHandleCleanupStillCloses(http-error)
+QWARN  : DesktopTests::failedAttachedHandleCleanupStillCloses(disconnected-service) This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::failedAttachedHandleCleanupStillCloses(disconnected-service) This plugin does not support propagateSizeHints()
+PASS   : DesktopTests::failedAttachedHandleCleanupStillCloses(disconnected-service)
+QWARN  : DesktopTests::releasedHandleCompletionCannotCloseANewerWorkbook() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::releasedHandleCompletionCannotCloseANewerWorkbook() This plugin does not support propagateSizeHints()
+PASS   : DesktopTests::releasedHandleCompletionCannotCloseANewerWorkbook()
 QWARN  : DesktopTests::enterAdvancesAfterCommitAndSaveKeepsTheCurrentCell() This plugin does not support propagateSizeHints()
 QWARN  : DesktopTests::enterAdvancesAfterCommitAndSaveKeepsTheCurrentCell() This plugin does not support propagateSizeHints()
 QWARN  : DesktopTests::enterAdvancesAfterCommitAndSaveKeepsTheCurrentCell() This plugin does not support propagateSizeHints()
@@ -181,5 +200,5 @@ QWARN  : DesktopTests::missingDraftSheetRequiresExplicitDiscardBeforeNewEdits() 
 QWARN  : DesktopTests::missingDraftSheetRequiresExplicitDiscardBeforeNewEdits() This plugin does not support propagateSizeHints()
 PASS   : DesktopTests::missingDraftSheetRequiresExplicitDiscardBeforeNewEdits()
 PASS   : DesktopTests::cleanupTestCase()
-Totals: 48 passed, 0 failed, 0 skipped, 0 blacklisted, 18872ms
+Totals: 54 passed, 0 failed, 0 skipped, 0 blacklisted, 20952ms
 ********* Finished testing of DesktopTests *********
