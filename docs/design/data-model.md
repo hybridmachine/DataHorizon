@@ -3,6 +3,10 @@
 Status: proposed conceptual model. Physical schema and formula semantics need
 implementation experiments before they become stable contracts.
 
+The experimental sparse-cell implementation is now described in
+[native format v1](native-format-v1.md) and [compatibility tier 0](compatibility-v0.md).
+Tables, relational views and persistent record identity remain later work.
+
 ## Workbook objects
 
 | Object | Meaning | Initial editing behavior |

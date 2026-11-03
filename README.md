@@ -1,18 +1,39 @@
 # DataHorizon
 
-DataHorizon is a planned native, cross-platform spreadsheet application combining
+DataHorizon is a native spreadsheet application in early development, combining
 SQLite storage with Python 3 programmability. The desktop GUI uses Qt Widgets
 with C++ on Windows, macOS, and Linux. GUI, managed CLI, Python SDK, and external
 integrations share application behavior through a REST service.
 
-The project is currently in the design phase. This repository contains product
-and architecture documents, everyday user stories, UI wireframes, and an
-implementation plan. No application code or executable prototype has been built.
+The repository now includes a Qt Widgets/C++ desktop, SQLite engine, authenticated
+localhost REST service, Python client and managed CLI. The local development
+preview supports spreadsheet editing, bounded views, formulas, range operations,
+Undo/Redo, list projections, search and CSV. The full implementation plan is
+still in progress; Excel/ODS, structural references, advanced programmability
+and cross-platform release qualification remain unfinished.
+
+## Build and run
+
+With Qt installed in `~/Qt` on macOS:
+
+```sh
+cmake -S . -B build -DCMAKE_PREFIX_PATH="$HOME/Qt/6.12.0/macos" -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+open build/DataHorizon.app
+```
+
+Python 3.11+, CMake 3.24+ and Qt 6.8+ are required. No pip dependencies are needed.
+See [development instructions](docs/design/development.md) for CLI, Python,
+service operation, install smoke and the Supplies walkthrough.
 
 ## Start here
 
 - [Design overview and document map](docs/design/README.md)
 - [Implementation plan](docs/design/implementation-plan.md)
+- [Implementation status and evidence](docs/design/implementation-status.md)
+- [Initial accepted contracts](docs/design/initial-contracts.md)
+- [Development compatibility](docs/design/compatibility-v0.md)
 - [Wireframe notes and interaction proposals](docs/design/ui-wireframes.md)
 - [Contributor and agent guidance](AGENTS.md)
 
@@ -34,6 +55,7 @@ Users define business workflows in their own code or external applications.
 
 ## License direction
 
-The desktop GUI will be licensed under GPLv3. Licenses for the service, SDK,
+The desktop GUI is licensed under GPLv3; see [license scope](LICENSES.md).
+Licenses for the service, SDK,
 and other components remain undecided; this is not a repository-wide license
 grant. See the design documents for the current decisions and open questions.

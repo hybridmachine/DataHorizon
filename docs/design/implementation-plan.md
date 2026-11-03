@@ -4,8 +4,10 @@ Draft 0.2 | October 31, 2026
 
 The first wireframes establish the visual direction for the desktop application.
 This plan turns them into a sequence of implementation increments with explicit
-dependencies and completion criteria. It is planning documentation, not a start
-of application development or a release-date commitment.
+dependencies and completion criteria. Implementation was explicitly requested on
+October 31, 2026. See [execution status](implementation-status.md),
+[accepted initial contracts](initial-contracts.md) and the [development guide](development.md).
+This plan remains the target scope, not a claim of completed milestones or dates.
 
 The [PDF edition](../../output/pdf/datahorizon-implementation-plan.pdf) accompanies
 the [18-page wireframe set](../../output/pdf/datahorizon-ui-wireframes.pdf).
@@ -52,8 +54,8 @@ Concurrent multiuser editing and complete Excel parity are not preview promises.
 | M7 | Cross-platform desktop preview | M6 | 1-18 |
 | M8 | Relational, programming, and remote expansion | Relevant M1-M7 contracts | Later wireframes |
 
-M0 is the next documentation task. Executable experiments, scaffolding, and
-application code begin only after a separate instruction to start implementation.
+The separate instruction to start implementation has been received. M0 contracts
+are recorded; subsequent increments are tracked in the execution status.
 Within each later increment, deliver the engine operation and its UI together;
 avoid accumulating screens that cannot perform their advertised actions.
 
@@ -341,7 +343,7 @@ features earlier; their full user interfaces do not block the everyday preview.
 
 ## 14. First work package and completion record
 
-The next work package is M0: settle persistence/outcome semantics, draft the
+The original first work package was M0: settle persistence/outcome semantics, draft the
 value/reference and undo contracts, specify the first compatibility tiers, and
 refine missing state/focus wireframes. Produce the M1 experiment specifications
 and numeric performance budget before requesting implementation work.
@@ -351,5 +353,5 @@ decision/document changes, automated and manual evidence, platform results,
 remaining risks, and the next dependency. Estimate calendar effort after M1,
 when toolchain, storage, Python integration, and grid risks have measured results.
 
-This plan creates no application code, project scaffolding, or executable UI
-prototype. The next implementation step remains a separate request.
+The historical PDF edition predates implementation. Use the execution status
+and actual automated/manual evidence to assess current scope.

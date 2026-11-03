@@ -28,10 +28,11 @@ other components have not been selected.
 
 ## Current work phase
 
-The project is in the design phase. Create UI wireframes based on the everyday
-spreadsheet user stories before building application code. Keep current work
-focused on documentation, user stories, wireframes, and interaction design.
-Do not create application code, scaffolding, or executable prototypes yet.
+Implementation was authorized on October 31, 2026 after the everyday user
+stories, wireframes, and implementation plan were written. Execute the plan in
+dependency order and preserve its completion criteria. The current local
+development preview is not a qualified cross-platform release. Start with
+`docs/design/implementation-status.md` for implemented scope and remaining work.
 
 ## Architecture and access contract
 
@@ -108,10 +109,14 @@ recursion, cancellation, and execution order need defined contracts.
 Start with [docs/design/README.md](docs/design/README.md). Keep design documents
 under `docs/design/` and update them when architectural decisions change.
 
-The project is currently at the design stage. The documents distinguish agreed
+The project is in early implementation. The documents distinguish agreed
 product and access decisions from proposed implementation details and open
-questions. Qt Widgets/C++ is selected for the desktop GUI. The REST framework,
-physical schema, Python isolation strategy, and detailed grid design remain open.
+questions. Qt Widgets/C++ is selected for the desktop GUI. The development tier
+uses a Python standard-library localhost HTTP service, versioned sparse SQLite
+cells, spawned Python hook workers with a transaction broker, and a bounded
+QTableView model. Production service hardening, full reference transformations,
+advanced storage, and packaging remain open. Read the initial contracts and
+completion evidence before extending the preview.
 
 When implementing:
 

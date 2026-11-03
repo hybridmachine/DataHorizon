@@ -3,6 +3,11 @@
 Status: agreed interface goals; proposed resource model, execution details, and
 compatibility stages. No endpoint names or command syntax are stable yet.
 
+The development API, CLI and Python client are now executable. `/openapi.json`
+and `/docs` expose the implemented localhost resources. [Development instructions](development.md)
+and [compatibility tier 0](compatibility-v0.md) describe actual scope; the remainder
+of this document retains the wider target design.
+
 ## Desktop experience
 
 Use Qt Widgets with C++ for the native desktop application on Windows, macOS,
