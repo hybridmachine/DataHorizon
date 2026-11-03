@@ -92,6 +92,7 @@ private:
     bool m_restoreDraft = false, m_draftNeedsReview = false;
     QString m_pendingId;
     QString m_restartPath, m_recoveryRecord;
+    quint64 m_clipboardGeneration = 0;
     bool m_busy = true, m_unknown = false, m_refreshing = false;
     int m_saveMode = 0;
     bool m_releasing = false, m_released = false;

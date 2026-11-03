@@ -101,6 +101,9 @@ must be reviewed against reopened inputs before applying it.
 Copy/Cut supports up to 10,000 selected cells in one consistent read, subject to
 the 4-MiB response limit. Oversized clipboard reads fail without replacing the
 clipboard; select a smaller range. Viewport previews are never clipboard data.
+An older asynchronous Copy/Cut reply cannot replace a newer clipboard command
+or newer clipboard content, including a copy made in the source editor or
+another application.
 
 If the owned service stops, File > Restart local service reopens stored inputs
 and looks up any pending operation receipt without repeating hooks. Unknown
@@ -136,6 +139,8 @@ Find/Replace All is case-sensitive within the selected rectangle, against source
 or displayed values. The Issues dock shows counts and locations. Display
 replacement preserves Text typing and leading zeros; identical replacements do
 nothing. Numeric, boolean and formula results require stored-source replacement.
+Replacement expansion is checked against the 64-KiB UTF-8 source limit before
+allocating the result, including any retained apostrophe text escape.
 CSV import previews UTF-8 comma-separated text and imports it atomically as Text.
 Dates, encodings, column typing and spreadsheet interchange remain incomplete.
 Export is an explicit values-only selected snapshot and blocks on formula errors.

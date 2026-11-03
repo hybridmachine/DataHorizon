@@ -36,6 +36,44 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+class DelayedClipboardServer : public QTcpServer {
+public:
+    struct Pending { QPointer<QTcpSocket> socket; QJsonObject range; };
+    QList<Pending> requests;
+    DelayedClipboardServer(const QString &state, const QString &sheet) : m_state(state), m_sheet(sheet) {
+        connect(this,&QTcpServer::newConnection,this,[this] {
+            auto *socket=nextPendingConnection();
+            connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
+            connect(socket,&QTcpSocket::readyRead,socket,[this,socket] {
+                const auto request=socket->property("request").toByteArray()+socket->readAll(); socket->setProperty("request",request);
+                const auto end=request.indexOf("\r\n\r\n"); if(end<0 || socket->property("handled").toBool()) return;
+                const auto length=QRegularExpression("Content-Length: (\\d+)",QRegularExpression::CaseInsensitiveOption)
+                    .match(QString::fromLatin1(request.left(end))).captured(1).toInt();
+                if(request.size()<end+4+length) return;
+                socket->setProperty("handled",true);
+                if(request.startsWith("POST ") && request.contains("/clipboard HTTP/"))
+                    requests.append({socket,QJsonDocument::fromJson(request.mid(end+4)).object()});
+                else send(socket,{{"state",m_state},{"sheet",m_sheet},{"cells",QJsonArray{}}});
+            });
+        });
+    }
+    void respond(int index, const QString &source, bool rejected = false) {
+        const auto &pending=requests.at(index);
+        if(rejected) send(pending.socket,{{"code","READ_FAILED"},{"message","Superseded clipboard read failed"}},true);
+        else send(pending.socket,{{"state",m_state},{"sheet",m_sheet},{"cells",QJsonArray{QJsonObject{
+            {"row",pending.range["r1"]},{"col",pending.range["c1"]},{"source",source},{"display",source},
+            {"value",source},{"input_kind","text"},{"kind","text"},{"style",QJsonObject{}}}}}});
+    }
+private:
+    static void send(QTcpSocket *socket, const QJsonObject &result, bool rejected = false) {
+        const auto body=QJsonDocument(result).toJson(QJsonDocument::Compact);
+        socket->write(QByteArray("HTTP/1.1 ")+(rejected?"409 Conflict":"200 OK")
+            +"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(body.size())+"\r\n\r\n"+body);
+        socket->disconnectFromHost();
+    }
+    QString m_state, m_sheet;
+};
+
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
@@ -480,6 +518,100 @@ private slots:
         for(auto *action:window.findChildren<QAction *>()) if(action->text()=="Paste formats only") action->trigger();
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Cut supports full paste only"));
         QCOMPARE(model->data(model->index(0,0)).toString(),QString("source")); QCOMPARE(model->data(model->index(0,1)).toString(),QString("destination"));
+    }
+    void newerCopySupersedesAnEarlierDelayedCut_data() {
+        QTest::addColumn<bool>("cutFinishesFirst");
+        QTest::newRow("older-reply-first") << true;
+        QTest::newRow("newer-reply-first") << false;
+    }
+    void newerCopySupersedesAnEarlierDelayedCut() {
+        QFETCH(bool,cutFinishesFirst);
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("clipboard-order.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{
+            QJsonObject{{"row",1},{"col",1},{"source","cut source"}},QJsonObject{{"row",1},{"col",2},{"source","copy source"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model(); auto *grid=window.findChild<QTableView *>("grid");
+        QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(0,1)),5000);
+        DelayedClipboardServer server(model->state(),model->sheet()); QVERIFY(server.listen(QHostAddress::LocalHost,0));
+        auto *client=window.findChild<RestClient *>();
+        client->configure("http://127.0.0.1:"+QString::number(server.serverPort()),"token");
+        int completed=0;
+        connect(client->findChild<QNetworkAccessManager *>(),&QNetworkAccessManager::finished,&window,[&](QNetworkReply *reply) {
+            if(reply->url().path().endsWith("/clipboard")) ++completed;
+        });
+        QAction *cut=nullptr,*copy=nullptr;
+        for(auto *action:window.findChildren<QAction *>()) {
+            if(action->shortcut().matches(QKeySequence::Cut)==QKeySequence::ExactMatch) cut=action;
+            if(action->shortcut().matches(QKeySequence::Copy)==QKeySequence::ExactMatch) copy=action;
+        }
+        QApplication::clipboard()->setText("prior clipboard");
+        QVERIFY(cut); QVERIFY(copy); grid->setFocus(); cut->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),1,3000);
+        grid->setCurrentIndex(model->index(0,1)); copy->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),2,3000);
+        QCOMPARE(server.requests[0].range["c1"].toInt(),1); QCOMPARE(server.requests[1].range["c1"].toInt(),2);
+        const auto status=window.findChild<QLabel *>("storageStatus")->text();
+        if(cutFinishesFirst) {
+            server.respond(0,"cut source"); QTRY_COMPARE_WITH_TIMEOUT(completed,1,3000);
+            QCOMPARE(QApplication::clipboard()->text(),QString("prior clipboard"));
+            QCOMPARE(window.findChild<QLabel *>("storageStatus")->text(),status);
+        }
+        server.respond(1,"copy source"); QTRY_COMPARE_WITH_TIMEOUT(completed,cutFinishesFirst?2:1,3000);
+        QCOMPARE(QApplication::clipboard()->text(),QString("copy source"));
+        const auto copied=QApplication::clipboard()->mimeData()->data("application/x-datahorizon-cells");
+        const auto payload=QJsonDocument::fromJson(copied).object();
+        QVERIFY(!payload["cut"].toBool()); QCOMPARE(payload["source_workbook"].toString(),model->workbook());
+        QCOMPARE(payload["source_sheet"].toString(),model->sheet()); QCOMPARE(payload["cut_state"].toString(),model->state());
+        QCOMPARE(payload["origin_col"].toInt(),2);
+        if(!cutFinishesFirst) { server.respond(0,"cut source"); QTRY_COMPARE_WITH_TIMEOUT(completed,2,3000); }
+        QCOMPARE(QApplication::clipboard()->text(),QString("copy source"));
+        QCOMPARE(QApplication::clipboard()->mimeData()->data("application/x-datahorizon-cells"),copied);
+        QCOMPARE(window.findChild<QLabel *>("storageStatus")->text(),status);
+    }
+    void clipboardContentChangesSupersedePendingGridReplies_data() {
+        QTest::addColumn<QString>("change"); QTest::addColumn<bool>("rejected");
+        for(const auto &change:{QString("external"),QString("source-copy"),QString("source-cut")}) {
+            QTest::newRow(qPrintable(change+"-success")) << change << false;
+            QTest::newRow(qPrintable(change+"-error")) << change << true;
+        }
+    }
+    void clipboardContentChangesSupersedePendingGridReplies() {
+        QFETCH(QString,change); QFETCH(bool,rejected);
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("clipboard-change.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *model=window.model(); auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source");
+        QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(0,0)),5000);
+        DelayedClipboardServer server(model->state(),model->sheet()); QVERIFY(server.listen(QHostAddress::LocalHost,0));
+        auto *client=window.findChild<RestClient *>();
+        client->configure("http://127.0.0.1:"+QString::number(server.serverPort()),"token");
+        int completed=0;
+        connect(client->findChild<QNetworkAccessManager *>(),&QNetworkAccessManager::finished,&window,[&](QNetworkReply *reply) {
+            if(reply->url().path().endsWith("/clipboard")) ++completed;
+        });
+        QAction *cut=nullptr;
+        for(auto *action:window.findChildren<QAction *>()) if(action->shortcut().matches(QKeySequence::Cut)==QKeySequence::ExactMatch) cut=action;
+        QApplication::clipboard()->setText("before newer content");
+        QVERIFY(cut); grid->setFocus(); cut->trigger(); QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),1,3000);
+        if(change=="external") QApplication::clipboard()->setText("new clipboard content");
+        else {
+            source->setFocus(); source->setText("new clipboard content"); source->selectAll();
+            if(change=="source-copy") source->copy(); else source->cut();
+        }
+        QCOMPARE(QApplication::clipboard()->text(),QString("new clipboard content"));
+        QVERIFY(!QApplication::clipboard()->mimeData()->hasFormat("application/x-datahorizon-cells"));
+        const auto status=window.findChild<QLabel *>("storageStatus")->text();
+        auto *issues=window.findChild<QPlainTextEdit *>(); const auto previousIssues=issues->toPlainText();
+        server.respond(0,"superseded cut",rejected); QTRY_COMPARE_WITH_TIMEOUT(completed,1,3000);
+        QCOMPARE(QApplication::clipboard()->text(),QString("new clipboard content"));
+        QVERIFY(!QApplication::clipboard()->mimeData()->hasFormat("application/x-datahorizon-cells"));
+        QCOMPARE(window.findChild<QLabel *>("storageStatus")->text(),status); QCOMPARE(issues->toPlainText(),previousIssues);
     }
     void clipboardLimitsRejectBeforeCellConstructionOrSubmission() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;

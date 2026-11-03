@@ -195,8 +195,11 @@ data. Full reads remain the default for REST/SDK callers. Copy/Cut uses one
 consistent clipboard read supporting 10,000 selected cells. Both range and
 clipboard response payloads, including their JSON envelope and separators, are
 limited to 4 MiB. Sheet deletion rejects more
-than 10,000 stored cells before its cascade. Formula evaluation permits
-10,000 referenced cells, 128 dependency levels and 0.25 seconds per viewport.
+than 10,000 stored cells before its cascade. Replace All checks each resulting
+UTF-8 source size before allocating it, including any retained text-escape
+prefix, so replacement expansion cannot bypass the 64-KiB cell limit.
+Formula evaluation permits 10,000 referenced cells, 128 dependency levels and
+0.25 seconds per viewport.
 CSV previews allow at most 10,000 records as well as 10,000 fields; blank records
 count toward the record limit. The CSV export limit covers the complete encoded
 JSON response, including escaped characters and metadata. Export destinations

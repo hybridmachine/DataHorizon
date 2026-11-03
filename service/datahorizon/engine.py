@@ -653,10 +653,17 @@ class Workbook:
                     replacement = request.get("replacement")
                     require(isinstance(replacement, str), "INVALID_ARGUMENT", "Replacement must be text")
                     matches = self.matches(sheet, request, deadline=self.deadline)
+                    needle = request["needle"]
+                    needle_bytes, replacement_bytes = len(needle.encode()), len(replacement.encode())
                     for match in matches:
                         item = self.raw(sheet, match["row"], match["col"])
                         source = match["text"] if request.get("field") == "display" else item["source"]
-                        replaced = source.replace(request["needle"], replacement)
+                        source_bytes = len(source.encode())+source.count(needle)*(replacement_bytes-needle_bytes)
+                        if request.get("field") == "display" and item["kind"] == "auto" and item["source"].startswith("'"):
+                            source_bytes += 1
+                        require(source_bytes<=65536,"INVALID_INPUT","Cell source must be text no larger than 64 KiB")
+                        # Validate expansion before allocating the replacement string.
+                        replaced = source.replace(needle, replacement)
                         if replaced == source:
                             continue
                         if request.get("field") == "display":

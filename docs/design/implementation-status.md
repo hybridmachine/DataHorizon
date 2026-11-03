@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 119 Python tests and 38 Qt contract cases.
+The review regression suite includes 121 Python tests and 46 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -437,3 +437,17 @@ Find and Replace All, while the old scans exceed it. A concurrent WAL writer
 used only in a regression commits between row probes: the current read remains
 consistent and the next read refreshes its state and values. This does not add a
 WAL sidecar portability claim to the native format.
+
+Cycle 27 continued with user-authorized local review agents after the external
+review provider exhausted its quota. Reviewers found two substantive issues.
+Replace All previously allocated an expanded result before checking the source
+limit; a 256-character replacement against a valid 64-KiB cell caused about
+32 MiB of temporary allocations before rejection. It now preflights the UTF-8
+result size from the match count, including the apostrophe text escape. The
+regression caps traced transient allocations while verifying durable rollback,
+unchanged inputs, exact UTF-8 boundaries and unchanged display replacements.
+A delayed Cut response could also replace a newer Copy and restore a superseded
+move source. Clipboard commands and observed clipboard changes now invalidate
+older responses before payload, status or error handling. Eight Qt scenarios
+cover both response orders and newer external/source-editor content, including
+stale error responses. The interface reviewer found no substantive issues.

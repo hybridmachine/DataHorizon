@@ -108,6 +108,7 @@ MainWindow::MainWindow(const StartupOptions &options, QWidget *parent)
     m_service.setParent(this);
     m_service.setObjectName("ownedService");
     buildUi();
+    connect(QApplication::clipboard(), &QClipboard::dataChanged, this, [this] { ++m_clipboardGeneration; });
     connect(m_model, &SheetModel::editRequested, this, [this](int row, int col, const QString &source, const QString &kind) {
         const auto destination=m_enterRequest; m_enterRequest={};
         if (m_busy || m_unknown) return;
@@ -777,11 +778,13 @@ void MainWindow::save(bool copy) {
 
 void MainWindow::copy(bool cut) {
     if (m_busy) return;
+    const auto generation=++m_clipboardGeneration;
     if (m_source->hasFocus()) { if (cut) m_source->cut(); else m_source->copy(); return; }
     auto range = selectedRange(); if (range.isEmpty()) return;
     range["sheet"] = m_model->sheet();
     const auto sourceWorkbook = m_info["id"].toString();
-    m_client->request(base()+"/clipboard", range, [this, range, cut, sourceWorkbook](QJsonObject result, QString error) {
+    m_client->request(base()+"/clipboard", range, [this, range, cut, sourceWorkbook, generation](QJsonObject result, QString error) {
+        if (generation!=m_clipboardGeneration) return;
         if (!error.isEmpty()) { issue(error); return; }
         QHash<quint64, QJsonObject> cells;
         for (const auto &cell : result["cells"].toArray()) { auto c = cell.toObject(); cells.insert((quint64(c["row"].toInt()) << 32) | quint32(c["col"].toInt()), c); }

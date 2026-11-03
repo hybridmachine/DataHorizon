@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import time
+import tracemalloc
 import unittest
 import uuid
 from unittest.mock import patch
@@ -21,6 +22,34 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class EngineTests(unittest.TestCase):
+    def test_replace_all_rejects_expansion_before_allocating_the_result(self):
+        source="a"*65536
+        self.apply(cells=[{"row":1,"col":1,"source":source,"kind":"text"}])
+        tracemalloc.start()
+        try:
+            with self.assertRaises(EngineError) as failure:
+                self.apply("replace_all",needle="a",replacement="x"*256)
+            _,peak=tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(failure.exception.body["code"],"INVALID_INPUT")
+        self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+        self.assertEqual(self.book.operation(failure.exception.body["operation_id"]),failure.exception.body)
+        self.assertLess(peak,4*1024*1024,"Oversized replacement was allocated before validating its source limit")
+        self.assertEqual(self.cells()[(1,1)]["source"],source)
+
+    def test_replace_all_size_preflight_counts_utf8_and_display_escape(self):
+        escaped="'"+"a"*32768
+        self.apply(cells=[{"row":1,"col":1,"source":"é"*16384,"kind":"text"},
+                          {"row":2,"col":1,"source":escaped},{"row":3,"col":1,"source":"7"}])
+        self.apply("replace_all",needle="é",replacement="éé")
+        self.assertEqual(len(self.cells()[(1,1)]["source"].encode()),65536)
+        with self.assertRaises(EngineError) as failure:
+            self.apply("replace_all",field="display",r1=2,needle="a",replacement="aa")
+        self.assertEqual(failure.exception.body["code"],"INVALID_INPUT")
+        self.assertEqual(self.cells()[(2,1)]["source"],escaped)
+        self.assertEqual(self.apply("replace_all",field="display",r1=3,needle="7",replacement="7")["changed_cells"],0)
+
     def test_multirow_read_keeps_one_snapshot_during_external_commit(self):
         self.edit((1,1,"7"),(2,1,"8")); events=[]; probes=0
         with closing(sqlite3.connect(self.path)) as direct:
