@@ -79,7 +79,9 @@ out destination is preserved for inspection; choose a new path to retry.
 Save submits a formula-bar draft and continues once its storage outcome is known.
 
 Enter submits the cell/source editor, Escape cancels its draft, and the address
-field jumps to A1 coordinates. Changing a draft's cell or sheet asks whether to
+field jumps to A1 coordinates. Confirming an unchanged input preserves its native
+kind, including NULL versus absence and automatic numbers with Text formatting;
+it does not run input-change handlers. Changing a draft's cell or sheet asks whether to
 Save, Discard or Cancel; losing focus alone retains the draft. Both source editors
 preserve valid sources up to the service's 64-KiB limit. The grid fetches bounded
 display previews, showing an ellipsis until loaded, and loads complete long

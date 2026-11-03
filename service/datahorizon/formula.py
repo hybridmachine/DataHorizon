@@ -314,14 +314,11 @@ class Calculator:
             if isinstance(left, list) or isinstance(right, list):
                 raise FormulaError("#VALUE!", "Array expressions are unsupported; use a range-aware function")
             if op in ("=", "<>", "<", ">", "<=", ">="):
-                if left is None and (right is None or isinstance(right, (int, float))):
-                    left = 0
-                    if right is None:
-                        right = 0
-                elif right is None and isinstance(left, (int, float)):
-                    right = 0
+                if left is None or right is None:
+                    # Blank comparisons permit numeric/Boolean coercion only.
+                    left, right = numeric(left), numeric(right)
                 if type(left) != type(right) and not (
-                        isinstance(left, (float, int)) and isinstance(right, (float, int))):
+                        type(left) in (float, int) and type(right) in (float, int)):
                     raise FormulaError("#VALUE!", "Comparison types differ")
                 return {"=": lambda: left == right, "<>": lambda: left != right,
                         "<": lambda: left < right, ">": lambda: left > right,

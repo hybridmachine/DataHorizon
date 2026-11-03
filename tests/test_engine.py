@@ -983,6 +983,45 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.cells()[(3,1)]["display"],"#VALUE!")
         self.assertEqual(self.cells()[(3,2)]["value"],7)
 
+    def test_comparisons_reject_mixed_boolean_and_number_types(self):
+        operators=("=","<>","<",">","<=",">=")
+        pairs=(("TRUE","1"),("1","TRUE"),("FALSE","0"),("0","FALSE"),
+               ("A1","B1"),("B1","A1"),("A2","B2"),("B2","A2"))
+        formulas=[(row,col,f"={left}{op}{right}") for row,(left,right) in enumerate(pairs,4)
+                  for col,op in enumerate(operators,1)]
+        self.edit((1,1,"TRUE"),(1,2,"1"),(2,1,"FALSE"),(2,2,"0"),*formulas,(12,1,"7"))
+        cells=self.cells(r2=12,c2=6)
+        for row,col,source in formulas:
+            with self.subTest(source=source):
+                self.assertEqual(cells[(row,col)]["display"],"#VALUE!")
+                self.assertIsNone(cells[(row,col)]["value"])
+                self.assertEqual(cells[(row,col)]["calculation"],"error")
+        self.assertEqual(cells[(12,1)]["value"],7)
+        self.assertEqual(cells[(12,1)]["calculation"],"current")
+
+    def test_comparisons_preserve_blank_boolean_and_numeric_cases(self):
+        operators=("=","<>","<",">","<=",">=")
+        equal=(True,False,False,False,True,True)
+        less=(False,True,True,False,True,False)
+        greater=(False,True,False,True,False,True)
+        cases=(("A1","B1",equal),("A1","FALSE",equal),("FALSE","A1",equal),
+               ("A1","TRUE",less),("TRUE","A1",greater),
+               ("A1","0",equal),("0","A1",equal),("A1","1",less),("1","A1",greater),
+               ("TRUE","TRUE",equal),("FALSE","FALSE",equal),
+               ("FALSE","TRUE",less),("TRUE","FALSE",greater),
+               ("+TRUE","1",equal),("1","+TRUE",equal),
+               ("SUM()","0",equal),("0","SUM()",equal),
+               ("1","2",less),("2","1",greater))
+        formulas=[(row,col,f"={left}{op}{right}") for row,(left,right,_) in enumerate(cases,2)
+                  for col,op in enumerate(operators,2)]
+        self.edit(*formulas)
+        cells=self.cells(r2=len(cases)+1,c2=7)
+        for row,(left,right,expected) in enumerate(cases,2):
+            for col,(op,value) in enumerate(zip(operators,expected),2):
+                with self.subTest(source=f"={left}{op}{right}"):
+                    self.assertIs(cells[(row,col)]["value"],value)
+                    self.assertEqual(cells[(row,col)]["calculation"],"current")
+
     def test_display_replacement_preserves_text_and_rejects_numeric_conversion(self):
         self.apply(cells=[{"row":1,"col":1,"source":"'00123"},
                           {"row":2,"col":1,"source":"1.2345","style":{"format":"fixed2"}},

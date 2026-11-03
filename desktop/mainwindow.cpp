@@ -115,7 +115,12 @@ MainWindow::MainWindow(const StartupOptions &options, QWidget *parent)
         const QJsonObject target{{"workbook",m_info["id"]},{"sheet",m_model->sheet()},{"state",m_info["state"]},
                                  {"row",row},{"col",col},{"input_kind",kind},{"source",source},{"needs_review",false}};
         if (!resolveDraft()) return;
-        QJsonObject cell{{"row", row}, {"col", col}, {"source", source}, {"kind",kind}};
+        QJsonObject cell{{"row", row}, {"col", col}};
+        const auto index=m_model->index(m_model->viewRow(row-1),col-1);
+        const auto original=m_model->cell(index);
+        if (!m_model->sourceReady(index) || source!=original["source"].toString() || kind!=original["input_kind"].toString("auto")) {
+            cell["source"]=source; cell["kind"]=kind;
+        }
         submit({{"action", "edit"}, {"label", "Edit cell"}, {"cells", QJsonArray{cell}},
                 {"workbook",target["workbook"]},{"sheet",target["sheet"]},{"expected_state",target["state"]}});
         if (!m_pendingId.isEmpty()) {
@@ -634,8 +639,14 @@ void MainWindow::submitDraft(bool advance, int direction) {
         m_draftNeedsReview=false;
     }
     m_recoveredDraft=m_draftTarget; m_recoveredDraft["source"]=m_source->text(); m_recoveredDraft["needs_review"]=false;
-    auto cell = QJsonObject{{"row",m_draftTarget["row"]},{"col",m_draftTarget["col"]},{"source",m_source->text()},
-                           {"kind",m_draftTarget["input_kind"]=="text"?"text":"auto"}};
+    auto cell = QJsonObject{{"row",draft["row"]},{"col",draft["col"]}};
+    const auto index=m_model->index(m_model->viewRow(draft["row"].toInt()-1),draft["col"].toInt()-1);
+    const auto original=m_model->cell(index);
+    const auto inputKind=draft["input_kind"].toString("auto");
+    const bool sameSource=m_model->sourceReady(index) && source==original["source"].toString();
+    if (!sameSource || inputKind!=original["input_kind"].toString("auto")) {
+        cell["source"]=source; cell["kind"]=sameSource?inputKind:inputKind=="text"?QString("text"):QString("auto");
+    }
     m_source->setModified(false);
     submit({{"action","edit"},{"label","Edit cell"},{"cells",QJsonArray{cell}},
             {"workbook",draft["workbook"]},{"sheet",draft["sheet"]},{"expected_state",draft["state"]}});

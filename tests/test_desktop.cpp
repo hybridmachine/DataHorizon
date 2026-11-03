@@ -100,7 +100,11 @@ public:
                 if(metadata) ++metadataReads;
                 if(path.endsWith("/close")) {
                     ++closes; closedHandle=parts[2];
-                    if(!closeFailure.isEmpty()) { closeReply={socket,{},"Close service unavailable"}; return; }
+                    if(!closeFailure.isEmpty()) {
+                        Pending failed{socket,{},"Close service unavailable"};
+                        if(m_closeFailureReleased) failClose(failed); else closeReply=failed;
+                        return;
+                    }
                 }
                 const QPointer<QTcpSocket> guarded=socket;
                 m_upstream.request(path,QJsonDocument::fromJson(request.mid(end+4)).object(),
@@ -117,7 +121,7 @@ public:
         });
     }
     void releaseClose() {
-        if(closeFailure=="disconnect") closeReply.socket->abort();
+        if(!closeFailure.isEmpty()) { m_closeFailureReleased=true; failClose(closeReply); }
         else send(closeReply);
         closeReply={};
     }
@@ -125,6 +129,9 @@ public:
     void releaseRange() { holdRange=false; send(rangeReply); }
     void releaseOpen() { holdOpen=false; send(openReply); }
 private:
+    void failClose(const Pending &response) {
+        if(closeFailure=="disconnect") response.socket->abort(); else send(response);
+    }
     static void send(const Pending &response) {
         const auto body=QJsonDocument(response.error.isEmpty()?response.result:QJsonObject{{"code","UNAVAILABLE"},{"message",response.error}})
             .toJson(QJsonDocument::Compact);
@@ -133,6 +140,7 @@ private:
         response.socket->disconnectFromHost();
     }
     RestClient m_upstream;
+    bool m_closeFailureReleased = false;
 };
 
 class DesktopTests : public QObject {
@@ -376,9 +384,22 @@ private slots:
         QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
         auto *source=window.findChild<QLineEdit *>("source"); QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
         QVERIFY(!window.close()); QTRY_VERIFY_WITH_TIMEOUT(proxy.closeReply.socket,3000); QVERIFY(!source->isEnabled());
+        int completedCloses=0;
+        connect(window.findChild<RestClient *>()->findChild<QNetworkAccessManager *>(),&QNetworkAccessManager::finished,&window,[&](QNetworkReply *reply) {
+            if(reply->url().path().endsWith("/close")) ++completedCloses;
+        });
         window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","must not submit"}}}}});
         proxy.releaseClose(); QTRY_VERIFY_WITH_TIMEOUT(!window.isVisible(),3000);
-        QCOMPARE(proxy.mutations,0); QCOMPARE(proxy.closes,1); QCOMPARE(proxy.metadataReads,0);
+        QCOMPARE(proxy.mutations,0); QCOMPARE(completedCloses,1); QVERIFY(proxy.closes>=1); QCOMPARE(proxy.metadataReads,0);
+        if(failure=="disconnect") {
+            const auto attempts=proxy.closes;
+            QTcpSocket retry; retry.setProxy(QNetworkProxy::NoProxy); retry.connectToHost(QHostAddress::LocalHost,proxy.serverPort());
+            QTRY_COMPARE_WITH_TIMEOUT(retry.state(),QAbstractSocket::ConnectedState,3000);
+            retry.write("POST /v1/workbooks/retried/close HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
+            QTRY_VERIFY_WITH_TIMEOUT(proxy.closes>attempts,3000);
+            QTRY_COMPARE_WITH_TIMEOUT(retry.state(),QAbstractSocket::UnconnectedState,3000);
+            QVERIFY(!proxy.closeReply.socket); QCOMPARE(completedCloses,1);
+        }
         QCOMPARE(owner.findChild<QProcess *>("ownedService")->state(),QProcess::Running);
         QVERIFY(QDir(options.recoveryDirectory).entryList({"operation-*.json"},QDir::Files).isEmpty());
     }
@@ -1115,6 +1136,90 @@ private slots:
         QFile output(csv); QVERIFY(output.open(QIODevice::ReadOnly)); QCOMPARE(output.readAll(),QByteArray("7\r\n"));
         window.openBook(path); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
         QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("7"),5000);
+    }
+    void unchangedEditorsPreserveNativeInputsWithoutRunningHooks_data() {
+        QTest::addColumn<bool>("inlineEditor"); QTest::addColumn<QString>("inputKind"); QTest::addColumn<QString>("input");
+        QTest::addColumn<bool>("textFormat"); QTest::addColumn<bool>("present"); QTest::addColumn<bool>("valuesPaste");
+        for(bool inlineEditor:{false,true}) {
+            const auto prefix=inlineEditor?QString("cell-"):QString("formula-bar-");
+            QTest::newRow(qPrintable(prefix+"null")) << inlineEditor << QString("null") << QString() << false << true << false;
+            QTest::newRow(qPrintable(prefix+"number-with-text-format")) << inlineEditor << QString("number") << QString("7") << true << true << false;
+            QTest::newRow(qPrintable(prefix+"boolean")) << inlineEditor << QString("boolean") << QString("TRUE") << false << true << false;
+            QTest::newRow(qPrintable(prefix+"formula-with-text-format")) << inlineEditor << QString("formula") << QString("=SUM(1,2)") << true << true << false;
+            QTest::newRow(qPrintable(prefix+"auto-number-with-text-format")) << inlineEditor << QString("auto") << QString("7") << true << true << false;
+            QTest::newRow(qPrintable(prefix+"text")) << inlineEditor << QString("text") << QString("00123") << false << true << false;
+            QTest::newRow(qPrintable(prefix+"absence")) << inlineEditor << QString("auto") << QString() << false << false << false;
+            QTest::newRow(qPrintable(prefix+"values-pasted-null")) << inlineEditor << QString("null") << QString() << false << true << true;
+        }
+    }
+    void unchangedEditorsPreserveNativeInputsWithoutRunningHooks() {
+        QFETCH(bool,inlineEditor); QFETCH(QString,inputKind); QFETCH(QString,input);
+        QFETCH(bool,textFormat); QFETCH(bool,present); QFETCH(bool,valuesPaste);
+        QTemporaryDir temp;
+        const auto handler=temp.filePath("count_changes.py"); QFile code(handler); QVERIFY(code.open(QIODevice::WriteOnly));
+        code.write("def on_change(context, changes):\n"
+            "    for change in changes:\n"
+            "        if (change['row'], change['col']) == (1, 1):\n"
+            "            value = context.value(change['sheet'], 1, 4) or 0\n"
+            "            context.set(change['sheet'], 1, 4, str(value + 1))\n"); code.close();
+        StartupOptions options; options.automaticWorkbook=false; options.handler=handler;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("unchanged-input.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QJsonArray cells{QJsonObject{{"row",1},{"col",4},{"source","0"}}};
+        if(valuesPaste) cells.append(QJsonObject{{"row",2},{"col",1},{"source","=Z1"}});
+        else if(present) cells.append(QJsonObject{{"row",1},{"col",1},{"source",input},{"kind",inputKind}});
+        window.submit({{"action","edit"},{"cells",cells}}); int expectedOpened=2;
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),expectedOpened,10000);
+        if(textFormat) {
+            window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"style",QJsonObject{{"format","text"}}}}}}});
+            ++expectedOpened; QTRY_COMPARE_WITH_TIMEOUT(opened.count(),expectedOpened,10000);
+        }
+        auto *model=window.model(); auto *grid=window.findChild<QTableView *>("grid"); auto *source=window.findChild<QLineEdit *>("source");
+        if(valuesPaste) {
+            QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(1,0)),5000);
+            QAction *copy=nullptr,*pasteValues=nullptr;
+            for(auto *action:window.findChildren<QAction *>()) {
+                if(action->shortcut().matches(QKeySequence::Copy)==QKeySequence::ExactMatch) copy=action;
+                if(action->text()=="Paste values only") pasteValues=action;
+            }
+            QVERIFY(copy); QVERIFY(pasteValues); QApplication::clipboard()->clear();
+            grid->setCurrentIndex(model->index(1,0)); grid->setFocus(); copy->trigger();
+            QTRY_VERIFY_WITH_TIMEOUT(QApplication::clipboard()->mimeData()
+                && QApplication::clipboard()->mimeData()->hasFormat("application/x-datahorizon-cells"),5000);
+            grid->setCurrentIndex(model->index(0,0)); pasteValues->trigger();
+            ++expectedOpened; QTRY_COMPARE_WITH_TIMEOUT(opened.count(),expectedOpened,10000);
+        }
+        grid->setCurrentIndex(model->index(0,0)); QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        const auto before=model->cell(model->index(0,0)); const auto state=model->state();
+        const auto hookCount=model->cell(model->index(0,3))["value"].toDouble();
+        QCOMPARE(before.contains("row"),present);
+        if(present) { QCOMPARE(before["input_kind"].toString(),inputKind); QCOMPARE(before["source"].toString(),input); }
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        if(inlineEditor) {
+            grid->edit(model->index(0,0)); QPointer<QLineEdit> editor=grid->findChild<QLineEdit *>(); QVERIFY(editor);
+            QVERIFY(!editor->isModified()); QTest::keyClick(editor,Qt::Key_Return); QTRY_VERIFY_WITH_TIMEOUT(editor.isNull(),3000);
+        } else { source->setFocus(); QVERIFY(!source->isModified()); QTest::keyClick(source,Qt::Key_Return); }
+        ++expectedOpened; QTRY_COMPARE_WITH_TIMEOUT(opened.count(),expectedOpened,10000);
+        QCOMPARE(changed.count(),1); QVERIFY(changed[0][0].toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,0)),5000);
+        QVERIFY(model->state()!=state); QCOMPARE(model->cell(model->index(0,0)),before);
+        QCOMPARE(model->cell(model->index(0,3))["value"].toDouble(),hookCount);
+        QCOMPARE(grid->currentIndex(),model->index(1,0));
+        grid->setCurrentIndex(model->index(0,0)); QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        if(inlineEditor) {
+            grid->edit(model->index(0,0)); QPointer<QLineEdit> editor=grid->findChild<QLineEdit *>(); QVERIFY(editor);
+            editor->selectAll(); QTest::keyClicks(editor,"9"); QTest::keyClick(editor,Qt::Key_Return);
+        } else { source->setFocus(); source->selectAll(); QTest::keyClicks(source,"9"); QTest::keyClick(source,Qt::Key_Return); }
+        ++expectedOpened; QTRY_COMPARE_WITH_TIMEOUT(opened.count(),expectedOpened,10000);
+        QCOMPARE(changed.count(),2); QVERIFY(changed[1][0].toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,0)),5000);
+        const auto after=model->cell(model->index(0,0));
+        QCOMPARE(after["source"].toString(),QString("9"));
+        QCOMPARE(after["input_kind"].toString(),inputKind=="text" || textFormat?QString("text"):QString("auto"));
+        QCOMPARE(after["kind"].toString(),inputKind=="text" || textFormat?QString("text"):QString("number"));
+        QCOMPARE(model->cell(model->index(0,3))["value"].toDouble(),hookCount+1);
     }
     void guiEditsPreserveExplicitTextWhileAutoCellsStillInferTypes() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;

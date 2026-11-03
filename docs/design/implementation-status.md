@@ -64,7 +64,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 123 Python tests and 52 Qt contract cases.
+The review regression suite includes 125 Python tests and 68 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -465,3 +465,17 @@ URL. Cleanup errors still permit the requested exit, and an older release cannot
 close a different newly opened handle. Six Qt cases cover delayed successful
 release, newer-state metadata, range reads, failed/disconnected cleanup and an
 in-flight Open, alongside existing draft and unknown-outcome close coverage.
+
+Cycle 29 local reviewers found Boolean/number comparisons bypassing the declared
+type rules and unmodified editor commits deleting native NULL cells. Formula
+comparisons now require matching type categories, preserving the documented
+blank/numeric/Boolean exception and explicit arithmetic conversion. Regressions
+cover all six operators, 48 rejected mixed cases and 114 permitted cases. Both
+GUI editor paths now preserve unchanged source and typing intent through durable
+no-op edits; native NULL, absence, explicit types and automatic numbers with Text
+formatting retain their inputs and do not run change handlers. Sixteen Qt
+scenarios cover native kinds, actual values-only pasted NULL origins and hooks.
+Linux CI also exposed a disconnect fixture that held a transport retry forever;
+the proxy now simulates a persistent outage across retries while asserting one
+logical cleanup completion. A subsequent raw socket probe verifies that behavior
+on Qt versions that do not retry the initial request.

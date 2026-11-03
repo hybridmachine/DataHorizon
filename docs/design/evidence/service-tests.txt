@@ -4,6 +4,8 @@ test_atomic_validation_and_undo_redo (test_engine.EngineTests.test_atomic_valida
 test_blank_comparisons_never_fail_the_viewport (test_engine.EngineTests.test_blank_comparisons_never_fail_the_viewport) ... ok
 test_bounded_reads_and_operations (test_engine.EngineTests.test_bounded_reads_and_operations) ... ok
 test_coalesced_input_with_style_change_does_not_dispatch_handler (test_engine.EngineTests.test_coalesced_input_with_style_change_does_not_dispatch_handler) ... ok
+test_comparisons_preserve_blank_boolean_and_numeric_cases (test_engine.EngineTests.test_comparisons_preserve_blank_boolean_and_numeric_cases) ... ok
+test_comparisons_reject_mixed_boolean_and_number_types (test_engine.EngineTests.test_comparisons_reject_mixed_boolean_and_number_types) ... ok
 test_copied_broken_reference_does_not_block_sheet_operations (test_engine.EngineTests.test_copied_broken_reference_does_not_block_sheet_operations) ... ok
 test_create_rejects_replacement_after_initialization (test_engine.EngineTests.test_create_rejects_replacement_after_initialization) ... ok
 test_cross_sheet_absolute_and_text_references (test_engine.EngineTests.test_cross_sheet_absolute_and_text_references) ... ok
@@ -123,6 +125,6 @@ test_slow_workbook_open_and_close_do_not_block_unrelated_reads (test_service.Ser
 test_unmatched_error_responses_never_clear_pending_operation (test_service.ServiceTests.test_unmatched_error_responses_never_clear_pending_operation) ... ok
 
 ----------------------------------------------------------------------
-Ran 123 tests in 10.341s
+Ran 125 tests in 10.370s
 
 OK

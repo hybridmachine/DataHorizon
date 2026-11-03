@@ -15,7 +15,8 @@ includes unary signs, so `+TRUE` is numeric 1 in this tier;
 SUM can consume that number while still ignoring unconverted boolean arguments.
 Comparisons of blank with
 blank or numeric/boolean values use zero for the blank operand. Other mixed-type
-comparisons are errors. Text comparison is case-sensitive. Formatting an empty
+comparisons are errors, including direct Boolean/number comparisons. Explicit
+numeric conversion such as `+TRUE=1` is permitted. Text comparison is case-sensitive. Formatting an empty
 auto cell does not turn it into empty Text; explicitly entered empty Text remains
 distinct and retains text coercion rules.
 Binary operations on ranges are #VALUE! because array expressions are outside
