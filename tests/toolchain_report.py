@@ -31,7 +31,7 @@ def build_report(build, grid_path):
     tests = json.loads(result.stdout)['tests']
     budgets = {test['name']: int(next(p['value'] for p in test['properties'] if p['name']=='TIMEOUT'))
                for test in tests}
-    expected = {'desktop': 180 if current['system'] in ('Darwin', 'Windows') else 90,
+    expected = {'desktop': {'Windows': 300, 'Darwin': 180}.get(current['system'], 90),
                 'service': 120 if current['system']=='Windows' else 45}
     if budgets != expected:
         raise RuntimeError(f'Test budgets differ from the documented baseline: {budgets}')

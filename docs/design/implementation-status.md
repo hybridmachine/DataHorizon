@@ -260,8 +260,12 @@ Python bundling, clean-machine installers, signing and other component licenses
 remain open. All PR #7 platform grid artifacts were inspected before merge.
 The new explicit Windows interpreter path exposed C++ escape sequences when
 embedded in the desktop launcher. Normalize native separators for the compiled
-definition; keep the selected interpreter for CTest/SDK. The failure was a
-startup-path defect, so no operation or suite deadline was increased.
+definition; keep the selected interpreter for CTest/SDK. A focused startup
+contract now passes in six seconds. The remaining silent suite timeouts are
+budgeted separately: a passing full Windows desktop suite took 171.77 seconds
+after two 180-second timeouts, so its whole-suite limit is now 300 seconds.
+Operation, hook and request deadlines remain unchanged; macOS/Linux suite
+budgets are unchanged. Failure artifacts and the focused startup check remain.
 
 ## Review corrections — November 1, 2026
 

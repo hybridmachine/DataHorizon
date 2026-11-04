@@ -68,7 +68,7 @@ if(BUILD_TESTING)
         ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/service" TIMEOUT 45)
     if(WIN32)
         # Allow the complete multi-process suites to finish on hosted Windows.
-        set_tests_properties(desktop PROPERTIES TIMEOUT 180)
+        set_tests_properties(desktop PROPERTIES TIMEOUT 300)
         set_tests_properties(service PROPERTIES TIMEOUT 120)
     elseif(APPLE)
         # Hosted macOS has also exceeded 90s with no assertion failures. Keep

@@ -32,8 +32,9 @@ and hicolor PNGs. Prebuilt assets and regeneration instructions are in
 [desktop/icons](../../desktop/icons/README.md); normal builds need no image tools.
 CTest uses Qt's offscreen platform for desktop tests. These tests do not
 replace native-platform keyboard, accessibility or installer acceptance.
-Whole-suite CTest limits are 180 seconds for desktop on Windows/macOS and
-120 seconds for Python on Windows. Hosted macOS twice exceeded the former
+Whole-suite CTest limits are 300 seconds for Windows desktop, 180 for macOS
+desktop, and 120 for Python on Windows. The Windows baseline run took 171.77
+seconds after two 180-second suite timeouts. Hosted macOS twice exceeded the former
 90-second desktop budget without an assertion failure; identical runs passed.
 Linux desktop retains 90 seconds and macOS/Linux Python retain 45 seconds.
 Per-operation, hook and
