@@ -32,7 +32,7 @@ formula source; values export contains 20.5. Formatting renders 20.50.
 | Increment | Evidence and scope | Remaining before full milestone closure |
 | --- | --- | --- |
 | M0 | [Initial contracts](initial-contracts.md), [compatibility](compatibility-v0.md), [native schema](native-format-v1.md), keyboard/state rules and numeric budgets recorded | Resolve deferred cases at their named milestones; no claim that historical PDFs have been regenerated |
-| M1 | Qt 6.12/C++17 builds locally; stdlib SQLite/HTTP and spawned brokered workers exercised; bounded SQLite capture comparison with typed old/new, rollback and negative controls; sparse/dense/long-text/large-disk, formula-chain and Qt scroll/input harnesses with local evidence and CI artifact collection | Comparative service/Python execution experiments, native capture binding and production SQL integration decisions, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
+| M1 | Qt 6.12/C++17 builds locally; bounded SQLite capture and service/Python execution comparisons with typed changes, transaction/worker failures and receipts; sparse/dense/long-text/large-disk, formula-chain and Qt scroll/input harnesses with local evidence and CI artifact collection | Physical/grid/toolchain experiment completion, production framework/runtime and native capture binding decisions, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
 | M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle; restart/reopen and warned unknown-outcome recovery | Broader failure injection, clean-machine packaging evidence and service lifecycle hardening |
 | M3 | Typed entry, A1 limits, SUM/IF/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
 | M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations and row/column reference transforms with destructive-operation fixtures | Unrestricted cut/rename/duplicate/delete, hook-aware structure events, wrap/borders/freeze/hide, dimensions/view persistence and platform conventions |
@@ -99,8 +99,9 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
-Next is the M1 service framework/Python execution comparison; the first bounded
-[SQLite capture comparison](sqlite-capture-experiment.md) is recorded below.
+Next is M1 physical representation validation; bounded
+[SQLite capture](sqlite-capture-experiment.md) and
+[service/Python execution](service-execution-experiment.md) comparisons are recorded below.
 Finish the remaining M1 experiments and native platform acceptance. Extend the
 bounded M4 structural tier to additional operations and hook-aware events only
 with explicit contracts and destructive-operation fixtures. Then finish list/CSV typing and explicit jobs,
@@ -183,6 +184,26 @@ engine operations for the preview. The journal is only a candidate for a
 restricted SQL prototype; native preupdate/session bindings, arbitrary schemas,
 Python hooks, history, receipts and result limits need separate qualification.
 Managed SQL stays unavailable. M1 remains open.
+
+## M1 service/Python execution comparison — November 4, 2026
+
+The [second experiment](service-execution-experiment.md) sends identical bounded
+engine operations through threaded HTTP and serial WSGI, and compares spawned
+brokered workers with an inline fast-code baseline. Both transports commit
+generated edits atomically and retain durable rollback receipts after handler
+exceptions, process exit and timeout. Disconnect/reopen reconciles committed
+receipts without rerunning hooks. Authentication rejects before mutation.
+[Local timing/outcome evidence](evidence/service-execution-benchmark.json) is
+repeatable in CI; [Python verification](evidence/service-execution-verification.txt)
+includes three new contract tests. Keep the current threaded localhost service
+and spawned broker for this development tier; inline cannot provide worker
+containment. Public job cancellation and production framework/runtime choices
+remain open. PR #4's capture artifacts were also inspected on all three hosted
+platforms before its merge; its duplicate macOS suite timeout passed on retry.
+The next PR reproduced that whole-suite macOS timeout without assertion
+failures while an identical run passed. macOS now has the same 180-second
+desktop suite budget as Windows; individual operation/hook deadlines are
+unchanged. The Python suite passes all 165 tests locally.
 
 ## Review corrections — November 1, 2026
 

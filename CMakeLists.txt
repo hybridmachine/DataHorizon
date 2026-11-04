@@ -59,6 +59,10 @@ if(BUILD_TESTING)
         # Allow the complete multi-process suites to finish on hosted Windows.
         set_tests_properties(desktop PROPERTIES TIMEOUT 180)
         set_tests_properties(service PROPERTIES TIMEOUT 120)
+    elseif(APPLE)
+        # Hosted macOS has also exceeded 90s with no assertion failures. Keep
+        # per-operation deadlines while budgeting the complete process suite.
+        set_tests_properties(desktop PROPERTIES TIMEOUT 180)
     endif()
 endif()
 

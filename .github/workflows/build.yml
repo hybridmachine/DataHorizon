@@ -33,6 +33,10 @@ jobs:
         run: ctest --test-dir build -C Release --output-on-failure
       - name: SQLite capture experiment
         run: python tests/sqlite_capture_experiment.py --output build/sqlite-capture-benchmark.json
+      - name: Service and Python execution experiment
+        env:
+          PYTHONPATH: service
+        run: python tests/service_execution_experiment.py --output build/service-execution-benchmark.json
       - name: Formula-chain measurements
         env:
           PYTHONPATH: service

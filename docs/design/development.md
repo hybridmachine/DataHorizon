@@ -26,9 +26,11 @@ and hicolor PNGs. Prebuilt assets and regeneration instructions are in
 [desktop/icons](../../desktop/icons/README.md); normal builds need no image tools.
 CTest uses Qt's offscreen platform for desktop tests. These tests do not
 replace native-platform keyboard, accessibility or installer acceptance.
-Whole-suite CTest limits are 180 seconds for desktop and 120 for Python on
-Windows, where hosted runs take roughly 84 and 39–45 seconds respectively.
-Other platforms retain 90/45-second suite limits. Per-operation, hook and
+Whole-suite CTest limits are 180 seconds for desktop on Windows/macOS and
+120 seconds for Python on Windows. Hosted macOS twice exceeded the former
+90-second desktop budget without an assertion failure; identical runs passed.
+Linux desktop retains 90 seconds and macOS/Linux Python retain 45 seconds.
+Per-operation, hook and
 individual request deadlines are independent of these test-runner limits.
 Hosted macOS CI uses `macos-15`; GitHub's `macos-14` image entered retirement
 brownouts and is scheduled for removal on November 2, 2026.
@@ -258,6 +260,7 @@ cmake --install build --prefix "$PWD/build/package"
 PYTHONPATH=service python3 tests/benchmark.py
 PYTHONPATH=service python3 tests/benchmark.py --formula-only --output build/formula-benchmark.json
 python3 tests/sqlite_capture_experiment.py --output build/sqlite-capture-benchmark.json
+PYTHONPATH=service python3 tests/service_execution_experiment.py --output build/service-execution-benchmark.json
 QT_QPA_PLATFORM=offscreen build/desktop_benchmark build/desktop-benchmark.json
 ```
 
@@ -273,6 +276,13 @@ typed old/new images against independent snapshots, and records incomplete
 RETURNING/recursive-trigger controls. It needs no service or pip dependencies
 and does not expose managed SQL. Its 16 contract tests run in normal discovery;
 CI preserves the report with the other M1 measurements.
+
+The [service/Python comparison](service-execution-experiment.md) runs identical
+small engine routes through threaded HTTP and serial WSGI, plus spawned-worker
+and inline timing baselines. It verifies generated-edit rollback after failure,
+crash and timeout, and durable receipt reconciliation after disconnect/reopen.
+Its default is 20 timing samples per arrangement. Inline is only an isolated
+fast-code baseline, never a service execution option.
 
 The desktop harness measures 100 scrolling viewports and 100 distant jumps,
 synthetic address input during reads, event-loop gaps, and range-response counts

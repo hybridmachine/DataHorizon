@@ -293,7 +293,11 @@ APIs require a separate binding decision; arbitrary SQL hook/history/receipt
 integration remains unqualified and all public managed SQL stays unavailable.
 Use stdlib localhost HTTP and a spawned Python worker for the first bounded
 experiment; compare dependencies and transaction/cancellation costs before
-calling either a production service choice. Exercise QTableView tiles,
+calling either a production service choice. The bounded
+[service/Python comparison](service-execution-experiment.md) retains that
+development arrangement after real exception/crash/timeout and receipt tests;
+it does not qualify a production framework or enable cancellable jobs.
+Exercise QTableView tiles,
 QNetworkAccessManager ordering and QAbstractItemModelTester. Record selected
 toolchain, correctness tests, measurements and remaining blockers in
 [implementation status](implementation-status.md).
