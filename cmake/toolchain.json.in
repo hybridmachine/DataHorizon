@@ -1,0 +1,14 @@
+{
+  "project_version": "@PROJECT_VERSION@",
+  "cmake": "@CMAKE_VERSION@",
+  "generator": "@CMAKE_GENERATOR@",
+  "compiler": "@CMAKE_CXX_COMPILER_ID@",
+  "compiler_version": "@CMAKE_CXX_COMPILER_VERSION@",
+  "cxx_standard": @CMAKE_CXX_STANDARD@,
+  "system": "@CMAKE_SYSTEM_NAME@",
+  "processor": "@CMAKE_SYSTEM_PROCESSOR@",
+  "qt": "@Qt6_VERSION@",
+  "python": "@Python3_VERSION@",
+  "build_type": "@CMAKE_BUILD_TYPE@",
+  "absolute_install_prefix": @DATAHORIZON_ABSOLUTE_INSTALL_PREFIX@
+}

@@ -1,0 +1,39 @@
+{
+  "recorded_at_utc": "2026-11-04T06:53:56.584327+00:00",
+  "build": {
+    "project_version": "0.1.0",
+    "cmake": "4.4.2",
+    "generator": "Unix Makefiles",
+    "compiler": "AppleClang",
+    "compiler_version": "17.0.0.17000603",
+    "cxx_standard": 17,
+    "system": "Darwin",
+    "processor": "arm64",
+    "qt": "6.12.0",
+    "python": "3.14.6",
+    "build_type": "Debug",
+    "absolute_install_prefix": true
+  },
+  "runtime": {
+    "python": "3.14.6",
+    "implementation": "CPython",
+    "sqlite": "3.53.4",
+    "system": "Darwin",
+    "architecture": "arm64"
+  },
+  "ctest_suite_seconds": {
+    "desktop": 180,
+    "service": 45
+  },
+  "grid_evidence": {
+    "qt": "6.12.0",
+    "platform_plugin": "offscreen",
+    "focused_address_retention_checked": true
+  },
+  "distribution": {
+    "python_bundled": false,
+    "clean_machine_qualified": false,
+    "gui_license": "GPL-3.0-only",
+    "service_sdk_license": "undecided"
+  }
+}

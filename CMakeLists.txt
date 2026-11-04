@@ -11,6 +11,11 @@ else()
 endif()
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Network Test)
 find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+set(DATAHORIZON_ABSOLUTE_INSTALL_PREFIX false)
+if(IS_ABSOLUTE "${CMAKE_INSTALL_PREFIX}")
+    set(DATAHORIZON_ABSOLUTE_INSTALL_PREFIX true)
+endif()
+configure_file(cmake/toolchain.json.in build-toolchain.json @ONLY)
 include(CTest)
 
 add_library(datahorizon_desktop STATIC
