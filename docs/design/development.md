@@ -20,6 +20,10 @@ open build/DataHorizon.app
 
 On Windows/Linux run the generated DataHorizon executable; set the Qt prefix to
 the selected kit. Test execution needs permission to bind loopback sockets.
+The selected Shared Cell application icon is embedded in Qt, included in the
+macOS bundle and Windows executable, and installed with a Linux desktop entry
+and hicolor PNGs. Prebuilt assets and regeneration instructions are in
+[desktop/icons](../../desktop/icons/README.md); normal builds need no image tools.
 CTest uses Qt's offscreen platform for desktop tests. These tests do not
 replace native-platform keyboard, accessibility or installer acceptance.
 Whole-suite CTest limits are 180 seconds for desktop and 120 for Python on

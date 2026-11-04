@@ -2,6 +2,7 @@
 #include "mainwindow.h"
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QIcon>
 #include <QJsonArray>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -9,6 +10,8 @@
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
     app.setOrganizationName("DataHorizon"); app.setApplicationName("DataHorizon"); app.setApplicationVersion("0.1.0");
+    app.setWindowIcon(QIcon(":/icons/datahorizon.png"));
+    app.setDesktopFileName("datahorizon");
     QCommandLineParser parser; parser.setApplicationDescription("DataHorizon native spreadsheet development preview"); parser.addHelpOption(); parser.addVersionOption();
     parser.addOption({"connect", "Attach to a localhost service; credential comes from DATAHORIZON_TOKEN", "url"});
     parser.addOption({"handler", "Explicitly activate a trusted Python handler for the owned service", "path"});
