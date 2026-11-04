@@ -11,6 +11,12 @@ Requirements: CMake 3.24+, C++17 compiler, Qt 6.8+ Widgets/Network/Test, Python
 17, Python 3.14.6 and CMake 4.4.2 on Apple Silicon macOS. No pip packages are
 required. Qt's other installed toolchains can be selected with CMAKE_PREFIX_PATH.
 
+The [toolchain/packaging baseline](toolchain-packaging-baseline.md) records the
+actual compiler, CMake, Qt, interpreter and SQLite versions. Hosted desktop
+jobs use Qt 6.8.3/Python 3.13, with separate complete Python 3.11 contract jobs
+on all three systems. The complete experiment suite needs SQLite 3.35+ for its
+RETURNING fixtures; this does not add an engine-side version gate.
+
 ```sh
 cmake -S . -B build -DCMAKE_PREFIX_PATH="$HOME/Qt/6.12.0/macos" -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --parallel
@@ -26,8 +32,9 @@ and hicolor PNGs. Prebuilt assets and regeneration instructions are in
 [desktop/icons](../../desktop/icons/README.md); normal builds need no image tools.
 CTest uses Qt's offscreen platform for desktop tests. These tests do not
 replace native-platform keyboard, accessibility or installer acceptance.
-Whole-suite CTest limits are 180 seconds for desktop on Windows/macOS and
-120 seconds for Python on Windows. Hosted macOS twice exceeded the former
+Whole-suite CTest limits are 300 seconds for Windows desktop, 180 for macOS
+desktop, and 120 for Python on Windows. The Windows baseline run took 171.77
+seconds after two 180-second suite timeouts. Hosted macOS twice exceeded the former
 90-second desktop budget without an assertion failure; identical runs passed.
 Linux desktop retains 90 seconds and macOS/Linux Python retain 45 seconds.
 Per-operation, hook and
@@ -304,6 +311,12 @@ scroll/horizontal samples with header/value/geometry and zero-edit checks. It
 records cache charges and saves a `*-frozen-row.png` screenshot beside the JSON.
 CI preserves those screenshots too. This read-only probe is not installed or
 exposed as a Freeze command; M4 interactions and view persistence remain open.
+
+After measuring the grid, run `python3 tests/toolchain_report.py --build build --output build/toolchain-benchmark.json`.
+Use `--grid-report PATH` for a report stored outside build, or `--runtime-only`
+to record the minimum-runtime job without a Qt build. PR updates and main
+pushes run CI; redundant branch-push runs are omitted and newer runs supersede
+older runs for the same ref.
 
 Whole-row/column edits use `rows_insert`, `rows_delete`, `columns_insert` or
 `columns_delete` with a sheet name/ID, 1-based `start`, and `count` (default 1).

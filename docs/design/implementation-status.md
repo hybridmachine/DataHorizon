@@ -32,7 +32,7 @@ formula source; values export contains 20.5. Formatting renders 20.50.
 | Increment | Evidence and scope | Remaining before full milestone closure |
 | --- | --- | --- |
 | M0 | [Initial contracts](initial-contracts.md), [compatibility](compatibility-v0.md), [native schema](native-format-v1.md), keyboard/state rules and numeric budgets recorded | Resolve deferred cases at their named milestones; no claim that historical PDFs have been regenerated |
-| M1 | Qt 6.12/C++17 builds locally; bounded SQLite capture and service/Python execution comparisons with typed changes, transaction/worker failures and receipts; sparse/dense/long-text/large-disk, formula-chain and Qt scroll/input harnesses with local evidence and CI artifact collection | Toolchain experiment completion, production framework/runtime and native capture binding decisions, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
+| M1 | Qt 6.12/C++17 builds locally; bounded SQLite capture and service/Python execution comparisons with typed changes, transaction/worker failures and receipts; sparse/dense/long-text/large-disk, formula-chain and Qt scroll/input harnesses with local evidence and CI artifact collection | Production framework/runtime and native capture binding decisions, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
 | M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle; restart/reopen and warned unknown-outcome recovery | Broader failure injection, clean-machine packaging evidence and service lifecycle hardening |
 | M3 | Typed entry, A1 limits, SUM/IF/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
 | M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations and row/column reference transforms with destructive-operation fixtures | Unrestricted cut/rename/duplicate/delete, hook-aware structure events, wrap/borders/freeze/hide, dimensions/view persistence and platform conventions |
@@ -99,7 +99,11 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
-Next is the M1 toolchain/packaging baseline; bounded
+The five bounded M1 experiment slices, including the
+[toolchain/packaging baseline](toolchain-packaging-baseline.md), now have
+repeatable evidence. Next are the remaining native-platform acceptance,
+cold-cache/RSS qualification and production framework/runtime/capture-binding
+decisions. The bounded
 [Qt grid/frozen-row display](grid-frozen-row-experiment.md),
 [native storage](native-storage-experiment.md),
 [SQLite capture](sqlite-capture-experiment.md) and
@@ -239,6 +243,29 @@ visibility and input regressions accompany full-suite verification. See
 [offscreen](evidence/grid-benchmark-offscreen.json) and
 [verification](evidence/grid-experiment-verification.txt) evidence. M1 still
 requires its toolchain baseline and remaining native/cold-cache qualification.
+
+## M1 toolchain/packaging baseline — November 4, 2026
+
+The [baseline](toolchain-packaging-baseline.md) records C++17/Qt Widgets, CMake
+3.24+, Python 3.11+ and the current native build/test/install arrangement.
+CMake emits actual compiler/generator/Qt/interpreter metadata; the report
+verifies it against runtime/grid artifacts and generated test budgets. A
+[local report](evidence/toolchain-benchmark.json) records the working host.
+New Python 3.11 jobs execute the complete Python suite on all three hosted
+systems and retain actual runtime/SQLite versions. Desktop jobs retain Qt
+6.8.3/Python 3.13. PR updates and main pushes run one matrix each, with superseded
+runs cancelled. The first four PR cycles were reviewed, verified and merged;
+their M1 evidence remains bounded and does not close native/release acceptance.
+Python bundling, clean-machine installers, signing and other component licenses
+remain open. All PR #7 platform grid artifacts were inspected before merge.
+The new explicit Windows interpreter path exposed C++ escape sequences when
+embedded in the desktop launcher. Normalize native separators for the compiled
+definition; keep the selected interpreter for CTest/SDK. A focused startup
+contract now passes in six seconds. The remaining silent suite timeouts are
+budgeted separately: a passing full Windows desktop suite took 171.77 seconds
+after two 180-second timeouts, so its whole-suite limit is now 300 seconds.
+Operation, hook and request deadlines remain unchanged; macOS/Linux suite
+budgets are unchanged. Failure artifacts and the focused startup check remain.
 
 ## Review corrections — November 1, 2026
 
