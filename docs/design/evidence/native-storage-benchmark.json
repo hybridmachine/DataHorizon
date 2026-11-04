@@ -1,0 +1,91 @@
+{
+  "recorded_at_utc": "2026-11-04T06:22:14.584299+00:00",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "python": "3.14.6",
+  "sqlite": "3.53.4",
+  "native_contracts": {
+    "typed_input_kinds": [
+      "text_identifier",
+      "null",
+      "empty_text",
+      "formula",
+      "absence",
+      "styled_blank"
+    ],
+    "stored_cell_columns": [
+      "sheet_id",
+      "row",
+      "col",
+      "source",
+      "kind",
+      "style"
+    ],
+    "read_preserves_inputs": true,
+    "external_handler_replay": false,
+    "external_formula_display": "10.00",
+    "stale_write_code": "STALE_STATE",
+    "managed_revision_unchanged_by_direct": true,
+    "identity_styles_reopen": true,
+    "snapshot_matches": true,
+    "future_version_rejected_without_repair": true
+  },
+  "layouts": {
+    "sparse_without_rowid": {
+      "cells": 10000,
+      "database_bytes": 724992,
+      "pages": 177,
+      "query_plan": [
+        "SEARCH cells USING PRIMARY KEY (sheet_id=? AND row=? AND col>? AND col<?)"
+      ],
+      "warm_narrow_read": {
+        "samples": 100,
+        "median_ms": 0.0064,
+        "p95_ms": 0.0072
+      }
+    },
+    "sparse_rowid": {
+      "cells": 10000,
+      "database_bytes": 1236992,
+      "pages": 302,
+      "query_plan": [
+        "SEARCH cells USING INDEX sqlite_autoindex_cells_1 (sheet_id=? AND row=? AND col>? AND col<?)"
+      ],
+      "warm_narrow_read": {
+        "samples": 100,
+        "median_ms": 0.0064,
+        "p95_ms": 0.0068
+      }
+    },
+    "dense_without_rowid": {
+      "cells": 10000,
+      "database_bytes": 716800,
+      "pages": 175,
+      "query_plan": [
+        "SEARCH cells USING PRIMARY KEY (sheet_id=? AND row=? AND col>? AND col<?)"
+      ],
+      "warm_narrow_read": {
+        "samples": 100,
+        "median_ms": 0.0145,
+        "p95_ms": 0.0152
+      }
+    },
+    "dense_rowid": {
+      "cells": 10000,
+      "database_bytes": 1216512,
+      "pages": 297,
+      "query_plan": [
+        "SEARCH cells USING INDEX sqlite_autoindex_cells_1 (sheet_id=? AND row=? AND col>? AND col<?)"
+      ],
+      "warm_narrow_read": {
+        "samples": 100,
+        "median_ms": 0.0149,
+        "p95_ms": 0.0156
+      }
+    }
+  },
+  "limitations": [
+    "10000-cell fixtures and warm SQLite reads; no cold-cache, REST, RSS or unlimited-scale claim.",
+    "Rowid is an isolated comparison and is deliberately rejected by native format v1.",
+    "Advanced physical storage, migrations and production durability remain unqualified."
+  ]
+}

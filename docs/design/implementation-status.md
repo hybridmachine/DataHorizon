@@ -32,7 +32,7 @@ formula source; values export contains 20.5. Formatting renders 20.50.
 | Increment | Evidence and scope | Remaining before full milestone closure |
 | --- | --- | --- |
 | M0 | [Initial contracts](initial-contracts.md), [compatibility](compatibility-v0.md), [native schema](native-format-v1.md), keyboard/state rules and numeric budgets recorded | Resolve deferred cases at their named milestones; no claim that historical PDFs have been regenerated |
-| M1 | Qt 6.12/C++17 builds locally; bounded SQLite capture and service/Python execution comparisons with typed changes, transaction/worker failures and receipts; sparse/dense/long-text/large-disk, formula-chain and Qt scroll/input harnesses with local evidence and CI artifact collection | Physical/grid/toolchain experiment completion, production framework/runtime and native capture binding decisions, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
+| M1 | Qt 6.12/C++17 builds locally; bounded SQLite capture and service/Python execution comparisons with typed changes, transaction/worker failures and receipts; sparse/dense/long-text/large-disk, formula-chain and Qt scroll/input harnesses with local evidence and CI artifact collection | Grid/toolchain experiment completion, production framework/runtime and native capture binding decisions, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
 | M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle; restart/reopen and warned unknown-outcome recovery | Broader failure injection, clean-machine packaging evidence and service lifecycle hardening |
 | M3 | Typed entry, A1 limits, SUM/IF/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
 | M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations and row/column reference transforms with destructive-operation fixtures | Unrestricted cut/rename/duplicate/delete, hook-aware structure events, wrap/borders/freeze/hide, dimensions/view persistence and platform conventions |
@@ -99,7 +99,8 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
-Next is M1 physical representation validation; bounded
+Next is the remaining M1 Qt grid/frozen-pane experiment; bounded
+[native storage](native-storage-experiment.md),
 [SQLite capture](sqlite-capture-experiment.md) and
 [service/Python execution](service-execution-experiment.md) comparisons are recorded below.
 Finish the remaining M1 experiments and native platform acceptance. Extend the
@@ -204,6 +205,20 @@ The next PR reproduced that whole-suite macOS timeout without assertion
 failures while an identical run passed. macOS now has the same 180-second
 desktop suite budget as Windows; individual operation/hook deadlines are
 unchanged. The Python suite passes all 165 tests locally.
+
+## M1 native representation validation — November 4, 2026
+
+The [storage experiment](native-storage-experiment.md) verifies typed inputs,
+formula-source/derived separation, styled blanks, stable identities, snapshots,
+external insertion/refresh without handler replay, durable stale-write rejection
+and unsupported version/schema boundaries. Four 10,000-cell fixtures compare
+native WITHOUT ROWID and isolated rowid layouts with sparse/dense addresses.
+[Local JSON](evidence/native-storage-benchmark.json) records sizes, query plans
+and 100 warm reads; the [Python suite](evidence/native-storage-verification.txt)
+includes two new contract tests. Keep native format v1 unchanged. Advanced
+storage, migration, cold-cache, RSS and production durability remain unqualified.
+CI collects equivalent platform reports; PR #5's Linux/macOS worker failure and
+receipt artifacts were inspected before its fully green merge.
 
 ## Review corrections — November 1, 2026
 
