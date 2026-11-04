@@ -35,6 +35,15 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/build/package" -DPython3_EXECUTABLE="${{ steps.python.outputs.python-path }}"
       - name: Build
         run: cmake --build build --config Release --parallel 2
+      - name: Windows desktop startup contract
+        if: runner.os == 'Windows'
+        timeout-minutes: 2
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_DEBUG_PLUGINS: '1'
+        run: |
+          build/Release/desktop_tests.exe -functions
+          build/Release/desktop_tests.exe scrollingPastTileLimitKeepsTheVisibleViewportLoaded -v1
       - name: Contract and desktop tests
         run: ctest --test-dir build -C Release --output-on-failure
       - name: SQLite capture experiment
@@ -79,6 +88,15 @@ jobs:
       - name: Run installed application under Xvfb
         if: runner.os == 'Linux'
         run: xvfb-run -a python tests/package_smoke.py build/package
+      - name: Preserve failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-diagnostics-${{ runner.os }}
+          path: |
+            build/Testing/Temporary/*.log
+            build/build-toolchain.json
+          if-no-files-found: ignore
 
   minimum-python:
     strategy:
