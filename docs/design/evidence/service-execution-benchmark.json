@@ -1,0 +1,91 @@
+{
+  "recorded_at_utc": "2026-11-04T06:07:49.138087+00:00",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "python": "3.14.6",
+  "contracts": {
+    "threaded_http": {
+      "generated_edit": {
+        "outcome": "committed",
+        "changed_cells": 2
+      },
+      "exception": {
+        "outcome": "rolled_back",
+        "code": "HOOK_FAILED",
+        "elapsed_ms": 103.647
+      },
+      "worker_crash": {
+        "outcome": "rolled_back",
+        "code": "HOOK_FAILED",
+        "elapsed_ms": 92.492
+      },
+      "worker_timeout": {
+        "outcome": "rolled_back",
+        "code": "HOOK_FAILED",
+        "elapsed_ms": 2109.688
+      },
+      "lost_acknowledgement": {
+        "outcome": "committed",
+        "changed_cells": 2
+      },
+      "receipt_survives_restart": true
+    },
+    "serial_wsgi": {
+      "generated_edit": {
+        "outcome": "committed",
+        "changed_cells": 2
+      },
+      "exception": {
+        "outcome": "rolled_back",
+        "code": "HOOK_FAILED",
+        "elapsed_ms": 105.062
+      },
+      "worker_crash": {
+        "outcome": "rolled_back",
+        "code": "HOOK_FAILED",
+        "elapsed_ms": 92.714
+      },
+      "worker_timeout": {
+        "outcome": "rolled_back",
+        "code": "HOOK_FAILED",
+        "elapsed_ms": 2109.454
+      },
+      "lost_acknowledgement": {
+        "outcome": "committed",
+        "changed_cells": 2
+      },
+      "receipt_survives_restart": true
+    }
+  },
+  "measurements": {
+    "threaded_http": {
+      "spawned_broker": {
+        "samples": 20,
+        "median_ms": 201.554,
+        "p95_ms": 203.771
+      },
+      "inline_baseline": {
+        "samples": 20,
+        "median_ms": 1.182,
+        "p95_ms": 1.341
+      }
+    },
+    "serial_wsgi": {
+      "spawned_broker": {
+        "samples": 20,
+        "median_ms": 202.622,
+        "p95_ms": 213.226
+      },
+      "inline_baseline": {
+        "samples": 20,
+        "median_ms": 1.165,
+        "p95_ms": 1.529
+      }
+    }
+  },
+  "limitations": [
+    "Identical minimal experiment routes, not complete alternative production APIs.",
+    "Inline runs only fast trusted code; cannot contain a loop/crash and is not a service option.",
+    "Cancellation evidence is required-hook timeout rollback; public job cancellation remains unavailable.",
+    "Warm local durable transactions; no network load, cold-cache or production hardening qualification."
+  ]
+}
