@@ -261,6 +261,7 @@ PYTHONPATH=service python3 tests/benchmark.py
 PYTHONPATH=service python3 tests/benchmark.py --formula-only --output build/formula-benchmark.json
 python3 tests/sqlite_capture_experiment.py --output build/sqlite-capture-benchmark.json
 PYTHONPATH=service python3 tests/service_execution_experiment.py --output build/service-execution-benchmark.json
+PYTHONPATH=service python3 tests/native_storage_experiment.py --output build/native-storage-benchmark.json
 QT_QPA_PLATFORM=offscreen build/desktop_benchmark build/desktop-benchmark.json
 ```
 
@@ -283,6 +284,11 @@ and inline timing baselines. It verifies generated-edit rollback after failure,
 crash and timeout, and durable receipt reconciliation after disconnect/reopen.
 Its default is 20 timing samples per arrangement. Inline is only an isolated
 fast-code baseline, never a service execution option.
+
+The [native storage experiment](native-storage-experiment.md) verifies input
+kinds, identity/styles, snapshot/reopen, external refresh without handler replay,
+stale writes and format boundaries. It compares four 10,000-cell physical
+fixtures with 100 warm indexed reads; its rowid variant is not native format v1.
 
 The desktop harness measures 100 scrolling viewports and 100 distant jumps,
 synthetic address input during reads, event-loop gaps, and range-response counts

@@ -37,6 +37,10 @@ jobs:
         env:
           PYTHONPATH: service
         run: python tests/service_execution_experiment.py --output build/service-execution-benchmark.json
+      - name: Native representation experiment
+        env:
+          PYTHONPATH: service
+        run: python tests/native_storage_experiment.py --output build/native-storage-benchmark.json
       - name: Formula-chain measurements
         env:
           PYTHONPATH: service
