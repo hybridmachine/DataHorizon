@@ -42,9 +42,27 @@ class ReferenceTransformTests(unittest.TestCase):
                                          if not start<=value<start+count]
                             ends = (min(remaining),max(remaining)) if remaining else None
                             if ends and first>last: ends=ends[::-1]
-                            expected = "=SUM(#REF!)" if ends is None else f"=SUM({ref(ends[0])}:{ref(ends[1])})"
-                            result, broken = transform_structure(f"=SUM({ref(first)}:{ref(last)})","Main","Main",axis,start,count,True)
-                            self.assertEqual((result,broken),(expected,int(ends is None)),(axis,first,last,start,count))
+                            for left, right in (("{}","{}"),("({})","{}"),("{}","(({}))"),("({})","(({}))")):
+                                expected = "=SUM(#REF!)" if ends is None else f"=SUM({left.format(ref(ends[0]))}:{right.format(ref(ends[1]))})"
+                                source = f"=SUM({left.format(ref(first))}:{right.format(ref(last))})"
+                                result, broken = transform_structure(source,"Main","Main",axis,start,count,True)
+                                self.assertEqual((result,broken),(expected,int(ends is None)),(axis,first,last,start,count,source))
+
+    def test_parenthesized_ranges_inherit_sheet_and_preserve_source_spelling(self):
+        target_id = str(uuid.uuid4())
+        for axis, low, high, shifted in (("row","$A$1","A$3","A$4"),("col","$A$1","$C1","$D1")):
+            for qualifier in ("Main!","'Main'!",f"'{target_id}'!"):
+                for left, right in (("{}","{}"),("({})","{}"),("{}","(({}))"),("({})","(({}))")):
+                    for first, last, new_first, new_last in ((low,high,low,shifted),(high,low,shifted,low)):
+                        with self.subTest(axis=axis,qualifier=qualifier,left=left,right=right,first=first):
+                            source = f'= SUM( {left.format(qualifier+first)} : {right.format(last)} ) + IF(TRUE,"A1:(A3)",0) '
+                            expected = f'= SUM( {left.format(qualifier+new_first)} : {right.format(new_last)} ) + IF(TRUE,"A1:(A3)",0) '
+                            self.assertEqual(transform_structure(source,"Other","Main",axis,2,1,target_id=target_id),(expected,0))
+
+    def test_broken_parenthesized_ranges_leave_balanced_surrounding_expressions(self):
+        source = '=IF(TRUE,SUM(((Main!A1):(A3))),A1)+SUM(Main!A1:(A3))'
+        expected = '=IF(TRUE,SUM((#REF!)),A1)+SUM(#REF!)'
+        self.assertEqual(transform_structure(source,"Other","Main","row",1,3,True),(expected,2))
 
     def test_insertion_expands_only_inside_range_and_moves_absolute_scalars(self):
         for start, expected in ((1,"A3:A7"),(2,"A1:A7"),(5,"A1:A7"),(6,"A1:A5")):
@@ -106,6 +124,45 @@ class StructureEngineTests(unittest.TestCase):
         cells=self.book.read("Sheet1",{"r2":3,"c2":3})["cells"]
         self.assertEqual(cells[1]["source"],"=B1+$B$1"); self.assertEqual(cells[1]["value"],14)
 
+    def test_parenthesized_ranges_keep_calculated_targets_through_structure_changes(self):
+        for axis, target in (("row","Rows"),("col","Columns")):
+            with self.subTest(axis=axis):
+                self.apply("sheet_add",name=target)
+                self.apply("sheet_add",name=target+" formulas")
+                low, high, shifted = ("A1","A3","A4") if axis=="row" else ("A1","C1","D1")
+                local_source = f"=SUM(({low}):{high})"
+                self.apply(sheet=target,cells=[{"row":n if axis=="row" else 1,"col":1 if axis=="row" else n,"source":str(n)} for n in range(1,4)]
+                           +[{"row":5,"col":5,"source":local_source}])
+                sources = [f"=SUM({target}!{low}:({high}))",f"=SUM(({target}!{low}):{high})",
+                           f"=SUM(({target}!{high}):(({low})))"]
+                self.apply(sheet=target+" formulas",cells=[{"row":n,"col":1,"source":source} for n,source in enumerate(sources,1)])
+                def assert_values(sheet, expected):
+                    formulas = [cell for cell in self.book.read(sheet,{"r2":6,"c2":6})["cells"] if cell["kind"]=="formula"]
+                    self.assertTrue(formulas)
+                    for cell in formulas:
+                        self.assertEqual(cell["value"],expected,cell)
+                        self.assertEqual(cell["calculation"],"current")
+                assert_values(target,6); assert_values(target+" formulas",6)
+                action = "rows" if axis=="row" else "columns"
+                receipt = self.apply(action+"_insert",sheet=target,start=2)
+                self.assertEqual(receipt["reference_warnings"],0)
+                assert_values(target,6); assert_values(target+" formulas",6)
+                transformed = self.book.read(target+" formulas",{"r2":3})["cells"]
+                self.assertEqual([cell["source"] for cell in transformed],[source.replace(high,shifted) for source in sources])
+                receipt = self.apply(action+"_delete",sheet=target,start=1)
+                self.assertEqual(receipt["reference_warnings"],0)
+                assert_values(target,5); assert_values(target+" formulas",5)
+                receipt = self.apply(action+"_delete",sheet=target,start=1,count=3)
+                self.assertEqual(receipt["reference_warnings"],4)
+                self.assertEqual(len(receipt["reference_issues"]),4)
+                for sheet in (target,target+" formulas"):
+                    formulas = self.book.read(sheet,{"r2":5,"c2":5})["cells"]
+                    for cell in formulas:
+                        self.assertEqual(cell["display"],"#REF!")
+                        self.assertEqual(cell["error"],"#REF!")
+                stored = self.stored(); self.book.close(); self.book=Workbook(self.path)
+                self.assertEqual(self.stored(),stored)
+
     def test_replay_does_not_shift_cells_twice(self):
         self.apply(cells=[{"row":2,"col":1,"source":"7"}])
         request={"action":"rows_insert","start":2,"count":2,"operation_id":"structure-replay","expected_state":self.book.state()}
@@ -147,6 +204,13 @@ class StructureEngineTests(unittest.TestCase):
         self.assertRollback("rows_delete","REFERENCE_TRANSFORM_UNAVAILABLE",start=3)
         self.book.handler=str(Path(__file__).parent/"fixtures"/"validation_hook.py")
         self.assertRollback("rows_insert","UNSUPPORTED_HOOK_SCOPE",start=3)
+
+    def test_non_reference_range_endpoints_reject_atomically(self):
+        for expression in ("(A1+1):A3","A1:(A2:A3)"):
+            with self.subTest(expression=expression):
+                self.apply(cells=[{"row":4,"col":2,"source":f"=IF(TRUE,7,SUM({expression}))"}])
+                self.assertEqual(self.book.read("Sheet1",{"r1":4,"r2":4,"c1":2,"c2":2})["cells"][0]["value"],7)
+                self.assertRollback("rows_insert","REFERENCE_TRANSFORM_UNAVAILABLE",start=1)
 
     def test_invalid_arguments_have_durable_rollback(self):
         self.apply(cells=[{"row":2,"col":1,"source":"7"}])

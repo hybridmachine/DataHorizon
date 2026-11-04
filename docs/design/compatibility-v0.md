@@ -34,6 +34,7 @@ quoted string contents. Unsupported transformations reject before any commit.
 Whole-row/column insertion/deletion adjusts both relative and absolute targets
 across sheets. Ranges expand for inserted interior members and contract around
 deleted members; deleted targets and overflowing references become #REF!.
+Parenthesized range endpoints retain the same membership and sheet inheritance.
 The [initial contracts](initial-contracts.md) define endpoints, identity, bounds
 and source-preserving rejection for unsupported syntax.
 Cross-sheet ranges must remain within one sheet. Whole-column ranges, named

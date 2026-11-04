@@ -122,14 +122,8 @@ def transform_structure(source, local_sheet, target_sheet, axis, start, count, d
     around deleted members and expands for insertions inside its endpoints.
     Return the source and number of newly broken reference expressions.
     """
-    Parser(source[1:]).parse()  # Never guess how unsupported syntax refers to cells.
-    tokens, pos = [], 1
-    while pos < len(source):
-        if source[pos:].isspace():
-            break
-        match = TOKEN.match(source, pos)
-        tokens.append(match)
-        pos = match.end()
+    parser = Parser(source[1:], track_spans=True)
+    pending = [parser.parse()]  # Use the same range semantics as the calculator.
     fold = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
     def targets(name):
         if target_id is not None and name == target_id:
@@ -161,17 +155,27 @@ def transform_structure(source, local_sheet, target_sheet, axis, start, count, d
         else: col = value
         result = f"{parts[1]}{column_name(col)}{parts[3]}{row}"
         return prefix+"!"+result if prefix is not None else result
-    edits, broken, index = [], 0, 0
-    while index < len(tokens):
-        first = tokens[index]
-        if first.lastgroup != "ref":
-            index += 1
+    edits, broken = [], 0
+    while pending:
+        node = pending.pop()
+        if node[0] == "call":
+            pending.extend(reversed(node[2]))
             continue
-        last = first
-        if index+2 < len(tokens) and tokens[index+1].group("op") == ":" and tokens[index+2].lastgroup == "ref":
-            last = tokens[index+2]
-        name, value = coordinate(first["ref"])
-        last_name, last_value = coordinate(last["ref"])
+        if node[0] == "binary":
+            pending.extend((node[3],node[2]))
+            continue
+        if node[0] == "unary":
+            pending.append(node[2])
+            continue
+        if node[0] not in ("ref", "range"):
+            continue
+        first = last = node
+        if node[0] == "range":
+            first, last = node[2:]
+            if first[0] != "ref" or last[0] != "ref":
+                raise FormulaError("#REF!", "Range endpoints must be cell references")
+        name, value = coordinate(first[1])
+        last_name, last_value = coordinate(last[1])
         if last is not first and last_name is None:
             last_name = name  # Sheet!A1:A3 inherits the first endpoint's sheet.
         if last is not first and targets(name) != targets(last_name):
@@ -179,16 +183,17 @@ def transform_structure(source, local_sheet, target_sheet, axis, start, count, d
         if targets(name):
             values = interval(value, last_value)
             if values is None:
-                edits.append((first.start("ref"), last.end("ref"), "#REF!"))
+                begin, finish = parser.spans[id(node)]
+                edits.append((begin+1, finish+1, "#REF!"))
                 broken += 1
             else:
                 endpoints = ((first,value,values[0]),) if last is first else ((first,value,values[0]),(last,last_value,values[1]))
-                for token, old, new in endpoints:
+                for endpoint, old, new in endpoints:
                     if old != new:
-                        edits.append((token.start("ref"),token.end("ref"),render(token["ref"],new)))
-        index += 3 if last is not first else 1
+                        begin, finish = parser.spans[id(endpoint)]
+                        edits.append((begin+1,finish+1,render(endpoint[1],new)))
     out, pos = [], 0
-    for begin, end, replacement in edits:
+    for begin, end, replacement in sorted(edits):
         out.extend((source[pos:begin], replacement))
         pos = end
     out.append(source[pos:])
@@ -196,14 +201,21 @@ def transform_structure(source, local_sheet, target_sheet, axis, start, count, d
 
 
 class Parser:
-    def __init__(self, source):
+    def __init__(self, source, *, track_spans=False):
         self.tokens, pos = [], 0
+        # Optional reference/range offsets use node identity so repeated A1
+        # occurrences stay distinct without changing the calculator's AST.
+        self.spans = {} if track_spans else None
+        self.token_spans = [] if track_spans else None
+        offset = len(source)-len(source.lstrip()) if track_spans else 0
         source = source.strip()
         while pos < len(source):
             match = TOKEN.match(source, pos)
             if not match:
                 raise FormulaError("#VALUE!", f"Unsupported syntax near {source[pos:pos+20]}")
             self.tokens.append((match.lastgroup, match[match.lastgroup]))
+            if track_spans:
+                self.token_spans.append((offset+match.start(match.lastgroup),offset+match.end(match.lastgroup)))
             pos = match.end()
             if len(self.tokens) > 1024:
                 raise FormulaError("#LIMIT!", "Formula has too many tokens")
@@ -222,6 +234,7 @@ class Parser:
     def expression(self, minimum=0, depth=0):
         if depth > 128:
             raise FormulaError("#LIMIT!", "Formula nesting limit exceeded")
+        start = self.pos
         kind, value = self.take()
         if kind == "number":
             node = ("literal", float(value))
@@ -229,6 +242,8 @@ class Parser:
             node = ("literal", value[1:-1].replace('""', '"'))
         elif kind == "ref":
             node = ("ref", value)
+            if self.spans is not None:
+                self.spans[id(node)] = self.token_spans[start]
         elif kind == "error":
             node = ("error", value)
         elif value in ("+", "-"):
@@ -262,6 +277,10 @@ class Parser:
             self.take()
             right = self.expression(power if op == "^" else power + 1, depth + 1)
             node = ("range" if op == ":" else "binary", op, node, right)
+            if self.spans is not None and op == ":":
+                # Include endpoint parentheses when replacing a whole range,
+                # but retain each leaf reference's own span for ordinary edits.
+                self.spans[id(node)] = (self.token_spans[start][0],self.token_spans[self.pos-1][1])
         return node
 
     def parse(self):

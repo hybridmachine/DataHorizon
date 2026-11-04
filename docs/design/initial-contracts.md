@@ -141,7 +141,11 @@ endpoint moves it, insertion inside a range expands it, and deletion contracts
 the range around surviving members. Reversed endpoint order is preserved.
 Deleted scalar targets, wholly deleted ranges and references shifted beyond
 the grid become `#REF!`. String literals and typed formula-looking Text do not
-change. Qualified ranges inherit their first endpoint's sheet. Sheet names use
+change. Parentheses around either range endpoint preserve range membership and
+sheet inheritance. Transformations use parsed ranges and retain source spelling
+outside changed references; wholly broken ranges become one `#REF!` expression.
+Ranges whose parsed endpoints are not cell references reject atomically.
+Qualified ranges inherit their first endpoint's sheet. Sheet names use
 SQLite's ASCII-only NOCASE matching, including quoted apostrophe escapes. Exact
 quoted sheet UUIDs also follow the calculator's existing identity resolution.
 

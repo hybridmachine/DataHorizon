@@ -135,12 +135,21 @@ absolute/cross-sheet/UUID references, inherited and reversed ranges, NULL/Text
 and styles, durable deduplication, unsupported syntax, grid overflow, deadlines,
 injected write failure and confirmation-state races. The formula range tests
 compare deletion shapes against independently enumerated surviving cells.
-Current checks pass 142 Python tests and 71 Qt contract cases (73 Qt checks
+Current checks pass 146 Python tests and 71 Qt contract cases (73 Qt checks
 including suite setup and cleanup), plus the installed native-app smoke.
 Active required handlers and projected structural edits remain explicitly
 unsupported; successful structural edits clear history. See the
 [increment verification](evidence/foundation-verification.txt) for current
 checks. M1 and M4 remain open for the ledger's remaining criteria.
+
+The PR #3 review reproduced parenthesized range endpoints losing inherited sheet
+scope on insertion and becoming broken scalars instead of contracting on deletion.
+Structural transformation now walks the calculator's parsed ranges with optional
+source offsets, retaining parentheses and spelling for surviving references and
+replacing wholly broken ranges with one valid `#REF!` expression. Regressions
+cover both axes, reversed and nested endpoints, sheet UUIDs, calculated totals,
+warning counts and reopen; the deletion oracle covers 8,232 overlap/parenthesis
+cases. Non-reference range endpoints reject with a durable rollback receipt.
 
 Managed SQL support matrix for this tier: SELECT/DDL/DML/PRAGMA/ATTACH/transaction
 control through an application SQL resource are all unavailable. No statement
