@@ -200,6 +200,10 @@ and spawned broker for this development tier; inline cannot provide worker
 containment. Public job cancellation and production framework/runtime choices
 remain open. PR #4's capture artifacts were also inspected on all three hosted
 platforms before its merge; its duplicate macOS suite timeout passed on retry.
+The next PR reproduced that whole-suite macOS timeout without assertion
+failures while an identical run passed. macOS now has the same 180-second
+desktop suite budget as Windows; individual operation/hook deadlines are
+unchanged. The Python suite passes all 165 tests locally.
 
 ## Review corrections — November 1, 2026
 
