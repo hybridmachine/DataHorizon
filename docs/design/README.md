@@ -60,6 +60,7 @@ applications, and AI agents through REST.
 | [SQLite capture experiment](sqlite-capture-experiment.md) | M1 capture comparison, typed old/new evidence, limits and remaining managed SQL gates |
 | [Service/Python experiment](service-execution-experiment.md) | M1 HTTP arrangements, transactional worker containment and durable outcomes |
 | [Native storage experiment](native-storage-experiment.md) | M1 input/derived separation, identity, external refresh and physical-layout comparison |
+| [Qt frozen-row experiment](grid-frozen-row-experiment.md) | M1 shared-cache frozen-header display, geometry/input measurements and limits |
 | [Native format v1](native-format-v1.md) | Actual development schema and callback-free direct SQLite access |
 | [Compatibility tier 0](compatibility-v0.md) | Implemented formulas, formatting, interchange and editing limits |
 | [Architecture](architecture.md) | Components, execution paths, transactions, external edits, and recovery |
