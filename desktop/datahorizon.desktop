@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=DataHorizon
+GenericName=Spreadsheet
+Comment=Native spreadsheet application
+Exec=DataHorizon %f
+Icon=datahorizon
+Terminal=false
+Categories=Office;Spreadsheet;
+StartupWMClass=DataHorizon

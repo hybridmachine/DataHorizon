@@ -25,9 +25,24 @@ target_compile_definitions(datahorizon_desktop PRIVATE
 
 qt_add_executable(DataHorizon WIN32 MACOSX_BUNDLE desktop/main.cpp)
 target_link_libraries(DataHorizon PRIVATE datahorizon_desktop)
+qt_add_resources(DataHorizon application_icon
+    PREFIX "/icons"
+    BASE desktop/icons
+    FILES desktop/icons/datahorizon.png)
 set_target_properties(DataHorizon PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER org.datahorizon.preview
     MACOSX_BUNDLE_BUNDLE_NAME DataHorizon)
+if(APPLE)
+    target_sources(DataHorizon PRIVATE desktop/icons/datahorizon.icns)
+    set_source_files_properties(desktop/icons/datahorizon.icns PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+    set_target_properties(DataHorizon PROPERTIES
+        MACOSX_BUNDLE_ICON_FILE datahorizon.icns)
+elseif(WIN32)
+    enable_language(RC)
+    target_sources(DataHorizon PRIVATE desktop/icons/datahorizon.rc)
+    target_include_directories(DataHorizon PRIVATE desktop/icons)
+endif()
 
 if(BUILD_TESTING)
     add_executable(desktop_tests tests/test_desktop.cpp)
@@ -54,6 +69,16 @@ else()
     install(DIRECTORY service/datahorizon DESTINATION share/datahorizon/service
         PATTERN __pycache__ EXCLUDE)
     install(FILES desktop/COPYING DESTINATION share/datahorizon/licenses RENAME GUI-GPLv3.txt)
+endif()
+if(UNIX AND NOT APPLE)
+    install(FILES desktop/datahorizon.desktop DESTINATION share/applications)
+    foreach(icon_size 16 24 32 48 64 128 256 512)
+        install(FILES desktop/icons/png/datahorizon-${icon_size}.png
+            DESTINATION share/icons/hicolor/${icon_size}x${icon_size}/apps
+            RENAME datahorizon.png)
+    endforeach()
+    install(FILES desktop/icons/datahorizon.png
+        DESTINATION share/icons/hicolor/1024x1024/apps)
 endif()
 qt_generate_deploy_app_script(TARGET DataHorizon OUTPUT_SCRIPT deploy_script
     NO_UNSUPPORTED_PLATFORM_ERROR)
