@@ -331,6 +331,7 @@ void MainWindow::buildUi() {
         for (auto ch : match.captured(1).toUpper()) col = col*26+ch.unicode()-'A'+1;
         int row = match.captured(2).toInt();
         if (!match.hasMatch() || row > 1048576 || col > 16384) { issue("Address must be within A1:XFD1048576."); return; }
+        m_address->setModified(false);
         auto index = m_model->index(row-1, col-1); m_grid->setCurrentIndex(index); m_grid->scrollTo(index); m_grid->setFocus();
     });
     setBusy(true);
@@ -578,15 +579,17 @@ void MainWindow::issue(const QString &message) {
 }
 
 void MainWindow::syncSource() {
+    const bool addressDraft=m_address->hasFocus() && m_address->isModified();
     auto index = m_grid->currentIndex();
     if (!index.isValid()) {
-        m_source->clear(); m_source->setModified(false); m_source->setEnabled(false); m_draftTarget={}; m_address->clear();
+        m_source->clear(); m_source->setModified(false); m_source->setEnabled(false); m_draftTarget={};
+        if(!addressDraft) m_address->clear();
         return;
     }
     m_model->ensureSource(index);
     const bool ready=m_model->sourceReady(index);
     m_source->setEnabled(!m_busy && !m_info["readonly"].toBool() && ready);
-    m_address->setText(SheetModel::columnName(index.column()+1) + QString::number(m_model->sourceRow(index.row())+1));
+    if(!addressDraft) m_address->setText(SheetModel::columnName(index.column()+1) + QString::number(m_model->sourceRow(index.row())+1));
     if (!m_source->isModified()) {
         if (!ready) { m_source->clear(); m_source->setModified(false); m_draftTarget={}; m_source->setPlaceholderText("Loading cell input…"); return; }
         m_source->setPlaceholderText(tr("Value or formula"));
@@ -595,7 +598,7 @@ void MainWindow::syncSource() {
                          {"row", m_model->sourceRow(index.row())+1}, {"col", index.column()+1}, {"input_kind",m_model->cell(index)["input_kind"]}};
     }
     if (m_source->isModified() && m_draftTarget["sheet"].toString()!=m_model->sheet()) {
-        m_address->setText(SheetModel::columnName(m_draftTarget["col"].toInt())+QString::number(m_draftTarget["row"].toInt()));
+        if(!addressDraft) m_address->setText(SheetModel::columnName(m_draftTarget["col"].toInt())+QString::number(m_draftTarget["row"].toInt()));
         m_status->setText("Draft target unavailable • Copy the retained input or press Escape to discard it");
         return;
     }

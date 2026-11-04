@@ -299,6 +299,12 @@ time, not a cold OS-cache distribution or physical/compositor latency. Timing
 targets are reported without making variable hosted-runner timings pass/fail
 gates. CI retains per-platform JSON artifacts named `m1-measurements-*`.
 
+The [frozen-row display probe](grid-frozen-row-experiment.md) adds 100 shared-cache
+scroll/horizontal samples with header/value/geometry and zero-edit checks. It
+records cache charges and saves a `*-frozen-row.png` screenshot beside the JSON.
+CI preserves those screenshots too. This read-only probe is not installed or
+exposed as a Freeze command; M4 interactions and view persistence remain open.
+
 Whole-row/column edits use `rows_insert`, `rows_delete`, `columns_insert` or
 `columns_delete` with a sheet name/ID, 1-based `start`, and `count` (default 1).
 For example, `book.apply("rows_insert", sheet="Sheet1", start=3, count=2)`

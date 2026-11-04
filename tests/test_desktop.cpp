@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "mainwindow.h"
+#include "frozen_row_probe.h"
 #include <QAbstractItemModelTester>
 #include <QApplication>
 #include <QAction>
@@ -9,6 +10,7 @@
 #include <QRegularExpression>
 #include <QLabel>
 #include <QSignalSpy>
+#include <QStandardItemModel>
 #include <QScopeGuard>
 #include <QTableView>
 #include <QPlainTextEdit>
@@ -146,6 +148,55 @@ private:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void frozenRowProbeKeepsOneSourceRowAcrossChangesAndReset() {
+        QStandardItemModel source(3,8);
+        source.setData(source.index(0,0),"Header");
+        FirstRowModel first(&source);
+        QAbstractItemModelTester tester(&first,QAbstractItemModelTester::FailureReportingMode::QtTest);
+        QCOMPARE(first.rowCount(),1); QCOMPARE(first.columnCount(),8);
+        QCOMPARE(first.data(first.index(0,0)).toString(),QString("Header"));
+        QVERIFY(!(first.flags(first.index(0,0)) & Qt::ItemIsEditable));
+        QSignalSpy changed(&first,&QAbstractItemModel::dataChanged);
+        source.setData(source.index(1,0),"Body"); QCOMPARE(changed.count(),0);
+        source.setData(source.index(0,0),"Updated"); QCOMPARE(changed.count(),1);
+        QCOMPARE(first.data(first.index(0,0)).toString(),QString("Updated"));
+        source.insertRow(0);
+        source.setData(source.index(0,0),"New header");
+        QCOMPARE(first.data(first.index(0,0)).toString(),QString("New header"));
+        source.removeRow(0);
+        QCOMPARE(first.data(first.index(0,0)).toString(),QString("Updated"));
+        source.clear(); QCOMPARE(first.rowCount(),0); QCOMPARE(first.columnCount(),0);
+    }
+    void frozenRowProbeRemainsVisibleDuringViewportScrolling() {
+        QStandardItemModel source(200,20);
+        source.setData(source.index(0,0),"Header");
+        QTableView grid; grid.setModel(&source); grid.resize(500,300); grid.show();
+        FrozenRowProbe frozen(&grid);
+        QCoreApplication::processEvents();
+        grid.scrollTo(source.index(100,10),QAbstractItemView::PositionAtTop);
+        QCoreApplication::processEvents();
+        QCOMPARE(frozen.view.pos(),grid.viewport()->pos());
+        QVERIFY(frozen.view.isVisible());
+        QCOMPARE(frozen.view.width(),grid.viewport()->width());
+    }
+    void viewportRepliesPreserveAnAddressBeingTyped() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("address-draft.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *model=window.model(); auto *grid=window.findChild<QTableView *>("grid");
+        auto *address=window.findChild<QLineEdit *>("address");
+        QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(0,0)),3000);
+        QSignalSpy loaded(model,&SheetModel::tileLoaded);
+        model->data(model->index(64000,0));
+        address->setFocus(); address->selectAll(); QTest::keyClicks(address,"B42");
+        QTRY_VERIFY_WITH_TIMEOUT(loaded.count()>0,3000);
+        QCOMPARE(address->text(),QString("B42"));
+        QTest::keyClick(address,Qt::Key_Return);
+        QTRY_COMPARE(grid->currentIndex(),model->index(41,1));
+        QCOMPARE(address->text(),QString("B42"));
+    }
     void scrollingPastTileLimitKeepsTheVisibleViewportLoaded() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
@@ -166,6 +217,9 @@ private slots:
             grid->scrollTo(model->index(40+sample*64,0),QAbstractItemView::PositionAtCenter);
             QCoreApplication::processEvents();
             QTRY_VERIFY_WITH_TIMEOUT(visibleReady(),3000);
+            const auto cache=model->cacheMetrics();
+            QVERIFY(cache["tiles"].toInt()<=16);
+            QVERIFY(cache["tile_charge_bytes"].toInt()<=cache["tile_budget_bytes"].toInt());
         }
     }
     void wholeRowColumnCommandsAdjustReferencesAndWarnOnDeletion() {

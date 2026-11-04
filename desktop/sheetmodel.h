@@ -29,6 +29,11 @@ public:
     QString workbook() const { return m_workbook; }
     QString sheet() const { return m_sheet; }
     QString state() const { return m_state; }
+    QJsonObject cacheMetrics() const {
+        return {{"tiles",int(m_cache.size())},{"tile_charge_bytes",int(m_cache.totalCost())},
+                {"tile_budget_bytes",int(m_cache.maxCost())},{"source_charge_bytes",int(m_sources.totalCost())},
+                {"source_budget_bytes",int(m_sources.maxCost())},{"pending_tiles",int(m_loading.size())}};
+    }
     static QString columnName(int oneBased);
 signals:
     void editRequested(int row, int col, QString source, QString kind);
