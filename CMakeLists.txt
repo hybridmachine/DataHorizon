@@ -45,6 +45,8 @@ elseif(WIN32)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(desktop_benchmark tests/benchmark_desktop.cpp)
+    target_link_libraries(desktop_benchmark PRIVATE datahorizon_desktop Qt6::Test)
     add_executable(desktop_tests tests/test_desktop.cpp)
     target_link_libraries(desktop_tests PRIVATE datahorizon_desktop Qt6::Test)
     target_compile_definitions(desktop_tests PRIVATE DATAHORIZON_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")

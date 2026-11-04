@@ -55,6 +55,8 @@ private:
     void applyList();
     void findDialog(bool replace);
     void changeSheet(int index);
+    void changeStructure(bool columns, bool remove);
+    void reportReferenceWarnings(const QJsonObject &receipt);
     void syncSource();
     bool resolveDraft();
     void submitDraft(bool advance = false, int direction = 1);

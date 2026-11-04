@@ -1,0 +1,50 @@
+{
+  "recorded_at_utc": "2026-11-04T03:05:40.193706+00:00",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "architecture": "arm64",
+  "python": "3.14.6",
+  "sqlite": "3.53.4",
+  "cpu_count": 8,
+  "transport": "authenticated loopback REST",
+  "formula_chains": {
+    "16": {
+      "samples": 100,
+      "median_ms": 0.591,
+      "p95_ms": 0.664,
+      "expected": 16,
+      "p95_target_ms": 150
+    },
+    "64": {
+      "samples": 100,
+      "median_ms": 1.073,
+      "p95_ms": 1.169,
+      "expected": 64,
+      "p95_target_ms": 150
+    },
+    "128": {
+      "samples": 100,
+      "median_ms": 1.673,
+      "p95_ms": 1.8,
+      "expected": 128,
+      "p95_target_ms": 150
+    },
+    "129": {
+      "samples": 100,
+      "median_ms": 1.689,
+      "p95_ms": 3.546,
+      "expected": "#LIMIT!",
+      "p95_target_ms": 150
+    },
+    "edit_and_fresh_read": {
+      "samples": 100,
+      "median_ms": 2.461,
+      "p95_ms": 2.813
+    }
+  },
+  "limitations": [
+    "No cold OS-cache, native GUI, frozen-pane or cross-platform qualification from a single run.",
+    "Peak RSS is unavailable on Windows in this stdlib driver; timings remain available."
+  ],
+  "driver_peak_rss_bytes": 34045952,
+  "service_peak_rss_bytes": 39157760
+}

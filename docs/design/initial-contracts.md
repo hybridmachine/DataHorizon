@@ -118,9 +118,9 @@ An evaluated non-finite numeric literal is #NUM! before comparison, branching
 or arithmetic can consume it; an unselected IF branch remains unevaluated.
 
 Sheet rename, duplication and deletion reject cross-sheet formulas until their
-reference transformer is proven. Structural row/column changes and
-cut involving formulas require a separately tested reference transformer before
-being enabled. Sorting freeform cells with formulas is initially restricted;
+reference transformer is proven. Cut involving formulas remains unavailable.
+Whole-row/column insertion and deletion use the bounded reference transformer
+described below. Sorting freeform cells with formulas is initially restricted;
 record identity and reference-safe sorting require M5 evidence. Filtered paste
 is disabled until stable-target semantics are implemented. These restrictions
 are visible capability limits, not placeholder successful operations.
@@ -129,6 +129,38 @@ references. Embedded NUL characters inside literals cannot hide a later
 cross-sheet separator from structural guards. Quoted sheet names still retain
 their following reference separator; incomplete quoted formulas are handled
 conservatively.
+
+Whole-row/column operations accept a 1-based `start` and positive `count`
+(default 1). Insertion occurs before `start`; deletion removes that inclusive
+span. Sheet UUIDs stay fixed; full stored cell inputs, kinds and styles move to
+their new coordinates. This does not introduce persistent record identities.
+References in all sheets follow the original target coordinates, including
+references to absent cells. Both absolute and relative components adjust;
+absolute markers only suppress copy/fill offsets. Insertion at a range's first
+endpoint moves it, insertion inside a range expands it, and deletion contracts
+the range around surviving members. Reversed endpoint order is preserved.
+Deleted scalar targets, wholly deleted ranges and references shifted beyond
+the grid become `#REF!`. String literals and typed formula-looking Text do not
+change. Parentheses around either range endpoint preserve range membership and
+sheet inheritance. Transformations use parsed ranges and retain source spelling
+outside changed references; wholly broken ranges become one `#REF!` expression.
+Ranges whose parsed endpoints are not cell references reject atomically.
+Qualified ranges inherit their first endpoint's sheet. Sheet names use
+SQLite's ASCII-only NOCASE matching, including quoted apostrophe escapes. Exact
+quoted sheet UUIDs also follow the calculator's existing identity resolution.
+
+These operations require no activated required handler until structure events
+are defined; they never bypass an active handler. They clear Undo/Redo on
+commit, and the desktop confirms that consequence before submission. A rejected
+operation preserves the original cells, formulas and history. They reject
+unsupported formula syntax instead of guessing at hidden references, and never
+discard stored cells at the grid edge. The ordinary tier permits at most 10,000
+affected coordinates, scans at most 10,000 workbook formulas, and bounds staged
+source/style payloads to 8 MiB (moved formulas count in both scans). The existing
+5-second operation and 8-MiB before/after budgets also apply. These are atomic
+operations, with no chunked commits. Their receipts report newly broken
+reference-expression counts and the first 100 affected formula locations after
+the move. Projected list operations remain disabled; clear the list first.
 
 ## Undo, lists and code
 

@@ -8,6 +8,15 @@ Implementation has since begun by explicit instruction. These remain historical
 wireframes; [initial contracts](initial-contracts.md) resolve selected proposals
 and [implementation status](implementation-status.md) records actual behavior.
 
+Page 8 implementation annotation: the Sheet menu now inserts/deletes the
+selected contiguous whole-row or whole-column span. Confirmation states that
+the full span changes, references across sheets adjust and Undo history clears.
+Cancel retains the original workbook. New #REF! expressions are reported with
+formula locations in Issues; stale dialog context, required handlers, projected
+lists, unsupported formula syntax and oversized edits reject explicitly. The
+[initial structural contract](initial-contracts.md) defines the bounded tier;
+the historical PDF has not been regenerated.
+
 The [wireframe PDF](../../output/pdf/datahorizon-ui-wireframes.pdf) contains 18
 landscape pages. It follows the [everyday spreadsheet user stories](../../output/pdf/datahorizon-everyday-spreadsheet-user-stories.pdf),
 including their Supplies sample session. The PDF has selectable text, vector

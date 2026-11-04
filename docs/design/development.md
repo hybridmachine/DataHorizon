@@ -256,7 +256,35 @@ security sandboxes, and transactional code must not perform external effects.
 ```sh
 cmake --install build --prefix "$PWD/build/package"
 PYTHONPATH=service python3 tests/benchmark.py
+PYTHONPATH=service python3 tests/benchmark.py --formula-only --output build/formula-benchmark.json
+QT_QPA_PLATFORM=offscreen build/desktop_benchmark build/desktop-benchmark.json
 ```
+
+The formula harness reads independent 16/64/128-cell chains from their tails in
+100 fresh REST snapshots, checks the 129-cell limit, and measures edits followed
+by fresh reads. `--samples` changes the default 100 measurements. The full run
+also retains the sparse/dense/large-disk fixture; `--formula-only` skips it.
+Peak RSS is reported on POSIX and explicitly null on Windows.
+
+The desktop harness measures 100 scrolling viewports and 100 distant jumps,
+synthetic address input during reads, event-loop gaps, and range-response counts
+against its actual service and QTableView. Run without `QT_QPA_PLATFORM=offscreen`
+to measure the native platform plugin. On Windows the executable is
+`build/Release/desktop_benchmark.exe`. It records single-process first-viewport
+time, not a cold OS-cache distribution or physical/compositor latency. Timing
+targets are reported without making variable hosted-runner timings pass/fail
+gates. CI retains per-platform JSON artifacts named `m1-measurements-*`.
+
+Whole-row/column edits use `rows_insert`, `rows_delete`, `columns_insert` or
+`columns_delete` with a sheet name/ID, 1-based `start`, and `count` (default 1).
+For example, `book.apply("rows_insert", sheet="Sheet1", start=3, count=2)`
+inserts two rows before row 3. The managed CLI accepts the same fields through
+`apply` JSON. The Sheet menu applies these operations to the selected row or
+column span, including whole-header selections. The full span moves, even when
+only part of a row/column is selected. Confirmation explains history clearing;
+newly broken references appear with their locations in Issues. Required handlers
+and unsupported formula syntax reject atomically. Clear projected list views
+first. See the initial contracts for the ordinary-operation and grid-edge limits.
 
 The install step deploys Qt and copies service sources. Use an absolute install
 prefix: Qt 6.8 deployment requires an absolute path when writing qt.conf on Linux

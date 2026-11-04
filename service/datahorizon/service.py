@@ -24,7 +24,7 @@ CAPABILITIES = {
     "api_version": 1, "format_version": 1, "max_operation_cells": MAX_CELLS,
     "max_viewport_cells": 4096, "max_clipboard_cells":MAX_CELLS, "max_request_bytes": 4 * 1024 * 1024,
     "formulas": ["arithmetic", "references", "SUM", "IF"],
-    "operations": ["edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete"],
+    "operations": ["edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
     "interchange": ["csv"], "managed_sql": False, "remote_binding": False,
     "follow_up_work": False, "chunked_jobs": False,
     "max_open_workbooks":8, "max_open_handles":128,
@@ -87,7 +87,9 @@ def openapi():
             "calculation":{"type":"string","enum":["current","error","pending"]},"error":{"type":"string"},
             "source_omitted":{"type":"boolean"},"value_omitted":{"type":"boolean"}}},
         "Receipt": {"type":"object","required":["operation_id","outcome","state","changed_cells"],"properties":{
-            "operation_id":{"type":"string"},"outcome":{"type":"string","enum":["committed"]},"state":{"type":"string"},"changed_cells":{"type":"integer"}}},
+            "operation_id":{"type":"string"},"outcome":{"type":"string","enum":["committed"]},"state":{"type":"string"},"changed_cells":{"type":"integer"},
+            "reference_warnings":{"type":"integer","description":"Newly broken reference expressions in a row/column operation"},
+            "reference_issues":{"type":"array","maxItems":100,"description":"First 100 affected formula locations after the structure change","items":{"type":"object","properties":{"sheet":sheet,"row":row,"col":col}}}}},
     }
     schemas["ClipboardRequest"] = {**schemas["RangeRequest"],
         "properties":{key:value for key,value in schemas["RangeRequest"]["properties"].items() if key!="preview"},
@@ -116,6 +118,11 @@ def openapi():
         "sheet_delete": (["sheet"],{"sheet":sheet},{"sheet":"Copy"}),
     }
     mapping = {}
+    for axis, maximum in (("rows",MAX_ROWS),("columns",MAX_COLS)):
+        for verb in ("insert","delete"):
+            actions[axis+"_"+verb] = (["start"],{"sheet":sheet,"start":{"type":"integer","minimum":1,"maximum":maximum},
+                "count":{"type":"integer","minimum":1,"maximum":maximum,"default":1,"description":"Must fit between start and the grid edge"}},
+                {"sheet":"Sheet1","start":2,"count":1})
     for action, (required, properties, example) in actions.items():
         schema_name = "".join(word.title() for word in action.split("_"))+"Operation"
         mapping[action] = "#/components/schemas/"+schema_name
@@ -124,7 +131,7 @@ def openapi():
             "example":{"operation_id":"generate-a-uuid","expected_state":"copy-from-workbook-info","action":action,**example}}
     schemas["OperationRequest"] = {"oneOf":[{"$ref":ref} for ref in mapping.values()],
         "discriminator":{"propertyName":"action","mapping":mapping},
-        "description":"Atomic operations: at most 10,000 affected cells and a 4 MiB request. Range endpoints are inclusive and must be ordered. Copy fill uses the top-left input; series requires a numeric seed. Move requires no formula sources in the workbook. Sheet rename/duplicate/delete reject cross-sheet references; duplicate/delete also reject activated required hooks. Structure changes clear history. No managed SQL or chunked commits.",
+        "description":"Atomic operations: at most 10,000 affected cells and a 4 MiB request. Range endpoints are inclusive and must be ordered. Copy fill uses the top-left input; series requires a numeric seed. Move requires no formula sources in the workbook. Sheet rename/duplicate/delete reject cross-sheet references; duplicate/delete also reject activated required hooks. Row/column changes retarget absolute and relative A1 references across sheets, expand/contract ranges and report newly broken references; required handlers, unsupported formula syntax and grid overflow reject atomically. Structure changes clear history. No managed SQL or chunked commits.",
         "example":schemas["EditOperation"]["example"]}
     schemas.update({
         "CsvPreviewRequest":{"type":"object","required":["csv"],"properties":{"csv":{"type":"string"},"delimiter":{"type":"string","minLength":1,"maxLength":1,"default":","}},"example":{"csv":"ID,Value\n00123,7"}},

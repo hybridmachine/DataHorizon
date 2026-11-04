@@ -31,6 +31,26 @@ jobs:
         run: cmake --build build --config Release --parallel 2
       - name: Contract and desktop tests
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Formula-chain measurements
+        env:
+          PYTHONPATH: service
+        run: python tests/benchmark.py --formula-only --output build/formula-benchmark.json
+      - name: Qt scroll and input measurements
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            build/Release/desktop_benchmark.exe build/desktop-benchmark.json
+          else
+            build/desktop_benchmark build/desktop-benchmark.json
+          fi
+      - name: Preserve platform benchmark evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: m1-measurements-${{ runner.os }}
+          path: build/*benchmark.json
+          if-no-files-found: error
       - name: Install smoke
         run: cmake --install build --config Release
       - name: Run installed application
