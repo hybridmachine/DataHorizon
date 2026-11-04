@@ -31,6 +31,11 @@ References support A1, $A1, A$1 and $A$1, rectangles and quoted sheet names such
 as `'Other sheet'!A1`. Quoted sheet names escape an apostrophe by doubling it.
 Copy/paste and fill translate relative components, preserving absolute ones and
 quoted string contents. Unsupported transformations reject before any commit.
+Whole-row/column insertion/deletion adjusts both relative and absolute targets
+across sheets. Ranges expand for inserted interior members and contract around
+deleted members; deleted targets and overflowing references become #REF!.
+The [initial contracts](initial-contracts.md) define endpoints, identity, bounds
+and source-preserving rejection for unsupported syntax.
 Cross-sheet ranges must remain within one sheet. Whole-column ranges, named
 ranges, structured references, external workbooks and 3D ranges are unsupported.
 
@@ -91,8 +96,12 @@ Sheet rename/delete/duplicate reject cross-sheet references until their full
 reference transformation is implemented. Literal exclamation marks in strings
 and formula error tokens such as #REF! are not sheet separators; copied broken
 references retain their error without blocking these operations.
-Row/column insertion/deletion, freeze,
-hide/unhide, wrap, borders, fit-column sampling and saved view state are deferred.
+Bounded row/column insertion/deletion is available from the Sheet menu and the
+shared operation API, with confirmation and broken-reference locations. It
+clears history and rejects activated required handlers, unsupported formula
+syntax, oversized operations and insertion that would discard stored cells.
+Freeze, hide/unhide, wrap, borders, fit-column sampling and saved view state are
+deferred.
 
 Lists are explicit presentation projections over source row coordinates, capped
 by the 10,000-cell ordinary scope. Sorting is stable with source row as tie-break;

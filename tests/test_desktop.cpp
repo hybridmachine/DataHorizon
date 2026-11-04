@@ -146,6 +146,94 @@ private:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void scrollingPastTileLimitKeepsTheVisibleViewportLoaded() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("scroll.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *grid=window.findChild<QTableView *>("grid"); auto *model=window.model();
+        auto visibleReady=[&] {
+            bool loaded=true;
+            for(int row=grid->rowAt(0);row<=grid->rowAt(grid->viewport()->height()-1);++row)
+                for(int col=grid->columnAt(0);col<=grid->columnAt(grid->viewport()->width()-1);++col) {
+                    const auto index=model->index(row,col); model->data(index);
+                    loaded=loaded && model->loaded(index);
+                }
+            return loaded;
+        };
+        for (int sample=0;sample<40;++sample) {
+            grid->scrollTo(model->index(40+sample*64,0),QAbstractItemView::PositionAtCenter);
+            QCoreApplication::processEvents();
+            QTRY_VERIFY_WITH_TIMEOUT(visibleReady(),3000);
+        }
+    }
+    void wholeRowColumnCommandsAdjustReferencesAndWarnOnDeletion() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("structure.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",1},{"source","7"}},
+            QJsonObject{{"row",4},{"col",2},{"source","=$A$2"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *grid=window.findChild<QTableView *>("grid"); auto *model=window.model();
+        const auto original=model->state(); grid->selectRow(1);
+        answerNextDialog(QMessageBox::Cancel); window.findChild<QAction *>("insertRowsAction")->trigger();
+        QCOMPARE(model->state(),original);
+        answerNextDialog(QMessageBox::Yes); window.findChild<QAction *>("insertRowsAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(4,1),Qt::EditRole).toString(),QString("=$A$3"),5000);
+        QCOMPARE(model->data(model->index(4,1)).toString(),QString("7"));
+        grid->selectColumn(0); answerNextDialog(QMessageBox::Yes);
+        window.findChild<QAction *>("insertColumnsAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(4,2),Qt::EditRole).toString(),QString("=$B$3"),5000);
+        grid->selectRow(2); answerNextDialog(QMessageBox::Yes);
+        window.findChild<QAction *>("deleteRowsAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(3,2)).toString(),QString("#REF!"),5000);
+        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("1 reference expressions became #REF!"));
+        grid->selectColumn(1); answerNextDialog(QMessageBox::Yes);
+        window.findChild<QAction *>("deleteColumnsAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(3,1),Qt::EditRole).toString(),QString("=#REF!"),5000);
+        model->setProjection({0,2});
+        window.findChild<QAction *>("insertRowsAction")->trigger();
+        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Clear the list view before changing rows or columns"));
+        QCOMPARE(opened.count(),6);
+    }
+    void rowDeletionConfirmationRetainsReviewedStateAfterExternalRefresh() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        const auto path=temp.filePath("structure-race.dhwb");
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",1},{"source","7"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        MainWindow writer(options); QSignalSpy writerReady(&writer,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(writerReady.count(),1,10000);
+        QSignalSpy writerOpened(&writer,&MainWindow::workbookReady); writer.openBook(path);
+        QTRY_COMPARE_WITH_TIMEOUT(writerOpened.count(),1,10000);
+        connect(&writer,&MainWindow::workbookReady,&window,[&]{window.model()->externalChange();});
+        bool confirmed=false;
+        connect(&window,&MainWindow::workbookReady,&window,[&]{
+            if (auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                confirmed=true; box->button(QMessageBox::Yes)->click();
+            }
+        });
+        window.findChild<QTableView *>("grid")->selectRow(1);
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        QTimer::singleShot(0,&writer,[&]{writer.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",1},{"source","9"}}}}});});
+        QTimer::singleShot(10000,&window,[]{
+            if (auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) box->button(QMessageBox::Cancel)->click();
+        });
+        window.findChild<QAction *>("deleteRowsAction")->trigger();
+        QVERIFY(confirmed); QCOMPARE(changed.count(),0);
+        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Reviewed inputs changed"));
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(1,0)).toString(),QString("9"),5000);
+    }
     void listSaveRetainsItsSourceCellAfterResorting() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);

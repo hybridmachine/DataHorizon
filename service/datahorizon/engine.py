@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 
-from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, has_sheet_reference, translate
+from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, has_sheet_reference, translate, transform_structure
 from .hooks import HookFailure, invoke
 
 MAX_CELLS = 10_000
@@ -550,7 +550,8 @@ class Workbook:
                     raise EngineError("INVALID_ARGUMENT","Request text must be valid Unicode") from error
                 require("label" not in request or isinstance(request["label"],str),"INVALID_ARGUMENT","Operation label must be text")
                 kind = request.get("action")
-                structural = kind.startswith("sheet_") if isinstance(kind, str) else False
+                structural = isinstance(kind, str) and (kind.startswith("sheet_") or kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"))
+                reference_report = {}
                 sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
                 if kind == "edit":
                     self.apply_edit(sheet, request.get("cells"))
@@ -681,6 +682,8 @@ class Workbook:
                         wanted, current = (before, after) if kind == "undo" else (after, before)
                         require(self.raw(*key) == current, "HISTORY_CONFLICT", "Undo target changed", 409)
                         self.put(*key, wanted)
+                elif kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"):
+                    reference_report = self.change_structure(request)
                 elif kind == "sheet_add":
                     name = request.get("name", "Sheet")
                     self.check_name(name)
@@ -724,6 +727,7 @@ class Workbook:
                 self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1]}
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
                 result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": len(self.changes)}
+                result.update(reference_report)
                 self.db.execute("INSERT INTO operations VALUES(?,?,?)", (operation, fingerprint, encoded(result)))
                 require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
                 self.db.execute("COMMIT")
@@ -788,6 +792,68 @@ class Workbook:
     def history_cost(label,changes):
         # Compute once per receipt; never serialize all prior history for each edit.
         return len(encoded([label,[[key, *values] for key, values in changes.items()]]).encode())
+
+    def change_structure(self, request):
+        """Bounded whole-row/column changes, including references on other sheets."""
+        require(not self.handler, "UNSUPPORTED_HOOK_SCOPE", "Row/column changes with required handlers need a structure-event contract")
+        target = self.sheet(request.get("sheet", "Sheet1"))
+        target_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
+        axis = "row" if request["action"].startswith("rows_") else "col"
+        maximum = MAX_ROWS if axis == "row" else MAX_COLS
+        start = integer(request.get("start"), 1, maximum, "start")
+        count = integer(request.get("count", 1), 1, maximum-start+1, "count")
+        delete = request["action"].endswith("_delete")
+        end = start+count-1
+        moved, formulas, payload_bytes, warnings, locations = {}, {}, 0, 0, []
+        with sql_deadline(self.db, self.deadline):
+            # Axis is selected internally. Stream sources so long cells cannot
+            # allocate an unbounded fetchall before the ordinary-operation limit.
+            for row, col, source, kind, style in self.db.execute(
+                    f"SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? AND {axis}>=? LIMIT ?",
+                    (target, start, MAX_CELLS+1)):
+                require(len(moved)<MAX_CELLS, "LIMIT", "Structure change exceeds 10,000 stored cells")
+                payload_bytes += len(source.encode())+len(style.encode())+128
+                require(payload_bytes<=8*1024*1024, "LIMIT", "Structure sources exceed 8 MiB")
+                value = row if axis == "row" else col
+                destination = None if delete and value<=end else value+(-count if delete else count)
+                require(destination is None or destination<=maximum, "GRID_OVERFLOW", "Insertion would discard stored cells beyond the grid edge")
+                key = (target,row,col)
+                new_key = None if destination is None else (target, destination if axis == "row" else row, destination if axis == "col" else col)
+                moved[key] = (new_key, {"source":source,"kind":kind,"style":json.loads(style)})
+            scanned = 0
+            for sheet, name, row, col, source, kind, style in self.db.execute(
+                    "SELECT c.sheet_id,s.name,c.row,c.col,c.source,c.kind,c.style FROM cells c JOIN sheets s ON s.id=c.sheet_id "
+                    "WHERE c.source LIKE '=%' AND c.kind IN ('auto','formula')"):
+                scanned += 1
+                require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
+                require(scanned<=MAX_CELLS, "LIMIT", "Structure reference scan exceeds 10,000 formulas; a large-job path is not available")
+                key = (sheet,row,col)
+                if key in moved and moved[key][0] is None:
+                    continue
+                payload_bytes += len(source.encode())+len(style.encode())+128
+                require(payload_bytes<=8*1024*1024, "LIMIT", "Structure sources exceed 8 MiB")
+                try:
+                    transformed, broken = transform_structure(source,name,target_name,axis,start,count,delete,target_id=target)
+                except FormulaError as error:
+                    raise EngineError("REFERENCE_TRANSFORM_UNAVAILABLE", f"Cannot safely transform {name}!{address(row,col)}: {error}") from error
+                warnings += broken
+                if broken and len(locations)<100:
+                    destination = moved[key][0] if key in moved else key
+                    locations.append({"sheet":name,"row":destination[1],"col":destination[2]})
+                if key in moved:
+                    moved[key][1]["source"] = transformed
+                elif transformed != source:
+                    formulas[key] = {"source":transformed,"kind":kind,"style":json.loads(style)}
+            affected = set(moved) | {dest for dest, _ in moved.values() if dest is not None} | set(formulas)
+            require(len(affected)<=MAX_CELLS, "LIMIT", "Structure change exceeds 10,000 affected coordinates")
+            for key in moved:
+                self.put(*key,None)
+            for destination, item in moved.values():
+                if destination is not None:
+                    self.put(*destination,item)
+            for key, item in formulas.items():
+                self.put(*key,item)
+        return {"reference_warnings":warnings,"reference_issues":locations}
 
     @staticmethod
     def check_name(name):

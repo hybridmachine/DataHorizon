@@ -157,8 +157,10 @@ void SheetModel::fetch(int tileRow, int tileCol) const {
                 tile->cells.insert((row%32)*16 + (cell.value("col").toInt()-1)%16, cell);
             }
             // Bound both tile count and estimated memory, including JSON overhead.
-            if (self->m_cache.size() >= 16) self->m_cache.remove(self->m_cache.keys().last());
-            const auto cost = qMax(1024, int(QJsonDocument(result).toJson(QJsonDocument::Compact).size()*3));
+            // Charge at least 1/16 of the tile budget so QCache enforces both
+            // bounds using its LRU order. Arbitrary key removal can repeatedly
+            // evict another visible tile and prevent a viewport from settling.
+            const auto cost = qMax(14*1024*1024/16, int(QJsonDocument(result).toJson(QJsonDocument::Compact).size()*3));
             self->m_cache.insert(key, tile, cost);
             if (self->m_projected) {
                 if (self->rowCount()) emit self->dataChanged(self->index(0, tileCol*16), self->index(self->rowCount()-1, qMin(tileCol*16+15, self->m_cols-1)));

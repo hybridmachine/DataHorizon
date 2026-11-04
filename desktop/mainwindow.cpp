@@ -266,6 +266,11 @@ void MainWindow::buildUi() {
         if (QMessageBox::question(this, tr("Delete sheet"), tr("Delete this sheet and its cells? This action clears Undo history.")) == QMessageBox::Yes)
             submit(command);
     });
+    sheetMenu->addSeparator();
+    add(sheetMenu, tr("Insert selected rows…"), {}, [this] { changeStructure(false,false); })->setObjectName("insertRowsAction");
+    add(sheetMenu, tr("Delete selected rows…"), {}, [this] { changeStructure(false,true); })->setObjectName("deleteRowsAction");
+    add(sheetMenu, tr("Insert selected columns…"), {}, [this] { changeStructure(true,false); })->setObjectName("insertColumnsAction");
+    add(sheetMenu, tr("Delete selected columns…"), {}, [this] { changeStructure(true,true); })->setObjectName("deleteColumnsAction");
     add(dataMenu, tr("Sort / filter selected list…"), {}, [this] { listDialog(); }, true);
     add(dataMenu, tr("Clear list view"), {}, [this] { if (!m_busy) { m_listSpec = {}; refresh(); } }, true);
 
@@ -500,6 +505,7 @@ void MainWindow::submit(QJsonObject operation) {
         if (m_enterNavigation["operation_id"].toString()==operationId) m_enterNavigation["ready"]=true;
         if (m_draftSubmissionId==operationId) clearRecoveredDraft();
         clearRecoveryRecord(); m_pendingId.clear(); m_unknown = false; m_info["state"] = result["state"];
+        reportReferenceWarnings(result);
         refresh(); emit operationFinished(true);
     });
 }
@@ -517,6 +523,7 @@ void MainWindow::reconcile() {
         }
         clearRecoveryRecord(); m_pendingId.clear(); m_unknown = false;
         issue(result["outcome"]=="committed" ? "Reconciled committed operation without repeating Python handlers." : "Reconciled rollback without repeating Python handlers: "+result["message"].toString());
+        reportReferenceWarnings(result);
         refresh();
     }, false);
 }
@@ -726,6 +733,37 @@ void MainWindow::changeSheet(int index) {
     m_listSpec = {};
     m_model->bind(m_info["id"].toString(), m_tabs->tabData(index).toString(), m_info["state"].toString(), m_info["readonly"].toBool());
     m_grid->setCurrentIndex(m_model->index(0, 0)); syncSource();
+}
+
+void MainWindow::changeStructure(bool columns, bool remove) {
+    if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
+    if (m_model->projected()) { issue("Clear the list view before changing rows or columns."); return; }
+    const auto ranges=m_grid->selectionModel()->selection();
+    if (ranges.size()!=1) { issue("Select one contiguous range of rows or columns."); return; }
+    const auto range=ranges.first();
+    const int start=(columns?range.left():range.top())+1;
+    const int count=columns?range.width():range.height();
+    auto command=targetContext({{"action",QString(columns?"columns_":"rows_")+(remove?"delete":"insert")},
+                                {"start",start},{"count",count}});
+    // Capture context before both draft resolution and the confirmation dialog.
+    captureGridDraft(false);
+    if (!resolveDraft()) return;
+    if (QMessageBox::question(this,remove?tr("Delete rows or columns"):tr("Insert rows or columns"),
+        tr("%1 %2 %3 starting at %4? This changes whole rows or columns, updates formula references across the workbook, and clears Undo history. Deleted references become #REF!. Required handlers and unsupported formulas can reject the entire operation.")
+            .arg(remove?tr("Delete"):tr("Insert")).arg(count).arg(columns?tr("columns"):tr("rows")).arg(start),
+        QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes) return;
+    submit(command);
+}
+
+void MainWindow::reportReferenceWarnings(const QJsonObject &receipt) {
+    if (receipt["reference_warnings"].toInt()<=0) return;
+    QStringList locations;
+    for (const auto &value:receipt["reference_issues"].toArray()) {
+        const auto cell=value.toObject();
+        locations.append(cell["sheet"].toString()+"!"+SheetModel::columnName(cell["col"].toInt())+QString::number(cell["row"].toInt()));
+    }
+    issue(tr("Structure change committed: %1 reference expressions became #REF!. Affected formulas (first 100): %2")
+        .arg(receipt["reference_warnings"].toInt()).arg(locations.join(", ")));
 }
 
 QJsonObject MainWindow::selectedRange() const {

@@ -16,7 +16,10 @@ consistent snapshot copies are implemented. Range operations include paste
 (all/values/formats), relative formula translation, bounded Cut/Paste, fill,
 numeric series and cell history. Sheet add/rename/duplicate/reorder/delete are
 available with documented reference and handler restrictions. Styles preserve
-source and types. Explicit list projections support multikey sorting and filters
+source and types. Bounded whole-row/column insertion/deletion moves stored inputs
+and styles and adjusts references across sheets, including absolute components
+and range expansion/contraction. The desktop confirms history clearing and
+reports newly broken references with locations. Explicit list projections support multikey sorting and filters
 over the entire declared scope, stable source-coordinate edits, counts and clear.
 Scoped find/replace and UTF-8 CSV are implemented within the declared tier.
 
@@ -29,10 +32,10 @@ formula source; values export contains 20.5. Formatting renders 20.50.
 | Increment | Evidence and scope | Remaining before full milestone closure |
 | --- | --- | --- |
 | M0 | [Initial contracts](initial-contracts.md), [compatibility](compatibility-v0.md), [native schema](native-format-v1.md), keyboard/state rules and numeric budgets recorded | Resolve deferred cases at their named milestones; no claim that historical PDFs have been regenerated |
-| M1 | Qt 6.12/C++17 builds locally; stdlib SQLite/HTTP and spawned brokered workers exercised; sparse/dense/long-text/large-disk measurements recorded | Comparative production framework/capture experiments, formula chains, GUI input/scroll measurements and Windows/Linux performance measurements |
+| M1 | Qt 6.12/C++17 builds locally; stdlib SQLite/HTTP and spawned brokered workers exercised; sparse/dense/long-text/large-disk measurements recorded; repeatable formula-chain and Qt scroll/input harnesses added with local evidence and CI artifact collection | Comparative production framework/capture experiments, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
 | M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle; restart/reopen and warned unknown-outcome recovery | Broader failure injection, clean-machine packaging evidence and service lifecycle hardening |
 | M3 | Typed entry, A1 limits, SUM/IF/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
-| M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations | Row/column reference transforms, unrestricted cut/rename/duplicate/delete, hook-aware structure events, wrap/borders/freeze/hide, dimensions/view persistence and platform conventions |
+| M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations and row/column reference transforms with destructive-operation fixtures | Unrestricted cut/rename/duplicate/delete, hook-aware structure events, wrap/borders/freeze/hide, dimensions/view persistence and platform conventions |
 | M5 | Explicit full-scope projected lists, stable source row edits, multikey sort/filter, scoped source/display find/replace, text CSV preview and snapshot export | Persistent record identities/list definitions, filtered range semantics, column typing/date/encoding controls, progress/cancellation and large jobs |
 | M6 | Native snapshots/recovery, read-only opens, conservative external refresh and bounded CSV | XLSX/ODS import/export fixtures and conversion reports, comprehensive disk/permission/crash recovery, bundled runtime, follow-up execution semantics |
 | M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
@@ -64,7 +67,7 @@ used. The automated suite includes:
   Save/Escape, Undo, formatted results, projected source targets, far-address
   navigation, required-hook rejection and a closable startup failure.
 
-The review regression suite includes 127 Python tests and 68 Qt contract cases.
+The original review regression evidence includes 127 Python tests and 68 Qt contract cases.
 [Python test output](evidence/service-tests.txt),
 [desktop test output](evidence/desktop-tests.txt),
 [desktop process resources](evidence/desktop-resources.txt), and
@@ -96,12 +99,48 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
-Finish the remaining M1 measurements and extend platform acceptance. Resolve the
-M4 structural reference/identity contracts with destructive-operation fixtures
-before enabling those controls. Then finish list/CSV typing and explicit jobs,
+Finish the remaining M1 experiments and native platform acceptance. Extend the
+bounded M4 structural tier to additional operations and hook-aware events only
+with explicit contracts and destructive-operation fixtures. Then finish list/CSV typing and explicit jobs,
 followed by independent XLSX/ODS fidelity stages and failure recovery. Full
 desktop acceptance and licensing/runtime distribution decisions precede a
 public preview. M8 remains a later set of independently designed increments.
+
+## Foundation benchmarks and bounded structural editing
+
+The new [formula-chain evidence](evidence/formula-benchmark.json) records 100
+fresh REST reads per chain length: p95 0.664/1.169/1.800 ms at 16/64/128 cells,
+with the 129-cell chain producing the declared #LIMIT! result. Editing a seed
+and reading fresh results measured p95 2.813 ms. These are synchronous snapshot
+calculations, not evidence for background calculation or a dependency index.
+
+The [native Cocoa measurements](evidence/desktop-benchmark-native.json) record
+100 scrolling viewports (p95 32.131 ms), 100 distant jumps (p95 30.278 ms), and a
+14.674-ms maximum observed event-loop gap. Synthetic address input was dispatched
+during reads. [Offscreen evidence](evidence/desktop-benchmark-offscreen.json) is
+also retained for comparison with the CI harness. These runs do not qualify
+screen readers, physical input/compositor latency, high DPI, cold OS caches,
+memory on every workload or native Windows/Linux interaction. CI collects
+formula and offscreen Qt JSON artifacts on all three supported systems.
+
+The scroll harness reproduced a viewport that never finished loading beyond the
+16-tile cache limit. Arbitrary-key eviction could repeatedly remove another
+visible tile. Minimum per-tile charges now let QCache enforce both count and
+byte limits with its LRU policy. The scrolling regression fails with the previous
+policy and passes with the fix.
+
+The row/column engine, REST schemas, SDK/CLI parity and four Sheet menu commands
+share the [structural contract](initial-contracts.md). Verification covers
+absolute/cross-sheet/UUID references, inherited and reversed ranges, NULL/Text
+and styles, durable deduplication, unsupported syntax, grid overflow, deadlines,
+injected write failure and confirmation-state races. The formula range tests
+compare deletion shapes against independently enumerated surviving cells.
+Current checks pass 142 Python tests and 71 Qt contract cases (73 Qt checks
+including suite setup and cleanup), plus the installed native-app smoke.
+Active required handlers and projected structural edits remain explicitly
+unsupported; successful structural edits clear history. See the
+[increment verification](evidence/foundation-verification.txt) for current
+checks. M1 and M4 remain open for the ledger's remaining criteria.
 
 Managed SQL support matrix for this tier: SELECT/DDL/DML/PRAGMA/ATTACH/transaction
 control through an application SQL resource are all unavailable. No statement

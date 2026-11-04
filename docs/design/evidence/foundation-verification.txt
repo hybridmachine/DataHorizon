@@ -1,0 +1,34 @@
+Foundation benchmarks and bounded structural editing verification
+
+Build: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release; cmake --build build --parallel 2
+Local platform: Apple Silicon macOS 26.6.2, Qt 6.12.0, Python 3.14.6
+REST-dependent checks ran with localhost socket access; sandbox-only attempts could not bind.
+
+Final check: ctest --test-dir build --output-on-failure
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   34.63 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   10.89 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  45.52 sec
+
+Suite totals from CTest output:
+Totals: 73 passed, 0 failed, 0 skipped, 0 blacklisted, 34599ms
+Ran 142 tests in 10.754s
+
+Install: cmake --install build --prefix /Users/btabone/source/DataHorizon/build/package
+Installed smoke: python3 tests/package_smoke.py build/package
+Installed application: managed edit and calculation passed
+
+Cache regression: scrollingPastTileLimitKeepsTheVisibleViewportLoaded
+Previous HEAD eviction policy: Totals: 2 passed, 1 failed, 0 skipped, 0 blacklisted, 10230ms
+Fixed LRU policy: Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 2899ms
+
+Benchmarks (100 samples per scenario; timing distributions are evidence, not CI thresholds):
+PYTHONPATH=service python3 tests/benchmark.py --formula-only --output docs/design/evidence/formula-benchmark.json
+QT_QPA_PLATFORM=offscreen build/desktop_benchmark docs/design/evidence/desktop-benchmark-offscreen.json
+build/desktop_benchmark docs/design/evidence/desktop-benchmark-native.json
+CI collects formula/offscreen Qt reports on Windows, macOS and Linux; native platform acceptance remains separate.

@@ -115,6 +115,86 @@ def translate(source, rows, cols):
     return "".join(out)
 
 
+def transform_structure(source, local_sheet, target_sheet, axis, start, count, delete=False, *, target_id=None):
+    """Retarget A1 references after a whole-row/column edit; preserve token spelling.
+
+    Absolute markers control copying, not structural edits. A range contracts
+    around deleted members and expands for insertions inside its endpoints.
+    Return the source and number of newly broken reference expressions.
+    """
+    Parser(source[1:]).parse()  # Never guess how unsupported syntax refers to cells.
+    tokens, pos = [], 1
+    while pos < len(source):
+        if source[pos:].isspace():
+            break
+        match = TOKEN.match(source, pos)
+        tokens.append(match)
+        pos = match.end()
+    fold = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+    def targets(name):
+        if target_id is not None and name == target_id:
+            return True  # The calculator also accepts an exact sheet UUID.
+        return (local_sheet if name is None else name).translate(fold) == target_sheet.translate(fold)
+    def coordinate(ref):
+        name, row, col = split_ref(ref)
+        return name, row if axis == "row" else col
+    maximum = MAX_ROWS if axis == "row" else MAX_COLS
+    end = start + count - 1
+    def interval(first, last):
+        low, high = sorted((first, last))
+        if delete:
+            if start <= low and high <= end:
+                return None
+            low = low if low < start else max(low, end+1)-count
+            high = high-count if high > end else min(high, start-1)
+        else:
+            low += count if low >= start else 0
+            high += count if high >= start else 0
+        if not (1 <= low <= high <= maximum):
+            return None
+        return (low, high) if first <= last else (high, low)
+    def render(ref, value):
+        prefix, cell = ref.rsplit("!", 1) if "!" in ref else (None, ref)
+        parts = ADDRESS.fullmatch(cell)
+        row, col = coordinates(cell)
+        if axis == "row": row = value
+        else: col = value
+        result = f"{parts[1]}{column_name(col)}{parts[3]}{row}"
+        return prefix+"!"+result if prefix is not None else result
+    edits, broken, index = [], 0, 0
+    while index < len(tokens):
+        first = tokens[index]
+        if first.lastgroup != "ref":
+            index += 1
+            continue
+        last = first
+        if index+2 < len(tokens) and tokens[index+1].group("op") == ":" and tokens[index+2].lastgroup == "ref":
+            last = tokens[index+2]
+        name, value = coordinate(first["ref"])
+        last_name, last_value = coordinate(last["ref"])
+        if last is not first and last_name is None:
+            last_name = name  # Sheet!A1:A3 inherits the first endpoint's sheet.
+        if last is not first and targets(name) != targets(last_name):
+            raise FormulaError("#REF!", "Cannot transform a range spanning different sheets")
+        if targets(name):
+            values = interval(value, last_value)
+            if values is None:
+                edits.append((first.start("ref"), last.end("ref"), "#REF!"))
+                broken += 1
+            else:
+                endpoints = ((first,value,values[0]),) if last is first else ((first,value,values[0]),(last,last_value,values[1]))
+                for token, old, new in endpoints:
+                    if old != new:
+                        edits.append((token.start("ref"),token.end("ref"),render(token["ref"],new)))
+        index += 3 if last is not first else 1
+    out, pos = [], 0
+    for begin, end, replacement in edits:
+        out.extend((source[pos:begin], replacement))
+        pos = end
+    out.append(source[pos:])
+    return "".join(out), broken
+
+
 class Parser:
     def __init__(self, source):
         self.tokens, pos = [], 0

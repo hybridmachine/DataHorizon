@@ -436,7 +436,8 @@ class ServiceTests(unittest.TestCase):
                     schema=methods["post"]["requestBody"]["content"]["application/json"]["schema"]
                     self.assertIn(schema["$ref"].rsplit("/",1)[-1],schemas,path)
             with client.open(Path(temp)/"examples.dhwb",create=True) as book:
-                sequence=("edit","paste","fill","move","replace_all","undo","redo", "sheet_add","sheet_rename","sheet_duplicate","sheet_reorder","sheet_delete")
+                sequence=("edit","paste","fill","move","replace_all","undo","redo", "sheet_add","sheet_rename","sheet_duplicate","sheet_reorder","sheet_delete",
+                          "rows_insert","rows_delete","columns_insert","columns_delete")
                 self.assertEqual(set(sequence),set(mapping))
                 for action in sequence:
                     with self.subTest(action=action):
@@ -451,6 +452,25 @@ class ServiceTests(unittest.TestCase):
                         result=client.request(book.base+"/operations",request)
                         self.assertEqual(result["outcome"],"committed")
                         book.refresh()
+
+    def test_row_column_operations_share_sdk_rest_and_cli_behavior(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            path=Path(temp)/"structure-clients.dhwb"
+            with client.open(path,create=True) as book:
+                book.apply("edit",cells=[{"row":2,"col":1,"source":"7"},{"row":4,"col":2,"source":"=$A$2"}])
+                book.apply("rows_insert",start=2,count=2)
+                request={"action":"columns_insert","sheet":"Sheet1","start":1,"operation_id":"rest-structure","expected_state":book.state}
+                receipt=client.request(book.base+"/operations",request)
+                self.assertEqual(receipt["outcome"],"committed")
+                run=subprocess.run([sys.executable,"-m","datahorizon.cli","--url",client.url,str(path),"apply"],
+                    input=json.dumps({"action":"rows_delete","start":1,"count":2}),
+                    env={**os.environ,"DATAHORIZON_TOKEN":client.token},capture_output=True,text=True,timeout=10)
+                self.assertEqual(run.returncode,0,run.stderr)
+                self.assertEqual(json.loads(run.stdout)["outcome"],"committed")
+                book.refresh()
+                cells=book.read(r2=4,c2=3)["cells"]
+                self.assertEqual([(cell["row"],cell["col"],cell["source"],cell["value"]) for cell in cells],
+                                 [(2,2,"7",7),(4,3,"=$B$2",7)])
 
     def test_direct_cli_reports_results_only_after_commit(self):
         with tempfile.TemporaryDirectory() as temp:

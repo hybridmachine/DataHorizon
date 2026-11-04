@@ -1,0 +1,45 @@
+{
+    "architecture": "arm64",
+    "dataset": "10,000 numeric cells in column A; distant jumps include empty sparse regions",
+    "distant_jump_range_responses": 150,
+    "distant_jump_to_usable_viewport": {
+        "max_ms": 30.848416,
+        "median_ms": 23.925625,
+        "p95_ms": 30.278416,
+        "samples": 100
+    },
+    "event_loop_gap": {
+        "max_ms": 14.673916,
+        "median_ms": 5.1049795,
+        "p95_ms": 12.398667,
+        "samples": 902
+    },
+    "first_blank_usable_viewport_ms": 59.169667,
+    "limitations": [
+        "One process launch; first viewport is not a cold OS-cache measurement.",
+        "Synthetic Qt input and synchronous Qt paints exclude physical input/compositor latency.",
+        "Offscreen runs do not qualify native interaction, accessibility, high DPI or another platform.",
+        "RSS and frozen panes are not measured by this executable."
+    ],
+    "os": "macOS Tahoe (26.6.2)",
+    "platform_plugin": "cocoa",
+    "qt": "6.12.0",
+    "recorded_at_utc": "2026-11-04T03:09:04Z",
+    "scroll_range_responses": 199,
+    "scroll_to_usable_viewport": {
+        "max_ms": 34.692125,
+        "median_ms": 29.888583500000003,
+        "p95_ms": 32.130583,
+        "samples": 100
+    },
+    "synthetic_address_key_dispatch": {
+        "max_ms": 0.222083,
+        "median_ms": 0.1590625,
+        "p95_ms": 0.179,
+        "samples": 200
+    },
+    "targets": {
+        "input_stall_ms": 50,
+        "viewport_p95_ms": 150
+    }
+}
