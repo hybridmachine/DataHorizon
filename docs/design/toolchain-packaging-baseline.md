@@ -32,6 +32,10 @@ duplicated configuration.
 CI passes the setup action's explicit
 [interpreter path output](https://github.com/actions/setup-python/blob/v6/action.yml)
 to CMake so another preinstalled interpreter cannot select the desktop service.
+Native Windows separators are normalized before embedding that path in the C++
+launcher definition. CI reproduced unrecognized C++ escapes from the explicit
+`C:\...\x64\python.exe` spelling and a desktop startup timeout before this fix;
+the same selected interpreter remains the CTest/SDK interpreter.
 
 The minimum-Python jobs run the complete engine, service, SDK, CLI, SQL capture,
 execution and native representation contracts under Python 3.11. They preserve

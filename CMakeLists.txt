@@ -11,6 +11,12 @@ else()
 endif()
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Network Test)
 find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+set(DATAHORIZON_PYTHON_EXECUTABLE "${Python3_EXECUTABLE}")
+if(WIN32)
+    # An explicitly supplied native path can contain C++ escape sequences
+    # (notably \x in the x64 directory). Qt accepts forward-slash paths.
+    string(REPLACE "\\" "/" DATAHORIZON_PYTHON_EXECUTABLE "${Python3_EXECUTABLE}")
+endif()
 set(DATAHORIZON_ABSOLUTE_INSTALL_PREFIX false)
 if(IS_ABSOLUTE "${CMAKE_INSTALL_PREFIX}")
     set(DATAHORIZON_ABSOLUTE_INSTALL_PREFIX true)
@@ -26,7 +32,7 @@ target_link_libraries(datahorizon_desktop PUBLIC Qt6::Widgets Qt6::Network)
 target_include_directories(datahorizon_desktop PUBLIC desktop)
 target_compile_definitions(datahorizon_desktop PRIVATE
     DATAHORIZON_SERVICE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/service"
-    DATAHORIZON_PYTHON="${Python3_EXECUTABLE}")
+    DATAHORIZON_PYTHON="${DATAHORIZON_PYTHON_EXECUTABLE}")
 
 qt_add_executable(DataHorizon WIN32 MACOSX_BUNDLE desktop/main.cpp)
 target_link_libraries(DataHorizon PRIVATE datahorizon_desktop)

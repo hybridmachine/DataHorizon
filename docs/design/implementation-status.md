@@ -258,6 +258,10 @@ runs cancelled. The first four PR cycles were reviewed, verified and merged;
 their M1 evidence remains bounded and does not close native/release acceptance.
 Python bundling, clean-machine installers, signing and other component licenses
 remain open. All PR #7 platform grid artifacts were inspected before merge.
+The new explicit Windows interpreter path exposed C++ escape sequences when
+embedded in the desktop launcher. Normalize native separators for the compiled
+definition; keep the selected interpreter for CTest/SDK. The failure was a
+startup-path defect, so no operation or suite deadline was increased.
 
 ## Review corrections — November 1, 2026
 
