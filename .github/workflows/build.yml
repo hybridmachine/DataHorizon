@@ -31,6 +31,8 @@ jobs:
         run: cmake --build build --config Release --parallel 2
       - name: Contract and desktop tests
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: SQLite capture experiment
+        run: python tests/sqlite_capture_experiment.py --output build/sqlite-capture-benchmark.json
       - name: Formula-chain measurements
         env:
           PYTHONPATH: service

@@ -57,6 +57,7 @@ applications, and AI agents through REST.
 | [Implementation status](implementation-status.md) | Current local evidence, milestone gaps and next dependencies |
 | [Development guide](development.md) | Build/run, API, CLI, Python, Supplies and package smoke |
 | [Initial contracts](initial-contracts.md) | M0 persistence, values, operations, budgets and explicit exclusions |
+| [SQLite capture experiment](sqlite-capture-experiment.md) | M1 capture comparison, typed old/new evidence, limits and remaining managed SQL gates |
 | [Native format v1](native-format-v1.md) | Actual development schema and callback-free direct SQLite access |
 | [Compatibility tier 0](compatibility-v0.md) | Implemented formulas, formatting, interchange and editing limits |
 | [Architecture](architecture.md) | Components, execution paths, transactions, external edits, and recovery |

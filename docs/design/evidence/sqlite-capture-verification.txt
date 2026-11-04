@@ -1,0 +1,15 @@
+Command: ctest --test-dir build --output-on-failure
+
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   35.03 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   11.67 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  46.71 sec
+
+Suite counts from CTest LastTest.log:
+Totals: 73 passed, 0 failed, 0 skipped, 0 blacklisted, 34941ms
+Ran 162 tests in 11.539s
