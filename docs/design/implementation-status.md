@@ -32,7 +32,7 @@ formula source; values export contains 20.5. Formatting renders 20.50.
 | Increment | Evidence and scope | Remaining before full milestone closure |
 | --- | --- | --- |
 | M0 | [Initial contracts](initial-contracts.md), [compatibility](compatibility-v0.md), [native schema](native-format-v1.md), keyboard/state rules and numeric budgets recorded | Resolve deferred cases at their named milestones; no claim that historical PDFs have been regenerated |
-| M1 | Qt 6.12/C++17 builds locally; stdlib SQLite/HTTP and spawned brokered workers exercised; sparse/dense/long-text/large-disk measurements recorded; repeatable formula-chain and Qt scroll/input harnesses added with local evidence and CI artifact collection | Comparative production framework/capture experiments, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
+| M1 | Qt 6.12/C++17 builds locally; stdlib SQLite/HTTP and spawned brokered workers exercised; bounded SQLite capture comparison with typed old/new, rollback and negative controls; sparse/dense/long-text/large-disk, formula-chain and Qt scroll/input harnesses with local evidence and CI artifact collection | Comparative service/Python execution experiments, native capture binding and production SQL integration decisions, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
 | M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle; restart/reopen and warned unknown-outcome recovery | Broader failure injection, clean-machine packaging evidence and service lifecycle hardening |
 | M3 | Typed entry, A1 limits, SUM/IF/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
 | M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations and row/column reference transforms with destructive-operation fixtures | Unrestricted cut/rename/duplicate/delete, hook-aware structure events, wrap/borders/freeze/hide, dimensions/view persistence and platform conventions |
@@ -99,6 +99,8 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
+Next is the M1 service framework/Python execution comparison; the first bounded
+[SQLite capture comparison](sqlite-capture-experiment.md) is recorded below.
 Finish the remaining M1 experiments and native platform acceptance. Extend the
 bounded M4 structural tier to additional operations and hook-aware events only
 with explicit contracts and destructive-operation fixtures. Then finish list/CSV typing and explicit jobs,
@@ -156,7 +158,31 @@ control through an application SQL resource are all unavailable. No statement
 is silently run outside hooks. Ordinary external SQLite cell changes are tested
 and intentionally supported; reserved schema/metadata changes are rejected on
 managed refresh. Proving capture for triggers/cascades/upsert/replace is still
-required before the first managed SQL mutation can be exposed.
+required before the first managed SQL mutation can be exposed. The bounded
+experiment below supplies initial capture evidence; engine integration remains
+unqualified.
+
+## M1 SQLite capture comparison — November 3, 2026
+
+The [isolated experiment](sqlite-capture-experiment.md) compares explicit
+known-target stdlib edits with a TEMP trigger journal. Its 18 SQL cases replay
+typed old/new images against independent before/after snapshots, including
+WITHOUT ROWID/composite keys, upsert/replacement, triggers, cascades and CTEs.
+Sixteen contract tests verify atomic failure, deferred COMMIT failure,
+cancellation, savepoints, event/byte limits, reserved-state protection and
+callback-free independent access. Snapshot copies omit the connection-local
+journal. [Local JSON evidence](evidence/sqlite-capture-benchmark.json) includes
+100 warm in-memory samples, compile options and typed images; CI now collects
+the same report on each platform. Hosted results remain uninspected.
+[Full local verification](evidence/sqlite-capture-verification.txt) passes
+162 Python tests and 73 Qt checks including suite setup/cleanup.
+
+Executable negative controls show RETURNING/changes() missing cascade rows and
+replacement deletes missing when recursive triggers are disabled. Keep explicit
+engine operations for the preview. The journal is only a candidate for a
+restricted SQL prototype; native preupdate/session bindings, arbitrary schemas,
+Python hooks, history, receipts and result limits need separate qualification.
+Managed SQL stays unavailable. M1 remains open.
 
 ## Review corrections — November 1, 2026
 

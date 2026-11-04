@@ -257,6 +257,7 @@ security sandboxes, and transactional code must not perform external effects.
 cmake --install build --prefix "$PWD/build/package"
 PYTHONPATH=service python3 tests/benchmark.py
 PYTHONPATH=service python3 tests/benchmark.py --formula-only --output build/formula-benchmark.json
+python3 tests/sqlite_capture_experiment.py --output build/sqlite-capture-benchmark.json
 QT_QPA_PLATFORM=offscreen build/desktop_benchmark build/desktop-benchmark.json
 ```
 
@@ -265,6 +266,13 @@ The formula harness reads independent 16/64/128-cell chains from their tails in
 by fresh reads. `--samples` changes the default 100 measurements. The full run
 also retains the sparse/dense/large-disk fixture; `--formula-only` skips it.
 Peak RSS is reported on POSIX and explicitly null on Windows.
+
+The isolated [SQLite capture experiment](sqlite-capture-experiment.md) compares
+known-target edits with a bounded connection-local trigger journal, verifies
+typed old/new images against independent snapshots, and records incomplete
+RETURNING/recursive-trigger controls. It needs no service or pip dependencies
+and does not expose managed SQL. Its 16 contract tests run in normal discovery;
+CI preserves the report with the other M1 measurements.
 
 The desktop harness measures 100 scrolling viewports and 100 distant jumps,
 synthetic address input during reads, event-loop gaps, and range-response counts
