@@ -159,6 +159,11 @@ private slots:
         QVERIFY(first.setData(first.index(0,0),"Edited",Qt::EditRole)); QCOMPARE(source.data(source.index(0,0)).toString(),QString("Edited"));
         source.insertRow(0); source.setData(source.index(0,0),"Inserted"); QCOMPARE(first.data(first.index(0,0)).toString(),QString("Inserted"));
         source.removeRows(0,source.rowCount()); QCOMPARE(first.rowCount(),0);
+        auto *shortLived=new QStandardItemModel(1,4);
+        FrozenTopRowModel detached(shortLived); QAbstractItemModelTester detachedTester(&detached,QAbstractItemModelTester::FailureReportingMode::QtTest);
+        const auto stale=detached.index(0,0); delete shortLived;
+        QCOMPARE(detached.rowCount(),0); QCOMPARE(detached.columnCount(),0);
+        QVERIFY(!detached.data(stale).isValid()); QVERIFY(!detached.setData(stale,"ignored",Qt::EditRole));
     }
     void frozenTopRowEditsAlignsAndPersistsWithoutCoveringBody() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;

@@ -1,17 +1,17 @@
-Full local CTest:
+Full local CTest on reviewed implementation:
 Test project /Users/btabone/source/DataHorizon/build
     Start 1: desktop
-1/2 Test #1: desktop ..........................   Passed   43.16 sec
+1/2 Test #1: desktop ..........................   Passed   43.02 sec
     Start 2: service
-2/2 Test #2: service ..........................   Passed   20.80 sec
+2/2 Test #2: service ..........................   Passed   20.82 sec
 
 100% tests passed out of 2
 
-Total Test time (real) =  63.96 sec
+Total Test time (real) =  63.84 sec
 
 Counts:
-Totals: 82 passed, 0 failed, 0 skipped, 0 blacklisted, 42774ms
-Ran 198 tests in 20.660s
+Totals: 82 passed, 0 failed, 0 skipped, 0 blacklisted, 42978ms
+Ran 198 tests in 20.680s
 OK (skipped=15)
 
 Optional APSW environment (all tests, no skips):
@@ -23,4 +23,5 @@ Installed application: managed edit and calculation passed
 
 Native acceptance: Cocoa scales 1 and 2 passed; reports/screenshots retained.
 Existing desktop grid/cache/input benchmark passed; separate display-probe scope retained.
+Source destruction/stale-index review regression passed with model invariants.
 Hosted Actions did not start jobs; local verification/merge authorized by user.

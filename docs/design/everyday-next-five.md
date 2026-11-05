@@ -5,12 +5,12 @@ PRs #9–#13. Implement, locally verify, review and merge each increment before
 beginning the next. Hosted Actions remain billing-blocked; local verification
 and sequential merges are explicitly authorized. M1 qualification stays open.
 
-1. Text wrapping with native stored styles and bounded visible-row measurement;
+1. [Text wrapping, PR #14](https://github.com/hybridmachine/DataHorizon/pull/14), with native stored styles and bounded visible-row measurement;
    retain the expanded native keyboard/accessibility/cancellation checks.
-2. Cell borders with atomic styles, Undo/Redo and copy/paste preservation.
-3. Row/column sizing with bounded fit measurement and saved desktop view state.
-4. Hide/unhide rows and columns with visible recovery controls.
-5. Freeze the top row with synchronized geometry, selection and saved state.
+2. [Cell borders, PR #15](https://github.com/hybridmachine/DataHorizon/pull/15), with atomic styles, Undo/Redo and copy/paste preservation.
+3. [Row/column sizing, PR #16](https://github.com/hybridmachine/DataHorizon/pull/16), with bounded fit measurement and saved desktop view state.
+4. [Hide/unhide, PR #17](https://github.com/hybridmachine/DataHorizon/pull/17), with visible recovery controls.
+5. [Freeze top row, PR #18](https://github.com/hybridmachine/DataHorizon/pull/18), with synchronized geometry, selection and saved state.
 
 ## Text wrapping
 
@@ -103,3 +103,7 @@ tests with the optional binding environment and 82 Qt checks, plus native
 acceptance and installed-app smoke. The [existing grid benchmark](evidence/everyday-desktop-benchmark.json)
 still meets its cache/input assertions; its read-only probe remains separate
 from the production freeze feature.
+
+The PR review also checks source-model destruction: the frozen forwarding model
+resets to an empty, non-editable model when its source is destroyed, including
+safe stale-index reads/writes during teardown.

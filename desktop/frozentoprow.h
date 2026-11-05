@@ -6,6 +6,7 @@
 #include <QKeyEvent>
 #include <QApplication>
 #include <QAbstractButton>
+#include <QPointer>
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QTableView>
@@ -16,6 +17,7 @@ public:
     explicit FrozenTopRowModel(QAbstractItemModel *source,QObject *parent=nullptr) : QAbstractTableModel(parent), m_source(source) {
         connect(source,&QAbstractItemModel::modelAboutToBeReset,this,[this]{beginResetModel();});
         connect(source,&QAbstractItemModel::modelReset,this,[this]{endResetModel();});
+        connect(source,&QObject::destroyed,this,[this]{beginResetModel(); m_source=nullptr; endResetModel();});
         connect(source,&QAbstractItemModel::rowsAboutToBeInserted,this,[this]{beginResetModel();});
         connect(source,&QAbstractItemModel::rowsInserted,this,[this]{endResetModel();});
         connect(source,&QAbstractItemModel::rowsAboutToBeRemoved,this,[this]{beginResetModel();});
@@ -32,14 +34,14 @@ public:
             else if(first==0 && rowCount()) emit headerDataChanged(orientation,0,0);
         });
     }
-    int rowCount(const QModelIndex &parent={}) const override {return parent.isValid()?0:qMin(1,m_source->rowCount());}
-    int columnCount(const QModelIndex &parent={}) const override {return parent.isValid()?0:m_source->columnCount();}
-    QVariant data(const QModelIndex &cell,int role=Qt::DisplayRole) const override {return cell.isValid()?m_source->data(m_source->index(0,cell.column()),role):QVariant{};}
-    QVariant headerData(int section,Qt::Orientation orientation,int role) const override {return m_source->headerData(section,orientation,role);}
-    Qt::ItemFlags flags(const QModelIndex &cell) const override {return cell.isValid()?m_source->flags(m_source->index(0,cell.column())):Qt::NoItemFlags;}
-    bool setData(const QModelIndex &cell,const QVariant &value,int role) override {return cell.isValid() && m_source->setData(m_source->index(0,cell.column()),value,role);}
+    int rowCount(const QModelIndex &parent={}) const override {return parent.isValid() || !m_source?0:qMin(1,m_source->rowCount());}
+    int columnCount(const QModelIndex &parent={}) const override {return parent.isValid() || !m_source?0:m_source->columnCount();}
+    QVariant data(const QModelIndex &cell,int role=Qt::DisplayRole) const override {return m_source && cell.isValid()?m_source->data(m_source->index(0,cell.column()),role):QVariant{};}
+    QVariant headerData(int section,Qt::Orientation orientation,int role) const override {return m_source?m_source->headerData(section,orientation,role):QVariant{};}
+    Qt::ItemFlags flags(const QModelIndex &cell) const override {return m_source && cell.isValid()?m_source->flags(m_source->index(0,cell.column())):Qt::NoItemFlags;}
+    bool setData(const QModelIndex &cell,const QVariant &value,int role) override {return m_source && cell.isValid() && m_source->setData(m_source->index(0,cell.column()),value,role);}
 private:
-    QAbstractItemModel *m_source;
+    QPointer<QAbstractItemModel> m_source;
 };
 
 // A layout sibling of the body, so no scrolling body cells are obscured.
