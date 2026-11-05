@@ -72,6 +72,19 @@ jobs:
           fi
       - name: Record build and runtime baseline
         run: python tests/toolchain_report.py --build build --output build/toolchain-benchmark.json
+      - name: Native platform acceptance at two scales
+        shell: bash
+        run: |
+          unset QT_QPA_PLATFORM
+          for scale in 1 2; do
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              QT_SCALE_FACTOR=$scale build/Release/native_acceptance.exe build/native-acceptance-$scale.json
+            elif [ "$RUNNER_OS" = "Linux" ]; then
+              QT_SCALE_FACTOR=$scale xvfb-run -a build/native_acceptance build/native-acceptance-$scale.json
+            else
+              QT_SCALE_FACTOR=$scale build/native_acceptance build/native-acceptance-$scale.json
+            fi
+          done
       - name: Preserve platform benchmark evidence
         uses: actions/upload-artifact@v4
         with:
@@ -79,6 +92,8 @@ jobs:
           path: |
             build/*benchmark.json
             build/*-frozen-row.png
+            build/native-acceptance-*.json
+            build/native-acceptance-*.png
           if-no-files-found: error
       - name: Install smoke
         run: cmake --install build --config Release
