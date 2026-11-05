@@ -35,7 +35,7 @@ formula source; values export contains 20.5. Formatting renders 20.50.
 | M1 | Qt 6.12/C++17 builds locally; bounded TEMP/native SQLite capture and service/Python execution comparisons with typed changes, transaction/worker failures and receipts; sparse/dense/long-text/large-disk, formula-chain and Qt scroll/input harnesses with local evidence and CI artifact collection | Production framework/runtime and capture-binding adoption, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
 | M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle; restart/reopen and warned unknown-outcome recovery | Broader failure injection, clean-machine packaging evidence and service lifecycle hardening |
 | M3 | Typed entry, A1 limits, SUM/IF/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
-| M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations and row/column reference transforms with destructive-operation fixtures | Unrestricted cut/rename/duplicate/delete, hook-aware structure events, wrap/borders/freeze/hide, dimensions/view persistence and platform conventions |
+| M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations and row/column reference transforms, wrap/borders and local sizing/hide/frozen-row preferences with destructive-operation fixtures | Unrestricted cut/rename/duplicate/delete, hook-aware structure events, portable view metadata, additional frozen edges/cross-pane range selection and platform conventions |
 | M5 | Explicit full-scope projected lists, stable source row edits, multikey sort/filter, scoped source/display find/replace, text CSV preview and snapshot export | Persistent record identities/list definitions, filtered range semantics, column typing/date/encoding controls, progress/cancellation and large jobs |
 | M6 | Native snapshots/recovery, read-only opens, conservative external refresh and bounded CSV | XLSX/ODS import/export fixtures and conversion reports, comprehensive disk/permission/crash recovery, bundled runtime, follow-up execution semantics |
 | M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
@@ -104,7 +104,12 @@ after PR #13. Text wrapping and all-cell borders now use native managed styles, 
 viewport measurement. Row/column dimensions now have local per-workbook/sheet preferences, source-row
 projection mapping, bounded visible-text fit and reset controls. Hide/unhide adds
 local source-coordinate preferences, header gap markers, persistent recovery
-controls and hidden-rectangle guards. Native scale 1/2 keyboard, editor accessibility and modal
+controls and hidden-rectangle guards. Freeze top row adds an editable, shared-cache
+row view with synchronized headers/columns, keyboard navigation and saved local
+state; projected lists and hidden row 1 temporarily suspend it.
+[Final local verification](evidence/everyday-verification.txt) passes 198 Python
+tests in the optional-binding environment, 82 Qt checks, native Cocoa scales 1/2,
+the existing grid benchmark and installed-app smoke. Native scale 1/2 keyboard, editor accessibility and modal
 cancellation checks also pass locally; hosted platforms remain pending.
 
 The [five qualification increments](qualification-next-five.md) now implement

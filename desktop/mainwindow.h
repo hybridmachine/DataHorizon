@@ -14,6 +14,7 @@ class QLabel;
 class QPlainTextEdit;
 class QToolBar;
 class QPushButton;
+class FrozenTopRow;
 
 struct StartupOptions { QString url, token, handler, recoveryDirectory, initialWorkbook, viewStatePath; bool automaticWorkbook = true; };
 
@@ -73,6 +74,7 @@ private:
     void applyVisibility();
     void ensureVisibleCurrent();
     bool intersectsHidden(int r1,int c1,int r2,int c2) const;
+    void updateFrozenRow();
     bool resolveDraft();
     void submitDraft(bool advance = false, int direction = 1);
     QJsonObject enterDestination(const QModelIndex &index, int direction) const;
@@ -121,4 +123,7 @@ private:
     bool m_applyingView = false;
     QSet<int> m_hiddenRows, m_hiddenColumns, m_hiddenViewRows, m_hiddenViewColumns;
     QPushButton *m_hiddenButton = nullptr;
+    FrozenTopRow *m_frozenTop = nullptr;
+    QAction *m_freezeAction = nullptr;
+    bool m_freezeTop = false;
 };

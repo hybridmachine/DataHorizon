@@ -3,7 +3,8 @@
 November 4, 2026. Retain QTableView and the bounded service-backed SheetModel.
 The existing scroll/input harness now includes a read-only frozen-header display
 probe. It is not installed, exposed as a desktop command or saved in workbooks.
-M4 frozen-pane interactions remain unimplemented.
+The subsequent [bounded M4 frozen-row increment](everyday-next-five.md#freeze-top-row)
+adds separate editable production behavior; this historical probe remains isolated.
 
 ## Design and contract
 

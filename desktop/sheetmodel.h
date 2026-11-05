@@ -9,6 +9,7 @@
 class SheetModel : public QAbstractTableModel {
     Q_OBJECT
 public:
+    enum { CellRole=Qt::UserRole+1 };
     explicit SheetModel(RestClient *client, QObject *parent = nullptr, int rows = 1048576, int cols = 16384);
     int rowCount(const QModelIndex &parent = {}) const override;
     int columnCount(const QModelIndex &parent = {}) const override;
