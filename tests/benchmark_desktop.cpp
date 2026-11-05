@@ -2,6 +2,7 @@
 // Explicit measurement executable: timings are evidence, not CI pass thresholds.
 #include "mainwindow.h"
 #include "frozen_row_probe.h"
+#include "peak_rss.h"
 #include <QApplication>
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -165,6 +166,7 @@ int main(int argc, char **argv) {
         QJsonObject report{{"recorded_at_utc",QDateTime::currentDateTimeUtc().toString(Qt::ISODate)},
             {"os",QSysInfo::prettyProductName()},{"architecture",QSysInfo::currentCpuArchitecture()},
             {"qt",qVersion()},{"platform_plugin",QApplication::platformName()},
+            {"gui_peak_rss_bytes",double(processPeakRssBytes())},
             {"dataset","10,000 numeric cells in column A; distant jumps include empty sparse regions"},
             {"first_blank_usable_viewport_ms",firstMs},{"scroll_to_usable_viewport",distribution(scroll)},
             {"distant_jump_to_usable_viewport",distribution(jumps)},{"synthetic_address_key_dispatch",distribution(input)},
@@ -180,7 +182,7 @@ int main(int argc, char **argv) {
                 "Synthetic Qt input and synchronous Qt paints exclude physical input/compositor latency.",
                 "Offscreen runs do not qualify native interaction, accessibility, high DPI or another platform.",
                 "Focused address retention is only checked when widget focus is available; inspect its explicit flag in native runs.",
-                "RSS, frozen-row editing/focus/selection, persistence, hidden columns and multiple frozen edges remain unqualified."}}};
+                "RSS applies to this 10,000-cell GUI workload; frozen-row editing/focus/selection, persistence, hidden columns and multiple frozen edges remain unqualified."}}};
         QFile output(QString::fromLocal8Bit(argv[1])); require(output.open(QIODevice::WriteOnly),"Cannot write benchmark report");
         const auto bytes=QJsonDocument(report).toJson(QJsonDocument::Indented);
         require(output.write(bytes)==bytes.size(),"Cannot finish benchmark report");

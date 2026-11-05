@@ -106,6 +106,12 @@ acceptance now has an executable that checks the real REST-backed window at
 scale factors 1/2 with keyboard/clipboard, accessible names/extent and geometry
 checks. CI runs native Cocoa/Windows/Xcb plugins and collects JSON/screenshots.
 Physical input, screen-reader navigation and native dialogs remain unqualified.
+The cache/RSS increment adds 100 fresh-process and warm REST measurements over
+a generated 1.27-GB workbook, per-process service peaks and GUI peak RSS. See
+[the measured scope](qualification-next-five.md#cache-and-rss-evidence).
+OS-cold caches remain unqualified. Hosted checks are currently unavailable due
+to account billing/spending limits; the user authorized local verification and
+sequential merges until that capacity is restored.
 
 The five bounded M1 experiment slices, including the
 [toolchain/packaging baseline](toolchain-packaging-baseline.md), now have

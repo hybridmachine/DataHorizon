@@ -1,0 +1,74 @@
+{
+    "architecture": "arm64",
+    "dataset": "10,000 numeric cells in column A; distant jumps include empty sparse regions",
+    "distant_jump_range_responses": 150,
+    "distant_jump_to_usable_viewport": {
+        "max_ms": 12.054542,
+        "median_ms": 11.695479500000001,
+        "p95_ms": 11.877084,
+        "samples": 100
+    },
+    "event_loop_gap": {
+        "max_ms": 19.220958,
+        "median_ms": 1.666708,
+        "p95_ms": 6.768084,
+        "samples": 1205
+    },
+    "first_blank_usable_viewport_ms": 24.149125,
+    "frozen_row": {
+        "cache": {
+            "pending_tiles": 0,
+            "source_budget_bytes": 2097152,
+            "source_charge_bytes": 0,
+            "tile_budget_bytes": 14680064,
+            "tile_charge_bytes": 14680064,
+            "tiles": 16
+        },
+        "focused_address_retention_checked_all_samples": true,
+        "managed_edit_requests": 0,
+        "range_responses": 182,
+        "scope": "Read-only display probe; not installed or persisted",
+        "screenshot": "desktop-rss-benchmark-frozen-row.png",
+        "scroll_to_usable_viewport": {
+            "max_ms": 17.920833,
+            "median_ms": 8.8085625,
+            "p95_ms": 10.920375,
+            "samples": 100
+        },
+        "synthetic_address_key_dispatch": {
+            "max_ms": 0.117833,
+            "median_ms": 0.064583,
+            "p95_ms": 0.08325,
+            "samples": 100
+        }
+    },
+    "gui_peak_rss_bytes": 70975488,
+    "limitations": [
+        "One process launch; first viewport is not a cold OS-cache measurement.",
+        "Synthetic Qt input and synchronous Qt paints exclude physical input/compositor latency.",
+        "Offscreen runs do not qualify native interaction, accessibility, high DPI or another platform.",
+        "Focused address retention is only checked when widget focus is available; inspect its explicit flag in native runs.",
+        "RSS applies to this 10,000-cell GUI workload; frozen-row editing/focus/selection, persistence, hidden columns and multiple frozen edges remain unqualified."
+    ],
+    "os": "macOS Tahoe (26.6.2)",
+    "platform_plugin": "offscreen",
+    "qt": "6.12.0",
+    "recorded_at_utc": "2026-11-05T04:04:29Z",
+    "scroll_range_responses": 199,
+    "scroll_to_usable_viewport": {
+        "max_ms": 15.928833,
+        "median_ms": 12.594375,
+        "p95_ms": 12.883583,
+        "samples": 100
+    },
+    "synthetic_address_key_dispatch": {
+        "max_ms": 0.317291,
+        "median_ms": 0.1013545,
+        "p95_ms": 0.11325,
+        "samples": 200
+    },
+    "targets": {
+        "input_stall_ms": 50,
+        "viewport_p95_ms": 150
+    }
+}

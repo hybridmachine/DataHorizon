@@ -56,6 +56,8 @@ jobs:
         env:
           PYTHONPATH: service
         run: python tests/native_storage_experiment.py --output build/native-storage-benchmark.json
+      - name: Cache and RSS measurement
+        run: python tests/cache_rss_benchmark.py --samples 10 --output build/cache-rss-benchmark.json
       - name: Formula-chain measurements
         env:
           PYTHONPATH: service
