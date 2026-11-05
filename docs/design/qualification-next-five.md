@@ -36,3 +36,27 @@ names and table dimensions; checking them does not certify a screen reader.
 Synthetic keyboard events, virtual displays and native-plugin rendering do not
 qualify physical input, compositor latency, multi-monitor behavior or native
 dialog interaction. Those remain explicit platform acceptance work.
+
+## Cache and RSS evidence
+
+`tests/cache_rss_benchmark.py` launches isolated copies of the real service with
+one authenticated, benchmark-only memory route. Each process reports its own
+peak RSS (`getrusage` on POSIX, native peak working set on Windows); it does not
+use aggregated child-process statistics. The route and launcher are not installed.
+The fixture has 100,000 sparse numeric cells and 270,000 one-KiB text cells,
+inserted through ordinary callback-free SQLite during setup. Measured reads use
+REST. [Local evidence](evidence/cache-rss-benchmark.json) records 100 fresh
+process start/open/read samples, first viewport time, 100 warm viewports, and
+driver/service peaks. CI is configured for ten samples per platform.
+
+Fresh process startup includes format validation and integrity checks, which
+can warm SQLite/OS caches. No OS-cache purge is attempted; true OS-cold
+qualification remains open. The dataset exceeds the 256-MiB service target,
+while the measured service stays below it. That is dataset-specific evidence,
+not a limit for arbitrary input shapes or multiple engines. The desktop
+benchmark now separately reports its process peak RSS for its 10,000-cell GUI
+workload. [GUI evidence](evidence/desktop-rss-benchmark.json) keeps that scope
+distinct from the larger service fixture.
+
+The user authorized local verification/merge while hosted Actions are blocked
+by account billing/spending limits. No successful new hosted result is claimed.

@@ -1,0 +1,36 @@
+{
+  "recorded_at_utc": "2026-11-05T04:01:53.092215+00:00",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "python": "3.14.6",
+  "sqlite": "3.53.4",
+  "dataset": {
+    "sparse_cells": 100000,
+    "long_text_cells": 270000,
+    "database_bytes": 1271037952,
+    "larger_than_service_memory_target": true
+  },
+  "fresh_process_start_open_first_read": {
+    "samples": 100,
+    "median_ms": 508.363,
+    "p95_ms": 537.651
+  },
+  "fresh_process_first_viewport_only": {
+    "samples": 100,
+    "median_ms": 0.917,
+    "p95_ms": 1.017
+  },
+  "warm_viewport": {
+    "samples": 100,
+    "median_ms": 1.69,
+    "p95_ms": 1.762
+  },
+  "service_peak_rss_bytes": 37847040,
+  "driver_peak_rss_bytes": 85278720,
+  "service_memory_target_bytes": 268435456,
+  "measured_service_within_target": true,
+  "limitations": [
+    "Fresh processes do not evict OS file caches; native validation may warm SQLite pages before the first viewport.",
+    "Peak RSS/working set is per owned service process; no worker processes are active in this fixture.",
+    "Dataset-specific memory evidence is not a bound on all workbook shapes or multiple open engines."
+  ]
+}
