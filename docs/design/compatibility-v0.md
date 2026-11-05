@@ -130,3 +130,7 @@ full text remains available in the source editor.
 Row/column sizing is stored in local desktop preferences per path/workbook/sheet,
 not native workbook metadata. Fit measures only loaded visible previews; see
 [the sizing limits](everyday-next-five.md#row-and-column-sizing).
+
+Hide/unhide is a local source-coordinate preference, with marked gaps and Show
+all controls. GUI range operations intersecting hidden sections are blocked;
+CSV import requires unhidden sections. Managed API coordinates are unchanged.

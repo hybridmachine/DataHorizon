@@ -1,0 +1,25 @@
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   42.14 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   21.24 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  63.39 sec
+
+Final review guard checks:
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+QWARN  : DesktopTests::hiddenSectionsPersistMarkGapsAndGuardPaste() qt.qpa.fonts: Populating font family aliases took 63 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost. 
+QWARN  : DesktopTests::hiddenSectionsPersistMarkGapsAndGuardPaste() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::hiddenSectionsPersistMarkGapsAndGuardPaste() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::hiddenSectionsPersistMarkGapsAndGuardPaste() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::hiddenSectionsPersistMarkGapsAndGuardPaste() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::hiddenSectionsPersistMarkGapsAndGuardPaste() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::hiddenSectionsPersistMarkGapsAndGuardPaste() This plugin does not support propagateSizeHints()
+PASS   : DesktopTests::hiddenSectionsPersistMarkGapsAndGuardPaste()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 797ms
+********* Finished testing of DesktopTests *********

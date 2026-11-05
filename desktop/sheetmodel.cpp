@@ -21,7 +21,18 @@ QString SheetModel::columnName(int col) {
 
 QVariant SheetModel::headerData(int section, Qt::Orientation orientation, int role) const {
     if (role != Qt::DisplayRole) return {};
-    return orientation == Qt::Horizontal ? QVariant(columnName(section + 1)) : QVariant(sourceRow(section) + 1);
+    const auto &hidden=orientation==Qt::Horizontal?m_hiddenColumns:m_hiddenRows;
+    auto source=[&](int value){return orientation==Qt::Horizontal?value:sourceRow(value);};
+    QString label=orientation==Qt::Horizontal?columnName(section+1):QString::number(sourceRow(section)+1);
+    if(section>0 && hidden.contains(source(section-1))) label.prepend("⋯ ");
+    if(section+1<(orientation==Qt::Horizontal?columnCount():rowCount()) && hidden.contains(source(section+1))) label.append(" ⋯");
+    return label;
+}
+
+void SheetModel::setHiddenSections(const QSet<int> &rows,const QSet<int> &columns) {
+    m_hiddenRows=rows; m_hiddenColumns=columns;
+    if(rowCount()) emit headerDataChanged(Qt::Vertical,0,rowCount()-1);
+    if(columnCount()) emit headerDataChanged(Qt::Horizontal,0,columnCount()-1);
 }
 
 bool SheetModel::loaded(const QModelIndex &index) const {

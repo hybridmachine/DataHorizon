@@ -26,6 +26,7 @@
 #include <QMimeData>
 #include <QPlainTextEdit>
 #include <QPainter>
+#include <QPushButton>
 #include <QPointer>
 #include <QPersistentModelIndex>
 #include <QProcessEnvironment>
@@ -46,6 +47,7 @@
 #include <QUuid>
 #include <QVBoxLayout>
 #include <filesystem>
+#include <algorithm>
 
 namespace {
 bool sameFile(const QString &left, const QString &right) {
@@ -218,7 +220,7 @@ void MainWindow::buildUi() {
     edit->addSeparator();
     add(edit, tr("Cu&t"), QKeySequence::Cut, [this] { copy(true); });
     add(edit, tr("&Copy"), QKeySequence::Copy, [this] { copy(); });
-    add(edit, tr("&Paste"), QKeySequence::Paste, [this] { paste(); }, true);
+    add(edit, tr("&Paste"), QKeySequence::Paste, [this] { paste(); }, true)->setObjectName("pasteAction");
     add(edit, tr("Paste values only"), QKeySequence(tr("Ctrl+Shift+V")), [this] { paste(true); });
     add(edit, tr("Paste formats only"), {}, [this] { paste(false, true); });
     add(edit, tr("Clear contents"), QKeySequence(Qt::Key_Delete), [this] {
@@ -296,6 +298,10 @@ void MainWindow::buildUi() {
     add(sheetMenu,tr("Column width…"),{},[this]{resizeSections(true);})->setObjectName("columnWidthAction");
     add(sheetMenu,tr("Fit columns to visible text"),{},[this]{fitColumns();})->setObjectName("fitColumnsAction");
     add(sheetMenu,tr("Reset row and column sizes"),{},[this]{resetDimensions();})->setObjectName("resetDimensionsAction");
+    add(sheetMenu,tr("Hide selected rows"),{},[this]{hideSections(false);})->setObjectName("hideRowsAction");
+    add(sheetMenu,tr("Hide selected columns"),{},[this]{hideSections(true);})->setObjectName("hideColumnsAction");
+    add(sheetMenu,tr("Show all hidden rows"),{},[this]{showHidden(true,false);})->setObjectName("showRowsAction");
+    add(sheetMenu,tr("Show all hidden columns"),{},[this]{showHidden(false,true);})->setObjectName("showColumnsAction");
     sheetMenu->addSeparator();
     add(sheetMenu, tr("Insert selected rows…"), {}, [this] { changeStructure(false,false); })->setObjectName("insertRowsAction");
     add(sheetMenu, tr("Delete selected rows…"), {}, [this] { changeStructure(false,true); })->setObjectName("deleteRowsAction");
@@ -326,6 +332,9 @@ void MainWindow::buildUi() {
     m_grid->setAlternatingRowColors(false);
     connect(m_model,&QAbstractItemModel::modelAboutToBeReset,this,[this]{
         QScopedValueRollback<bool> applying(m_applyingView,true);
+        for(int row:m_hiddenViewRows) m_grid->setRowHidden(row,false);
+        for(int col:m_hiddenViewColumns) m_grid->setColumnHidden(col,false);
+        m_hiddenViewRows.clear(); m_hiddenViewColumns.clear();
         for(int row:m_wrappedRows) m_grid->setRowHeight(row,26);
         m_wrappedRows.clear();
         for(int row:m_sizedRows) m_grid->setRowHeight(row,26);
@@ -366,6 +375,9 @@ void MainWindow::buildUi() {
     m_status = new QLabel(tr("Starting local service…")); m_status->setAccessibleName(tr("Storage and calculation status"));
     m_status->setObjectName("storageStatus");
     statusBar()->addWidget(m_status, 1);
+    m_hiddenButton=new QPushButton(this); m_hiddenButton->setObjectName("showHiddenButton");
+    m_hiddenButton->hide(); statusBar()->addPermanentWidget(m_hiddenButton);
+    connect(m_hiddenButton,&QPushButton::clicked,this,[this]{showHidden(true,true);});
     auto *issuesDock = new QDockWidget(tr("Issues"), this); issuesDock->setObjectName("issuesDock");
     m_issues = new QPlainTextEdit; m_issues->setReadOnly(true); m_issues->setAccessibleName(tr("Operation and calculation issues")); issuesDock->setWidget(m_issues);
     addDockWidget(Qt::BottomDockWidgetArea, issuesDock); issuesDock->hide(); view->addAction(issuesDock->toggleViewAction());
@@ -396,6 +408,7 @@ void MainWindow::buildUi() {
         for (auto ch : match.captured(1).toUpper()) col = col*26+ch.unicode()-'A'+1;
         int row = match.captured(2).toInt();
         if (!match.hasMatch() || row > 1048576 || col > 16384) { issue("Address must be within A1:XFD1048576."); return; }
+        if(m_hiddenRows.contains(row-1) || m_hiddenColumns.contains(col-1)) { issue("That address is hidden. Show hidden rows or columns before navigating there."); return; }
         m_address->setModified(false);
         auto index = m_model->index(row-1, col-1); m_grid->setCurrentIndex(index); m_grid->scrollTo(index); m_grid->setFocus();
     });
@@ -415,10 +428,12 @@ void MainWindow::fitVisibleWrappedRows() {
     }
     for(int row=firstRow;row<=lastRow;++row) {
         if(m_grid->rowViewportPosition(row)>m_grid->viewport()->height()) break;
+        if(m_grid->isRowHidden(row)) continue;
         if(m_rowSizes.contains(m_model->sourceRow(row))) continue;
         int height=26; bool loaded=false;
         for(int col=firstCol;col<=lastCol;++col) {
             if(m_grid->columnViewportPosition(col)>m_grid->viewport()->width()) break;
+            if(m_grid->isColumnHidden(col)) continue;
             const auto index=m_model->index(row,col);
             if(!m_model->loaded(index)) continue;
             loaded=true;
@@ -446,7 +461,9 @@ void MainWindow::saveViewState() {
         QJsonObject result; for(auto it=sizes.begin();it!=sizes.end();++it) result[QString::number(it.key())]=it.value(); return result;
     };
     QSettings settings(viewSettingsPath(),QSettings::IniFormat);
-    settings.setValue(m_viewKey,QJsonDocument(QJsonObject{{"rows",encode(m_rowSizes)},{"columns",encode(m_columnSizes)}}).toJson(QJsonDocument::Compact));
+    auto hidden=[](const QSet<int> &values){QJsonArray result; QList<int> sorted=values.values(); std::sort(sorted.begin(),sorted.end()); for(int value:sorted) result.append(value); return result;};
+    settings.setValue(m_viewKey,QJsonDocument(QJsonObject{{"rows",encode(m_rowSizes)},{"columns",encode(m_columnSizes)},
+        {"hidden_rows",hidden(m_hiddenRows)},{"hidden_columns",hidden(m_hiddenColumns)}}).toJson(QJsonDocument::Compact));
     settings.sync();
     if(settings.status()!=QSettings::NoError && !m_shuttingDown) issue("Could not save desktop view preferences. Workbook data remains stored.");
 }
@@ -457,6 +474,7 @@ void MainWindow::restoreViewState() {
     const auto key="views/v1/"+QString::fromLatin1(QCryptographicHash::hash(identity.toUtf8(),QCryptographicHash::Sha256).toHex());
     if(key!=m_viewKey) {
         saveViewState(); m_viewKey=key; m_rowSizes.clear(); m_columnSizes.clear();
+        m_hiddenRows.clear(); m_hiddenColumns.clear();
         QSettings settings(viewSettingsPath(),QSettings::IniFormat);
         const auto bytes=settings.value(key).toByteArray();
         const auto state=bytes.size()<=256*1024?QJsonDocument::fromJson(bytes).object():QJsonObject{};
@@ -472,6 +490,13 @@ void MainWindow::restoreViewState() {
         };
         m_rowSizes=decode(state["rows"].toObject(),1048576,18,1000);
         m_columnSizes=decode(state["columns"].toObject(),16384,30,2000);
+        auto hidden=[](const QJsonArray &values,int maximum){
+            QSet<int> result; if(values.size()>1024) return result;
+            for(const auto &value:values) if(value.isDouble() && value.toDouble()==value.toInt(-1) && value.toInt()>=0 && value.toInt()<maximum) result.insert(value.toInt());
+            return result;
+        };
+        m_hiddenRows=hidden(state["hidden_rows"].toArray(),1048576);
+        m_hiddenColumns=hidden(state["hidden_columns"].toArray(),16384);
     }
     for(auto it=m_rowSizes.begin();it!=m_rowSizes.end();++it) {
         const int row=m_model->viewRow(it.key());
@@ -480,6 +505,7 @@ void MainWindow::restoreViewState() {
     for(auto it=m_columnSizes.begin();it!=m_columnSizes.end();++it) {
         m_grid->setColumnWidth(it.key(),it.value()); m_sizedColumns.insert(it.key());
     }
+    applyVisibility();
 }
 
 QPair<int,int> MainWindow::selectedSections(bool columns) {
@@ -546,6 +572,68 @@ void MainWindow::resetDimensions() {
     for(int col:m_sizedColumns) m_grid->setColumnWidth(col,110);
     m_rowSizes.clear(); m_columnSizes.clear(); m_sizedRows.clear(); m_sizedColumns.clear();
     saveViewState(); fitVisibleWrappedRows();
+}
+
+bool MainWindow::intersectsHidden(int r1,int c1,int r2,int c2) const {
+    for(int row:m_hiddenRows) if(row+1>=r1 && row+1<=r2) return true;
+    for(int col:m_hiddenColumns) if(col+1>=c1 && col+1<=c2) return true;
+    return false;
+}
+
+void MainWindow::ensureVisibleCurrent() {
+    const auto current=m_grid->currentIndex(); if(!current.isValid()) return;
+    int row=current.row(), col=current.column();
+    if(!m_grid->isRowHidden(row) && !m_grid->isColumnHidden(col)) return;
+    for(int attempts=0;attempts<=1024 && m_grid->isRowHidden(row);++attempts) row=(row+1)%qMax(1,m_model->rowCount());
+    for(int attempts=0;attempts<=1024 && m_grid->isColumnHidden(col);++attempts) col=(col+1)%m_model->columnCount();
+    m_grid->setCurrentIndex(m_model->index(row,col));
+}
+
+void MainWindow::applyVisibility() {
+    QScopedValueRollback<bool> applying(m_applyingView,true);
+    for(int row:m_hiddenViewRows) m_grid->setRowHidden(row,false);
+    for(int col:m_hiddenViewColumns) m_grid->setColumnHidden(col,false);
+    m_hiddenViewRows.clear(); m_hiddenViewColumns.clear();
+    for(int source:m_hiddenRows) {
+        const int row=m_model->viewRow(source);
+        if(row>=0 && row<m_model->rowCount()) {m_grid->setRowHidden(row,true); m_hiddenViewRows.insert(row);}
+    }
+    // A projection can exclude every visible source row. Keep one displayed row
+    // reachable without changing the stored source-coordinate preferences.
+    if(m_model->rowCount()>0 && m_hiddenViewRows.size()==m_model->rowCount()) {
+        const int row=0; m_hiddenRows.remove(m_model->sourceRow(row));
+        m_grid->setRowHidden(row,false); m_hiddenViewRows.remove(row);
+        issue("This list would hide every row. Its first source row was shown.");
+    }
+    for(int col:m_hiddenColumns) {m_grid->setColumnHidden(col,true); m_hiddenViewColumns.insert(col);}
+    m_model->setHiddenSections(m_hiddenRows,m_hiddenColumns);
+    const bool any=!m_hiddenRows.isEmpty() || !m_hiddenColumns.isEmpty();
+    m_hiddenButton->setText(tr("Hidden: %1 rows, %2 columns • Show all").arg(m_hiddenRows.size()).arg(m_hiddenColumns.size()));
+    m_hiddenButton->setAccessibleName(m_hiddenButton->text()); m_hiddenButton->setVisible(any);
+    ensureVisibleCurrent();
+}
+
+void MainWindow::hideSections(bool columns) {
+    const auto sections=selectedSections(columns); if(sections.first<0) return;
+    const auto key=m_viewKey, state=m_info["state"].toString();
+    QSet<int> sources;
+    for(int section=sections.first;section<=sections.second;++section) sources.insert(columns?section:m_model->sourceRow(section));
+    captureGridDraft(false); if(!resolveDraft()) return;
+    if(m_busy || m_unknown || key!=m_viewKey || state!=m_info["state"].toString()) {issue("View changed. Select the rows or columns again."); return;}
+    auto hidden=columns?m_hiddenColumns:m_hiddenRows; hidden.unite(sources);
+    if(hidden.size()>1024) {issue("At most 1,024 hidden rows or columns per axis are supported."); return;}
+    int displayed=0;
+    for(int source:hidden) if(columns || m_model->viewRow(source)>=0) ++displayed;
+    if(displayed>=(columns?m_model->columnCount():m_model->rowCount())) {issue("Keep at least one displayed row or column visible."); return;}
+    if(columns) m_hiddenColumns=hidden; else m_hiddenRows=hidden;
+    applyVisibility(); saveViewState();
+}
+
+void MainWindow::showHidden(bool rows,bool columns) {
+    if(m_busy || m_unknown || m_info.isEmpty()) return;
+    if(rows) m_hiddenRows.clear();
+    if(columns) m_hiddenColumns.clear();
+    applyVisibility(); saveViewState();
 }
 
 void MainWindow::startService() {
@@ -792,6 +880,7 @@ void MainWindow::issue(const QString &message) {
 }
 
 void MainWindow::syncSource() {
+    ensureVisibleCurrent();
     const bool addressDraft=m_address->hasFocus() && m_address->isModified();
     auto index = m_grid->currentIndex();
     if (!index.isValid()) {
@@ -924,6 +1013,10 @@ void MainWindow::restoreRecoveredDraft() {
     }
     const auto target=m_model->index(m_recoveredDraft["row"].toInt()-1,m_recoveredDraft["col"].toInt()-1);
     if (!target.isValid()) { retainUnavailable(); issue("The recovered draft target is unavailable; the draft remains retained."); return; }
+    if(m_hiddenRows.contains(target.row()) || m_hiddenColumns.contains(target.column())) {
+        m_hiddenRows.remove(target.row()); m_hiddenColumns.remove(target.column());
+        applyVisibility(); saveViewState(); issue("Shown the recovered draft's original row and column for review.");
+    }
     {
         QSignalBlocker blocker(m_grid->selectionModel()); m_grid->setCurrentIndex(target); m_grid->scrollTo(target);
     }
@@ -954,6 +1047,7 @@ void MainWindow::changeSheet(int index) {
 
 void MainWindow::changeStructure(bool columns, bool remove) {
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
+    if(!m_hiddenRows.isEmpty() || !m_hiddenColumns.isEmpty()) {issue("Show hidden rows and columns before structural edits."); return;}
     if (m_model->projected()) { issue("Clear the list view before changing rows or columns."); return; }
     const auto ranges=m_grid->selectionModel()->selection();
     if (ranges.size()!=1) { issue("Select one contiguous range of rows or columns."); return; }
@@ -988,6 +1082,9 @@ QJsonObject MainWindow::selectedRange() const {
     auto ranges = m_grid->selectionModel()->selection();
     if (ranges.isEmpty()) return {};
     const auto &range = ranges.first();
+    if(intersectsHidden(range.top()+1,range.left()+1,range.bottom()+1,range.right()+1)) {
+        const_cast<MainWindow *>(this)->issue("Show hidden rows and columns in this rectangle before range operations."); return {};
+    }
     if (qint64(range.height())*range.width() > 10000) {
         const_cast<MainWindow *>(this)->issue("Selection exceeds the 10,000-cell ordinary operation limit."); return {};
     }
@@ -1128,6 +1225,16 @@ void MainWindow::paste(bool valuesOnly, bool formatsOnly) {
         command["action"]="move"; command["label"]="Move cells";
     } else { command["action"] = "paste"; command["label"] = "Paste cells"; }
     command["row"] = m_grid->currentIndex().row()+1; command["col"] = m_grid->currentIndex().column()+1;
+    int rows=0,cols=0;
+    if(command["cut"].toBool()) {
+        rows=command["r2"].toInt()-command["r1"].toInt()+1; cols=command["c2"].toInt()-command["c1"].toInt()+1;
+        if(intersectsHidden(command["r1"].toInt(),command["c1"].toInt(),command["r2"].toInt(),command["c2"].toInt())) {issue("Show hidden cells in the cut source before moving it."); return;}
+    } else {
+        const auto matrix=command["rows"].toArray(); rows=matrix.size();
+        for(const auto &row:matrix) cols=qMax(cols,int(row.toArray().size()));
+    }
+    const int row=command["row"].toInt(),col=command["col"].toInt();
+    if(intersectsHidden(row,col,row+rows-1,col+cols-1)) {issue("Show hidden rows and columns in the paste destination first."); return;}
     command["mode"] = valuesOnly ? "values" : formatsOnly ? "formats" : "all"; submit(command);
 }
 
@@ -1151,6 +1258,7 @@ void MainWindow::importCsv() {
 }
 
 QJsonObject MainWindow::csvImportTarget() const {
+    if(!m_hiddenRows.isEmpty() || !m_hiddenColumns.isEmpty()) {const_cast<MainWindow *>(this)->issue("Show hidden rows and columns before importing CSV."); return {};}
     const auto start = m_grid->currentIndex();
     if (!start.isValid()) return {};
     const int row=m_model->sourceRow(start.row())+1, col=start.column()+1;
@@ -1160,6 +1268,7 @@ QJsonObject MainWindow::csvImportTarget() const {
 }
 
 void MainWindow::importCsvText(const QString &text, QJsonObject target) {
+    if(!m_hiddenRows.isEmpty() || !m_hiddenColumns.isEmpty()) {issue("Show hidden rows and columns before importing CSV."); return;}
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected()) return;
     if (target.isEmpty()) target=csvImportTarget();
     if (target.isEmpty()) return;
@@ -1206,6 +1315,7 @@ void MainWindow::exportCsvTo(const QString &path, QJsonObject target) {
         target=selectedRange(); if (target.isEmpty()) return;
         target=targetContext(target);
     }
+    if(intersectsHidden(target["r1"].toInt(1),target["c1"].toInt(1),target["r2"].toInt(target["r1"].toInt(1)),target["c2"].toInt(target["c1"].toInt(1)))) {issue("Show hidden cells in the export rectangle first."); return;}
     if (!matchesTarget(target)) { issue("Reviewed export inputs changed. Review the selection again."); return; }
     auto range=target; range.remove("workbook"); range.remove("expected_state");
     const auto workbookPath=m_info["path"].toString();
