@@ -707,6 +707,12 @@ private slots:
             grid->selectColumn(0); window.findChild<QAction *>("fitColumnsAction")->trigger();
             QVERIFY(grid->columnWidth(0)<234); QVERIFY(mutations.isEmpty());
             grid->setColumnWidth(0,234);
+            window.submit({{"action","sheet_add"},{"name","Other"}});
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+            auto *tabs=window.findChild<QTabBar *>("sheets"); tabs->setCurrentIndex(1);
+            QCOMPARE(grid->columnWidth(0),110); QCOMPARE(grid->rowHeight(2),26);
+            tabs->setCurrentIndex(0);
+            QCOMPARE(grid->columnWidth(0),234); QCOMPARE(grid->rowHeight(2),86);
         }
         {
             QSettings preferences(options.viewStatePath,QSettings::IniFormat);
@@ -779,7 +785,7 @@ private slots:
         QCOMPARE(grid->rowHeight(0),91);
         window.findChild<QAction *>("resetDimensionsAction")->trigger();
         QTRY_COMPARE_WITH_TIMEOUT(grid->rowHeight(0),26,5000);
-        QCOMPARE(model->data(model->index(0,0),Qt::EditRole).toString(),text);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0),Qt::EditRole).toString(),text,5000);
     }
     void sourceEditorsPreserveLongInputs() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;

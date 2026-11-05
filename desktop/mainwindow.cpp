@@ -948,6 +948,7 @@ void MainWindow::changeSheet(int index) {
     }
     m_listSpec = {};
     m_model->bind(m_info["id"].toString(), m_tabs->tabData(index).toString(), m_info["state"].toString(), m_info["readonly"].toBool());
+    restoreViewState();
     m_grid->setCurrentIndex(m_model->index(0, 0)); syncSource();
 }
 

@@ -1,9 +1,9 @@
 Test project /Users/btabone/source/DataHorizon/build
     Start 1: desktop
-1/2 Test #1: desktop ..........................   Passed   37.68 sec
+1/2 Test #1: desktop ..........................   Passed   38.58 sec
     Start 2: service
-2/2 Test #2: service ..........................   Passed   21.01 sec
+2/2 Test #2: service ..........................   Passed   21.24 sec
 
 100% tests passed out of 2
 
-Total Test time (real) =  58.70 sec
+Total Test time (real) =  59.82 sec
