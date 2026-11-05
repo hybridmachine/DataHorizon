@@ -22,6 +22,22 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class EngineTests(unittest.TestCase):
+    def test_borders_validate_atomically_and_preserve_formula_copy_history(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"=SUM(2,3)","style":{"border":"box"}}])
+        for invalid in (True,1,None,"dashed",{},[]):
+            with self.assertRaises(EngineError) as failure:
+                self.apply(cells=[{"row":1,"col":1,"source":"bad"},{"row":2,"col":1,"style":{"border":invalid}}])
+            self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+            self.assertEqual(self.cells()[(1,1)]["value"],5)
+        self.apply("paste",row=2,col=1,mode="formats",rows=[[self.cells()[(1,1)]]])
+        self.assertEqual(self.cells()[(2,1)]["style"]["border"],"box")
+        self.apply(cells=[{"row":1,"col":1,"style":{"border":"none"}}])
+        self.apply("undo"); self.assertEqual(self.cells()[(1,1)]["style"]["border"],"box")
+        self.apply("redo"); self.assertEqual(self.cells()[(1,1)]["style"]["border"],"none")
+        self.book.close(); self.book=Workbook(self.path)
+        self.assertEqual(self.cells()[(1,1)]["source"],"=SUM(2,3)")
+        self.assertEqual(self.cells()[(2,1)]["style"]["border"],"box")
+
     def test_wrap_style_is_atomic_undoable_and_survives_copy_reopen(self):
         source="a long literal text value"
         self.apply(cells=[{"row":1,"col":1,"source":source,"kind":"text","style":{"wrap":True}}])

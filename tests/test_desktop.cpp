@@ -15,6 +15,7 @@
 #include <QTableView>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QPainter>
 #include <QAbstractButton>
 #include <QPushButton>
 #include <QAbstractItemDelegate>
@@ -681,6 +682,28 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("startup failed"),5000);
         QVERIFY(window.close());
         if(original.isNull()) qunsetenv("DATAHORIZON_PYTHON"); else qputenv("DATAHORIZON_PYTHON",original);
+    }
+    void cellBordersPaintAndClearWithoutChangingInput() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show();
+        QSignalSpy ready(&window,&MainWindow::serviceReady); QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("border.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *grid=window.findChild<QTableView *>("grid"); auto *model=window.model();
+        const auto index=model->index(0,0); QTRY_VERIFY_WITH_TIMEOUT(model->loaded(index),5000);
+        auto render=[&]{
+            QImage image(120,52,QImage::Format_ARGB32); image.fill(Qt::white); QPainter painter(&image);
+            QStyleOptionViewItem option; option.initFrom(grid); option.rect=image.rect(); option.state=QStyle::State_Enabled;
+            grid->itemDelegate()->paint(&painter,option,index); return image;
+        };
+        const auto before=render();
+        window.findChild<QAction *>("allBordersAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000); QTRY_VERIFY_WITH_TIMEOUT(model->loaded(index),5000);
+        const auto bordered=render(); QVERIFY(bordered.pixelColor(1,20)!=before.pixelColor(1,20));
+        QCOMPARE(model->data(index,Qt::EditRole).toString(),QString());
+        window.findChild<QAction *>("clearBordersAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000); QTRY_VERIFY_WITH_TIMEOUT(model->loaded(index),5000);
+        QCOMPARE(render().pixelColor(1,20),before.pixelColor(1,20));
     }
     void wrappedTextRetainsInputAndFitsVisibleRows() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;

@@ -28,3 +28,11 @@ Qt modal. In-cell editors expose their source address to accessibility.
 [scale 2](evidence/native-interaction-2.json) have matching screenshots at a
 560-pixel width. Physical input, screen-reader navigation and native system file
 panels remain unqualified; hosted Windows/Xcb checks remain pending.
+
+## Cell borders
+
+Format → All cell borders / Clear cell borders use shared native styles and
+existing rollback, history and clipboard contracts. Engine fixtures check
+invalid-style atomicity, formula preservation, formats-only paste, Undo/Redo
+and reopen. A real REST-backed Qt fixture renders the delegate and verifies
+that the edge appears and clears without changing input.

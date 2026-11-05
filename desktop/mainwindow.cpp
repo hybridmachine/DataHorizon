@@ -24,6 +24,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
+#include <QPainter>
 #include <QPointer>
 #include <QPersistentModelIndex>
 #include <QProcessEnvironment>
@@ -60,6 +61,15 @@ public:
     }
     std::function<bool()> canEdit;
     std::function<void(const QModelIndex &,int)> enterPressed;
+    void paint(QPainter *painter,const QStyleOptionViewItem &option,const QModelIndex &index) const override {
+        QStyledItemDelegate::paint(painter,option,index);
+        const auto *model=qobject_cast<const SheetModel *>(index.model());
+        if(model && model->cell(index)["style"].toObject()["border"].toString()=="box") {
+            painter->save(); painter->setClipRect(option.rect);
+            painter->setPen(QPen(option.palette.color(QPalette::Text),2)); painter->setBrush(Qt::NoBrush);
+            painter->drawRect(option.rect.adjusted(1,1,-2,-2)); painter->restore();
+        }
+    }
     QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const override {
         if (canEdit && !canEdit()) return nullptr;
         auto *editor = QStyledItemDelegate::createEditor(parent, option, index);
@@ -234,6 +244,8 @@ void MainWindow::buildUi() {
     add(formatMenu, tr("Bold"), QKeySequence::Bold, [this] { format({{"bold", !m_model->cell(m_grid->currentIndex())["style"].toObject()["bold"].toBool()}}); }, true);
     add(formatMenu, tr("Italic"), QKeySequence::Italic, [this] { format({{"italic", !m_model->cell(m_grid->currentIndex())["style"].toObject()["italic"].toBool()}}); });
     add(formatMenu, tr("Wrap text"), {}, [this] { format({{"wrap", !m_model->cell(m_grid->currentIndex())["style"].toObject()["wrap"].toBool()}}); })->setObjectName("wrapTextAction");
+    add(formatMenu, tr("All cell borders"), {}, [this] { format({{"border","box"}}); })->setObjectName("allBordersAction");
+    add(formatMenu, tr("Clear cell borders"), {}, [this] { format({{"border","none"}}); })->setObjectName("clearBordersAction");
     add(formatMenu, tr("General"), {}, [this] { format({{"format", "general"}}); });
     add(formatMenu, tr("Text"), {}, [this] { format({{"format", "text"}}); });
     add(formatMenu, tr("Two decimal places"), {}, [this] { format({{"format", "fixed2"}}); }, true);

@@ -323,3 +323,8 @@ Exercise QTableView tiles,
 QNetworkAccessManager ordering and QAbstractItemModelTester. Record selected
 toolchain, correctness tests, measurements and remaining blockers in
 [implementation status](implementation-status.md).
+
+Cell borders use the native style `border: "box"` or `"none"`. The desktop
+Format menu applies or clears all four edges on each selected cell using one
+managed edit. Borders use the system text color with a two-logical-pixel stroke.
+Per-edge patterns, line/color selection and merged-cell borders are unavailable.
