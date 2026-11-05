@@ -1,0 +1,29 @@
+Local verification, November 4, 2026 (America/Chicago; reports use UTC)
+Platform: macOS 26.6.2 arm64, Python 3.14.6, Qt 6.12.0
+Optional experiment: APSW 3.54.1.0 / private SQLite 3.54.1
+Application runtime: stdlib SQLite 3.53.4, no APSW dependency
+
+PYTHONPATH=service build/capture-binding-venv/bin/python -m unittest discover -s tests -v
+Ran 196 tests in 21.212s
+OK
+
+ctest --test-dir build -R desktop --output-on-failure
+76 Qt checks passed, including suite setup/cleanup
+Desktop CTest passed in 38.63 seconds
+
+build/capture-binding-venv/bin/python -m unittest discover -s tests -p test_native_capture.py -v
+Ran 15 tests in 0.331s
+OK
+
+python3 -m unittest discover -s tests -p test_native_capture.py -v
+Ran 15 tests in 0.000s
+OK (skipped=15): expected when optional APSW is absent
+
+build/capture-binding-venv/bin/python tests/native_capture_experiment.py --samples 100 --output docs/design/evidence/native-capture-benchmark.json
+18 typed-image cases; native replacement/rollback controls; independent callback-free stdlib access
+100 warm in-memory samples per candidate; all semantic assertions passed
+Source compilation and git diff --check passed
+
+Hosted Actions cannot start due to account billing/spending limits.
+The user explicitly authorized local verification and sequential merge while unavailable.
+No hosted Windows/Linux or production binding qualification is claimed.

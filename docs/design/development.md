@@ -336,6 +336,9 @@ installed dependency, not a bundled runtime. The resulting package is a local
 development artifact, not a signed/notarized or clean-machine-qualified release.
 GUI GPLv3 text is in desktop/COPYING. Other component licensing remains open;
 no repository-wide license grant is implied.
+The optional native capture experiment has a separate pinned test dependency;
+see [its isolated setup and evidence](native-capture-binding.md). It is not
+installed by the application or base runtime tests.
 `python3 tests/package_smoke.py build/package` checks the installed native app;
 on headless Linux run it with `xvfb-run -a`. Offscreen Qt is used for the regular
 desktop tests, not required in the deployed end-user bundle.

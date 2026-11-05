@@ -3,6 +3,9 @@
 November 3, 2026. This records the first bounded capture comparison in M1;
 it does not close M1 or enable managed SQL. The experiment is isolated under
 `tests/`, is not installed, and does not change native format v1.
+The later [native binding comparison](native-capture-binding.md) adds APSW
+preupdate evidence; the native-binding exclusions below describe this original
+stdlib-only experiment.
 
 ## Decision and alternatives
 

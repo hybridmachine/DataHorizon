@@ -308,8 +308,10 @@ capture. Verify direct writes, stale edits, rollback and backup. Managed SQL
 writes remain unavailable until inserts, deletes, upserts, replacements,
 triggers, cascades and old/new iteration are all proven for a declared surface.
 The first bounded [capture comparison](sqlite-capture-experiment.md) now has
-repeatable TEMP-journal evidence and negative controls. Native preupdate/session
-APIs require a separate binding decision; arbitrary SQL hook/history/receipt
+repeatable TEMP-journal evidence and negative controls. The optional
+[native preupdate binding comparison](native-capture-binding.md) now exercises
+APSW with the same typed-image oracle and bounded failure cases. Production
+binding adoption and native session APIs remain separate decisions; SQL hook/history/receipt
 integration remains unqualified and all public managed SQL stays unavailable.
 Use stdlib localhost HTTP and a spawned Python worker for the first bounded
 experiment; compare dependencies and transaction/cancellation costs before

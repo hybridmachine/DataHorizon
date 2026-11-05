@@ -3,6 +3,8 @@
 November 4, 2026. Execute each item as a separate implemented, reviewed and
 verified PR, merging before starting the next. These extend the remaining M1
 dependencies, rather than closing M1 or moving ahead to relational features.
+All five implementations now have local completion evidence below; hosted
+platform qualification remains pending the recorded billing exception.
 
 1. **Native Qt acceptance automation.** Exercise the real REST-backed window
    with Cocoa, Windows and Xcb plugins at scale factors 1/2; check keyboard
@@ -103,3 +105,16 @@ handler. Existing exception/crash/timeout and generated-edit rollback tests
 continue to apply. This is trusted-code containment, with no sandbox, external
 effect rollback, memory quota or hard OS-I/O cancellation claim. Hosted platform
 execution remains pending the recorded billing exception.
+
+## Native capture binding
+
+The final increment adds the isolated
+[APSW preupdate comparison](native-capture-binding.md), pinned to an optional
+wheel. Eighteen statement cases replay typed native images and compare the TEMP
+journal's changed-row scope; fifteen optional failure/budget/access tests pass
+locally. Native capture sees replacement deletes with recursive triggers off,
+while its rollback control proves that attempted images need explicit discard.
+The independent stdlib connection continues to work without callbacks. CI has
+separate optional-binding jobs; the installed runtime remains stdlib-only and
+public managed SQL remains unavailable. Production binding adoption, native
+Session capture and hosted platform execution remain open.
