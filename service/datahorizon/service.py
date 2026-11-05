@@ -79,6 +79,7 @@ def openapi():
             "format":{"type":"string","enum":["general","text","fixed2"]},
             "bold":{"type":"boolean"},"italic":{"type":"boolean"},"wrap":{"type":"boolean"},
             "align":{"type":"string","enum":["left","center","right"]},
+            "border":{"type":"string","enum":["none","box"]},
             "background":{"type":"string","pattern":"^#[0-9a-fA-F]{6}$"}}},
         "CellEdit": {"type":"object","required":["row","col"],"properties":{
             "row":row,"col":col,"source":{"type":"string","maxLength":65536,"description":"Stored input, at most 64 KiB of UTF-8"},

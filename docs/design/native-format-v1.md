@@ -83,3 +83,8 @@ The source is never overwritten by Save a copy. History is in service memory,
 at most 100 operations and 16 MiB of serialized labels and cell changes across
 Undo and Redo (excluding Python object overhead); it does not survive a service
 restart or an external edit. Operation receipts remain in the file.
+
+Cell borders use the native style `border: "box"` or `"none"`. The desktop
+Format menu applies or clears all four edges on each selected cell using one
+managed edit. Borders use the system text color with a two-logical-pixel stroke.
+Per-edge patterns, line/color selection and merged-cell borders are unavailable.

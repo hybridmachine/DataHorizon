@@ -126,7 +126,7 @@ def rectangle(args, limit=MAX_CELLS):
 
 def validate_style(style):
     require(isinstance(style, dict), "INVALID_STYLE", "Style must be an object")
-    allowed = {"format", "bold", "italic", "align", "background", "wrap"}
+    allowed = {"format", "bold", "italic", "align", "background", "wrap", "border"}
     require(not set(style) - allowed, "UNSUPPORTED_STYLE", "Unsupported style property")
     for key, value in style.items():
         if key == "format":
@@ -135,6 +135,8 @@ def validate_style(style):
             require(value in ("left", "center", "right"), "INVALID_STYLE", "Invalid alignment")
         elif key == "background":
             require(isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value), "INVALID_STYLE", "Expected #RRGGBB")
+        elif key == "border":
+            require(value in ("none", "box"), "INVALID_STYLE", "Border must be none or box")
         else:
             require(type(value) is bool, "INVALID_STYLE", f"{key} must be boolean")
     return style
