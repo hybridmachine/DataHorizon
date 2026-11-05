@@ -77,7 +77,7 @@ def openapi():
             "example":{"sheet":"Sheet1","r1":1,"c1":1,"r2":32,"c2":16}},
         "Style":{"type":"object","additionalProperties":False,"properties":{
             "format":{"type":"string","enum":["general","text","fixed2"]},
-            "bold":{"type":"boolean"},"italic":{"type":"boolean"},
+            "bold":{"type":"boolean"},"italic":{"type":"boolean"},"wrap":{"type":"boolean"},
             "align":{"type":"string","enum":["left","center","right"]},
             "background":{"type":"string","pattern":"^#[0-9a-fA-F]{6}$"}}},
         "CellEdit": {"type":"object","required":["row","col"],"properties":{

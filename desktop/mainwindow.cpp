@@ -28,6 +28,7 @@
 #include <QPersistentModelIndex>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
+#include <QScrollBar>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QSpinBox>
@@ -82,6 +83,11 @@ public:
         return draft;
     }
 protected:
+    void initStyleOption(QStyleOptionViewItem *option,const QModelIndex &index) const override {
+        QStyledItemDelegate::initStyleOption(option,index);
+        const auto *model=qobject_cast<const SheetModel *>(index.model());
+        option->features.setFlag(QStyleOptionViewItem::WrapText,model && model->cell(index)["style"].toObject()["wrap"].toBool());
+    }
     bool eventFilter(QObject *object, QEvent *event) override {
         if (object==m_editor && event->type()==QEvent::KeyPress) {
             const auto *key=static_cast<QKeyEvent *>(event);
@@ -227,6 +233,7 @@ void MainWindow::buildUi() {
     add(edit, tr("Reconcile unknown operation"), {}, [this] { reconcile(); });
     add(formatMenu, tr("Bold"), QKeySequence::Bold, [this] { format({{"bold", !m_model->cell(m_grid->currentIndex())["style"].toObject()["bold"].toBool()}}); }, true);
     add(formatMenu, tr("Italic"), QKeySequence::Italic, [this] { format({{"italic", !m_model->cell(m_grid->currentIndex())["style"].toObject()["italic"].toBool()}}); });
+    add(formatMenu, tr("Wrap text"), {}, [this] { format({{"wrap", !m_model->cell(m_grid->currentIndex())["style"].toObject()["wrap"].toBool()}}); })->setObjectName("wrapTextAction");
     add(formatMenu, tr("General"), {}, [this] { format({{"format", "general"}}); });
     add(formatMenu, tr("Text"), {}, [this] { format({{"format", "text"}}); });
     add(formatMenu, tr("Two decimal places"), {}, [this] { format({{"format", "fixed2"}}); }, true);
@@ -296,6 +303,16 @@ void MainWindow::buildUi() {
     m_grid->verticalHeader()->setDefaultSectionSize(26);
     m_grid->horizontalHeader()->setMinimumSectionSize(30);
     m_grid->setAlternatingRowColors(false);
+    connect(m_model,&QAbstractItemModel::modelAboutToBeReset,this,[this]{
+        for(int row:m_wrappedRows) m_grid->setRowHeight(row,26);
+        m_wrappedRows.clear();
+    });
+    auto *wrapTimer=new QTimer(this); wrapTimer->setSingleShot(true); wrapTimer->setInterval(0);
+    connect(wrapTimer,&QTimer::timeout,this,&MainWindow::fitVisibleWrappedRows);
+    connect(m_model,&SheetModel::tileLoaded,wrapTimer,qOverload<>(&QTimer::start));
+    connect(m_grid->verticalScrollBar(),&QScrollBar::valueChanged,wrapTimer,qOverload<>(&QTimer::start));
+    connect(m_grid->horizontalScrollBar(),&QScrollBar::valueChanged,wrapTimer,qOverload<>(&QTimer::start));
+    connect(m_grid->horizontalHeader(),&QHeaderView::sectionResized,wrapTimer,qOverload<>(&QTimer::start));
     layout->addWidget(m_grid, 1);
     m_tabs = new QTabBar; m_tabs->setObjectName("sheets"); m_tabs->setAccessibleName(tr("Worksheets")); m_tabs->setExpanding(false);
     layout->addWidget(m_tabs);
@@ -337,6 +354,33 @@ void MainWindow::buildUi() {
         auto index = m_model->index(row-1, col-1); m_grid->setCurrentIndex(index); m_grid->scrollTo(index); m_grid->setFocus();
     });
     setBusy(true);
+}
+
+void MainWindow::fitVisibleWrappedRows() {
+    // Only inspect loaded visible cells; never resize a million-row model to
+    // contents or fetch full sources to measure presentation.
+    const int firstRow=qMax(0,m_grid->rowAt(0)), firstCol=qMax(0,m_grid->columnAt(0));
+    const int lastRow=qMin(m_model->rowCount()-1,firstRow+63);
+    const int lastCol=qMin(m_model->columnCount()-1,firstCol+15);
+    for(int row=firstRow;row<=lastRow;++row) {
+        if(m_grid->rowViewportPosition(row)>m_grid->viewport()->height()) break;
+        int height=26; bool loaded=false;
+        for(int col=firstCol;col<=lastCol;++col) {
+            if(m_grid->columnViewportPosition(col)>m_grid->viewport()->width()) break;
+            const auto index=m_model->index(row,col);
+            if(!m_model->loaded(index)) continue;
+            loaded=true;
+            if(!m_model->cell(index)["style"].toObject()["wrap"].toBool()) continue;
+            const QFontMetrics metrics(qvariant_cast<QFont>(m_model->data(index,Qt::FontRole)));
+            const auto bounds=metrics.boundingRect(QRect(0,0,qMax(1,m_grid->columnWidth(col)-8),0),Qt::TextWordWrap,
+                                                  m_model->data(index).toString());
+            height=qMax(height,qMin(260,bounds.height()+8));
+        }
+        if(loaded && (height>26 || m_wrappedRows.contains(row))) {
+            if(m_grid->rowHeight(row)!=height) m_grid->setRowHeight(row,height);
+            if(height>26) m_wrappedRows.insert(row); else m_wrappedRows.remove(row);
+        }
+    }
 }
 
 void MainWindow::startService() {

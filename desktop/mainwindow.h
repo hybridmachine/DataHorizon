@@ -58,6 +58,7 @@ private:
     void changeStructure(bool columns, bool remove);
     void reportReferenceWarnings(const QJsonObject &receipt);
     void syncSource();
+    void fitVisibleWrappedRows();
     bool resolveDraft();
     void submitDraft(bool advance = false, int direction = 1);
     QJsonObject enterDestination(const QModelIndex &index, int direction) const;
@@ -99,4 +100,5 @@ private:
     int m_saveMode = 0;
     bool m_releasing = false, m_released = false;
     bool m_shuttingDown = false;
+    QSet<int> m_wrappedRows;
 };

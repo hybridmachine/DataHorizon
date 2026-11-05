@@ -682,6 +682,27 @@ private slots:
         QVERIFY(window.close());
         if(original.isNull()) qunsetenv("DATAHORIZON_PYTHON"); else qputenv("DATAHORIZON_PYTHON",original);
     }
+    void wrappedTextRetainsInputAndFitsVisibleRows() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show();
+        QSignalSpy ready(&window,&MainWindow::serviceReady); QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("wrap.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        const QString text="A long text value that should occupy several lines in a narrow spreadsheet column";
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source",text},{"kind","text"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *grid=window.findChild<QTableView *>("grid"); auto *model=window.model();
+        QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,0)),5000);
+        auto *wrap=window.findChild<QAction *>("wrapTextAction"); QVERIFY(wrap); wrap->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(grid->rowHeight(0)>26,5000);
+        QCOMPARE(model->data(model->index(0,0),Qt::EditRole).toString(),text);
+        const int narrowHeight=grid->rowHeight(0); grid->setColumnWidth(0,500);
+        QTRY_VERIFY_WITH_TIMEOUT(grid->rowHeight(0)<narrowHeight,5000);
+        wrap->trigger(); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(grid->rowHeight(0),26,5000);
+        QCOMPARE(model->data(model->index(0,0),Qt::EditRole).toString(),text);
+    }
     void sourceEditorsPreserveLongInputs() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show();
@@ -697,6 +718,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(source->text(),original,5000);
         grid->edit(model->index(0,0)); QPointer<QLineEdit> editor=grid->findChild<QLineEdit *>(); QVERIFY(editor);
         QCOMPARE(editor->text(),original);
+        QCOMPARE(editor->accessibleName(),QString("Cell A1 input"));
         editor->setCursorPosition(editor->text().size()); editor->insert("z"); QTest::keyClick(editor,Qt::Key_Return);
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
         QTRY_VERIFY_WITH_TIMEOUT(editor.isNull(),3000); grid->setCurrentIndex(model->index(0,0));
