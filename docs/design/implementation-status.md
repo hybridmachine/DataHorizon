@@ -32,7 +32,7 @@ formula source; values export contains 20.5. Formatting renders 20.50.
 | Increment | Evidence and scope | Remaining before full milestone closure |
 | --- | --- | --- |
 | M0 | [Initial contracts](initial-contracts.md), [compatibility](compatibility-v0.md), [native schema](native-format-v1.md), keyboard/state rules and numeric budgets recorded | Resolve deferred cases at their named milestones; no claim that historical PDFs have been regenerated |
-| M1 | Qt 6.12/C++17 builds locally; bounded SQLite capture and service/Python execution comparisons with typed changes, transaction/worker failures and receipts; sparse/dense/long-text/large-disk, formula-chain and Qt scroll/input harnesses with local evidence and CI artifact collection | Production framework/runtime and native capture binding decisions, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
+| M1 | Qt 6.12/C++17 builds locally; bounded TEMP/native SQLite capture and service/Python execution comparisons with typed changes, transaction/worker failures and receipts; sparse/dense/long-text/large-disk, formula-chain and Qt scroll/input harnesses with local evidence and CI artifact collection | Production framework/runtime and capture-binding adoption, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
 | M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle; restart/reopen and warned unknown-outcome recovery | Broader failure injection, clean-machine packaging evidence and service lifecycle hardening |
 | M3 | Typed entry, A1 limits, SUM/IF/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
 | M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations and row/column reference transforms with destructive-operation fixtures | Unrestricted cut/rename/duplicate/delete, hook-aware structure events, wrap/borders/freeze/hide, dimensions/view persistence and platform conventions |
@@ -99,9 +99,9 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
-The [next five implemented increments](qualification-next-five.md) start with
-native-platform automation, followed by cache/RSS measurement, HTTP admission,
-worker lifecycle hardening and native capture-binding comparison. Native Qt
+The [five qualification increments](qualification-next-five.md) now implement
+native-platform automation, cache/RSS measurement, HTTP admission, worker
+lifecycle hardening and an optional native capture-binding comparison. Native Qt
 acceptance now has an executable that checks the real REST-backed window at
 scale factors 1/2 with keyboard/clipboard, accessible names/extent and geometry
 checks. CI runs native Cocoa/Windows/Xcb plugins and collects JSON/screenshots.
@@ -112,19 +112,22 @@ a generated 1.27-GB workbook, per-process service peaks and GUI peak RSS. See
 OS-cold caches remain unqualified. Hosted checks are currently unavailable due
 to account billing/spending limits; the user authorized local verification and
 sequential merges until that capacity is restored.
-The next increment bounds HTTP handler admission, total slow-request reads and
+HTTP admission now bounds handler concurrency, total slow-request reads and
 aggregate headers, with real-socket saturation/recovery tests that preserve
 durable operation outcomes. See [the contract](initial-contracts.md#jobs-limits-and-evidence).
 Worker lifecycle hardening now closes process/pipe resources on startup and
 protocol failures, bounds JSON broker messages, and keeps blocked pipe I/O off
 the transaction thread. Repeated crash/recovery checks preserve hook rollback
 and receipt semantics; [scope and limits](qualification-next-five.md#python-worker-lifecycle).
+The optional [native capture comparison](native-capture-binding.md) adds APSW
+preupdate images, bounded failure/rollback and direct-access evidence alongside
+the TEMP journal. The preview keeps stdlib SQLite; managed SQL remains disabled.
 
 The five bounded M1 experiment slices, including the
 [toolchain/packaging baseline](toolchain-packaging-baseline.md), now have
 repeatable evidence. Next are the remaining native-platform acceptance,
-cold-cache/RSS qualification and production framework/runtime/capture-binding
-decisions. The bounded
+OS-cold cache and broader RSS qualification, plus production framework/runtime
+and capture-binding adoption decisions. The bounded
 [Qt grid/frozen-row display](grid-frozen-row-experiment.md),
 [native storage](native-storage-experiment.md),
 [SQLite capture](sqlite-capture-experiment.md) and

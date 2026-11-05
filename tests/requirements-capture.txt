@@ -1,0 +1,2 @@
+# Optional experiment dependency; never installed by the service or desktop.
+apsw==3.54.1.0

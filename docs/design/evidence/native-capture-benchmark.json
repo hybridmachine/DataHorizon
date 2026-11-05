@@ -1,0 +1,880 @@
+{
+  "recorded_at_utc": "2026-11-05T04:58:13.071706+00:00",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "python": "3.14.6",
+  "apsw": "3.54.1.0",
+  "native_sqlite": "3.54.1",
+  "stdlib_sqlite": "3.53.4",
+  "native_compile_options": [
+    "ATOMIC_INTRINSICS=1",
+    "COMPILER=clang-15.0.0",
+    "DEFAULT_AUTOVACUUM",
+    "DEFAULT_CACHE_SIZE=-2000",
+    "DEFAULT_FILE_FORMAT=4",
+    "DEFAULT_JOURNAL_SIZE_LIMIT=-1",
+    "DEFAULT_MMAP_SIZE=0",
+    "DEFAULT_PAGE_SIZE=4096",
+    "DEFAULT_PCACHE_INITSZ=20",
+    "DEFAULT_RECURSIVE_TRIGGERS",
+    "DEFAULT_SECTOR_SIZE=4096",
+    "DEFAULT_SYNCHRONOUS=2",
+    "DEFAULT_WAL_AUTOCHECKPOINT=1000",
+    "DEFAULT_WAL_SYNCHRONOUS=2",
+    "DEFAULT_WORKER_THREADS=0",
+    "DIRECT_OVERFLOW_READ",
+    "ENABLE_CARRAY",
+    "ENABLE_COLUMN_METADATA",
+    "ENABLE_DBSTAT_VTAB",
+    "ENABLE_FTS3",
+    "ENABLE_FTS3_PARENTHESIS",
+    "ENABLE_FTS4",
+    "ENABLE_FTS5",
+    "ENABLE_GEOPOLY",
+    "ENABLE_MATH_FUNCTIONS",
+    "ENABLE_PERCENTILE",
+    "ENABLE_PREUPDATE_HOOK",
+    "ENABLE_RTREE",
+    "ENABLE_SESSION",
+    "ENABLE_SETLK_TIMEOUT",
+    "ENABLE_STAT4",
+    "HAVE_ISNAN",
+    "LIKE_DOESNT_MATCH_BLOBS",
+    "MALLOC_SOFT_LIMIT=1024",
+    "MAX_ATTACHED=125",
+    "MAX_COLUMN=2000",
+    "MAX_COMPOUND_SELECT=500",
+    "MAX_DEFAULT_PAGE_SIZE=8192",
+    "MAX_EXPR_DEPTH=1000",
+    "MAX_FUNCTION_ARG=1000",
+    "MAX_LENGTH=1000000000",
+    "MAX_LIKE_PATTERN_LENGTH=50000",
+    "MAX_MMAP_SIZE=0x1000000000000LL",
+    "MAX_PAGE_COUNT=0xfffffffe",
+    "MAX_PAGE_SIZE=65536",
+    "MAX_SCHEMA=10000000",
+    "MAX_SQL_LENGTH=1000000000",
+    "MAX_TRIGGER_DEPTH=1000",
+    "MAX_VARIABLE_NUMBER=32766",
+    "MAX_VDBE_OP=250000000",
+    "MAX_WORKER_THREADS=8",
+    "MUTEX_PTHREADS",
+    "OMIT_AUTOINIT",
+    "OMIT_DEPRECATED",
+    "OMIT_SHARED_CACHE",
+    "STRICT_SUBTYPE",
+    "SYSTEM_MALLOC",
+    "TEMP_STORE=1",
+    "THREADSAFE=1"
+  ],
+  "correctness": {
+    "insert": {
+      "event_count": 1,
+      "changed_rows": 1,
+      "max_trigger_depth": 0,
+      "charged_bytes": 135,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "INSERT",
+          null,
+          [
+            1,
+            "d",
+            "00123"
+          ]
+        ]
+      ]
+    },
+    "update_and_after_trigger": {
+      "event_count": 2,
+      "changed_rows": 2,
+      "max_trigger_depth": 1,
+      "charged_bytes": 267,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            10
+          ],
+          [
+            1,
+            "a",
+            11
+          ]
+        ],
+        [
+          2,
+          "effects",
+          "INSERT",
+          null,
+          [
+            "a",
+            11
+          ]
+        ]
+      ]
+    },
+    "delete": {
+      "event_count": 1,
+      "changed_rows": 1,
+      "max_trigger_depth": 0,
+      "charged_bytes": 132,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "DELETE",
+          [
+            1,
+            "a",
+            10
+          ],
+          null
+        ]
+      ]
+    },
+    "upsert_update": {
+      "event_count": 2,
+      "changed_rows": 2,
+      "max_trigger_depth": 1,
+      "charged_bytes": 267,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            10
+          ],
+          [
+            1,
+            "a",
+            12
+          ]
+        ],
+        [
+          2,
+          "effects",
+          "INSERT",
+          null,
+          [
+            "a",
+            12
+          ]
+        ]
+      ]
+    },
+    "upsert_insert": {
+      "event_count": 1,
+      "changed_rows": 1,
+      "max_trigger_depth": 0,
+      "charged_bytes": 132,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "INSERT",
+          null,
+          [
+            1,
+            "d",
+            12
+          ]
+        ]
+      ]
+    },
+    "replace_primary_key": {
+      "event_count": 2,
+      "changed_rows": 1,
+      "max_trigger_depth": 0,
+      "charged_bytes": 264,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "DELETE",
+          [
+            1,
+            "a",
+            10
+          ],
+          null
+        ],
+        [
+          2,
+          "records",
+          "INSERT",
+          null,
+          [
+            1,
+            "a",
+            12
+          ]
+        ]
+      ]
+    },
+    "replace_unique_key": {
+      "event_count": 2,
+      "changed_rows": 2,
+      "max_trigger_depth": 0,
+      "charged_bytes": 264,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "DELETE",
+          [
+            1,
+            "a",
+            10
+          ],
+          null
+        ],
+        [
+          2,
+          "records",
+          "INSERT",
+          null,
+          [
+            2,
+            "a",
+            12
+          ]
+        ]
+      ]
+    },
+    "update_or_replace": {
+      "event_count": 2,
+      "changed_rows": 2,
+      "max_trigger_depth": 0,
+      "charged_bytes": 268,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "DELETE",
+          [
+            1,
+            "b",
+            20
+          ],
+          null
+        ],
+        [
+          2,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            10
+          ],
+          [
+            1,
+            "b",
+            10
+          ]
+        ]
+      ]
+    },
+    "delete_cascade": {
+      "event_count": 3,
+      "changed_rows": 3,
+      "max_trigger_depth": 1,
+      "charged_bytes": 396,
+      "typed_images": [
+        [
+          1,
+          "parents",
+          "DELETE",
+          [
+            1,
+            "one"
+          ],
+          null
+        ],
+        [
+          2,
+          "records",
+          "DELETE",
+          [
+            1,
+            "a",
+            10
+          ],
+          null
+        ],
+        [
+          3,
+          "records",
+          "DELETE",
+          [
+            1,
+            "b",
+            20
+          ],
+          null
+        ]
+      ]
+    },
+    "update_cascade": {
+      "event_count": 3,
+      "changed_rows": 6,
+      "max_trigger_depth": 1,
+      "charged_bytes": 408,
+      "typed_images": [
+        [
+          1,
+          "parents",
+          "UPDATE",
+          [
+            1,
+            "one"
+          ],
+          [
+            3,
+            "one"
+          ]
+        ],
+        [
+          2,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            10
+          ],
+          [
+            3,
+            "a",
+            10
+          ]
+        ],
+        [
+          3,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "b",
+            20
+          ],
+          [
+            3,
+            "b",
+            20
+          ]
+        ]
+      ]
+    },
+    "primary_key_move": {
+      "event_count": 1,
+      "changed_rows": 2,
+      "max_trigger_depth": 0,
+      "charged_bytes": 136,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            10
+          ],
+          [
+            1,
+            "z",
+            10
+          ]
+        ]
+      ]
+    },
+    "instead_of_view": {
+      "event_count": 2,
+      "changed_rows": 2,
+      "max_trigger_depth": 2,
+      "charged_bytes": 267,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            10
+          ],
+          [
+            1,
+            "a",
+            11
+          ]
+        ],
+        [
+          2,
+          "effects",
+          "INSERT",
+          null,
+          [
+            "a",
+            11
+          ]
+        ]
+      ]
+    },
+    "cte_write": {
+      "event_count": 4,
+      "changed_rows": 4,
+      "max_trigger_depth": 1,
+      "charged_bytes": 534,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            10
+          ],
+          [
+            1,
+            "a",
+            11
+          ]
+        ],
+        [
+          2,
+          "effects",
+          "INSERT",
+          null,
+          [
+            "a",
+            11
+          ]
+        ],
+        [
+          3,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "b",
+            20
+          ],
+          [
+            1,
+            "b",
+            11
+          ]
+        ],
+        [
+          4,
+          "effects",
+          "INSERT",
+          null,
+          [
+            "b",
+            11
+          ]
+        ]
+      ]
+    },
+    "delete_all": {
+      "event_count": 3,
+      "changed_rows": 3,
+      "max_trigger_depth": 0,
+      "charged_bytes": 396,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "DELETE",
+          [
+            1,
+            "a",
+            10
+          ],
+          null
+        ],
+        [
+          2,
+          "records",
+          "DELETE",
+          [
+            1,
+            "b",
+            20
+          ],
+          null
+        ],
+        [
+          3,
+          "records",
+          "DELETE",
+          [
+            2,
+            "c",
+            30
+          ],
+          null
+        ]
+      ]
+    },
+    "no_op": {
+      "event_count": 1,
+      "changed_rows": 0,
+      "max_trigger_depth": 0,
+      "charged_bytes": 136,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            10
+          ],
+          [
+            1,
+            "a",
+            10
+          ]
+        ]
+      ]
+    },
+    "ignore": {
+      "event_count": 0,
+      "changed_rows": 0,
+      "max_trigger_depth": 0,
+      "charged_bytes": 0,
+      "typed_images": []
+    },
+    "coalesced": {
+      "event_count": 7,
+      "changed_rows": 0,
+      "max_trigger_depth": 1,
+      "charged_bytes": 938,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            10
+          ],
+          [
+            1,
+            "a",
+            11
+          ]
+        ],
+        [
+          2,
+          "effects",
+          "INSERT",
+          null,
+          [
+            "a",
+            11
+          ]
+        ],
+        [
+          3,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            11
+          ],
+          [
+            1,
+            "a",
+            12
+          ]
+        ],
+        [
+          4,
+          "effects",
+          "UPDATE",
+          [
+            "a",
+            11
+          ],
+          [
+            "a",
+            12
+          ]
+        ],
+        [
+          5,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            12
+          ],
+          [
+            1,
+            "a",
+            10
+          ]
+        ],
+        [
+          6,
+          "effects",
+          "UPDATE",
+          [
+            "a",
+            12
+          ],
+          [
+            "a",
+            10
+          ]
+        ],
+        [
+          7,
+          "effects",
+          "DELETE",
+          [
+            "a",
+            10
+          ],
+          null
+        ]
+      ]
+    },
+    "typed_values": {
+      "event_count": 11,
+      "changed_rows": 2,
+      "max_trigger_depth": 1,
+      "charged_bytes": 1471,
+      "typed_images": [
+        [
+          1,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            10
+          ],
+          [
+            1,
+            "a",
+            null
+          ]
+        ],
+        [
+          2,
+          "effects",
+          "INSERT",
+          null,
+          [
+            "a",
+            null
+          ]
+        ],
+        [
+          3,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            null
+          ],
+          [
+            1,
+            "a",
+            1
+          ]
+        ],
+        [
+          4,
+          "effects",
+          "UPDATE",
+          [
+            "a",
+            null
+          ],
+          [
+            "a",
+            1
+          ]
+        ],
+        [
+          5,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            1
+          ],
+          [
+            1,
+            "a",
+            1.0
+          ]
+        ],
+        [
+          6,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            1.0
+          ],
+          [
+            1,
+            "a",
+            "1"
+          ]
+        ],
+        [
+          7,
+          "effects",
+          "UPDATE",
+          [
+            "a",
+            1
+          ],
+          [
+            "a",
+            "1"
+          ]
+        ],
+        [
+          8,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            "1"
+          ],
+          [
+            1,
+            "a",
+            {
+              "type": "blob",
+              "base64": "AP8="
+            }
+          ]
+        ],
+        [
+          9,
+          "effects",
+          "UPDATE",
+          [
+            "a",
+            "1"
+          ],
+          [
+            "a",
+            {
+              "type": "blob",
+              "base64": "AP8="
+            }
+          ]
+        ],
+        [
+          10,
+          "records",
+          "UPDATE",
+          [
+            1,
+            "a",
+            {
+              "type": "blob",
+              "base64": "AP8="
+            }
+          ],
+          [
+            1,
+            "a",
+            "\u0000\u00e9"
+          ]
+        ],
+        [
+          11,
+          "effects",
+          "UPDATE",
+          [
+            "a",
+            {
+              "type": "blob",
+              "base64": "AP8="
+            }
+          ],
+          [
+            "a",
+            "\u0000\u00e9"
+          ]
+        ]
+      ]
+    }
+  },
+  "replacement_control": {
+    "recursive_triggers": false,
+    "native_actions": [
+      "DELETE",
+      "INSERT"
+    ],
+    "missed_rows": 0,
+    "temp_journal_control_missed_rows": 1
+  },
+  "rollback_control": {
+    "attempted_events": 2,
+    "events_after_raw_rollback": 2,
+    "events_after_driver_discard": 0,
+    "stored_rows_restored": true
+  },
+  "direct_access": {
+    "independent_stdlib_write_value": 42,
+    "native_events": 0,
+    "callbacks_registered_on_direct_connection": false
+  },
+  "warm_in_memory_measurements": {
+    "explicit_known_targets": {
+      "samples": 100,
+      "median_ms": 0.0057,
+      "p95_ms": 0.008
+    },
+    "temp_trigger_journal": {
+      "samples": 100,
+      "median_ms": 0.0431,
+      "p95_ms": 0.0471
+    },
+    "apsw_preupdate": {
+      "samples": 100,
+      "median_ms": 0.0081,
+      "p95_ms": 0.01
+    }
+  },
+  "limitations": [
+    "Optional pinned wheel; no installed service/API/format change or managed SQL enablement.",
+    "Real-table fixture only; arbitrary schemas, virtual tables, BEFORE/same-row rewrites and incremental BLOB writes unqualified.",
+    "Raw images capped at 10000 events and 4 MiB charged payload; callback row copying is not an RSS bound.",
+    "Native callbacks survive rollback; driver discards all attempted images on failure/rollback. User savepoints are denied.",
+    "No Session object is created on the preupdate connection; coexistence is unsupported.",
+    "Bindings use different SQLite builds; timings exclude REST, hooks, durability and cold caches and do not isolate binding overhead."
+  ]
+}

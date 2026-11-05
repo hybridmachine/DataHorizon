@@ -58,6 +58,7 @@ applications, and AI agents through REST.
 | [Development guide](development.md) | Build/run, API, CLI, Python, Supplies and package smoke |
 | [Initial contracts](initial-contracts.md) | M0 persistence, values, operations, budgets and explicit exclusions |
 | [SQLite capture experiment](sqlite-capture-experiment.md) | M1 capture comparison, typed old/new evidence, limits and remaining managed SQL gates |
+| [Native capture binding](native-capture-binding.md) | Optional APSW preupdate comparison, rollback controls, bounds and adoption gates |
 | [Service/Python experiment](service-execution-experiment.md) | M1 HTTP arrangements, transactional worker containment and durable outcomes |
 | [Native storage experiment](native-storage-experiment.md) | M1 input/derived separation, identity, external refresh and physical-layout comparison |
 | [Qt frozen-row experiment](grid-frozen-row-experiment.md) | M1 shared-cache frozen-header display, geometry/input measurements and limits |
