@@ -99,6 +99,11 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
+The [follow-up M1 sequence](qualification-followup.md) continues after PR #13.
+Its first increment extends native scale 1/2 checks to range/Tab navigation,
+accessible in-cell source addresses, modal Escape cancellation and narrow-window
+geometry. Local Cocoa reports pass; hosted platforms remain pending.
+
 The [five qualification increments](qualification-next-five.md) now implement
 native-platform automation, cache/RSS measurement, HTTP admission, worker
 lifecycle hardening and an optional native capture-binding comparison. Native Qt

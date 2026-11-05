@@ -1,0 +1,39 @@
+{
+    "accessible_controls": [
+        {
+            "name": "Cell address",
+            "role": 42
+        },
+        {
+            "name": "Cell input or formula",
+            "role": 42
+        },
+        {
+            "name": "Spreadsheet",
+            "role": 24
+        }
+    ],
+    "acknowledged_enter_advances": true,
+    "active_window": true,
+    "cell_editor_accessible_address": true,
+    "cell_logical_width": 109,
+    "clipboard_paste": true,
+    "device_pixel_ratio": 4,
+    "keyboard_edit_calculation_escape_navigation": true,
+    "keyboard_range_tab_and_editor_cancel": true,
+    "limitations": [
+        "QTest widget events are synthetic; no physical input or compositor-latency qualification.",
+        "Accessible names/table extent do not certify screen-reader navigation across the entire sheet.",
+        "Native dialogs, multiple monitors and clean-machine installation remain separate acceptance."
+    ],
+    "narrow_window_usable_grid": true,
+    "os": "macOS Tahoe (26.6.2)",
+    "palette_base": "#ffffff",
+    "platform_plugin": "cocoa",
+    "qt": "6.12.0",
+    "qt_modal_escape_without_mutation": true,
+    "recorded_at_utc": "2026-11-05T05:14:10Z",
+    "scale_request": "2",
+    "screenshot": "native-interaction-2.png",
+    "window_logical_width": 560
+}

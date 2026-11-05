@@ -67,6 +67,8 @@ public:
             m_original=index.data(Qt::EditRole).toString();
             const auto *model=qobject_cast<const SheetModel *>(index.model());
             m_inputKind=model?model->cell(index)["input_kind"].toString("auto"):QString("auto");
+            line->setAccessibleName(tr("Cell %1%2 input").arg(SheetModel::columnName(index.column()+1))
+                .arg((model?model->sourceRow(index.row()):index.row())+1));
         }
         return editor;
     }
@@ -242,7 +244,7 @@ void MainWindow::buildUi() {
         auto command=targetContext({{"action","sheet_add"}});
         bool ok; auto name = QInputDialog::getText(this, tr("Add sheet"), tr("Name"), QLineEdit::Normal, "Sheet2", &ok);
         if (ok) { command["name"]=name; submit(command); }
-    });
+    })->setObjectName("addSheetAction");
     add(sheetMenu, tr("Rename sheet…"), {}, [this] {
         if (m_busy) return;
         auto command=targetContext({{"action","sheet_rename"}});

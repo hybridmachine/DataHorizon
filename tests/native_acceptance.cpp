@@ -3,6 +3,7 @@
 #include "mainwindow.h"
 #include <QAccessible>
 #include <QApplication>
+#include <QAction>
 #include <QClipboard>
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -12,12 +13,15 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLineEdit>
+#include <QInputDialog>
+#include <QPointer>
 #include <QMimeData>
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QSysInfo>
 #include <QTableView>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QUuid>
 #include <QTest>
 #include <memory>
@@ -79,6 +83,53 @@ int main(int argc,char **argv) {
         address->setText("A1"); QTest::keyClick(address,Qt::Key_Return);
         waitFor([&]{return model->data(grid->currentIndex()).toString()=="20.5";},"Returning to calculated cell failed");
 
+        QSignalSpy edits(model,&SheetModel::editRequested);
+        grid->setFocus();
+        QTest::keyClick(grid,Qt::Key_Right,Qt::ShiftModifier);
+        require(grid->selectionModel()->selectedIndexes().size()==2,"Keyboard range selection failed");
+        QTest::keyClick(grid,Qt::Key_Left);
+        require(grid->currentIndex()==model->index(0,0),"Keyboard range collapse failed");
+        QTest::keyClick(grid,Qt::Key_Tab);
+        require(grid->currentIndex()==model->index(0,1),"Grid Tab navigation failed");
+        QTest::keyClick(grid,Qt::Key_Backtab);
+        require(grid->currentIndex()==model->index(0,0),"Grid Backtab navigation failed");
+        waitFor([&]{return model->sourceReady(grid->currentIndex());},"Cell source never loaded");
+#ifdef Q_OS_MACOS
+        QTest::keyClick(grid,Qt::Key_Return);
+#else
+        QTest::keyClick(grid,Qt::Key_F2);
+#endif
+        QPointer<QLineEdit> editor=grid->findChild<QLineEdit *>();
+        require(editor && editor->isVisible(),"Keyboard cell editor did not open");
+        auto *editorAccessible=QAccessible::queryAccessibleInterface(editor);
+        require(editorAccessible && editorAccessible->text(QAccessible::Name)=="Cell A1 input","Cell editor has no source-address accessible name");
+        editor->selectAll(); QTest::keyClicks(editor,"999"); QTest::keyClick(editor,Qt::Key_Escape);
+        waitFor([&]{return !editor || !editor->isVisible();},"Cell editor Escape failed");
+
+        // Exercise a real Qt modal on the native plugin. A watchdog also bounds
+        // failures in nested dialog event loops, so CI cannot wait for a person.
+        auto *addSheet=window.findChild<QAction *>("addSheetAction");
+        require(addSheet,"Add sheet action missing");
+        bool dialogSeen=false;
+        QTimer cancelDialog,watchdog;
+        cancelDialog.setInterval(10); watchdog.setSingleShot(true);
+        QObject::connect(&cancelDialog,&QTimer::timeout,[&]{
+            if(auto *dialog=qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+                dialogSeen=true; QTest::keyClick(dialog,Qt::Key_Escape);
+            }
+        });
+        QObject::connect(&watchdog,&QTimer::timeout,[&]{
+            if(auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget())) dialog->reject();
+        });
+        cancelDialog.start(); watchdog.start(5000); addSheet->trigger();
+        cancelDialog.stop(); watchdog.stop();
+        require(dialogSeen,"Native-plugin sheet dialog did not appear");
+        require(edits.isEmpty() && opened.count()==2,"Navigation or cancelled editor/dialog submitted an edit");
+        require(model->data(model->index(0,0)).toString()=="20.5","Cancelled native interaction changed a value");
+        window.resize(560,440); QTest::qWait(100);
+        grid->scrollTo(model->index(0,0));
+        require(grid->viewport()->width()>100 && grid->viewport()->height()>100,"Narrow window lost usable grid geometry");
+
         QJsonArray controls;
         for(QWidget *widget:QList<QWidget *>{address,source,grid}) {
             auto *accessible=QAccessible::queryAccessibleInterface(widget);
@@ -100,6 +151,8 @@ int main(int argc,char **argv) {
             {"active_window",window.isActiveWindow()},{"accessible_controls",controls},
             {"keyboard_edit_calculation_escape_navigation",true},{"clipboard_paste",true},
             {"acknowledged_enter_advances",true},
+            {"keyboard_range_tab_and_editor_cancel",true},{"cell_editor_accessible_address",true},
+            {"qt_modal_escape_without_mutation",true},{"narrow_window_usable_grid",true},
             {"window_logical_width",window.width()},{"cell_logical_width",cell.width()},
             {"palette_base",grid->palette().color(QPalette::Base).name()},
             {"screenshot",QFileInfo(screenshot).fileName()},
