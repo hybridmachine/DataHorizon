@@ -53,9 +53,10 @@ int main(int argc,char **argv) {
         QTest::keyClick(source,Qt::Key_Return);
         waitFor([&]{return opened.count()==2;},"Keyboard edit failed");
         waitFor([&]{return model->data(model->index(0,0)).toString()=="20.5";},"Native calculation mismatch");
+        waitFor([&]{return grid->currentIndex()==model->index(1,0) && source->isEnabled();},"Acknowledged Enter did not advance to A2");
         source->setFocus(); source->selectAll(); QTest::keyClicks(source,"999");
         QTest::keyClick(source,Qt::Key_Escape);
-        require(!source->isModified() && source->text()=="=SUM(7,13.5)","Escape did not restore the stored formula");
+        require(!source->isModified() && source->text().isEmpty(),"Escape did not restore the blank A2 input");
         require(model->data(model->index(0,0)).toString()=="20.5","Escape changed stored input");
         address->setFocus(); address->selectAll(); QTest::keyClicks(address,"B42"); QTest::keyClick(address,Qt::Key_Return);
         waitFor([&]{return grid->currentIndex()==model->index(41,1);},"Native address navigation failed");
@@ -98,6 +99,7 @@ int main(int argc,char **argv) {
             {"device_pixel_ratio",window.devicePixelRatioF()},{"scale_request",qEnvironmentVariable("QT_SCALE_FACTOR","1")},
             {"active_window",window.isActiveWindow()},{"accessible_controls",controls},
             {"keyboard_edit_calculation_escape_navigation",true},{"clipboard_paste",true},
+            {"acknowledged_enter_advances",true},
             {"window_logical_width",window.width()},{"cell_logical_width",cell.width()},
             {"palette_base",grid->palette().color(QPalette::Base).name()},
             {"screenshot",QFileInfo(screenshot).fileName()},

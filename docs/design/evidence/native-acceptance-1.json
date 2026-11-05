@@ -13,6 +13,7 @@
             "role": 24
         }
     ],
+    "acknowledged_enter_advances": true,
     "active_window": true,
     "cell_logical_width": 109,
     "clipboard_paste": true,
@@ -27,7 +28,7 @@
     "palette_base": "#ffffff",
     "platform_plugin": "cocoa",
     "qt": "6.12.0",
-    "recorded_at_utc": "2026-11-05T03:27:18Z",
+    "recorded_at_utc": "2026-11-05T03:30:33Z",
     "scale_request": "1",
     "screenshot": "native-acceptance-1.png",
     "window_logical_width": 820
