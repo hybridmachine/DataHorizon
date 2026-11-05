@@ -115,6 +115,10 @@ sequential merges until that capacity is restored.
 The next increment bounds HTTP handler admission, total slow-request reads and
 aggregate headers, with real-socket saturation/recovery tests that preserve
 durable operation outcomes. See [the contract](initial-contracts.md#jobs-limits-and-evidence).
+Worker lifecycle hardening now closes process/pipe resources on startup and
+protocol failures, bounds JSON broker messages, and keeps blocked pipe I/O off
+the transaction thread. Repeated crash/recovery checks preserve hook rollback
+and receipt semantics; [scope and limits](qualification-next-five.md#python-worker-lifecycle).
 
 The five bounded M1 experiment slices, including the
 [toolchain/packaging baseline](toolchain-packaging-baseline.md), now have

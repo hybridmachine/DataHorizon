@@ -198,7 +198,16 @@ transaction-aware broker context; reads and edits join the parent transaction.
 Actual changed inputs are processed in deterministic coordinate order, with
 generated changes in subsequent rounds. No-op assignments produce no event.
 Limits: 16 rounds, 10,000 changed cells, 2 seconds per worker invocation and
-5 seconds total operation time. Failure to load, exception, timeout or recursion
+5 seconds total operation time. The worker budget starts before process startup;
+checks between startup calls and broker messages enforce the remaining budget.
+Pipe messages use bounded JSON frames (1 MiB), not worker-supplied pickle.
+Pipe reads/writes run off the transaction thread so a stuck peer can still be
+terminated at its deadline. Construction/start failure, malformed/oversized
+messages, EOF and broker startup failure all fail the required handler. Cleanup
+closes both pipes and the reaped Process object. Diagnostic output retains the
+last 8,192 characters without concatenating the full write into that tail.
+OS process startup/termination and cleanup are not hard real-time guarantees.
+Failure to load, exception, timeout or recursion
 limit rolls back. This is process containment, not a secure sandbox. Trusted
 transactional code must avoid external effects. After-commit work is disabled.
 
