@@ -697,6 +697,10 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
         QTRY_VERIFY_WITH_TIMEOUT(grid->rowHeight(0)>26,5000);
         QCOMPARE(model->data(model->index(0,0),Qt::EditRole).toString(),text);
+        grid->scrollTo(model->index(10000,0),QAbstractItemView::PositionAtTop);
+        QTRY_COMPARE_WITH_TIMEOUT(grid->rowHeight(0),26,5000);
+        grid->scrollTo(model->index(0,0),QAbstractItemView::PositionAtTop);
+        QTRY_VERIFY_WITH_TIMEOUT(grid->rowHeight(0)>26,5000);
         const int narrowHeight=grid->rowHeight(0); grid->setColumnWidth(0,500);
         QTRY_VERIFY_WITH_TIMEOUT(grid->rowHeight(0)<narrowHeight,5000);
         wrap->trigger(); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);

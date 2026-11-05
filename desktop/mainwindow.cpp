@@ -362,6 +362,10 @@ void MainWindow::fitVisibleWrappedRows() {
     const int firstRow=qMax(0,m_grid->rowAt(0)), firstCol=qMax(0,m_grid->columnAt(0));
     const int lastRow=qMin(m_model->rowCount()-1,firstRow+63);
     const int lastCol=qMin(m_model->columnCount()-1,firstCol+15);
+    const auto previous=m_wrappedRows;
+    for(int row:previous) if(row<firstRow || row>lastRow) {
+        m_grid->setRowHeight(row,26); m_wrappedRows.remove(row);
+    }
     for(int row=firstRow;row<=lastRow;++row) {
         if(m_grid->rowViewportPosition(row)>m_grid->viewport()->height()) break;
         int height=26; bool loaded=false;

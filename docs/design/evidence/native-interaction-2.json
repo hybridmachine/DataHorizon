@@ -32,7 +32,7 @@
     "platform_plugin": "cocoa",
     "qt": "6.12.0",
     "qt_modal_escape_without_mutation": true,
-    "recorded_at_utc": "2026-11-05T05:14:10Z",
+    "recorded_at_utc": "2026-11-05T05:19:50Z",
     "scale_request": "2",
     "screenshot": "native-interaction-2.png",
     "window_logical_width": 560
