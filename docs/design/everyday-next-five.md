@@ -54,3 +54,20 @@ leave sizes attached to coordinate numbers rather than transforming them with
 cell contents. Invalid preference entries are ignored. Native portable workbook
 view metadata remains a later format decision. Tests and probes use isolated
 preference files.
+
+## Hide and unhide
+
+Sheet → Hide selected rows/columns saves at most 1,024 source-coordinate entries
+per axis in the same local preferences as sizes. Header ellipses mark adjacent
+hidden sections. A persistent status button shows counts and unhides both axes;
+Sheet also has separate Show all rows/columns commands. Hiding never deletes
+inputs or changes managed history. Source rows retain their hidden state through
+list sorting. At least one displayed row must remain visible; if applying a new
+projection would hide all its rows, the first source row is explicitly shown.
+
+Address navigation to hidden cells is rejected. GUI rectangle operations that
+intersect hidden sections are blocked; paste checks the complete source/destination
+extent, including TSV expansion, before submission. Structural edits and CSV import require unhidden
+rows/columns. Clear the local hiding preferences to perform those operations.
+Managed REST/CLI/SDK coordinates remain independent of local visibility.
+A recovered draft explicitly unhides its original row/column for review.

@@ -35,6 +35,7 @@ public:
                 {"source_budget_bytes",int(m_sources.maxCost())},{"pending_tiles",int(m_loading.size())}};
     }
     static QString columnName(int oneBased);
+    void setHiddenSections(const QSet<int> &rows,const QSet<int> &columns);
 signals:
     void editRequested(int row, int col, QString source, QString kind);
     void issue(QString message);
@@ -51,6 +52,7 @@ private:
     int m_rows, m_cols;
     bool m_projected = false;
     QList<int> m_projection;
+    QSet<int> m_hiddenRows, m_hiddenColumns;
     mutable QCache<quint64, Tile> m_cache{14*1024*1024};
     mutable QCache<quint64, QString> m_sources{2*1024*1024};
     mutable QSet<quint64> m_sourceLoading;

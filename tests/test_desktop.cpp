@@ -685,6 +685,58 @@ private slots:
         QVERIFY(window.close());
         if(original.isNull()) qunsetenv("DATAHORIZON_PYTHON"); else qputenv("DATAHORIZON_PYTHON",original);
     }
+    void hiddenSectionsPersistMarkGapsAndGuardPaste() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        options.viewStatePath=temp.filePath("views.ini"); const auto path=temp.filePath("hidden.dhwb");
+        {
+            MainWindow window(options); window.show();
+            QSignalSpy ready(&window,&MainWindow::serviceReady); QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+            QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,true);
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+            window.submit({{"action","edit"},{"cells",QJsonArray{
+                QJsonObject{{"row",1},{"col",1},{"source","3"}},QJsonObject{{"row",2},{"col",1},{"source","1"}},
+                QJsonObject{{"row",3},{"col",1},{"source","2"}}}}});
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+            auto *grid=window.findChild<QTableView *>("grid"); grid->setRowHeight(1,66); grid->setColumnWidth(1,234);
+            QSignalSpy mutations(&window,&MainWindow::operationFinished);
+            grid->selectRow(1); window.findChild<QAction *>("hideRowsAction")->trigger(); QVERIFY(grid->isRowHidden(1));
+            grid->selectColumn(1); window.findChild<QAction *>("hideColumnsAction")->trigger(); QVERIFY(grid->isColumnHidden(1));
+            QVERIFY(window.model()->headerData(0,Qt::Horizontal,Qt::DisplayRole).toString().contains("⋯"));
+            QVERIFY(window.model()->headerData(0,Qt::Vertical,Qt::DisplayRole).toString().contains("⋯"));
+            QVERIFY(!grid->isColumnHidden(grid->currentIndex().column()));
+            auto *show=window.findChild<QPushButton *>("showHiddenButton"); QVERIFY(show->isVisible());
+            grid->setCurrentIndex(window.model()->index(0,0));
+            auto *saved=new QMimeData;
+            if(const auto *mime=QApplication::clipboard()->mimeData()) for(const auto &format:mime->formats()) saved->setData(format,mime->data(format));
+            QApplication::clipboard()->setText("7\n8\n9");
+            window.findChild<QAction *>("pasteAction")->trigger(); QApplication::clipboard()->setMimeData(saved);
+            QVERIFY(mutations.isEmpty());
+            window.exportCsvTo(temp.filePath("blocked.csv"),{{"r1",2},{"c1",1}});
+            QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("export rectangle"));
+            QVERIFY(!QFile::exists(temp.filePath("blocked.csv")));
+            answerNextDialog(QMessageBox::Cancel); window.findChild<QAction *>("deleteRowsAction")->trigger();
+            QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("structural edits"));
+            auto *address=window.findChild<QLineEdit *>("address"); address->setText("B2"); QTest::keyClick(address,Qt::Key_Return);
+            QCOMPARE(grid->currentIndex(),window.model()->index(0,0));
+            window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"header",false},
+                {"sort",QJsonArray{QJsonObject{{"col",1},{"descending",false}}}}});
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+            QCOMPARE(window.model()->viewRow(1),0); QVERIFY(grid->isRowHidden(0));
+            grid->selectionModel()->select(QItemSelection(window.model()->index(0,0),window.model()->index(2,0)),QItemSelectionModel::ClearAndSelect);
+            window.findChild<QAction *>("hideRowsAction")->trigger(); QVERIFY(!grid->isRowHidden(1)); QVERIFY(mutations.isEmpty());
+        }
+        {
+            MainWindow window(options); window.show();
+            QSignalSpy ready(&window,&MainWindow::serviceReady); QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+            QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,false,true);
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+            auto *grid=window.findChild<QTableView *>("grid"); QVERIFY(grid->isRowHidden(1)); QVERIFY(grid->isColumnHidden(1));
+            window.findChild<QPushButton *>("showHiddenButton")->click();
+            QVERIFY(!grid->isRowHidden(1)); QVERIFY(!grid->isColumnHidden(1));
+            QCOMPARE(grid->rowHeight(1),66); QCOMPARE(grid->columnWidth(1),234);
+            QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(1,0)).toString(),QString("1"),5000);
+        }
+    }
     void sheetDimensionsPersistAndFollowProjectedSourceRows() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         options.viewStatePath=temp.filePath("views.ini"); const auto path=temp.filePath("sizes.dhwb");
