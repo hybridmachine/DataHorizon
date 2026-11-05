@@ -112,6 +112,9 @@ a generated 1.27-GB workbook, per-process service peaks and GUI peak RSS. See
 OS-cold caches remain unqualified. Hosted checks are currently unavailable due
 to account billing/spending limits; the user authorized local verification and
 sequential merges until that capacity is restored.
+The next increment bounds HTTP handler admission, total slow-request reads and
+aggregate headers, with real-socket saturation/recovery tests that preserve
+durable operation outcomes. See [the contract](initial-contracts.md#jobs-limits-and-evidence).
 
 The five bounded M1 experiment slices, including the
 [toolchain/packaging baseline](toolchain-packaging-baseline.md), now have

@@ -204,6 +204,17 @@ transactional code must avoid external effects. After-commit work is disabled.
 
 ## Jobs, limits and evidence
 
+The localhost development HTTP server admits at most 16 concurrent handlers.
+Excess connections receive HTTP 503 `SERVICE_BUSY` with an unknown operation
+outcome and no operation ID: no body was parsed, so clients must keep their
+pending ID and reconcile it before another write. Accepted operations retain
+their existing transaction and durable receipt semantics. Request line/headers
+and body share a ten-second total read deadline, including trickled bytes;
+aggregate headers are at most 64 KiB (the request line is separately bounded by
+the standard parser). Responses have a five-second socket-write timeout.
+These bounds do not qualify the development server for production or remote
+binding. See [admission evidence](qualification-next-five.md#http-admission).
+
 Ordinary operations are atomic, at most 10,000 target cells, 4 MiB request body,
 64 KiB cell source and 5 seconds engine time. Formula preflight queries check
 that deadline inside SQLite even when no matching cells are returned, and remove

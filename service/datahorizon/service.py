@@ -4,15 +4,18 @@ import argparse
 from contextlib import contextmanager
 import csv
 import hmac
+from http.client import LineTooLong
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
+import math
 from pathlib import Path
 import secrets
 from socketserver import TCPServer
 import sqlite3
 import sys
 import threading
+import time
 import traceback
 from urllib.parse import unquote, urlsplit
 import uuid
@@ -28,6 +31,7 @@ CAPABILITIES = {
     "interchange": ["csv"], "managed_sql": False, "remote_binding": False,
     "follow_up_work": False, "chunked_jobs": False,
     "max_open_workbooks":8, "max_open_handles":128,
+    "max_concurrent_requests":16, "max_header_bytes":65536, "request_read_timeout_seconds":10,
 }
 
 ROUTES = {
@@ -149,7 +153,8 @@ def openapi():
         parameters = [{"name": name, "in": "path", "required": True, "schema": {"type": "string"}}
                       for name in ("workbook", "operation") if "{" + name + "}" in path]
         operation = {"summary": summary, "parameters": parameters,
-                     "responses": {"200": {"description": "JSON result"}, **{str(status):{"description":"Structured error; inspect outcome and operation_id before deciding whether a mutation finished"} for status in (400,401,403,404,409,413,500,503)}},
+                     "responses": {"200": {"description": "JSON result"}, **{str(status):{"description":"Structured error; inspect outcome and operation_id before deciding whether a mutation finished"} for status in (400,401,403,404,408,409,413,500,503)},
+                                   "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
             name = "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
@@ -194,13 +199,44 @@ out.textContent=r.status+'\\n'+JSON.stringify(await r.json(),null,2)}catch(e){ou
 class Service(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port=0, token=None, handler=None):
+    def __init__(self, port=0, token=None, handler=None, *, max_requests=16, read_seconds=10, max_header_bytes=65536):
+        if type(max_requests) is not int or max_requests<1 or type(max_header_bytes) is not int or max_header_bytes<1:
+            raise ValueError("Positive request and header limits required")
+        if type(read_seconds) not in (int,float) or not math.isfinite(read_seconds) or read_seconds<=0:
+            raise ValueError("Positive finite read deadline required")
+        self._request_slots=threading.BoundedSemaphore(max_requests)
+        self.read_seconds,self.max_header_bytes=read_seconds,max_header_bytes
         self.token, self.handler = token or secrets.token_urlsafe(32), handler
         self.workbooks, self.registry_lock = {}, threading.RLock()
         self._path_locks, self._opening = {}, set()
         self._reserved_handles = 0
         self._stopping = False
         super().__init__(("127.0.0.1", port), RequestHandler)
+
+    def process_request(self, request, client_address):
+        if not self._request_slots.acquire(blocking=False):
+            # No request was parsed, so do not attach a possibly unrelated ID or
+            # assert a terminal operation outcome. Clients retain pending IDs.
+            body=encoded({"code":"SERVICE_BUSY","message":"Service request capacity is full; reconcile pending operations before retrying", "outcome":"unknown"}).encode()
+            try:
+                request.settimeout(.1)
+                request.sendall(b"HTTP/1.0 503 Service Unavailable\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: "+str(len(body)).encode()+b"\r\n\r\n"+body)
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request,client_address)
+        except BaseException:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request,client_address)
+        finally:
+            self._request_slots.release()
 
     def server_bind(self):
         # HTTPServer resolves a hostname here; a numeric loopback service has
@@ -350,24 +386,75 @@ class Service(ThreadingHTTPServer):
         raise EngineError("NOT_FOUND", "Unknown API resource", 404)
 
 
+class DeadlineSocketInput(io.RawIOBase):
+    """A total read budget, including a peer that continually trickles bytes."""
+    def __init__(self, connection, seconds):
+        super().__init__()
+        self.connection,self.deadline=connection,time.monotonic()+seconds
+
+    def readable(self): return True
+
+    def remaining(self):
+        remaining=self.deadline-time.monotonic()
+        if remaining<=0: raise TimeoutError("Request read deadline exceeded")
+        return remaining
+
+    def readinto(self, buffer):
+        self.connection.settimeout(self.remaining())
+        return self.connection.recv_into(buffer)
+
+
+class RequestInput(io.BufferedReader):
+    header_remaining=None
+
+    def readline(self, size=-1):
+        self.raw.remaining()
+        if self.header_remaining is not None:
+            size=min(size if size>=0 else self.header_remaining+1,self.header_remaining+1)
+        line=super().readline(size)
+        if self.header_remaining is not None:
+            self.header_remaining-=len(line)
+            if self.header_remaining<0: raise LineTooLong("aggregate headers")
+        return line
+
+    def read(self, size=-1):
+        self.raw.remaining()
+        return super().read(size)
+
+
 class RequestHandler(BaseHTTPRequestHandler):
     server_version = "DataHorizon/0.1"
+
+    def setup(self):
+        super().setup()
+        self.rfile.close()
+        self.rfile=RequestInput(DeadlineSocketInput(self.connection,self.server.read_seconds),buffer_size=8192)
+
+    def parse_request(self):
+        # The stdlib separately bounds the request line. Count headers consumed
+        # by its parser, preserving any prefetched body in the same buffer.
+        self.rfile.header_remaining=self.server.max_header_bytes
+        try:
+            return super().parse_request()
+        finally:
+            self.rfile.header_remaining=None
 
     def log_message(self, *_):
         pass  # Avoid logging credentials, inputs, or local file paths.
 
     def respond(self, status, result, content_type="application/json"):
         data = encoded(result).encode() if content_type == "application/json" else result.encode()
-        self.send_response(status)
-        self.send_header("Content-Type", content_type + "; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
-        self.end_headers()
         try:
+            self.connection.settimeout(5)
+            self.send_response(status)
+            self.send_header("Content-Type", content_type + "; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.end_headers()
             self.wfile.write(data)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
             pass  # The durable receipt remains available after a lost response.
 
     def run_request(self):
@@ -387,8 +474,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             if self.command == "POST":
                 length = int(self.headers.get("Content-Length", "0"))
                 require(0 < length <= 4 * 1024 * 1024, "REQUEST_LIMIT", "JSON body must be 1 byte to 4 MiB", 413)
-                self.connection.settimeout(10)
-                raw = self.rfile.read(length)
+                try:
+                    raw = self.rfile.read(length)
+                except TimeoutError as error:
+                    raise EngineError("REQUEST_TIMEOUT","Request read deadline exceeded",408) from error
                 require(len(raw) == length, "INVALID_JSON", "Incomplete request body")
                 body = json.loads(raw, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Non-finite JSON")))
                 require(isinstance(body, dict), "INVALID_JSON", "Request body must be an object")

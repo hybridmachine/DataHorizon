@@ -60,3 +60,23 @@ distinct from the larger service fixture.
 
 The user authorized local verification/merge while hosted Actions are blocked
 by account billing/spending limits. No successful new hosted result is claimed.
+
+## HTTP admission
+
+The stdlib development service now bounds admitted handler threads to 16 with a
+nonblocking semaphore, returning a small HTTP 503 response under a bounded
+socket-write timeout when full. A failed thread start returns its slot. The
+[threading server extension points](https://docs.python.org/3.11/library/socketserver.html)
+retain normal per-connection cleanup. A deadline-aware buffered socket reader
+shares one ten-second deadline across request line, headers and body; it checks
+remaining time on every socket receive, including continuous trickle input.
+The standard parser retains its request-line bound, while aggregate headers are
+limited to 64 KiB. Prefetched body bytes remain in the same buffer.
+
+`tests/test_http_limits.py` exercises real header/body trickles, header overflow,
+prefetched JSON, failed handler startup and saturation while an admitted write
+is paused. The accepted write commits with a queryable receipt; the rejected
+connection does not edit data or clear the SDK's pending operation ID. Recovery
+after socket expiry is checked. These are local macOS results; hosted checks
+remain unavailable under the recorded billing exception. This is a bounded
+development server, not a production framework or remote-security decision.
