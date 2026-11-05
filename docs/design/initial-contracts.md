@@ -298,7 +298,7 @@ The first exchange tier is UTF-8 CSV values, one explicit rectangle, with text
 as the default import type. Formula-looking imported text stays literal. Excel
 and ODS are unavailable until independent import/export fixtures and conversion
 reports pass; no misleading extension-based export is allowed. Initial styles
-are text/general/fixed two decimals, bold, italic, alignment and background.
+are text/general/fixed two decimals, bold, italic, alignment, background and boolean text wrapping.
 Additional styles, frozen panes and view persistence require their own evidence.
 
 ## M1 experiment specification

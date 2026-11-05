@@ -99,6 +99,11 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
+The user prioritized [five everyday spreadsheet increments](everyday-next-five.md)
+after PR #13. Text wrapping now uses native managed styles and bounded loaded
+viewport measurement. Native scale 1/2 keyboard, editor accessibility and modal
+cancellation checks also pass locally; hosted platforms remain pending.
+
 The [five qualification increments](qualification-next-five.md) now implement
 native-platform automation, cache/RSS measurement, HTTP admission, worker
 lifecycle hardening and an optional native capture-binding comparison. Native Qt

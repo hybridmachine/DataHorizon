@@ -22,6 +22,23 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class EngineTests(unittest.TestCase):
+    def test_wrap_style_is_atomic_undoable_and_survives_copy_reopen(self):
+        source="a long literal text value"
+        self.apply(cells=[{"row":1,"col":1,"source":source,"kind":"text","style":{"wrap":True}}])
+        for invalid in (1,"true",None,[]):
+            with self.assertRaises(EngineError) as failure:
+                self.apply(cells=[{"row":1,"col":1,"source":"changed"},{"row":2,"col":1,"style":{"wrap":invalid}}])
+            self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+            self.assertEqual(self.cells()[(1,1)]["source"],source)
+        self.apply(cells=[{"row":1,"col":1,"style":{"wrap":False}}])
+        self.apply("undo")
+        self.assertTrue(self.cells()[(1,1)]["style"]["wrap"])
+        self.apply("paste",row=2,col=1,rows=[[self.cells()[(1,1)]]])
+        self.assertTrue(self.cells()[(2,1)]["style"]["wrap"])
+        self.book.close(); self.book=Workbook(self.path)
+        self.assertEqual(self.cells()[(1,1)]["source"],source)
+        self.assertTrue(self.cells()[(1,1)]["style"]["wrap"])
+
     def test_replace_all_rejects_expansion_before_allocating_the_result(self):
         source="a"*65536
         self.apply(cells=[{"row":1,"col":1,"source":source,"kind":"text"}])

@@ -24,7 +24,7 @@ beginning `=`, finite decimal numbers, TRUE/FALSE and an apostrophe text prefix;
 other source is text. `formula` preserves source beginning `=` independently of
 subsequent display formatting. Explicit `text` preserves leading zeros and
 empty strings. Explicit `null` has a null typed value; absence has no row.
-`style` is a JSON object: format (`general`, `text`, `fixed2`), bold/italic
+`style` is a JSON object: format (`general`, `text`, `fixed2`), wrap/bold/italic
 booleans, align (`left`, `center`, `right`), background (`#RRGGBB`). Applying a
 format never retypes existing input. Text format changes subsequent auto entry.
 
