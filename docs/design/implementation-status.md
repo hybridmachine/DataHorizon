@@ -99,6 +99,14 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
+The [next five implemented increments](qualification-next-five.md) start with
+native-platform automation, followed by cache/RSS measurement, HTTP admission,
+worker lifecycle hardening and native capture-binding comparison. Native Qt
+acceptance now has an executable that checks the real REST-backed window at
+scale factors 1/2 with keyboard/clipboard, accessible names/extent and geometry
+checks. CI runs native Cocoa/Windows/Xcb plugins and collects JSON/screenshots.
+Physical input, screen-reader navigation and native dialogs remain unqualified.
+
 The five bounded M1 experiment slices, including the
 [toolchain/packaging baseline](toolchain-packaging-baseline.md), now have
 repeatable evidence. Next are the remaining native-platform acceptance,
