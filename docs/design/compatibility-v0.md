@@ -126,3 +126,7 @@ Regular expressions and case-folded replacement are not implemented.
 Text wrapping is a stored boolean style. The GUI measures loaded visible preview
 text within 64 rows × 16 columns and caps automatic row height at 260 pixels;
 full text remains available in the source editor.
+
+Row/column sizing is stored in local desktop preferences per path/workbook/sheet,
+not native workbook metadata. Fit measures only loaded visible previews; see
+[the sizing limits](everyday-next-five.md#row-and-column-sizing).

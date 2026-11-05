@@ -41,6 +41,7 @@ int main(int argc,char **argv) {
         require(plugin!="offscreen" && plugin!="minimal","Acceptance requires a native platform plugin");
         QTemporaryDir temp; require(temp.isValid(),"Cannot create fixture directory");
         StartupOptions options; options.automaticWorkbook=false;
+        options.viewStatePath=temp.filePath("views.ini");
         MainWindow window(options); window.resize(820,620);
         QSignalSpy ready(&window,&MainWindow::serviceReady), opened(&window,&MainWindow::workbookReady);
         window.show(); window.raise(); window.activateWindow();

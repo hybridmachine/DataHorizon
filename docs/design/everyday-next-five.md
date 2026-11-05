@@ -36,3 +36,21 @@ existing rollback, history and clipboard contracts. Engine fixtures check
 invalid-style atomicity, formula preservation, formats-only paste, Undo/Redo
 and reopen. A real REST-backed Qt fixture renders the delegate and verifies
 that the edge appears and clears without changing input.
+
+## Row and column sizing
+
+Sheet → Row height / Column width uses logical pixels; dragging a header edge
+also saves its size. Fit columns to visible text measures only loaded previews,
+at most 16 selected columns × 64 visible rows, with a 1,000-pixel fit cap.
+Explicit sizes range from 18–1,000 pixels for rows and 30–2,000 for columns.
+Each axis supports at most 1,024 explicit sizes. Reset sizes restores defaults
+and automatic wrapping. Size changes do not alter cell inputs or history.
+
+Preferences are local to this computer, keyed by native workbook identity,
+resolved file path and stable sheet identity. They are available for read-only
+opens and do not travel with native snapshots or exports. Coordinates retain
+their sizes across cell edits and projected-list reordering; structural edits
+leave sizes attached to coordinate numbers rather than transforming them with
+cell contents. Invalid preference entries are ignored. Native portable workbook
+view metadata remains a later format decision. Tests and probes use isolated
+preference files.

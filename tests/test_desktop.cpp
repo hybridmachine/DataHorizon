@@ -16,6 +16,8 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPainter>
+#include <QInputDialog>
+#include <QSettings>
 #include <QAbstractButton>
 #include <QPushButton>
 #include <QAbstractItemDelegate>
@@ -683,6 +685,51 @@ private slots:
         QVERIFY(window.close());
         if(original.isNull()) qunsetenv("DATAHORIZON_PYTHON"); else qputenv("DATAHORIZON_PYTHON",original);
     }
+    void sheetDimensionsPersistAndFollowProjectedSourceRows() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        options.viewStatePath=temp.filePath("views.ini"); const auto path=temp.filePath("sizes.dhwb");
+        {
+            MainWindow window(options); window.show();
+            QSignalSpy ready(&window,&MainWindow::serviceReady); QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+            QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,true);
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+            window.submit({{"action","edit"},{"cells",QJsonArray{
+                QJsonObject{{"row",1},{"col",1},{"source","3"}},QJsonObject{{"row",2},{"col",1},{"source","1"}},
+                QJsonObject{{"row",3},{"col",1},{"source","2"}}}}});
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+            auto *grid=window.findChild<QTableView *>("grid"); grid->setColumnWidth(0,234); grid->setRowHeight(2,86);
+            window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"header",false},
+                {"sort",QJsonArray{QJsonObject{{"col",1},{"descending",false}}}}});
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+            QCOMPARE(window.model()->sourceRow(1),2); QCOMPARE(grid->rowHeight(1),86); QCOMPARE(grid->columnWidth(0),234);
+            QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);
+            QSignalSpy mutations(&window,&MainWindow::operationFinished);
+            grid->selectColumn(0); window.findChild<QAction *>("fitColumnsAction")->trigger();
+            QVERIFY(grid->columnWidth(0)<234); QVERIFY(mutations.isEmpty());
+            grid->setColumnWidth(0,234);
+        }
+        {
+            QSettings preferences(options.viewStatePath,QSettings::IniFormat);
+            const auto key=preferences.allKeys().first();
+            auto state=QJsonDocument::fromJson(preferences.value(key).toByteArray()).object();
+            auto rows=state["rows"].toObject(); rows["-1"]=50; rows["1048576"]=50; rows["4"]=32.5;
+            state["rows"]=rows; preferences.setValue(key,QJsonDocument(state).toJson(QJsonDocument::Compact));
+        }
+        {
+            MainWindow window(options); window.show();
+            QSignalSpy ready(&window,&MainWindow::serviceReady); QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+            QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,false,true);
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+            auto *grid=window.findChild<QTableView *>("grid");
+            QCOMPARE(grid->rowHeight(2),86); QCOMPARE(grid->rowHeight(1),26); QCOMPARE(grid->columnWidth(0),234);
+            QCOMPARE(grid->rowHeight(4),26);
+            grid->selectRow(2);
+            QTimer::singleShot(20,[] { if(auto *dialog=qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {dialog->setIntValue(77); dialog->accept();} });
+            window.findChild<QAction *>("rowHeightAction")->trigger(); QCOMPARE(grid->rowHeight(2),77);
+            window.findChild<QAction *>("resetDimensionsAction")->trigger();
+            QCOMPARE(grid->rowHeight(2),26); QCOMPARE(grid->columnWidth(0),110);
+        }
+    }
     void cellBordersPaintAndClearWithoutChangingInput() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show();
@@ -726,7 +773,11 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(grid->rowHeight(0)>26,5000);
         const int narrowHeight=grid->rowHeight(0); grid->setColumnWidth(0,500);
         QTRY_VERIFY_WITH_TIMEOUT(grid->rowHeight(0)<narrowHeight,5000);
+        grid->setRowHeight(0,91); grid->setColumnWidth(0,110); QTest::qWait(30);
+        QCOMPARE(grid->rowHeight(0),91);
         wrap->trigger(); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QCOMPARE(grid->rowHeight(0),91);
+        window.findChild<QAction *>("resetDimensionsAction")->trigger();
         QTRY_COMPARE_WITH_TIMEOUT(grid->rowHeight(0),26,5000);
         QCOMPARE(model->data(model->index(0,0),Qt::EditRole).toString(),text);
     }

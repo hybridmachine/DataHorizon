@@ -21,6 +21,7 @@ int main(int argc, char **argv) {
     const auto files = parser.positionalArguments(); const bool smoke=parser.isSet("smoke-test"); options.automaticWorkbook = files.isEmpty() && !smoke;
     if (!smoke && !files.isEmpty()) options.initialWorkbook=files.first();
     QTemporaryDir smokeDirectory;
+    if(smoke) options.viewStatePath=smokeDirectory.filePath("views.ini");
     bool smokeSubmitted=false;
     MainWindow window(options);
     if (smoke) {
