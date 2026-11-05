@@ -80,3 +80,26 @@ connection does not edit data or clear the SDK's pending operation ID. Recovery
 after socket expiry is checked. These are local macOS results; hosted checks
 remain unavailable under the recorded billing exception. This is a bounded
 development server, not a production framework or remote-security decision.
+
+## Python worker lifecycle
+
+Required hooks retain the spawned worker and parent-owned transaction broker.
+The two-second invocation budget now starts before process startup. A dedicated
+I/O thread handles bounded JSON pipe frames and replies; only the transaction
+thread dispatches engine calls. This avoids blocking that thread in a partial
+frame read or a response to a peer that never reads. The parent can terminate
+the worker and roll back on its existing deadline. Both pipe endpoints and the
+reaped Process are explicitly closed, including construction/start and broker
+thread-start failure. Python documents the
+[frame length bound and Process cleanup](https://docs.python.org/3.11/library/multiprocessing.html#connection-objects).
+
+`tests/test_worker_lifecycle.py` checks injected construction/process/thread
+startup failures, startup budget consumption, real spawned malformed/oversized
+frames and EOF, blocked response writes, maximum-size cell source round trips,
+and repeated crash/recovery. It checks closed pipes/Process objects, no additional
+active child and no remaining broker thread. A required-hook startup failure has
+a durable rolled-back receipt, and subsequent successful edits still run the
+handler. Existing exception/crash/timeout and generated-edit rollback tests
+continue to apply. This is trusted-code containment, with no sandbox, external
+effect rollback, memory quota or hard OS-I/O cancellation claim. Hosted platform
+execution remains pending the recorded billing exception.

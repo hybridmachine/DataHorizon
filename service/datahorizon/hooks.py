@@ -1,7 +1,9 @@
 """Explicitly activated trusted hooks, isolated for timeout/crash containment."""
 
 import multiprocessing
+import json
 import os
+import queue
 from contextlib import redirect_stderr, redirect_stdout
 import runpy
 import time
@@ -13,13 +15,30 @@ class HookFailure(Exception):
     pass
 
 
+MAX_BROKER_BYTES=1024*1024
+
+
+def _send(pipe, message):
+    payload=json.dumps(message,allow_nan=False,ensure_ascii=False).encode('utf-8')
+    if len(payload)>MAX_BROKER_BYTES:
+        raise HookFailure("Required Python handler broker message exceeds 1 MiB")
+    pipe.send_bytes(payload)
+
+
+def _receive(pipe):
+    message=json.loads(pipe.recv_bytes(MAX_BROKER_BYTES),
+                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Non-finite broker JSON")))
+    if not isinstance(message,dict): raise HookFailure("Invalid Python handler broker message")
+    return message
+
+
 def _worker(pipe, path, changes, operation):
     class LogTail:
         def __init__(self):
             self.text=""
 
         def write(self, text):
-            self.text=(self.text+text)[-8192:]
+            self.text=(self.text+text[-8192:])[-8192:]
             return len(text)
 
         def flush(self):
@@ -29,8 +48,8 @@ def _worker(pipe, path, changes, operation):
         operation_id = operation
 
         def request(self, method, **arguments):
-            pipe.send({"method": method, **arguments})
-            response = pipe.recv()
+            _send(pipe,{"method": method, **arguments})
+            response = _receive(pipe)
             if "error" in response:
                 raise RuntimeError(response["error"])
             return response.get("result")
@@ -56,47 +75,95 @@ def _worker(pipe, path, changes, operation):
         try:
             module = runpy.run_path(path)
             module["on_change"](Context(), changes)
-            pipe.send({"method": "done"})
+            _send(pipe,{"method": "done"})
         except BaseException:
-            pipe.send({"method": "failed", "error": traceback.format_exc(limit=8)+logs.text})
+            try:
+                _send(pipe,{"method": "failed", "error": traceback.format_exc(limit=8)+logs.text})
+            except (OSError,ValueError,HookFailure):
+                pass  # Parent timeout/closed channel still fails the operation.
         finally:
             watchdog.cancel()
             pipe.close()
 
 
 def invoke(path, changes, operation, dispatch, deadline):
-    context = multiprocessing.get_context("spawn")
-    parent, child = context.Pipe()
-    process = context.Process(target=_worker, args=(child, str(path), changes, operation), daemon=True)
-    process.start()
-    child.close()
+    # Charge startup to the same invocation budget, not a fresh post-spawn one.
     deadline = min(deadline, time.monotonic() + 2)
+    parent=child=process=pump=None
+    incoming,replies=queue.Queue(),queue.Queue()
+
+    def broker_io():
+        # Pipe frame reads and response writes can block after poll() says a
+        # frame is ready. Keep both off the transaction-owning thread so its
+        # deadline can still terminate/reap a stuck peer.
+        try:
+            while True:
+                message=_receive(parent)
+                method=message.get('method')
+                incoming.put(message)
+                if method in ('done','failed'): return
+                reply=replies.get()
+                if reply is None: return
+                _send(parent,reply)
+        except Exception as error:
+            incoming.put(error)
+
     try:
+        context = multiprocessing.get_context("spawn")
+        parent, child = context.Pipe()
+        process = context.Process(target=_worker, args=(child, str(path), changes, operation), daemon=True)
+        process.start()
+        child.close()
+        pump=threading.Thread(target=broker_io,name='DataHorizonHookBroker',daemon=True)
+        pump.start()
         while True:
             remaining = deadline - time.monotonic()
-            if remaining <= 0 or not parent.poll(max(0, remaining)):
+            if remaining <= 0:
                 raise HookFailure("Required Python handler timed out; operation rolled back")
             try:
-                message = parent.recv()
-            except EOFError as error:
-                raise HookFailure("Required Python handler exited without a result") from error
-            method = message.pop("method")
+                message=incoming.get(timeout=remaining)
+            except queue.Empty as error:
+                raise HookFailure("Required Python handler timed out; operation rolled back") from error
+            if time.monotonic()>=deadline:
+                raise HookFailure("Required Python handler timed out; operation rolled back")
+            if isinstance(message,Exception):
+                raise HookFailure("Required Python handler exited or broke its broker protocol: "+str(message)) from message
+            method = message.pop("method",None)
             if method == "done":
+                if message: raise HookFailure("Invalid Python handler completion message")
                 return
             if method == "failed":
+                if set(message)!={'error'} or not isinstance(message['error'],str):
+                    raise HookFailure("Invalid Python handler failure message")
                 raise HookFailure(message["error"])
+            if method not in ('get','value','set'):
+                raise HookFailure("Unknown Python handler broker method")
             try:
-                parent.send({"result": dispatch(method, message)})
+                replies.put({"result": dispatch(method, message)})
             except Exception as error:
                 # A broker validation error always fails the whole operation, even if
                 # workbook code attempts to catch it and continue.
                 raise HookFailure(str(error)) from error
+    except HookFailure:
+        raise
+    except Exception as error:
+        raise HookFailure("Required Python handler could not start or communicate: "+str(error)) from error
     finally:
-        parent.close()
-        process.join(timeout=0.1)
-        if process.is_alive():
-            process.terminate()
-            process.join(timeout=1)
-        if process.is_alive():
-            process.kill()
-            process.join()
+        replies.put(None)
+        try:
+            if child is not None: child.close()
+            if process is not None:
+                try:
+                    if process.pid is not None:
+                        process.join(timeout=0.1)
+                        if process.is_alive():
+                            process.terminate()
+                            process.join(timeout=1)
+                        if process.is_alive():
+                            process.kill()
+                            process.join()
+                finally:
+                    process.close()
+        finally:
+            if pump is not None and pump.ident is not None: pump.join(timeout=1)
+            if parent is not None: parent.close()
