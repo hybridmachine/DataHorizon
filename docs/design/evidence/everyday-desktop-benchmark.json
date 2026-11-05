@@ -1,0 +1,74 @@
+{
+    "architecture": "arm64",
+    "dataset": "10,000 numeric cells in column A; distant jumps include empty sparse regions",
+    "distant_jump_range_responses": 150,
+    "distant_jump_to_usable_viewport": {
+        "max_ms": 15.372208,
+        "median_ms": 14.892707999999999,
+        "p95_ms": 15.1615,
+        "samples": 100
+    },
+    "event_loop_gap": {
+        "max_ms": 21.204625,
+        "median_ms": 1.9313125,
+        "p95_ms": 8.351167,
+        "samples": 1210
+    },
+    "first_blank_usable_viewport_ms": 37.522292,
+    "frozen_row": {
+        "cache": {
+            "pending_tiles": 0,
+            "source_budget_bytes": 2097152,
+            "source_charge_bytes": 0,
+            "tile_budget_bytes": 14680064,
+            "tile_charge_bytes": 14680064,
+            "tiles": 16
+        },
+        "focused_address_retention_checked_all_samples": true,
+        "managed_edit_requests": 0,
+        "range_responses": 182,
+        "scope": "Read-only display probe; not installed or persisted",
+        "screenshot": "everyday-desktop-benchmark-frozen-row.png",
+        "scroll_to_usable_viewport": {
+            "max_ms": 20.088334,
+            "median_ms": 10.7601045,
+            "p95_ms": 12.936083,
+            "samples": 100
+        },
+        "synthetic_address_key_dispatch": {
+            "max_ms": 0.0685,
+            "median_ms": 0.0599795,
+            "p95_ms": 0.064667,
+            "samples": 100
+        }
+    },
+    "gui_peak_rss_bytes": 71499776,
+    "limitations": [
+        "One process launch; first viewport is not a cold OS-cache measurement.",
+        "Synthetic Qt input and synchronous Qt paints exclude physical input/compositor latency.",
+        "Offscreen runs do not qualify native interaction, accessibility, high DPI or another platform.",
+        "Focused address retention is only checked when widget focus is available; inspect its explicit flag in native runs.",
+        "RSS applies to this 10,000-cell GUI workload; frozen-row editing/focus/selection, persistence, hidden columns and multiple frozen edges remain unqualified."
+    ],
+    "os": "macOS Tahoe (26.6.2)",
+    "platform_plugin": "offscreen",
+    "qt": "6.12.0",
+    "recorded_at_utc": "2026-11-05T05:53:57Z",
+    "scroll_range_responses": 199,
+    "scroll_to_usable_viewport": {
+        "max_ms": 17.259208,
+        "median_ms": 15.8688125,
+        "p95_ms": 16.143833,
+        "samples": 100
+    },
+    "synthetic_address_key_dispatch": {
+        "max_ms": 0.573167,
+        "median_ms": 0.102167,
+        "p95_ms": 0.113333,
+        "samples": 200
+    },
+    "targets": {
+        "input_stall_ms": 50,
+        "viewport_p95_ms": 150
+    }
+}

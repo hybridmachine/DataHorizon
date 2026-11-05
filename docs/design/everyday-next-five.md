@@ -5,12 +5,12 @@ PRs #9–#13. Implement, locally verify, review and merge each increment before
 beginning the next. Hosted Actions remain billing-blocked; local verification
 and sequential merges are explicitly authorized. M1 qualification stays open.
 
-1. Text wrapping with native stored styles and bounded visible-row measurement;
+1. [Text wrapping, PR #14](https://github.com/hybridmachine/DataHorizon/pull/14), with native stored styles and bounded visible-row measurement;
    retain the expanded native keyboard/accessibility/cancellation checks.
-2. Cell borders with atomic styles, Undo/Redo and copy/paste preservation.
-3. Row/column sizing with bounded fit measurement and saved desktop view state.
-4. Hide/unhide rows and columns with visible recovery controls.
-5. Freeze the top row with synchronized geometry, selection and saved state.
+2. [Cell borders, PR #15](https://github.com/hybridmachine/DataHorizon/pull/15), with atomic styles, Undo/Redo and copy/paste preservation.
+3. [Row/column sizing, PR #16](https://github.com/hybridmachine/DataHorizon/pull/16), with bounded fit measurement and saved desktop view state.
+4. [Hide/unhide, PR #17](https://github.com/hybridmachine/DataHorizon/pull/17), with visible recovery controls.
+5. [Freeze top row, PR #18](https://github.com/hybridmachine/DataHorizon/pull/18), with synchronized geometry, selection and saved state.
 
 ## Text wrapping
 
@@ -71,3 +71,39 @@ extent, including TSV expansion, before submission. Structural edits and CSV imp
 rows/columns. Clear the local hiding preferences to perform those operations.
 Managed REST/CLI/SDK coordinates remain independent of local visibility.
 A recovered draft explicitly unhides its original row/column for review.
+
+## Freeze top row
+
+View → Freeze top row displays an editable one-row model above the body. Both
+views use the same bounded SheetModel cache and REST operations; the frozen view
+has no cell cache. The body hides its duplicate row 1 and column headers; the frozen view
+provides synchronized headers. A layout reserves real space for both views, so no
+body cells are obscured. Column widths, hidden columns and horizontal scrolling
+stay synchronized. Frozen header clicks select source columns; frozen horizontal
+cell selections map to the source rectangle. Plain Up/Down moves across the pane
+boundary. Editing, Enter advancement, Escape and draft capture use the existing
+managed operation/recovery path. Read-only workbooks remain read-only.
+
+Freeze and explicit frozen-row height persist in local sheet preferences.
+Freezing is suspended in projected lists or while source row 1 is hidden, and
+resumes when that condition clears. Only source row 1 is supported; multiple
+frozen edges and range dragging/Shift-selection across the pane boundary are
+outside this tier. Native workbook view metadata remains unchanged.
+
+[Cocoa scale 1](evidence/everyday-native-1.json) and
+[scale 2](evidence/everyday-native-2.json) include screenshots showing wrap,
+borders, width, hidden-column recovery and frozen-row alignment together. Model
+invariants and REST-backed Qt checks cover editing/cancellation, keyboard and
+header selection, distant scroll geometry, shared-cache bounds, list suspension,
+reopen/read-only behavior and saved frozen-row height. Hosted Windows/Linux
+execution remains pending the billing block; these are local macOS results.
+
+[Final local verification](evidence/everyday-verification.txt) passes 198 Python
+tests with the optional binding environment and 82 Qt checks, plus native
+acceptance and installed-app smoke. The [existing grid benchmark](evidence/everyday-desktop-benchmark.json)
+still meets its cache/input assertions; its read-only probe remains separate
+from the production freeze feature.
+
+The PR review also checks source-model destruction: the frozen forwarding model
+resets to an empty, non-editable model when its source is destroyed, including
+safe stale-index reads/writes during teardown.

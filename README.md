@@ -8,8 +8,9 @@ integrations share application behavior through a REST service.
 The repository now includes a Qt Widgets/C++ desktop, SQLite engine, authenticated
 localhost REST service, Python client and managed CLI. The local development
 preview supports spreadsheet editing, bounded views, formulas, range operations,
-Undo/Redo, list projections, search and CSV. The full implementation plan is
-still in progress; Excel/ODS, structural references, advanced programmability
+Undo/Redo, wrap/borders, local sizing/hide/frozen-row preferences, list projections,
+search and CSV. The full implementation plan is
+still in progress; Excel/ODS, unrestricted structural references, advanced programmability
 and cross-platform release qualification remain unfinished.
 
 ## Build and run

@@ -87,6 +87,7 @@ QVariant SheetModel::data(const QModelIndex &index, int role) const {
     auto item = cell(index);
     auto style = item.value("style").toObject();
     switch (role) {
+    case CellRole: item["row"]=sourceRow(index.row())+1; item["col"]=index.column()+1; return QVariant::fromValue(item);
     case Qt::DisplayRole: return loaded(index) ? item.value("display").toString() : QStringLiteral("…");
     case Qt::EditRole:
         if (!sourceReady(index)) { ensureSource(index); return {}; }

@@ -134,3 +134,8 @@ not native workbook metadata. Fit measures only loaded visible previews; see
 Hide/unhide is a local source-coordinate preference, with marked gaps and Show
 all controls. GUI range operations intersecting hidden sections are blocked;
 CSV import requires unhidden sections. Managed API coordinates are unchanged.
+
+Freeze top row supports one editable source row with shared cached values,
+synchronized columns and local persistence. It is suspended in projected lists
+or while row 1 is hidden. Multiple edges and cross-pane range selection remain
+unavailable.

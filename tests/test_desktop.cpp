@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "mainwindow.h"
 #include "frozen_row_probe.h"
+#include "frozentoprow.h"
 #include <QAbstractItemModelTester>
 #include <QApplication>
 #include <QAction>
@@ -151,6 +152,79 @@ private:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void frozenTopRowModelForwardsEditsAndTracksSourceResets() {
+        QStandardItemModel source(3,4); source.setData(source.index(0,0),"Header");
+        FrozenTopRowModel first(&source); QAbstractItemModelTester tester(&first,QAbstractItemModelTester::FailureReportingMode::QtTest);
+        QCOMPARE(first.rowCount(),1); QVERIFY(first.flags(first.index(0,0))&Qt::ItemIsEditable);
+        QVERIFY(first.setData(first.index(0,0),"Edited",Qt::EditRole)); QCOMPARE(source.data(source.index(0,0)).toString(),QString("Edited"));
+        source.insertRow(0); source.setData(source.index(0,0),"Inserted"); QCOMPARE(first.data(first.index(0,0)).toString(),QString("Inserted"));
+        source.removeRows(0,source.rowCount()); QCOMPARE(first.rowCount(),0);
+        auto *shortLived=new QStandardItemModel(1,4);
+        FrozenTopRowModel detached(shortLived); QAbstractItemModelTester detachedTester(&detached,QAbstractItemModelTester::FailureReportingMode::QtTest);
+        const auto stale=detached.index(0,0); delete shortLived;
+        QCOMPARE(detached.rowCount(),0); QCOMPARE(detached.columnCount(),0);
+        QVERIFY(!detached.data(stale).isValid()); QVERIFY(!detached.setData(stale,"ignored",Qt::EditRole));
+    }
+    void frozenTopRowEditsAlignsAndPersistsWithoutCoveringBody() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        options.viewStatePath=temp.filePath("views.ini"); const auto path=temp.filePath("frozen.dhwb");
+        {
+            MainWindow window(options); window.show();
+            QSignalSpy ready(&window,&MainWindow::serviceReady); QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+            QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,true);
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+            window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","=SUM(7,13.5)"},{"style",QJsonObject{{"border","box"}}}}}}});
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+            auto *grid=window.findChild<QTableView *>("grid"); auto *model=window.model();
+            QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(0,0)),5000);
+            auto *freeze=window.findChild<QAction *>("freezeTopRowAction"); freeze->trigger();
+            auto *top=window.findChild<QTableView *>("frozenTopRow"); QVERIFY(top->isVisible()); QVERIFY(grid->isRowHidden(0));
+            QVERIFY(top->viewport()->mapToGlobal(QPoint(0,top->rowHeight(0))).y()<=grid->viewport()->mapToGlobal(QPoint()).y());
+            grid->scrollTo(model->index(10000,7),QAbstractItemView::PositionAtTop);
+            QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(10000,7)),5000);
+            grid->setColumnWidth(7,188); QCOMPARE(top->columnWidth(7),188);
+            QCOMPARE(top->viewport()->mapToGlobal(top->visualRect(top->model()->index(0,7)).topLeft()).x(),
+                     grid->viewport()->mapToGlobal(grid->visualRect(model->index(10000,7)).topLeft()).x());
+            const int scroll=grid->verticalScrollBar()->value(); top->setCurrentIndex(top->model()->index(0,7));
+            QCOMPARE(grid->currentIndex(),model->index(0,7)); QCOMPARE(grid->verticalScrollBar()->value(),scroll);
+            top->setFocus(); QTest::keyClick(top,Qt::Key_Right,Qt::ShiftModifier);
+            QCOMPARE(grid->selectionModel()->selectedIndexes().size(),2);
+            top->setCurrentIndex(top->model()->index(0,7));
+            QSignalSpy edits(model,&SheetModel::editRequested);
+            top->edit(top->model()->index(0,7)); QPointer<QLineEdit> editor=top->findChild<QLineEdit *>(); QVERIFY(editor);
+            editor->setText("999"); QTest::keyClick(editor,Qt::Key_Escape); QTRY_VERIFY_WITH_TIMEOUT(editor.isNull(),3000); QVERIFY(edits.isEmpty());
+            top->edit(top->model()->index(0,7)); editor=top->findChild<QLineEdit *>(); QVERIFY(editor);
+            QCOMPARE(editor->accessibleName(),QString("Cell H1 input")); editor->setText("123"); QTest::keyClick(editor,Qt::Key_Return);
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000); QTRY_COMPARE_WITH_TIMEOUT(edits.count(),1,5000);
+            QTRY_COMPARE_WITH_TIMEOUT(top->model()->data(top->model()->index(0,7)).toString(),QString("123"),5000);
+            QTRY_COMPARE_WITH_TIMEOUT(grid->currentIndex(),model->index(1,7),5000);
+            QTest::keyClick(grid,Qt::Key_Up); QCOMPARE(grid->currentIndex(),model->index(0,7));
+            QTest::keyClick(top,Qt::Key_Down); QCOMPARE(grid->currentIndex(),model->index(1,7));
+            QTest::mouseClick(top->horizontalHeader()->viewport(),Qt::LeftButton,Qt::NoModifier,
+                QPoint(top->horizontalHeader()->sectionViewportPosition(7)+10,5));
+            QCOMPARE(grid->selectionModel()->selection().first().height(),model->rowCount());
+            top->setRowHeight(0,77); QCOMPARE(top->rowHeight(0),77);
+            grid->selectColumn(2); window.findChild<QAction *>("hideColumnsAction")->trigger(); QVERIFY(top->isColumnHidden(2));
+            window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",8},{"header",false}});
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000); QVERIFY(!top->isVisible());
+            window.findChild<QAction *>("clearListAction")->trigger();
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000); QVERIFY(top->isVisible());
+            QVERIFY(model->cacheMetrics()["tiles"].toInt()<=16);
+        }
+        {
+            MainWindow window(options); window.show();
+            QSignalSpy ready(&window,&MainWindow::serviceReady); QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+            QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,false,true);
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+            auto *top=window.findChild<QTableView *>("frozenTopRow"); auto *grid=window.findChild<QTableView *>("grid");
+            QVERIFY(top->isVisible()); QVERIFY(top->isColumnHidden(2));
+            QCOMPARE(top->rowHeight(0),77);
+            QVERIFY(!(top->model()->flags(top->model()->index(0,7))&Qt::ItemIsEditable));
+            QTRY_COMPARE_WITH_TIMEOUT(top->model()->data(top->model()->index(0,7)).toString(),QString("123"),5000);
+            window.findChild<QAction *>("freezeTopRowAction")->trigger(); QVERIFY(!top->isVisible()); QVERIFY(!grid->isRowHidden(0));
+            QCOMPARE(grid->rowHeight(0),77);
+        }
+    }
     void frozenRowProbeKeepsOneSourceRowAcrossChangesAndReset() {
         QStandardItemModel source(3,8);
         source.setData(source.index(0,0),"Header");
@@ -714,7 +788,11 @@ private slots:
             window.exportCsvTo(temp.filePath("blocked.csv"),{{"r1",2},{"c1",1}});
             QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("export rectangle"));
             QVERIFY(!QFile::exists(temp.filePath("blocked.csv")));
-            answerNextDialog(QMessageBox::Cancel); window.findChild<QAction *>("deleteRowsAction")->trigger();
+            QTimer cancelUnexpectedDialog; cancelUnexpectedDialog.setInterval(10);
+            connect(&cancelUnexpectedDialog,&QTimer::timeout,[]{
+                if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) if(auto *cancel=box->button(QMessageBox::Cancel)) cancel->click();
+            });
+            cancelUnexpectedDialog.start(); window.findChild<QAction *>("deleteRowsAction")->trigger(); cancelUnexpectedDialog.stop();
             QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("structural edits"));
             auto *address=window.findChild<QLineEdit *>("address"); address->setText("B2"); QTest::keyClick(address,Qt::Key_Return);
             QCOMPARE(grid->currentIndex(),window.model()->index(0,0));

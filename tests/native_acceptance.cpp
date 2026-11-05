@@ -14,6 +14,9 @@
 #include <QJsonDocument>
 #include <QLineEdit>
 #include <QInputDialog>
+#include <QHeaderView>
+#include <QScrollBar>
+#include <QPushButton>
 #include <QPointer>
 #include <QMimeData>
 #include <QScopeGuard>
@@ -143,6 +146,30 @@ int main(int argc,char **argv) {
         const QRect cell=grid->visualRect(grid->currentIndex());
         require(cell.width()>0 && cell.height()>0 && grid->viewport()->rect().intersects(cell),"Native cell geometry invalid");
         require(window.devicePixelRatioF()>=qEnvironmentVariable("QT_SCALE_FACTOR","1").toDouble(),"Requested scale factor was not applied");
+        window.submit({{"action","edit"},{"cells",QJsonArray{
+            QJsonObject{{"row",1},{"col",1},{"style",QJsonObject{{"border","box"}}}},
+            QJsonObject{{"row",2},{"col",1},{"source","Wrapped text stays below the frozen top row while the body scrolls."},{"kind","text"},
+                {"style",QJsonObject{{"wrap",true},{"border","box"}}}}}}});
+        waitFor([&]{return opened.count()==3;},"Native everyday styling failed");
+        window.findChild<QAction *>("freezeTopRowAction")->trigger();
+        auto *top=window.findChild<QTableView *>("frozenTopRow");
+        require(top && top->isVisible(),"Native top row did not freeze");
+        grid->setColumnWidth(0,180);
+        waitFor([&]{return top->model()->data(top->model()->index(0,0)).toString()=="20.5";},"Native frozen value mismatch");
+        require(top->columnWidth(0)==180,"Native frozen column size mismatch");
+        grid->selectColumn(1); window.findChild<QAction *>("hideColumnsAction")->trigger();
+        require(top->isColumnHidden(1) && grid->isColumnHidden(1),"Native frozen column hiding mismatch");
+        require(window.findChild<QPushButton *>("showHiddenButton")->isVisible(),"Native hidden-section recovery control missing");
+        auto *frozenAccessible=QAccessible::queryAccessibleInterface(top);
+        require(frozenAccessible && frozenAccessible->tableInterface() && frozenAccessible->tableInterface()->rowCount()==1,"Native frozen accessible table missing");
+        grid->setCurrentIndex(model->index(0,0));
+        require(top->viewport()->mapToGlobal(QPoint(0,top->rowHeight(0))).y()<=grid->viewport()->mapToGlobal(QPoint()).y(),"Native frozen row covers body cells");
+        grid->scrollTo(model->index(10000,0),QAbstractItemView::PositionAtTop);
+        waitFor([&]{return model->loaded(model->index(10000,0));},"Native frozen distant scroll failed");
+        require(top->model()->data(top->model()->index(0,0)).toString()=="20.5","Native frozen header scrolled away");
+        grid->scrollTo(model->index(1,0),QAbstractItemView::PositionAtTop);
+        waitFor([&]{return model->loaded(model->index(1,0)) && grid->rowHeight(1)>26;},"Native text wrapping did not fit");
+        require(model->cacheMetrics()["tiles"].toInt()<=16,"Native frozen view exceeded the shared cache");
         const QFileInfo reportFile(QString::fromLocal8Bit(argv[1]));
         const auto screenshot=reportFile.dir().filePath(reportFile.completeBaseName()+".png");
         require(window.grab().save(screenshot),"Native screenshot failed");
@@ -154,6 +181,8 @@ int main(int argc,char **argv) {
             {"acknowledged_enter_advances",true},
             {"keyboard_range_tab_and_editor_cancel",true},{"cell_editor_accessible_address",true},
             {"qt_modal_escape_without_mutation",true},{"narrow_window_usable_grid",true},
+            {"frozen_header_shared_cache_geometry",true},{"native_wrap_border_and_column_size",true},
+            {"native_hidden_gap_and_recovery_control",true},
             {"window_logical_width",window.width()},{"cell_logical_width",cell.width()},
             {"palette_base",grid->palette().color(QPalette::Base).name()},
             {"screenshot",QFileInfo(screenshot).fileName()},
