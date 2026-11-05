@@ -93,10 +93,10 @@ def measurements(samples,disk_rows,sparse_rows=100_000):
             with measured_service() as client:
                 book=client.open(path,readonly=True)
                 read_started=time.perf_counter()
-                cells=book.read(sheet='Disk',r1=disk_rows,r2=disk_rows,c1=1,c2=1)['cells']
+                cells=book.read(sheet='Disk',r1=max(1,disk_rows-31),r2=disk_rows,c1=1,c2=16)['cells']
                 first.append((time.perf_counter()-read_started)*1000)
                 cold.append((time.perf_counter()-started)*1000)
-                if len(cells)!=1 or cells[0]['value']!='x'*1024:
+                if len(cells)!=min(32,disk_rows) or any(c['value']!='x'*1024 for c in cells):
                     raise AssertionError('Fresh-process read changed stored data')
                 peaks.append(client.request('/benchmark/memory')['peak_rss_bytes'])
                 book.close()
@@ -116,6 +116,7 @@ def measurements(samples,disk_rows,sparse_rows=100_000):
         return {'dataset':{'sparse_cells':sparse_rows,'long_text_cells':disk_rows,'database_bytes':path.stat().st_size,
                            'larger_than_service_memory_target':path.stat().st_size>target},
                 'fresh_process_start_open_first_read':distribution(cold),'fresh_process_first_viewport_only':distribution(first),
+                'viewport_scope':[max(1,disk_rows-31),1,disk_rows,16],
                 'warm_viewport':distribution(warm),'service_peak_rss_bytes':max(peaks),
                 'driver_peak_rss_bytes':peak_rss(),'service_memory_target_bytes':target,
                 'measured_service_within_target':max(peaks)<target}
