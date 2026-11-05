@@ -5,6 +5,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QColorDialog>
+#include <QCryptographicHash>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -30,6 +31,8 @@
 #include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QScrollBar>
+#include <QScopedValueRollback>
+#include <QSettings>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QSpinBox>
@@ -159,6 +162,7 @@ MainWindow::MainWindow(const StartupOptions &options, QWidget *parent)
 }
 
 MainWindow::~MainWindow() {
+    saveViewState();
     m_shuttingDown = true;
     if (m_service.state() != QProcess::NotRunning) {
         m_service.terminate();
@@ -288,6 +292,11 @@ void MainWindow::buildUi() {
             submit(command);
     });
     sheetMenu->addSeparator();
+    add(sheetMenu,tr("Row height…"),{},[this]{resizeSections(false);})->setObjectName("rowHeightAction");
+    add(sheetMenu,tr("Column width…"),{},[this]{resizeSections(true);})->setObjectName("columnWidthAction");
+    add(sheetMenu,tr("Fit columns to visible text"),{},[this]{fitColumns();})->setObjectName("fitColumnsAction");
+    add(sheetMenu,tr("Reset row and column sizes"),{},[this]{resetDimensions();})->setObjectName("resetDimensionsAction");
+    sheetMenu->addSeparator();
     add(sheetMenu, tr("Insert selected rows…"), {}, [this] { changeStructure(false,false); })->setObjectName("insertRowsAction");
     add(sheetMenu, tr("Delete selected rows…"), {}, [this] { changeStructure(false,true); })->setObjectName("deleteRowsAction");
     add(sheetMenu, tr("Insert selected columns…"), {}, [this] { changeStructure(true,false); })->setObjectName("insertColumnsAction");
@@ -316,9 +325,34 @@ void MainWindow::buildUi() {
     m_grid->horizontalHeader()->setMinimumSectionSize(30);
     m_grid->setAlternatingRowColors(false);
     connect(m_model,&QAbstractItemModel::modelAboutToBeReset,this,[this]{
+        QScopedValueRollback<bool> applying(m_applyingView,true);
         for(int row:m_wrappedRows) m_grid->setRowHeight(row,26);
         m_wrappedRows.clear();
+        for(int row:m_sizedRows) m_grid->setRowHeight(row,26);
+        for(int col:m_sizedColumns) m_grid->setColumnWidth(col,110);
+        m_sizedRows.clear(); m_sizedColumns.clear();
     });
+    auto *viewSaveTimer=new QTimer(this); viewSaveTimer->setSingleShot(true); viewSaveTimer->setInterval(250);
+    connect(viewSaveTimer,&QTimer::timeout,this,&MainWindow::saveViewState);
+    auto recordSize=[this,viewSaveTimer](bool columns,int section,int size){
+        if(m_applyingView || m_viewKey.isEmpty()) return;
+        auto &sizes=columns?m_columnSizes:m_rowSizes;
+        const int source=columns?section:m_model->sourceRow(section);
+        if(source<0) return;
+        if(!sizes.contains(source) && sizes.size()>=1024) {
+            QScopedValueRollback<bool> applying(m_applyingView,true);
+            if(columns) m_grid->setColumnWidth(section,110); else m_grid->setRowHeight(section,26);
+            issue("Only 1,024 custom sizes per axis are supported. Reset sizes before adding more."); return;
+        }
+        size=qBound(columns?30:18,size,columns?2000:1000);
+        sizes[source]=size;
+        if(columns) m_sizedColumns.insert(section); else { m_sizedRows.insert(section); m_wrappedRows.remove(section); }
+        QScopedValueRollback<bool> applying(m_applyingView,true);
+        if(columns) m_grid->setColumnWidth(section,size); else m_grid->setRowHeight(section,size);
+        viewSaveTimer->start();
+    };
+    connect(m_grid->horizontalHeader(),&QHeaderView::sectionResized,this,[recordSize](int section,int,int size){recordSize(true,section,size);});
+    connect(m_grid->verticalHeader(),&QHeaderView::sectionResized,this,[recordSize](int section,int,int size){recordSize(false,section,size);});
     auto *wrapTimer=new QTimer(this); wrapTimer->setSingleShot(true); wrapTimer->setInterval(0);
     connect(wrapTimer,&QTimer::timeout,this,&MainWindow::fitVisibleWrappedRows);
     connect(m_model,&SheetModel::tileLoaded,wrapTimer,qOverload<>(&QTimer::start));
@@ -369,6 +403,7 @@ void MainWindow::buildUi() {
 }
 
 void MainWindow::fitVisibleWrappedRows() {
+    QScopedValueRollback<bool> applying(m_applyingView,true);
     // Only inspect loaded visible cells; never resize a million-row model to
     // contents or fetch full sources to measure presentation.
     const int firstRow=qMax(0,m_grid->rowAt(0)), firstCol=qMax(0,m_grid->columnAt(0));
@@ -380,6 +415,7 @@ void MainWindow::fitVisibleWrappedRows() {
     }
     for(int row=firstRow;row<=lastRow;++row) {
         if(m_grid->rowViewportPosition(row)>m_grid->viewport()->height()) break;
+        if(m_rowSizes.contains(m_model->sourceRow(row))) continue;
         int height=26; bool loaded=false;
         for(int col=firstCol;col<=lastCol;++col) {
             if(m_grid->columnViewportPosition(col)>m_grid->viewport()->width()) break;
@@ -397,6 +433,119 @@ void MainWindow::fitVisibleWrappedRows() {
             if(height>26) m_wrappedRows.insert(row); else m_wrappedRows.remove(row);
         }
     }
+}
+
+QString MainWindow::viewSettingsPath() const {
+    if(!m_options.viewStatePath.isEmpty()) return m_options.viewStatePath;
+    return qEnvironmentVariable("DATAHORIZON_VIEW_STATE",QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)+"/views.ini");
+}
+
+void MainWindow::saveViewState() {
+    if(m_viewKey.isEmpty()) return;
+    auto encode=[](const QMap<int,int> &sizes){
+        QJsonObject result; for(auto it=sizes.begin();it!=sizes.end();++it) result[QString::number(it.key())]=it.value(); return result;
+    };
+    QSettings settings(viewSettingsPath(),QSettings::IniFormat);
+    settings.setValue(m_viewKey,QJsonDocument(QJsonObject{{"rows",encode(m_rowSizes)},{"columns",encode(m_columnSizes)}}).toJson(QJsonDocument::Compact));
+    settings.sync();
+    if(settings.status()!=QSettings::NoError && !m_shuttingDown) issue("Could not save desktop view preferences. Workbook data remains stored.");
+}
+
+void MainWindow::restoreViewState() {
+    QScopedValueRollback<bool> applying(m_applyingView,true);
+    const auto identity=m_info["path"].toString()+"/"+m_info["workbook_id"].toString()+"/"+m_model->sheet();
+    const auto key="views/v1/"+QString::fromLatin1(QCryptographicHash::hash(identity.toUtf8(),QCryptographicHash::Sha256).toHex());
+    if(key!=m_viewKey) {
+        saveViewState(); m_viewKey=key; m_rowSizes.clear(); m_columnSizes.clear();
+        QSettings settings(viewSettingsPath(),QSettings::IniFormat);
+        const auto bytes=settings.value(key).toByteArray();
+        const auto state=bytes.size()<=256*1024?QJsonDocument::fromJson(bytes).object():QJsonObject{};
+        auto decode=[](const QJsonObject &values,int maximum,int lower,int upper){
+            QMap<int,int> result;
+            if(values.size()>1024) return result;
+            for(auto it=values.begin();it!=values.end();++it) {
+                bool ok=false; const int section=it.key().toInt(&ok), size=it.value().toInt(-1);
+                if(ok && section>=0 && section<maximum && it.value().isDouble() && it.value().toDouble()==size && size>=lower && size<=upper)
+                    result[section]=size;
+            }
+            return result;
+        };
+        m_rowSizes=decode(state["rows"].toObject(),1048576,18,1000);
+        m_columnSizes=decode(state["columns"].toObject(),16384,30,2000);
+    }
+    for(auto it=m_rowSizes.begin();it!=m_rowSizes.end();++it) {
+        const int row=m_model->viewRow(it.key());
+        if(row>=0 && row<m_model->rowCount()) { m_grid->setRowHeight(row,it.value()); m_sizedRows.insert(row); }
+    }
+    for(auto it=m_columnSizes.begin();it!=m_columnSizes.end();++it) {
+        m_grid->setColumnWidth(it.key(),it.value()); m_sizedColumns.insert(it.key());
+    }
+}
+
+QPair<int,int> MainWindow::selectedSections(bool columns) {
+    if(m_busy || m_unknown || m_info.isEmpty()) return {-1,-1};
+    const auto ranges=m_grid->selectionModel()->selection();
+    if(ranges.isEmpty()) return {-1,-1};
+    const int first=columns?ranges.first().left():ranges.first().top();
+    const int last=columns?ranges.last().right():ranges.last().bottom();
+    if(last-first>=1024) { issue("Select at most 1,024 rows or columns for this view operation."); return {-1,-1}; }
+    return {first,last};
+}
+
+void MainWindow::resizeSections(bool columns) {
+    const auto sections=selectedSections(columns); if(sections.first<0) return;
+    auto sizes=columns?m_columnSizes:m_rowSizes; QList<int> sources;
+    for(int section=sections.first;section<=sections.second;++section) {
+        const int source=columns?section:m_model->sourceRow(section); sources.append(source); sizes[source]=1;
+    }
+    if(sizes.size()>1024) { issue("This selection exceeds the 1,024 custom sizes per axis. Reset sizes first."); return; }
+    // Capture the source identity across the modal event loop.
+    const auto key=m_viewKey; const auto state=m_info["state"];
+    bool ok=false;
+    const int size=QInputDialog::getInt(this,columns?tr("Column width"):tr("Row height"),
+        tr("Logical pixels (saved on this computer)"),columns?m_grid->columnWidth(sections.first):m_grid->rowHeight(sections.first),
+        columns?30:18,columns?2000:1000,1,&ok);
+    if(!ok) return;
+    if(key!=m_viewKey || state!=m_info["state"] || m_busy || m_unknown) { issue("View changed while the size dialog was open. Select the rows or columns again."); return; }
+    for(int section=sections.first;section<=sections.second;++section)
+        if(!columns && m_model->sourceRow(section)!=sources[section-sections.first]) { issue("List order changed. Select the rows again."); return; }
+    for(int section=sections.first;section<=sections.second;++section) {
+        if(columns) m_grid->setColumnWidth(section,size); else m_grid->setRowHeight(section,size);
+    }
+    saveViewState();
+}
+
+void MainWindow::fitColumns() {
+    const auto sections=selectedSections(true); if(sections.first<0) return;
+    if(sections.second-sections.first>=16) { issue("Fit at most 16 columns using loaded visible text."); return; }
+    const int first=qMax(0,m_grid->rowAt(0));
+    QMap<int,int> widths;
+    for(int col=sections.first;col<=sections.second;++col) {
+        int width=m_grid->fontMetrics().horizontalAdvance(SheetModel::columnName(col+1))+16;
+        bool loaded=false;
+        for(int row=first;row<qMin(first+64,m_model->rowCount());++row) {
+            if(m_grid->rowViewportPosition(row)>m_grid->viewport()->height()) break;
+            const auto index=m_model->index(row,col); if(!m_model->loaded(index)) continue;
+            loaded=true;
+            const QFontMetrics metrics(qvariant_cast<QFont>(m_model->data(index,Qt::FontRole)));
+            for(const auto &line:m_model->data(index).toString().split('\n')) width=qMax(width,metrics.horizontalAdvance(line)+16);
+        }
+        if(!loaded) { issue("Load the selected columns before fitting. Fit samples only visible preview text."); return; }
+        widths[col]=qBound(30,width,1000);
+    }
+    auto sizes=m_columnSizes; for(auto it=widths.begin();it!=widths.end();++it) sizes[it.key()]=it.value();
+    if(sizes.size()>1024) { issue("Fit exceeds the 1,024 custom widths. Reset sizes first."); return; }
+    for(auto it=widths.begin();it!=widths.end();++it) m_grid->setColumnWidth(it.key(),it.value());
+    saveViewState();
+}
+
+void MainWindow::resetDimensions() {
+    if(m_busy || m_unknown || m_info.isEmpty()) return;
+    QScopedValueRollback<bool> applying(m_applyingView,true);
+    for(int row:m_sizedRows) m_grid->setRowHeight(row,26);
+    for(int col:m_sizedColumns) m_grid->setColumnWidth(col,110);
+    m_rowSizes.clear(); m_columnSizes.clear(); m_sizedRows.clear(); m_sizedColumns.clear();
+    saveViewState(); fitVisibleWrappedRows();
 }
 
 void MainWindow::startService() {
@@ -478,6 +627,7 @@ void MainWindow::openBook(const QString &path, bool create, bool readonly) {
 }
 
 void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet) {
+    QScopedValueRollback<bool> applying(m_applyingView,true);
     const auto oldSheet = m_restoreDraft ? m_recoveredDraft["sheet"].toString() : selectSheet.isEmpty() ? m_model->sheet() : selectSheet;
     if (m_restoreDraft) m_listSpec={};
     const auto previous = m_grid->currentIndex();
@@ -495,6 +645,7 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     m_tabs->setCurrentIndex(current); m_tabs->blockSignals(false);
     if (!oldSheet.isEmpty() && m_tabs->tabData(current).toString()!=oldSheet) m_listSpec={};
     m_model->bind(info["id"].toString(), m_tabs->tabData(current).toString(), info["state"].toString(), info["readonly"].toBool());
+    restoreViewState();
     m_grid->setCurrentIndex(m_model->index(previousRow,previousColumn));
     m_undo->setText(info["undo"].isString() ? "Undo " + info["undo"].toString() : "Undo");
     m_redo->setText(info["redo"].isString() ? "Redo " + info["redo"].toString() : "Redo");
@@ -797,6 +948,7 @@ void MainWindow::changeSheet(int index) {
     }
     m_listSpec = {};
     m_model->bind(m_info["id"].toString(), m_tabs->tabData(index).toString(), m_info["state"].toString(), m_info["readonly"].toBool());
+    restoreViewState();
     m_grid->setCurrentIndex(m_model->index(0, 0)); syncSource();
 }
 
@@ -1128,6 +1280,7 @@ void MainWindow::applyList() {
         }
         QList<int> rows; for (const auto &row : result["rows"].toArray()) rows.append(row.toInt()-1);
         m_model->setProjection(rows);
+        restoreViewState();
         if (!rows.isEmpty()) m_grid->setCurrentIndex(m_model->index(qMax(0,m_model->viewRow(selectedRow)),selectedColumn));
         setBusy(false, tr("List view • %1 / %2 records • Edits target original source rows • Clear list view to restore sheet")
             .arg(result["matching"].toInt()).arg(result["total"].toInt()));

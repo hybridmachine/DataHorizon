@@ -5,6 +5,7 @@
 #include "sheetmodel.h"
 #include <QMainWindow>
 #include <QProcess>
+#include <QMap>
 
 class QTableView;
 class QLineEdit;
@@ -13,7 +14,7 @@ class QLabel;
 class QPlainTextEdit;
 class QToolBar;
 
-struct StartupOptions { QString url, token, handler, recoveryDirectory, initialWorkbook; bool automaticWorkbook = true; };
+struct StartupOptions { QString url, token, handler, recoveryDirectory, initialWorkbook, viewStatePath; bool automaticWorkbook = true; };
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -59,6 +60,13 @@ private:
     void reportReferenceWarnings(const QJsonObject &receipt);
     void syncSource();
     void fitVisibleWrappedRows();
+    void resizeSections(bool columns);
+    void fitColumns();
+    void resetDimensions();
+    QPair<int,int> selectedSections(bool columns);
+    QString viewSettingsPath() const;
+    void saveViewState();
+    void restoreViewState();
     bool resolveDraft();
     void submitDraft(bool advance = false, int direction = 1);
     QJsonObject enterDestination(const QModelIndex &index, int direction) const;
@@ -101,4 +109,8 @@ private:
     bool m_releasing = false, m_released = false;
     bool m_shuttingDown = false;
     QSet<int> m_wrappedRows;
+    QMap<int,int> m_rowSizes, m_columnSizes;
+    QSet<int> m_sizedRows, m_sizedColumns;
+    QString m_viewKey;
+    bool m_applyingView = false;
 };

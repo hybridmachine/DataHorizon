@@ -47,6 +47,7 @@ int main(int argc, char **argv) {
         require(argc==2,"Usage: desktop_benchmark output.json");
         QTemporaryDir temp; require(temp.isValid(),"Cannot create benchmark directory");
         StartupOptions options; options.automaticWorkbook=false;
+        options.viewStatePath=temp.filePath("views.ini");
         MainWindow window(options);
         QSignalSpy service(&window,&MainWindow::serviceReady), opened(&window,&MainWindow::workbookReady);
         window.show(); waitFor([&]{return service.count()==1;},"Service startup timed out");

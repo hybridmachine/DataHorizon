@@ -101,7 +101,8 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 The user prioritized [five everyday spreadsheet increments](everyday-next-five.md)
 after PR #13. Text wrapping and all-cell borders now use native managed styles, with bounded loaded
-viewport measurement. Native scale 1/2 keyboard, editor accessibility and modal
+viewport measurement. Row/column dimensions now have local per-workbook/sheet preferences, source-row
+projection mapping, bounded visible-text fit and reset controls. Native scale 1/2 keyboard, editor accessibility and modal
 cancellation checks also pass locally; hosted platforms remain pending.
 
 The [five qualification increments](qualification-next-five.md) now implement
