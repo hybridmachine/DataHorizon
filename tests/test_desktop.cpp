@@ -23,6 +23,7 @@
 #include <QPushButton>
 #include <QAbstractItemDelegate>
 #include <QClipboard>
+#include <QComboBox>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileDialog>
@@ -1062,7 +1063,7 @@ private slots:
                 encoding->setCurrentIndex(encoding->findData("cp1252")); delimiter->setCurrentIndex(delimiter->findData(";"));
                 selectedOptions=true; dialog->accept();
             } else if(auto *box=qobject_cast<QMessageBox *>(modal)) {
-                reviewed=box->text().contains("cp1252") && box->text().contains(QString::fromUtf8("café"));
+                reviewed=box->textFormat()==Qt::PlainText && box->text().contains("cp1252") && box->text().contains(QString::fromUtf8("café"));
                 box->button(QMessageBox::Yes)->click();
             }
         });
@@ -1073,8 +1074,9 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString::fromUtf8("café"),5000);
         QCOMPARE(window.model()->data(window.model()->index(0,0)).toString(),QString("00123"));
         QCOMPARE(window.model()->data(window.model()->index(0,2)).toString(),QString("=1+1"));
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
         window.importCsvBytes(QByteArray::fromHex("ff"));
-        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("INVALID_CSV_ENCODING"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("invalid for utf-8"),5000);
         QCOMPARE(changed.count(),1);
     }
     void csvPreviewCapturesItsTargetAndRejectsInvalidatedProjection() {

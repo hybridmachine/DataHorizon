@@ -1367,7 +1367,12 @@ void MainWindow::previewCsv(QJsonObject request, QJsonObject target) {
             lines.append(values.join(" | "));
         }
         QStringList report; for(const auto &line:preview["report"].toArray()) report.append(line.toString());
-        auto choice = QMessageBox::question(this, tr("Review CSV import"), tr("%1 cells. %2\nPreview (first 8 rows/columns, 120 characters per field):\n%3\n\nApply as one managed operation at %4?").arg(preview["cells"].toInt()).arg(report.join('\n')).arg(lines.join('\n')).arg(targetName),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel);
+        QMessageBox review(QMessageBox::Question,tr("Review CSV import"),
+            tr("%1 cells. %2\nPreview (first 8 rows/columns, 120 characters per field):\n%3\n\nApply as one managed operation at %4?")
+                .arg(preview["cells"].toInt()).arg(report.join('\n')).arg(lines.join('\n')).arg(targetName),
+            QMessageBox::Yes|QMessageBox::Cancel,this);
+        review.setTextFormat(Qt::PlainText); review.setDefaultButton(QMessageBox::Cancel);
+        const auto choice=review.exec();
         if (!validTarget()) { setBusy(false); issue("CSV import target changed; import cancelled."); return; }
         setBusy(false);
         if (choice != QMessageBox::Yes) return;

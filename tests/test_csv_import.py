@@ -14,6 +14,8 @@ class CsvImportTests(unittest.TestCase):
         return {"csv_base64":base64.b64encode(data).decode("ascii"),"encoding":encoding,"delimiter":delimiter}
 
     def test_encoding_dialects_bom_and_quotes_preserve_exact_text(self):
+        big_endian=preview_csv(self.byte_request(b"\xfe\xff"+'café;00123'.encode("utf-16-be"),"utf-16",";"))
+        self.assertEqual(big_endian["rows"],[["café","00123"]])
         for encoding in ("utf-8-sig","utf-8","utf-16","cp1252","latin-1"):
             for delimiter in (",",";","\t","|"):
                 with self.subTest(encoding=encoding,delimiter=delimiter):

@@ -300,8 +300,9 @@ names apply; screen-reader and narrow-window qualification remains M7 work.
 ## Compatibility
 
 Native format v1 preserves supported inputs, formula sources, styles and sheets.
-The first exchange tier is UTF-8 CSV values, one explicit rectangle, with text
-as the default import type. Formula-looking imported text stays literal. Excel
+CSV values export is UTF-8 over one explicit rectangle. Import offers the strict
+encoding/delimiter controls in [the CSV contract](editing-csv-next-five.md#csv-encoding-and-delimiters),
+with Text as the default import type. Formula-looking imported text stays literal. Excel
 and ODS are unavailable until independent import/export fixtures and conversion
 reports pass; no misleading extension-based export is allowed. Initial styles
 are text/general/fixed two decimals, bold, italic, alignment, background and boolean text wrapping.

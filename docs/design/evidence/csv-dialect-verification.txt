@@ -1,0 +1,10 @@
+Complete local suites, run separately with loopback access:
+QT_QPA_PLATFORM=offscreen DATAHORIZON_VIEW_STATE=build/test-views.ini build/desktop_tests
+PYTHONPATH=service python3 -m unittest discover -s tests -v
+
+Totals: 86 passed, 0 failed, 0 skipped, 0 blacklisted, 41437ms
+Ran 221 tests in 22.252s
+OK (skipped=15)
+Targeted file/options/preview/error GUI fixture also passed.
+One CTest attempt was interrupted after taking longer than usual; the full direct GUI rerun passed in 41 seconds without reproducing the delay.
+Hosted CI billing-blocked; local verification and merge authorized.
