@@ -582,8 +582,7 @@ class EngineTests(unittest.TestCase):
                 with closing(sqlite3.connect(self.path)) as direct,direct:
                     direct.execute("UPDATE cells SET kind='auto' WHERE sheet_id=?",(self.book.sheet("Sheet1"),))
             self.assertEqual(self.cells()[(1,1)]["value"],9)
-            for action,name,code in (("sheet_delete",None,"REFERENCED_SHEET"),
-                                     ("sheet_duplicate","Copy","REFERENCE_TRANSFORM_UNAVAILABLE")):
+            for action,name,code in (("sheet_delete",None,"REFERENCED_SHEET"),):
                 with self.subTest(input_kind=input_kind,action=action):
                     with self.assertRaises(EngineError) as failure:
                         self.apply(action,sheet="Other",name=name)

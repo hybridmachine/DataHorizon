@@ -989,6 +989,30 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->cell(window.model()->index(0,0))["source"].toString(),QString("='O''Brien'!A2"),5000);
         QCOMPARE(window.model()->data(window.model()->index(0,0)).toString(),QString("7"));
     }
+    void sheetDuplicateDialogCopiesSelfReferencesWithoutChangingSource() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("duplicate.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        const auto original=window.model()->sheet();
+        window.submit({{"action","edit"},{"cells",QJsonArray{
+            QJsonObject{{"row",1},{"col",1},{"source","=Sheet1!A2"}},
+            QJsonObject{{"row",2},{"col",1},{"source","9"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QTimer answer; answer.setInterval(10);
+        connect(&answer,&QTimer::timeout,&window,[&]{
+            if(auto *dialog=qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+                dialog->setTextValue("Copy"); dialog->accept();
+            }
+        });
+        answer.start(); window.findChild<QAction *>("duplicateSheetAction")->trigger(); answer.stop();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        auto *tabs=window.findChild<QTabBar *>(); QCOMPARE(tabs->count(),2); tabs->setCurrentIndex(1);
+        QVERIFY(window.model()->sheet()!=original);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->cell(window.model()->index(0,0))["source"].toString(),QString("='Copy'!A2"),5000);
+        QCOMPARE(window.model()->data(window.model()->index(0,0)).toString(),QString("9"));
+    }
     void csvPreviewCapturesItsTargetAndRejectsInvalidatedProjection() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show();

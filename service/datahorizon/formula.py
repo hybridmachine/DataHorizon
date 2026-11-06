@@ -115,8 +115,8 @@ def translate(source, rows, cols):
     return "".join(out)
 
 
-def rename_sheet_references(source, old_name, new_name, *, target_id=None):
-    """Rewrite qualified name references, leaving stable UUID references intact."""
+def rename_sheet_references(source, old_name, new_name, *, target_id=None, new_id=None):
+    """Retarget qualified names; copies can also retarget explicit self UUIDs."""
     parser = Parser(source[1:], track_spans=True)
     pending = [parser.parse()]
     fold = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
@@ -131,10 +131,16 @@ def rename_sheet_references(source, old_name, new_name, *, target_id=None):
             pending.append(node[2])
         elif node[0] == "ref":
             name, _, _ = split_ref(node[1])
-            if name is not None and name != target_id and name.translate(fold) == old_name.translate(fold):
+            replacement_name = None
+            if name is not None:
+                if name == target_id:
+                    replacement_name = new_id  # Rename preserves identity; copy creates one.
+                elif name.translate(fold) == old_name.translate(fold):
+                    replacement_name = new_name
+            if replacement_name is not None:
                 _, cell = node[1].rsplit("!", 1)
                 begin, end = parser.spans[id(node)]
-                edits.append((begin+1, end+1, "'"+new_name.replace("'", "''")+"'!"+cell))
+                edits.append((begin+1, end+1, "'"+replacement_name.replace("'", "''")+"'!"+cell))
     out, pos = [], 0
     for begin, end, replacement in sorted(edits):
         out.extend((source[pos:begin], replacement))

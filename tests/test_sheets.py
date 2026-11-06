@@ -105,3 +105,67 @@ class SheetTests(unittest.TestCase):
             book.apply("sheet_rename",sheet=target,name="Renamed")
             self.assertEqual(book.info["sheets"][0]["id"],target)
             self.assertEqual(book.read("Renamed")["cells"][0]["value"],7)
+
+    def test_duplicate_retargets_local_name_and_uuid_self_references_only_in_copy(self):
+        target=self.book.sheet("Sheet1")
+        self.apply("sheet_add",name="Other")
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"3"}])
+        source=f'= A2 + SUM(sHeEt1!$A$2:A3) + \'{target}\'!A2 + Other!A1'
+        self.apply(cells=[{"row":1,"col":1,"source":source,"style":{"wrap":True}},
+                          {"row":2,"col":1,"source":"7"},
+                          {"row":3,"col":2,"source":"=Sheet1!A2","kind":"text"}])
+        before=self.book.db.execute("SELECT row,col,source,kind,style FROM cells WHERE sheet_id=?",(target,)).fetchall()
+        result=self.apply("sheet_duplicate",name="O'Brien")
+        copied=self.book.sheet("O'Brien")
+        self.assertNotEqual(copied,target)
+        self.assertEqual(result["changed_cells"],3)
+        self.assertEqual(self.book.db.execute("SELECT row,col,source,kind,style FROM cells WHERE sheet_id=?",(target,)).fetchall(),before)
+        first=self.book.read("O'Brien",{})["cells"][0]
+        self.assertEqual(first["source"],source.replace("sHeEt1!","'O''Brien'!").replace(target,copied))
+        self.assertEqual(first["value"],24)
+        self.assertEqual(first["style"],{"wrap":True})
+        self.apply(sheet="O'Brien",cells=[{"row":2,"col":1,"source":"11"}])
+        self.assertEqual(self.book.read("O'Brien",{})["cells"][0]["value"],36)
+        self.assertEqual(self.book.read("Sheet1",{})["cells"][0]["value"],24)
+        self.assertEqual(self.book.read("O'Brien",{"r1":3,"r2":3,"c1":2,"c2":2})["cells"][0]["source"],"=Sheet1!A2")
+        self.book.close(); self.book=Workbook(self.path)
+        self.assertEqual(self.book.read("O'Brien",{})["cells"][0]["value"],36)
+
+    def test_duplicate_ignores_unsupported_formulas_on_other_sheets(self):
+        self.apply("sheet_add",name="Other")
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"=Sheet1!A1&\"x\""}])
+        self.apply(cells=[{"row":1,"col":1,"source":"7"}])
+        self.apply("sheet_duplicate",name="Copy")
+        self.assertEqual(self.book.read("Copy",{})["cells"][0]["value"],7)
+
+    def test_duplicate_limits_hooks_unsupported_syntax_and_failure_roll_back_catalog(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2"},
+                          {"row":2,"col":1,"source":"7"}])
+        with patch("datahorizon.engine.MAX_CELLS",1):
+            self.assertRollback("sheet_duplicate","LIMIT",name="Copy")
+        self.assertRollback("sheet_duplicate","OPERATION_FAILED",name="Sheet1")
+        original=self.book.put
+        def fail(*args):
+            original(*args)
+            raise EngineError("INJECTED","copy failed")
+        with patch.object(self.book,"put",side_effect=fail):
+            self.assertRollback("sheet_duplicate","INJECTED",name="Copy")
+        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2"+" "*65520}])
+        self.assertRollback("sheet_duplicate","INVALID_INPUT",name="a"*31)
+        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2&\"x\""}])
+        self.assertRollback("sheet_duplicate","REFERENCE_TRANSFORM_UNAVAILABLE",name="Copy")
+        self.book.handler="required.py"
+        self.assertRollback("sheet_duplicate","UNSUPPORTED_HOOK_SCOPE",name="Copy")
+
+    def test_duplicate_rest_replay_retains_the_single_new_identity(self):
+        with LocalService() as client, client.open(Path(self.temp.name)/"copy-rest.dhwb",create=True) as book:
+            book.set(1,1,"=Sheet1!A2"); book.set(2,1,"7")
+            old_state=book.state
+            receipt=book.apply("sheet_duplicate",sheet="Sheet1",name="Copy",operation_id="copy-once")
+            book.refresh()
+            copied=book.info["sheets"][1]["id"]
+            self.assertEqual(client.request(book.base+"/operations",{
+                "action":"sheet_duplicate","sheet":"Sheet1","name":"Copy",
+                "operation_id":"copy-once","expected_state":old_state}),receipt)
+            self.assertEqual(book.read("Copy")["cells"][0]["value"],7)
+            self.assertEqual(book.info["sheets"][1]["id"],copied)

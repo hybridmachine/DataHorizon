@@ -279,9 +279,9 @@ void MainWindow::buildUi() {
     add(sheetMenu, tr("Duplicate sheet…"), {}, [this] {
         if (m_busy) return;
         auto command=targetContext({{"action","sheet_duplicate"}});
-        bool ok; auto name = QInputDialog::getText(this,tr("Duplicate sheet"),tr("New name"),QLineEdit::Normal,m_tabs->tabText(m_tabs->currentIndex())+" copy",&ok);
+        bool ok; auto name = QInputDialog::getText(this,tr("Duplicate sheet"),tr("New name (copies self-references and clears Undo history)"),QLineEdit::Normal,m_tabs->tabText(m_tabs->currentIndex())+" copy",&ok);
         if (ok) { command["name"]=name; submit(command); }
-    });
+    })->setObjectName("duplicateSheetAction");
     add(sheetMenu, tr("Move sheet left"), {}, [this] {
         int index=m_tabs->currentIndex(); if(m_busy || index<=0) return;
         QStringList ids; for(int i=0;i<m_tabs->count();++i) ids.append(m_tabs->tabData(i).toString()); ids.swapItemsAt(index,index-1);
