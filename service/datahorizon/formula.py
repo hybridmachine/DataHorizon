@@ -115,6 +115,34 @@ def translate(source, rows, cols):
     return "".join(out)
 
 
+def rename_sheet_references(source, old_name, new_name, *, target_id=None):
+    """Rewrite qualified name references, leaving stable UUID references intact."""
+    parser = Parser(source[1:], track_spans=True)
+    pending = [parser.parse()]
+    fold = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+    edits = []
+    while pending:
+        node = pending.pop()
+        if node[0] == "call":
+            pending.extend(node[2])
+        elif node[0] in ("binary", "range"):
+            pending.extend(node[2:])
+        elif node[0] == "unary":
+            pending.append(node[2])
+        elif node[0] == "ref":
+            name, _, _ = split_ref(node[1])
+            if name is not None and name != target_id and name.translate(fold) == old_name.translate(fold):
+                _, cell = node[1].rsplit("!", 1)
+                begin, end = parser.spans[id(node)]
+                edits.append((begin+1, end+1, "'"+new_name.replace("'", "''")+"'!"+cell))
+    out, pos = [], 0
+    for begin, end, replacement in sorted(edits):
+        out.extend((source[pos:begin], replacement))
+        pos = end
+    out.append(source[pos:])
+    return "".join(out)
+
+
 def transform_structure(source, local_sheet, target_sheet, axis, start, count, delete=False, *, target_id=None):
     """Retarget A1 references after a whole-row/column edit; preserve token spelling.
 
