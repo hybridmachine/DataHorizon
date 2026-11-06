@@ -96,7 +96,10 @@ available for cells stored with automatic typing.
 Sheet rename retargets qualified names across sheets while retaining stable UUID
 references. The bounded parser, source/scan limits and required-hook exclusions
 are recorded in [the editing contract](editing-csv-next-five.md#sheet-rename).
-Sheet delete/duplicate still reject cross-sheet references. Literal exclamation marks in strings
+Sheet duplication retargets copied explicit self-references (names and UUIDs),
+leaves unqualified references local to the copy, and preserves other-sheet
+targets. Only the copied cells are scanned; unsupported copied formulas reject.
+Sheet delete still rejects cross-sheet references. Literal exclamation marks in strings
 and formula error tokens such as #REF! are not sheet separators; copied broken
 references retain their error without blocking these operations.
 Bounded row/column insertion/deletion is available from the Sheet menu and the

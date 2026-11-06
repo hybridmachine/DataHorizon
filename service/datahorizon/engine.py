@@ -700,13 +700,7 @@ class Workbook:
                     target = self.sheet(request.get("sheet"))
                     self.check_name(request.get("name"))
                     require(not self.handler, "UNSUPPORTED_HOOK_SCOPE", "Sheet duplication with required handlers needs a structure-event contract")
-                    count = self.db.execute("SELECT count(*) FROM (SELECT 1 FROM cells WHERE sheet_id=? LIMIT ?)", (target,MAX_CELLS+1)).fetchone()[0]
-                    require(count <= MAX_CELLS, "LIMIT", "Sheet duplication exceeds 10,000 cells")
-                    require(not self.has_cross_sheet_formulas(), "REFERENCE_TRANSFORM_UNAVAILABLE", "Duplicate is unavailable while cross-sheet formulas exist")
-                    new = str(uuid.uuid4())
-                    self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (new, request["name"], self.next_sheet_position()))
-                    for row, col, source, input_kind, style in self.db.execute("SELECT row,col,source,kind,style FROM cells WHERE sheet_id=?", (target,)):
-                        self.put(new, row, col, {"source":source, "kind":input_kind, "style":json.loads(style)})
+                    self.duplicate_sheet(target, request["name"])
                 elif kind == "sheet_reorder":
                     order = request.get("order")
                     current = [row[0] for row in self.db.execute("SELECT id FROM sheets")]
@@ -793,6 +787,28 @@ class Workbook:
     def history_cost(label,changes):
         # Compute once per receipt; never serialize all prior history for each edit.
         return len(encoded([label,[[key, *values] for key, values in changes.items()]]).encode())
+
+    def duplicate_sheet(self, target, new_name):
+        old_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
+        new_id, cells, payload_bytes = str(uuid.uuid4()), [], 0
+        with sql_deadline(self.db, self.deadline):
+            for row, col, source, kind, style in self.db.execute(
+                    "SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? LIMIT ?",(target,MAX_CELLS+1)):
+                require(time.monotonic()<=self.deadline, "TIMEOUT", "Operation exceeded its time budget")
+                require(len(cells)<MAX_CELLS, "LIMIT", "Sheet duplication exceeds 10,000 cells")
+                payload_bytes += len(source.encode())+len(style.encode())+128
+                require(payload_bytes<=8*1024*1024, "LIMIT", "Sheet duplication sources exceed 8 MiB")
+                if kind in ("auto","formula") and source.startswith("="):
+                    try:
+                        source = rename_sheet_references(source, old_name, new_name, target_id=target, new_id=new_id)
+                    except FormulaError as error:
+                        raise EngineError("REFERENCE_TRANSFORM_UNAVAILABLE", f"Cannot safely copy {old_name}!{address(row,col)}: {error}") from error
+                item = {"source":source,"kind":kind,"style":json.loads(style)}
+                typed(item)
+                cells.append((row,col,item))
+            self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (new_id,new_name,self.next_sheet_position()))
+            for row, col, item in cells:
+                self.put(new_id,row,col,item)
 
     def rename_references(self, target, new_name):
         old_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
