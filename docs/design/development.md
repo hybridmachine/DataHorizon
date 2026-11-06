@@ -156,13 +156,17 @@ replacement preserves Text typing and leading zeros; identical replacements do
 nothing. Numeric, boolean and formula results require stored-source replacement.
 Replacement expansion is checked against the 64-KiB UTF-8 source limit before
 allocating the result, including any retained apostrophe text escape.
-CSV import previews UTF-8 comma-separated text and imports it atomically as Text.
-Dates, encodings, column typing and spreadsheet interchange remain incomplete.
+CSV import offers explicit UTF-8, UTF-16 with BOM, Windows-1252 and Latin-1
+decoding, plus comma/semicolon/tab/pipe delimiters. Strict decoding errors stop
+the preview. Parsed fields are reviewed and imported atomically as Text.
+Dates, column typing and spreadsheet interchange remain incomplete.
 Export is an explicit values-only selected snapshot and blocks on formula errors.
 CSV import captures its destination before the file picker and checks it again
 after file selection and confirmation. A refreshed or removed sheet cancels the
 import; an active cell draft must first be saved, discarded or cancelled. File
 reads are limited to 3 MiB even if a file grows after its initial size check.
+Decoded UTF-8 text is also limited to 3 MiB; request/response JSON remains
+bounded by 4 MiB, including base64 overhead. Select a smaller file if needed.
 
 Export cannot overwrite the open native workbook, including paths that identify
 the same file through a filesystem alias. CSV previews are capped at 10,000

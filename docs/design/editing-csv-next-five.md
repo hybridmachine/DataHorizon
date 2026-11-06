@@ -7,7 +7,7 @@ Hosted CI remains unavailable under the user's local-verification authorization.
 1. [Sheet rename, PR #19](https://github.com/hybridmachine/DataHorizon/pull/19), with formula reference updates.
 2. [Sheet duplication, PR #20](https://github.com/hybridmachine/DataHorizon/pull/20), with reference preservation and copied self-references.
 3. [Sheet deletion, PR #21](https://github.com/hybridmachine/DataHorizon/pull/21), with broken-reference transformation and warnings.
-4. CSV encoding and delimiter controls.
+4. [CSV encoding and delimiters, PR #22](https://github.com/hybridmachine/DataHorizon/pull/22).
 5. CSV column typing with explicit conversion review.
 
 ## Sheet rename
@@ -76,3 +76,27 @@ cells, catalog and history; operation replay never repeats deletion.
 215 Python tests (15 optional-binding skips) and 85 Qt checks. A further review
 regression confirms deadline expiry preserves the catalog, cells and receipt;
 all 18 focused sheet tests pass. The initial contract now reflects these scopes.
+
+## CSV encoding and delimiters
+
+File import now asks for an explicit encoding and delimiter, then sends bytes
+to the shared REST preview operation. UTF-8 accepts a BOM by default; UTF-16
+requires one and supports either byte order. Windows-1252 and Latin-1 are also
+available. Decoding is strict: there is no guessing or replacement of invalid
+bytes. The GUI offers comma, semicolon, tab and pipe; the API accepts any one
+character except quote, NUL and line endings. CSV quoting remains the Python
+parser's strict double-quote convention, including embedded delimiters/newlines.
+
+The API accepts exactly one of Unicode `csv` or base64 `csv_base64`; only bytes
+accept an `encoding`. Raw source and decoded UTF-8 are each limited to 3 MiB;
+the complete request and response each retain their 4-MiB limit, including
+base64/JSON overhead. Records/cells remain limited to 10,000 and each cell to
+64 KiB of UTF-8. The dialog samples only the first eight rows/columns and 120
+characters per field; all parsed cells are imported in one managed Text edit.
+The preview never mutates. File/options/review dialogs retain the original
+workbook, sheet, destination and state; changed context cancels the import.
+
+[CSV controls local verification](evidence/csv-dialect-verification.txt): all 221
+Python tests (15 optional-binding skips) and 86 Qt checks pass. Both UTF-16 byte
+orders and missing-BOM rejection are covered. Review enforces literal PlainText
+rendering so formula-like or HTML-like text cannot alter the review display.
