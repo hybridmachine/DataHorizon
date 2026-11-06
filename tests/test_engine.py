@@ -570,28 +570,22 @@ class EngineTests(unittest.TestCase):
         self.apply("sheet_rename",sheet='A"B',name="Renamed")
         self.assertEqual(self.book.read("Other",{})["cells"][0]["source"],"='Renamed'!A1+\"tail\"")
 
-    def test_sheet_reference_guard_detects_separator_after_literal_nul(self):
+    def test_sheet_delete_transforms_separator_after_literal_nul(self):
         self.apply("sheet_add",name="Other")
         self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"9"}])
         source='=IF(FALSE,"text\0literal",Other!A1)'
-        self.edit((1,1,source))
-        sheets=self.book.info()["sheets"]
         for input_kind in ("formula","auto"):
+            self.edit((1,1,source))
             if input_kind == "auto":
-                # Ordinary direct writes can also retain automatic formula input.
                 with closing(sqlite3.connect(self.path)) as direct,direct:
                     direct.execute("UPDATE cells SET kind='auto' WHERE sheet_id=?",(self.book.sheet("Sheet1"),))
             self.assertEqual(self.cells()[(1,1)]["value"],9)
-            for action,name,code in (("sheet_delete",None,"REFERENCED_SHEET"),):
-                with self.subTest(input_kind=input_kind,action=action):
-                    with self.assertRaises(EngineError) as failure:
-                        self.apply(action,sheet="Other",name=name)
-                    self.assertEqual(failure.exception.body["code"],code)
-                    self.assertEqual(failure.exception.body["outcome"],"rolled_back")
-                    self.assertEqual(self.book.operation(failure.exception.body["operation_id"]),failure.exception.body)
-                    self.assertEqual(self.book.info()["sheets"],sheets)
-                    self.assertEqual(self.cells()[(1,1)]["source"],source)
-                    self.assertEqual(self.cells()[(1,1)]["value"],9)
+            receipt=self.apply("sheet_delete",sheet="Other")
+            self.assertEqual(receipt["reference_warnings"],1)
+            self.assertEqual(self.cells()[(1,1)]["source"],'=IF(FALSE,"text\0literal",#REF!)')
+            self.assertEqual(self.cells()[(1,1)]["error"],"#REF!")
+            self.apply("sheet_add",name="Other")
+            self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"9"}])
 
     def test_literal_exclamations_with_nul_allow_sheet_operations(self):
         sources=['=IF(FALSE,"before\0!after",7)','="before!\0after"']

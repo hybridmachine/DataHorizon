@@ -52,3 +52,22 @@ history and the dialog explains self-reference handling and history clearing.
 [Duplication local verification](evidence/duplicate-verification.txt): 209 Python
 tests (15 optional-binding skips) and 84 Qt checks pass. Published diff reviewed
 for original/copy isolation, name/UUID references, limits, rollback and replay.
+
+## Sheet deletion
+
+Delete replaces surviving qualified name/UUID references to the removed sheet
+with permanent `#REF!` expressions. An inherited range such as `Sheet1!A1:A3`
+becomes one error expression; unrelated references, literal strings and native
+Text remain unchanged. Recreating the old name cannot reconnect broken links.
+The receipt counts newly broken expressions and includes the first 100 affected
+formula locations, shown in the desktop Issues dock. The confirmation warns
+about reference errors and Undo history clearing and defaults to Cancel.
+
+Deleted cells and rewritten surviving formulas share the 10,000 affected-cell
+limit. Reference scans cover at most 10,000 surviving formulas, with an aggregate
+8-MiB source/style budget, existing change-byte limits and five-second deadline.
+Unsupported syntax or mixed-sheet ranges in surviving formulas, required hooks,
+limits and the last-sheet guard reject atomically. Formulas being deleted do
+not need transformation. Cell removals participate in the same tracked changes
+as reference rewrites before the catalog entry is removed. Failure restores
+cells, catalog and history; operation replay never repeats deletion.

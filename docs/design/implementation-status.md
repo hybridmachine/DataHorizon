@@ -107,6 +107,9 @@ and the remaining structure-event contract are explicit.
 Sheet duplication now preserves other-sheet targets and retargets explicit
 self-references, including stable UUID references, in the copy alone. It
 preflights at most 10,000 stored cells/8 MiB before creating the new sheet.
+Sheet deletion now atomically removes bounded stored cells and permanently
+breaks surviving name/UUID references, reporting the affected formula locations.
+Deleted and rewritten cells share the ordinary operation budget.
 
 The user prioritized [five everyday spreadsheet increments](everyday-next-five.md)
 after PR #13. Text wrapping and all-cell borders now use native managed styles, with bounded loaded
