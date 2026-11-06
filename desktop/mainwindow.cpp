@@ -1357,33 +1357,100 @@ void MainWindow::previewCsv(QJsonObject request, QJsonObject target) {
     const int row=target["row"].toInt(), col=target["col"].toInt();
     const auto targetName=target["name"].toString();
     setBusy(true,"Previewing CSV for "+targetName);
-    m_client->request("/v1/import/csv/preview", request, [this,row,col,targetName,validTarget,target](QJsonObject preview, QString error) {
+    m_client->request("/v1/import/csv/preview", request, [this,row,col,targetName,validTarget,target,request](QJsonObject preview, QString error) mutable {
         if (!error.isEmpty() || !validTarget()) { setBusy(false); issue(error.isEmpty()?"CSV import target changed; import cancelled.":error); return; }
         QStringList lines;
         const auto rows = preview["rows"].toArray();
+        if(row+rows.size()-1>1048576 || col+preview["columns"].toInt()-1>16384) {
+            setBusy(false); issue("CSV destination exceeds the supported grid. Choose a different starting cell."); return;
+        }
+        const auto inputs=preview["inputs"].toArray();
         for (int i=0; i<qMin(8, int(rows.size())); ++i) {
             const auto fields=rows[i].toArray(); QStringList values;
-            for (int c=0;c<qMin(8,int(fields.size()));++c) values.append(fields[c].toString().left(120));
+            const auto typedRow=i<inputs.size()?inputs[i].toArray():QJsonArray{};
+            for (int c=0;c<qMin(8,int(fields.size()));++c) {
+                const auto item=c<typedRow.size()?typedRow[c].toObject():QJsonObject{};
+                values.append((item.isEmpty()?fields[c].toString():item["source"].toString()).left(120));
+            }
             lines.append(values.join(" | "));
         }
         QStringList report; for(const auto &line:preview["report"].toArray()) report.append(line.toString());
+        const auto conversionIssues=preview["conversion_issues"].toArray(),dateExamples=preview["date_examples"].toArray();
+        for(int i=0;i<qMin(10,int(conversionIssues.size()));++i) {
+            const auto cell=conversionIssues[i].toObject(); report.append(tr("CSV row %1, column %2: %3 (%4)")
+                .arg(cell["row"].toInt()).arg(cell["col"].toInt()).arg(cell["message"].toString()).arg(cell["code"].toString()));
+        }
+        for(int i=0;i<qMin(10,int(dateExamples.size()));++i) {
+            const auto cell=dateExamples[i].toObject(); report.append(tr("CSV row %1, column %2: %3 → %4")
+                .arg(cell["row"].toInt()).arg(cell["col"].toInt()).arg(cell["source"].toString()).arg(cell["result"].toString()));
+        }
         QMessageBox review(QMessageBox::Question,tr("Review CSV import"),
             tr("%1 cells. %2\nPreview (first 8 rows/columns, 120 characters per field):\n%3\n\nApply as one managed operation at %4?")
                 .arg(preview["cells"].toInt()).arg(report.join('\n')).arg(lines.join('\n')).arg(targetName),
             QMessageBox::Yes|QMessageBox::Cancel,this);
         review.setTextFormat(Qt::PlainText); review.setDefaultButton(QMessageBox::Cancel);
+        auto *typesButton=review.addButton(tr("Column types…"),QMessageBox::ActionRole); typesButton->setObjectName("csvTypesButton");
+        typesButton->setEnabled(preview["columns"].toInt()>0);
+        const bool canImport=preview["can_import"].toBool(); review.button(QMessageBox::Yes)->setEnabled(canImport);
         const auto choice=review.exec();
         if (!validTarget()) { setBusy(false); issue("CSV import target changed; import cancelled."); return; }
+        if(review.clickedButton()==typesButton) {
+            csvTypesDialog(request,preview);
+            if (!validTarget()) { setBusy(false); issue("CSV import target changed; import cancelled."); return; }
+            setBusy(false); previewCsv(request,target); return;
+        }
         setBusy(false);
-        if (choice != QMessageBox::Yes) return;
+        if (choice != QMessageBox::Yes || !canImport) return;
         QJsonArray edits;
         for (int r=0; r<rows.size(); ++r) {
             auto values = rows[r].toArray();
-            for (int c=0; c<values.size(); ++c) edits.append(QJsonObject{{"row", row+r}, {"col", col+c}, {"source", values[c]}, {"kind", "text"}});
+            const auto typedRow=r<inputs.size()?inputs[r].toArray():QJsonArray{};
+            for (int c=0; c<values.size(); ++c) {
+                auto item=c<typedRow.size()?typedRow[c].toObject():QJsonObject{};
+                if(item.isEmpty()) item={{"source",values[c]},{"kind","text"}};
+                item["row"]=row+r; item["col"]=col+c; edits.append(item);
+            }
         }
         submit({{"action", "edit"}, {"label", "Import CSV"}, {"cells", edits},
                 {"workbook",target["workbook"]},{"sheet",target["sheet"]},{"expected_state",target["expected_state"]}});
     });
+}
+
+bool MainWindow::csvTypesDialog(QJsonObject &request, const QJsonObject &preview) {
+    QDialog dialog(this); dialog.setWindowTitle(tr("CSV column types")); dialog.setObjectName("csvTypesDialog");
+    QFormLayout layout(&dialog);
+    QSpinBox column(&dialog); column.setObjectName("csvTypeColumn"); column.setRange(1,preview["columns"].toInt());
+    QComboBox type(&dialog); type.setObjectName("csvColumnType");
+    type.addItem(tr("Text (preserve exactly)"),"text"); type.addItem(tr("Number (invariant decimal)"),"number");
+    type.addItem(tr("Boolean (TRUE/FALSE)"),"boolean"); type.addItem(tr("Date YYYY-MM-DD → ISO Text"),"date_iso");
+    type.addItem(tr("Date M/D/YYYY → ISO Text"),"date_mdy"); type.addItem(tr("Date D/M/YYYY → ISO Text"),"date_dmy");
+    QCheckBox header(tr("First record is a header; keep it as Text"),&dialog); header.setObjectName("csvHeader");
+    header.setChecked(request["header"].toBool());
+    QLabel sample(&dialog); sample.setTextFormat(Qt::PlainText); sample.setWordWrap(true);
+    QJsonObject types=request["column_types"].toObject();
+    auto load=[&] {
+        QSignalBlocker blocker(&type); const auto kind=types.value(QString::number(column.value())).toString("text");
+        type.setCurrentIndex(qMax(0,type.findData(kind)));
+        QStringList values; const auto rows=preview["rows"].toArray();
+        for(int r=0;r<qMin(4,int(rows.size()));++r) {
+            const auto fields=rows[r].toArray();
+            values.append(column.value()<=fields.size()?fields[column.value()-1].toString().left(120):QString{});
+        }
+        sample.setText(tr("Source sample:\n%1").arg(values.join('\n')));
+    };
+    connect(&column,&QSpinBox::valueChanged,&dialog,[&]{load();});
+    connect(&type,&QComboBox::currentIndexChanged,&dialog,[&]{
+        const auto key=QString::number(column.value()),kind=type.currentData().toString();
+        if(kind=="text") types.remove(key); else types[key]=kind;
+    });
+    layout.addRow(&header); layout.addRow(tr("CSV column (1-based)"),&column); layout.addRow(tr("Type"),&type); layout.addRow(&sample);
+    QLabel note(tr("Unspecified columns remain Text. Dates become ISO Text. Empty converted fields become blank. Invalid conversions block Apply; review the result before importing."),&dialog);
+    note.setWordWrap(true); layout.addRow(&note);
+    QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog); layout.addRow(&buttons);
+    connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept); connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    load();
+    if(dialog.exec()!=QDialog::Accepted) return false;
+    request["column_types"]=types; request["header"]=header.isChecked(); return true;
 }
 
 void MainWindow::exportCsv() {

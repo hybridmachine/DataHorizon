@@ -24,6 +24,8 @@
 #include <QAbstractItemDelegate>
 #include <QClipboard>
 #include <QComboBox>
+#include <QCheckBox>
+#include <QSpinBox>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileDialog>
@@ -1078,6 +1080,92 @@ private slots:
         window.importCsvBytes(QByteArray::fromHex("ff"));
         QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("invalid for utf-8"),5000);
         QCOMPARE(changed.count(),1);
+    }
+    void csvColumnTypesReviewConvertsHeadersNumbersBooleansAndDatesAtomically() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("types.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        int phase=0; bool reviewed=false; QTimer answer; answer.setInterval(10);
+        connect(&answer,&QTimer::timeout,&window,[&]{
+            auto *modal=QApplication::activeModalWidget();
+            if(auto *box=qobject_cast<QMessageBox *>(modal)) {
+                if(phase==0) { phase=1; box->findChild<QPushButton *>("csvTypesButton")->click(); }
+                else if(phase==2) {
+                    reviewed=box->text().contains("1 ambiguous") && box->text().contains("2026-03-04");
+                    const auto screenshot=qEnvironmentVariable("DATAHORIZON_CSV_SCREENSHOT");
+                    if(!screenshot.isEmpty()) box->grab().save(screenshot);
+                    phase=3; box->button(QMessageBox::Yes)->click();
+                }
+            } else if(auto *dialog=qobject_cast<QDialog *>(modal);dialog && dialog->objectName()=="csvTypesDialog" && phase==1) {
+                dialog->findChild<QCheckBox *>("csvHeader")->setChecked(true);
+                auto *column=dialog->findChild<QSpinBox *>("csvTypeColumn"); auto *type=dialog->findChild<QComboBox *>("csvColumnType");
+                column->setValue(2); type->setCurrentIndex(type->findData("number"));
+                column->setValue(3); type->setCurrentIndex(type->findData("boolean"));
+                column->setValue(4); type->setCurrentIndex(type->findData("date_mdy"));
+                phase=2; dialog->accept();
+            }
+        });
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        answer.start(); window.importCsvText("ID,Qty,Active,When,Formula\n00123,2,TRUE,03/04/2026,=1+1");
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000); answer.stop(); QVERIFY(reviewed); QVERIFY(changed[0][0].toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model(); QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(1,3)).toString(),QString("2026-03-04"),5000);
+        QCOMPARE(model->cell(model->index(0,1))["input_kind"].toString(),QString("text"));
+        QCOMPARE(model->cell(model->index(1,1))["input_kind"].toString(),QString("number"));
+        QCOMPARE(model->cell(model->index(1,2))["value"].toBool(),true);
+        QCOMPARE(model->data(model->index(1,0)).toString(),QString("00123"));
+        QCOMPARE(model->data(model->index(1,4)).toString(),QString("=1+1"));
+        window.submit({{"action","undo"}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(1,3)).toString(),QString(),5000);
+        window.submit({{"action","redo"}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(1,3)).toString(),QString("2026-03-04"),5000);
+    }
+    void csvInvalidConversionDisablesApplyAndCanBeCorrectedToText() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("invalid-types.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QSignalSpy changed(&window,&MainWindow::operationFinished); int phase=0; bool blocked=false;
+        QTimer answer; answer.setInterval(10);
+        connect(&answer,&QTimer::timeout,&window,[&]{
+            auto *modal=QApplication::activeModalWidget();
+            if(auto *box=qobject_cast<QMessageBox *>(modal)) {
+                if(phase==0) {phase=1; box->findChild<QPushButton *>("csvTypesButton")->click();}
+                else if(phase==2) {
+                    blocked=!box->button(QMessageBox::Yes)->isEnabled() && box->text().contains("INVALID_INPUT") && changed.count()==0;
+                    phase=3; box->findChild<QPushButton *>("csvTypesButton")->click();
+                } else if(phase==4) {phase=5; box->button(QMessageBox::Yes)->click();}
+            } else if(auto *dialog=qobject_cast<QDialog *>(modal);dialog && dialog->objectName()=="csvTypesDialog") {
+                auto *type=dialog->findChild<QComboBox *>("csvColumnType");
+                type->setCurrentIndex(type->findData(phase==1?"number":"text")); ++phase; dialog->accept();
+            }
+        });
+        answer.start(); window.importCsvText("=1+1"); QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000); answer.stop();
+        QVERIFY(blocked); QVERIFY(changed[0][0].toBool()); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("=1+1"),5000);
+        QCOMPARE(window.model()->cell(window.model()->index(0,0))["input_kind"].toString(),QString("text"));
+    }
+    void csvTypeDialogCannotApplyAfterProjectionChanges() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("stale-types.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QSignalSpy changed(&window,&MainWindow::operationFinished); bool invalidated=false;
+        QTimer answer; answer.setInterval(10);
+        connect(&answer,&QTimer::timeout,&window,[&]{
+            auto *modal=QApplication::activeModalWidget();
+            if(auto *box=qobject_cast<QMessageBox *>(modal)) box->findChild<QPushButton *>("csvTypesButton")->click();
+            else if(auto *dialog=qobject_cast<QDialog *>(modal);dialog && dialog->objectName()=="csvTypesDialog") {
+                window.model()->setProjection({0,1}); invalidated=true; dialog->accept();
+            }
+        });
+        answer.start(); window.importCsvText("7");
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("CSV import target changed"),5000);
+        answer.stop(); QVERIFY(invalidated); QCOMPARE(changed.count(),0);
     }
     void csvPreviewCapturesItsTargetAndRejectsInvalidatedProjection() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;

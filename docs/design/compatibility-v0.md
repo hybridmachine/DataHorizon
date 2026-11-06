@@ -59,7 +59,7 @@ background results that can overwrite a newer input state.
 
 | Feature | Native v1 | CSV import | CSV export | XLSX / ODS |
 | --- | --- | --- | --- | --- |
-| Typed values | Preserved | All Text by default | Canonical displayed values without number format | Unavailable |
+| Typed values | Preserved | Text by default; explicit Number/Boolean and date-to-Text conversion | Canonical displayed values without number format | Unavailable |
 | Leading-zero text | Preserved | Preserved | Preserved as characters; receiving application may infer types | Unavailable |
 | Formula source | Preserved | Formula-like text remains literal | Evaluated values only | Unavailable |
 | Supported styles | Preserved | Existing destination styles retained | Omitted, reported before export | Unavailable |
@@ -71,8 +71,13 @@ BOM), Windows-1252 and Latin-1, with strict decoding. The GUI offers comma,
 semicolon, tab and pipe delimiters; the API accepts one character excluding
 quotes, NUL and line endings. Import preview is bounded by 10,000 cells/records,
 3 MiB of raw bytes and decoded UTF-8, 64 KiB per cell and a 4-MiB complete JSON
-request/response. The reviewed import keeps all columns Text; per-column
-numeric/date conversion remains M5 work. See [CSV controls](editing-csv-next-five.md#csv-encoding-and-delimiters).
+request/response. Text is the default. Explicit per-column Number/Boolean uses
+native strict conversion and precision rules; dates require YYYY-MM-DD,
+M/D/YYYY or D/M/YYYY and normalize to ISO Text. A header option retains the
+first record as Text. Invalid conversions block Apply and never fall back to
+Text; users can explicitly change the type and review again. See
+[CSV controls](editing-csv-next-five.md#csv-encoding-and-delimiters) and
+[typing details](editing-csv-next-five.md#csv-column-typing).
 Exports use round-trip-safe numeric text rather than the grid's display rounding.
 Empty text, NULL and absence all map to
 an empty CSV field; this loss is inherent in the initial values-only tier.

@@ -9,7 +9,9 @@ The repository now includes a Qt Widgets/C++ desktop, SQLite engine, authenticat
 localhost REST service, Python client and managed CLI. The local development
 preview supports spreadsheet editing, bounded views, formulas, range operations,
 Undo/Redo, wrap/borders, local sizing/hide/frozen-row preferences, list projections,
-search and CSV. The full implementation plan is
+search and CSV with strict encoding/delimiter choices and reviewed column types.
+Bounded sheet rename/duplicate/delete now update references and report broken
+links. The full implementation plan is
 still in progress; Excel/ODS, unrestricted structural references, advanced programmability
 and cross-platform release qualification remain unfinished.
 

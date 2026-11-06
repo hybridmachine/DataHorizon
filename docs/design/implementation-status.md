@@ -111,7 +111,10 @@ Sheet deletion now atomically removes bounded stored cells and permanently
 breaks surviving name/UUID references, reporting the affected formula locations.
 Deleted and rewritten cells share the ordinary operation budget.
 CSV import now offers strict encoding and delimiter controls with service-side
-byte decoding, bounded parsed previews and unchanged atomic Text imports.
+byte decoding and bounded parsed previews. Explicit Number/Boolean and date-to-ISO
+Text column choices now support header preservation, conversion errors and
+ambiguity reports. Reviewed typed imports use one managed edit with history and
+required hooks; failed conversions disable Apply until corrected explicitly.
 
 The user prioritized [five everyday spreadsheet increments](everyday-next-five.md)
 after PR #13. Text wrapping and all-cell borders now use native managed styles, with bounded loaded

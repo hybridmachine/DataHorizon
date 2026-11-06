@@ -158,8 +158,14 @@ Replacement expansion is checked against the 64-KiB UTF-8 source limit before
 allocating the result, including any retained apostrophe text escape.
 CSV import offers explicit UTF-8, UTF-16 with BOM, Windows-1252 and Latin-1
 decoding, plus comma/semicolon/tab/pipe delimiters. Strict decoding errors stop
-the preview. Parsed fields are reviewed and imported atomically as Text.
-Dates, column typing and spreadsheet interchange remain incomplete.
+the preview. Text is the default. In the preview, Column types offers Number,
+Boolean, ISO/M-D-Y/D-M-Y dates stored as ISO Text, and a first-record header
+option. The service reports failed and ambiguous conversions; Apply stays
+disabled until all conversions succeed. The reviewed typed cells use one managed
+edit, retaining destination styles, history and required hooks. Ragged records
+are not padded; empty converted fields become blank. A failed conversion can be
+corrected explicitly to Text and reviewed again. Native date/time types, locale
+number parsing and spreadsheet interchange remain incomplete.
 Export is an explicit values-only selected snapshot and blocks on formula errors.
 CSV import captures its destination before the file picker and checks it again
 after file selection and confirmation. A refreshed or removed sheet cancels the
