@@ -149,6 +149,47 @@ def rename_sheet_references(source, old_name, new_name, *, target_id=None, new_i
     return "".join(out)
 
 
+def delete_sheet_references(source, local_sheet, target_sheet, *, target_id=None):
+    """Make deleted-sheet references permanent errors, including inherited ranges."""
+    parser = Parser(source[1:], track_spans=True)
+    pending = [parser.parse()]
+    fold = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+    def targets(name):
+        return (target_id is not None and name == target_id or
+                (local_sheet if name is None else name).translate(fold) == target_sheet.translate(fold))
+    edits = []
+    while pending:
+        node = pending.pop()
+        if node[0] == "call":
+            pending.extend(node[2])
+        elif node[0] == "binary":
+            pending.extend(node[2:])
+        elif node[0] == "unary":
+            pending.append(node[2])
+        elif node[0] in ("ref","range"):
+            if node[0] == "range":
+                first, last = node[2:]
+                if first[0] != "ref" or last[0] != "ref":
+                    raise FormulaError("#REF!", "Range endpoints must be cell references")
+                name, _, _ = split_ref(first[1])
+                last_name, _, _ = split_ref(last[1])
+                if last_name is None:
+                    last_name = name
+                if targets(name) != targets(last_name):
+                    raise FormulaError("#REF!", "Cannot transform a range spanning different sheets")
+            else:
+                name, _, _ = split_ref(node[1])
+            if targets(name):
+                begin, end = parser.spans[id(node)]
+                edits.append((begin+1,end+1,"#REF!"))
+    out, pos = [], 0
+    for begin, end, replacement in sorted(edits):
+        out.extend((source[pos:begin],replacement))
+        pos = end
+    out.append(source[pos:])
+    return "".join(out), len(edits)
+
+
 def transform_structure(source, local_sheet, target_sheet, axis, start, count, delete=False, *, target_id=None):
     """Retarget A1 references after a whole-row/column edit; preserve token spelling.
 

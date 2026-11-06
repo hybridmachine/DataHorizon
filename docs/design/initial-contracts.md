@@ -117,8 +117,14 @@ is bounded by cell, depth, range, and time budgets. Unsupported functions return
 An evaluated non-finite numeric literal is #NUM! before comparison, branching
 or arithmetic can consume it; an unselected IF branch remains unevaluated.
 
-Sheet rename, duplication and deletion reject cross-sheet formulas until their
-reference transformer is proven. Cut involving formulas remains unavailable.
+Sheet rename, duplication and deletion use the bounded parsed reference
+transformations in [the editing contract](editing-csv-next-five.md). Rename
+retargets qualified names, copies retarget explicit self name/UUID references,
+and deletion replaces surviving targets with permanent #REF! expressions and
+reports affected formula locations. Unsupported syntax and required handlers
+reject atomically; successful structure changes clear Undo/Redo history.
+
+Cut involving formulas remains unavailable.
 Whole-row/column insertion and deletion use the bounded reference transformer
 described below. Sorting freeform cells with formulas is initially restricted;
 record identity and reference-safe sorting require M5 evidence. Filtered paste

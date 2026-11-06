@@ -1013,6 +1013,31 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->cell(window.model()->index(0,0))["source"].toString(),QString("='Copy'!A2"),5000);
         QCOMPARE(window.model()->data(window.model()->index(0,0)).toString(),QString("9"));
     }
+    void sheetDeleteDialogWarnsAndReportsBrokenReferences() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("delete.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","sheet_add"},{"name","Other"}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *tabs=window.findChild<QTabBar *>(); tabs->setCurrentIndex(1);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","=Sheet1!A2"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        tabs->setCurrentIndex(0);
+        bool warned=false; QTimer answer; answer.setInterval(10);
+        connect(&answer,&QTimer::timeout,&window,[&]{
+            if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                warned=box->text().contains("#REF!") && box->text().contains("Undo");
+                box->button(QMessageBox::Yes)->click();
+            }
+        });
+        answer.start(); window.findChild<QAction *>("deleteSheetAction")->trigger(); answer.stop();
+        QVERIFY(warned); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QCOMPARE(tabs->count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
+        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
+    }
     void csvPreviewCapturesItsTargetAndRejectsInvalidatedProjection() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show();

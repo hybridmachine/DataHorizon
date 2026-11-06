@@ -6,7 +6,7 @@ Hosted CI remains unavailable under the user's local-verification authorization.
 
 1. [Sheet rename, PR #19](https://github.com/hybridmachine/DataHorizon/pull/19), with formula reference updates.
 2. [Sheet duplication, PR #20](https://github.com/hybridmachine/DataHorizon/pull/20), with reference preservation and copied self-references.
-3. Sheet deletion with broken-reference transformation and warnings.
+3. [Sheet deletion, PR #21](https://github.com/hybridmachine/DataHorizon/pull/21), with broken-reference transformation and warnings.
 4. CSV encoding and delimiter controls.
 5. CSV column typing with explicit conversion review.
 
@@ -52,3 +52,27 @@ history and the dialog explains self-reference handling and history clearing.
 [Duplication local verification](evidence/duplicate-verification.txt): 209 Python
 tests (15 optional-binding skips) and 84 Qt checks pass. Published diff reviewed
 for original/copy isolation, name/UUID references, limits, rollback and replay.
+
+## Sheet deletion
+
+Delete replaces surviving qualified name/UUID references to the removed sheet
+with permanent `#REF!` expressions. An inherited range such as `Sheet1!A1:A3`
+becomes one error expression; unrelated references, literal strings and native
+Text remain unchanged. Recreating the old name cannot reconnect broken links.
+The receipt counts newly broken expressions and includes the first 100 affected
+formula locations, shown in the desktop Issues dock. The confirmation warns
+about reference errors and Undo history clearing and defaults to Cancel.
+
+Deleted cells and rewritten surviving formulas share the 10,000 affected-cell
+limit. Reference scans cover at most 10,000 surviving formulas, with an aggregate
+8-MiB source/style budget, existing change-byte limits and five-second deadline.
+Unsupported syntax or mixed-sheet ranges in surviving formulas, required hooks,
+limits and the last-sheet guard reject atomically. Formulas being deleted do
+not need transformation. Cell removals participate in the same tracked changes
+as reference rewrites before the catalog entry is removed. Failure restores
+cells, catalog and history; operation replay never repeats deletion.
+
+[Deletion local verification](evidence/delete-verification.txt): full CTest passes
+215 Python tests (15 optional-binding skips) and 85 Qt checks. A further review
+regression confirms deadline expiry preserves the catalog, cells and receipt;
+all 18 focused sheet tests pass. The initial contract now reflects these scopes.

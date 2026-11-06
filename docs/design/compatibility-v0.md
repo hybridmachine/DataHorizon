@@ -99,7 +99,11 @@ are recorded in [the editing contract](editing-csv-next-five.md#sheet-rename).
 Sheet duplication retargets copied explicit self-references (names and UUIDs),
 leaves unqualified references local to the copy, and preserves other-sheet
 targets. Only the copied cells are scanned; unsupported copied formulas reject.
-Sheet delete still rejects cross-sheet references. Literal exclamation marks in strings
+Sheet deletion replaces surviving references to the deleted sheet (including
+UUIDs and inherited ranges) with permanent #REF! errors and reports locations.
+Unsupported surviving syntax rejects the operation. Deleted inputs and rewritten
+formulas share the 10,000-cell limit. See [the deletion contract](editing-csv-next-five.md#sheet-deletion).
+Literal exclamation marks in strings
 and formula error tokens such as #REF! are not sheet separators; copied broken
 references retain their error without blocking these operations.
 Bounded row/column insertion/deletion is available from the Sheet menu and the

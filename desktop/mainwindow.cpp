@@ -290,9 +290,9 @@ void MainWindow::buildUi() {
     add(sheetMenu, tr("Delete sheet…"), {}, [this] {
         if (m_busy || m_info.isEmpty()) return;
         const auto command=targetContext({{"action","sheet_delete"}});
-        if (QMessageBox::question(this, tr("Delete sheet"), tr("Delete this sheet and its cells? This action clears Undo history.")) == QMessageBox::Yes)
+        if (QMessageBox::question(this, tr("Delete sheet"), tr("Delete this sheet and its cells? References to this sheet become #REF! and affected formulas are reported in Issues. This action clears Undo history."),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel) == QMessageBox::Yes)
             submit(command);
-    });
+    })->setObjectName("deleteSheetAction");
     sheetMenu->addSeparator();
     add(sheetMenu,tr("Row height…"),{},[this]{resizeSections(false);})->setObjectName("rowHeightAction");
     add(sheetMenu,tr("Column width…"),{},[this]{resizeSections(true);})->setObjectName("columnWidthAction");

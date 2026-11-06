@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from datahorizon.engine import EngineError, Workbook
 from datahorizon.client import LocalService
-from datahorizon.formula import rename_sheet_references
+from datahorizon.formula import rename_sheet_references, delete_sheet_references
 
 
 class SheetTests(unittest.TestCase):
@@ -169,3 +169,92 @@ class SheetTests(unittest.TestCase):
                 "operation_id":"copy-once","expected_state":old_state}),receipt)
             self.assertEqual(book.read("Copy")["cells"][0]["value"],7)
             self.assertEqual(book.info["sheets"][1]["id"],copied)
+
+    def test_delete_breaks_name_uuid_and_inherited_ranges_permanently(self):
+        target=self.book.sheet("Sheet1")
+        self.apply(cells=[{"row":2,"col":1,"source":"7"}])
+        self.apply("sheet_add",name="Other")
+        source=f'=SUM((sHeEt1!$A$2):(A3))+\'{target}\'!A2+IF(TRUE,0,"Sheet1!A2")'
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":source,"style":{"bold":True}},
+                                       {"row":2,"col":1,"source":"=Other!A3"},
+                                       {"row":3,"col":1,"source":"=Sheet1!A2","kind":"text"}])
+        receipt=self.apply("sheet_delete")
+        self.assertEqual(receipt["changed_cells"],2)
+        self.assertEqual(receipt["reference_warnings"],2)
+        self.assertEqual(receipt["reference_issues"],[{"sheet":"Other","row":1,"col":1}])
+        cells=self.book.read("Other",{"r2":3})["cells"]
+        self.assertEqual(cells[0]["source"],'=SUM(#REF!)+#REF!+IF(TRUE,0,"Sheet1!A2")')
+        self.assertEqual(cells[0]["error"],"#REF!")
+        self.assertEqual(cells[0]["style"],{"bold":True})
+        self.assertEqual(cells[1]["value"],"=Sheet1!A2")
+        self.apply("sheet_add",name="Sheet1")
+        self.apply(cells=[{"row":2,"col":1,"source":"100"}])
+        self.assertEqual(self.book.read("Other",{})["cells"][0]["error"],"#REF!")
+        self.book.close(); self.book=Workbook(self.path)
+        self.assertEqual(self.book.read("Other",{})["cells"][0]["error"],"#REF!")
+
+    def test_delete_ignores_deleted_formulas_but_rejects_unsupported_survivors_and_hooks(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2&\"x\""}])
+        self.apply("sheet_add",name="Other")
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"=Sheet1!A2&\"x\""}])
+        self.assertRollback("sheet_delete","REFERENCE_TRANSFORM_UNAVAILABLE")
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"clear":True}])
+        self.book.handler="required.py"
+        self.assertRollback("sheet_delete","UNSUPPORTED_HOOK_SCOPE")
+        self.book.handler=None
+        self.apply("sheet_delete")
+        self.assertRollback("sheet_delete","LAST_SHEET",sheet="Other")
+
+    def test_delete_affected_cell_budget_and_write_failure_preserve_catalog_and_history(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"7"},{"row":2,"col":1,"source":"8"}])
+        self.apply("sheet_add",name="Other")
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"=Sheet1!A1"}])
+        with patch("datahorizon.engine.MAX_CELLS",2):
+            self.assertRollback("sheet_delete","LIMIT")
+        original=self.book.put
+        def fail(*args):
+            original(*args)
+            if args[-1] is None:
+                raise EngineError("INJECTED","delete failed")
+        with patch.object(self.book,"put",side_effect=fail):
+            self.assertRollback("sheet_delete","INJECTED")
+
+    def test_delete_reports_first_hundred_formula_locations_and_replays_receipt(self):
+        self.apply("sheet_add",name="Other")
+        self.apply(sheet="Other",cells=[{"row":row,"col":1,"source":"=Sheet1!A2"} for row in range(1,102)])
+        request={"action":"sheet_delete","sheet":"Sheet1","expected_state":self.book.state(),"operation_id":"delete-once"}
+        receipt=self.book.mutate(request)
+        self.assertEqual(receipt["reference_warnings"],101)
+        self.assertEqual(len(receipt["reference_issues"]),100)
+        self.assertEqual(self.book.mutate(request),receipt)
+
+    def test_delete_rejects_mixed_sheet_ranges_and_uses_ascii_name_matching(self):
+        self.assertEqual(delete_sheet_references("=SUM('O''Brien'!A1:A2)+Other!A1","Main","O'Brien"),
+                         ("=SUM(#REF!)+Other!A1",1))
+        self.assertEqual(delete_sheet_references("='ä'!A1","Main","Ä"),("='ä'!A1",0))
+        self.apply("sheet_add",name="Other")
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"=SUM(Sheet1!A1:Other!A2)"}])
+        self.assertRollback("sheet_delete","REFERENCE_TRANSFORM_UNAVAILABLE")
+
+    def test_delete_over_rest_returns_broken_reference_receipt(self):
+        with LocalService() as client, client.open(Path(self.temp.name)/"delete-rest.dhwb",create=True) as book:
+            book.apply("sheet_add",name="Other")
+            book.set(1,1,"=Sheet1!A2",sheet="Other")
+            result=book.apply("sheet_delete",sheet="Sheet1")
+            self.assertEqual(result["reference_warnings"],1)
+            self.assertEqual(book.read("Other")["cells"][0]["source"],"=#REF!")
+
+    def test_delete_reference_scan_deadline_rolls_back_with_a_durable_receipt(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"7"}])
+        self.apply("sheet_add",name="Other")
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"=Sheet1!A1"}])
+        clock=[0]
+        def expire(sql):
+            if sql.startswith("SELECT c.sheet_id"):
+                clock[0]=6
+        self.book.db.set_trace_callback(expire)
+        try:
+            with patch("datahorizon.engine.time.monotonic",side_effect=lambda:clock[0]):
+                self.assertRollback("sheet_delete","TIMEOUT")
+        finally:
+            self.book.db.set_trace_callback(None)

@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 
-from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, has_sheet_reference, translate, transform_structure, rename_sheet_references
+from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, translate, transform_structure, rename_sheet_references, delete_sheet_references
 from .hooks import HookFailure, invoke
 
 MAX_CELLS = 10_000
@@ -710,11 +710,8 @@ class Workbook:
                 elif kind == "sheet_delete":
                     target = self.sheet(request.get("sheet"))
                     require(self.db.execute("SELECT count(*) FROM sheets").fetchone()[0] > 1, "LAST_SHEET", "Cannot delete the last sheet")
-                    require(not self.has_cross_sheet_formulas(), "REFERENCED_SHEET", "Delete is unavailable while cross-sheet formulas exist")
                     require(not self.handler, "UNSUPPORTED_HOOK_SCOPE", "Sheet deletion with an activated required handler needs a structure-event contract")
-                    count=self.db.execute("SELECT count(*) FROM (SELECT 1 FROM cells WHERE sheet_id=? LIMIT ?)",(target,MAX_CELLS+1)).fetchone()[0]
-                    require(count<=MAX_CELLS,"LIMIT","Sheet deletion exceeds 10,000 cells; a large-job deletion is not available")
-                    self.db.execute("DELETE FROM sheets WHERE id=?", (target,))
+                    reference_report = self.delete_sheet(target)
                 else:
                     raise EngineError("UNSUPPORTED_OPERATION", f"Operation is not available: {kind}")
                 self.run_hooks(operation)
@@ -787,6 +784,41 @@ class Workbook:
     def history_cost(label,changes):
         # Compute once per receipt; never serialize all prior history for each edit.
         return len(encoded([label,[[key, *values] for key, values in changes.items()]]).encode())
+
+    def delete_sheet(self, target):
+        target_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
+        deleted, formulas, payload_bytes, warnings, locations = [], [], 0, 0, []
+        with sql_deadline(self.db,self.deadline):
+            for row, col, source, style in self.db.execute(
+                    "SELECT row,col,source,style FROM cells WHERE sheet_id=? LIMIT ?",(target,MAX_CELLS+1)):
+                require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
+                require(len(deleted)<MAX_CELLS,"LIMIT","Sheet deletion exceeds 10,000 cells")
+                payload_bytes += len(source.encode())+len(style.encode())+128
+                require(payload_bytes<=8*1024*1024,"LIMIT","Sheet deletion sources exceed 8 MiB")
+                deleted.append((target,row,col))
+            for scanned, (sheet, name, row, col, source, kind, style) in enumerate(self.db.execute(
+                    "SELECT c.sheet_id,s.name,c.row,c.col,c.source,c.kind,c.style FROM cells c JOIN sheets s ON s.id=c.sheet_id "
+                    "WHERE c.sheet_id<>? AND c.source LIKE '=%' AND c.kind IN ('auto','formula')",(target,)),1):
+                require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
+                require(scanned<=MAX_CELLS,"LIMIT","Sheet reference scan exceeds 10,000 formulas")
+                payload_bytes += len(source.encode())+len(style.encode())+128
+                require(payload_bytes<=8*1024*1024,"LIMIT","Sheet deletion sources exceed 8 MiB")
+                try:
+                    transformed, broken = delete_sheet_references(source,name,target_name,target_id=target)
+                except FormulaError as error:
+                    raise EngineError("REFERENCE_TRANSFORM_UNAVAILABLE", f"Cannot safely transform {name}!{address(row,col)}: {error}") from error
+                if transformed != source:
+                    formulas.append(((sheet,row,col),{"source":transformed,"kind":kind,"style":json.loads(style)}))
+                    warnings += broken
+                    if len(locations)<100:
+                        locations.append({"sheet":name,"row":row,"col":col})
+            require(len(deleted)+len(formulas)<=MAX_CELLS,"LIMIT","Sheet deletion exceeds 10,000 affected cells")
+            for key, item in formulas:
+                self.put(*key,item)
+            for key in deleted:
+                self.put(*key,None)
+            self.db.execute("DELETE FROM sheets WHERE id=?",(target,))
+        return {"reference_warnings":warnings,"reference_issues":locations}
 
     def duplicate_sheet(self, target, new_name):
         old_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
@@ -906,15 +938,6 @@ class Workbook:
                 "POSITION_LIMIT","Reorder sheets before adding or duplicating another sheet; display positions are exhausted",409)
         # Check in Python before addition: SQLite promotes integer overflow to REAL.
         return position+1
-
-    def has_cross_sheet_formulas(self):
-        with sql_deadline(self.db,self.deadline):
-            # LIKE stops at embedded NUL; instr still finds later separators.
-            for source, in self.db.execute("SELECT source FROM cells WHERE source LIKE '=%' AND instr(source,'!')>0 AND kind IN ('auto','formula')"):
-                require(time.monotonic() <= self.deadline, "TIMEOUT", "Operation exceeded its time budget")
-                if has_sheet_reference(source):
-                    return True
-        return False
 
     def list_view(self, sheet, args):
         """An explicit list is a presentation projection over stable source rows."""
