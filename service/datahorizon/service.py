@@ -21,7 +21,7 @@ import uuid
 
 from .engine import EngineError, MAX_CELLS, Workbook, boolean, encoded, require
 from .formula import MAX_COLS, MAX_ROWS
-from .csv_import import ENCODINGS, preview_csv
+from .csv_import import COLUMN_TYPES, ENCODINGS, preview_csv
 
 CAPABILITIES = {
     "api_version": 1, "format_version": 1, "max_operation_cells": MAX_CELLS,
@@ -37,7 +37,7 @@ CAPABILITIES = {
 ROUTES = {
     "/v1/capabilities": ("get", "Preview capabilities"),
     "/v1/open": ("post", "Create or open a server-local native workbook"),
-    "/v1/import/csv/preview": ("post", "Parse CSV as text for explicit import review"),
+    "/v1/import/csv/preview": ("post", "Decode CSV and review explicit column conversions without mutation"),
     "/v1/workbooks/{workbook}": ("get", "Workbook state and sheets"),
     "/v1/workbooks/{workbook}/range": ("post", "Bounded consistent viewport read"),
     "/v1/workbooks/{workbook}/clipboard": ("post", "Consistent full-source clipboard read, at most 10,000 cells and 4 MiB"),
@@ -143,6 +143,8 @@ def openapi():
             "properties":{"csv":{"type":"string","description":"Already decoded Unicode text; at most 3 MiB of UTF-8"},
                 "csv_base64":{"type":"string","format":"byte","description":"Strict base64 of at most 3 MiB of source bytes; total JSON request remains limited to 4 MiB"},
                 "encoding":{"type":"string","enum":list(ENCODINGS),"default":"utf-8-sig","description":"Strict byte decoding; UTF-16 requires a BOM"},
+                "column_types":{"type":"object","additionalProperties":{"type":"string","enum":list(COLUMN_TYPES)},"description":"1-based CSV column numbers as keys; unspecified columns stay Text. Numbers/booleans use strict native input rules. Dates normalize to ISO Text. Conversion errors set can_import=false and omit inputs; successful typed previews return inputs for one managed edit."},
+                "header":{"type":"boolean","default":False,"description":"Keep the first CSV record as Text, including typed columns; do not skip it"},
                 "delimiter":{"type":"string","minLength":1,"maxLength":1,"default":",","description":"Cannot be a quote, NUL, CR or LF"}},
             "example":{"csv":"ID,Value\n00123,7"}},
         "SnapshotRequest":{"type":"object","required":["path"],"properties":{"path":{"type":"string","description":"New server-local destination; never overwrite an existing file"}},"example":{"path":"/tmp/copy.dhwb"}},

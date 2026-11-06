@@ -54,6 +54,7 @@ private:
     void format(const QJsonObject &style, QJsonObject target = {});
     void importCsv();
     void previewCsv(QJsonObject request, QJsonObject target);
+    bool csvTypesDialog(QJsonObject &request, const QJsonObject &preview);
     QJsonObject csvImportTarget() const;
     void exportCsv();
     void listDialog();

@@ -8,7 +8,7 @@ Hosted CI remains unavailable under the user's local-verification authorization.
 2. [Sheet duplication, PR #20](https://github.com/hybridmachine/DataHorizon/pull/20), with reference preservation and copied self-references.
 3. [Sheet deletion, PR #21](https://github.com/hybridmachine/DataHorizon/pull/21), with broken-reference transformation and warnings.
 4. [CSV encoding and delimiters, PR #22](https://github.com/hybridmachine/DataHorizon/pull/22).
-5. CSV column typing with explicit conversion review.
+5. [CSV column typing, PR #23](https://github.com/hybridmachine/DataHorizon/pull/23), with explicit conversion review.
 
 ## Sheet rename
 
@@ -100,3 +100,57 @@ workbook, sheet, destination and state; changed context cancels the import.
 Python tests (15 optional-binding skips) and 86 Qt checks pass. Both UTF-16 byte
 orders and missing-BOM rejection are covered. Review enforces literal PlainText
 rendering so formula-like or HTML-like text cannot alter the review display.
+
+## CSV column typing
+
+Text remains the default; no inference activates formulas or code. Column types
+lets the user select a 1-based CSV column and choose Number, Boolean, ISO date,
+M/D/YYYY date or D/M/YYYY date. The first-record header option imports that
+record as Text rather than skipping it. Controls use one column selector/type
+chooser rather than allocating a widget for every possible source column.
+
+Numbers and TRUE/FALSE booleans use the native strict input and precision rules,
+without trimming or locale separators. Dates require the selected spelling and
+valid calendar values; slash dates with two possible orders are counted in the
+review. Dates normalize to YYYY-MM-DD stored as native Text, with no new date
+storage type or serial arithmetic promise. Empty converted fields become blank;
+Text fields preserve empty Text. Ragged records are not padded, and blank records
+retain their destination row offsets. Formula-looking Text stays literal.
+
+The preview returns original rows and, for successful explicit types, typed
+`inputs` that clients can flatten into one managed edit. It never mutates. Any
+failed conversion disables Apply and omits that typed payload; there is no
+partial import or implicit Text fallback. The user can change types and request
+a new review. Reports include total errors, first 100 error locations, total
+ambiguous slash dates and first 20 date examples; the desktop displays bounded
+samples. Text/typed payloads share the existing complete 4-MiB response limit.
+The desktop also checks the full destination extent before review/submission.
+
+The Qt review uses a compact two-row/four-column summary (40 characters per
+field), with expandable, scrollable details for encoding, selected types,
+conversion reports and the eight-row/eight-column sample. It renders literal
+text and defaults to Cancel. The custom column action and disabled Import state
+use a Qt dialog consistently across native platform plugins.
+
+Types are local to the current review. All dialogs retain its original workbook,
+sheet, coordinate and state; a context change cancels the import. One managed
+edit preserves destination styles, Undo/Redo and applicable required hooks.
+Hook rejection rolls back the complete import and generated edits, with the
+normal durable receipt. Large jobs, locale numbers, native date/time types,
+skipped columns and spreadsheet file formats remain later work.
+
+[Final local verification](evidence/editing-csv-verification.txt) passes all 227
+Python tests without skips in the optional-binding environment and 89 Qt checks.
+Cocoa native acceptance passes at [scale 1](evidence/editing-csv-native-1.json)
+and [scale 2](evidence/editing-csv-native-2.json). The native CSV typing and
+error-correction flows pass at scale 2, with the [review screenshot](evidence/csv-types-review.png)
+visually inspected. Installed-app edit/calculation smoke passes. Hosted runs
+still start no jobs; no new hosted platform qualification is claimed.
+
+Review fixed Cocoa custom-button behavior using Qt's
+[documented dialog option](https://doc.qt.io/qt-6.8/qmessagebox.html#Option-enum),
+shortened the main report into a compact summary with scrollable details, and
+bounded the automated file-picker fixture. No unresolved findings remain in
+these declared tiers. The next everyday dependencies are explicit progress and
+cancellation/large-job semantics, followed by independent XLSX/ODS fidelity and
+recovery increments. M1 and cross-platform release qualification remain open.

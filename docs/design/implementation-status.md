@@ -35,8 +35,8 @@ formula source; values export contains 20.5. Formatting renders 20.50.
 | M1 | Qt 6.12/C++17 builds locally; bounded TEMP/native SQLite capture and service/Python execution comparisons with typed changes, transaction/worker failures and receipts; sparse/dense/long-text/large-disk, formula-chain and Qt scroll/input harnesses with local evidence and CI artifact collection | Production framework/runtime and capture-binding adoption, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
 | M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle; restart/reopen and warned unknown-outcome recovery | Broader failure injection, clean-machine packaging evidence and service lifecycle hardening |
 | M3 | Typed entry, A1 limits, SUM/IF/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
-| M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations and row/column reference transforms, wrap/borders and local sizing/hide/frozen-row preferences with destructive-operation fixtures | Unrestricted cut/rename/duplicate/delete, hook-aware structure events, portable view metadata, additional frozen edges/cross-pane range selection and platform conventions |
-| M5 | Explicit full-scope projected lists, stable source row edits, multikey sort/filter, scoped source/display find/replace, text CSV preview and snapshot export | Persistent record identities/list definitions, filtered range semantics, column typing/date/encoding controls, progress/cancellation and large jobs |
+| M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations and row/column reference transforms, wrap/borders and local sizing/hide/frozen-row preferences with destructive-operation fixtures | Formula-aware Cut, hook-aware structure events, portable view metadata, additional frozen edges/cross-pane range selection and platform conventions |
+| M5 | Explicit full-scope projected lists, stable source row edits, multikey sort/filter, scoped source/display find/replace, strict CSV encodings/delimiters, reviewed column types and snapshot export | Persistent record identities/list definitions, filtered range semantics, native date/time and locale conversion, progress/cancellation and large jobs |
 | M6 | Native snapshots/recovery, read-only opens, conservative external refresh and bounded CSV | XLSX/ODS import/export fixtures and conversion reports, comprehensive disk/permission/crash recovery, bundled runtime, follow-up execution semantics |
 | M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
 | M8 | Shared engine and REST boundaries retained; unsupported APIs reject explicitly | Relational schema/tooling, proven managed SQL capture, workbook code/macros/functions/packages, remote TLS/mTLS/password access and additional wireframes |
@@ -111,7 +111,14 @@ Sheet deletion now atomically removes bounded stored cells and permanently
 breaks surviving name/UUID references, reporting the affected formula locations.
 Deleted and rewritten cells share the ordinary operation budget.
 CSV import now offers strict encoding and delimiter controls with service-side
-byte decoding, bounded parsed previews and unchanged atomic Text imports.
+byte decoding and bounded parsed previews. Explicit Number/Boolean and date-to-ISO
+Text column choices now support header preservation, conversion errors and
+ambiguity reports. Reviewed typed imports use one managed edit with history and
+required hooks; failed conversions disable Apply until corrected explicitly.
+[Final local evidence](evidence/editing-csv-verification.txt) passes 227 Python
+tests without skips in the optional-binding environment and 89 Qt checks, Cocoa
+scales 1/2, native typing/correction flows and installed-app smoke. Hosted jobs
+still do not start; platform qualification remains open.
 
 The user prioritized [five everyday spreadsheet increments](everyday-next-five.md)
 after PR #13. Text wrapping and all-cell borders now use native managed styles, with bounded loaded
