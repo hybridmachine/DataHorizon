@@ -1,0 +1,15 @@
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   44.72 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   22.13 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  66.85 sec
+
+Totals: 85 passed, 0 failed, 0 skipped, 0 blacklisted, 44239ms
+Ran 215 tests in 21.965s
+OK (skipped=15)
+Review deadline regression: all 18 focused sheet tests pass, including scan expiry with durable rollback.
+Hosted CI billing-blocked; local verification and merge authorized.

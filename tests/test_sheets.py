@@ -243,3 +243,18 @@ class SheetTests(unittest.TestCase):
             result=book.apply("sheet_delete",sheet="Sheet1")
             self.assertEqual(result["reference_warnings"],1)
             self.assertEqual(book.read("Other")["cells"][0]["source"],"=#REF!")
+
+    def test_delete_reference_scan_deadline_rolls_back_with_a_durable_receipt(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"7"}])
+        self.apply("sheet_add",name="Other")
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"=Sheet1!A1"}])
+        clock=[0]
+        def expire(sql):
+            if sql.startswith("SELECT c.sheet_id"):
+                clock[0]=6
+        self.book.db.set_trace_callback(expire)
+        try:
+            with patch("datahorizon.engine.time.monotonic",side_effect=lambda:clock[0]):
+                self.assertRollback("sheet_delete","TIMEOUT")
+        finally:
+            self.book.db.set_trace_callback(None)
