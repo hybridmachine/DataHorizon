@@ -93,16 +93,18 @@ Text retains its escape and displayed value.
 The grid and formula bar preserve explicitly typed Text during edits, including
 CSV-imported identifiers and formula-looking text. Automatic entry remains
 available for cells stored with automatic typing.
-Sheet rename/delete/duplicate reject cross-sheet references until their full
-reference transformation is implemented. Literal exclamation marks in strings
+Sheet rename retargets qualified names across sheets while retaining stable UUID
+references. The bounded parser, source/scan limits and required-hook exclusions
+are recorded in [the editing contract](editing-csv-next-five.md#sheet-rename).
+Sheet delete/duplicate still reject cross-sheet references. Literal exclamation marks in strings
 and formula error tokens such as #REF! are not sheet separators; copied broken
 references retain their error without blocking these operations.
 Bounded row/column insertion/deletion is available from the Sheet menu and the
 shared operation API, with confirmation and broken-reference locations. It
 clears history and rejects activated required handlers, unsupported formula
 syntax, oversized operations and insertion that would discard stored cells.
-Freeze, hide/unhide, wrap, borders, fit-column sampling and saved view state are
-deferred.
+Wrap/borders are native styles; sizing, hiding and freezing use local view state
+as described below.
 
 Lists are explicit presentation projections over source row coordinates, capped
 by the 10,000-cell ordinary scope. Sorting is stable with source row as tie-break;

@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 
-from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, has_sheet_reference, translate, transform_structure
+from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, has_sheet_reference, translate, transform_structure, rename_sheet_references
 from .hooks import HookFailure, invoke
 
 MAX_CELLS = 10_000
@@ -693,9 +693,8 @@ class Workbook:
                 elif kind == "sheet_rename":
                     target = self.sheet(request.get("sheet"))
                     self.check_name(request.get("name"))
-                    # Renaming referenced sheets is restricted until a token-based
-                    # transformer supports all declared syntax.
-                    require(not self.has_cross_sheet_formulas(), "REFERENCE_TRANSFORM_UNAVAILABLE", "Rename is unavailable while cross-sheet formulas exist")
+                    require(not self.handler, "UNSUPPORTED_HOOK_SCOPE", "Sheet rename with required handlers needs a structure-event contract")
+                    self.rename_references(target, request["name"])
                     self.db.execute("UPDATE sheets SET name=? WHERE id=?", (request["name"], target))
                 elif kind == "sheet_duplicate":
                     target = self.sheet(request.get("sheet"))
@@ -794,6 +793,28 @@ class Workbook:
     def history_cost(label,changes):
         # Compute once per receipt; never serialize all prior history for each edit.
         return len(encoded([label,[[key, *values] for key, values in changes.items()]]).encode())
+
+    def rename_references(self, target, new_name):
+        old_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
+        formulas, payload_bytes = [], 0
+        with sql_deadline(self.db, self.deadline):
+            for scanned, (sheet, name, row, col, source, kind, style) in enumerate(self.db.execute(
+                    "SELECT c.sheet_id,s.name,c.row,c.col,c.source,c.kind,c.style FROM cells c JOIN sheets s ON s.id=c.sheet_id "
+                    "WHERE c.source LIKE '=%' AND c.kind IN ('auto','formula')"), 1):
+                require(time.monotonic()<=self.deadline, "TIMEOUT", "Operation exceeded its time budget")
+                require(scanned<=MAX_CELLS, "LIMIT", "Sheet reference scan exceeds 10,000 formulas")
+                payload_bytes += len(source.encode())+len(style.encode())+128
+                require(payload_bytes<=8*1024*1024, "LIMIT", "Sheet reference sources exceed 8 MiB")
+                try:
+                    transformed = rename_sheet_references(source, old_name, new_name, target_id=target)
+                except FormulaError as error:
+                    raise EngineError("REFERENCE_TRANSFORM_UNAVAILABLE", f"Cannot safely transform {name}!{address(row,col)}: {error}") from error
+                if transformed != source:
+                    item = {"source":transformed,"kind":kind,"style":json.loads(style)}
+                    typed(item)
+                    formulas.append(((sheet,row,col),item))
+            for key, item in formulas:
+                self.put(*key,item)
 
     def change_structure(self, request):
         """Bounded whole-row/column changes, including references on other sheets."""

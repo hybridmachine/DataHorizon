@@ -1,0 +1,107 @@
+"""Atomic sheet catalog changes and reference preservation."""
+from pathlib import Path
+import tempfile
+import unittest
+import uuid
+from unittest.mock import patch
+
+from datahorizon.engine import EngineError, Workbook
+from datahorizon.client import LocalService
+from datahorizon.formula import rename_sheet_references
+
+
+class SheetTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.path = Path(self.temp.name)/"sheets.dhwb"
+        self.book = Workbook(self.path, create=True)
+
+    def tearDown(self):
+        self.book.close()
+        self.temp.cleanup()
+
+    def apply(self, action="edit", **args):
+        return self.book.mutate({"action":action,"sheet":"Sheet1", "operation_id":str(uuid.uuid4()),
+                                 "expected_state":self.book.state(), **args})
+
+    def stored(self):
+        return (self.book.db.execute("SELECT * FROM sheets ORDER BY id").fetchall(),
+                self.book.db.execute("SELECT * FROM cells ORDER BY sheet_id,row,col").fetchall())
+
+    def assertRollback(self, action, code, **args):
+        before, history = self.stored(), list(self.book.undo)
+        with self.assertRaises(EngineError) as failure:
+            self.apply(action, **args)
+        self.assertEqual(failure.exception.body["code"],code)
+        self.assertEqual(failure.exception.body["outcome"],"rolled_back")
+        self.assertEqual(self.book.operation(failure.exception.body["operation_id"]),failure.exception.body)
+        self.assertEqual(self.stored(),before)
+        self.assertEqual(self.book.undo,history)
+
+    def test_rename_preserves_spelling_strings_ranges_absolute_and_uuid_references(self):
+        target = self.book.sheet("Sheet1")
+        self.apply(cells=[{"row":2,"col":1,"source":"7"}])
+        self.apply("sheet_add",name="Other")
+        source = f'= SUM(sHeEt1!$A$2:A3) + \'{target}\'!A2 + IF(TRUE,0,"Sheet1!A2\0") '
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":source,"style":{"bold":True}},
+                                       {"row":2,"col":1,"source":"=Sheet1!A2","kind":"text"}])
+        result = self.apply("sheet_rename",name="O'Brien")
+        self.assertEqual(result["changed_cells"],1)
+        self.assertEqual(self.book.sheet("O'Brien"),target)
+        cells = self.book.read("Other",{"r2":2})["cells"]
+        self.assertEqual(cells[0]["source"],source.replace("sHeEt1!","'O''Brien'!"))
+        self.assertEqual(cells[0]["value"],14)
+        self.assertEqual(cells[0]["style"],{"bold":True})
+        self.assertEqual(cells[1]["source"],"=Sheet1!A2")
+        self.assertIsNone(self.book.info()["undo"])
+        self.book.close(); self.book=Workbook(self.path)
+        self.assertEqual(self.book.read("Other",{})["cells"][0]["value"],14)
+
+    def test_rename_matches_sqlite_ascii_case_rules_and_leaves_unqualified_refs(self):
+        self.assertEqual(rename_sheet_references('=Main!a$2 + A1 + "Main!A2"',"main","New"),
+                         '=\'New\'!a$2 + A1 + "Main!A2"')
+        self.assertEqual(rename_sheet_references("='ä'!A1", "Ä", "New"),"='ä'!A1")
+
+    def test_rename_unsupported_syntax_and_hook_reject_without_catalog_change(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2&\"x\""}])
+        self.assertRollback("sheet_rename","REFERENCE_TRANSFORM_UNAVAILABLE",name="New")
+        self.book.handler="required.py"
+        self.assertRollback("sheet_rename","UNSUPPORTED_HOOK_SCOPE",name="New")
+
+    def test_rename_collision_and_write_failure_roll_back_formulas_and_catalog(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2"},
+                          {"row":1,"col":2,"source":"=Sheet1!A3"}])
+        self.apply("sheet_add",name="Other")
+        self.assertRollback("sheet_rename","OPERATION_FAILED",name="Other")
+        original = self.book.put
+        def fail(*args):
+            original(*args)
+            raise EngineError("INJECTED","write failed")
+        with patch.object(self.book,"put",side_effect=fail):
+            self.assertRollback("sheet_rename","INJECTED",name="New")
+
+    def test_rename_scan_budget_and_expanded_source_limit_are_atomic(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2"},
+                          {"row":1,"col":2,"source":"=Sheet1!A3"}])
+        with patch("datahorizon.engine.MAX_CELLS",1):
+            self.assertRollback("sheet_rename","LIMIT",name="New")
+        self.apply(cells=[{"row":1,"col":2,"clear":True},
+                          {"row":1,"col":1,"source":"=Sheet1!A2"+" "*65520}])
+        self.assertRollback("sheet_rename","INVALID_INPUT",name="a"*31)
+
+    def test_rename_receipt_replay_does_not_run_transform_again(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2"}])
+        request={"action":"sheet_rename","sheet":"Sheet1","name":"Renamed",
+                 "operation_id":"rename-once","expected_state":self.book.state()}
+        receipt=self.book.mutate(request)
+        self.assertEqual(self.book.mutate(request),receipt)
+        self.assertEqual(self.book.read("Renamed",{})["cells"][0]["source"],"='Renamed'!A2")
+
+    def test_rename_through_sdk_rest_preserves_shared_reference_behavior(self):
+        with LocalService() as client, client.open(Path(self.temp.name)/"rest.dhwb",create=True) as book:
+            book.set(1,1,"=Sheet1!A2")
+            book.set(2,1,"7")
+            target=book.info["sheets"][0]["id"]
+            book.apply("sheet_rename",sheet=target,name="Renamed")
+            self.assertEqual(book.info["sheets"][0]["id"],target)
+            self.assertEqual(book.read("Renamed")["cells"][0]["value"],7)

@@ -556,8 +556,8 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.cells()[(1, 1)]["value"], 10)
         self.assertEqual(translate('=A1+$B1+C$1+$D$1+IF(TRUE,"A1",0)', 2, 3),
                          '=D3+$B3+F$1+$D$1+IF(TRUE,"A1",0)')
-        with self.assertRaises(EngineError):
-            self.apply("sheet_rename", name="Renamed")
+        self.apply("sheet_rename", name="Renamed")
+        self.assertEqual(self.book.read("Renamed",{})["cells"][0]["value"],10)
 
     def test_sheet_reference_detection_ignores_formula_strings_and_preserves_quoted_names(self):
         self.edit((1,1,'="Not a reference!"'),(2,1,'="Escaped ""!"" text"'))
@@ -567,9 +567,8 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.book.read('A"B',{"r2":1,"c2":1})["cells"][0]["value"],"Not a reference!")
         self.apply("sheet_add",name="Other")
         self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":'''='A"B'!A1+"tail"'''}])
-        with self.assertRaises(EngineError) as failure:
-            self.apply("sheet_rename",sheet='A"B',name="Renamed")
-        self.assertEqual(failure.exception.body["code"],"REFERENCE_TRANSFORM_UNAVAILABLE")
+        self.apply("sheet_rename",sheet='A"B',name="Renamed")
+        self.assertEqual(self.book.read("Other",{})["cells"][0]["source"],"='Renamed'!A1+\"tail\"")
 
     def test_sheet_reference_guard_detects_separator_after_literal_nul(self):
         self.apply("sheet_add",name="Other")
@@ -583,8 +582,7 @@ class EngineTests(unittest.TestCase):
                 with closing(sqlite3.connect(self.path)) as direct,direct:
                     direct.execute("UPDATE cells SET kind='auto' WHERE sheet_id=?",(self.book.sheet("Sheet1"),))
             self.assertEqual(self.cells()[(1,1)]["value"],9)
-            for action,name,code in (("sheet_rename","Renamed","REFERENCE_TRANSFORM_UNAVAILABLE"),
-                                     ("sheet_delete",None,"REFERENCED_SHEET"),
+            for action,name,code in (("sheet_delete",None,"REFERENCED_SHEET"),
                                      ("sheet_duplicate","Copy","REFERENCE_TRANSFORM_UNAVAILABLE")):
                 with self.subTest(input_kind=input_kind,action=action):
                     with self.assertRaises(EngineError) as failure:

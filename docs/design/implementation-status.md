@@ -99,6 +99,12 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
+The next [five editing and CSV increments](editing-csv-next-five.md) continue
+everyday features. Sheet rename now retargets parsed qualified name references
+while preserving stable sheet identity, styles and literal Text. Unsupported
+syntax, limits and active required handlers reject atomically; history clearing
+and the remaining structure-event contract are explicit.
+
 The user prioritized [five everyday spreadsheet increments](everyday-next-five.md)
 after PR #13. Text wrapping and all-cell borders now use native managed styles, with bounded loaded
 viewport measurement. Row/column dimensions now have local per-workbook/sheet preferences, source-row

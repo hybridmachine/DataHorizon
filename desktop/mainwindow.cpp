@@ -273,9 +273,9 @@ void MainWindow::buildUi() {
     add(sheetMenu, tr("Rename sheet…"), {}, [this] {
         if (m_busy) return;
         auto command=targetContext({{"action","sheet_rename"}});
-        bool ok; auto name = QInputDialog::getText(this, tr("Rename sheet"), tr("Name"), QLineEdit::Normal, m_tabs->tabText(m_tabs->currentIndex()), &ok);
+        bool ok; auto name = QInputDialog::getText(this, tr("Rename sheet"), tr("New name (updates formula references and clears Undo history)"), QLineEdit::Normal, m_tabs->tabText(m_tabs->currentIndex()), &ok);
         if (ok) { command["name"]=name; submit(command); }
-    });
+    })->setObjectName("renameSheetAction");
     add(sheetMenu, tr("Duplicate sheet…"), {}, [this] {
         if (m_busy) return;
         auto command=targetContext({{"action","sheet_duplicate"}});
