@@ -76,3 +76,22 @@ cells, catalog and history; operation replay never repeats deletion.
 215 Python tests (15 optional-binding skips) and 85 Qt checks. A further review
 regression confirms deadline expiry preserves the catalog, cells and receipt;
 all 18 focused sheet tests pass. The initial contract now reflects these scopes.
+
+## CSV encoding and delimiters
+
+File import now asks for an explicit encoding and delimiter, then sends bytes
+to the shared REST preview operation. UTF-8 accepts a BOM by default; UTF-16
+requires one and supports either byte order. Windows-1252 and Latin-1 are also
+available. Decoding is strict: there is no guessing or replacement of invalid
+bytes. The GUI offers comma, semicolon, tab and pipe; the API accepts any one
+character except quote, NUL and line endings. CSV quoting remains the Python
+parser's strict double-quote convention, including embedded delimiters/newlines.
+
+The API accepts exactly one of Unicode `csv` or base64 `csv_base64`; only bytes
+accept an `encoding`. Raw source and decoded UTF-8 are each limited to 3 MiB;
+the complete request and response each retain their 4-MiB limit, including
+base64/JSON overhead. Records/cells remain limited to 10,000 and each cell to
+64 KiB of UTF-8. The dialog samples only the first eight rows/columns and 120
+characters per field; all parsed cells are imported in one managed Text edit.
+The preview never mutates. File/options/review dialogs retain the original
+workbook, sheet, destination and state; changed context cancels the import.

@@ -1300,16 +1300,30 @@ void MainWindow::importCsv() {
     captureGridDraft(false);
     if (!resolveDraft()) return;
     if (!matchesTarget(target) || m_model->projected()) { issue("CSV import target changed; import cancelled."); return; }
-    auto path = QFileDialog::getOpenFileName(this, tr("Import UTF-8 CSV at selected cell"), {}, tr("CSV (*.csv)"));
+    auto path = QFileDialog::getOpenFileName(this, tr("Import CSV at selected cell"), {}, tr("CSV and text (*.csv *.tsv *.txt);;All files (*)"));
     if (path.isEmpty()) return;
     if (!matchesTarget(target) || m_model->projected()) { issue("CSV import target changed; import cancelled."); return; }
     constexpr int maxBytes=3*1024*1024;
     QFile file(path); if (!file.open(QIODevice::ReadOnly) || file.size() > maxBytes) { issue("CSV must be readable and at most 3 MiB."); return; }
     const auto bytes=file.read(maxBytes+1);
     if (file.error()!=QFileDevice::NoError || bytes.size()>maxBytes) { issue("CSV must be readable and at most 3 MiB."); return; }
-    auto text = QString::fromUtf8(bytes);
-    if (text.toUtf8() != bytes) { issue("CSV is not valid UTF-8. Convert its encoding before importing."); return; }
-    importCsvText(text,target);
+    QDialog dialog(this); dialog.setWindowTitle(tr("CSV import options")); dialog.setObjectName("csvOptionsDialog");
+    QFormLayout layout(&dialog);
+    QComboBox encoding(&dialog); encoding.setObjectName("csvEncoding");
+    encoding.addItem(tr("UTF-8 (BOM accepted)"),"utf-8-sig"); encoding.addItem(tr("UTF-16 (BOM required)"),"utf-16");
+    encoding.addItem(tr("Windows-1252"),"cp1252"); encoding.addItem(tr("Latin-1"),"latin-1");
+    QComboBox delimiter(&dialog); delimiter.setObjectName("csvDelimiter");
+    delimiter.addItem(tr("Comma"),","); delimiter.addItem(tr("Semicolon"),";");
+    delimiter.addItem(tr("Tab"),"\t"); delimiter.addItem(tr("Pipe"),"|");
+    layout.addRow(tr("Encoding"),&encoding); layout.addRow(tr("Delimiter"),&delimiter);
+    QLabel note(tr("Choose the file's encoding. Invalid bytes stop the import. Review parsed Text cells before applying."),&dialog);
+    note.setWordWrap(true); layout.addRow(&note);
+    QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog); layout.addRow(&buttons);
+    connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);
+    connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    if(dialog.exec()!=QDialog::Accepted) return;
+    if (!matchesTarget(target) || m_model->projected()) { issue("CSV import target changed; import cancelled."); return; }
+    importCsvBytes(bytes,encoding.currentData().toString(),delimiter.currentData().toString(),target);
 }
 
 QJsonObject MainWindow::csvImportTarget() const {
@@ -1323,6 +1337,15 @@ QJsonObject MainWindow::csvImportTarget() const {
 }
 
 void MainWindow::importCsvText(const QString &text, QJsonObject target) {
+    previewCsv({{"csv",text}},target);
+}
+
+void MainWindow::importCsvBytes(const QByteArray &bytes, const QString &encoding, const QString &delimiter, QJsonObject target) {
+    if(bytes.size()>3*1024*1024) { issue("CSV source exceeds 3 MiB."); return; }
+    previewCsv({{"csv_base64",QString::fromLatin1(bytes.toBase64())},{"encoding",encoding},{"delimiter",delimiter}},target);
+}
+
+void MainWindow::previewCsv(QJsonObject request, QJsonObject target) {
     if(!m_hiddenRows.isEmpty() || !m_hiddenColumns.isEmpty()) {issue("Show hidden rows and columns before importing CSV."); return;}
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected()) return;
     if (target.isEmpty()) target=csvImportTarget();
@@ -1334,14 +1357,17 @@ void MainWindow::importCsvText(const QString &text, QJsonObject target) {
     const int row=target["row"].toInt(), col=target["col"].toInt();
     const auto targetName=target["name"].toString();
     setBusy(true,"Previewing CSV for "+targetName);
-    m_client->request("/v1/import/csv/preview", {{"csv", text}}, [this,row,col,targetName,validTarget,target](QJsonObject preview, QString error) {
+    m_client->request("/v1/import/csv/preview", request, [this,row,col,targetName,validTarget,target](QJsonObject preview, QString error) {
         if (!error.isEmpty() || !validTarget()) { setBusy(false); issue(error.isEmpty()?"CSV import target changed; import cancelled.":error); return; }
         QStringList lines;
         const auto rows = preview["rows"].toArray();
         for (int i=0; i<qMin(8, int(rows.size())); ++i) {
-            QStringList values; for (const auto &value : rows[i].toArray()) values.append(value.toString()); lines.append(values.join(" | "));
+            const auto fields=rows[i].toArray(); QStringList values;
+            for (int c=0;c<qMin(8,int(fields.size()));++c) values.append(fields[c].toString().left(120));
+            lines.append(values.join(" | "));
         }
-        auto choice = QMessageBox::question(this, tr("Review CSV import"), tr("%1 cells. All columns will remain Text, preserving IDs and formula-like text.\n\n%2\n\nApply as one managed operation at %3?").arg(preview["cells"].toInt()).arg(lines.join('\n')).arg(targetName));
+        QStringList report; for(const auto &line:preview["report"].toArray()) report.append(line.toString());
+        auto choice = QMessageBox::question(this, tr("Review CSV import"), tr("%1 cells. %2\nPreview (first 8 rows/columns, 120 characters per field):\n%3\n\nApply as one managed operation at %4?").arg(preview["cells"].toInt()).arg(report.join('\n')).arg(lines.join('\n')).arg(targetName),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel);
         if (!validTarget()) { setBusy(false); issue("CSV import target changed; import cancelled."); return; }
         setBusy(false);
         if (choice != QMessageBox::Yes) return;

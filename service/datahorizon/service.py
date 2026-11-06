@@ -2,7 +2,6 @@
 
 import argparse
 from contextlib import contextmanager
-import csv
 import hmac
 from http.client import LineTooLong
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +21,7 @@ import uuid
 
 from .engine import EngineError, MAX_CELLS, Workbook, boolean, encoded, require
 from .formula import MAX_COLS, MAX_ROWS
+from .csv_import import ENCODINGS, preview_csv
 
 CAPABILITIES = {
     "api_version": 1, "format_version": 1, "max_operation_cells": MAX_CELLS,
@@ -139,7 +139,12 @@ def openapi():
         "description":"Atomic operations: at most 10,000 affected cells and a 4 MiB request. Range endpoints are inclusive and must be ordered. Copy fill uses the top-left input; series requires a numeric seed. Move requires no formula sources in the workbook. Sheet rename updates qualified name references while preserving stable UUID references, scanning at most 10,000 formulas/8 MiB. Sheet duplication preserves other-sheet references and retargets copied self-references, including UUIDs; it copies at most 10,000 stored cells/8 MiB. Sheet deletion replaces surviving name/UUID references and inherited ranges with permanent #REF! errors and reports affected locations; deleted and rewritten cells share the 10,000-cell limit. Unsupported syntax and required hooks reject reference-changing structure operations. Row/column changes retarget absolute and relative A1 references across sheets, expand/contract ranges and report newly broken references; required handlers, unsupported formula syntax and grid overflow reject atomically. Structure changes clear history. No managed SQL or chunked commits.",
         "example":schemas["EditOperation"]["example"]}
     schemas.update({
-        "CsvPreviewRequest":{"type":"object","required":["csv"],"properties":{"csv":{"type":"string"},"delimiter":{"type":"string","minLength":1,"maxLength":1,"default":","}},"example":{"csv":"ID,Value\n00123,7"}},
+        "CsvPreviewRequest":{"type":"object","oneOf":[{"required":["csv"],"not":{"anyOf":[{"required":["csv_base64"]},{"required":["encoding"]}]}},{"required":["csv_base64"],"not":{"required":["csv"]}}],
+            "properties":{"csv":{"type":"string","description":"Already decoded Unicode text; at most 3 MiB of UTF-8"},
+                "csv_base64":{"type":"string","format":"byte","description":"Strict base64 of at most 3 MiB of source bytes; total JSON request remains limited to 4 MiB"},
+                "encoding":{"type":"string","enum":list(ENCODINGS),"default":"utf-8-sig","description":"Strict byte decoding; UTF-16 requires a BOM"},
+                "delimiter":{"type":"string","minLength":1,"maxLength":1,"default":",","description":"Cannot be a quote, NUL, CR or LF"}},
+            "example":{"csv":"ID,Value\n00123,7"}},
         "SnapshotRequest":{"type":"object","required":["path"],"properties":{"path":{"type":"string","description":"New server-local destination; never overwrite an existing file"}},"example":{"path":"/tmp/copy.dhwb"}},
         "CloseRequest":{"type":"object","example":{}},
         "FindRequest":{"type":"object","required":["needle"],"properties":{"sheet":sheet,**rectangle,**search},"example":{"sheet":"Sheet1","r2":10,"c2":4,"needle":"Pen"}},
@@ -327,21 +332,7 @@ class Service(ThreadingHTTPServer):
         if method == "POST" and path == "/v1/open":
             return self._open(body)
         if method == "POST" and path == "/v1/import/csv/preview":
-            text = body.get("csv")
-            delimiter = body.get("delimiter", ",")
-            require(isinstance(text, str) and isinstance(delimiter, str) and len(delimiter) == 1,
-                    "INVALID_CSV", "Provide CSV text and a one-character delimiter")
-            rows, count = [], 0
-            try:
-                for row in csv.reader(io.StringIO(text, newline=""), delimiter=delimiter, strict=True):
-                    require(len(rows) < MAX_CELLS, "LIMIT", "CSV preview/import exceeds 10,000 records")
-                    count += len(row)
-                    require(count <= MAX_CELLS, "LIMIT", "CSV preview/import exceeds 10,000 cells")
-                    rows.append(row)
-            except csv.Error as error:
-                raise EngineError("INVALID_CSV", str(error)) from error
-            return {"rows": rows, "cells": count, "default_kind": "text",
-                    "report": ["All columns remain text, including leading zeros and formula-like text. Choose types explicitly before applying."]}
+            return preview_csv(body)
         parts = path.strip("/").split("/")
         require(len(parts) >= 3 and parts[:2] == ["v1", "workbooks"], "NOT_FOUND", "Unknown API resource", 404)
         with self.registry_lock:

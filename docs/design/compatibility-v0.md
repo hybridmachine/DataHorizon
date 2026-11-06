@@ -66,10 +66,13 @@ background results that can overwrite a newer input state.
 | Sheets | Preserved | At selected cell on one sheet | Explicit selected rectangle | Unavailable |
 | Code / queries / relationships | Planned metadata, not implemented | No code activation | Omitted | Unavailable |
 
-CSV is UTF-8, comma-separated in the GUI, with quote handling through the Python
-CSV parser. The API accepts another single-character delimiter. Import preview
-is bounded by 10,000 cells and must be reviewed. GUI import keeps all columns
-Text; per-column numeric/date conversions and encoding controls remain M5 work.
+CSV import supports explicitly selected UTF-8 (optional BOM), UTF-16 (required
+BOM), Windows-1252 and Latin-1, with strict decoding. The GUI offers comma,
+semicolon, tab and pipe delimiters; the API accepts one character excluding
+quotes, NUL and line endings. Import preview is bounded by 10,000 cells/records,
+3 MiB of raw bytes and decoded UTF-8, 64 KiB per cell and a 4-MiB complete JSON
+request/response. The reviewed import keeps all columns Text; per-column
+numeric/date conversion remains M5 work. See [CSV controls](editing-csv-next-five.md#csv-encoding-and-delimiters).
 Exports use round-trip-safe numeric text rather than the grid's display rounding.
 Empty text, NULL and absence all map to
 an empty CSV field; this loss is inherent in the initial values-only tier.

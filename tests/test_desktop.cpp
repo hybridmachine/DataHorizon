@@ -1038,6 +1038,45 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void csvEncodingAndDelimiterOptionsDecodeBeforeReviewAndRejectInvalidBytes() {
+        const bool originalDialogs=QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs,true);
+        const auto restore=qScopeGuard([originalDialogs]{QApplication::setAttribute(Qt::AA_DontUseNativeDialogs,originalDialogs);});
+        QTemporaryDir temp; const auto path=temp.filePath("data.csv"); QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly)); file.write(QByteArray::fromHex("30303132333b636166e93b3d312b31")); file.close();
+        StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("csv.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        bool selectedOptions=false,reviewed=false;
+        QTimer answer; answer.setInterval(10);
+        connect(&answer,&QTimer::timeout,&window,[&]{
+            auto *modal=QApplication::activeModalWidget();
+            if(auto *picker=qobject_cast<QFileDialog *>(modal)) {
+                picker->selectFile(path);
+                if(auto *buttons=picker->findChild<QDialogButtonBox *>()) buttons->button(QDialogButtonBox::Open)->click();
+            } else if(auto *dialog=qobject_cast<QDialog *>(modal);dialog && dialog->objectName()=="csvOptionsDialog") {
+                auto *encoding=dialog->findChild<QComboBox *>("csvEncoding");
+                auto *delimiter=dialog->findChild<QComboBox *>("csvDelimiter");
+                encoding->setCurrentIndex(encoding->findData("cp1252")); delimiter->setCurrentIndex(delimiter->findData(";"));
+                selectedOptions=true; dialog->accept();
+            } else if(auto *box=qobject_cast<QMessageBox *>(modal)) {
+                reviewed=box->text().contains("cp1252") && box->text().contains(QString::fromUtf8("café"));
+                box->button(QMessageBox::Yes)->click();
+            }
+        });
+        QAction *import=nullptr; for(auto *action:window.findChildren<QAction *>()) if(action->text()=="Import CSV…") import=action;
+        QVERIFY(import); QSignalSpy changed(&window,&MainWindow::operationFinished);
+        answer.start(); import->trigger(); QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000); answer.stop();
+        QVERIFY(selectedOptions); QVERIFY(reviewed); QVERIFY(changed[0][0].toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString::fromUtf8("café"),5000);
+        QCOMPARE(window.model()->data(window.model()->index(0,0)).toString(),QString("00123"));
+        QCOMPARE(window.model()->data(window.model()->index(0,2)).toString(),QString("=1+1"));
+        window.importCsvBytes(QByteArray::fromHex("ff"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("INVALID_CSV_ENCODING"),5000);
+        QCOMPARE(changed.count(),1);
+    }
     void csvPreviewCapturesItsTargetAndRejectsInvalidatedProjection() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show();

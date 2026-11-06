@@ -26,6 +26,7 @@ public:
     void openBook(const QString &path, bool create = false, bool readonly = false);
     void submit(QJsonObject operation);
     void importCsvText(const QString &text, QJsonObject target = {});
+    void importCsvBytes(const QByteArray &bytes, const QString &encoding = "utf-8-sig", const QString &delimiter = ",", QJsonObject target = {});
     void exportCsvTo(const QString &path, QJsonObject target = {});
     void showList(QJsonObject scope);
     static bool isRecoveryPath(QString path);
@@ -52,6 +53,7 @@ private:
     void paste(bool valuesOnly = false, bool formatsOnly = false);
     void format(const QJsonObject &style, QJsonObject target = {});
     void importCsv();
+    void previewCsv(QJsonObject request, QJsonObject target);
     QJsonObject csvImportTarget() const;
     void exportCsv();
     void listDialog();

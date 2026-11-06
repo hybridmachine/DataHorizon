@@ -110,6 +110,8 @@ preflights at most 10,000 stored cells/8 MiB before creating the new sheet.
 Sheet deletion now atomically removes bounded stored cells and permanently
 breaks surviving name/UUID references, reporting the affected formula locations.
 Deleted and rewritten cells share the ordinary operation budget.
+CSV import now offers strict encoding and delimiter controls with service-side
+byte decoding, bounded parsed previews and unchanged atomic Text imports.
 
 The user prioritized [five everyday spreadsheet increments](everyday-next-five.md)
 after PR #13. Text wrapping and all-cell borders now use native managed styles, with bounded loaded
