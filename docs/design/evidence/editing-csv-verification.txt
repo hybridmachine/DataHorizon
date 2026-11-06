@@ -1,0 +1,20 @@
+Final local verification on reviewed implementation:
+
+Full Qt suite after review fixes:
+Totals: 89 passed, 0 failed, 0 skipped, 0 blacklisted, 44513ms
+
+Complete Python suite with the existing optional APSW environment:
+Ran 227 tests in 22.710s
+OK
+
+Base CTest before final dialog-only review changes: 227 Python tests (15 optional skips), 89 Qt checks; both tests passed.
+
+Native CSV typing and correction (Cocoa, scale 2):
+Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 2318ms
+Native acceptance: Cocoa scales 1 and 2 passed; JSON/screenshots retained.
+
+Installed application:
+Installed application: managed edit and calculation passed
+
+Review corrections: preserve the custom column action in a Qt review dialog on Cocoa, use a compact summary with scrollable details, label types for people, and initialize the automated file picker once with an explicit timeout. A waiting superseded test process was stopped; the complete corrected GUI suite passes in 44.5 seconds.
+Latest hosted Actions run completed without starting any jobs; user authorized local verification and sequential merge.

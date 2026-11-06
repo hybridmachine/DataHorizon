@@ -10,6 +10,8 @@ from .engine import EngineError, MAX_CELLS, boolean, encoded, require, typed
 
 ENCODINGS = ("utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1")
 COLUMN_TYPES = ("text", "number", "boolean", "date_iso", "date_mdy", "date_dmy")
+COLUMN_LABELS = {"text":"Text","number":"Number","boolean":"Boolean",
+                 "date_iso":"Date YYYY-MM-DD","date_mdy":"Date M/D/YYYY","date_dmy":"Date D/M/YYYY"}
 MAX_SOURCE_BYTES = 3*1024*1024
 
 
@@ -123,6 +125,6 @@ def convert_columns(request,result):
         result["inputs"]=inputs  # A failed conversion never supplies an applicable typed payload.
     selected=sorted(types.items(),key=lambda entry:int(entry[0]))
     result["report"]=[result["report"][0],
-        f"{len(types)} explicit column types (first 20): "+", ".join(f"{column}={kind}" for column,kind in selected[:20])+"; unspecified columns remain Text.",
-        f"{converted} typed/date values; {errors} conversion errors. First record stays Text: {header}.",
+        f"{len(types)} explicit column types (first 20): "+", ".join(f"{column}={COLUMN_LABELS[kind]}" for column,kind in selected[:20])+"; unspecified columns remain Text.",
+        f"{converted} typed/date values; {errors} conversion errors. First record stays Text: {'yes' if header else 'no'}.",
         f"{ambiguous} ambiguous slash dates use the explicitly selected order. Dates are stored as ISO Text, not a native date type. Empty converted fields become blank."]

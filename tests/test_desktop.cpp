@@ -1052,27 +1052,37 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
         QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("csv.dhwb"),true);
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
-        bool selectedOptions=false,reviewed=false;
+        bool selectedOptions=false,reviewed=false,pickerInitialized=false,timedOut=false;
+        QElapsedTimer elapsed; elapsed.start();
         QTimer answer; answer.setInterval(10);
         connect(&answer,&QTimer::timeout,&window,[&]{
             auto *modal=QApplication::activeModalWidget();
+            if(elapsed.elapsed()>10000) {
+                timedOut=true;
+                if(auto *dialog=qobject_cast<QDialog *>(modal)) dialog->reject();
+                return;
+            }
             if(auto *picker=qobject_cast<QFileDialog *>(modal)) {
-                picker->selectFile(path);
-                if(auto *buttons=picker->findChild<QDialogButtonBox *>()) buttons->button(QDialogButtonBox::Open)->click();
+                if(!pickerInitialized) {
+                    pickerInitialized=true; picker->setDirectory(temp.path()); picker->selectFile(QFileInfo(path).fileName());
+                }
+                if(auto *buttons=picker->findChild<QDialogButtonBox *>())
+                    if(auto *open=buttons->button(QDialogButtonBox::Open);open && open->isEnabled()) open->click();
             } else if(auto *dialog=qobject_cast<QDialog *>(modal);dialog && dialog->objectName()=="csvOptionsDialog") {
                 auto *encoding=dialog->findChild<QComboBox *>("csvEncoding");
                 auto *delimiter=dialog->findChild<QComboBox *>("csvDelimiter");
                 encoding->setCurrentIndex(encoding->findData("cp1252")); delimiter->setCurrentIndex(delimiter->findData(";"));
                 selectedOptions=true; dialog->accept();
             } else if(auto *box=qobject_cast<QMessageBox *>(modal)) {
-                reviewed=box->textFormat()==Qt::PlainText && box->text().contains("cp1252") && box->text().contains(QString::fromUtf8("café"));
+                const auto review=box->text()+box->informativeText()+box->detailedText();
+                reviewed=box->textFormat()==Qt::PlainText && review.contains("cp1252") && review.contains(QString::fromUtf8("café"));
                 box->button(QMessageBox::Yes)->click();
             }
         });
         QAction *import=nullptr; for(auto *action:window.findChildren<QAction *>()) if(action->text()=="Import CSV…") import=action;
         QVERIFY(import); QSignalSpy changed(&window,&MainWindow::operationFinished);
         answer.start(); import->trigger(); QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000); answer.stop();
-        QVERIFY(selectedOptions); QVERIFY(reviewed); QVERIFY(changed[0][0].toBool());
+        QVERIFY(!timedOut); QVERIFY(selectedOptions); QVERIFY(reviewed); QVERIFY(changed[0][0].toBool());
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString::fromUtf8("café"),5000);
         QCOMPARE(window.model()->data(window.model()->index(0,0)).toString(),QString("00123"));
         QCOMPARE(window.model()->data(window.model()->index(0,2)).toString(),QString("=1+1"));
@@ -1093,7 +1103,7 @@ private slots:
             if(auto *box=qobject_cast<QMessageBox *>(modal)) {
                 if(phase==0) { phase=1; box->findChild<QPushButton *>("csvTypesButton")->click(); }
                 else if(phase==2) {
-                    reviewed=box->text().contains("1 ambiguous") && box->text().contains("2026-03-04");
+                    reviewed=box->informativeText().contains("1 ambiguous") && box->informativeText().contains("2026-03-04");
                     const auto screenshot=qEnvironmentVariable("DATAHORIZON_CSV_SCREENSHOT");
                     if(!screenshot.isEmpty()) box->grab().save(screenshot);
                     phase=3; box->button(QMessageBox::Yes)->click();
@@ -1135,7 +1145,7 @@ private slots:
             if(auto *box=qobject_cast<QMessageBox *>(modal)) {
                 if(phase==0) {phase=1; box->findChild<QPushButton *>("csvTypesButton")->click();}
                 else if(phase==2) {
-                    blocked=!box->button(QMessageBox::Yes)->isEnabled() && box->text().contains("INVALID_INPUT") && changed.count()==0;
+                    blocked=!box->button(QMessageBox::Yes)->isEnabled() && box->detailedText().contains("INVALID_INPUT") && changed.count()==0;
                     phase=3; box->findChild<QPushButton *>("csvTypesButton")->click();
                 } else if(phase==4) {phase=5; box->button(QMessageBox::Yes)->click();}
             } else if(auto *dialog=qobject_cast<QDialog *>(modal);dialog && dialog->objectName()=="csvTypesDialog") {

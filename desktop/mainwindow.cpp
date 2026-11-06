@@ -1359,7 +1359,7 @@ void MainWindow::previewCsv(QJsonObject request, QJsonObject target) {
     setBusy(true,"Previewing CSV for "+targetName);
     m_client->request("/v1/import/csv/preview", request, [this,row,col,targetName,validTarget,target,request](QJsonObject preview, QString error) mutable {
         if (!error.isEmpty() || !validTarget()) { setBusy(false); issue(error.isEmpty()?"CSV import target changed; import cancelled.":error); return; }
-        QStringList lines;
+        QStringList lines,shortLines;
         const auto rows = preview["rows"].toArray();
         if(row+rows.size()-1>1048576 || col+preview["columns"].toInt()-1>16384) {
             setBusy(false); issue("CSV destination exceeds the supported grid. Choose a different starting cell."); return;
@@ -1373,6 +1373,11 @@ void MainWindow::previewCsv(QJsonObject request, QJsonObject target) {
                 values.append((item.isEmpty()?fields[c].toString():item["source"].toString()).left(120));
             }
             lines.append(values.join(" | "));
+            if(i<2) {
+                QStringList shortValues;
+                for(int c=0;c<qMin(4,int(values.size()));++c) shortValues.append(values[c].left(40));
+                shortLines.append(shortValues.join(" | "));
+            }
         }
         QStringList report; for(const auto &line:preview["report"].toArray()) report.append(line.toString());
         const auto conversionIssues=preview["conversion_issues"].toArray(),dateExamples=preview["date_examples"].toArray();
@@ -1385,10 +1390,18 @@ void MainWindow::previewCsv(QJsonObject request, QJsonObject target) {
                 .arg(cell["row"].toInt()).arg(cell["col"].toInt()).arg(cell["source"].toString()).arg(cell["result"].toString()));
         }
         QMessageBox review(QMessageBox::Question,tr("Review CSV import"),
-            tr("%1 cells. %2\nPreview (first 8 rows/columns, 120 characters per field):\n%3\n\nApply as one managed operation at %4?")
-                .arg(preview["cells"].toInt()).arg(report.join('\n')).arg(lines.join('\n')).arg(targetName),
+            tr("Import %1 cells at %2?").arg(preview["cells"].toInt()).arg(targetName),
             QMessageBox::Yes|QMessageBox::Cancel,this);
+        // This review has a custom column-type action; keep its button identity
+        // and disabled Apply state in the Qt widget on every platform.
+        review.setOption(QMessageBox::Option::DontUseNativeDialog);
         review.setTextFormat(Qt::PlainText); review.setDefaultButton(QMessageBox::Cancel);
+        QString summary=tr("%1 converted values; %2 conversion errors.\n%3 ambiguous slash dates use your selected date order. Dates become ISO Text.\n\nPreview (first 2 rows / 4 columns, 40 characters per field):\n%4\n\nOpen Details for encoding, column types, conversion issues and more preview rows.")
+            .arg(preview["converted_cells"].toInt()).arg(preview["conversion_errors"].toInt())
+            .arg(preview["ambiguous_dates"].toInt()).arg(shortLines.join('\n'));
+        review.setInformativeText(summary);
+        review.setDetailedText(report.join('\n')+tr("\n\nPreview (first 8 rows/columns, 120 characters per field):\n")+lines.join('\n'));
+        review.button(QMessageBox::Yes)->setText(tr("Import"));
         auto *typesButton=review.addButton(tr("Column types…"),QMessageBox::ActionRole); typesButton->setObjectName("csvTypesButton");
         typesButton->setEnabled(preview["columns"].toInt()>0);
         const bool canImport=preview["can_import"].toBool(); review.button(QMessageBox::Yes)->setEnabled(canImport);
