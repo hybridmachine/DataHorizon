@@ -1,0 +1,14 @@
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   41.54 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   21.98 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  63.52 sec
+
+Totals: 83 passed, 0 failed, 0 skipped, 0 blacklisted, 41488ms
+Ran 205 tests in 21.802s
+OK (skipped=15)
+Hosted CI billing-blocked; local verification and merge authorized.

@@ -4,7 +4,7 @@ November 5, 2026. Continue everyday features after PRs #14–#18. Implement,
 verify locally, open/review/fix and merge each item before starting the next.
 Hosted CI remains unavailable under the user's local-verification authorization.
 
-1. Sheet rename with formula reference updates.
+1. [Sheet rename, PR #19](https://github.com/hybridmachine/DataHorizon/pull/19), with formula reference updates.
 2. Sheet duplication with reference preservation and copied self-references.
 3. Sheet deletion with broken-reference transformation and warnings.
 4. CSV encoding and delimiter controls.
@@ -29,3 +29,7 @@ Rollback and replay retain the existing durable operation receipt contract.
 Verification covers quoted/case/UUID/range/string references, reopen, Text
 preservation, source/scan limits, collision, injected write failure and receipt
 replay; SDK/REST and the real Qt rename dialog exercise the same operation.
+
+[Rename local verification](evidence/rename-verification.txt): 205 Python tests
+(15 optional-binding skips) and 83 Qt checks pass. Published diff reviewed; no
+unresolved findings in this scope.
