@@ -48,6 +48,16 @@ class XlsxStyleTests(unittest.TestCase):
         invalid=preview(styled_fixture('<c r="A1" s="99"><v>7</v></c>',styles))
         self.assertFalse(invalid["can_import"]); self.assertEqual(invalid["cells"],[])
 
+    def test_rgb_alpha_case_is_ignored_for_cell_fills_and_tint_is_reported(self):
+        for rgb in ("0012ab34","ff12AB34","7f12ab34"):
+            styles=f'<styleSheet xmlns="{S}"><fonts><font/></fonts><fills><fill><patternFill patternType="solid"><fgColor rgb="{rgb}"/></patternFill></fill></fills><borders><border><diagonal style="thin"/></border></borders><cellXfs><xf fontId="0" fillId="0" borderId="0"/></cellXfs></styleSheet>'
+            result=preview(styled_fixture('<c r="A1"><v>7</v></c>',styles))
+            self.assertEqual(result["cells"][0]["style"],{"background":"#12ab34"})
+            self.assertIn("Diagonal"," ".join(result["report"]))
+            tinted=preview(styled_fixture('<c r="A1"><v>7</v></c>',styles.replace('rgb="'+rgb+'"','rgb="'+rgb+'" tint="0.5"')))
+            self.assertNotIn("background",tinted["cells"][0]["style"])
+            self.assertIn("tinted"," ".join(tinted["report"]))
+
     def test_import_replaces_default_style_preserves_input_and_undo_restores_prior_style(self):
         with tempfile.TemporaryDirectory() as temp,LocalService() as client,client.open(Path(temp)/"style.dhwb",create=True) as book:
             book.apply("edit",cells=[{"row":1,"col":1,"source":"old","style":{"bold":True,"background":"#ff0000"}}])

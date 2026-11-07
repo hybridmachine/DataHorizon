@@ -48,11 +48,11 @@ class XlsxStyles:
         if enabled(font.find(f"{{{S}}}i")): result["italic"]=True
         fill=self.index(xf.get("fillId","0"),self.fills)
         pattern=fill.find(f"{{{S}}}patternFill")
-        if pattern is not None and pattern.get("patternType") not in (None,"none","gray125"):
+        if pattern is not None and pattern.get("patternType") not in (None,"none"):
             color=pattern.find(f"{{{S}}}fgColor")
             rgb=color.get("rgb","") if color is not None else ""
-            if pattern.get("patternType")=="solid" and re.fullmatch(r"FF[0-9a-fA-F]{6}",rgb): result["background"]="#"+rgb[2:].lower()
-            else: self.loss("Non-solid, transparent, indexed or theme fills are omitted.")
+            if pattern.get("patternType")=="solid" and re.fullmatch(r"[0-9a-fA-F]{8}",rgb) and color.get("tint","0") in ("0","0.0"): result["background"]="#"+rgb[2:].lower()
+            else: self.loss("Non-solid, tinted, indexed or theme fills are omitted.")
         border=self.index(xf.get("borderId","0"),self.borders)
         sides=[border.find(f"{{{S}}}{side}") for side in ("left","right","top","bottom")]
         styles=[side.get("style") if side is not None else None for side in sides]
@@ -60,6 +60,8 @@ class XlsxStyles:
             result["border"]="box"
             self.loss("Border colors map to the native default color.")
         elif any(styles): self.loss("Partial or non-thin borders are omitted.")
+        if any(edge.tag.rsplit("}",1)[-1] not in ("left","right","top","bottom") and edge.get("style") for edge in border):
+            self.loss("Diagonal and additional border edges are omitted.")
         alignment=xf.find(f"{{{S}}}alignment")
         if alignment is not None:
             horizontal=alignment.get("horizontal")

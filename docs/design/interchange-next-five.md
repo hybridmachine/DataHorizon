@@ -6,7 +6,7 @@ remains unavailable under the user's local verification authorization.
 
 1. [Cancellable CSV preparation, PR #24](https://github.com/hybridmachine/DataHorizon/pull/24), progress and explicit atomic Apply.
 2. [XLSX inputs/formulas, PR #25](https://github.com/hybridmachine/DataHorizon/pull/25), with snapshot export and conversion reports.
-3. XLSX formatting fidelity for the native style tier, with explicit loss reports.
+3. [XLSX native styles, PR #26](https://github.com/hybridmachine/DataHorizon/pull/26), with explicit loss reports.
 4. Bounded ODS input/formula/style import and snapshot export.
 5. Native recovery and interchange failure hardening, with destructive fixtures.
 
@@ -88,7 +88,7 @@ CTest, final service regressions, native Cocoa scale 2 and independent readers.
 
 Import maps direct cell formats to the existing native style tier. General,
 Text and fixed2 map from built-ins 0/49/2 and exact custom equivalents. Bold,
-italic, left/center/right alignment, wrap, opaque solid RGB fill and four thin
+italic, left/center/right alignment, wrap, solid RGB fill and four thin
 borders map to native properties. Borders use the native default color. Default
 and styled-empty cells replace destination styles, including removing prior
 formatting, in the same managed edit as the imported source. Input kinds stay
@@ -96,7 +96,7 @@ explicit: a numeric cell with Text display formatting remains numeric. Undo and
 required hooks cover sources and styles together.
 
 The report lists unsupported number formats, date/time display serials,
-partial/thick borders, theme/indexed/translucent fills and alignment properties.
+partial/thick borders, theme/indexed/tinted fills and alignment properties.
 Font family/size/color, rich-text runs, named-style inheritance, conditional
 formatting, row/column defaults and dimensions are outside this tier and reported
 as omitted. Dates are not silently interpreted as native dates. Styles and shared
@@ -109,3 +109,9 @@ are bounded at 4,096 entries. Existing ZIP/XML/response limits remain. Independe
 openpyxl producer/consumer checks exercise every mapped property; the Qt fixture
 is produced by openpyxl and verifies calculated fixed2 display and emphasis.
 Mapping follows [Microsoft's cell format documentation](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.spreadsheet.cellformat).
+
+[Style verification](evidence/xlsx-styles-verification.txt) records full local
+CTest and final review regressions, independent readers and Cocoa scale 2.
+Review corrected ARGB handling (alpha is irrelevant to cell fills), and now
+reports tint, patterned fills and diagonal borders. The
+[native screenshot](evidence/xlsx-styles-native.png) was visually inspected.
