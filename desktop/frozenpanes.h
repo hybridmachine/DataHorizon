@@ -84,7 +84,7 @@ public:
         connect(m_left->verticalScrollBar(),&QScrollBar::valueChanged,body->verticalScrollBar(),&QScrollBar::setValue);
     }
     ~FrozenPanes()override {
-        m_selection.setEnabled(false);
+        m_selection.shutdown();
         m_body->viewport()->removeEventFilter(this);m_body->verticalHeader()->removeEventFilter(this);m_body->horizontalHeader()->removeEventFilter(this);
         m_body->horizontalHeader()->disconnect(this);m_body->verticalHeader()->disconnect(this);
         for(auto *view:views()) {

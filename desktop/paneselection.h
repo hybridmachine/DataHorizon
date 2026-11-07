@@ -10,6 +10,7 @@
 #include <QScrollBar>
 #include <QTableView>
 #include <QTimer>
+#include <functional>
 
 // Prefix panes retain source row/column indices. The body owns the canonical
 // current cell and rectangle; proxies mirror intersections without data caches.
@@ -23,6 +24,12 @@ public:
         });
         connect(body->selectionModel(),&QItemSelectionModel::selectionChanged,this,[this]{sync();});
         connect(body->model(),&QAbstractItemModel::modelReset,this,[this]{m_anchor=QModelIndex();m_dragging=false;sync();});
+    }
+    std::function<void(const QString &,bool)> dataNavigation;
+    void shutdown() {
+        m_enabled=false;m_dragging=false;dataNavigation={};
+        for(auto *view:m_views){view->removeEventFilter(this);view->viewport()->removeEventFilter(this);}
+        m_views.clear();
     }
     void addPane(QTableView *pane) {
         m_views.append(pane);install(pane);
@@ -41,6 +48,10 @@ public:
                 QTimer::singleShot(0,this,[this]{sync();});
             }
         });
+    }
+    bool navigateTo(const QModelIndex &cell,bool extend,const QModelIndex &anchor={}) {
+        if(anchor.isValid())m_anchor=anchor;
+        return select(cell,extend,paneFor(cell));
     }
     void focusCurrent() {
         auto *pane=m_enabled?paneFor(m_body->currentIndex()):m_body;
@@ -66,10 +77,22 @@ public:
     }
 protected:
     bool eventFilter(QObject *object,QEvent *event) override {
-        if(!m_enabled)return false;
         QTableView *view=nullptr;
         for(auto *candidate:m_views)if(object==candidate || object==candidate->viewport()){view=candidate;break;}
         if(!view || !view->isVisible())return false;
+        if((event->type()==QEvent::ShortcutOverride || event->type()==QEvent::KeyPress) && object==view
+            && view->window()->focusWidget()==view && dataNavigation) {
+            const auto *key=static_cast<QKeyEvent *>(event);const auto mods=key->modifiers();QString direction;
+            if(mods.testFlag(Qt::ControlModifier) && !(mods&~(Qt::ControlModifier|Qt::ShiftModifier))) {
+                if(key->key()==Qt::Key_Up)direction="up";else if(key->key()==Qt::Key_Down)direction="down";
+                else if(key->key()==Qt::Key_Left)direction="left";else if(key->key()==Qt::Key_Right)direction="right";
+            }
+            if(!direction.isEmpty()) {
+                if(event->type()==QEvent::ShortcutOverride)event->accept();else dataNavigation(direction,mods.testFlag(Qt::ShiftModifier));
+                return true;
+            }
+        }
+        if(!m_enabled)return false;
         if(event->type()==QEvent::MouseButtonPress && object==view->viewport()) {
             const auto *mouse=static_cast<QMouseEvent *>(event);
             if(mouse->button()!=Qt::LeftButton || mouse->modifiers()&~Qt::ShiftModifier)return false;
@@ -91,12 +114,13 @@ protected:
         if(event->type()==QEvent::KeyPress && object==view) {
             const auto *key=static_cast<QKeyEvent *>(event);
             if(key->modifiers()&~Qt::ShiftModifier)return false;
-            int dr=0,dc=0;
-            if(key->key()==Qt::Key_Down)dr=1;else if(key->key()==Qt::Key_Up)dr=-1;
+            int dr=0,dc=0;const bool tab=key->key()==Qt::Key_Tab || key->key()==Qt::Key_Backtab;
+            if(tab)dc=key->key()==Qt::Key_Backtab || key->modifiers().testFlag(Qt::ShiftModifier)?-1:1;
+            else if(key->key()==Qt::Key_Down)dr=1;else if(key->key()==Qt::Key_Up)dr=-1;
             else if(key->key()==Qt::Key_Right)dc=1;else if(key->key()==Qt::Key_Left)dc=-1;else return false;
             auto cell=m_body->currentIndex();if(!cell.isValid())return false;
             do {cell=m_body->model()->index(cell.row()+dr,cell.column()+dc);}while(cell.isValid() && !paneFor(cell));
-            if(cell.isValid())select(cell,key->modifiers().testFlag(Qt::ShiftModifier),paneFor(cell));
+            if(cell.isValid())select(cell,!tab && key->modifiers().testFlag(Qt::ShiftModifier),paneFor(cell));
             return true;
         }
         return false;

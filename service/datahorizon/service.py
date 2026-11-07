@@ -56,6 +56,7 @@ ROUTES = {
     "/v1/workbooks/{workbook}/range": ("post", "Bounded consistent viewport read"),
     "/v1/workbooks/{workbook}/clipboard": ("post", "Consistent full-source clipboard read, at most 10,000 cells and 4 MiB"),
     "/v1/workbooks/{workbook}/list": ("post", "Explicit full-scope sorted/filtered list projection"),
+    "/v1/workbooks/{workbook}/navigate": ("post", "Bounded stored-input data-region boundary navigation"),
     "/v1/workbooks/{workbook}/summary": ("post", "Count and numeric summary of one bounded stored-data snapshot"),
     "/v1/workbooks/{workbook}/find": ("post", "Find in a declared source or display scope"),
     "/v1/workbooks/{workbook}/operations": ("post", "Atomic managed operation"),
@@ -111,6 +112,11 @@ def openapi():
             "reference_warnings":{"type":"integer","description":"Newly broken reference expressions in a row/column operation"},
             "reference_issues":{"type":"array","maxItems":100,"description":"First 100 affected formula locations after the structure change","items":{"type":"object","properties":{"sheet":sheet,"row":row,"col":col}}}}},
     }
+    schemas["NavigationRequest"]={"type":"object","required":["row","col","direction","expected_state"],"properties":{
+        "sheet":sheet,"row":row,"col":col,"direction":{"type":"string","enum":["up","down","left","right"]},"expected_state":{"type":"string"}},
+        "description":"Current and adjacent populated inputs move to the end of their contiguous run; otherwise seek the next populated input or grid edge. Formula inputs and empty Text count as populated; native NULL/styled empty auto cells do not. One snapshot, 10,000 candidate stored cells/4 MiB inputs/2 seconds, no evaluation/hooks/writes. Limits reject without a partial target.",
+        "example":{"row":1,"col":1,"direction":"down","expected_state":"from-workbook-info"}}
+    schemas["Navigation"]={"type":"object","required":["state","sheet","row","col","basis"],"properties":{"state":{"type":"string"},"sheet":sheet,"row":row,"col":col,"basis":{"type":"string","enum":["stored_inputs"]}}}
     schemas["SummaryRequest"]={"type":"object","additionalProperties":False,"properties":{"sheet":sheet,**rectangle},
         "description":"One rectangle up to 10,000 cells, 4 MiB stored input/style budget and 2 seconds; shared formula budgets apply. No hooks or history writes. Count includes non-NULL values and formula errors, including empty Text. Numeric summaries exclude Text/Booleans and are unavailable on any formula error or nonfinite running subtotal. Numeric values are unformatted (percentage fractions unscaled).",
         "example":{"sheet":"Sheet1","r1":1,"c1":1,"r2":100,"c2":3}}
@@ -205,12 +211,14 @@ def openapi():
                      "security": [{"localToken": []}]}
         if method == "post":
             name = "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
-                "summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
+                "navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
         for status in ("400","401","403","404","409","413","500","503"):
             operation["responses"][status]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}
-        if path.endswith("/summary"):
+        if path.endswith("/navigate"):
+            operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Navigation"}}}
+        elif path.endswith("/summary"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Summary"}}}
         elif path.endswith("/operations"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Receipt"}}}
@@ -424,6 +432,8 @@ class Service(ThreadingHTTPServer):
             return book.read(body.get("sheet", "Sheet1"), {**body,"preview":False},limit=MAX_CELLS)
         if method == "POST" and suffix == ["list"]:
             return book.list_view(body.get("sheet", "Sheet1"), body)
+        if method == "POST" and suffix == ["navigate"]:
+            return book.navigate(body.get("sheet","Sheet1"),body)
         if method == "POST" and suffix == ["summary"]:
             return book.summary(body.get("sheet","Sheet1"),body)
         if method == "POST" and suffix == ["find"]:

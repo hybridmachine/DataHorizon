@@ -7,6 +7,7 @@
 #include <QProcess>
 #include <QMap>
 #include <QJsonArray>
+#include <QPersistentModelIndex>
 
 class QTableView;
 class QLineEdit;
@@ -92,9 +93,10 @@ private:
     bool intersectsHidden(int r1,int c1,int r2,int c2) const;
     void updateFrozenRow();
     void freezeAtCurrent();
+    void navigateData(const QString &direction,bool extend);
     bool resolveDraft();
     void submitDraft(bool advance = false, int direction = 1);
-    QJsonObject enterDestination(const QModelIndex &index, int direction) const;
+    QJsonObject enterDestination(const QModelIndex &index, int direction, bool horizontal = false) const;
     void applyEnterNavigation();
     void restartService();
     QString recoveryDirectory() const;
@@ -126,6 +128,10 @@ private:
     QJsonObject m_info;
     QJsonObject m_listSpec;
     QJsonObject m_findScope;
+    QList<QAction *> m_navigationActions;
+    quint64 m_navigationGeneration = 0, m_navigationFlight = 0;
+    bool m_navigationPending = false, m_navigationExtending = false, m_applyingNavigation = false;
+    QPersistentModelIndex m_navigationAnchor;
     QJsonArray m_findMatches;
     int m_findIndex = -1, m_findTotal = 0;
     QAction *m_findNext = nullptr, *m_findPrevious = nullptr;

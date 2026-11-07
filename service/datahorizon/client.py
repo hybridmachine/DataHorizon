@@ -147,6 +147,10 @@ class WorkbookClient:
         self._ensure_open()
         return self.client.request(self.base + "/range", {"sheet": sheet, "r1": r1, "c1": c1, "r2": r2, "c2": c2})
 
+    def navigate(self,row,col,direction,sheet="Sheet1",expected_state=None):
+        self._ensure_open()
+        return self.client.request(self.base+"/navigate",{"sheet":sheet,"row":row,"col":col,"direction":direction,"expected_state":self.state if expected_state is None else expected_state})
+
     def summary(self, sheet="Sheet1", **scope):
         self._ensure_open()
         return self.client.request(self.base+"/summary",{"sheet":sheet,**scope})

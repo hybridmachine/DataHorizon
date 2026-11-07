@@ -1,0 +1,33 @@
+Local macOS November 7, 2026. C++ build passed; hosted credits exhausted.
+
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   69.44 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   26.57 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  96.02 sec
+
+test_limits_return_no_partial_target_and_release_transaction (test_data_navigation.NavigationTests.test_limits_return_no_partial_target_and_release_transaction) ... ok
+test_runs_gaps_empty_formula_text_null_styles_and_grid_edges (test_data_navigation.NavigationTests.test_runs_gaps_empty_formula_text_null_styles_and_grid_edges) ... ok
+test_sdk_readonly_preconditions_and_no_hooks_receipts (test_data_navigation.NavigationTests.test_sdk_readonly_preconditions_and_no_hooks_receipts) ... ok
+test_snapshot_and_source_byte_budget (test_data_navigation.NavigationTests.test_snapshot_and_source_byte_budget) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.359s
+
+OK
+
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::dataBoundaryNavigationExtendsFromSequenceAnchorAndProtectsDrafts()
+PASS   : DesktopTests::dataBoundaryNavigationDiscardsMovedSelectionEditorAndConnectionReplies()
+PASS   : DesktopTests::frozenPaneTabAndEditorTabAdvanceAcrossSourceColumns()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 2325ms
+********* Finished testing of DesktopTests *********
+
+Self-review: stored-input runs/gaps/edges/types, one read snapshot and state fence, source/count/time limits, no formula evaluation or writes/hooks/receipts, read-only SDK/OpenAPI parity, stable extension sequence, scoped Ctrl keys preserving editor input, hidden/projection/draft guards, late selection/editor/connection replies and frozen editor Tab. Controller event filters are detached before pane teardown; actual Ctrl dispatch and window destruction are covered. Physical keyboard/accessibility and cross-platform release gates remain open.

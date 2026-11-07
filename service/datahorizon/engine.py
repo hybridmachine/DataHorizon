@@ -420,6 +420,48 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
+    def navigate(self, sheet, args):
+        row=integer(args.get("row"),1,MAX_ROWS,"row");col=integer(args.get("col"),1,MAX_COLS,"col")
+        direction=args.get("direction")
+        require(direction in ("up","down","left","right"),"INVALID_ARGUMENT","Direction must be up, down, left or right")
+        expected=args.get("expected_state")
+        require(isinstance(expected,str) and bool(expected),"INVALID_ARGUMENT","Navigation requires the reviewed expected_state")
+        vertical=direction in ("up","down");step=-1 if direction in ("up","left") else 1
+        moving,fixed=("row","col") if vertical else ("col","row")
+        position=row if vertical else col;maximum=MAX_ROWS if vertical else MAX_COLS
+        with self.lock:
+            deadline=time.monotonic()+2;self.refresh(deadline=deadline);self.db.execute("BEGIN")
+            try:
+                self.refresh(deadline=deadline)
+                require(expected==self.state(),"STALE_STATE","Workbook changed. Refresh before navigating",409)
+                with sql_deadline(self.db,deadline):
+                    identity=self.sheet(sheet);input_bytes=0
+                    def occupied(item):
+                        nonlocal input_bytes
+                        if item is None:return False
+                        input_bytes+=len(encoded(item).encode())
+                        require(input_bytes<=4*1024*1024,"READ_LIMIT","Navigation inputs exceed 4 MiB; use a nearer address")
+                        return typed(item)["kind"] not in ("blank","null")
+                    current=occupied(self.raw(identity,row,col));target=position;mode=None
+                    if 1<=position+step<=maximum:
+                        operator,order=(">","ASC") if step>0 else ("<","DESC")
+                        records=self.db.execute(f"SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? AND {fixed}=? AND {moving}{operator}? ORDER BY {moving} {order} LIMIT ?",
+                            (identity,col if vertical else row,position,MAX_CELLS+1))
+                        for count,(r,c,source,kind,style) in enumerate(records,1):
+                            require(time.monotonic()<=deadline,"TIMEOUT","Navigation exceeded its time budget")
+                            require(count<=MAX_CELLS,"NAVIGATION_LIMIT","Boundary scan exceeds 10,000 stored cells; use a nearer address")
+                            value=r if vertical else c
+                            present=occupied({"source":source,"kind":kind,"style":json.loads(style)})
+                            if mode is None:mode="block" if current and value==position+step and present else "seek"
+                            if mode=="block":
+                                if value!=target+step or not present:break
+                                target=value
+                            elif present:target=value;break
+                        else:
+                            if mode!="block":target=maximum if step>0 else 1
+                    return {"state":self.state(),"sheet":identity,"row":target if vertical else row,"col":col if vertical else target,"basis":"stored_inputs"}
+            finally:self.db.execute("ROLLBACK")
+
     def summary(self, sheet, args):
         """Stored selection, one read snapshot, no hooks/history/cache writes."""
         require("rows" not in args,"INVALID_ARGUMENT","Summary requires one rectangle, not projected rows")

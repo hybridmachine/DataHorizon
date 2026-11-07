@@ -113,6 +113,8 @@ public:
     }
     std::function<bool()> canEdit;
     std::function<void(const QModelIndex &,int)> enterPressed;
+    std::function<bool(const QModelIndex &,int)> tabPressed;
+    bool hasEditor()const{return m_editor && m_index.isValid();}
     void paint(QPainter *painter,const QStyleOptionViewItem &option,const QModelIndex &index) const override {
         QStyledItemDelegate::paint(painter,option,index);
         const auto item=index.data(SheetModel::CellRole).toJsonObject();
@@ -152,6 +154,11 @@ protected:
     bool eventFilter(QObject *object, QEvent *event) override {
         if (object==m_editor && event->type()==QEvent::KeyPress) {
             const auto *key=static_cast<QKeyEvent *>(event);
+            if((key->key()==Qt::Key_Tab || key->key()==Qt::Key_Backtab) && !(key->modifiers()&~Qt::ShiftModifier) && tabPressed
+                && tabPressed(m_index,key->key()==Qt::Key_Backtab || key->modifiers().testFlag(Qt::ShiftModifier)?-1:1)) {
+                QPointer<QLineEdit> editor=m_editor;emit commitData(editor);
+                if(editor)emit closeEditor(editor,QAbstractItemDelegate::NoHint);return true;
+            }
             if (key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter) {
                 if (enterPressed) enterPressed(m_index,key->modifiers().testFlag(Qt::ShiftModifier)?-1:1);
                 QPointer<QLineEdit> editor=m_editor;
@@ -383,6 +390,10 @@ void MainWindow::buildUi() {
     m_grid = new QTableView; m_grid->setObjectName("grid"); m_grid->setAccessibleName(tr("Spreadsheet")); m_grid->setModel(m_model);
     auto *delegate=new CellDelegate(m_grid); delegate->canEdit=[this]{return !m_source->isModified();};
     delegate->enterPressed=[this](const QModelIndex &index,int direction){m_enterRequest=enterDestination(index,direction);};
+    delegate->tabPressed=[this](const QModelIndex &index,int direction){
+        if(!m_frozenTop || !(m_frozenTop->active() || m_frozenTop->columnActive()))return false;
+        m_enterRequest=enterDestination(index,direction,true);return true;
+    };
     connect(delegate,&QAbstractItemDelegate::closeEditor,this,[this]{m_enterRequest={};});
     m_grid->setItemDelegate(delegate);
     m_grid->setSelectionMode(QAbstractItemView::ContiguousSelection);
@@ -441,6 +452,10 @@ void MainWindow::buildUi() {
         connect(pane->verticalHeader(),&QHeaderView::sectionResized,this,[recordSize](int section,int,int size){recordSize(false,section,size);});
         auto *delegate=new CellDelegate(pane);delegate->canEdit=[this]{return !m_source->isModified();};
         delegate->enterPressed=[this](const QModelIndex &index,int direction){m_enterRequest=enterDestination(index,direction);};
+    delegate->tabPressed=[this](const QModelIndex &index,int direction){
+        if(!m_frozenTop || !(m_frozenTop->active() || m_frozenTop->columnActive()))return false;
+        m_enterRequest=enterDestination(index,direction,true);return true;
+    };
         connect(delegate,&QAbstractItemDelegate::closeEditor,this,[this]{m_enterRequest={};});pane->setItemDelegate(delegate);
     }
     gridLayout->addWidget(m_frozenTop,0,1);gridLayout->addWidget(m_frozenTop->cornerView(),0,0);
@@ -475,6 +490,17 @@ void MainWindow::buildUi() {
         if(m_busy || m_unknown || !matchesTarget(target))return;
         m_frozenRows=0;m_frozenColumns=0;updateFrozenRow();saveViewState();m_frozenTop->focusCurrent();
     });m_unfreezePanesAction->setObjectName("unfreezePanesAction");
+    m_frozenTop->selectionController()->dataNavigation=[this](const QString &direction,bool extend){navigateData(direction,extend);};
+    auto *jumpMenu=view->addMenu(tr("Jump to data boundary"));auto *extendMenu=view->addMenu(tr("Extend to data boundary"));
+    for(const auto &direction:QStringList{"up","down","left","right"})for(bool extend:{false,true}) {
+        const auto label=direction.left(1).toUpper()+direction.mid(1);
+        auto *action=add(extend?extendMenu:jumpMenu,label,QKeySequence((extend?QString("Ctrl+Shift+"):QString("Ctrl+"))+label),[this,direction,extend]{navigateData(direction,extend);});
+        action->setObjectName("data"+QString(extend?"Extend":"Jump")+label+"Action");action->setShortcutContext(Qt::WidgetShortcut);
+        m_grid->addAction(action);for(auto *pane:m_frozenTop->views())pane->addAction(action);m_navigationActions.append(action);
+    }
+    connect(m_grid->selectionModel(),&QItemSelectionModel::selectionChanged,this,[this]{++m_navigationGeneration;if(!m_applyingNavigation)m_navigationExtending=false;});
+    connect(m_model,&QAbstractItemModel::modelReset,this,[this]{++m_navigationGeneration;m_navigationExtending=false;});
+    connect(m_client,&RestClient::configured,this,[this]{++m_navigationFlight;++m_navigationGeneration;m_navigationPending=false;m_navigationExtending=false;});
     m_tabs = new QTabBar; m_tabs->setObjectName("sheets"); m_tabs->setAccessibleName(tr("Worksheets")); m_tabs->setExpanding(false);
     layout->addWidget(m_tabs);
     setCentralWidget(central);
@@ -506,6 +532,7 @@ void MainWindow::buildUi() {
     });
     add(help, tr("About DataHorizon"), {}, [this] { QMessageBox::about(this, tr("DataHorizon"), tr("DataHorizon 0.1 development preview\nGUI: GNU GPL version 3.\nOther component licenses remain undecided.\nSee repository licensing materials.")); });
     connect(m_grid->selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex &, const QModelIndex &previous) {
+        ++m_navigationGeneration;if(!m_applyingNavigation)m_navigationExtending=false;
         if (m_source->isModified() && !resolveDraft()) {
             if (previous.isValid()) { QSignalBlocker blocker(m_grid->selectionModel()); m_grid->setCurrentIndex(previous); }
             syncSource();
@@ -754,6 +781,33 @@ void MainWindow::applyVisibility() {
     m_hiddenButton->setToolTip(tr("Show all hidden rows and columns on this sheet.")); m_hiddenButton->setVisible(any);
     updateFrozenRow();
     ensureVisibleCurrent();queueSummary();
+}
+
+void MainWindow::navigateData(const QString &direction,bool extend) {
+    if(m_busy || m_unknown || m_info.isEmpty() || m_navigationPending)return;
+    if(m_model->projected()){issue("Clear the list view before source data-boundary navigation.");return;}
+    const auto start=m_grid->currentIndex();if(!start.isValid())return;
+    const auto target=targetContext();captureGridDraft(false);if(!resolveDraft())return;
+    if(m_busy || m_unknown || !matchesTarget(target) || m_grid->currentIndex()!=start)return;
+    const auto generation=m_navigationGeneration,flight=++m_navigationFlight;
+    if(!extend || !m_navigationExtending)m_navigationAnchor=start;
+    const auto anchor=m_navigationAnchor;m_navigationPending=true;
+    auto request=target;request.remove("workbook");request["row"]=start.row()+1;request["col"]=start.column()+1;request["direction"]=direction;
+    m_client->request(base()+"/navigate",request,[this,target,start,anchor,generation,flight,extend,direction](QJsonObject result,QString error){
+        if(flight!=m_navigationFlight)return;m_navigationPending=false;
+        if(generation!=m_navigationGeneration || m_busy || m_unknown || !matchesTarget(target) || m_grid->currentIndex()!=start || m_source->isModified())return;
+        QList<QTableView *> views=m_frozenTop->views();views.append(m_grid);
+        for(auto *view:views)if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))if(delegate->hasEditor())return;
+        if(!error.isEmpty()){issue(error);if(result["code"]=="STALE_STATE")m_model->externalChange();return;}
+        const int row=result["row"].toInt(),col=result["col"].toInt();
+        const bool vertical=direction=="up" || direction=="down";
+        if(result["state"]!=target["expected_state"] || result["sheet"]!=target["sheet"] || result["basis"]!="stored_inputs"
+            || !result["row"].isDouble() || result["row"].toDouble()!=row || !result["col"].isDouble() || result["col"].toDouble()!=col
+            || row<1 || row>1048576 || col<1 || col>16384 || (vertical?col!=start.column()+1:row!=start.row()+1)) {issue("Invalid or stale navigation result. Refresh and try again.");return;}
+        if(intersectsHidden(row,col,row,col)){issue("The data boundary is hidden. Show its row/column before navigating there.");return;}
+        QScopedValueRollback<bool> applying(m_applyingNavigation,true);
+        if(m_frozenTop->selectionController()->navigateTo(m_model->index(row-1,col-1),extend,extend?QModelIndex(anchor):QModelIndex()))m_navigationExtending=extend;
+    });
 }
 
 void MainWindow::freezeAtCurrent() {
@@ -1062,7 +1116,8 @@ void MainWindow::restartService() {
 
 void MainWindow::setBusy(bool busy, const QString &message) {
     m_busy = busy || m_releasing;
-    if(m_busy) clearFindResults();
+    if(m_busy){clearFindResults();++m_navigationGeneration;m_navigationExtending=false;}
+    for(auto *action:m_navigationActions)action->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
     m_model->setBusy(m_busy); m_toolbar->setEnabled(!m_busy); m_tabs->setEnabled(!m_busy);
     if(m_freezePanesAction)m_freezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
     if(m_unfreezePanesAction)m_unfreezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && (m_frozenRows>0 || m_frozenColumns>0));
@@ -1107,8 +1162,8 @@ void MainWindow::syncSource() {
     if (cell.contains("error")) m_status->setText(cell["display"].toString() + " • " + cell["error"].toString() + " • Input retained");
 }
 
-QJsonObject MainWindow::enterDestination(const QModelIndex &index, int direction) const {
-    const auto next=m_model->index(index.row()+direction,index.column());
+QJsonObject MainWindow::enterDestination(const QModelIndex &index, int direction, bool horizontal) const {
+    const auto next=m_model->index(index.row()+(horizontal?0:direction),index.column()+(horizontal?direction:0));
     if (!index.isValid() || !next.isValid()) return {};
     return {{"workbook",m_info["id"]},{"sheet",m_model->sheet()},
             {"row",m_model->sourceRow(next.row())+1},{"col",next.column()+1}};
