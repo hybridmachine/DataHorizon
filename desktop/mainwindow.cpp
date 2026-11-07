@@ -57,6 +57,40 @@ bool sameFile(const QString &left, const QString &right) {
     return std::filesystem::equivalent(QFileInfo(left).filesystemFilePath(), QFileInfo(right).filesystemFilePath(), error);
 }
 
+class ExportFileDialog : public QFileDialog {
+public:
+    ExportFileDialog(QWidget *parent, const QStringList &filters) : QFileDialog(parent) {
+        setObjectName("exportFileDialog");
+        setOption(QFileDialog::DontUseNativeDialog);
+        setAcceptMode(QFileDialog::AcceptSave); setFileMode(QFileDialog::AnyFile);
+        setNameFilters(filters); setDefaultSuffix("csv"); selectFile("export.csv");
+        setLabelText(QFileDialog::FileType,QObject::tr("Format:"));
+        connect(this,&QFileDialog::filterSelected,this,[this]{
+            setDefaultSuffix(format());
+            const auto path=selectedFiles().value(0);
+            if(!path.isEmpty() && !QFileInfo(path).isDir()) selectFile(withFormat(path));
+        });
+    }
+    QString format() const {
+        return QStringList{"csv","xlsx","ods"}.value(nameFilters().indexOf(selectedNameFilter()),"csv");
+    }
+    void accept() override {
+        const auto path=selectedFiles().value(0);
+        if(path.isEmpty()) return;
+        // Normalize before QFileDialog's overwrite confirmation, so it covers
+        // the exact destination passed to the exporter.
+        if(!QFileInfo(path).isDir()) selectFile(withFormat(path));
+        QFileDialog::accept();
+    }
+private:
+    QString withFormat(const QString &path) const {
+        const auto suffix=QFileInfo(path).suffix();
+        if(suffix.compare(format(),Qt::CaseInsensitive)==0) return path;
+        if(QStringList{"csv","xlsx","ods"}.contains(suffix.toLower())) return path.left(path.size()-suffix.size())+format();
+        return path+"."+format();
+    }
+};
+
 class CellDelegate : public QStyledItemDelegate {
 public:
     explicit CellDelegate(QObject *parent) : QStyledItemDelegate(parent) {
@@ -206,12 +240,8 @@ void MainWindow::buildUi() {
     add(file, tr("&Save"), QKeySequence::Save, [this] { save(false); }, true)->setObjectName("saveAction");
     add(file, tr("Save a &copy…"), QKeySequence::SaveAs, [this] { save(true); });
     file->addSeparator();
-    add(file, tr("Import CSV…"), {}, [this] { importCsv(); });
-    add(file, tr("Export selection as CSV…"), {}, [this] { exportCsv(); });
-    add(file, tr("Import XLSX…"), {}, [this] { importSpreadsheet("xlsx"); });
-    add(file, tr("Export selection as XLSX…"), {}, [this] { exportSpreadsheet("xlsx"); });
-    add(file, tr("Import ODS…"), {}, [this] { importSpreadsheet("ods"); });
-    add(file, tr("Export selection as ODS…"), {}, [this] { exportSpreadsheet("ods"); });
+    add(file, tr("Import…"), {}, [this] { importFile(); })->setObjectName("importAction");
+    add(file, tr("Export…"), {}, [this] { exportFile(); })->setObjectName("exportAction");
     add(file, tr("Recovery workbooks…"), {}, [this] {
         if (m_busy) return;
         auto path = QFileDialog::getOpenFileName(this, tr("Open recovery workbook"), QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)+"/recovery", tr("DataHorizon (*.dhwb)"));
@@ -1303,20 +1333,32 @@ void MainWindow::paste(bool valuesOnly, bool formatsOnly) {
     command["mode"] = valuesOnly ? "values" : formatsOnly ? "formats" : "all"; submit(command);
 }
 
-void MainWindow::importCsv() {
+void MainWindow::importFile() {
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
-    if (m_model->projected()) { issue("Clear the list view before importing CSV."); return; }
+    if (m_model->projected()) { issue("Clear the list view before importing."); return; }
     const auto target=csvImportTarget(); if (target.isEmpty()) return;
     captureGridDraft(false);
     if (!resolveDraft()) return;
-    if (!matchesTarget(target) || m_model->projected()) { issue("CSV import target changed; import cancelled."); return; }
-    auto path = QFileDialog::getOpenFileName(this, tr("Import CSV at selected cell"), {}, tr("CSV and text (*.csv *.tsv *.txt);;All files (*)"));
+    auto validTarget=[this,target]{return matchesTarget(target) && !m_model->projected();};
+    if (!validTarget()) { issue("Import target changed; import cancelled."); return; }
+    const auto path=QFileDialog::getOpenFileName(this,tr("Import at selected cell"),{},
+        tr("Supported files (*.csv *.tsv *.txt *.xlsx *.ods)"));
     if (path.isEmpty()) return;
-    if (!matchesTarget(target) || m_model->projected()) { issue("CSV import target changed; import cancelled."); return; }
+    if (!validTarget()) { issue("Import target changed; import cancelled."); return; }
+    const auto extension=QFileInfo(path).suffix().toLower();
+    if (!QStringList{"csv","tsv","txt","xlsx","ods"}.contains(extension)) {
+        issue("Unsupported import extension. Choose CSV, TSV, TXT, XLSX or ODS."); return;
+    }
     constexpr int maxBytes=3*1024*1024;
-    QFile file(path); if (!file.open(QIODevice::ReadOnly) || file.size() > maxBytes) { issue("CSV must be readable and at most 3 MiB."); return; }
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly) || file.size()>maxBytes) { issue("Import file must be readable and at most 3 MiB."); return; }
     const auto bytes=file.read(maxBytes+1);
-    if (file.error()!=QFileDevice::NoError || bytes.size()>maxBytes) { issue("CSV must be readable and at most 3 MiB."); return; }
+    if (file.error()!=QFileDevice::NoError || bytes.size()>maxBytes) { issue("Import file read failed or exceeds 3 MiB."); return; }
+    if (extension=="xlsx" || extension=="ods") importSpreadsheetOptions(bytes,extension,target);
+    else importCsvOptions(bytes,target,extension=="tsv"?"\t":",");
+}
+
+void MainWindow::importCsvOptions(const QByteArray &bytes, QJsonObject target, const QString &defaultDelimiter) {
     QDialog dialog(this); dialog.setWindowTitle(tr("CSV import options")); dialog.setObjectName("csvOptionsDialog");
     QFormLayout layout(&dialog);
     QComboBox encoding(&dialog); encoding.setObjectName("csvEncoding");
@@ -1325,6 +1367,7 @@ void MainWindow::importCsv() {
     QComboBox delimiter(&dialog); delimiter.setObjectName("csvDelimiter");
     delimiter.addItem(tr("Comma"),","); delimiter.addItem(tr("Semicolon"),";");
     delimiter.addItem(tr("Tab"),"\t"); delimiter.addItem(tr("Pipe"),"|");
+    delimiter.setCurrentIndex(delimiter.findData(defaultDelimiter));
     layout.addRow(tr("Encoding"),&encoding); layout.addRow(tr("Delimiter"),&delimiter);
     QLabel note(tr("Choose the file's encoding. Invalid bytes stop the import. Review parsed Text cells before applying."),&dialog);
     note.setWordWrap(true); layout.addRow(&note);
@@ -1337,7 +1380,7 @@ void MainWindow::importCsv() {
 }
 
 QJsonObject MainWindow::csvImportTarget() const {
-    if(!m_hiddenRows.isEmpty() || !m_hiddenColumns.isEmpty()) {const_cast<MainWindow *>(this)->issue("Show hidden rows and columns before importing CSV."); return {};}
+    if(!m_hiddenRows.isEmpty() || !m_hiddenColumns.isEmpty()) {const_cast<MainWindow *>(this)->issue("Show hidden rows and columns before importing."); return {};}
     const auto start = m_grid->currentIndex();
     if (!start.isValid()) return {};
     const int row=m_model->sourceRow(start.row())+1, col=start.column()+1;
@@ -1389,7 +1432,7 @@ void MainWindow::prepareImport(QJsonObject request, RestClient::Callback callbac
 }
 
 void MainWindow::previewCsv(QJsonObject request, QJsonObject target) {
-    if(!m_hiddenRows.isEmpty() || !m_hiddenColumns.isEmpty()) {issue("Show hidden rows and columns before importing CSV."); return;}
+    if(!m_hiddenRows.isEmpty() || !m_hiddenColumns.isEmpty()) {issue("Show hidden rows and columns before importing."); return;}
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected()) return;
     if (target.isEmpty()) target=csvImportTarget();
     if (target.isEmpty()) return;
@@ -1507,15 +1550,6 @@ bool MainWindow::csvTypesDialog(QJsonObject &request, const QJsonObject &preview
     load();
     if(dialog.exec()!=QDialog::Accepted) return false;
     request["column_types"]=types; request["header"]=header.isChecked(); return true;
-}
-
-void MainWindow::exportCsv() {
-    if (m_busy) return;
-    auto range = selectedRange(); if (range.isEmpty()) return;
-    range=targetContext(range);
-    if (QMessageBox::question(this, tr("CSV values export"), tr("Export selected values from one consistent input state? Formulas, styles, other sheets and native metadata are omitted. Blank, NULL and empty text all become empty fields. The native workbook is retained.")) != QMessageBox::Yes) return;
-    auto path = QFileDialog::getSaveFileName(this, tr("Export CSV"), {}, tr("CSV (*.csv)")); if (path.isEmpty()) return;
-    exportCsvTo(path,range);
 }
 
 void MainWindow::exportCsvTo(const QString &path, QJsonObject target) {
@@ -1683,16 +1717,8 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
     return QMainWindow::eventFilter(object, event);
 }
 
-void MainWindow::importSpreadsheet(const QString &format) {
-    if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected()) return;
-    auto target=csvImportTarget(); if(target.isEmpty()) return;
-    captureGridDraft(false); if(!resolveDraft() || !matchesTarget(target)) return;
-    const auto path=QFileDialog::getOpenFileName(this,tr("Import %1 at selected cell").arg(format.toUpper()),{},format.toUpper()+" (*."+format+")");
-    if(path.isEmpty() || !matchesTarget(target)) return;
-    QFile file(path); if(!file.open(QIODevice::ReadOnly) || file.size()>3*1024*1024) { issue("Spreadsheet must be readable and at most 3 MiB."); return; }
-    const auto bytes=file.read(3*1024*1024+1);
-    if(file.error()!=QFileDevice::NoError || bytes.size()>3*1024*1024) { issue("Spreadsheet read failed or exceeds 3 MiB."); return; }
-    QDialog dialog(this); dialog.setWindowTitle(tr("Spreadsheet import options"));
+void MainWindow::importSpreadsheetOptions(const QByteArray &bytes, const QString &format, QJsonObject target) {
+    QDialog dialog(this); dialog.setWindowTitle(tr("Spreadsheet import options")); dialog.setObjectName("spreadsheetOptionsDialog");
     QFormLayout layout(&dialog); QSpinBox sheet(&dialog); sheet.setRange(1,64);
     QComboBox mode(&dialog); mode.addItem(tr("Preserve supported formulas"),"formulas"); mode.addItem(tr("Cached values (freshness unverified)"),"values");
     layout.addRow(tr("Sheet number"),&sheet); layout.addRow(tr("Inputs"),&mode);
@@ -1729,16 +1755,24 @@ void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &
     },format);
 }
 
-void MainWindow::exportSpreadsheet(const QString &format) {
-    if(m_busy) return;
+void MainWindow::exportFile() {
+    if(m_busy || m_unknown || m_info.isEmpty()) return;
     auto range=selectedRange(); if(range.isEmpty()) return;
     const auto target=targetContext(range);
+    ExportFileDialog dialog(this,{tr("CSV (*.csv)"),tr("Excel workbook (*.xlsx)"),tr("OpenDocument spreadsheet (*.ods)")});
+    dialog.setWindowTitle(tr("Export selection"));
+    if(dialog.exec()!=QDialog::Accepted || !matchesTarget(target)) return;
+    const auto path=dialog.selectedFiles().value(0), format=dialog.format();
+    if(path.isEmpty()) return;
+    if(format=="csv") {
+        if (QMessageBox::question(this,tr("CSV values export"),tr("Export selected values from one consistent input state? Formulas, styles, other sheets and native metadata are omitted. Blank, NULL and empty text all become empty fields. The native workbook is retained."),
+                QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)==QMessageBox::Yes) exportCsvTo(path,target);
+        return;
+    }
     bool ok=false;
     const auto choice=QInputDialog::getItem(this,tr("Spreadsheet export"),tr("Export selected cells as"),
         {tr("Inputs and supported formulas"),tr("Calculated values")},0,false,&ok);
-    if(!ok || !matchesTarget(target)) return;
-    const auto path=QFileDialog::getSaveFileName(this,tr("Export %1 selection").arg(format.toUpper()),{},format.toUpper()+" (*."+format+")");
-    if(!path.isEmpty()) exportSpreadsheetTo(path,format,choice==tr("Calculated values")?"values":"formulas",target);
+    if(ok && matchesTarget(target)) exportSpreadsheetTo(path,format,choice==tr("Calculated values")?"values":"formulas",target);
 }
 
 void MainWindow::exportSpreadsheetTo(const QString &path, const QString &format, const QString &mode, QJsonObject target) {

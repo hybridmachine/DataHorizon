@@ -55,14 +55,14 @@ private:
     void copy(bool cut = false);
     void paste(bool valuesOnly = false, bool formatsOnly = false);
     void format(const QJsonObject &style, QJsonObject target = {});
-    void importCsv();
+    void importFile();
+    void exportFile();
+    void importCsvOptions(const QByteArray &bytes, QJsonObject target, const QString &delimiter);
     void previewCsv(QJsonObject request, QJsonObject target);
     void prepareImport(QJsonObject request, RestClient::Callback callback, const QString &format = "csv");
-    void importSpreadsheet(const QString &format);
-    void exportSpreadsheet(const QString &format);
+    void importSpreadsheetOptions(const QByteArray &bytes, const QString &format, QJsonObject target);
     bool csvTypesDialog(QJsonObject &request, const QJsonObject &preview);
     QJsonObject csvImportTarget() const;
-    void exportCsv();
     void listDialog();
     void applyList();
     void findDialog(bool replace);

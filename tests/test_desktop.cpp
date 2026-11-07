@@ -1166,6 +1166,141 @@ private slots:
         QCOMPARE(changed.count(),0); QVERIFY(!qobject_cast<QMessageBox *>(QApplication::activeModalWidget()));
         QCOMPARE(window.model()->data(window.model()->index(0,0)).toString(),QString());
     }
+    void unifiedImportDetectsExtensions_data() {
+        QTest::addColumn<QString>("extension");
+        QTest::addColumn<QString>("expectedFirst");
+        QTest::addColumn<QString>("expectedSecond");
+        QTest::newRow("tsv")<<QString("TSV")<<QString("00123")<<QString("7");
+        QTest::newRow("text")<<QString("txt")<<QString("00123")<<QString("7");
+        QTest::newRow("xlsx")<<QString("XLSX")<<QString("7")<<QString("14.00");
+        QTest::newRow("ods")<<QString("ods")<<QString("7")<<QString("14.00");
+    }
+    void unifiedImportDetectsExtensions() {
+        QFETCH(QString,extension); QFETCH(QString,expectedFirst); QFETCH(QString,expectedSecond);
+        const bool nativeDialogs=QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs,true);
+        const auto restore=qScopeGuard([nativeDialogs]{QApplication::setAttribute(Qt::AA_DontUseNativeDialogs,nativeDialogs);});
+        QTemporaryDir temp; const auto path=temp.filePath("input."+extension);
+        const bool tabular=extension=="TSV" || extension=="txt";
+        if(tabular) { QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly)); file.write(extension=="TSV"?"00123\t7":"00123,7"); }
+        else QVERIFY(QFile::copy(QStringLiteral(DATAHORIZON_FIXTURES "/inputs.")+extension.toLower(),path));
+        StartupOptions options; options.automaticWorkbook=false; MainWindow window(options); window.show();
+        QSignalSpy ready(&window,&MainWindow::serviceReady); QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("native.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *import=window.findChild<QAction *>("importAction"); QVERIFY(import);
+        int imports=0,exports=0;
+        for(auto *action:window.findChildren<QAction *>()) {
+            imports+=action->text().startsWith("Import"); exports+=action->text().startsWith("Export");
+        }
+        QCOMPARE(imports,1); QCOMPARE(exports,1);
+        bool pickerSeen=false,optionsSeen=false,correctDelimiter=true,timedOut=false;
+        QElapsedTimer elapsed; elapsed.start(); QTimer answer; answer.setInterval(10);
+        connect(&answer,&QTimer::timeout,&window,[&]{
+            auto *modal=QApplication::activeModalWidget();
+            if(elapsed.elapsed()>10000) { timedOut=true; if(auto *dialog=qobject_cast<QDialog *>(modal)) dialog->reject(); return; }
+            if(auto *picker=qobject_cast<QFileDialog *>(modal)) {
+                if(!pickerSeen) {
+                    pickerSeen=true;
+                    QCOMPARE(picker->nameFilters().size(),1);
+                    QVERIFY(picker->nameFilters()[0].contains("*.ods")); QVERIFY(!picker->nameFilters()[0].contains("(*)"));
+                    picker->setDirectory(temp.path()); picker->selectFile(QFileInfo(path).fileName());
+                }
+                if(auto *buttons=picker->findChild<QDialogButtonBox *>())
+                    if(auto *button=buttons->button(QDialogButtonBox::Open);button && button->isEnabled()) button->click();
+            } else if(auto *dialog=qobject_cast<QDialog *>(modal);dialog && dialog->objectName()==(tabular?"csvOptionsDialog":"spreadsheetOptionsDialog")) {
+                optionsSeen=true;
+                if(tabular) correctDelimiter=dialog->findChild<QComboBox *>("csvDelimiter")->currentData().toString()==(extension=="TSV"?"\t":",");
+                dialog->accept();
+            } else if(auto *box=qobject_cast<QMessageBox *>(modal)) {
+                if(auto *button=box->button(QMessageBox::Yes)) button->click();
+            }
+        });
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        answer.start(); import->trigger(); QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000); answer.stop();
+        QVERIFY(!timedOut); QVERIFY(pickerSeen); QVERIFY(optionsSeen); QVERIFY(correctDelimiter); QVERIFY(changed[0][0].toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),expectedFirst,5000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),expectedSecond,5000);
+    }
+    void unifiedExportUsesTheFormatDropdown_data() {
+        QTest::addColumn<int>("formatIndex"); QTest::addColumn<QString>("extension");
+        QTest::newRow("csv")<<0<<QString("csv"); QTest::newRow("xlsx")<<1<<QString("xlsx"); QTest::newRow("ods")<<2<<QString("ods");
+    }
+    void unifiedExportUsesTheFormatDropdown() {
+        QFETCH(int,formatIndex); QFETCH(QString,extension);
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("native.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}},QJsonObject{{"row",1},{"col",2},{"source","=A1*2"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *grid=window.findChild<QTableView *>(); QVERIFY(grid);
+        grid->selectionModel()->select(QItemSelection(window.model()->index(0,0),window.model()->index(0,1)),QItemSelectionModel::ClearAndSelect);
+        auto *action=window.findChild<QAction *>("exportAction"); QVERIFY(action);
+        bool pickerSeen=false,timedOut=false; QElapsedTimer elapsed; elapsed.start(); QTimer answer; answer.setInterval(10);
+        connect(&answer,&QTimer::timeout,&window,[&]{
+            auto *modal=QApplication::activeModalWidget();
+            if(elapsed.elapsed()>10000) { timedOut=true; if(auto *dialog=qobject_cast<QDialog *>(modal)) dialog->reject(); return; }
+            if(auto *picker=qobject_cast<QFileDialog *>(modal)) {
+                if(!pickerSeen) {
+                    pickerSeen=true; QCOMPARE(picker->nameFilters().size(),3);
+                    picker->setDirectory(temp.path()); picker->selectFile("result.csv");
+                    auto *formats=picker->findChild<QComboBox *>("fileTypeCombo"); QVERIFY(formats);
+                    formats->setFocus(); QTest::keyClick(formats,Qt::Key_Home);
+                    for(int i=0;i<formatIndex;++i) QTest::keyClick(formats,Qt::Key_Down);
+                    QCOMPARE(picker->selectedNameFilter(),picker->nameFilters()[formatIndex]);
+                    if(qEnvironmentVariableIsSet("DATAHORIZON_EXPORT_DIALOG_SCREENSHOT")) picker->grab().save(qEnvironmentVariable("DATAHORIZON_EXPORT_DIALOG_SCREENSHOT"));
+                }
+                if(auto *buttons=picker->findChild<QDialogButtonBox *>())
+                    if(auto *button=buttons->button(QDialogButtonBox::Save);button && button->isEnabled()) button->click();
+            } else if(auto *input=qobject_cast<QInputDialog *>(modal)) input->accept();
+            else if(auto *box=qobject_cast<QMessageBox *>(modal)) {
+                if(auto *button=box->button(QMessageBox::Yes)) button->click();
+            }
+        });
+        answer.start(); action->trigger();
+        const auto path=temp.filePath("result."+extension);
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(path),10000); answer.stop(); QVERIFY(pickerSeen); QVERIFY(!timedOut);
+        QFile output(path); QVERIFY(output.open(QIODevice::ReadOnly)); const auto data=output.readAll();
+        if(extension=="csv") QCOMPARE(data,QByteArray("7,14\r\n"));
+        else if(extension=="xlsx") { QVERIFY(data.startsWith("PK")); QVERIFY(data.contains("xl/workbook.xml")); }
+        else { QVERIFY(data.startsWith("PK")); QVERIFY(data.contains("application/vnd.oasis.opendocument.spreadsheet")); }
+        QCOMPARE(opened.count(),2); QVERIFY(extension=="csv" || !QFile::exists(temp.filePath("result.csv")));
+    }
+    void unifiedExportConfirmsTheNormalizedFilenameBeforeOverwriting() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("native.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        const auto path=temp.filePath("retained.xlsx"); QFile original(path); QVERIFY(original.open(QIODevice::WriteOnly)); original.write("retained"); original.close();
+        bool pickerSeen=false,declined=false,confirmedExactPath=false,timedOut=false;
+        QElapsedTimer elapsed; elapsed.start(); QTimer answer; answer.setInterval(10);
+        connect(&answer,&QTimer::timeout,&window,[&]{
+            auto *modal=QApplication::activeModalWidget();
+            if(auto *picker=qobject_cast<QFileDialog *>(modal)) {
+                if(declined || elapsed.elapsed()>10000) { timedOut=elapsed.elapsed()>10000; picker->reject(); return; }
+                if(!pickerSeen) {
+                    pickerSeen=true; picker->setDirectory(temp.path()); picker->selectNameFilter(picker->nameFilters()[1]);
+                    // A conflicting suffix typed after choosing the format must
+                    // still be normalized before the overwrite question.
+                    auto *name=picker->findChild<QLineEdit *>("fileNameEdit"); QVERIFY(name); name->setText("retained.csv");
+                }
+                if(auto *buttons=picker->findChild<QDialogButtonBox *>())
+                    if(auto *button=buttons->button(QDialogButtonBox::Save);button && button->isEnabled()) button->click();
+            } else if(auto *box=qobject_cast<QMessageBox *>(modal)) {
+                confirmedExactPath=box->text().contains("retained.xlsx"); declined=true;
+                if(auto *button=box->button(QMessageBox::No)) button->click();
+                else if(auto *button=box->button(QMessageBox::Cancel)) button->click();
+            }
+        });
+        auto *action=window.findChild<QAction *>("exportAction"); QVERIFY(action);
+        answer.start(); action->trigger(); answer.stop();
+        QVERIFY(!timedOut); QVERIFY(pickerSeen); QVERIFY(declined); QVERIFY(confirmedExactPath);
+        QVERIFY(original.open(QIODevice::ReadOnly)); QCOMPARE(original.readAll(),QByteArray("retained"));
+        QVERIFY(!QFile::exists(temp.filePath("retained.csv")));
+    }
     void csvEncodingAndDelimiterOptionsDecodeBeforeReviewAndRejectInvalidBytes() {
         const bool originalDialogs=QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
         QApplication::setAttribute(Qt::AA_DontUseNativeDialogs,true);
@@ -1204,7 +1339,7 @@ private slots:
                 box->button(QMessageBox::Yes)->click();
             }
         });
-        QAction *import=nullptr; for(auto *action:window.findChildren<QAction *>()) if(action->text()=="Import CSV…") import=action;
+        QAction *import=nullptr; for(auto *action:window.findChildren<QAction *>()) if(action->objectName()=="importAction") import=action;
         QVERIFY(import); QSignalSpy changed(&window,&MainWindow::operationFinished);
         answer.start(); import->trigger(); QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000); answer.stop();
         QVERIFY(!timedOut); QVERIFY(selectedOptions); QVERIFY(reviewed); QVERIFY(changed[0][0].toBool());
@@ -1299,7 +1434,7 @@ private slots:
             }
         });
         answer.start(); window.importCsvText("7");
-        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("CSV import target changed"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Import target changed"),5000);
         answer.stop(); QVERIFY(invalidated); QCOMPARE(changed.count(),0);
     }
     void csvPreviewCapturesItsTargetAndRejectsInvalidatedProjection() {
@@ -1318,7 +1453,7 @@ private slots:
         QCOMPARE(model->data(model->index(0,0)).toString(),QString("ID")); QCOMPARE(model->data(model->index(4,1)).toString(),QString());
         QVERIFY(!QFile::exists(temp.filePath("wrong.dhwb")));
         window.importCsvText("wrong target"); model->setProjection({0,1});
-        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("CSV import target changed"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Import target changed"),5000);
         QCOMPARE(changed.count(),1);
         window.openBook(path); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
         QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("ID"),5000);
@@ -1389,13 +1524,13 @@ private slots:
         });
         dialogs.start();
         QAction *import=nullptr;
-        for(auto *action:window.findChildren<QAction *>()) if(action->text()=="Import CSV…") import=action;
+        for(auto *action:window.findChildren<QAction *>()) if(action->objectName()=="importAction") import=action;
         QVERIFY(import); import->trigger();
         QVERIFY(pickerOpened); QVERIFY(refreshed); QVERIFY(fileChosen);
         auto *issues=window.findChild<QPlainTextEdit *>();
-        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("CSV import target changed") || changed.count()>0,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("Import target changed") || changed.count()>0,10000);
         QCOMPARE(changed.count(),0);
-        QVERIFY(issues->toPlainText().contains("CSV import target changed"));
+        QVERIFY(issues->toPlainText().contains("Import target changed"));
         QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);
         QCOMPARE(window.model()->data(window.model()->index(0,0)).toString(),QString());
     }
