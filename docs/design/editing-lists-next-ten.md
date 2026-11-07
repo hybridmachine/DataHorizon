@@ -145,6 +145,27 @@ for ordinary refresh. This remains a presentation projection without native
 record identity or workflow semantics. Existing engine limits and type comparison
 rules apply; no sorting/filtering is limited to the loaded viewport.
 
+## Copy filtered values
+
+Data → Copy list result values copies the whole visible projection. Grid Copy
+copies one selected display rectangle inside the source columns. Both retain
+explicit headers unless locally hidden, exclude locally hidden source sections,
+and preserve displayed sort/filter order. Native clipboard data retains scalar
+Text/Number/Boolean/NULL distinctions and supported styles. Formulas explicitly
+become calculated values; formula-looking Text and leading-zero identifiers stay
+Text. Plain text is quoted TSV using display formatting. Cut/paste into a list
+remain unavailable; paste these values into an ordinary source sheet.
+
+REST `POST /list/values` and SDK `list_values` evaluate criteria and read values
+inside one read transaction with required expected_state. Optional display-row
+slices, source-column slices and up to 1,024 source section exclusions are bounded
+by the existing 10,000-cell source scope, two seconds and 4 MiB response/criteria
+cache. GUI clipboard data plus TSV is capped at 4 MiB. No hooks, history, receipts
+or revision writes occur. Formula errors, limits and empty results leave the GUI
+clipboard unchanged. Clipboard generations, workbook/sheet/state/service and
+criteria/visibility fences discard superseded replies. This is a values-copy
+compatibility tier; source formula inputs remain in the native workbook.
+
 ## Completed PRs
 
 1. [Formula-aware Cut #45](https://github.com/hybridmachine/DataHorizon/pull/45): locally verified, self-reviewed and merged.
@@ -158,3 +179,5 @@ rules apply; no sorting/filtering is limited to the loaded viewport.
 5. [Data-aware navigation #49](https://github.com/hybridmachine/DataHorizon/pull/49): locally verified, self-reviewed and merged.
 
 6. [Expanded criteria editor #50](https://github.com/hybridmachine/DataHorizon/pull/50): locally verified, self-reviewed and merged.
+
+7. [Copy filtered values #51](https://github.com/hybridmachine/DataHorizon/pull/51): locally verified, self-reviewed and merged.

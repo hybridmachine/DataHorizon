@@ -377,6 +377,7 @@ void MainWindow::buildUi() {
     add(sheetMenu, tr("Insert selected columns…"), {}, [this] { changeStructure(true,false); })->setObjectName("insertColumnsAction");
     add(sheetMenu, tr("Delete selected columns…"), {}, [this] { changeStructure(true,true); })->setObjectName("deleteColumnsAction");
     add(dataMenu, tr("Sort / filter selected list…"), {}, [this] { listDialog(); }, true)->setObjectName("listCriteriaAction");
+    add(dataMenu,tr("Copy list result values"),{},[this]{copyListValues();},true)->setObjectName("copyListValuesAction");
     add(dataMenu, tr("Clear list view"), {}, [this] { if (!m_busy) { m_listSpec = {}; refresh(); } }, true)->setObjectName("clearListAction");
 
     auto *central = new QWidget(this); auto *layout = new QVBoxLayout(central);
@@ -1421,6 +1422,7 @@ void MainWindow::copy(bool cut) {
     if (m_busy) return;
     const auto generation=++m_clipboardGeneration;
     if (m_source->hasFocus()) { if (cut) m_source->cut(); else m_source->copy(); return; }
+    if(m_model->projected()){if(cut)issue("Cut is unavailable in a list view. Copy list values or clear the list first.");else copyListValues(true);return;}
     auto range = selectedRange(); if (range.isEmpty()) return;
     range["sheet"] = m_model->sheet();
     const auto sourceWorkbook = m_info["id"].toString();
@@ -1445,6 +1447,44 @@ void MainWindow::copy(bool cut) {
         mime->setData("application/x-datahorizon-cells", QJsonDocument(payload).toJson(QJsonDocument::Compact));
         QApplication::clipboard()->setMimeData(mime);
         if(cut) m_status->setText("Cut pending • Source retained until a managed paste commits • References follow moved cells");
+    });
+}
+
+QJsonObject MainWindow::listValuesRequest(bool selectionOnly) {
+    if(!m_model->projected() || m_listSpec.isEmpty()){issue("Apply a list view first.");return {};}
+    auto request=targetContext(m_listSpec);const auto spec=m_listSpec;
+    if(selectionOnly){
+        const auto ranges=m_grid->selectionModel()->selection();if(ranges.size()!=1){issue("Select one rectangle of list values.");return {};}
+        const auto range=ranges.first();
+        if(range.left()+1<spec["c1"].toInt() || range.right()+1>spec["c2"].toInt()){issue("Select columns inside the list source scope.");return {};}
+        request["view_r1"]=range.top()+1;request["view_r2"]=range.bottom()+1;request["select_c1"]=range.left()+1;request["select_c2"]=range.right()+1;
+    }
+    QJsonArray rows,columns;
+    for(int row:m_hiddenRows)if(row+1>=spec["r1"].toInt() && row+1<=spec["r2"].toInt())rows.append(row+1);
+    for(int col:m_hiddenColumns)if(col+1>=spec["c1"].toInt() && col+1<=spec["c2"].toInt())columns.append(col+1);
+    request["exclude_rows"]=rows;request["exclude_columns"]=columns;return request;
+}
+
+void MainWindow::copyListValues(bool selectionOnly) {
+    if(m_busy || m_unknown || m_info.isEmpty())return;
+    const auto target=listValuesRequest(selectionOnly);if(target.isEmpty())return;
+    const auto criteria=m_listSpec;const auto hiddenRows=m_hiddenRows,hiddenColumns=m_hiddenColumns;
+    captureGridDraft(false);if(!resolveDraft())return;
+    if(m_busy || !matchesTarget(target) || !m_model->projected() || m_listSpec!=criteria)return;
+    const auto generation=++m_clipboardGeneration;const auto service=m_client->url();
+    auto request=target;request.remove("workbook");
+    m_client->request(base()+"/list/values",request,[this,target,criteria,hiddenRows,hiddenColumns,generation,service](QJsonObject result,QString error){
+        if(service!=m_client->url() || generation!=m_clipboardGeneration || !matchesTarget(target) || !m_model->projected() || m_listSpec!=criteria || m_hiddenRows!=hiddenRows || m_hiddenColumns!=hiddenColumns)return;
+        if(!error.isEmpty()){issue(error);return;}if(result["state"]!=target["expected_state"]){issue("List inputs changed; refresh before copying.");return;}
+        const auto rows=result["rows"].toArray();if(rows.isEmpty() || rows.first().toArray().isEmpty()){issue("No visible list values to copy. Clipboard retained.");return;}
+        QStringList lines;for(const auto &value:rows){QStringList fields;for(const auto &cell:value.toArray()){
+            auto text=cell.toObject()["display"].toString();if(text.contains('\t') || text.contains('\n') || text.contains('\r') || text.contains('"')){text.replace("\"","\"\"");text='"'+text+'"';}fields.append(text);
+        }lines.append(fields.join('\t'));}
+        const auto text=lines.join('\n');
+        const auto bytes=QJsonDocument(QJsonObject{{"rows",rows},{"origin_row",1},{"origin_col",1},{"cut",false},{"list_values",true}}).toJson(QJsonDocument::Compact);
+        if(bytes.size()+text.toUtf8().size()>4*1024*1024){issue("List clipboard exceeds 4 MiB. Narrow the source scope.");return;}
+        auto *mime=new QMimeData;mime->setText(text);mime->setData("application/x-datahorizon-cells",bytes);QApplication::clipboard()->setMimeData(mime);
+        m_status->setText(tr("Copied %1 visible list rows in display order • Values and styles; formulas converted to values").arg(rows.size()));
     });
 }
 

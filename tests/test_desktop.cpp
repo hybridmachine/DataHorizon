@@ -96,7 +96,7 @@ public:
                     .match(QString::fromLatin1(request.left(end))).captured(1).toInt();
                 if(request.size()<end+4+length) return;
                 socket->setProperty("handled",true);
-                if(request.startsWith("POST ") && request.contains("/clipboard HTTP/"))
+                if(request.startsWith("POST ") && (request.contains("/clipboard HTTP/") || request.contains("/list/values HTTP/")))
                     requests.append({socket,QJsonDocument::fromJson(request.mid(end+4)).object()});
                 else send(socket,{{"state",m_state},{"sheet",m_sheet},{"cells",QJsonArray{}}});
             });
@@ -109,6 +109,7 @@ public:
             {"row",pending.range["r1"]},{"col",pending.range["c1"]},{"source",source},{"display",source},
             {"value",source},{"input_kind","text"},{"kind","text"},{"style",QJsonObject{}}}}}});
     }
+    void respondList(int index,const QString &text) {send(requests.at(index).socket,{{"state",m_state},{"rows",QJsonArray{QJsonArray{QJsonObject{{"source",text},{"display",text},{"input_kind","text"}}}}}});}
 private:
     static void send(QTcpSocket *socket, const QJsonObject &result, bool rejected = false) {
         const auto body=QJsonDocument(result).toJson(QJsonDocument::Compact);
@@ -1076,6 +1077,29 @@ private slots:
         QCOMPARE(tabs->count(),1);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
+    }
+    void filteredCopyUsesDisplayedValuesAndStylesAndPreservesClipboardOnEmpty() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("list-copy.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","ID"}},QJsonObject{{"row",1},{"col",2},{"source","Value"}},
+            QJsonObject{{"row",2},{"col",1},{"source","00123"},{"kind","text"}},QJsonObject{{"row",2},{"col",2},{"source","=1/4"},{"style",QJsonObject{{"format","percent2"}}}},
+            QJsonObject{{"row",3},{"col",1},{"source","Z"}},QJsonObject{{"row",3},{"col",2},{"source","TRUE"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();QSignalSpy edits(&window,&MainWindow::operationFinished);
+        window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",2},{"header",true},{"sort",QJsonArray{QJsonObject{{"col",1},{"descending",true}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QApplication::clipboard()->setText("before");window.copyListValues();QTRY_COMPARE_WITH_TIMEOUT(QApplication::clipboard()->text(),QString("ID\tValue\nZ\tTRUE\n00123\t25.00%"),5000);QVERIFY(edits.isEmpty());
+        const auto payload=QJsonDocument::fromJson(QApplication::clipboard()->mimeData()->data("application/x-datahorizon-cells")).object();auto copied=payload["rows"].toArray();QCOMPARE(copied[2].toArray()[1].toObject()["input_kind"].toString(),QString("number"));QCOMPARE(copied[2].toArray()[1].toObject()["value"].toDouble(),.25);
+        grid->selectionModel()->select(QItemSelection(model->index(1,0),model->index(2,1)),QItemSelectionModel::ClearAndSelect);grid->setFocus();QAction *copy=nullptr;for(auto *action:window.findChildren<QAction *>())if(action->shortcut().matches(QKeySequence::Copy)==QKeySequence::ExactMatch)copy=action;QVERIFY(copy);copy->trigger();QTRY_COMPARE_WITH_TIMEOUT(QApplication::clipboard()->text(),QString("Z\tTRUE\n00123\t25.00%"),5000);
+        window.findChild<QAction *>("clearListAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);grid->setCurrentIndex(model->index(9,0));grid->setFocus();QTest::keySequence(grid,QKeySequence::Paste);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(10,1)),5000);QCOMPARE(model->cell(model->index(10,0))["input_kind"].toString(),QString("text"));QCOMPARE(model->cell(model->index(10,0))["source"].toString(),QString("00123"));QCOMPARE(model->cell(model->index(10,1))["source"].toString(),QString("0.25"));QCOMPARE(model->cell(model->index(10,1))["style"].toObject()["format"].toString(),QString("percent2"));
+        grid->setCurrentIndex(model->index(1,0));grid->selectionModel()->select(QItemSelection(model->index(1,0),model->index(1,1)),QItemSelectionModel::ClearAndSelect);QVERIFY(!grid->selectionModel()->selection().isEmpty());window.findChild<QAction *>("hideRowsAction")->trigger();QVERIFY2(grid->isRowHidden(1),qPrintable(window.findChild<QPlainTextEdit *>()->toPlainText()));window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",2},{"header",true}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);window.copyListValues();QTRY_COMPARE_WITH_TIMEOUT(QApplication::clipboard()->text(),QString("ID\tValue\nZ\tTRUE"),5000);
+        window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",2},{"filters",QJsonArray{QJsonObject{{"col",1},{"op","="},{"value","missing"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),7,10000);const auto prior=QApplication::clipboard()->text();window.copyListValues();QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("No visible list values"),5000);QCOMPARE(QApplication::clipboard()->text(),prior);
+    }
+    void filteredCopyIgnoresSupersededClipboardAndServiceReplies() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("late-list.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);window.showList({{"r1",1},{"r2",2},{"c1",1},{"c2",1}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model();DelayedClipboardServer server(model->state(),model->sheet());QVERIFY(server.listen(QHostAddress::LocalHost,0));auto *client=window.findChild<RestClient *>();client->configure("http://127.0.0.1:"+QString::number(server.serverPort()),"token");
+        window.copyListValues();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),1,3000);QApplication::clipboard()->setText("new external clipboard");server.respondList(0,"stale");QTest::qWait(100);QCOMPARE(QApplication::clipboard()->text(),QString("new external clipboard"));
+        window.copyListValues();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),2,3000);client->configure("http://127.0.0.1:1","other");server.respondList(1,"wrong service");QTest::qWait(100);QCOMPARE(QApplication::clipboard()->text(),QString("new external clipboard"));
     }
     void multiCriteriaEditorPreservesScalarTypesOrderAndLimits() {
         QJsonArray keys;for(int col=1;col<=8;++col)keys.append(QJsonObject{{"col",col},{"descending",col==8}});
