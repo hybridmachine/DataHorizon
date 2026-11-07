@@ -99,6 +99,11 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
+The [next interchange/recovery increments](interchange-next-five.md) begin with
+cancellable, bounded CSV preparation jobs. Progress and result discard precede
+an explicit atomic managed Apply; no chunked commits or larger limits are claimed.
+
+
 The next [five editing and CSV increments](editing-csv-next-five.md) continue
 everyday features. Sheet rename now retargets parsed qualified name references
 while preserving stable sheet identity, styles and literal Text. Unsupported

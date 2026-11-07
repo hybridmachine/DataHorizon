@@ -31,6 +31,7 @@
 #include <QPointer>
 #include <QPersistentModelIndex>
 #include <QProcessEnvironment>
+#include <QProgressDialog>
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QScopedValueRollback>
@@ -1345,6 +1346,38 @@ void MainWindow::importCsvBytes(const QByteArray &bytes, const QString &encoding
     previewCsv({{"csv_base64",QString::fromLatin1(bytes.toBase64())},{"encoding",encoding},{"delimiter",delimiter}},target);
 }
 
+void MainWindow::prepareCsv(QJsonObject request, RestClient::Callback callback) {
+    const auto id=QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const auto resource="/v1/jobs/"+id;
+    auto *progress=new QProgressDialog(tr("Preparing CSV…"),tr("Cancel"),0,0,this);
+    progress->setObjectName("csvPreparationProgress"); progress->setWindowModality(Qt::WindowModal);
+    progress->setMinimumDuration(0); progress->setAutoClose(false); progress->setAutoReset(false);
+    auto cancelled=std::make_shared<bool>(false);
+    connect(progress,&QProgressDialog::canceled,this,[this,resource,cancelled]{
+        *cancelled=true;
+        m_client->request(resource+"/cancel",{},[](QJsonObject,QString){});
+    });
+    auto *timer=new QTimer(progress); timer->setInterval(100);
+    auto finish=[this,progress,timer,resource,cancelled,callback](QJsonObject job,QString error) {
+        if(error.isEmpty() && job["status"]=="running") {
+            progress->setLabelText(tr("%1 • %2 processed").arg(job["phase"].toString()).arg(job["completed"].toInt()));
+            timer->start(); return;
+        }
+        timer->stop(); progress->hide(); progress->deleteLater();
+        if(error.isEmpty()) {
+            m_client->request(resource+"/release",{},[](QJsonObject,QString){});
+            if(*cancelled || job["status"]=="cancelled") error=tr("CSV preparation cancelled. No workbook changes were made.");
+            else if(job["status"]!="completed") error=job["error"].toObject()["message"].toString(tr("CSV preparation failed."));
+        }
+        callback(error.isEmpty()?job["result"].toObject():QJsonObject{},error);
+    };
+    connect(timer,&QTimer::timeout,this,[this,timer,resource,finish]{
+        timer->stop(); m_client->request(resource,{},finish,false);
+    });
+    request["job_id"]=id;
+    m_client->request("/v1/import/csv/jobs",request,finish);
+}
+
 void MainWindow::previewCsv(QJsonObject request, QJsonObject target) {
     if(!m_hiddenRows.isEmpty() || !m_hiddenColumns.isEmpty()) {issue("Show hidden rows and columns before importing CSV."); return;}
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected()) return;
@@ -1357,7 +1390,7 @@ void MainWindow::previewCsv(QJsonObject request, QJsonObject target) {
     const int row=target["row"].toInt(), col=target["col"].toInt();
     const auto targetName=target["name"].toString();
     setBusy(true,"Previewing CSV for "+targetName);
-    m_client->request("/v1/import/csv/preview", request, [this,row,col,targetName,validTarget,target,request](QJsonObject preview, QString error) mutable {
+    prepareCsv(request, [this,row,col,targetName,validTarget,target,request](QJsonObject preview, QString error) mutable {
         if (!error.isEmpty() || !validTarget()) { setBusy(false); issue(error.isEmpty()?"CSV import target changed; import cancelled.":error); return; }
         QStringList lines,shortLines;
         const auto rows = preview["rows"].toArray();

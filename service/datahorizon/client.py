@@ -96,6 +96,13 @@ class Client:
                 raise ValueError("Invalid JSON error response")
             raise APIError(error.code, body) from error
 
+    def prepare_csv(self, request, job_id=None):
+        return self.request("/v1/import/csv/jobs", {**request,"job_id":job_id or str(uuid.uuid4())})
+
+    def preparation(self, job_id, action=None):
+        path = "/v1/jobs/"+quote(job_id,safe="")
+        return self.request(path+"/"+action, {}) if action in ("cancel","release") else self.request(path)
+
     def open(self, path, create=False, readonly=False):
         info = self.request("/v1/open", {"path": str(Path(path).expanduser().resolve()), "create": create, "readonly": readonly})
         return WorkbookClient(self, info)

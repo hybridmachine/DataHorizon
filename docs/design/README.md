@@ -66,6 +66,7 @@ applications, and AI agents through REST.
 | [Next five qualification increments](qualification-next-five.md) | Native plugin checks, cache/RSS, HTTP/worker hardening and native capture binding |
 | [Everyday spreadsheet increments](everyday-next-five.md) | Wrap, borders, sizing, hide/unhide and freeze |
 | [Editing and CSV increments](editing-csv-next-five.md) | Sheet reference changes, CSV dialects and column types |
+| [Interchange and recovery increments](interchange-next-five.md) | Preparation jobs, XLSX/ODS fidelity stages and failure recovery |
 | [Native format v1](native-format-v1.md) | Actual development schema and callback-free direct SQLite access |
 | [Compatibility tier 0](compatibility-v0.md) | Implemented formulas, formatting, interchange and editing limits |
 | [Architecture](architecture.md) | Components, execution paths, transactions, external edits, and recovery |
