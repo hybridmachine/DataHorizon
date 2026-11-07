@@ -112,3 +112,52 @@ replacement. Existing native transaction-crash and lost-acknowledgement fixtures
 remain in force. These are process/SQLite/injected-I/O fixtures, **not** physical
 disk-full, power-loss or filesystem durability qualification. Evidence is in
 `evidence/recovery-failures-verification.txt`.
+
+## Local qualification and packaging — November 7, 2026
+
+`python3 tests/qualify_preview.py --build build --config Debug --output-dir
+build/qualification-CANDIDATE` performs a local C++ build, complete CTest, native
+Qt automation at scales 1/2, installation, neutral-directory relocated smoke and
+a local tar.gz archive. Run under a real desktop session (or an explicitly
+identified virtual display); Linux can use `xvfb-run -a`. The same driver supports
+macOS, Windows and Linux and writes per-step logs, source fingerprint, native
+reports/screenshots, package checksum/inventory and `qualification.json`. Output
+directories must be new so failed or stale evidence cannot be reused.
+
+Installed apps require their installed launcher and never fall back to the source
+checkout. Development executables alone retain their configured interpreter and
+source paths. Installed interpreter order is explicit DATAHORIZON_PYTHON, an
+explicitly staged adjacent runtime, then an external Python on PATH (Python 3.11+
+with SQLite is required). An incomplete staged runtime fails explicitly. This
+increment **does not select, bundle or redistribute a Python runtime**.
+
+`tests/package_smoke.py` copies the installation with framework symlinks preserved,
+removes Python/development/plugin overrides, runs a managed edit/calculation from
+a neutral working directory, then removes the installed launcher and requires an
+explicit failure. This exposes hidden dependencies on development service files.
+It retains the host's external interpreter, OS, display and system libraries;
+it is not clean-machine evidence.
+
+`tests/preview_package.py` creates an exclusive local development archive, rejects
+external symlinks/missing required files, preserves Qt framework links and file
+modes, and verifies archived content against a SHA-256 inventory. Its manifest
+records toolchain/source provenance and unresolved distribution obligations. The
+archive is a local build artifact, not a redistributable installer or public release.
+
+The qualification matrix only marks the current platform's completed automation.
+Absent platforms, physical input, native dialogs, screen readers, multiple monitors,
+clean-machine runtime/installer, signing/notarization and distribution licenses
+remain pending. No successful new hosted jobs are claimed. Local macOS evidence
+is recorded in `evidence/local-qualification.json` and
+`evidence/qualification-packaging-verification.txt`; Windows/Linux require actual
+runs on those systems when capacity is available.
+
+## Implementation PR record
+
+The first four implementation PRs were locally verified, self-reviewed and merged
+in order: [XLSX #30](https://github.com/hybridmachine/DataHorizon/pull/30),
+[ODS #31](https://github.com/hybridmachine/DataHorizon/pull/31),
+[fidelity #32](https://github.com/hybridmachine/DataHorizon/pull/32), and
+[recovery #33](https://github.com/hybridmachine/DataHorizon/pull/33).
+[Qualification and packaging #34](https://github.com/hybridmachine/DataHorizon/pull/34)
+adds the final implementation and retains the unexecuted release gates listed above. This batch does not close M1–M8 or qualify a public preview.

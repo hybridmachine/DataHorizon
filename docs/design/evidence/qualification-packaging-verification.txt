@@ -1,0 +1,36 @@
+Local macOS verification, November 7, 2026. Hosted Actions credits are exhausted.
+C++ build and complete CTest:
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   55.82 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   24.52 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  80.35 sec
+
+Qt: 108 checks passed. Core Python: 281 tests, 15 optional-binding skips.
+Complete Python run in the existing optional-binding environment:
+
+Ran 281 tests in 24.714s
+
+OK
+
+Packaging contracts:
+test_archive_preserves_inventory_modes_and_local_only_manifest (test_packaging.PackagingTests.test_archive_preserves_inventory_modes_and_local_only_manifest) ... ok
+test_candidate_normalizes_git_checkout_line_endings (test_packaging.PackagingTests.test_candidate_normalizes_git_checkout_line_endings) ... ok
+test_missing_launcher_or_external_symlink_rejects_packaging (test_packaging.PackagingTests.test_missing_launcher_or_external_symlink_rejects_packaging) ... ok
+test_missing_platforms_and_manual_gates_never_become_qualified (test_packaging.PackagingTests.test_missing_platforms_and_manual_gates_never_become_qualified) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.108s
+
+OK
+
+Native Cocoa acceptance at scales 1/2 passed; JSON/screenshots are preserved.
+Relocated application, neutral working directory, removed developer/plugin/Python overrides, managed edit/calculation and missing-installed-launcher rejection passed.
+Local development tar.gz: 71 inventoried files, verified archived SHA-256 content, file modes and framework symlinks. Artifact and checksum are identified in local-qualification.json.
+Independent openpyxl/odfpy formula and values consumers also pass.
+Self-review fixed cross-platform candidate ordering/line-end normalization, verified the embedded archive manifest, preserved attached-service smoke behavior, and retained failed-run reports.
+Windows/Linux, screen readers/physical native interaction, clean-machine installers/runtime, signing and distribution obligations remain open. This is not a qualified release.
