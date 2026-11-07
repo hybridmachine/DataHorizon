@@ -90,7 +90,7 @@ def openapi():
             "description":"At most 4,096 viewport cells and a 4 MiB response. Without coordinates, reads default to A1.",
             "example":{"sheet":"Sheet1","r1":1,"c1":1,"r2":32,"c2":16}},
         "Style":{"type":"object","additionalProperties":False,"properties":{
-            "format":{"type":"string","enum":["general","text","fixed2"]},
+            "format":{"type":"string","enum":["general","text","fixed2","percent2"]},
             "bold":{"type":"boolean"},"italic":{"type":"boolean"},"wrap":{"type":"boolean"},
             "align":{"type":"string","enum":["left","center","right"]},
             "border":{"type":"string","enum":["none","box"]},

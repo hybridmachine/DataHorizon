@@ -88,6 +88,8 @@ an empty CSV field; this loss is inherent in the initial values-only tier.
 Native snapshot copies preserve the distinction. TSV clipboard input currently
 uses literal tab/newline separation; embedded delimiters require CSV import.
 
+Percentage presentation now has an explicit [percent2 tier](spreadsheet-next-ten.md#percentage-format-contract), preserving numeric fractions and native input types through formatting, history and XLSX/ODS.
+
 ## Editing and presentation
 
 Supported: typed entry, full/value/format paste, copy/fill reference offsets,

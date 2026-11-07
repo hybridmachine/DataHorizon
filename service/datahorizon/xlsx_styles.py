@@ -42,6 +42,7 @@ class XlsxStyles:
         custom=self.formats.get(fmt)
         if fmt=="49" or custom=="@": result["format"]="text"
         elif fmt=="2" or custom=="0.00": result["format"]="fixed2"
+        elif fmt=="10" or custom=="0.00%": result["format"]="percent2"
         elif fmt!="0" and custom!="General": self.loss(f"Number format {fmt} ({custom or 'built-in'}) is omitted; numeric inputs remain numbers, including date/time serials.")
         font=self.index(xf.get("fontId","0"),self.fonts)
         if enabled(font.find(f"{{{S}}}b")): result["bold"]=True
@@ -73,7 +74,7 @@ class XlsxStyles:
         return result
 
     def report(self):
-        return ["Mapped direct cell styles replace destination styles: general/Text/fixed2, bold/italic, alignment, wrapping, solid RGB fill and thin box borders.",
+        return ["Mapped direct cell styles replace destination styles: general/Text/fixed2/percent2, bold/italic, alignment, wrapping, solid RGB fill and thin box borders.",
                 "Font family/size/color, rich-text runs, named-style inheritance, conditional formatting, row/column defaults and dimensions are omitted.",*sorted(self.losses)]
 
 
@@ -107,7 +108,7 @@ def export_styles(cells):
     bases=node(root,"cellStyleXfs",count="1"); node(bases,"xf",numFmtId="0",fontId="0",fillId="0",borderId="0")
     xfs=node(root,"cellXfs",count=str(len(styles)))
     for index,style in enumerate(styles):
-        xf=node(xfs,"xf",numFmtId={"general":"0","text":"49","fixed2":"2"}[style.get("format","general")],
+        xf=node(xfs,"xf",numFmtId={"general":"0","text":"49","fixed2":"2","percent2":"10"}[style.get("format","general")],
                 fontId=str(index),fillId=str(index+2) if "background" in style else "0",borderId=str(index),xfId="0",
                 applyFont="1",applyFill="1",applyBorder="1",applyNumberFormat="1",applyAlignment="1")
         alignment={}

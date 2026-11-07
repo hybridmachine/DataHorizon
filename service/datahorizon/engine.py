@@ -1,5 +1,6 @@
 """SQLite transaction owner. All managed clients enter through these operations."""
 
+from decimal import Context, Decimal, localcontext
 import csv
 from contextlib import contextmanager
 from functools import cmp_to_key
@@ -135,7 +136,7 @@ def validate_style(style):
     require(not set(style) - allowed, "UNSUPPORTED_STYLE", "Unsupported style property")
     for key, value in style.items():
         if key == "format":
-            require(value in ("general", "text", "fixed2"), "UNSUPPORTED_STYLE", "Unsupported number format")
+            require(value in ("general", "text", "fixed2", "percent2"), "UNSUPPORTED_STYLE", "Unsupported number format")
         elif key == "align":
             require(value in ("left", "center", "right"), "INVALID_STYLE", "Invalid alignment")
         elif key == "background":
@@ -191,6 +192,9 @@ def display(value, style):
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
     if isinstance(value, (float, int)):
+        if style.get("format")=="percent2":
+            with localcontext(Context(prec=340)):
+                return f"{Decimal(str(value))*100:.2f}%"
         return f"{value:.2f}" if style.get("format") == "fixed2" else format(value, ".15g")
     return str(value)
 

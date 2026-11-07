@@ -1,0 +1,37 @@
+Local macOS, November 7, 2026. Hosted Actions have no credits.
+C++ build passed.
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   58.05 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   25.51 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  83.56 sec
+
+Percentage contracts:
+test_both_file_formats_preserve_style_and_unscaled_numeric_values (test_percentage.PercentageTests.test_both_file_formats_preserve_style_and_unscaled_numeric_values) ... ok
+test_finite_display_text_boolean_null_and_extremes (test_percentage.PercentageTests.test_finite_display_text_boolean_null_and_extremes) ... ok
+test_style_preserves_inputs_copy_history_reopen_and_csv_values (test_percentage.PercentageTests.test_style_preserves_inputs_copy_history_reopen_and_csv_values) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.035s
+
+OK
+
+Independent file producers/consumers:
+openpyxl percentage producer/consumer: style retained, numeric fraction unscaled.
+odfpy percentage producer/consumer: style retained, numeric fraction unscaled.
+
+Native Cocoa scale 2:
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::percentageActionPreservesFormulaAndSupportsUndo()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 666ms
+********* Finished testing of DesktopTests *********
+
+Self-review checked unscaled numeric values, Text/Boolean/NULL display, finite extremes/ambient decimal context, source/type/history/copy/reopen behavior, CSV raw values, exact XLSX/ODS mappings and native-v1 older-reader limitations.
+No new platform or release qualification is claimed.
