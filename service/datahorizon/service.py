@@ -135,7 +135,7 @@ def openapi():
                   {"row":2,"col":1,"rows":[[{"source":"8","input_kind":"text"}]]}),
         "fill": ([],{"sheet":sheet,**rectangle,"mode":{"type":"string","enum":["copy","series","down","right"],"default":"copy"},"step":{"type":"number","default":1}},
                  {"r1":1,"c1":1,"r2":2,"c2":1,"mode":"series","step":2}),
-        "move": (["row","col","cut_state"],{"sheet":sheet,**rectangle,"row":row,"col":col,"cut_state":{"type":"string","description":"State captured by Cut; must still match"},"mode":{"type":"string","enum":["all"],"default":"all"}},
+        "move": (["row","col","cut_state"],{"sheet":sheet,**rectangle,"row":row,"col":col,"cut_state":{"type":"string","description":"State captured by Cut; must still match. Same-sheet scalar/fully-contained range references follow the move; partial referenced-range intersections reject atomically."},"mode":{"type":"string","enum":["all"],"default":"all"}},
                  {"r1":1,"c1":1,"r2":1,"c2":1,"row":3,"col":1,"cut_state":"copy-from-workbook-info"}),
         "replace_all": (["needle","replacement"],{"sheet":sheet,**rectangle,**search,"replacement":{"type":"string"}},
                         {"r1":1,"c1":1,"r2":3,"c2":1,"needle":"7","replacement":"9"}),

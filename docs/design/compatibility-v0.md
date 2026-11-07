@@ -95,7 +95,7 @@ Percentage presentation now has an explicit [percent2 tier](spreadsheet-next-ten
 Supported: typed entry, full/value/format paste, copy/fill reference offsets,
 explicit numeric series, cell/range Undo/Redo, source-preserving styles, bounded
 sheet duplication/reorder, and limited rename/delete. Cut is an atomic same-sheet
-move only when no formula source exists anywhere in the workbook. Structure
+move with bounded reference retargeting; see the [move contract](editing-lists-next-ten.md#formula-aware-cut). Structure
 operations clear Undo/Redo and are restricted with active required handlers.
 Cut rejects values-only and formats-only paste; Copy supports both. Absent
 clipboard cells clear inputs while values-only paste retains destination styles;

@@ -1327,7 +1327,7 @@ void MainWindow::copy(bool cut) {
                             {"cut",cut},{"cut_state",result["state"]},{"source_workbook",sourceWorkbook},{"source_sheet",range["sheet"]}};
         mime->setData("application/x-datahorizon-cells", QJsonDocument(payload).toJson(QJsonDocument::Compact));
         QApplication::clipboard()->setMimeData(mime);
-        if(cut) m_status->setText("Cut pending • Source retained until a managed paste commits • Formula-bearing workbooks require Copy");
+        if(cut) m_status->setText("Cut pending • Source retained until a managed paste commits • References follow moved cells");
     });
 }
 

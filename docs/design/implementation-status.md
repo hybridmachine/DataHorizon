@@ -122,9 +122,11 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
-The [next ten spreadsheet increments](spreadsheet-next-ten.md) extend the M3–M5
-foundation. The first tier adds AVERAGE/MIN/MAX/COUNT/COUNTA with shared engine,
-transactional hook and XLSX/ODS contracts. Local evidence is recorded per PR.
+The previous [ten spreadsheet increments](spreadsheet-next-ten.md) are complete
+through PR #44. The authorized [editing/list usability batch](editing-lists-next-ten.md)
+starts with bounded formula-aware Cut, then frozen selection/panes, data-aware
+navigation, richer sort/filter, filtered copy/export, saved views and full Find
+navigation. Each increment retains local verification and sequential PR review/merge.
 
 The [workbook compatibility/recovery/qualification increments](workbook-next-five.md)
 now add bounded whole-workbook XLSX/ODS with atomic empty-destination import and

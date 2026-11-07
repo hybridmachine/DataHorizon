@@ -1074,6 +1074,27 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void formulaAwareCutRetargetsDependentsAndSupportsUndo() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("formula-cut.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}},
+            QJsonObject{{"row",1},{"col",2},{"source","=$A$1+1"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model();auto *grid=window.findChild<QTableView *>("grid");
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,1)).toString(),QString("8"),5000);
+        QAction *cut=nullptr;for(auto *action:window.findChildren<QAction *>())if(action->shortcut().matches(QKeySequence::Cut)==QKeySequence::ExactMatch)cut=action;
+        QVERIFY(cut);grid->setCurrentIndex(model->index(0,0));grid->setFocus();cut->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(QApplication::clipboard()->mimeData()->hasFormat("application/x-datahorizon-cells"),5000);
+        grid->setCurrentIndex(model->index(2,0));window.findChild<QAction *>("pasteAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,1),Qt::EditRole).toString(),QString("=$A$3+1"),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(2,0)).toString(),QString("7"),5000);
+        window.submit({{"action","undo"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,1),Qt::EditRole).toString(),QString("=$A$1+1"),5000);
+    }
     void selectionSummaryReadsWholeStoredRectangleAndHandlesErrorsAndViewGuards() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
         MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);
