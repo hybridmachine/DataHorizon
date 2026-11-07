@@ -1043,6 +1043,70 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void scopedFindNavigatesWrapsAndInvalidatesAfterEdits() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("find.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","hit"}},
+            QJsonObject{{"row",3},{"col",2},{"source","hit"}},QJsonObject{{"row",8},{"col",1},{"source","hit"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();
+        auto *next=window.findChild<QAction *>("findNextAction"),*previous=window.findChild<QAction *>("findPreviousAction");
+        QVERIFY(!next->isEnabled());
+        grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(4,1)),QItemSelectionModel::ClearAndSelect);
+        auto search=[&](const QString &needle){
+            QTimer answer;answer.setInterval(10);connect(&answer,&QTimer::timeout,&window,[&]{
+                if(auto *dialog=qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+                    dialog->setTextValue(dialog->windowTitle()=="Search field"?dialog->comboBoxItems().first():needle);dialog->accept();
+                }
+            });answer.start();window.findChild<QAction *>("findAction")->trigger();
+        };
+        QSignalSpy changed(&window,&MainWindow::operationFinished);search("hit");
+        QTRY_VERIFY_WITH_TIMEOUT(next->isEnabled(),5000);QCOMPARE(grid->currentIndex(),model->index(0,0));
+        next->trigger();QCOMPARE(grid->currentIndex(),model->index(2,1));
+        next->trigger();QCOMPARE(grid->currentIndex(),model->index(0,0));
+        previous->trigger();QCOMPARE(grid->currentIndex(),model->index(2,1));
+        QVERIFY(window.findChild<QLabel *>("storageStatus")->text().contains("2 of 2"));
+        QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(2,1)),5000);
+        auto *source=window.findChild<QLineEdit *>("source");source->setText("draft");source->setModified(true);
+        answerNextDialog(QMessageBox::Cancel);next->trigger();QCOMPARE(grid->currentIndex(),model->index(2,1));QCOMPARE(source->text(),QString("draft"));
+        answerNextDialog(QMessageBox::Discard);next->trigger();QCOMPARE(grid->currentIndex(),model->index(0,0));
+        previous->trigger();QCOMPARE(grid->currentIndex(),model->index(2,1));
+        window.findChild<QAction *>("hideRowsAction")->trigger();
+        previous->trigger();QCOMPARE(grid->currentIndex(),model->index(0,0));
+        next->trigger();QCOMPARE(grid->currentIndex(),model->index(0,0));
+        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("next match is hidden"));
+        window.findChild<QPushButton *>("showHiddenButton")->click();next->trigger();QCOMPARE(grid->currentIndex(),model->index(2,1));
+        QVERIFY(changed.isEmpty());
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",3},{"col",2},{"source","changed"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QVERIFY(!next->isEnabled());QVERIFY(!previous->isEnabled());
+        search("absent");QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("0 matching cells"),5000);
+        QVERIFY(!next->isEnabled());
+    }
+    void scopedFindTruncationWrapsOnlyTheReportedMatchesAndSupportsDisplay() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("find-limit.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QJsonArray cells;for(int r=1;r<=501;++r)cells.append(QJsonObject{{"row",r},{"col",1},{"source","=1/8"},{"style",QJsonObject{{"format","percent2"}}}});
+        window.submit({{"action","edit"},{"cells",cells}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model();auto *grid=window.findChild<QTableView *>("grid");
+        grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(500,0)),QItemSelectionModel::ClearAndSelect);
+        QTimer answer;answer.setInterval(10);connect(&answer,&QTimer::timeout,&window,[&]{
+            if(auto *dialog=qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+                dialog->setTextValue(dialog->windowTitle()=="Search field"?dialog->comboBoxItems().at(1):QString("12.50%"));dialog->accept();
+            }
+        });answer.start();window.findChild<QAction *>("findAction")->trigger();answer.stop();
+        auto *next=window.findChild<QAction *>("findNextAction");QTRY_VERIFY_WITH_TIMEOUT(next->isEnabled(),5000);
+        QVERIFY(window.findChild<QLabel *>("storageStatus")->text().contains("first 500 / 501"));
+        window.findChild<QAction *>("findPreviousAction")->trigger();QCOMPARE(grid->currentIndex(),model->index(499,0));
+        next->trigger();QCOMPARE(grid->currentIndex(),model->index(0,0));
+        window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"header",false}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QVERIFY(!next->isEnabled());
+    }
     void addressRangesNormalizeBoundsAndProtectDraftsAndViewGuards() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
         MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);

@@ -170,3 +170,19 @@ a rectangle that includes the frozen top row. Drafts require existing
 Save/Discard/Cancel resolution before navigation, with target/state rechecked
 after the dialog. Navigation does not mutate data or invoke hooks. Sheet names,
 multiple areas, entire row/column notation and named ranges remain outside this tier.
+
+8. [Range navigation #42](https://github.com/hybridmachine/DataHorizon/pull/42): locally verified, self-reviewed and merged.
+
+## Find navigation contract
+
+Find in selection retains its original case-sensitive source/display rectangle;
+selecting a match does not narrow that scope. Next/Previous wrap in source
+row/column order over the returned matches. Up to the first 500 are navigable;
+when truncated the status names both the 500-result boundary and total count,
+and asks users to narrow the search for the remainder. No matches/errors disable
+navigation. Busy operations, refreshed/reset models, new workbooks/sheets and
+list projections discard cached results; each navigation checks workbook/sheet/
+state again. Unsubmitted drafts use Save/Discard/Cancel. A hidden next match is
+reported and retains the current result position until shown. Single frozen-row
+matches focus the visible pane. Find/Next/Previous are read-only and do not
+invoke change handlers. Replace All retains its separate reviewed atomic flow.
