@@ -47,6 +47,19 @@ class OdsTests(unittest.TestCase):
         with self.assertRaises(EngineError) as failure: preview(data)
         self.assertEqual(failure.exception.body["code"],"LIMIT")
 
+    def test_repeated_long_text_preflights_bytes_and_unknown_types_never_become_blank(self):
+        import tracemalloc
+        data=fixture('<table:table-row table:number-rows-repeated="10000"><table:table-cell office:value-type="string" office:string-value="'+"x"*60000+'"/></table:table-row>')
+        tracemalloc.start()
+        try:
+            with self.assertRaises(EngineError) as failure: preview(data)
+            self.assertEqual(failure.exception.body["code"],"READ_LIMIT")
+            self.assertLess(tracemalloc.get_traced_memory()[1],12*1024*1024)
+        finally: tracemalloc.stop()
+        result=preview(fixture('<table:table-row><table:table-cell office:value-type="unknown"/></table:table-row>'))
+        self.assertFalse(result["can_import"]); self.assertEqual(result["cells"],[])
+        self.assertIn("Unsupported ODS value type",result["issues"][0]["message"])
+
     def test_unsupported_formulas_and_error_or_missing_caches_block_complete_payload(self):
         for source in ('of:=[Other.A1]','of:=2^3^2','of:=AVERAGE([.A1])','oooc:=1+1'):
             data=fixture(f'<table:table-row><table:table-cell table:formula="{source}" office:value-type="float" office:value="8"/></table:table-row>')

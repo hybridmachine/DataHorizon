@@ -1,0 +1,43 @@
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   49.22 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   23.07 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  72.30 sec
+
+Before text-only review corrections: 248 Python tests (15 optional-binding skips), 92 Qt checks.
+Final full service suite:
+Ran 250 tests in 22.981s
+OK (skipped=15)
+
+Final ODS regressions:
+test_dates_become_text_and_native_styles_roundtrip (test_ods.OdsTests.test_dates_become_text_and_native_styles_roundtrip) ... ok
+test_ods_cannot_export_native_xml_controls_or_bad_values (test_ods.OdsTests.test_ods_cannot_export_native_xml_controls_or_bad_values) ... ok
+test_paragraph_whitespace_collapses_without_annotations_or_ruby_readings (test_ods.OdsTests.test_paragraph_whitespace_collapses_without_annotations_or_ruby_readings) ... ok
+test_repeated_long_text_preflights_bytes_and_unknown_types_never_become_blank (test_ods.OdsTests.test_repeated_long_text_preflights_bytes_and_unknown_types_never_become_blank) ... ok
+test_repeated_nonempty_cells_are_bounded_without_materializing_empty_grid (test_ods.OdsTests.test_repeated_nonempty_cells_are_bounded_without_materializing_empty_grid) ... ok
+test_repetition_sparse_coordinates_text_whitespace_types_and_local_formulas (test_ods.OdsTests.test_repetition_sparse_coordinates_text_whitespace_types_and_local_formulas) ... ok
+test_rest_sdk_hook_rollback_and_snapshot_export (test_ods.OdsTests.test_rest_sdk_hook_rollback_and_snapshot_export) ... ok
+test_unsupported_formulas_and_error_or_missing_caches_block_complete_payload (test_ods.OdsTests.test_unsupported_formulas_and_error_or_missing_caches_block_complete_payload) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.299s
+
+OK
+
+Independent producer/consumer:
+Independent openpyxl producer/consumer: Text, numbers, formulas passed.
+Independent openpyxl producer/consumer: all native style properties passed.
+Independent odfpy producer/consumer: Text, numbers, formulas and native styles passed.
+
+Cocoa scale 2:
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::odsImportAndExportPreserveFormattedFormulaThroughTheManagedGrid()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 925ms
+********* Finished testing of DesktopTests *********

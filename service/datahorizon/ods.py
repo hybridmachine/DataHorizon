@@ -162,7 +162,7 @@ def ods_preview(request,checkpoint=lambda completed,phase:None):
     selected=integer(request.get("sheet_index",1),1,64,"sheet_index"); selected_mode=mode(request)
     report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct native styles replace destination inputs/styles.",
             "Other sheets, code, charts, comments, merged presentation, names, validation, conditional/inherited/row/column formatting, dimensions and advanced fonts are omitted; code never activates.",
-            "Dates and durations become ISO Text. Formula syntax is translated canonically; only local SUM/IF and arithmetic/comparison formulas without powers are supported."]
+            "Percentage/currency retain numeric magnitude; currency codes and unsupported display are omitted. Dates and durations become ISO Text. Formula syntax is translated canonically; only local SUM/IF and arithmetic/comparison formulas without powers are supported."]
     if selected_mode=="values": report.append("Formula caches become values with unverified freshness; missing/error caches block Apply.")
     with package(request) as archive:
         try: require(archive.read("mimetype")==MIME.encode(),"INVALID_SPREADSHEET","Package is not an ODS spreadsheet")
@@ -174,7 +174,7 @@ def ods_preview(request,checkpoint=lambda completed,phase:None):
         require(0<len(sheets)<=64 and selected<=len(sheets),"INVALID_SPREADSHEET","Choose an existing ODS sheet")
         roots=([read_xml(archive,"styles.xml")] if "styles.xml" in archive.namelist() else [])+[root]
         styles=OdsStyles(roots)
-        edits=[]; issues=[]; row=1; processed=0
+        edits=[]; issues=[]; row=1; processed=0; staged_bytes=0
         def rows(parent):
             for item in parent:
                 if item.tag==q(T,"table-row"): yield item
@@ -209,6 +209,7 @@ def ods_preview(request,checkpoint=lambda completed,phase:None):
                     elif kind=="string" or cell.findall(q(X,"p")):
                         item={"source":ods_text(cell),"kind":"text"}
                     else:
+                        require(kind is None,"UNSUPPORTED_CELL","Unsupported ODS value type")
                         require(formula is None,"MISSING_CACHE","ODS formula has no supported cache")
                         item={"source":"","kind":"auto"}
                     if formula is not None and selected_mode=="values":
@@ -218,9 +219,11 @@ def ods_preview(request,checkpoint=lambda completed,phase:None):
                     item.update(style=styles.style(style_name),replace_style=True)
                     typed(item)
                     require(len(edits)+row_count*(len(template)+count)<=MAX_CELLS,"LIMIT","Repeated stored cells exceed 10,000")
+                    staged_bytes+=row_count*count*(len(encoded(item).encode())+40)
+                    require(staged_bytes<=3*1024*1024,"READ_LIMIT","Repeated ODS input payload exceeds 3 MiB")
                     template.extend({"col":col+offset,**item} for offset in range(count))
                 except EngineError as error:
-                    if error.body["code"]=="LIMIT": raise
+                    if error.body["code"] in ("LIMIT","READ_LIMIT"): raise
                     if len(issues)<100: issues.append({"cell":f"row {row}, column {col}","message":str(error)[:200]})
                 col+=count
             for offset in range(row_count if template else 0): edits.extend({"row":row+offset,**item} for item in template)
