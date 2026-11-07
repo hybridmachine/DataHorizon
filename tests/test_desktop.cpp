@@ -1074,6 +1074,43 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void frozenPaneSelectionCrossesByKeyboardMouseAndAddressWithoutEdits() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);
+        window.openBook(temp.filePath("cross-pane.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();
+        window.findChild<QAction *>("freezeTopRowAction")->trigger();auto *top=window.findChild<QTableView *>("frozenTopRow");
+        QSignalSpy changed(&window,&MainWindow::operationFinished);QSignalSpy edits(model,&SheetModel::editRequested);
+        auto point=[](QTableView *view,int row,int col){return view->visualRect(view->model()->index(row,col)).center();};
+        QTest::mouseClick(grid->viewport(),Qt::LeftButton,Qt::NoModifier,point(grid,1,1));
+        QTest::keyClick(grid,Qt::Key_Up,Qt::ShiftModifier);QCOMPARE(grid->currentIndex(),model->index(0,1));
+        QCOMPARE(grid->selectionModel()->selection().first().height(),2);QCOMPARE(window.focusWidget(),top);
+        QTest::keyClick(top,Qt::Key_Down,Qt::ShiftModifier);QCOMPARE(grid->currentIndex(),model->index(1,1));
+        QCOMPARE(grid->selectionModel()->selection().first().height(),1);
+        auto drag=[&](QTableView *from,int r1,int c1,QTableView *to,int r2,int c2){
+            QTest::mousePress(from->viewport(),Qt::LeftButton,Qt::NoModifier,point(from,r1,c1));
+            const auto global=to->viewport()->mapToGlobal(point(to,r2,c2));
+            QMouseEvent move(QEvent::MouseMove,QPointF(from->viewport()->mapFromGlobal(global)),QPointF(global),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+            QApplication::sendEvent(from->viewport(),&move);
+            QTest::mouseRelease(from->viewport(),Qt::LeftButton,Qt::NoModifier,from->viewport()->mapFromGlobal(global));
+        };
+        drag(top,0,0,grid,2,2);auto range=grid->selectionModel()->selection().first();
+        QCOMPARE(range.top(),0);QCOMPARE(range.left(),0);QCOMPARE(range.bottom(),2);QCOMPARE(range.right(),2);
+        QCOMPARE(top->selectionModel()->selection().first().width(),3);
+        drag(grid,2,2,top,0,0);QCOMPARE(grid->selectionModel()->selection().first(),range);
+        auto *address=window.findChild<QLineEdit *>("address");address->setText("A1:C3");QTest::keyClick(address,Qt::Key_Return);
+        QCOMPARE(grid->selectionModel()->selection().first(),range);
+        QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(0,0)),5000);
+        auto *source=window.findChild<QLineEdit *>("source");source->setText("draft");source->setModified(true);
+        answerNextDialog(QMessageBox::Cancel);QTest::mouseClick(grid->viewport(),Qt::LeftButton,Qt::ShiftModifier,point(grid,3,3));
+        QCOMPARE(grid->selectionModel()->selection().first(),range);QCOMPARE(source->text(),QString("draft"));
+        QTest::keyClick(source,Qt::Key_Escape);QVERIFY(edits.isEmpty());QVERIFY(changed.isEmpty());
+        QAction *bold=nullptr;for(auto *action:window.findChildren<QAction *>())if(action->shortcut().matches(QKeySequence::Bold)==QKeySequence::ExactMatch)bold=action;
+        QVERIFY(bold);bold->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(2,2)),5000);QVERIFY(model->cell(model->index(2,2))["style"].toObject()["bold"].toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,0)),5000);QVERIFY(model->cell(model->index(0,0))["style"].toObject()["bold"].toBool());
+    }
     void formulaAwareCutRetargetsDependentsAndSupportsUndo() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
         MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);
@@ -1244,7 +1281,8 @@ private slots:
         window.findChild<QAction *>("freezeTopRowAction")->trigger();
         go("C1");QCOMPARE(grid->currentIndex(),model->index(0,2));
         QCOMPARE(window.focusWidget(),window.findChild<QTableView *>("frozenTopRow"));
-        go("A1:B2");QCOMPARE(grid->currentIndex(),model->index(0,2));
+        go("A1:B2");QCOMPARE(grid->currentIndex(),model->index(0,0));
+        QCOMPARE(grid->selectionModel()->selection().first().bottom(),1);
         window.findChild<QAction *>("freezeTopRowAction")->trigger();
         window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"header",false}});
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);

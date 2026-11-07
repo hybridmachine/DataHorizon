@@ -149,8 +149,9 @@ with optional absolute markers and surrounding whitespace: `$B$2:D20`. Reversed
 endpoints normalize the rectangle and retain the first endpoint as the active
 cell. Bounds remain A1:XFD1048576 and rectangles are limited to 10,000 cells.
 Invalid, hidden-intersecting or projected targets retain the old selection.
-Single frozen-row cells navigate in the visible pane; unfreeze before selecting
-a rectangle that includes the frozen top row. Drafts require existing
+Single frozen-row cells navigate in the visible pane. The subsequent
+[cross-pane selection increment](editing-lists-next-ten.md#cross-pane-selection)
+also permits address rectangles spanning the frozen top row and body. Drafts require existing
 Save/Discard/Cancel resolution before navigation, with target/state rechecked
 after the dialog. Navigation does not mutate data or invoke hooks. Sheet names,
 multiple areas, entire row/column notation and named ranges remain outside this tier.

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
+#include "paneselection.h"
 #include <QAbstractTableModel>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -47,7 +48,7 @@ private:
 // A layout sibling of the body, so no scrolling body cells are obscured.
 class FrozenTopRow : public QWidget {
 public:
-    explicit FrozenTopRow(QTableView *body,QWidget *parent=nullptr) : QWidget(parent), m_body(body), m_model(body->model(),this) {
+    explicit FrozenTopRow(QTableView *body,QWidget *parent=nullptr) : QWidget(parent), m_body(body), m_model(body->model(),this),m_selection(body,this) {
         auto *layout=new QHBoxLayout(this); layout->setContentsMargins(0,0,0,0); layout->setSpacing(0);
         m_view=new QTableView(this); m_view->setObjectName("frozenTopRow"); m_view->setAccessibleName(tr("Frozen top row"));
         m_view->setModel(&m_model); m_view->setSelectionMode(QAbstractItemView::ContiguousSelection);
@@ -65,29 +66,13 @@ public:
         if(auto *corner=m_view->findChild<QAbstractButton *>()) connect(corner,&QAbstractButton::clicked,m_body,&QTableView::selectAll);
         connect(body->horizontalScrollBar(),&QScrollBar::valueChanged,m_view->horizontalScrollBar(),&QScrollBar::setValue);
         connect(m_view->horizontalScrollBar(),&QScrollBar::valueChanged,body->horizontalScrollBar(),&QScrollBar::setValue);
-        connect(m_view->selectionModel(),&QItemSelectionModel::currentChanged,this,[this](const QModelIndex &current){
-            if(!m_active || !current.isValid()) return;
-            const int scroll=m_body->verticalScrollBar()->value();
-            m_selecting=true;
-            m_body->setCurrentIndex(m_body->model()->index(0,current.column()));
-            m_body->verticalScrollBar()->setValue(scroll);
-            m_selecting=false;
-            if(m_body->currentIndex()!=m_body->model()->index(0,current.column())) syncSelection();
-        });
-        connect(m_view->selectionModel(),&QItemSelectionModel::selectionChanged,this,[this]{
-            if(!m_active || m_selecting) return;
-            QItemSelection selection;
-            for(const auto &range:m_view->selectionModel()->selection())
-                selection.select(m_body->model()->index(0,range.left()),m_body->model()->index(0,range.right()));
-            m_body->selectionModel()->select(selection,QItemSelectionModel::ClearAndSelect);
-        });
-        connect(body->selectionModel(),&QItemSelectionModel::currentChanged,this,[this]{syncSelection();});
+        m_selection.addPane(m_view);
     }
     QTableView *view() const {return m_view;}
     bool active() const {return m_active;}
     void setFrozen(bool active,int height=26) {
         if(active==m_active) {if(active) setRowHeight(height); return;}
-        m_active=active;
+        m_active=active;m_selection.setEnabled(active);
         m_body->horizontalHeader()->setVisible(!active);
         if(active) {
             for(int col=0;col<m_model.columnCount();++col) if(m_view->columnWidth(col)!=m_body->columnWidth(col)) m_view->setColumnWidth(col,m_body->columnWidth(col));
@@ -103,32 +88,12 @@ public:
         for(int col:columns) m_view->setColumnHidden(col,true);
         m_hiddenColumns=columns; syncGeometry();
     }
-    void syncSelection() {
-        if(m_selecting) return;
-        QSignalBlocker blocker(m_view->selectionModel());
-        const auto current=m_body->currentIndex();
-        if(current.isValid() && current.row()==0) {
-            if(m_view->currentIndex()!=m_model.index(0,current.column())) m_view->setCurrentIndex(m_model.index(0,current.column()));
-        }
-        else {m_view->clearSelection(); m_view->setCurrentIndex({});}
-    }
+    void syncSelection() {m_selection.sync();}
+    PaneSelection *selectionController() {return &m_selection;}
 protected:
     bool eventFilter(QObject *object,QEvent *event) override {
         if(m_active && object==m_view->viewport() && event->type()==QEvent::Wheel) {
             QApplication::sendEvent(m_body->viewport(),event); return true;
-        }
-        if(m_active && event->type()==QEvent::KeyPress) {
-            const auto *key=static_cast<QKeyEvent *>(event);
-            if(object==m_view && key->key()==Qt::Key_Down && key->modifiers()==Qt::NoModifier) {
-                const int col=qMax(0,m_view->currentIndex().column());
-                int row=1; while(row<m_body->model()->rowCount() && m_body->isRowHidden(row)) ++row;
-                m_body->setCurrentIndex(m_body->model()->index(row,col)); m_body->setFocus(); return true;
-            }
-            if(object==m_body && key->key()==Qt::Key_Up && key->modifiers()==Qt::NoModifier && m_body->currentIndex().row()>0) {
-                int row=m_body->currentIndex().row()-1;
-                while(row>0 && m_body->isRowHidden(row)) --row;
-                if(row==0) {m_body->setCurrentIndex(m_body->model()->index(0,m_body->currentIndex().column())); m_view->setFocus(); return true;}
-            }
         }
         if((object==m_body->viewport() || object==m_body->verticalHeader()) && (event->type()==QEvent::Resize || event->type()==QEvent::Move)) syncGeometry();
         return QWidget::eventFilter(object,event);
@@ -145,6 +110,7 @@ private:
     }
     QTableView *m_body, *m_view;
     FrozenTopRowModel m_model;
+    PaneSelection m_selection;
     QSet<int> m_hiddenColumns;
-    bool m_active=false, m_syncing=false, m_selecting=false;
+    bool m_active=false, m_syncing=false;
 };
