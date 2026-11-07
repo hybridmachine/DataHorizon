@@ -1,0 +1,37 @@
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   49.53 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   23.61 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  73.15 sec
+
+Totals: 91 passed, 0 failed, 0 skipped, 0 blacklisted, 49044ms
+Ran 241 tests in 23.455s
+OK (skipped=15)
+
+Final style review regressions:
+test_import_replaces_default_style_preserves_input_and_undo_restores_prior_style (test_xlsx_styles.XlsxStyleTests.test_import_replaces_default_style_preserves_input_and_undo_restores_prior_style) ... ok
+test_native_style_roundtrip_including_styled_blanks_and_explicit_number_with_text_format (test_xlsx_styles.XlsxStyleTests.test_native_style_roundtrip_including_styled_blanks_and_explicit_number_with_text_format) ... ok
+test_rgb_alpha_case_is_ignored_for_cell_fills_and_tint_is_reported (test_xlsx_styles.XlsxStyleTests.test_rgb_alpha_case_is_ignored_for_cell_fills_and_tint_is_reported) ... ok
+test_unsupported_format_theme_fill_and_partial_border_are_reported_and_invalid_indices_block (test_xlsx_styles.XlsxStyleTests.test_unsupported_format_theme_fill_and_partial_border_are_reported_and_invalid_indices_block) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.115s
+
+OK
+
+Independent producer/consumer:
+Independent openpyxl producer/consumer: Text, numbers, formulas passed.
+Independent openpyxl producer/consumer: all native style properties passed.
+
+Cocoa scale 2:
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::xlsxImportReviewAndExportUseTheManagedGrid()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 1693ms
+********* Finished testing of DesktopTests *********

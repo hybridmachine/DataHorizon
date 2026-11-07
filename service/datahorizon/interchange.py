@@ -72,6 +72,18 @@ def read_xml(archive,path):
         raise EngineError("INVALID_SPREADSHEET",f"Invalid or missing XML part: {path}") from error
 
 
+def related_part(relationships,kind):
+    candidates=[item for item in relationships if item.get("Type")==R+"/"+kind]
+    require(len(candidates)<=1,"INVALID_SPREADSHEET","Duplicate workbook part relationships")
+    if not candidates: return None
+    item=candidates[0]
+    require(item.get("TargetMode")!="External","INVALID_SPREADSHEET","Workbook data parts must be local")
+    target=item.get("Target","")
+    path=posixpath.normpath(target.lstrip("/") if target.startswith("/") else "xl/"+target)
+    require(path.startswith("xl/") and "\\" not in path,"INVALID_SPREADSHEET","Invalid workbook part target")
+    return path
+
+
 def local_formula(source, bounds=None):
     """The interchange tier preserves only implemented, local A1 formulas."""
     require(not any((ord(c)<32 and c not in "\t\n\r") or ord(c) in (65534,65535) for c in source),
@@ -116,7 +128,7 @@ def xlsx_preview(request,checkpoint=lambda completed,phase:None):
     selected=integer(request.get("sheet_index",1),1,64,"sheet_index")
     selected_mode=mode(request)
     report=["Only the selected sheet's stored cells are imported; absent cells do not clear the destination.",
-            "Formatting, dates' display formats, dimensions, other sheets and advanced features are omitted in this tier.",
+            "Dimensions, other sheets and advanced features are omitted; unsupported styles are listed below.",
             "Formulas recalculate with DataHorizon's declared compatibility tier; imported code is never activated."]
     if selected_mode=="values": report.append("Formula caches become literal values. Cache freshness cannot be verified; missing/error caches block import.")
     with package(request) as archive:
@@ -136,14 +148,19 @@ def xlsx_preview(request,checkpoint=lambda completed,phase:None):
         root=read_xml(archive,path)
         require(root.tag==f"{{{S}}}worksheet","INVALID_SPREADSHEET","Invalid worksheet")
         shared=[]
-        if "xl/sharedStrings.xml" in archive.namelist():
-            for item in read_xml(archive,"xl/sharedStrings.xml"):
+        shared_path=related_part(relationships,"sharedStrings") or ("xl/sharedStrings.xml" if "xl/sharedStrings.xml" in archive.namelist() else None)
+        if shared_path:
+            for item in read_xml(archive,shared_path):
                 shared.append(xlsx_text(item))
                 require(len(shared)<=MAX_CELLS,"LIMIT","Shared strings exceed 10,000 entries")
         features=sorted({item.tag.rsplit("}",1)[-1] for item in root if item.tag!=f"{{{S}}}sheetData"})
         report.append("Worksheet features outside cell inputs: "+", ".join(features[:40]))
         advanced=[name for name in archive.namelist() if any(part in name.lower() for part in ("vba","externallink","drawing","chart","pivot","table","comment"))]
         if advanced: report.append(f"{len(advanced)} advanced package parts are omitted; no external resources are fetched.")
+        from .xlsx_styles import XlsxStyles
+        style_path=related_part(relationships,"styles")
+        require(style_path is None or style_path in archive.namelist(),"INVALID_SPREADSHEET","Missing related stylesheet")
+        styles=XlsxStyles(archive,style_path or "xl/styles.xml")
         edits,issues,seen=[],[],set()
         count=0
         for cell in root.findall(f"{{{S}}}sheetData/{{{S}}}row/{{{S}}}c"):
@@ -175,10 +192,12 @@ def xlsx_preview(request,checkpoint=lambda completed,phase:None):
                     require(formula is None or value is not None,"MISSING_CACHE","Formula has no cached value")
                     item={"source":value or "","kind":"number" if value else "auto"}
                 else: raise EngineError("UNSUPPORTED_CELL",f"Unsupported cell type: {kind}")
-                typed({**item,"style":{}})
+                item.update(style=styles.style(cell.get("s","0")),replace_style=True)
+                typed(item)
                 edits.append({"row":row,"col":col,**item})
             except (EngineError,FormulaError,UnicodeError) as error:
                 if len(issues)<100: issues.append({"cell":location,"message":str(error)[:200]})
+        report.extend(styles.report())
         result={"cells":edits if not issues else [],"can_import":bool(edits) and not issues,"issues":issues,
                 "sheet":sheets[selected-1].get("name",""),"sheets":[s.get("name","") for s in sheets],"report":report,"stored_cells":count}
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Spreadsheet preview exceeds 4 MiB")
@@ -190,15 +209,17 @@ def xlsx_preview(request,checkpoint=lambda completed,phase:None):
 def xlsx_export(snapshot,request):
     selected_mode=mode(request)
     report=["Selection only, at original source coordinates, from one consistent native state.",
-            "Formatting, other sheets, code, queries, relationships, history and view preferences are omitted.",
+            "Native cell styles are mapped. Other sheets, code, queries, relationships, history, dimensions and view preferences are omitted.",
             "Native NULL becomes an empty cell. Formula semantics follow the target application's compatibility; formula caches are omitted and recalculation is requested."]
+    from .xlsx_styles import export_styles
+    styles,style_ids=export_styles(snapshot["cells"])
     root=ET.Element("worksheet",xmlns=S)
     data=node(root,"sheetData")
     current=None
     for cell in snapshot["cells"]:
         if cell["row"]!=current:
             current=cell["row"]; row=node(data,"row",r=str(current))
-        out=node(row,"c",r=address(cell["row"],cell["col"]))
+        out=node(row,"c",r=address(cell["row"],cell["col"]),s=str(style_ids[encoded(cell.get("style",{}))]))
         if cell["kind"]=="formula" and selected_mode=="formulas":
             node(out,"f",local_formula(cell["source"],snapshot["range"])[1:])
         else:
@@ -215,6 +236,7 @@ def xlsx_export(snapshot,request):
     node(workbook,"calcPr",fullCalcOnLoad="1",forceFullCalc="1")
     relationships=ET.Element("Relationships",xmlns=P)
     node(relationships,"Relationship",Id="rId1",Type=R+"/worksheet",Target="worksheets/sheet1.xml")
+    node(relationships,"Relationship",Id="rId2",Type=R+"/styles",Target="styles.xml")
     mainrels=ET.Element("Relationships",xmlns=P)
     node(mainrels,"Relationship",Id="rId1",Type=R+"/officeDocument",Target="xl/workbook.xml")
     types=ET.Element("Types",xmlns="http://schemas.openxmlformats.org/package/2006/content-types")
@@ -222,10 +244,11 @@ def xlsx_export(snapshot,request):
     node(types,"Default",Extension="xml",ContentType="application/xml")
     node(types,"Override",PartName="/xl/workbook.xml",ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml")
     node(types,"Override",PartName="/xl/worksheets/sheet1.xml",ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml")
+    node(types,"Override",PartName="/xl/styles.xml",ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml")
     output=io.BytesIO()
     with zipfile.ZipFile(output,"w",compression=zipfile.ZIP_DEFLATED) as archive:
         for name,part in (("[Content_Types].xml",types),("_rels/.rels",mainrels),("xl/workbook.xml",workbook),
-                          ("xl/_rels/workbook.xml.rels",relationships),("xl/worksheets/sheet1.xml",root)):
+                          ("xl/_rels/workbook.xml.rels",relationships),("xl/worksheets/sheet1.xml",root),("xl/styles.xml",styles)):
             archive.writestr(name,xml(part))
     result={"file_base64":base64.b64encode(output.getvalue()).decode(),"state":snapshot["state"],"report":report}
     require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Export response exceeds 4 MiB")
