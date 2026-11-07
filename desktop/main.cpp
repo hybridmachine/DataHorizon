@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "mainwindow.h"
+#include "servicepaths.h"
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QIcon>
@@ -22,6 +23,10 @@ int main(int argc, char **argv) {
     if (!smoke && !files.isEmpty()) options.initialWorkbook=files.first();
     QTemporaryDir smokeDirectory;
     if(smoke) options.viewStatePath=smokeDirectory.filePath("views.ini");
+    if(smoke && options.url.isEmpty()) {
+        const auto paths=resolveServicePaths(QCoreApplication::applicationDirPath(),qEnvironmentVariable("DATAHORIZON_PYTHON"));
+        if(!paths.error.isEmpty()) {qCritical("%s",qPrintable(paths.error));return 4;}
+    }
     bool smokeSubmitted=false;
     MainWindow window(options);
     if (smoke) {

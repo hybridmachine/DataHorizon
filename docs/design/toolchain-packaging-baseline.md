@@ -68,3 +68,10 @@ open for native-platform interaction/performance acceptance, cold-cache/RSS
 qualification, production framework/runtime decisions and any selected native
 capture binding. The restricted managed SQL matrix and M4/M7 completion gates
 remain in force; no full-milestone or public-preview completion is claimed.
+
+The November 7 [local qualification/package driver](workbook-next-five.md#local-qualification-and-packaging--november-7-2026)
+adds repeatable local evidence while hosted credits are exhausted. Installed
+runtime resolution no longer depends on the developer's absolute interpreter
+or source checkout. A relocated smoke tests that distinction explicitly, and a
+verified development archive retains checksums, executable modes and framework
+symlinks. Python redistribution and the release/distribution gates above remain open.

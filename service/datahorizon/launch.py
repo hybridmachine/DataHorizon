@@ -4,6 +4,8 @@ import sys
 
 
 def main():
+    if sys.version_info < (3,11):
+        raise SystemExit("DataHorizon requires Python 3.11 or newer with SQLite. Choose a supported trusted interpreter.")
     if not sys.flags.isolated:
         raise SystemExit("Start the service with python -I -B /absolute/path/to/datahorizon/launch.py")
     from pathlib import Path

@@ -377,3 +377,26 @@ required hooks and a durable receipt. The independent openpyxl/odfpy tools in
 read-only native metadata/integrity inspection through REST without activating
 code or repairing the file. Qt exposes the same operation in the File menu.
 Preserve the native workbook and operation ID when an outcome remains unknown.
+
+## Repeatable local qualification and development archive
+
+Hosted Actions currently have no credits. Run the local driver on each available
+platform using a **new** output directory:
+
+```sh
+python3 tests/qualify_preview.py --build build --config Debug --output-dir build/qualification-candidate
+```
+
+Use `--config Release` for a Release/multiconfig build; on headless Linux, run the
+command under `xvfb-run -a`. It builds/tests, runs native Qt at scales 1/2, installs,
+checks relocation and missing-service failure, and creates an inventoried local
+archive. Inspect `qualification.json` and step logs. Source changes during the
+run invalidate its candidate. See the [scope and remaining gates](workbook-next-five.md#local-qualification-and-packaging--november-7-2026).
+Python remains separately installed. Installed apps select a trusted override,
+an explicitly staged runtime or Python on PATH; the build's absolute development
+interpreter/source paths are not installed fallbacks. This is local automation
+and a development archive, not signing, a clean-machine installer or release approval.
+
+The qualification/archive tools also require Git on PATH for source provenance.
+Source fingerprints use Git's clean conversion and stable relative-path ordering
+so ordinary LF/CRLF checkout differences do not invent different candidates.

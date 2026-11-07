@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "mainwindow.h"
+#include "servicepaths.h"
 #include "frozen_row_probe.h"
 #include "frozentoprow.h"
 #include <QAbstractItemModelTester>
@@ -1041,6 +1042,17 @@ private slots:
         QCOMPARE(tabs->count(),1);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
+    }
+    void installedRuntimeResolutionNeverFallsBackToDevelopmentSources() {
+        QTemporaryDir temp; const auto bin=temp.filePath("bin"); QVERIFY(QDir().mkpath(bin));
+        auto missing=resolveServicePaths(bin); QVERIFY(!missing.error.isEmpty()); QVERIFY(!missing.developmentFallback);
+        const auto service=temp.filePath("share/datahorizon/service/datahorizon"); QVERIFY(QDir().mkpath(service));
+        QFile launcher(service+"/launch.py"); QVERIFY(launcher.open(QIODevice::WriteOnly)); launcher.write("# fixture"); launcher.close();
+        const auto selected=resolveServicePaths(bin,"/trusted/python"); QCOMPARE(selected.python,QString("/trusted/python")); QCOMPARE(selected.runtimeSource,QString("override"));
+        QVERIFY(selected.error.isEmpty()); QVERIFY(!selected.developmentFallback);
+        const auto runtime=temp.filePath("share/datahorizon/runtime"); QVERIFY(QDir().mkpath(runtime));
+        const auto incomplete=resolveServicePaths(bin); QCOMPARE(incomplete.runtimeSource,QString("bundled")); QVERIFY(!incomplete.error.isEmpty());
+        const auto overrideIncomplete=resolveServicePaths(bin,"/trusted/python"); QVERIFY(overrideIncomplete.error.isEmpty());
     }
     void interruptedAtomicExportRetainsOldOrCommittedDestination() {
         QTemporaryDir temp; const auto path=temp.filePath("export.xlsx");
