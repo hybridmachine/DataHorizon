@@ -19,6 +19,7 @@
 #include <QPointer>
 #include <QPainter>
 #include <QInputDialog>
+#include "listcriteriadialog.h"
 #include <QSettings>
 #include <QAbstractButton>
 #include <QPushButton>
@@ -1075,6 +1076,54 @@ private slots:
         QCOMPARE(tabs->count(),1);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
+    }
+    void multiCriteriaEditorPreservesScalarTypesOrderAndLimits() {
+        QJsonArray keys;for(int col=1;col<=8;++col)keys.append(QJsonObject{{"col",col},{"descending",col==8}});
+        const QJsonArray filters{QJsonObject{{"col",1},{"op","="},{"value","00123"}},QJsonObject{{"col",2},{"op",">"},{"value",1.25}},
+            QJsonObject{{"col",3},{"op","="},{"value",false}},QJsonObject{{"col",4},{"op","="}},QJsonObject{{"col",5},{"op","="},{"value",""}}};
+        ListCriteriaDialog dialog({{"r1",1},{"c1",1},{"r2",10},{"c2",8},{"header",false},{"sort",keys},{"filters",filters}});
+        auto *sort=dialog.findChild<QTableWidget *>("sortCriteria"),*table=dialog.findChild<QTableWidget *>("filterCriteria");
+        QCOMPARE(sort->rowCount(),8);QVERIFY(!dialog.findChild<QPushButton *>("addSort")->isEnabled());
+        sort->setCurrentCell(7,0);dialog.findChild<QPushButton *>("sortUp")->click();QCOMPARE(qobject_cast<QSpinBox *>(sort->cellWidget(6,0))->value(),8);
+        QCOMPARE(qobject_cast<QComboBox *>(sort->cellWidget(6,1))->currentIndex(),1);
+        for(int i=0;i<4;++i)dialog.findChild<QPushButton *>("addFilter")->click();QCOMPARE(table->rowCount(),8);QVERIFY(!dialog.findChild<QPushButton *>("addFilter")->isEnabled());
+        table->setCurrentCell(7,0);dialog.findChild<QPushButton *>("removeFilter")->click();QVERIFY(dialog.findChild<QPushButton *>("addFilter")->isEnabled());
+        auto *number=qobject_cast<QLineEdit *>(table->cellWidget(1,3));number->setText("not a number");
+        auto *ok=dialog.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok);ok->click();QVERIFY(dialog.result()!=QDialog::Accepted);QVERIFY(dialog.findChild<QLabel *>("criteriaError")->text().contains("finite"));
+        number->setText("2.5");ok->click();QCOMPARE(dialog.result(),int(QDialog::Accepted));const auto result=dialog.scope();
+        QCOMPARE(result["filters"].toArray()[0].toObject()["value"].toString(),QString("00123"));QCOMPARE(result["filters"].toArray()[1].toObject()["value"].toDouble(),2.5);
+        QVERIFY(result["filters"].toArray()[2].toObject()["value"].isBool());QVERIFY(!result["filters"].toArray()[2].toObject()["value"].toBool());QVERIFY(result["filters"].toArray()[3].toObject()["value"].isNull());
+        QCOMPARE(result["filters"].toArray()[4].toObject()["value"].toString(),QString());QCOMPARE(result["sort"].toArray()[6].toObject()["col"].toInt(),8);
+    }
+    void multiCriteriaDialogAppliesEditsAndCancelsAnExistingProjection() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("criteria.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        const QList<QStringList> rows{{"ID","Group","Qty","Flag"},{"b","X","2","TRUE"},{"a","X","3","TRUE"},{"c","Y","4","FALSE"},{"d","X","1","TRUE"}};
+        QJsonArray cells;for(int row=0;row<rows.size();++row)for(int col=0;col<4;++col)cells.append(QJsonObject{{"row",row+1},{"col",col+1},{"source",rows[row][col]}});
+        window.submit({{"action","edit"},{"cells",cells}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);QSignalSpy changed(&window,&MainWindow::operationFinished);
+        auto *model=window.model();auto *grid=window.findChild<QTableView *>("grid");grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(4,3)),QItemSelectionModel::ClearAndSelect);
+        QTimer answer;answer.setInterval(10);bool filled=false;
+        connect(&answer,&QTimer::timeout,&window,[&]{if(auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());dialog && dialog->objectName()=="listCriteriaDialog" && !filled){
+            filled=true;auto *sort=dialog->findChild<QTableWidget *>("sortCriteria"),*filters=dialog->findChild<QTableWidget *>("filterCriteria");
+            for(int i=0;i<3;++i){dialog->findChild<QPushButton *>("addSort")->click();dialog->findChild<QPushButton *>("addFilter")->click();}
+            for(int i=0;i<3;++i)qobject_cast<QSpinBox *>(sort->cellWidget(i,0))->setValue(QList<int>{2,3,1}[i]);qobject_cast<QComboBox *>(sort->cellWidget(1,1))->setCurrentIndex(1);
+            for(int i=0;i<3;++i){qobject_cast<QSpinBox *>(filters->cellWidget(i,0))->setValue(i+2);qobject_cast<QComboBox *>(filters->cellWidget(i,2))->setCurrentIndex(i);}
+            qobject_cast<QLineEdit *>(filters->cellWidget(0,3))->setText("X");qobject_cast<QComboBox *>(filters->cellWidget(1,1))->setCurrentText(">");qobject_cast<QLineEdit *>(filters->cellWidget(1,3))->setText("1");qobject_cast<QLineEdit *>(filters->cellWidget(2,3))->setText("TRUE");
+            if(qEnvironmentVariableIsSet("DATAHORIZON_CRITERIA_SCREENSHOT"))dialog->grab().save(qEnvironmentVariable("DATAHORIZON_CRITERIA_SCREENSHOT"));
+            dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+        }});answer.start();window.findChild<QAction *>("listCriteriaAction")->trigger();answer.stop();QVERIFY(filled);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QVERIFY(model->projected());QCOMPARE(model->rowCount(),3);QCOMPARE(model->sourceRow(1),2);QCOMPARE(model->sourceRow(2),1);
+        auto *summary=window.findChild<QLabel *>("listCriteriaSummary");QVERIFY(summary->isVisible());QVERIFY(summary->text().contains("B↑, C↓, A↑"));QVERIFY(summary->toolTip().contains("Boolean"));QVERIFY(changed.isEmpty());
+        if(qEnvironmentVariableIsSet("DATAHORIZON_CRITERIA_VIEW_SCREENSHOT"))window.grab().save(qEnvironmentVariable("DATAHORIZON_CRITERIA_VIEW_SCREENSHOT"));
+        QTimer cancel;cancel.setInterval(10);bool inspected=false;connect(&cancel,&QTimer::timeout,&window,[&]{if(auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());dialog && dialog->objectName()=="listCriteriaDialog"){
+            inspected=dialog->findChild<QTableWidget *>("sortCriteria")->rowCount()==3 && dialog->findChild<QTableWidget *>("filterCriteria")->rowCount()==3;dialog->reject();
+        }});cancel.start();window.findChild<QAction *>("listCriteriaAction")->trigger();cancel.stop();QVERIFY(inspected);QCOMPARE(opened.count(),3);QCOMPARE(model->rowCount(),3);
+        QTimer edit;edit.setInterval(10);connect(&edit,&QTimer::timeout,&window,[&]{if(auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());dialog && dialog->objectName()=="listCriteriaDialog"){
+            auto *filters=dialog->findChild<QTableWidget *>("filterCriteria");qobject_cast<QLineEdit *>(filters->cellWidget(1,3))->setText("2");dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+        }});edit.start();window.findChild<QAction *>("listCriteriaAction")->trigger();edit.stop();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);QCOMPARE(model->rowCount(),2);QCOMPARE(model->sourceRow(1),2);QVERIFY(changed.isEmpty());
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",3},{"col",3},{"source","=1/0"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);QVERIFY(!model->projected());QVERIFY(!summary->isVisible());QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("List evaluation blocked"));
+        window.submit({{"action","undo"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(2,2)).toString(),QString("3"),5000);
     }
     void dataBoundaryNavigationExtendsFromSequenceAnchorAndProtectsDrafts() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");

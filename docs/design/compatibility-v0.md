@@ -129,8 +129,8 @@ as described below.
 
 Lists are explicit presentation projections over source row coordinates, capped
 by the 10,000-cell ordinary scope. Sorting is stable with source row as tie-break;
-up to eight keys and filters are accepted by REST (two sort keys/one filter in
-the GUI). Type order is blank, number, text, boolean; text comparison is
+up to eight keys and eight AND filters are accepted by REST and the GUI
+[criteria editor](editing-lists-next-ten.md#expanded-criteria-editor). Type order is blank, number, text, boolean; text comparison is
 case-sensitive. A list header is explicit. Filter edits can remove a record from
 the view; Clear restores the source sheet. Range operations on projections are
 blocked. Persistent lists and a stable record-ID schema are later work.

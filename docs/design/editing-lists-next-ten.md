@@ -123,6 +123,28 @@ traverse source columns across pane boundaries; source-grid edges stop traversal
 Unfrozen editor Tab behavior is retained. These are read/navigation primitives,
 not managed edits or historical handler replay.
 
+## Expanded criteria editor
+
+Sort/filter now offers up to eight ordered keys and eight AND filters, matching
+the existing REST tier. Add/remove and Move up/down preserve priority and typed
+values. Filters explicitly choose Text, finite invariant Number, TRUE/FALSE
+Boolean or NULL; empty Text stays distinct from NULL. Contains requires Text.
+Invalid values stay in the dialog with an inline error; no request is sent until
+valid acceptance. Text values are bounded to 64 KiB UTF-8 and are never silently
+truncated. No sort keys retain source order. Header handling stays explicit.
+
+The editor opens the original source scope when a list is already active and
+prefills its criteria, including REST defaults. Cancel leaves the existing view
+and data intact. A compact accessible banner identifies the active source scope,
+header choice, ordered keys and filters; previews are capped in the tooltip,
+with full values available in the editor. Pending evaluation does not label new
+criteria active before acceptance. Workbook/sheet/state and service fences guard
+reviewed requests and late replies. Evaluation failure returns to the source
+sheet and reports the error, retaining stored inputs/history; state changes ask
+for ordinary refresh. This remains a presentation projection without native
+record identity or workflow semantics. Existing engine limits and type comparison
+rules apply; no sorting/filtering is limited to the loaded viewport.
+
 ## Completed PRs
 
 1. [Formula-aware Cut #45](https://github.com/hybridmachine/DataHorizon/pull/45): locally verified, self-reviewed and merged.
@@ -132,3 +154,7 @@ not managed edits or historical handler replay.
 3. [Freeze first column #47](https://github.com/hybridmachine/DataHorizon/pull/47): locally verified, self-reviewed and merged.
 
 4. [Selected frozen panes #48](https://github.com/hybridmachine/DataHorizon/pull/48): locally verified, self-reviewed and merged.
+
+5. [Data-aware navigation #49](https://github.com/hybridmachine/DataHorizon/pull/49): locally verified, self-reviewed and merged.
+
+6. [Expanded criteria editor #50](https://github.com/hybridmachine/DataHorizon/pull/50): locally verified, self-reviewed and merged.

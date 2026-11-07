@@ -2,6 +2,7 @@
 #include "mainwindow.h"
 #include "servicepaths.h"
 #include "frozenpanes.h"
+#include "listcriteriadialog.h"
 #include <QGridLayout>
 #include <QApplication>
 #include <QClipboard>
@@ -375,7 +376,7 @@ void MainWindow::buildUi() {
     add(sheetMenu, tr("Delete selected rows…"), {}, [this] { changeStructure(false,true); })->setObjectName("deleteRowsAction");
     add(sheetMenu, tr("Insert selected columns…"), {}, [this] { changeStructure(true,false); })->setObjectName("insertColumnsAction");
     add(sheetMenu, tr("Delete selected columns…"), {}, [this] { changeStructure(true,true); })->setObjectName("deleteColumnsAction");
-    add(dataMenu, tr("Sort / filter selected list…"), {}, [this] { listDialog(); }, true);
+    add(dataMenu, tr("Sort / filter selected list…"), {}, [this] { listDialog(); }, true)->setObjectName("listCriteriaAction");
     add(dataMenu, tr("Clear list view"), {}, [this] { if (!m_busy) { m_listSpec = {}; refresh(); } }, true)->setObjectName("clearListAction");
 
     auto *central = new QWidget(this); auto *layout = new QVBoxLayout(central);
@@ -387,6 +388,9 @@ void MainWindow::buildUi() {
     m_source->installEventFilter(this);
     formula->addWidget(m_address); formula->addWidget(new QLabel("fx")); formula->addWidget(m_source, 1);
     layout->addLayout(formula);
+    m_listSummary=new QLabel(central);m_listSummary->setObjectName("listCriteriaSummary");m_listSummary->setAccessibleName(tr("Active sort and filter criteria"));
+    m_listSummary->setMinimumWidth(0);m_listSummary->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);m_listSummary->hide();layout->addWidget(m_listSummary);
+    connect(m_model,&QAbstractItemModel::modelReset,this,&MainWindow::updateListSummary);
     m_grid = new QTableView; m_grid->setObjectName("grid"); m_grid->setAccessibleName(tr("Spreadsheet")); m_grid->setModel(m_model);
     auto *delegate=new CellDelegate(m_grid); delegate->canEdit=[this]{return !m_source->isModified();};
     delegate->enterPressed=[this](const QModelIndex &index,int direction){m_enterRequest=enterDestination(index,direction);};
@@ -1125,7 +1129,7 @@ void MainWindow::setBusy(bool busy, const QString &message) {
     if(m_freezeAction) m_freezeAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenRows.contains(0));
     syncSource();
     if (!message.isEmpty()) m_status->setText(m_releasing ? "Closing workbook…" : message);
-    queueSummary();
+    queueSummary();updateListSummary();
 }
 
 void MainWindow::issue(const QString &message) {
@@ -1754,37 +1758,30 @@ void MainWindow::exportCsvTo(const QString &path, QJsonObject target) {
 }
 
 void MainWindow::listDialog() {
-    if (m_busy || !resolveDraft()) return;
-    auto scope = selectedRange(); if (scope.isEmpty()) return;
-    scope=targetContext(scope);
-    QDialog dialog(this); dialog.setWindowTitle(tr("Declared list scope"));
-    auto *form = new QFormLayout(&dialog);
-    form->addRow(new QLabel(tr("Source rectangle: %1%2:%3%4\nSorting changes this view; original source rows remain stable.")
-        .arg(SheetModel::columnName(scope["c1"].toInt())).arg(scope["r1"].toInt())
-        .arg(SheetModel::columnName(scope["c2"].toInt())).arg(scope["r2"].toInt())));
-    auto *header = new QCheckBox(tr("First row is a header")); header->setChecked(true); form->addRow(header);
-    auto *filterEnabled = new QCheckBox(tr("Apply comparison filter")); form->addRow(filterEnabled);
-    auto *filterCol = new QSpinBox; filterCol->setRange(scope["c1"].toInt(), scope["c2"].toInt()); form->addRow(tr("Filter source column number"), filterCol);
-    auto *comparison = new QComboBox; comparison->addItems({">", ">=", "=", "<>", "<", "<=", "contains"}); form->addRow(tr("Comparison"), comparison);
-    auto *type = new QComboBox; type->addItems({tr("Number"), tr("Text")}); form->addRow(tr("Value type"), type);
-    auto *value = new QLineEdit; form->addRow(tr("Value"), value);
-    auto *sort = new QComboBox; sort->addItems({tr("Source order"), tr("Ascending"), tr("Descending")}); form->addRow(tr("Sort"), sort);
-    auto *sortCol = new QSpinBox; sortCol->setRange(scope["c1"].toInt(), scope["c2"].toInt()); form->addRow(tr("Sort source column number"), sortCol);
-    auto *sort2 = new QComboBox; sort2->addItems({tr("No second key"), tr("Ascending"), tr("Descending")}); form->addRow(tr("Then sort"), sort2);
-    auto *sortCol2 = new QSpinBox; sortCol2->setRange(scope["c1"].toInt(), scope["c2"].toInt()); form->addRow(tr("Second source column number"), sortCol2);
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    form->addRow(buttons); connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept); connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    if (dialog.exec() != QDialog::Accepted) return;
-    QJsonArray filters, keys;
-    if (filterEnabled->isChecked()) {
-        QJsonValue typed = value->text();
-        if (!type->currentIndex()) { bool ok; const auto number = value->text().toDouble(&ok); if (!ok || !qIsFinite(number)) { issue("Filter value is not a finite number."); return; } typed = number; }
-        filters.append(QJsonObject{{"col", filterCol->value()}, {"op", comparison->currentText()}, {"value", typed}});
+    if(m_busy || m_unknown || m_info.isEmpty())return;
+    auto scope=m_model->projected()?m_listSpec:selectedRange();if(scope.isEmpty())return;
+    if(!m_model->projected())scope["header"]=true;
+    const int r1=scope["r1"].toInt(1),c1=scope["c1"].toInt(1);
+    scope["r1"]=r1;scope["c1"]=c1;scope["r2"]=scope["r2"].toInt(r1);scope["c2"]=scope["c2"].toInt(c1);
+    scope=targetContext(scope);captureGridDraft(false);if(!resolveDraft())return;
+    if(m_busy || !matchesTarget(scope)){issue("List inputs changed. Review the source scope again.");return;}
+    for(const auto &value:scope["filters"].toArray())if(value.toObject()["value"].isString() && value.toObject()["value"].toString().toUtf8().size()>65536){issue("This filter value exceeds the desktop editor's 64 KiB limit. Clear the list or manage its criteria through REST.");return;}
+    ListCriteriaDialog dialog(scope,this);if(dialog.exec()==QDialog::Accepted)showList(dialog.scope());
+}
+
+void MainWindow::updateListSummary() {
+    if(!m_listSummary)return;const bool visible=!m_busy && m_model->projected() && !m_listSpec.isEmpty();m_listSummary->setVisible(visible);if(!visible)return;
+    const auto spec=m_listSpec;QStringList keys,filters;
+    for(const auto &value:spec["sort"].toArray()){const auto key=value.toObject();keys.append(SheetModel::columnName(key["col"].toInt())+(key["descending"].toBool()?QString("↓"):QString("↑")));}
+    for(const auto &value:spec["filters"].toArray()) {
+        const auto filter=value.toObject();const QJsonValue scalar=filter.contains("value")?filter["value"]:QJsonValue(QJsonValue::Null);
+        const QString type=scalar.isNull()?"NULL":scalar.isBool()?"Boolean":scalar.isDouble()?"Number":"Text";
+        const auto encoded=QString::fromUtf8(QJsonDocument(QJsonArray{scalar}).toJson(QJsonDocument::Compact));
+        filters.append(SheetModel::columnName(filter["col"].toInt())+" "+filter["op"].toString()+" "+type+" "+encoded.mid(1,encoded.size()-2).left(120));
     }
-    if (sort->currentIndex()) keys.append(QJsonObject{{"col", sortCol->value()}, {"descending", sort->currentIndex()==2}});
-    if (sort2->currentIndex()) keys.append(QJsonObject{{"col", sortCol2->value()}, {"descending", sort2->currentIndex()==2}});
-    scope["header"] = header->isChecked(); scope["filters"] = filters; scope["sort"] = keys;
-    showList(scope);
+    const auto range=tr("%1%2:%3%4").arg(SheetModel::columnName(spec["c1"].toInt())).arg(spec["r1"].toInt()).arg(SheetModel::columnName(spec["c2"].toInt())).arg(spec["r2"].toInt());
+    const auto text=tr("List %1 • Header %2 • Sort %3 • Filters (AND): %4").arg(range,spec["header"].toBool()?tr("yes"):tr("no"),keys.isEmpty()?tr("source order"):keys.join(", "),filters.isEmpty()?tr("none"):filters.join("; "));
+    m_listSummary->setText(text);m_listSummary->setToolTip(text+tr("\nValues are previewed to 120 characters. Open Sort/filter to inspect or edit full criteria. Local hiding is separate from these source criteria."));
 }
 
 void MainWindow::showList(QJsonObject scope) {
@@ -1792,7 +1789,7 @@ void MainWindow::showList(QJsonObject scope) {
     const auto defaults=targetContext();
     for (auto field=defaults.begin(); field!=defaults.end(); ++field)
         if (!scope.contains(field.key())) scope[field.key()]=field.value();
-    if (!resolveDraft()) return;
+    captureGridDraft(false);if (!resolveDraft()) return;
     if (!matchesTarget(scope)) { issue("Reviewed list inputs changed. Review the scope again."); return; }
     scope.remove("workbook"); scope.remove("expected_state"); scope.remove("sheet");
     m_listSpec=scope; applyList();
@@ -1803,11 +1800,20 @@ void MainWindow::applyList() {
     const auto selected=m_grid->currentIndex();
     const int selectedRow=selected.isValid()?m_model->sourceRow(selected.row()):-1;
     const int selectedColumn=selected.isValid()?selected.column():0;
+    const QString workbook=m_info["id"].toString(),sheet=m_model->sheet();const auto service=m_client->url();
     auto request = m_listSpec; request["sheet"] = m_model->sheet(); setBusy(true, "Evaluating full list scope…");
-    m_client->request(base()+"/list", request, [this,selectedRow,selectedColumn](QJsonObject result, QString error) {
+    m_client->request(base()+"/list", request, [this,selectedRow,selectedColumn,workbook,sheet,service](QJsonObject result, QString error) {
+        if(m_info["id"].toString()!=workbook || m_model->sheet()!=sheet || m_client->url()!=service)return;
         if (!error.isEmpty() || result["state"] != m_info["state"]) {
-            m_listSpec = {}; setBusy(false); issue(error.isEmpty() ? "List inputs changed. Refresh before applying the view again." : error); emit workbookReady(); return;
+            const bool stale=error.isEmpty();m_listSpec={};
+            m_model->bind(m_info["id"].toString(),sheet,m_info["state"].toString(),m_info["readonly"].toBool());restoreViewState();
+            m_grid->setCurrentIndex(m_model->index(qMax(0,selectedRow),selectedColumn));setBusy(false,"List not applied • Source sheet");
+            issue(stale?"List inputs changed. Refreshing source data; review the scope again.":error);
+            if(stale)refresh();else emit workbookReady();return;
         }
+        const auto scope=result["scope"].toArray();
+        if(scope.size()==4){m_listSpec["r1"]=scope[0];m_listSpec["c1"]=scope[1];m_listSpec["r2"]=scope[2];m_listSpec["c2"]=scope[3];}
+        m_listSpec["header"]=m_listSpec["header"].toBool(false);
         QList<int> rows; for (const auto &row : result["rows"].toArray()) rows.append(row.toInt()-1);
         m_model->setProjection(rows);
         restoreViewState();
