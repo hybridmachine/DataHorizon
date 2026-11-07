@@ -1,10 +1,11 @@
 """Small, deliberately bounded spreadsheet parser. Never evaluates Python source."""
 
+from decimal import Context, Decimal, InvalidOperation, localcontext, ROUND_HALF_UP, ROUND_UP, ROUND_DOWN
 import math
 import re
 import time
 
-SUPPORTED_FUNCTIONS = {"SUM", "IF", "AVERAGE", "MIN", "MAX", "COUNT", "COUNTA", "AND", "OR", "NOT", "IFERROR"}
+SUPPORTED_FUNCTIONS = {"SUM", "IF", "AVERAGE", "MIN", "MAX", "COUNT", "COUNTA", "AND", "OR", "NOT", "IFERROR", "ABS", "ROUND", "ROUNDUP", "ROUNDDOWN"}
 CELL_ERRORS = {"#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#NUM!", "#N/A", "#NULL!"}
 NUMBER_TEXT = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\Z")
 
@@ -498,6 +499,24 @@ class Calculator:
         if not count: raise FormulaError("#VALUE!","Logical aggregate has no numeric or Boolean inputs")
         return result
 
+    def number_function(self,name,args,sheet):
+        required=1 if name=="ABS" else 2
+        if len(args)!=required: raise FormulaError("#NAME?",name+f" requires {required} arguments")
+        number=numeric(self.evaluate(args[0],sheet))
+        if name=="ABS": return abs(number)
+        digits=numeric(self.evaluate(args[1],sheet))
+        if not -15<=digits<=15: raise FormulaError("#NUM!","Rounding supports -15 through 15 decimal places")
+        if int(digits)!=digits: raise FormulaError("#VALUE!","Rounding digits must be an integer")
+        rounding={"ROUND":ROUND_HALF_UP,"ROUNDUP":ROUND_UP,"ROUNDDOWN":ROUND_DOWN}[name]
+        try:
+            with localcontext(Context(prec=340)):
+                # Round the shortest decimal spelling of the binary64 value.
+                result=float(Decimal(str(number)).quantize(Decimal(1).scaleb(-int(digits)),rounding=rounding))
+        except (InvalidOperation,OverflowError,ValueError) as error:
+            raise FormulaError("#NUM!","Rounding exceeded the numeric range") from error
+        if not math.isfinite(result): raise FormulaError("#NUM!","Rounding exceeded the finite range")
+        return 0.0 if result==0 else result
+
     def aggregate(self,name,args,sheet):
         if not 1<=len(args)<=255: raise FormulaError("#NAME?",name+" requires 1-255 arguments")
         count=0; total=0.0; extreme=None
@@ -564,6 +583,8 @@ class Calculator:
                     raise FormulaError("#VALUE!", "IF condition must be numeric or boolean")
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
+            if name in ("ABS","ROUND","ROUNDUP","ROUNDDOWN"):
+                return self.number_function(name,args,sheet)
             if name in ("AND","OR","NOT"):
                 return self.logical(name,args,sheet)
             if name in ("AVERAGE","MIN","MAX","COUNT","COUNTA"):

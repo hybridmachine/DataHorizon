@@ -1043,6 +1043,18 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void numericFunctionsRenderDecimalRoundingRules() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("rounding.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QJsonArray cells; const QStringList formulas{"=ABS(-7)","=ROUND(-2.5,0)","=ROUNDUP(-1.21,1)","=ROUNDDOWN(-1.29,1)"};
+        for(int i=0;i<formulas.size();++i) cells.append(QJsonObject{{"row",1},{"col",i+1},{"source",formulas[i]}});
+        window.submit({{"action","edit"},{"cells",cells}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        const QStringList expected{"7","-3","-1.3","-1.2"};
+        for(int i=0;i<expected.size();++i) QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,i)).toString(),expected[i],5000);
+    }
     void iferrorRendersFallbackWithoutHidingCircularReferences() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
