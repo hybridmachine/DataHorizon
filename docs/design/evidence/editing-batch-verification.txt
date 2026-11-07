@@ -1,0 +1,28 @@
+Editing/list batch final local verification — November 7, 2026
+
+Source candidate: ecd2b1155e401462e39b2237bf35fc46819e487a0093fdace288ad4e8994759a
+CMake Debug build: passed.
+Full CTest: passed; 139 Qt checks and 327 Python tests (15 optional-binding skips).
+Optional capture-binding venv: all 327 Python tests passed, no skips.
+Native Cocoa scale-2 batch: 18 feature scenarios plus init/cleanup passed (20 total).
+Native qualification scale requests 1 and 2: passed; actual device ratios 2 and 4.
+Independent openpyxl/odfpy workbook, percentage and ordered-list consumers: passed.
+Criteria/pane native screenshots visually inspected for layout.
+Relocated installed-app managed edit/calculation: passed; developer overrides removed.
+Missing service: explicit failure verified.
+Archive inventory: 72 files verified.
+Archive SHA-256: 12f1c4956ad0dabc3043bac149ad5ee7a0240803ca69bd0af90472663a3dcd86
+Local qualification directory: build/editing-batch-qualification
+Local archive: build/editing-batch-qualification/DataHorizon-preview.tar.gz
+
+The source fingerprint covers CMakeLists.txt, desktop, service, tests and cmake;
+documentation/evidence updates do not change that candidate. The final published
+PR head is verified against this candidate during review.
+
+Hosted Actions credits exhausted; local verification is authoritative for this
+preview. This is not a cross-platform release qualification: Windows/Linux,
+physical/native dialog interaction, screen-reader navigation, multiple monitors,
+clean-machine runtime/installer, signing and distribution/license gates remain.
+The preview still requires separately installed Python unless explicitly staged.
+Named views are local preferences; filtered copy/export explicitly convert
+formulas to values; see editing-lists-next-ten.md for stage limits.

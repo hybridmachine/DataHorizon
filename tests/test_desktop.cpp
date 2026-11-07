@@ -122,6 +122,19 @@ private:
     QString m_state, m_sheet;
 };
 
+class DelayedFindServer : public QTcpServer {
+public:
+    struct Pending{QPointer<QTcpSocket> socket;QJsonObject input;};QList<Pending> requests;QString state,sheet;
+    DelayedFindServer(QString version,QString source):state(version),sheet(source){connect(this,&QTcpServer::newConnection,this,[this]{auto *socket=nextPendingConnection();connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);connect(socket,&QTcpSocket::readyRead,socket,[this,socket]{
+        const auto bytes=socket->property("input").toByteArray()+socket->readAll();socket->setProperty("input",bytes);const int end=bytes.indexOf("\r\n\r\n");if(end<0 || socket->property("handled").toBool())return;
+        const int length=QRegularExpression("Content-Length: (\\d+)",QRegularExpression::CaseInsensitiveOption).match(QString::fromLatin1(bytes.left(end))).captured(1).toInt();if(bytes.size()<end+4+length)return;socket->setProperty("handled",true);
+        if(bytes.contains("/find HTTP/"))requests.append({socket,QJsonDocument::fromJson(bytes.mid(end+4)).object()});else send(socket,{{"state",state},{"sheet",sheet},{"cells",QJsonArray{}}});
+    });});}
+    void respond(int index,int count=1200,int singleRow=1){const auto &pending=requests.at(index);const int offset=pending.input["offset"].toInt();QJsonArray matches;for(int i=offset;i<qMin(count,offset+500);++i){const int row=count==1?singleRow:i+1;matches.append(QJsonObject{{"row",row},{"col",1},{"address","A"+QString::number(row)},{"text","hit"}});}send(pending.socket,{{"state",state},{"count",count},{"offset",offset},{"limit",500},{"matches",matches},{"truncated",count>matches.size()}});}
+private:
+    static void send(QTcpSocket *socket,QJsonObject result){const auto bytes=QJsonDocument(result).toJson(QJsonDocument::Compact);socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(bytes.size())+"\r\n\r\n"+bytes);socket->disconnectFromHost();}
+};
+
 class DelayedCloseProxy : public QTcpServer {
 public:
     struct Pending { QPointer<QTcpSocket> socket; QJsonObject result; QString error; };
@@ -1133,7 +1146,7 @@ private slots:
         QApplication::clipboard()->setText("before");window.copyListValues();QTRY_COMPARE_WITH_TIMEOUT(QApplication::clipboard()->text(),QString("ID\tValue\nZ\tTRUE\n00123\t25.00%"),5000);QVERIFY(edits.isEmpty());
         const auto payload=QJsonDocument::fromJson(QApplication::clipboard()->mimeData()->data("application/x-datahorizon-cells")).object();auto copied=payload["rows"].toArray();QCOMPARE(copied[2].toArray()[1].toObject()["input_kind"].toString(),QString("number"));QCOMPARE(copied[2].toArray()[1].toObject()["value"].toDouble(),.25);
         grid->selectionModel()->select(QItemSelection(model->index(1,0),model->index(2,1)),QItemSelectionModel::ClearAndSelect);grid->setFocus();QAction *copy=nullptr;for(auto *action:window.findChildren<QAction *>())if(action->shortcut().matches(QKeySequence::Copy)==QKeySequence::ExactMatch)copy=action;QVERIFY(copy);copy->trigger();QTRY_COMPARE_WITH_TIMEOUT(QApplication::clipboard()->text(),QString("Z\tTRUE\n00123\t25.00%"),5000);
-        window.findChild<QAction *>("clearListAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);grid->setCurrentIndex(model->index(9,0));grid->setFocus();QTest::keySequence(grid,QKeySequence::Paste);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
+        window.findChild<QAction *>("clearListAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);grid->setCurrentIndex(model->index(9,0));grid->setFocus();window.findChild<QAction *>("pasteAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
         QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(10,1)),5000);QCOMPARE(model->cell(model->index(10,0))["input_kind"].toString(),QString("text"));QCOMPARE(model->cell(model->index(10,0))["source"].toString(),QString("00123"));QCOMPARE(model->cell(model->index(10,1))["source"].toString(),QString("0.25"));QCOMPARE(model->cell(model->index(10,1))["style"].toObject()["format"].toString(),QString("percent2"));
         grid->setCurrentIndex(model->index(1,0));grid->selectionModel()->select(QItemSelection(model->index(1,0),model->index(1,1)),QItemSelectionModel::ClearAndSelect);QVERIFY(!grid->selectionModel()->selection().isEmpty());window.findChild<QAction *>("hideRowsAction")->trigger();QVERIFY2(grid->isRowHidden(1),qPrintable(window.findChild<QPlainTextEdit *>()->toPlainText()));window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",2},{"header",true}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);window.copyListValues();QTRY_COMPARE_WITH_TIMEOUT(QApplication::clipboard()->text(),QString("ID\tValue\nZ\tTRUE"),5000);
         window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",2},{"filters",QJsonArray{QJsonObject{{"col",1},{"op","="},{"value","missing"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),7,10000);const auto prior=QApplication::clipboard()->text();window.copyListValues();QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("No visible list values"),5000);QCOMPARE(QApplication::clipboard()->text(),prior);
@@ -1539,7 +1552,19 @@ private slots:
         search("absent");QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("0 matching cells"),5000);
         QVERIFY(!next->isEnabled());
     }
-    void scopedFindTruncationWrapsOnlyTheReportedMatchesAndSupportsDisplay() {
+    void findPagesDiscardMovedSelectionsDraftsInvalidCountsAndSupersededSearches() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("late-find.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();auto *source=window.findChild<QLineEdit *>("source");auto *next=window.findChild<QAction *>("findNextAction"),*previous=window.findChild<QAction *>("findPreviousAction");auto *client=window.findChild<RestClient *>();DelayedFindServer server(model->state(),model->sheet());QVERIFY(server.listen(QHostAddress::LocalHost,0));QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(8,0)),5000);client->configure("http://127.0.0.1:"+QString::number(server.serverPort()),"token");QSignalSpy replies(client->findChild<QNetworkAccessManager *>(),&QNetworkAccessManager::finished);
+        auto search=[&]{grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(1199,0)),QItemSelectionModel::ClearAndSelect);QTimer timer;connect(&timer,&QTimer::timeout,&window,[&]{if(auto *dialog=qobject_cast<QInputDialog *>(QApplication::activeModalWidget())){dialog->setTextValue(dialog->windowTitle()=="Search field"?dialog->comboBoxItems().first():QString("hit"));dialog->accept();}});timer.start(10);window.findChild<QAction *>("findAction")->trigger();};
+        search();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),1,3000);server.respond(0);QTRY_VERIFY_WITH_TIMEOUT(next->isEnabled(),3000);QCOMPARE(grid->currentIndex(),model->index(0,0));
+        previous->trigger();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),2,3000);QCOMPARE(server.requests[1].input["offset"].toInt(),1000);QCOMPARE(server.requests[1].input["expected_state"].toString(),model->state());grid->setCurrentIndex(model->index(8,0));server.respond(1);QTRY_VERIFY_WITH_TIMEOUT(next->isEnabled(),3000);QCOMPARE(grid->currentIndex(),model->index(8,0));
+        previous->trigger();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),3,3000);QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),3000);source->setFocus();source->setText("new draft");source->setModified(true);server.respond(2);QTRY_VERIFY_WITH_TIMEOUT(next->isEnabled(),3000);QCOMPARE(source->text(),QString("new draft"));QCOMPARE(grid->currentIndex(),model->index(8,0));QTest::keyClick(source,Qt::Key_Escape);
+        previous->trigger();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),4,3000);server.respond(3,1199);QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("page is invalid"),3000);QVERIFY(!next->isEnabled());
+        search();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),5,3000);server.respond(4);QTRY_VERIFY_WITH_TIMEOUT(next->isEnabled(),3000);previous->trigger();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),6,3000);
+        search();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),7,3000);const auto before=grid->currentIndex();const int completed=replies.count();server.respond(5);QTRY_VERIFY_WITH_TIMEOUT(replies.count()>completed,3000);QCOMPARE(grid->currentIndex(),before);QVERIFY(!next->isEnabled());server.respond(6,1,4);QTRY_VERIFY_WITH_TIMEOUT(next->isEnabled(),3000);QCOMPARE(grid->currentIndex(),model->index(3,0));
+        client->configure("http://127.0.0.1:1","other");QVERIFY(!next->isEnabled());QVERIFY(!previous->isEnabled());
+    }
+    void scopedFindPagesPastFiveHundredAndWrapsAcrossAllDisplayMatches() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
         MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);
         QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
@@ -1555,9 +1580,11 @@ private slots:
             }
         });answer.start();window.findChild<QAction *>("findAction")->trigger();answer.stop();
         auto *next=window.findChild<QAction *>("findNextAction");QTRY_VERIFY_WITH_TIMEOUT(next->isEnabled(),5000);
-        QVERIFY(window.findChild<QLabel *>("storageStatus")->text().contains("first 500 / 501"));
-        window.findChild<QAction *>("findPreviousAction")->trigger();QCOMPARE(grid->currentIndex(),model->index(499,0));
-        next->trigger();QCOMPARE(grid->currentIndex(),model->index(0,0));
+        QVERIFY(window.findChild<QLabel *>("storageStatus")->text().contains("1 of 501"));
+        window.findChild<QAction *>("findPreviousAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(grid->currentIndex(),model->index(500,0),5000);
+        QVERIFY(window.findChild<QLabel *>("storageStatus")->text().contains("501 of 501"));
+        next->trigger();QTRY_COMPARE_WITH_TIMEOUT(grid->currentIndex(),model->index(0,0),5000);
+        for(int i=1;i<500;++i)next->trigger();QCOMPARE(grid->currentIndex(),model->index(499,0));next->trigger();QTRY_COMPARE_WITH_TIMEOUT(grid->currentIndex(),model->index(500,0),5000);
         window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"header",false}});
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QVERIFY(!next->isEnabled());
     }

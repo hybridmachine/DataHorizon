@@ -50,6 +50,17 @@ kinds, transactional hooks and existing size limits remain explicit. Local batch
 verification is recorded in [the final evidence](evidence/spreadsheet-batch-verification.txt);
 Windows/Linux, accessibility, clean-machine/runtime and distribution gates remain open.
 
+The [editing/list usability batch](editing-lists-next-ten.md) adds bounded
+formula-aware Cut, canonical cross-pane selection, first-column and selected
+prefix freezing (up to 16 rows/8 columns), stored-input boundary jumps, eight-key/
+eight-filter typed editing, ordered filtered values copy/export, local named view
+definitions and state-checked Find pages across the full bounded scope. These
+remain shared-engine/REST operations and local presentation preferences, with
+explicit formula/reference, snapshot, draft, visibility and late-reply limits.
+[Batch verification](evidence/editing-batch-verification.txt) records the final
+local candidate; this does not qualify Windows/Linux, screen readers, physical
+interaction, clean-machine runtime or distribution.
+
 ## Milestone ledger
 
 | Increment | Evidence and scope | Remaining before full milestone closure |
@@ -58,8 +69,8 @@ Windows/Linux, accessibility, clean-machine/runtime and distribution gates remai
 | M1 | Qt 6.12/C++17 builds locally; bounded TEMP/native SQLite capture and service/Python execution comparisons with typed changes, transaction/worker failures and receipts; sparse/dense/long-text/large-disk, formula-chain and Qt scroll/input harnesses with local evidence and CI artifact collection | Production framework/runtime and capture-binding adoption, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
 | M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle; restart/reopen and warned unknown-outcome recovery | Broader failure injection, clean-machine packaging evidence and service lifecycle hardening |
 | M3 | Typed entry, A1 limits, staged scalar functions/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
-| M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations and row/column reference transforms, wrap/borders and local sizing/hide/frozen-row preferences with destructive-operation fixtures | Formula-aware Cut, hook-aware structure events, portable view metadata, additional frozen edges/cross-pane range selection and platform conventions |
-| M5 | Explicit full-scope projected lists, stable source row edits, multikey sort/filter, scoped source/display find/replace/navigation and snapshot summaries, strict CSV encodings/delimiters, reviewed column types and snapshot export | Persistent record identities/list definitions, filtered range semantics, native date/time and locale conversion, progress/cancellation and large jobs |
+| M4 | Typed copy/paste, formula-aware same-sheet Cut, series, styles, cell Undo/Redo, bounded sheet operations/reference transforms, wrap/borders, local dimensions/hiding, multi-edge prefix freezing and cross-pane selection | Hook-aware structure events, full Excel reference compatibility, portable view metadata and native platform/accessibility conventions |
+| M5 | Explicit full-scope projected lists, stable source-address edits, typed eight-key/filter editing, local named definitions, ordered values copy/export, paged Find, atomic Replace All and snapshot summaries, strict CSV conversion/interchange | Persistent record identities, portable native list/query definitions, formula-preserving filtered range semantics, native date/time and locale conversion, progress/cancellation and large jobs |
 | M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures | Broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
 | M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
 | M8 | Shared engine and REST boundaries retained; unsupported APIs reject explicitly | Relational schema/tooling, proven managed SQL capture, workbook code/macros/functions/packages, remote TLS/mTLS/password access and additional wireframes |
@@ -122,11 +133,13 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
-The previous [ten spreadsheet increments](spreadsheet-next-ten.md) are complete
-through PR #44. The authorized [editing/list usability batch](editing-lists-next-ten.md)
-starts with bounded formula-aware Cut, then frozen selection/panes, data-aware
-navigation, richer sort/filter, filtered copy/export, saved views and full Find
-navigation. Each increment retains local verification and sequential PR review/merge.
+The [spreadsheet increments](spreadsheet-next-ten.md) through PR #44 and the
+[editing/list usability batch](editing-lists-next-ten.md) through PR #54 are complete
+within their declared development tiers, each with local verification and a
+separate reviewed/merged PR. Remaining M3–M5 work includes wider tested formula
+compatibility, hook-aware structure events, portable native views/record identity,
+date/time/locale semantics and large-job execution. Native keyboard/accessibility
+and Windows/Linux qualification remain required before a cross-platform release.
 
 The [workbook compatibility/recovery/qualification increments](workbook-next-five.md)
 now add bounded whole-workbook XLSX/ODS with atomic empty-destination import and

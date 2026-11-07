@@ -1,0 +1,63 @@
+{
+  "format": 1,
+  "platform": "Darwin",
+  "candidate": "ecd2b1155e401462e39b2237bf35fc46819e487a0093fdace288ad4e8994759a",
+  "automation_passed": true,
+  "steps": [
+    {
+      "name": "build",
+      "seconds": 0.37,
+      "returncode": 0
+    },
+    {
+      "name": "contracts",
+      "seconds": 102.59,
+      "returncode": 0
+    },
+    {
+      "name": "native-1",
+      "seconds": 1.22,
+      "returncode": 0
+    },
+    {
+      "name": "native-2",
+      "seconds": 0.86,
+      "returncode": 0
+    },
+    {
+      "name": "install",
+      "seconds": 7.82,
+      "returncode": 0
+    }
+  ],
+  "package_smoke": {
+    "platform": "Darwin",
+    "relocated_managed_edit_calculation": true,
+    "developer_overrides_removed": true,
+    "missing_service_fails_explicitly": true,
+    "runtime_dependency": "Separately installed Python unless an explicitly supplied runtime is staged",
+    "clean_machine_qualified": false
+  },
+  "archive": {
+    "name": "DataHorizon-preview.tar.gz",
+    "files": 72,
+    "sha256": "12f1c4956ad0dabc3043bac149ad5ee7a0240803ca69bd0af90472663a3dcd86",
+    "inventory_verified": true
+  },
+  "matrix": {
+    "platforms": {
+      "Darwin": "local automation passed; manual qualification pending",
+      "Windows": "pending",
+      "Linux": "pending"
+    },
+    "manual_gates": [
+      "physical keyboard/clipboard/native dialogs",
+      "screen-reader navigation",
+      "multiple monitors and system appearance",
+      "clean-machine installer/runtime",
+      "signing/notarization",
+      "distribution licenses/notices"
+    ],
+    "release_qualified": false
+  }
+}

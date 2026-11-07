@@ -1305,13 +1305,23 @@ class Workbook:
         return matches
 
     def find(self, sheet, args):
+        offset=integer(args.get("offset",0),0,MAX_CELLS,"offset")
+        limit=integer(args.get("limit",500),1,500,"limit")
+        expected=args.get("expected_state")
+        require(expected is None or isinstance(expected,str) and bool(expected),"INVALID_ARGUMENT","expected_state must be nonempty text")
+        require(not offset or expected is not None,"INVALID_ARGUMENT","Later Find pages require expected_state")
         with self.lock:
-            self.refresh()
-            self.db.execute("BEGIN")
+            deadline=time.monotonic()+2
+            self.refresh(deadline=deadline);self.db.execute("BEGIN")
             try:
-                self.refresh()
-                matches = self.matches(self.sheet(sheet), args)
-                return {"matches": [{**match, "text":match["text"][:256]} for match in matches[:500]], "count": len(matches), "state": self.state(), "truncated": len(matches) > 500}
+                self.refresh(deadline=deadline)
+                require(expected is None or expected==self.state(),"STALE_STATE","Find inputs changed; refresh and search again",409)
+                matches=self.matches(self.sheet(sheet),args,deadline=deadline)
+                page=[{**match,"text":match["text"][:256]} for match in matches[offset:offset+limit]]
+                require(time.monotonic()<=deadline,"TIMEOUT","Search exceeded its time budget")
+                more=offset+len(page)<len(matches)
+                return {"matches":page,"count":len(matches),"state":self.state(),"offset":offset,"limit":limit,
+                        "has_more":more,"next_offset":offset+len(page) if more else None,"truncated":len(matches)>len(page)}
             finally:
                 self.db.execute("ROLLBACK")
 

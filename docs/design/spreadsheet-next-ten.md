@@ -160,9 +160,9 @@ multiple areas, entire row/column notation and named ranges remain outside this 
 
 Find in selection retains its original case-sensitive source/display rectangle;
 selecting a match does not narrow that scope. Next/Previous wrap in source
-row/column order over the returned matches. Up to the first 500 are navigable;
-when truncated the status names both the 500-result boundary and total count,
-and asks users to narrow the search for the remainder. No matches/errors disable
+row/column order. The original first-500 tier is superseded by
+[state-checked page navigation](editing-lists-next-ten.md#paged-find), with one
+500-match desktop cache and navigation over every match in the bounded scope. No matches/errors disable
 navigation. Busy operations, refreshed/reset models, new workbooks/sheets and
 list projections discard cached results; each navigation checks workbook/sheet/
 state again. Unsubmitted drafts use Save/Discard/Cancel. A hidden next match is

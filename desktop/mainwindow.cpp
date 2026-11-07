@@ -312,6 +312,7 @@ void MainWindow::buildUi() {
     m_findNext->setObjectName("findNextAction");m_findPrevious->setObjectName("findPreviousAction");
     clearFindResults();
     connect(m_model,&QAbstractItemModel::modelReset,this,&MainWindow::clearFindResults);
+    connect(m_client,&RestClient::configured,this,&MainWindow::clearFindResults);
     add(edit, tr("Replace all in selection…"), QKeySequence::Replace, [this] { findDialog(true); });
     add(edit, tr("Reconcile unknown operation"), {}, [this] { reconcile(); });
     add(formatMenu, tr("Bold"), QKeySequence::Bold, [this] { format({{"bold", !m_model->cell(m_grid->currentIndex())["style"].toObject()["bold"].toBool()}}); }, true);
@@ -1979,33 +1980,56 @@ void MainWindow::requestSummary() {
 }
 
 void MainWindow::clearFindResults() {
-    m_findScope={};m_findMatches={};m_findIndex=-1;m_findTotal=0;
+    ++m_findGeneration;m_findLoading=false;m_findScope={};m_findMatches={};m_findIndex=-1;m_findTotal=0;m_findPageOffset=0;
     if(m_findNext)m_findNext->setEnabled(false);
     if(m_findPrevious)m_findPrevious->setEnabled(false);
 }
 
+bool MainWindow::validFindPage(const QJsonObject &result,const QJsonObject &scope,int offset) const {
+    auto integer=[](QJsonValue value,int low,int high){return value.isDouble() && value.toDouble()==value.toInt(-1) && value.toInt()>=low && value.toInt()<=high;};
+    if(result["state"]!=scope["expected_state"] || !integer(result["count"],0,10000) || !integer(result["offset"],offset,offset) || !integer(result["limit"],500,500) || !result["matches"].isArray())return false;
+    const auto matches=result["matches"].toArray();if(matches.size()!=qMin(500,qMax(0,result["count"].toInt()-offset)))return false;
+    int lastRow=0,lastCol=0;
+    for(const auto &value:matches){const auto cell=value.toObject();if(!value.isObject() || !integer(cell["row"],scope["r1"].toInt(),scope["r2"].toInt()) || !integer(cell["col"],scope["c1"].toInt(),scope["c2"].toInt()))return false;
+        const int row=cell["row"].toInt(),col=cell["col"].toInt();if(row<lastRow || (row==lastRow && col<=lastCol))return false;lastRow=row;lastCol=col;
+    }
+    return true;
+}
+
+void MainWindow::showFindMatch(int index) {
+    const int local=index-m_findPageOffset;if(local<0 || local>=m_findMatches.size())return;
+    const auto match=m_findMatches[local].toObject();const int row=match["row"].toInt(),col=match["col"].toInt();
+    if(intersectsHidden(row,col,row,col)){issue("The next match is hidden. Show its row/column before navigating to it.");return;}
+    const auto cell=m_model->index(row-1,col-1);m_grid->setCurrentIndex(cell);m_grid->selectionModel()->select(cell,QItemSelectionModel::ClearAndSelect);if(m_grid->currentIndex()!=cell)return;
+    m_findIndex=index;m_frozenTop->focusCurrent();m_status->setText(tr("Find %1 of %2 matches • Wraparound within searched selection").arg(index+1).arg(m_findTotal));
+}
+
 void MainWindow::navigateFind(int direction) {
-    if(m_busy || m_unknown || m_findMatches.isEmpty())return;
-    if(m_model->projected() || !matchesTarget(m_findScope)) {clearFindResults();issue("Find results expired. Search the selection again.");return;}
+    if(m_busy || m_unknown || m_findLoading || m_findTotal<=0)return;
+    if(m_model->projected() || !matchesTarget(m_findScope)){clearFindResults();issue("Find results expired. Search the selection again.");return;}
     const auto scope=m_findScope;captureGridDraft(false);if(!resolveDraft())return;
-    if(m_busy || m_unknown || !matchesTarget(scope) || scope!=m_findScope) {clearFindResults();return;}
-    const int count=m_findMatches.size();
-    const int next=m_findIndex<0?(direction<0?count-1:0):(m_findIndex+direction+count)%count;
-    const auto match=m_findMatches[next].toObject();const int row=match["row"].toInt(),col=match["col"].toInt();
-    if(intersectsHidden(row,col,row,col)) {issue("The next match is hidden. Show its row/column before navigating to it.");return;}
-    const auto index=m_model->index(row-1,col-1);m_grid->setCurrentIndex(index);
-    m_grid->selectionModel()->select(index,QItemSelectionModel::ClearAndSelect);
-    if(m_grid->currentIndex()!=index)return;
-    m_findIndex=next;
-    m_frozenTop->focusCurrent();
-    m_status->setText(m_findTotal>count?tr("Find %1 of first %2 / %3 matches • Narrow the search for remaining matches").arg(next+1).arg(count).arg(m_findTotal):tr("Find %1 of %2 matches • Wraparound within searched selection").arg(next+1).arg(count));
+    if(m_busy || m_unknown || !matchesTarget(scope) || scope!=m_findScope){clearFindResults();return;}
+    const int next=m_findIndex<0?(direction<0?m_findTotal-1:0):(m_findIndex+direction+m_findTotal)%m_findTotal;
+    if(next>=m_findPageOffset && next<m_findPageOffset+m_findMatches.size()){showFindMatch(next);return;}
+    const int offset=(next/500)*500;const auto generation=m_findGeneration;const auto service=m_client->url();const auto current=QPersistentModelIndex(m_grid->currentIndex());const auto selection=m_grid->selectionModel()->selection();
+    m_findLoading=true;m_findNext->setEnabled(false);m_findPrevious->setEnabled(false);m_status->setText("Loading next Find page…");auto request=scope;request.remove("workbook");request["offset"]=offset;request["limit"]=500;
+    m_client->request(base()+"/find",request,[this,scope,generation,service,current,selection,offset,next](QJsonObject result,QString error){
+        if(generation!=m_findGeneration || service!=m_client->url())return;
+        m_findLoading=false;
+        if(m_busy || m_unknown || m_model->projected() || !matchesTarget(scope) || scope!=m_findScope){clearFindResults();return;}
+        if(!error.isEmpty() || !validFindPage(result,scope,offset) || result["count"].toInt()!=m_findTotal){clearFindResults();issue(error.isEmpty()?"Find results changed or the page is invalid. Refresh and search again.":error);return;}
+        m_findNext->setEnabled(true);m_findPrevious->setEnabled(true);
+        bool editor=false;auto views=m_frozenTop->views();views.append(m_grid);for(auto *view:views)if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))editor|=delegate->hasEditor();
+        if(m_grid->currentIndex()!=current || m_grid->selectionModel()->selection()!=selection || m_source->isModified() || editor){m_status->setText("Find navigation cancelled • Selection or draft changed");return;}
+        m_findMatches=result["matches"].toArray();m_findPageOffset=offset;showFindMatch(next);
+    });
 }
 
 void MainWindow::findDialog(bool replace) {
     if(m_busy || m_unknown || m_info.isEmpty())return;
     auto scope = selectedRange(); if (scope.isEmpty()) return;
     scope=targetContext(scope);
-    const auto workbook=m_info["id"].toString();
+    const auto workbook=m_info["id"].toString();const auto service=m_client->url();
     captureGridDraft(false);if(!resolveDraft())return;
     if(m_busy || !matchesTarget(scope)) {issue("Search target changed. Review the scope again.");return;}
     bool ok;
@@ -2013,21 +2037,23 @@ void MainWindow::findDialog(bool replace) {
     if (!ok || needle.isEmpty()) return;
     auto field = QInputDialog::getItem(this, tr("Search field"), tr("Search"), {tr("Stored input / formula source"), tr("Displayed value")}, 0, false, &ok);
     if (!ok) return;
-    if (m_busy || workbook!=m_info["id"].toString() || scope["expected_state"]!=m_info["state"]
+    if (m_busy || service!=m_client->url() || workbook!=m_info["id"].toString() || scope["expected_state"]!=m_info["state"]
         || scope["sheet"].toString()!=m_model->sheet()) { issue("Search inputs changed. Refresh and review the scope again."); return; }
     scope["needle"] = needle; scope["field"] = field == tr("Displayed value") ? "display" : "source";
     setBusy(true, "Finding within declared scope…");
-    auto request=scope; request.remove("workbook");
-    m_client->request(base()+"/find", request, [this, scope, replace, workbook](QJsonObject result, QString error) mutable {
-        if (m_info["id"].toString()!=workbook) return;
+    const auto generation=m_findGeneration;
+    auto request=scope; request.remove("workbook");request["offset"]=0;request["limit"]=500;
+    m_client->request(base()+"/find", request, [this, scope, replace, workbook,generation,service](QJsonObject result, QString error) mutable {
+        if (generation!=m_findGeneration || service!=m_client->url() || m_info["id"].toString()!=workbook) return;
         setBusy(false);
         if (!error.isEmpty()) { issue(error); return; }
         if (result["state"] != scope["expected_state"] || result["state"]!=m_info["state"]
             || scope["sheet"].toString()!=m_model->sheet()) { issue("Search inputs changed. Refresh and review the scope again."); return; }
+        if(!validFindPage(result,scope,0)){issue("Invalid Find page. Refresh and search again.");return;}
         QStringList locations; for (const auto &value : result["matches"].toArray()) locations.append(value.toObject()["address"].toString());
         issue(tr("%1 matching cells: %2%3").arg(result["count"].toInt()).arg(locations.join(", ")).arg(result["truncated"].toBool() ? " (first 500 shown)" : ""));
         if(!replace) {
-            m_findScope=scope;m_findMatches=result["matches"].toArray();m_findTotal=result["count"].toInt();m_findIndex=-1;
+            m_findScope=scope;m_findMatches=result["matches"].toArray();m_findTotal=result["count"].toInt();m_findIndex=-1;m_findPageOffset=0;
             m_findNext->setEnabled(!m_findMatches.isEmpty());m_findPrevious->setEnabled(!m_findMatches.isEmpty());
             if(!m_findMatches.isEmpty())navigateFind(1);
             return;
