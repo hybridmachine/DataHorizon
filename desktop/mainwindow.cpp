@@ -435,12 +435,6 @@ void MainWindow::buildUi() {
     auto *gridArea=new QWidget(central); auto *gridLayout=new QGridLayout(gridArea);
     gridLayout->setContentsMargins(0,0,0,0); gridLayout->setSpacing(0);
     m_frozenTop=new FrozenPanes(m_grid,gridArea);
-    connect(m_frozenTop->view()->verticalHeader(),&QHeaderView::sectionResized,this,[this,recordSize](int row,int,int size){
-        if(row!=0 || m_applyingView) return;
-        recordSize(false,0,size);
-        QScopedValueRollback<bool> applying(m_applyingView,true);
-        m_frozenTop->setRowHeight(m_rowSizes.value(0,26));
-    });
     for(auto *pane:m_frozenTop->views()) {
         connect(pane->horizontalHeader(),&QHeaderView::sectionResized,wrapTimer,qOverload<>(&QTimer::start));
         connect(pane->horizontalHeader(),&QHeaderView::sectionResized,this,[recordSize](int section,int,int size){recordSize(true,section,size);});
@@ -462,7 +456,7 @@ void MainWindow::buildUi() {
         if(m_busy || m_unknown || key!=m_viewKey || state!=m_info["state"].toString() || m_model->projected() || m_hiddenRows.contains(0)) {
             updateFrozenRow(); issue("View changed. Review Freeze top row again."); return;
         }
-        m_freezeTop=requested; updateFrozenRow(); saveViewState();
+        m_frozenRows=requested?1:0; updateFrozenRow(); saveViewState();
     });
     m_freezeAction->setCheckable(true); m_freezeAction->setObjectName("freezeTopRowAction");
     m_freezeColumnAction=add(view,tr("Freeze first column"),{},[this]{
@@ -470,9 +464,17 @@ void MainWindow::buildUi() {
         if(m_busy || m_unknown || m_info.isEmpty() || m_model->projected() || m_hiddenColumns.contains(0)) {updateFrozenRow();issue("Clear the list view and show column A before changing Freeze first column.");return;}
         captureGridDraft(false);if(!resolveDraft()){updateFrozenRow();return;}
         if(m_busy || m_unknown || !matchesTarget(target) || key!=m_viewKey || m_model->projected() || m_hiddenColumns.contains(0)) {updateFrozenRow();issue("View changed. Review Freeze first column again.");return;}
-        m_freezeFirstColumn=requested;updateFrozenRow();saveViewState();
+        m_frozenColumns=requested?1:0;updateFrozenRow();saveViewState();
     });
     m_freezeColumnAction->setCheckable(true);m_freezeColumnAction->setObjectName("freezeFirstColumnAction");
+    m_freezePanesAction=add(view,tr("Freeze panes above and left of active cell"),{},[this]{freezeAtCurrent();});
+    m_freezePanesAction->setObjectName("freezePanesAction");m_freezePanesAction->setToolTip(tr("Freeze up to 16 rows above and 8 columns left of the active cell."));
+    m_unfreezePanesAction=add(view,tr("Unfreeze panes"),{},[this]{
+        if(m_busy || m_unknown || m_info.isEmpty())return;
+        const auto target=targetContext();captureGridDraft(false);if(!resolveDraft())return;
+        if(m_busy || m_unknown || !matchesTarget(target))return;
+        m_frozenRows=0;m_frozenColumns=0;updateFrozenRow();saveViewState();m_frozenTop->focusCurrent();
+    });m_unfreezePanesAction->setObjectName("unfreezePanesAction");
     m_tabs = new QTabBar; m_tabs->setObjectName("sheets"); m_tabs->setAccessibleName(tr("Worksheets")); m_tabs->setExpanding(false);
     layout->addWidget(m_tabs);
     setCentralWidget(central);
@@ -499,7 +501,7 @@ void MainWindow::buildUi() {
     add(help, tr("Preview capabilities"), {}, [this] {
         m_client->request("/v1/capabilities", {}, [this](QJsonObject, QString error) {
             if (!error.isEmpty()) issue(error);
-            else QMessageBox::information(this, tr("Development preview"), tr("Qt Widgets/C++ desktop • SQLite • Python REST service\n\nAvailable: cell entry, bounded viewports, the published formula tier, copy/paste, fill, wrap/borders, cell Undo/Redo, bounded sheet and row/column edits, list views, scoped search, CSV and bounded XLSX/ODS selection/workbook interchange. Sheet sizes, hiding and Freeze top row use local desktop preferences.\n\nUnavailable: unrestricted reference transforms, managed SQL, workbook code authoring and remote binding.\n\nThese limits are recorded in docs/design/implementation-status.md."));
+            else QMessageBox::information(this, tr("Development preview"), tr("Qt Widgets/C++ desktop • SQLite • Python REST service\n\nAvailable: cell entry, bounded viewports, the published formula tier, copy/paste, fill, wrap/borders, cell Undo/Redo, bounded sheet and row/column edits, list views, scoped search, CSV and bounded XLSX/ODS selection/workbook interchange. Sheet sizes, hiding and frozen panes use local desktop preferences.\n\nUnavailable: unrestricted reference transforms, managed SQL, workbook code authoring and remote binding.\n\nThese limits are recorded in docs/design/implementation-status.md."));
         }, false);
     });
     add(help, tr("About DataHorizon"), {}, [this] { QMessageBox::about(this, tr("DataHorizon"), tr("DataHorizon 0.1 development preview\nGUI: GNU GPL version 3.\nOther component licenses remain undecided.\nSee repository licensing materials.")); });
@@ -545,8 +547,8 @@ void MainWindow::fitVisibleWrappedRows() {
     // Only inspect loaded visible cells; never resize a million-row model to
     // contents or fetch full sources to measure presentation.
     QList<int> rows,columns;
-    if(m_frozenTop->active())rows.append(0);
-    if(m_frozenTop->columnActive())columns.append(0);
+    for(int row=0;row<m_frozenTop->frozenRows();++row)rows.append(row);
+    for(int col=0;col<m_frozenTop->frozenColumns();++col)columns.append(col);
     for(int row=qMax(0,m_grid->rowAt(0));row<m_model->rowCount() && rows.size()<64;++row) {
         if(m_grid->rowViewportPosition(row)>m_grid->viewport()->height())break;
         if(!m_grid->isRowHidden(row) && !rows.contains(row))rows.append(row);
@@ -590,7 +592,7 @@ void MainWindow::saveViewState() {
     QSettings settings(viewSettingsPath(),QSettings::IniFormat);
     auto hidden=[](const QSet<int> &values){QJsonArray result; QList<int> sorted=values.values(); std::sort(sorted.begin(),sorted.end()); for(int value:sorted) result.append(value); return result;};
     settings.setValue(m_viewKey,QJsonDocument(QJsonObject{{"rows",encode(m_rowSizes)},{"columns",encode(m_columnSizes)},
-        {"hidden_rows",hidden(m_hiddenRows)},{"hidden_columns",hidden(m_hiddenColumns)},{"freeze_top_row",m_freezeTop},{"freeze_first_column",m_freezeFirstColumn}}).toJson(QJsonDocument::Compact));
+        {"hidden_rows",hidden(m_hiddenRows)},{"hidden_columns",hidden(m_hiddenColumns)},{"freeze_top_row",m_frozenRows>0},{"freeze_first_column",m_frozenColumns>0},{"frozen_rows",m_frozenRows},{"frozen_columns",m_frozenColumns}}).toJson(QJsonDocument::Compact));
     settings.sync();
     if(settings.status()!=QSettings::NoError && !m_shuttingDown) issue("Could not save desktop view preferences. Workbook data remains stored.");
 }
@@ -624,7 +626,9 @@ void MainWindow::restoreViewState() {
         };
         m_hiddenRows=hidden(state["hidden_rows"].toArray(),1048576);
         m_hiddenColumns=hidden(state["hidden_columns"].toArray(),16384);
-        m_freezeTop=state["freeze_top_row"].toBool();m_freezeFirstColumn=state["freeze_first_column"].toBool();
+        auto count=[](QJsonValue value,int maximum,int fallback){const int n=value.toInt(-1);return value.isDouble() && value.toDouble()==n && n>=0 && n<=maximum?n:fallback;};
+        m_frozenRows=count(state["frozen_rows"],16,state["freeze_top_row"].toBool()?1:0);
+        m_frozenColumns=count(state["frozen_columns"],8,state["freeze_first_column"].toBool()?1:0);
     }
     for(auto it=m_rowSizes.begin();it!=m_rowSizes.end();++it) {
         const int row=m_model->viewRow(it.key());
@@ -715,8 +719,8 @@ bool MainWindow::intersectsHidden(int r1,int c1,int r2,int c2) const {
 void MainWindow::ensureVisibleCurrent() {
     const auto current=m_grid->currentIndex(); if(!current.isValid()) return;
     int row=current.row(), col=current.column();
-    auto hiddenRow=[this](int index){return m_grid->isRowHidden(index) && !(index==0 && m_frozenTop->active());};
-    auto hiddenColumn=[this](int index){return m_grid->isColumnHidden(index) && !(index==0 && m_frozenTop->columnActive());};
+    auto hiddenRow=[this](int index){return m_grid->isRowHidden(index) && !(index<m_frozenTop->frozenRows());};
+    auto hiddenColumn=[this](int index){return m_grid->isColumnHidden(index) && !(index<m_frozenTop->frozenColumns());};
     if(!hiddenRow(row) && !hiddenColumn(col)) return;
     for(int attempts=0;attempts<=1024 && hiddenRow(row);++attempts) row=(row+1)%qMax(1,m_model->rowCount());
     for(int attempts=0;attempts<=1024 && hiddenColumn(col);++attempts) col=(col+1)%m_model->columnCount();
@@ -752,25 +756,55 @@ void MainWindow::applyVisibility() {
     ensureVisibleCurrent();queueSummary();
 }
 
+void MainWindow::freezeAtCurrent() {
+    if(m_busy || m_unknown || m_info.isEmpty())return;
+    if(m_model->projected()){issue("Clear the list view before freezing panes.");return;}
+    const auto cell=m_grid->currentIndex();if(!cell.isValid())return;
+    const int rows=cell.row(),columns=cell.column();
+    if(rows>16 || columns>8){issue("Freeze at most 16 rows and 8 columns. Select a cell nearer the top-left.");return;}
+    for(int row:m_hiddenRows)if(row<rows){issue("Show hidden rows in the frozen prefix first.");return;}
+    for(int col:m_hiddenColumns)if(col<columns){issue("Show hidden columns in the frozen prefix first.");return;}
+    int height=0,width=0;
+    for(int row=0;row<rows;++row)height+=m_frozenTop->sectionSize(false,row);
+    for(int col=0;col<columns;++col)width+=m_frozenTop->sectionSize(true,col);
+    if((rows && height+m_grid->horizontalHeader()->height()+54>m_grid->parentWidget()->height()) ||
+       (columns && width+m_grid->verticalHeader()->width()+82>m_grid->parentWidget()->width())) {
+        issue("The frozen prefix would leave too little scrolling space. Resize the window or freeze fewer rows/columns.");return;
+    }
+    const auto target=targetContext();const auto key=m_viewKey;
+    const auto hiddenRows=m_hiddenRows,hiddenColumns=m_hiddenColumns;const auto rowSizes=m_rowSizes,columnSizes=m_columnSizes;
+    const auto area=m_grid->parentWidget()->size();
+    captureGridDraft(false);if(!resolveDraft())return;
+    if(m_busy || m_unknown || !matchesTarget(target) || key!=m_viewKey || m_model->projected()
+        || hiddenRows!=m_hiddenRows || hiddenColumns!=m_hiddenColumns || rowSizes!=m_rowSizes || columnSizes!=m_columnSizes || area!=m_grid->parentWidget()->size()) {
+        issue("View changed. Select the freeze position again.");return;
+    }
+    m_frozenRows=rows;m_frozenColumns=columns;updateFrozenRow();saveViewState();m_frozenTop->focusCurrent();
+}
+
 void MainWindow::updateFrozenRow() {
     QScopedValueRollback<bool> applying(m_applyingView,true);
-    const bool active=m_freezeTop && !m_model->projected() && !m_hiddenRows.contains(0);
-    m_frozenTop->setFrozen(active,m_rowSizes.value(0,26));
-    m_frozenTop->setHiddenRows(m_hiddenViewRows);
-    m_frozenTop->setFirstColumnFrozen(m_freezeFirstColumn && !m_model->projected() && !m_hiddenColumns.contains(0));
-    m_frozenTop->setHiddenColumns(m_hiddenColumns);
-    // Turning freeze off must restore an independently hidden row 1.
-    if(!active && m_hiddenRows.contains(0) && m_model->viewRow(0)>=0) m_grid->setRowHidden(m_model->viewRow(0),true);
-    if(!active && !m_model->projected() && !m_hiddenRows.contains(0)) {
-        m_grid->setRowHeight(0,m_rowSizes.value(0,26));
-        if(m_rowSizes.contains(0)) m_sizedRows.insert(0);
-    }
-    QSignalBlocker blocker(m_freezeAction); m_freezeAction->setChecked(active);
-    m_freezeAction->setEnabled(!m_busy && !m_unknown && !m_model->projected() && !m_hiddenRows.contains(0));
-    if(m_freezeColumnAction) {
-        QSignalBlocker blocker(m_freezeColumnAction);m_freezeColumnAction->setChecked(m_freezeFirstColumn);
-        m_freezeColumnAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenColumns.contains(0));
-    }
+    bool rows=m_frozenRows>0 && !m_model->projected(),columns=m_frozenColumns>0 && !m_model->projected();
+    for(int row:m_hiddenRows)if(row<m_frozenRows)rows=false;
+    for(int col:m_hiddenColumns)if(col<m_frozenColumns)columns=false;
+    int height=0,width=0;
+    if(rows)for(int row=0;row<m_frozenRows;++row)height+=m_frozenTop->sectionSize(false,row);
+    if(columns)for(int col=0;col<m_frozenColumns;++col)width+=m_frozenTop->sectionSize(true,col);
+    const bool rowRoom=!(rows && m_frozenRows>1 && height+m_grid->horizontalHeader()->height()+54>m_grid->parentWidget()->height());
+    const bool columnRoom=!(columns && m_frozenColumns>1 && width+m_grid->verticalHeader()->width()+82>m_grid->parentWidget()->width());
+    if(!rowRoom || !columnRoom){
+        if(!m_frozenSizeIssue)issue("Saved frozen prefixes do not fit this window. Enlarge it and reapply freezing, or choose Unfreeze panes.");
+        m_frozenSizeIssue=true;
+    } else m_frozenSizeIssue=false;
+    rows=rows && rowRoom;columns=columns && columnRoom;
+    m_frozenTop->setFrozenCounts(rows?m_frozenRows:0,columns?m_frozenColumns:0);
+    m_frozenTop->setHiddenRows(m_hiddenViewRows);m_frozenTop->setHiddenColumns(m_hiddenColumns);
+    if(m_freezePanesAction)m_freezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
+    if(m_unfreezePanesAction)m_unfreezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && (m_frozenRows>0 || m_frozenColumns>0));
+    if(m_freezeAction){QSignalBlocker blocker(m_freezeAction);m_freezeAction->setChecked(rows && m_frozenRows==1);
+        m_freezeAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenRows.contains(0));}
+    if(m_freezeColumnAction){QSignalBlocker blocker(m_freezeColumnAction);m_freezeColumnAction->setChecked(columns && m_frozenColumns==1);
+        m_freezeColumnAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenColumns.contains(0));}
 }
 
 void MainWindow::hideSections(bool columns) {
@@ -1030,6 +1064,8 @@ void MainWindow::setBusy(bool busy, const QString &message) {
     m_busy = busy || m_releasing;
     if(m_busy) clearFindResults();
     m_model->setBusy(m_busy); m_toolbar->setEnabled(!m_busy); m_tabs->setEnabled(!m_busy);
+    if(m_freezePanesAction)m_freezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
+    if(m_unfreezePanesAction)m_unfreezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && (m_frozenRows>0 || m_frozenColumns>0));
     if(m_freezeColumnAction)m_freezeColumnAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenColumns.contains(0));
     if(m_freezeAction) m_freezeAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenRows.contains(0));
     syncSource();

@@ -67,13 +67,34 @@ as hiding row 1 suspends the top edge. Draft capture/resolution and Save cover e
 frozen cells within the existing 64-row × 16-column loaded-preview measurement
 budget, with one shared row height. Plain/Shift arrows and Enter cross panes;
 Tab-specific traversal is part of the later keyboard-navigation increment.
-There are no data/history/hook changes from freezing or navigation. Multiple
-frozen rows/columns remain the next increment. Native automation and visual QA
+There are no data/history/hook changes from freezing or navigation. The following increment extends
+these panes to multiple rows/columns. Native automation and visual QA
 cover layout, distant scrolling, selection, corner editing, persistence and guards;
 physical input/screen-reader/cross-platform release acceptance remains open.
+
+## Freeze selected panes
+
+View → Freeze panes above and left of active cell freezes the source prefixes
+before the active row/column (C3 freezes rows 1–2 and columns A–B). Prefixes are
+limited to 16 rows and 8 columns and must leave at least a small scrolling body;
+excessive counts, hidden prefix sections or insufficient room reject without
+changing preferences. Unfreeze panes removes both edges while retaining custom
+sizes and stored inputs. Top-row/first-column commands remain one-edge shortcuts.
+
+Top, left and corner models resize their bounded source prefixes and retain the
+canonical source selection, actual section sizes and one shared cache. Saved
+counts use local preferences; old Boolean preferences migrate to one-row/column
+settings, and malformed counts fall back safely. Projected/hidden prefixes suspend
+edges. Saved multi-section prefixes that do not fit are suspended with an explicit
+message; enlarge and reapply, or unfreeze. Draft resolution and workbook/sheet/state,
+visibility, size and geometry checks protect the reviewed freeze request. Freezing
+and navigation do not emit managed edits, hooks or history entries. The wrapping
+measurement cap includes prefix cells and scrolling cells together.
 
 ## Completed PRs
 
 1. [Formula-aware Cut #45](https://github.com/hybridmachine/DataHorizon/pull/45): locally verified, self-reviewed and merged.
 
 2. [Cross-pane selection #46](https://github.com/hybridmachine/DataHorizon/pull/46): locally verified, self-reviewed and merged.
+
+3. [Freeze first column #47](https://github.com/hybridmachine/DataHorizon/pull/47): locally verified, self-reviewed and merged.
