@@ -116,3 +116,50 @@ class WorkbookInterchangeTests(unittest.TestCase):
         data=xlsx_export(snapshot,{"mode":"values"})
         result=xlsx_preview({"file_base64":data["file_base64"],"scope":"workbook"})
         self.assertEqual(result["workbook_sheets"][0]["cells"][0]["kind"],"number")
+
+
+class OdsWorkbookTests(unittest.TestCase):
+    def test_named_cross_sheet_references_ranges_and_quoted_literals_translate_safely(self):
+        from datahorizon.ods import ods_to_native,native_to_ods
+        names=["O'Brien Sales",'Semi;"Quote','Summary']
+        source='=SUM(\'O\'\'Brien Sales\'!$A$1:A2,IF(TRUE,\'Semi;"Quote\'!A1,"[.A1];"))'
+        external=native_to_ods(source,sheet_names=names)
+        native=ods_to_native(external,names)
+        self.assertIn("'O''Brien Sales'!$A$1:'O''Brien Sales'!A2",native)
+        self.assertIn("'Semi;\"Quote'!A1",native)
+        self.assertIn('"[.A1];"',native)
+        for bad in ('of:=[Missing.A1]','of:=[One.A1:Two.A2]','of:=[file:///tmp/source#One.A1]'):
+            with self.assertRaises(EngineError): ods_to_native(bad,["One","Two"])
+
+    def test_independent_ods_workbook_rest_export_roundtrip_and_odfpy_consumer(self):
+        from datahorizon.ods import O,T,X,Y,F,N,OF,MIME,q
+        from xml.sax.saxutils import escape
+        content=f'''<office:document-content xmlns:office="{O}" xmlns:table="{T}" xmlns:text="{X}" xmlns:style="{Y}" xmlns:fo="{F}" xmlns:number="{N}" xmlns:of="{OF}"><office:body><office:spreadsheet>
+<table:table table:name="O'Brien Sales"><table:table-row><table:table-cell office:value-type="float" office:value="7"/></table:table-row></table:table>
+<table:table table:name="Summary"><table:table-row><table:table-cell table:formula="of:=SUM([$'O''Brien Sales'.$A$1:$'O''Brien Sales'.$A$2])" office:value-type="float" office:value="7"/></table:table-row></table:table>
+<table:table table:name="Empty"/>
+</office:spreadsheet></office:body></office:document-content>'''
+        output=io.BytesIO()
+        with zipfile.ZipFile(output,"w") as archive:
+            archive.writestr("mimetype",MIME); archive.writestr("content.xml",content)
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            preview=prepare(client,output.getvalue(),"ods")
+            self.assertTrue(preview["can_import"],preview)
+            with client.open(Path(temp)/"ods.dhwb",create=True) as book:
+                book.import_prepared(preview)
+                self.assertEqual(book.read("Summary",r2=1,c2=1)["cells"][0]["value"],7)
+                result=book.export_spreadsheet("ods",scope="workbook")
+                self.assertEqual(result["state"],book.state)
+            data=base64.b64decode(result["file_base64"])
+            again=prepare(client,data,"ods")
+            self.assertEqual([s["name"] for s in again["workbook_sheets"]],["O'Brien Sales","Summary","Empty"])
+            with client.open(Path(temp)/"copy.dhwb",create=True) as book:
+                book.import_prepared(again)
+                self.assertEqual(book.read("Summary",r2=1,c2=1)["cells"][0]["value"],7)
+            try:
+                from odf.opendocument import load
+                from odf.table import Table,TableCell
+            except ImportError: return
+            foreign=load(io.BytesIO(data))
+            self.assertEqual([s.getAttribute("name") for s in foreign.spreadsheet.getElementsByType(Table)],["O'Brien Sales","Summary","Empty"])
+            self.assertIn("O''Brien Sales",foreign.spreadsheet.getElementsByType(TableCell)[1].getAttribute("formula"))

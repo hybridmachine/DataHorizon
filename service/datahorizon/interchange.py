@@ -95,7 +95,12 @@ def local_formula(source, bounds=None, sheet_names=None):
             if item[0]=="call":
                 require(item[1] in ("SUM","IF"),"UNSUPPORTED_FORMULA",f"Unsupported function: {item[1]}")
                 pending.extend(item[2])
-            elif item[0] in ("binary","range"): pending.extend(item[2:])
+            elif item[0] in ("binary","range"):
+                if item[0]=="range":
+                    require(item[2][0]==item[3][0]=="ref","UNSUPPORTED_FORMULA","Only cell-reference range endpoints are supported")
+                    left=split_ref(item[2][1])[0]; right=split_ref(item[3][1])[0]
+                    require(right is None or (left is not None and fold_name(left)==fold_name(right)),"UNSUPPORTED_FORMULA","Ranges spanning different sheets are unavailable")
+                pending.extend(item[2:])
             elif item[0]=="unary": pending.append(item[2])
             elif item[0]=="ref":
                 name,row,col=split_ref(item[1])

@@ -1,0 +1,30 @@
+Local macOS verification, November 6, 2026; hosted Actions credits exhausted.
+C++ build passed.
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   53.11 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   24.30 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  77.42 sec
+
+Independent openpyxl/odfpy workbook contracts:
+test_independent_ods_workbook_rest_export_roundtrip_and_odfpy_consumer (test_workbook_interchange.OdsWorkbookTests.test_independent_ods_workbook_rest_export_roundtrip_and_odfpy_consumer) ... ok
+test_named_cross_sheet_references_ranges_and_quoted_literals_translate_safely (test_workbook_interchange.OdsWorkbookTests.test_named_cross_sheet_references_ranges_and_quoted_literals_translate_safely) ... ok
+test_missing_sheet_reference_blocks_whole_preview_and_values_mode_is_explicit (test_workbook_interchange.WorkbookInterchangeTests.test_missing_sheet_reference_blocks_whole_preview_and_values_mode_is_explicit) ... ok
+test_whole_preview_aggregate_limit_cancellation_and_invalid_late_sheet (test_workbook_interchange.WorkbookInterchangeTests.test_whole_preview_aggregate_limit_cancellation_and_invalid_late_sheet) ... ok
+test_workbook_import_rejects_required_handlers_duplicate_names_and_aggregate_limit (test_workbook_interchange.WorkbookInterchangeTests.test_workbook_import_rejects_required_handlers_duplicate_names_and_aggregate_limit) ... ok
+test_workbook_import_rolls_back_catalog_cells_and_receipt_on_late_failure (test_workbook_interchange.WorkbookInterchangeTests.test_workbook_import_rolls_back_catalog_cells_and_receipt_on_late_failure) ... ok
+test_xlsx_rest_roundtrip_order_empty_sheets_formulas_styles_and_reopen (test_workbook_interchange.WorkbookInterchangeTests.test_xlsx_rest_roundtrip_order_empty_sheets_formulas_styles_and_reopen) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.760s
+
+OK
+
+Focused offscreen Qt whole-workbook imports and selection/workbook exports: 9 passed.
+Native Cocoa scale 2 whole-workbook imports: 4 passed.
+Review checked canonical sheet references, inherited range targets, quoted string/separator handling, shared style IDs and aggregate whitespace/package limits. Different-sheet range endpoints now reject in both formats.
+Actual Excel/LibreOffice and Windows/Linux qualification remain open.

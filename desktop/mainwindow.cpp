@@ -1728,8 +1728,8 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
 
 void MainWindow::importSpreadsheetOptions(const QByteArray &bytes, const QString &format, QJsonObject target) {
     QDialog dialog(this); dialog.setWindowTitle(tr("Spreadsheet import options")); dialog.setObjectName("spreadsheetOptionsDialog");
-    QFormLayout layout(&dialog); QSpinBox sheet(&dialog); sheet.setRange(format=="xlsx"?0:1,64); sheet.setValue(1);
-    if(format=="xlsx") sheet.setSpecialValueText(tr("All sheets (empty destination)"));
+    QFormLayout layout(&dialog); QSpinBox sheet(&dialog); sheet.setRange(0,64); sheet.setValue(1);
+    sheet.setSpecialValueText(tr("All sheets (empty destination)"));
     QComboBox mode(&dialog); mode.addItem(tr("Preserve supported formulas"),"formulas"); mode.addItem(tr("Cached values (freshness unverified)"),"values");
     layout.addRow(tr("Sheet number"),&sheet); layout.addRow(tr("Inputs"),&mode);
     QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog); layout.addRow(&buttons);
@@ -1750,7 +1750,7 @@ void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &
         [this,target,format](QJsonObject preview,QString error) {
         if(!error.isEmpty() || !matchesTarget(target) || m_model->projected()) { setBusy(false); issue(error.isEmpty()?"Import target changed; import cancelled.":error); return; }
         QStringList report; for(const auto &line:preview["report"].toArray()) report.append(line.toString());
-        for(const auto &entry:preview["issues"].toArray()) { const auto item=entry.toObject(); report.append(item["cell"].toString()+": "+item["message"].toString()); }
+        for(const auto &entry:preview["issues"].toArray()) { const auto item=entry.toObject(); report.append((item["sheet"].toString().isEmpty()?QString():item["sheet"].toString()+"!")+item["cell"].toString()+": "+item["message"].toString()); }
         const bool allowed=preview["can_import"].toBool();
         QMessageBox review(QMessageBox::Question,tr("Review spreadsheet import"),
             preview["scope"]=="workbook" ? tr("Import %1 sheets and %2 stored cells into this empty workbook? History will be cleared.").arg(preview["workbook_sheets"].toArray().size()).arg(preview["stored_cells"].toInt()) :
@@ -1787,7 +1787,7 @@ void MainWindow::exportFile() {
     }
     bool ok=false;
     QStringList choices{tr("Inputs and supported formulas"),tr("Calculated values")};
-    if(format=="xlsx") choices << tr("Whole workbook: inputs and supported formulas") << tr("Whole workbook: calculated values");
+    choices << tr("Whole workbook: inputs and supported formulas") << tr("Whole workbook: calculated values");
     const auto choice=QInputDialog::getItem(this,tr("Spreadsheet export"),tr("Export cells as"),choices,0,false,&ok);
     const auto choiceIndex=choices.indexOf(choice);
     if(choiceIndex>=2) target["scope"]="workbook";

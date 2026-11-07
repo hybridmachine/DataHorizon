@@ -39,3 +39,23 @@ Code, queries, relationships, dimensions, history, view state and advanced featu
 remain omitted with reports; imported code cannot activate.
 
 Local evidence is recorded in `evidence/workbook-xlsx-verification.txt`.
+
+## Whole-workbook ODS
+
+ODS now supports the same `scope=workbook` and atomic Apply contract. OpenFormula
+cell/range references translate between native qualified names and ODF named
+sheet locators, including spaces, apostrophes, punctuation and absolute cell
+components. Export repeats the sheet locator on both range endpoints to preserve
+native inherited range targets. Different-sheet range endpoints, external files,
+unknown sheets, matrix formulas and power syntax reject explicitly. String
+literals are tokenized separately from references and function separators.
+Names, inputs, current caches and mapped direct styles share one snapshot;
+empty sheets remain present. Date/duration values remain ISO Text; percentage
+and currency keep their magnitudes without unsupported display/currency codes.
+Sheet-relative movement semantics are canonicalized to named sheet references.
+
+The translation follows the named-sheet reference grammar in the
+[OASIS OpenFormula specification](https://docs.oasis-open.org/office/v1.2/cd05/OpenDocument-v1.2-cd05-part2.html).
+This is a bounded compatibility tier, with independent XML fixtures and odfpy
+consumption; it does not claim native LibreOffice acceptance. Local evidence is
+in `evidence/workbook-ods-verification.txt`.
