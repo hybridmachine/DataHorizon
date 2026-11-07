@@ -68,7 +68,7 @@ public:
         connect(this,&QFileDialog::filterSelected,this,[this]{
             setDefaultSuffix(format());
             const auto path=selectedFiles().value(0);
-            if(!path.isEmpty() && !QFileInfo(path).isDir()) selectFile(withFormat(path));
+            if(!path.isEmpty() && !QFileInfo(path).isDir()) normalizeFile(path);
         });
     }
     QString format() const {
@@ -79,10 +79,19 @@ public:
         if(path.isEmpty()) return;
         // Normalize before QFileDialog's overwrite confirmation, so it covers
         // the exact destination passed to the exporter.
-        if(!QFileInfo(path).isDir()) selectFile(withFormat(path));
+        if(!QFileInfo(path).isDir()) normalizeFile(path);
         QFileDialog::accept();
     }
 private:
+    void normalizeFile(const QString &path) {
+        const auto normalized=withFormat(path);
+        if(normalized==path) return;
+        // QFileDialog preserves a focused filename editor on selectFile().
+        auto *editor=focusWidget();
+        if(editor) editor->clearFocus();
+        selectFile(normalized);
+        if(editor) editor->setFocus(Qt::OtherFocusReason);
+    }
     QString withFormat(const QString &path) const {
         const auto suffix=QFileInfo(path).suffix();
         if(suffix.compare(format(),Qt::CaseInsensitive)==0) return path;

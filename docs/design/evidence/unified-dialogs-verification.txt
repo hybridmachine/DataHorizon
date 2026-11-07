@@ -1,0 +1,37 @@
+Unified Import/Export local verification. Hosted run 42340496340 starts no jobs; existing local-verification authorization applies.
+
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   51.05 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   24.05 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  75.11 sec
+
+Complete suite summaries:
+Totals: 102 passed, 0 failed, 0 skipped, 0 blacklisted, 50619ms
+Ran 257 tests in 23.902s
+OK (skipped=15)
+
+Native Cocoa scale 2 (actual file dialogs, mixed-case extension routing, TSV default, three format dropdown exports, focused-filename overwrite cancellation):
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::unifiedImportDetectsExtensions(tsv)
+PASS   : DesktopTests::unifiedImportDetectsExtensions(text)
+PASS   : DesktopTests::unifiedImportDetectsExtensions(xlsx)
+PASS   : DesktopTests::unifiedImportDetectsExtensions(ods)
+PASS   : DesktopTests::unifiedExportUsesTheFormatDropdown(csv)
+PASS   : DesktopTests::unifiedExportUsesTheFormatDropdown(xlsx)
+PASS   : DesktopTests::unifiedExportUsesTheFormatDropdown(ods)
+PASS   : DesktopTests::unifiedExportConfirmsTheNormalizedFilenameBeforeOverwriting()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 6702ms
+********* Finished testing of DesktopTests *********
+
+Installed preview:
+Installed application: managed edit and calculation passed
+
+Build: no compiler warnings/errors. Screenshot visually inspected. Review fixed QFileDialog selectFile preserving a focused filename editor; normalization now updates it before built-in overwrite confirmation. Picker automation schedules clicks outside its answer timer, enters filenames directly and retains bounded cleanup. CSV-specific API error assertions remain distinct from the generic menu target check.

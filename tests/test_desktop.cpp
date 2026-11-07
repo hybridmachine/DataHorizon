@@ -1204,10 +1204,11 @@ private slots:
                     pickerSeen=true;
                     QCOMPARE(picker->nameFilters().size(),1);
                     QVERIFY(picker->nameFilters()[0].contains("*.ods")); QVERIFY(!picker->nameFilters()[0].contains("(*)"));
-                    picker->setDirectory(temp.path()); picker->selectFile(QFileInfo(path).fileName());
+                    picker->setDirectory(temp.path());
+                    auto *name=picker->findChild<QLineEdit *>("fileNameEdit"); QVERIFY(name); name->setText(path);
                 }
                 if(auto *buttons=picker->findChild<QDialogButtonBox *>())
-                    if(auto *button=buttons->button(QDialogButtonBox::Open);button && button->isEnabled()) button->click();
+                    if(auto *button=buttons->button(QDialogButtonBox::Open);button && button->isEnabled()) QTimer::singleShot(0,button,[button]{button->click();});
             } else if(auto *dialog=qobject_cast<QDialog *>(modal);dialog && dialog->objectName()==(tabular?"csvOptionsDialog":"spreadsheetOptionsDialog")) {
                 optionsSeen=true;
                 if(tabular) correctDelimiter=dialog->findChild<QComboBox *>("csvDelimiter")->currentData().toString()==(extension=="TSV"?"\t":",");
@@ -1245,7 +1246,8 @@ private slots:
             if(auto *picker=qobject_cast<QFileDialog *>(modal)) {
                 if(!pickerSeen) {
                     pickerSeen=true; QCOMPARE(picker->nameFilters().size(),3);
-                    picker->setDirectory(temp.path()); picker->selectFile("result.csv");
+                    picker->setDirectory(temp.path());
+                    auto *name=picker->findChild<QLineEdit *>("fileNameEdit"); QVERIFY(name); name->setText(temp.filePath("result.csv"));
                     auto *formats=picker->findChild<QComboBox *>("fileTypeCombo"); QVERIFY(formats);
                     formats->setFocus(); QTest::keyClick(formats,Qt::Key_Home);
                     for(int i=0;i<formatIndex;++i) QTest::keyClick(formats,Qt::Key_Down);
@@ -1253,7 +1255,7 @@ private slots:
                     if(qEnvironmentVariableIsSet("DATAHORIZON_EXPORT_DIALOG_SCREENSHOT")) picker->grab().save(qEnvironmentVariable("DATAHORIZON_EXPORT_DIALOG_SCREENSHOT"));
                 }
                 if(auto *buttons=picker->findChild<QDialogButtonBox *>())
-                    if(auto *button=buttons->button(QDialogButtonBox::Save);button && button->isEnabled()) button->click();
+                    if(auto *button=buttons->button(QDialogButtonBox::Save);button && button->isEnabled()) QTimer::singleShot(0,button,[button]{button->click();});
             } else if(auto *input=qobject_cast<QInputDialog *>(modal)) input->accept();
             else if(auto *box=qobject_cast<QMessageBox *>(modal)) {
                 if(auto *button=box->button(QMessageBox::Yes)) button->click();
@@ -1279,6 +1281,9 @@ private slots:
         QElapsedTimer elapsed; elapsed.start(); QTimer answer; answer.setInterval(10);
         connect(&answer,&QTimer::timeout,&window,[&]{
             auto *modal=QApplication::activeModalWidget();
+            if(elapsed.elapsed()>10000) {
+                timedOut=true; if(auto *dialog=qobject_cast<QDialog *>(modal)) dialog->reject(); return;
+            }
             if(auto *picker=qobject_cast<QFileDialog *>(modal)) {
                 if(declined || elapsed.elapsed()>10000) { timedOut=elapsed.elapsed()>10000; picker->reject(); return; }
                 if(!pickerSeen) {
@@ -1288,7 +1293,7 @@ private slots:
                     auto *name=picker->findChild<QLineEdit *>("fileNameEdit"); QVERIFY(name); name->setText("retained.csv");
                 }
                 if(auto *buttons=picker->findChild<QDialogButtonBox *>())
-                    if(auto *button=buttons->button(QDialogButtonBox::Save);button && button->isEnabled()) button->click();
+                    if(auto *button=buttons->button(QDialogButtonBox::Save);button && button->isEnabled()) QTimer::singleShot(0,button,[button]{button->click();});
             } else if(auto *box=qobject_cast<QMessageBox *>(modal)) {
                 confirmedExactPath=box->text().contains("retained.xlsx"); declined=true;
                 if(auto *button=box->button(QMessageBox::No)) button->click();
@@ -1434,7 +1439,7 @@ private slots:
             }
         });
         answer.start(); window.importCsvText("7");
-        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Import target changed"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("CSV import target changed"),5000);
         answer.stop(); QVERIFY(invalidated); QCOMPARE(changed.count(),0);
     }
     void csvPreviewCapturesItsTargetAndRejectsInvalidatedProjection() {
@@ -1453,7 +1458,7 @@ private slots:
         QCOMPARE(model->data(model->index(0,0)).toString(),QString("ID")); QCOMPARE(model->data(model->index(4,1)).toString(),QString());
         QVERIFY(!QFile::exists(temp.filePath("wrong.dhwb")));
         window.importCsvText("wrong target"); model->setProjection({0,1});
-        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Import target changed"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("CSV import target changed"),5000);
         QCOMPARE(changed.count(),1);
         window.openBook(path); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
         QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("ID"),5000);

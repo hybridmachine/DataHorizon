@@ -364,7 +364,8 @@ XLSX/ODS retain sheet/input options and conversion review.
 File → Export… opens one save dialog with a Format dropdown for CSV, XLSX or ODS.
 The filename follows the selected format, including a conflicting supported
 suffix; normalization happens before overwrite confirmation. The Qt file dialog
-keeps this dropdown available on all platforms. CSV retains its values/loss
+keeps this dropdown available on all platforms, following Qt's
+[documented filters and suffix behavior](https://doc.qt.io/qt-6.8/qfiledialog.html). CSV retains its values/loss
 review; spreadsheet exports retain their formula/value choice and conversion
 report. Imports target the selected cell and exports use the selected rectangle.
 See [the exact input/formula/style tiers](interchange-next-five.md). CSV/XLSX/ODS
