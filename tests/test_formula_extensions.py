@@ -81,3 +81,40 @@ class AggregateTests(unittest.TestCase):
             self.assertEqual([c['value'] for c in book.read(r2=1,c2=2)['cells']],[3,6])
             with self.assertRaises(APIError): book.set(1,1,'=MIN(-1,4)')
             self.assertEqual([c['value'] for c in book.read(r2=1,c2=2)['cells']],[3,6])
+
+
+class LogicalTests(unittest.TestCase):
+    def test_boolean_numeric_text_reference_and_blank_contracts(self):
+        cells={('Sheet1',1,1):literal('TRUE','text'),('Sheet1',2,1):literal(True,'boolean'),('Sheet1',3,1):literal(0)}
+        for source,expected in [('AND(TRUE,2,-1)',True),('OR(FALSE,0)',False),('NOT(FALSE)',True),('NOT(A4)',True),('AND("true",1)',True),('OR(A1:A4)',True),('AND(A1:A4)',False)]:
+            self.assertEqual(evaluate(source,cells),expected)
+        for source in ('AND(A1)','OR(A4)','AND("bad")','NOT(A1:A2)','NOT("1")'):
+            with self.assertRaises(FormulaError) as failure: evaluate(source,cells)
+            self.assertEqual(failure.exception.code,'#VALUE!')
+
+    def test_eager_errors_arity_and_resource_guards(self):
+        for source in ('AND(FALSE,1/0)','OR(TRUE,1/0)','NOT(1/0)'):
+            with self.assertRaises(FormulaError) as failure: evaluate(source)
+            self.assertEqual(failure.exception.code,'#DIV/0!')
+        for source in ('AND()','OR()','NOT()','NOT(1,2)'):
+            with self.assertRaises(FormulaError) as failure: evaluate(source)
+            self.assertEqual(failure.exception.code,'#NAME?')
+        for source in ('AND(FALSE,A1:A1048576)','OR(TRUE,A1:A1048576)'):
+            with self.assertRaises(FormulaError) as failure: evaluate(source)
+            self.assertEqual(failure.exception.code,'#LIMIT!')
+        self.assertEqual(evaluate('IF(FALSE,AND(TRUE,1/0),7)'),7)
+
+    def test_both_interchange_formats_preserve_boolean_function_sources(self):
+        cells=[{'row':1,'col':i,'kind':'formula','source':source,'value':value,'calculation':'current','style':{}} for i,(source,value) in enumerate([('=AND(TRUE,1)',True),('=OR(FALSE,0)',False),('=NOT(TRUE)',False)],1)]
+        snapshot={'cells':cells,'range':[1,1,1,3],'state':'fixture'}
+        for export,preview in ((xlsx_export,xlsx_preview),(ods_export,ods_preview)):
+            parsed=preview(export(snapshot,{}));self.assertTrue(parsed['can_import'],parsed)
+            self.assertEqual([evaluate(c['source']) for c in parsed['cells']],[True,False,False])
+
+    def test_logical_conditions_participate_in_required_transactional_validation(self):
+        from datahorizon.client import APIError,LocalService
+        with tempfile.TemporaryDirectory() as temp,LocalService(handler=Path(__file__).parent/'fixtures'/'validation_hook.py') as client,client.open(Path(temp)/'logical.dhwb',create=True) as book:
+            book.set(1,1,'=IF(AND(TRUE,2>1),7,-1)')
+            self.assertEqual([c['value'] for c in book.read(r2=1,c2=2)['cells']],[7,14])
+            with self.assertRaises(APIError): book.set(1,1,'=IF(OR(FALSE,0),1,-1)')
+            self.assertEqual([c['value'] for c in book.read(r2=1,c2=2)['cells']],[7,14])

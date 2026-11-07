@@ -48,3 +48,23 @@ Primary references: Microsoft's
 [MAX](https://support.microsoft.com/en-us/excel/functions/max-function),
 [COUNT](https://support.microsoft.com/en-us/excel/functions/count-function), and
 [COUNTA](https://support.microsoft.com/en-us/excel/functions/counta-function).
+
+## Logical function contract
+
+AND/OR accept 1–255 scalar/reference/range arguments. Numeric and Boolean inputs
+participate; referenced Text and empty/NULL cells are ignored. Direct TRUE/FALSE
+Text is accepted case-insensitively; other direct Text is #VALUE!. An aggregate
+with no participating values is #VALUE!. Both functions evaluate all arguments
+and propagate errors, including after a decisive FALSE/TRUE value. NOT requires
+one scalar, treats blank/NULL as FALSE, accepts numeric/Boolean/TRUE-or-FALSE Text,
+and rejects arrays and other Text. Existing lazy IF is unchanged. The ordinary
+calculation/parser budgets still apply, and both file formats use the shared
+function registry.
+
+References: Microsoft [AND](https://support.microsoft.com/en-us/excel/functions/and-function),
+[OR](https://support.microsoft.com/en-us/excel/functions/or-function), and
+[NOT](https://support.microsoft.com/en-us/excel/functions/not-function).
+
+## PR record
+
+1. [Aggregate functions #35](https://github.com/hybridmachine/DataHorizon/pull/35): locally verified, self-reviewed and merged.
