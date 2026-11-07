@@ -45,8 +45,8 @@ ROUTES = {
     "/v1/recovery/inspect": ("post", "Read-only native-file inspection without code activation or repair"),
     "/v1/import/csv/preview": ("post", "Decode CSV and review explicit column conversions without mutation"),
     "/v1/import/csv/jobs": ("post", "Start a cancellable CSV preparation; never writes workbook data"),
-    "/v1/import/ods/jobs": ("post", "Prepare one bounded ODS sheet with formula/style conversion review"),
-    "/v1/workbooks/{workbook}/export/ods": ("post", "Bounded ODS selection snapshot and conversion report"),
+    "/v1/import/ods/jobs": ("post", "Prepare bounded ODS selected-sheet or whole-workbook inputs with conversion review"),
+    "/v1/workbooks/{workbook}/export/ods": ("post", "Bounded ODS selection or whole-workbook snapshot and conversion report"),
     "/v1/import/xlsx/jobs": ("post", "Prepare bounded selected-sheet or whole-workbook XLSX with conversion review"),
     "/v1/workbooks/{workbook}/export/xlsx": ("post", "Bounded XLSX selection or whole-workbook snapshot and conversion report"),
     "/v1/jobs/{job}": ("get", "Ephemeral preparation status, progress and reviewed result"),
@@ -180,7 +180,7 @@ def openapi():
         "scope":{"type":"string","enum":["selection","workbook"],"default":"selection"},
         "sheet_index":{"type":"integer","minimum":1,"maximum":64,"default":1},"row":row,"col":col,
         "mode":{"type":"string","enum":["formulas","values"],"default":"formulas"}},
-        "description":"Selected sheet or whole-workbook inputs, at most 10,000 stored cells total. Whole-workbook XLSX requires an empty destination and no required handler, replaces sheets atomically and clears history. Values mode uses unverified formula caches. Issues block the entire applicable payload. Explicit reviewed Apply is one managed edit; no code activation."}
+        "description":"Selected sheet or whole-workbook inputs, at most 10,000 stored cells total. Whole-workbook XLSX/ODS requires an empty destination and no required handler, replaces sheets atomically and clears history. Values mode uses unverified formula caches. Issues block the entire applicable payload. Explicit reviewed Apply is one managed edit; no code activation."}
     schemas["SpreadsheetExport"] = {**schemas["CsvExportRequest"],"properties":{**schemas["CsvExportRequest"]["properties"],
         "scope":{"type":"string","enum":["selection","workbook"],"default":"selection"},
         "mode":{"type":"string","enum":["formulas","values"],"default":"formulas"}}}
@@ -424,7 +424,6 @@ class Service(ThreadingHTTPServer):
         if method == "POST" and suffix in (["export", "xlsx"],["export","ods"]):
             require("rows" not in body,"INVALID_ARGUMENT","Spreadsheet export requires a contiguous rectangle")
             whole=preparation_scope(body)=="workbook"
-            require(not whole or suffix[1]=="xlsx","INVALID_ARGUMENT","Workbook scope is currently XLSX only")
             snapshot=book.read_workbook() if whole else book.read(body.get("sheet","Sheet1"),{**body,"preview":False},limit=MAX_CELLS)
             return (xlsx_export if suffix[1]=="xlsx" else ods_export)(snapshot,body)
         if method == "POST" and suffix == ["export", "csv"]:

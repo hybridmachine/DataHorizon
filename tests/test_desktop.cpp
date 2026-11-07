@@ -1151,20 +1151,25 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(output),5000);
         QFile exported(output); QVERIFY(exported.open(QIODevice::ReadOnly)); QVERIFY(exported.readAll().startsWith("PK"));
     }
-    void wholeWorkbookXlsxImportReplacesEmptyCatalogAndExportsSnapshot() {
+    void wholeWorkbookImportReplacesEmptyCatalogAndExportsSnapshot_data() {
+        QTest::addColumn<QString>("format");
+        QTest::newRow("xlsx")<<QString("xlsx"); QTest::newRow("ods")<<QString("ods");
+    }
+    void wholeWorkbookImportReplacesEmptyCatalogAndExportsSnapshot() {
+        QFETCH(QString,format);
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
         QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
         QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("whole.dhwb"),true);
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
-        QFile fixture(QStringLiteral(DATAHORIZON_FIXTURES "/inputs.xlsx")); QVERIFY(fixture.open(QIODevice::ReadOnly));
+        QFile fixture(QStringLiteral(DATAHORIZON_FIXTURES "/inputs.")+format); QVERIFY(fixture.open(QIODevice::ReadOnly));
         QSignalSpy changed(&window,&MainWindow::operationFinished);
-        answerNextDialog(QMessageBox::Yes); window.importSpreadsheetBytes(fixture.readAll(),"xlsx","formulas",0);
+        answerNextDialog(QMessageBox::Yes); window.importSpreadsheetBytes(fixture.readAll(),format,"formulas",0);
         QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000); QVERIFY(changed[0][0].toBool());
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14.00"),5000);
         // The public export helper captures the full reviewed context itself.
-        const auto output=temp.filePath("whole.xlsx");
-        answerNextDialog(QMessageBox::Yes); window.exportSpreadsheetTo(output,"xlsx");
+        const auto output=temp.filePath("whole."+format);
+        answerNextDialog(QMessageBox::Yes); window.exportSpreadsheetTo(output,format);
         QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(output),5000);
     }
     void cancellingCsvPreparationCannotOpenReviewOrWriteCells() {
@@ -1240,11 +1245,12 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),expectedSecond,5000);
     }
     void unifiedExportUsesTheFormatDropdown_data() {
-        QTest::addColumn<int>("formatIndex"); QTest::addColumn<QString>("extension");
-        QTest::newRow("csv")<<0<<QString("csv"); QTest::newRow("xlsx")<<1<<QString("xlsx"); QTest::newRow("ods")<<2<<QString("ods");
+        QTest::addColumn<int>("formatIndex"); QTest::addColumn<QString>("extension"); QTest::addColumn<bool>("whole");
+        QTest::newRow("csv")<<0<<QString("csv")<<false; QTest::newRow("xlsx")<<1<<QString("xlsx")<<false; QTest::newRow("ods")<<2<<QString("ods")<<false;
+        QTest::newRow("xlsx-workbook")<<1<<QString("xlsx")<<true; QTest::newRow("ods-workbook")<<2<<QString("ods")<<true;
     }
     void unifiedExportUsesTheFormatDropdown() {
-        QFETCH(int,formatIndex); QFETCH(QString,extension);
+        QFETCH(int,formatIndex); QFETCH(QString,extension); QFETCH(bool,whole);
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
         QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
@@ -1253,7 +1259,7 @@ private slots:
         window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}},QJsonObject{{"row",1},{"col",2},{"source","=A1*2"}}}}});
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
         auto *grid=window.findChild<QTableView *>(); QVERIFY(grid);
-        grid->selectionModel()->select(QItemSelection(window.model()->index(0,0),window.model()->index(0,1)),QItemSelectionModel::ClearAndSelect);
+        grid->selectionModel()->select(QItemSelection(window.model()->index(0,whole?1:0),window.model()->index(0,1)),QItemSelectionModel::ClearAndSelect);
         auto *action=window.findChild<QAction *>("exportAction"); QVERIFY(action);
         bool pickerSeen=false,timedOut=false; QElapsedTimer elapsed; elapsed.start(); QTimer answer; answer.setInterval(10);
         connect(&answer,&QTimer::timeout,&window,[&]{
@@ -1272,7 +1278,10 @@ private slots:
                 }
                 if(auto *buttons=picker->findChild<QDialogButtonBox *>())
                     if(auto *button=buttons->button(QDialogButtonBox::Save);button && button->isEnabled()) QTimer::singleShot(0,button,[button]{button->click();});
-            } else if(auto *input=qobject_cast<QInputDialog *>(modal)) input->accept();
+            } else if(auto *input=qobject_cast<QInputDialog *>(modal)) {
+                if(whole) input->setTextValue(input->comboBoxItems().value(2));
+                input->accept();
+            }
             else if(auto *box=qobject_cast<QMessageBox *>(modal)) {
                 if(auto *button=box->button(QMessageBox::Yes)) button->click();
             }

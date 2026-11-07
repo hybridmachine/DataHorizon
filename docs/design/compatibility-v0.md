@@ -171,7 +171,7 @@ ODS now has a separate [bounded tier](interchange-next-five.md#ods-inputs-formul
 
 ## Whole-workbook interchange
 
-XLSX now supports `scope=workbook`: all sheet names/order, empty sheets, mapped
+XLSX and ODS now support `scope=workbook`: all sheet names/order, empty sheets, mapped
 inputs/styles and supported cross-sheet formulas. Import replaces an empty
 workbook atomically and rejects required handlers; success clears history.
 Export uses one bounded read transaction and translates stable native IDs to names.

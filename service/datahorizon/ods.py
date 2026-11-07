@@ -6,8 +6,8 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 from .engine import EngineError, MAX_CELLS, encoded, integer, require, typed
-from .formula import Parser
-from .interchange import import_edits, local_formula, mode, node, package, read_xml, xml
+from .formula import Parser, split_ref
+from .interchange import import_edits, local_formula, mode, node, package, read_xml, xml, preparation_scope, prepare_workbook, validate_sheet_names, workbook_report
 
 O="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
 T="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
@@ -32,25 +32,39 @@ def repeat(element,name,maximum):
     return int(value)
 
 
-def ods_to_native(source):
+def ods_to_native(source,sheet_names=None):
     require(source.startswith("of:="),"UNSUPPORTED_FORMULA","Only the of:= OpenFormula prefix is supported")
-    pieces=re.split(r'("(?:[^"]|"")*")',source[4:])
-    for index in range(0,len(pieces),2):
-        part=pieces[index]
-        require("^" not in part,"UNSUPPORTED_FORMULA","ODS power precedence is outside this formula tier")
-        def ref(match):
-            value=match[1]
-            require(re.fullmatch(r"\.\$?[A-Za-z]{1,3}\$?[1-9][0-9]*(?::\.\$?[A-Za-z]{1,3}\$?[1-9][0-9]*)?",value),
-                    "UNSUPPORTED_FORMULA","Only local, bounded A1 OpenFormula references are supported")
-            return value.replace(".","")
-        part=re.sub(r"\[([^\]]*)\]",ref,part).replace(";",",")
-        part=re.sub(r"\b(TRUE|FALSE)\(\)",lambda m:m[1].upper(),part,flags=re.I)
-        pieces[index]=part
-    return local_formula("="+"".join(pieces))
+    def endpoint(value):
+        match=re.fullmatch(r"(\$?(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z_0-9]*))?\.(\$?[A-Za-z]{1,3}\$?[1-9][0-9]*)",value)
+        require(match is not None,"UNSUPPORTED_FORMULA","Only bounded A1 OpenFormula references are supported")
+        name=match[1]
+        if name is None: return match[2]
+        name=name.removeprefix("$")
+        return name+"!"+match[2]
+    parts=[]; pos=0
+    for match in re.finditer(r'"(?:[^"]|"")*"|\[[^\]]*\]|[^"\[]+',source[4:]):
+        require(match.start()==pos,"UNSUPPORTED_FORMULA","Invalid OpenFormula quoting")
+        part=match[0]; pos=match.end()
+        if part.startswith('"'): parts.append(part)
+        elif part.startswith("["):
+            refs=part[1:-1].split(":")
+            require(1<=len(refs)<=2,"UNSUPPORTED_FORMULA","Unsupported OpenFormula range")
+            parts.append(":".join(endpoint(value) for value in refs))
+        else:
+            require("^" not in part,"UNSUPPORTED_FORMULA","ODS power precedence is outside this formula tier")
+            part=re.sub(r"\b(TRUE|FALSE)\(\)",lambda m:m[1].upper(),part,flags=re.I)
+            parts.append(part.replace(";",","))
+    require(pos==len(source)-4,"UNSUPPORTED_FORMULA","Invalid OpenFormula syntax")
+    return local_formula("="+"".join(parts),sheet_names=sheet_names)
 
 
-def native_to_ods(source,bounds):
-    local_formula(source,bounds)
+def native_to_ods(source,bounds=None,sheet_names=None):
+    local_formula(source,bounds,sheet_names)
+    def reference(value,inherited=None):
+        name,_,_=split_ref(value)
+        cell=value.rsplit("!",1)[-1]
+        name=name if name is not None else inherited
+        return ("$'"+name.replace("'","''")+"'" if name is not None else "")+"."+cell
     def render(item):
         kind=item[0]
         if kind=="literal":
@@ -58,7 +72,7 @@ def native_to_ods(source,bounds):
             if isinstance(value,str): return '"'+value.replace('"','""')+'"'
             if type(value) is bool: return "TRUE()" if value else "FALSE()"
             return repr(value)
-        if kind=="ref": return "[."+item[1]+"]"
+        if kind=="ref": return "["+reference(item[1])+"]"
         if kind=="call": return item[1]+"("+";".join(map(render,item[2]))+")"
         if kind=="binary":
             require(item[1]!="^","UNSUPPORTED_FORMULA","ODS power precedence is outside this formula tier")
@@ -66,7 +80,8 @@ def native_to_ods(source,bounds):
         if kind=="unary": return "("+item[1]+render(item[2])+")"
         if kind=="range":
             require(item[2][0]==item[3][0]=="ref","UNSUPPORTED_FORMULA","Only cell-reference range endpoints are supported")
-            return "[."+item[2][1]+":."+item[3][1]+"]"
+            inherited=split_ref(item[2][1])[0]
+            return "["+reference(item[2][1])+":"+reference(item[3][1],inherited)+"]"
         raise EngineError("UNSUPPORTED_FORMULA","Formula errors are outside ODS formula export")
     return "of:="+render(Parser(source[1:]).parse())
 
@@ -158,8 +173,7 @@ class OdsStyles:
         return result
 
 
-def ods_preview(request,checkpoint=lambda completed,phase:None):
-    require(request.get("scope","selection")=="selection","INVALID_ARGUMENT","ODS whole-workbook scope is not yet available")
+def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None):
     selected=integer(request.get("sheet_index",1),1,64,"sheet_index"); selected_mode=mode(request)
     report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct native styles replace destination inputs/styles.",
             "Other sheets, code, charts, comments, merged presentation, names, validation, conditional/inherited/row/column formatting, dimensions and advanced fonts are omitted; code never activates.",
@@ -196,7 +210,7 @@ def ods_preview(request,checkpoint=lambda completed,phase:None):
                     if not meaningful: col+=count; continue
                     if formula is not None and selected_mode=="formulas":
                         require(not any("matrix" in key for key in cell.attrib),"UNSUPPORTED_FORMULA","ODS matrix formulas are unavailable")
-                        item={"source":ods_to_native(formula),"kind":"formula"}
+                        item={"source":ods_to_native(formula,sheet_names),"kind":"formula"}
                     elif kind in ("float","percentage","currency"):
                         item={"source":cell.get(q(O,"value"),""),"kind":"number"}
                     elif kind=="boolean":
@@ -241,12 +255,16 @@ def ods_export(snapshot,request):
     selected_mode=mode(request)
     report=["One selection at original coordinates from a consistent native state. Native direct styles map to ODS; formulas translate canonically and use current snapshot values as caches.",
             "Other sheets, code, queries, relationships, history, dimensions and view state are omitted. NULL becomes empty. Target formula/coercion compatibility can differ; retain the native workbook."]
+    whole="sheets" in snapshot
+    snapshots=snapshot["sheets"] if whole else [{**snapshot,"name":"Sheet1"}]
+    names=validate_sheet_names([s["name"] for s in snapshots])
+    if whole: report=workbook_report()+["OpenFormula uses canonical named sheet references and current snapshot caches; sheet-relative movement semantics are not retained. NULL becomes empty."]
     root=ET.Element(q(O,"document-content"),{q(O,"version"):"1.3","xmlns:of":OF})
     automatic=node(root,q(O,"automatic-styles"))
     number=node(automatic,q(N,"number-style"),**{q(Y,"name"):"N2"}); node(number,q(N,"number"),**{q(N,"decimal-places"):"2",q(N,"min-integer-digits"):"1"})
     textstyle=node(automatic,q(N,"text-style"),**{q(Y,"name"):"NT"}); node(textstyle,q(N,"text-content"))
     style_ids={}
-    for cell in snapshot["cells"]:
+    for cell in [c for s in snapshots for c in s["cells"]]:
         style=cell.get("style",{}); key=encoded(style)
         if key in style_ids: continue
         require(len(style_ids)<1024,"LIMIT","ODS export exceeds 1,024 styles")
@@ -264,38 +282,40 @@ def ods_export(snapshot,request):
         if props: node(out,q(Y,"table-cell-properties"),**props)
         if paragraph: node(out,q(Y,"paragraph-properties"),**paragraph)
         if text: node(out,q(Y,"text-properties"),**text)
-    body=node(root,q(O,"body")); spreadsheet=node(body,q(O,"spreadsheet")); table=node(spreadsheet,q(T,"table"),**{q(T,"name"):"Sheet1"})
-    previous_row=0; previous_col=0; row_node=None; text_nodes=0
-    for cell in snapshot["cells"]:
-        row,col=cell["row"],cell["col"]
-        if row!=previous_row:
-            if row-previous_row>1: node(table,q(T,"table-row"),**{q(T,"number-rows-repeated"):str(row-previous_row-1)})
-            row_node=node(table,q(T,"table-row")); previous_row=row; previous_col=0
-        if col-previous_col>1: node(row_node,q(T,"table-cell"),**{q(T,"number-columns-repeated"):str(col-previous_col-1)})
-        previous_col=col
-        out=node(row_node,q(T,"table-cell"),**{q(T,"style-name"):style_ids[encoded(cell.get("style",{}))]})
-        require(cell.get("calculation")=="current","CALCULATION_ERROR","ODS export requires error-free current values")
-        if cell["kind"]=="formula" and selected_mode=="formulas": out.set(q(T,"formula"),native_to_ods(cell["source"],snapshot["range"]))
-        value=cell.get("value")
-        if type(value) is bool: out.set(q(O,"value-type"),"boolean"); out.set(q(O,"boolean-value"),str(value).lower())
-        elif type(value) in (float,int): out.set(q(O,"value-type"),"float"); out.set(q(O,"value"),str(value))
-        elif value is not None:
-            require(not any((ord(c)<32 and c not in "\t\n\r") or ord(c) in (65534,65535) for c in value),"UNSUPPORTED_CELL","ODS cannot represent this cell's XML control characters")
-            out.set(q(O,"value-type"),"string"); out.set(q(O,"string-value"),value)
-            paragraph=node(out,q(X,"p"))
-            # Explicit whitespace elements preserve presentation as well as the typed value.
-            for segment in re.split(r"([ \t\r\n]+)",value):
-                if not segment: continue
-                if segment[0] in " \t\r\n":
-                    for run in re.findall(r" +|[^ ]",segment):
-                        text_nodes+=1
-                        require(text_nodes<=50000,"LIMIT","ODS text structure exceeds 50,000 whitespace nodes")
-                        if run[0]==" ": node(paragraph,q(X,"s"),**{q(X,"c"):str(len(run))})
-                        elif run=="\t": node(paragraph,q(X,"tab"))
-                        else: node(paragraph,q(X,"line-break"))
-                else:
-                    if len(paragraph): paragraph[-1].tail=(paragraph[-1].tail or "")+segment
-                    else: paragraph.text=(paragraph.text or "")+segment
+    body=node(root,q(O,"body")); spreadsheet=node(body,q(O,"spreadsheet")); text_nodes=0
+    for sheet in snapshots:
+        table=node(spreadsheet,q(T,"table"),**{q(T,"name"):sheet["name"]})
+        previous_row=0; previous_col=0; row_node=None
+        for cell in sheet["cells"]:
+            row,col=cell["row"],cell["col"]
+            if row!=previous_row:
+                if row-previous_row>1: node(table,q(T,"table-row"),**{q(T,"number-rows-repeated"):str(row-previous_row-1)})
+                row_node=node(table,q(T,"table-row")); previous_row=row; previous_col=0
+            if col-previous_col>1: node(row_node,q(T,"table-cell"),**{q(T,"number-columns-repeated"):str(col-previous_col-1)})
+            previous_col=col
+            out=node(row_node,q(T,"table-cell"),**{q(T,"style-name"):style_ids[encoded(cell.get("style",{}))]})
+            require(cell.get("calculation")=="current","CALCULATION_ERROR","ODS export requires error-free current values")
+            if cell["kind"]=="formula" and selected_mode=="formulas": out.set(q(T,"formula"),native_to_ods(cell["source"],None if whole else sheet["range"],names if whole else None))
+            value=cell.get("value")
+            if type(value) is bool: out.set(q(O,"value-type"),"boolean"); out.set(q(O,"boolean-value"),str(value).lower())
+            elif type(value) in (float,int): out.set(q(O,"value-type"),"float"); out.set(q(O,"value"),str(value))
+            elif value is not None:
+                require(not any((ord(c)<32 and c not in "\t\n\r") or ord(c) in (65534,65535) for c in value),"UNSUPPORTED_CELL","ODS cannot represent this cell's XML control characters")
+                out.set(q(O,"value-type"),"string"); out.set(q(O,"string-value"),value)
+                paragraph=node(out,q(X,"p"))
+                # Explicit whitespace elements preserve presentation as well as the typed value.
+                for segment in re.split(r"([ \t\r\n]+)",value):
+                    if not segment: continue
+                    if segment[0] in " \t\r\n":
+                        for run in re.findall(r" +|[^ ]",segment):
+                            text_nodes+=1
+                            require(text_nodes<=50000,"LIMIT","ODS text structure exceeds 50,000 whitespace nodes")
+                            if run[0]==" ": node(paragraph,q(X,"s"),**{q(X,"c"):str(len(run))})
+                            elif run=="\t": node(paragraph,q(X,"tab"))
+                            else: node(paragraph,q(X,"line-break"))
+                    else:
+                        if len(paragraph): paragraph[-1].tail=(paragraph[-1].tail or "")+segment
+                        else: paragraph.text=(paragraph.text or "")+segment
     styles=ET.Element(q(O,"document-styles"),{q(O,"version"):"1.3"}); node(styles,q(O,"styles"))
     manifest=ET.Element(q(M,"manifest"),{q(M,"version"):"1.3"})
     for name,mime in (("/",MIME),("content.xml","text/xml"),("styles.xml","text/xml")):
@@ -308,4 +328,14 @@ def ods_export(snapshot,request):
         for name,data in parts: archive.writestr(name,data)
     result={"file_base64":base64.b64encode(output.getvalue()).decode(),"state":snapshot["state"],"report":report}
     require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","ODS export exceeds 4 MiB")
+    return result
+
+
+def ods_preview(request,checkpoint=lambda completed,phase:None):
+    if preparation_scope(request)!="workbook": return _ods_preview(request,checkpoint)
+    with package(request) as archive:
+        root=read_xml(archive,"content.xml")
+        names=[s.get(q(T,"name"),"") for s in root.findall(f'{q(O,"body")}/{q(O,"spreadsheet")}/{q(T,"table")}')]
+    result=prepare_workbook(request,checkpoint,names,_ods_preview)
+    result["report"].append("Date/duration values become ISO Text. Percentage/currency retain magnitudes; currency codes and unsupported display are omitted. Named sheet references replace sheet-relative movement semantics.")
     return result
