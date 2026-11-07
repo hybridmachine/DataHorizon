@@ -1151,6 +1151,22 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(output),5000);
         QFile exported(output); QVERIFY(exported.open(QIODevice::ReadOnly)); QVERIFY(exported.readAll().startsWith("PK"));
     }
+    void wholeWorkbookXlsxImportReplacesEmptyCatalogAndExportsSnapshot() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("whole.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QFile fixture(QStringLiteral(DATAHORIZON_FIXTURES "/inputs.xlsx")); QVERIFY(fixture.open(QIODevice::ReadOnly));
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        answerNextDialog(QMessageBox::Yes); window.importSpreadsheetBytes(fixture.readAll(),"xlsx","formulas",0);
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000); QVERIFY(changed[0][0].toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14.00"),5000);
+        // The public export helper captures the full reviewed context itself.
+        const auto output=temp.filePath("whole.xlsx");
+        answerNextDialog(QMessageBox::Yes); window.exportSpreadsheetTo(output,"xlsx");
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(output),5000);
+    }
     void cancellingCsvPreparationCannotOpenReviewOrWriteCells() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);

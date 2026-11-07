@@ -159,6 +159,7 @@ class OdsStyles:
 
 
 def ods_preview(request,checkpoint=lambda completed,phase:None):
+    require(request.get("scope","selection")=="selection","INVALID_ARGUMENT","ODS whole-workbook scope is not yet available")
     selected=integer(request.get("sheet_index",1),1,64,"sheet_index"); selected_mode=mode(request)
     report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct native styles replace destination inputs/styles.",
             "Other sheets, code, charts, comments, merged presentation, names, validation, conditional/inherited/row/column formatting, dimensions and advanced fonts are omitted; code never activates.",

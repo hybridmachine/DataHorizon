@@ -67,6 +67,7 @@ applications, and AI agents through REST.
 | [Everyday spreadsheet increments](everyday-next-five.md) | Wrap, borders, sizing, hide/unhide and freeze |
 | [Editing and CSV increments](editing-csv-next-five.md) | Sheet reference changes, CSV dialects and column types |
 | [Interchange and recovery increments](interchange-next-five.md) | Preparation jobs, XLSX/ODS fidelity stages and failure recovery |
+| [Workbook compatibility, recovery and qualification](workbook-next-five.md) | Authorized next five increments and bounded whole-workbook contracts |
 | [Native format v1](native-format-v1.md) | Actual development schema and callback-free direct SQLite access |
 | [Compatibility tier 0](compatibility-v0.md) | Implemented formulas, formatting, interchange and editing limits |
 | [Architecture](architecture.md) | Components, execution paths, transactions, external edits, and recovery |

@@ -1728,7 +1728,8 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
 
 void MainWindow::importSpreadsheetOptions(const QByteArray &bytes, const QString &format, QJsonObject target) {
     QDialog dialog(this); dialog.setWindowTitle(tr("Spreadsheet import options")); dialog.setObjectName("spreadsheetOptionsDialog");
-    QFormLayout layout(&dialog); QSpinBox sheet(&dialog); sheet.setRange(1,64);
+    QFormLayout layout(&dialog); QSpinBox sheet(&dialog); sheet.setRange(format=="xlsx"?0:1,64); sheet.setValue(1);
+    if(format=="xlsx") sheet.setSpecialValueText(tr("All sheets (empty destination)"));
     QComboBox mode(&dialog); mode.addItem(tr("Preserve supported formulas"),"formulas"); mode.addItem(tr("Cached values (freshness unverified)"),"values");
     layout.addRow(tr("Sheet number"),&sheet); layout.addRow(tr("Inputs"),&mode);
     QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog); layout.addRow(&buttons);
@@ -1744,13 +1745,15 @@ void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &
     captureGridDraft(false); if(!resolveDraft() || !matchesTarget(target)) return;
     setBusy(true,tr("Preparing %1 import…").arg(format.toUpper()));
     prepareImport({{"file_base64",QString::fromLatin1(bytes.toBase64())},{"mode",mode},{"sheet_index",sheetIndex},
-                   {"row",target["row"]},{"col",target["col"]}},
+                   {"scope",sheetIndex==0?"workbook":"selection"},
+                   {"row",sheetIndex==0?QJsonValue(1):target["row"]},{"col",sheetIndex==0?QJsonValue(1):target["col"]}},
         [this,target,format](QJsonObject preview,QString error) {
         if(!error.isEmpty() || !matchesTarget(target) || m_model->projected()) { setBusy(false); issue(error.isEmpty()?"Import target changed; import cancelled.":error); return; }
         QStringList report; for(const auto &line:preview["report"].toArray()) report.append(line.toString());
         for(const auto &entry:preview["issues"].toArray()) { const auto item=entry.toObject(); report.append(item["cell"].toString()+": "+item["message"].toString()); }
         const bool allowed=preview["can_import"].toBool();
         QMessageBox review(QMessageBox::Question,tr("Review spreadsheet import"),
+            preview["scope"]=="workbook" ? tr("Import %1 sheets and %2 stored cells into this empty workbook? History will be cleared.").arg(preview["workbook_sheets"].toArray().size()).arg(preview["stored_cells"].toInt()) :
             tr("Import %1 stored cells from %2 at %3?").arg(preview["stored_cells"].toInt()).arg(preview["sheet"].toString().left(80)).arg(target["name"].toString()),
             QMessageBox::Yes|QMessageBox::Cancel,this);
         review.setObjectName("spreadsheetImportReview");
@@ -1759,6 +1762,10 @@ void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &
         review.setDetailedText(report.join('\n')); review.button(QMessageBox::Yes)->setEnabled(allowed);
         const auto choice=review.exec(); setBusy(false);
         if(choice!=QMessageBox::Yes || !allowed || !matchesTarget(target) || m_model->projected()) return;
+        if(preview["scope"]=="workbook") {
+            submit({{"action","workbook_import"},{"label","Import "+format.toUpper()+" workbook"},{"sheets",preview["workbook_sheets"]},
+                    {"workbook",target["workbook"]},{"expected_state",target["expected_state"]}}); return;
+        }
         submit({{"action","edit"},{"label","Import "+format.toUpper()},{"cells",preview["cells"]},
                 {"workbook",target["workbook"]},{"sheet",target["sheet"]},{"expected_state",target["expected_state"]}});
     },format);
@@ -1767,7 +1774,7 @@ void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &
 void MainWindow::exportFile() {
     if(m_busy || m_unknown || m_info.isEmpty()) return;
     auto range=selectedRange(); if(range.isEmpty()) return;
-    const auto target=targetContext(range);
+    auto target=targetContext(range);
     ExportFileDialog dialog(this,{tr("CSV (*.csv)"),tr("Excel workbook (*.xlsx)"),tr("OpenDocument spreadsheet (*.ods)")});
     dialog.setWindowTitle(tr("Export selection"));
     if(dialog.exec()!=QDialog::Accepted || !matchesTarget(target)) return;
@@ -1779,22 +1786,25 @@ void MainWindow::exportFile() {
         return;
     }
     bool ok=false;
-    const auto choice=QInputDialog::getItem(this,tr("Spreadsheet export"),tr("Export selected cells as"),
-        {tr("Inputs and supported formulas"),tr("Calculated values")},0,false,&ok);
-    if(ok && matchesTarget(target)) exportSpreadsheetTo(path,format,choice==tr("Calculated values")?"values":"formulas",target);
+    QStringList choices{tr("Inputs and supported formulas"),tr("Calculated values")};
+    if(format=="xlsx") choices << tr("Whole workbook: inputs and supported formulas") << tr("Whole workbook: calculated values");
+    const auto choice=QInputDialog::getItem(this,tr("Spreadsheet export"),tr("Export cells as"),choices,0,false,&ok);
+    const auto choiceIndex=choices.indexOf(choice);
+    if(choiceIndex>=2) target["scope"]="workbook";
+    if(ok && matchesTarget(target)) exportSpreadsheetTo(path,format,choiceIndex%2==1?"values":"formulas",target);
 }
 
 void MainWindow::exportSpreadsheetTo(const QString &path, const QString &format, const QString &mode, QJsonObject target) {
     if(m_busy || path.isEmpty()) return;
     if(target.isEmpty()) { const auto range=selectedRange(); if(range.isEmpty()) return; target=targetContext(range); }
-    if(!matchesTarget(target) || intersectsHidden(target["r1"].toInt(1),target["c1"].toInt(1),target["r2"].toInt(1),target["c2"].toInt(1))) { issue("Review a visible export selection first."); return; }
+    if(!matchesTarget(target) || (target.value("scope").toString()!="workbook" && intersectsHidden(target["r1"].toInt(1),target["c1"].toInt(1),target["r2"].toInt(1),target["c2"].toInt(1)))) { issue("Review a visible export selection first."); return; }
     const auto native=m_info["path"].toString(); if(sameFile(path,native)) { issue("Export destination is the native workbook. Choose a different file."); return; }
     auto request=target; request.remove("workbook"); request.remove("expected_state"); request["mode"]=mode;
     setBusy(true,"Preparing spreadsheet snapshot…");
     m_client->request(base()+"/export/"+format,request,[this,path,native,target](QJsonObject result,QString error) {
         if(!error.isEmpty() || !matchesTarget(target) || result["state"]!=target["expected_state"]) { setBusy(false); issue(error.isEmpty()?"Export inputs changed; review again.":error); return; }
         QStringList report; for(const auto &line:result["report"].toArray()) report.append(line.toString());
-        QMessageBox review(QMessageBox::Question,tr("Review spreadsheet export"),tr("Save this selection snapshot?"),QMessageBox::Yes|QMessageBox::Cancel,this);
+        QMessageBox review(QMessageBox::Question,tr("Review spreadsheet export"),target.value("scope").toString()=="workbook"?tr("Save this whole-workbook snapshot?"):tr("Save this selection snapshot?"),QMessageBox::Yes|QMessageBox::Cancel,this);
         review.setOption(QMessageBox::Option::DontUseNativeDialog); review.setTextFormat(Qt::PlainText); review.setDefaultButton(QMessageBox::Cancel);
         review.setObjectName("spreadsheetExportReview");
         review.setInformativeText(report.join('\n'));
