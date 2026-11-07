@@ -696,7 +696,15 @@ class Workbook:
                     r1, c1, r2, c2 = rectangle(request)
                     source = self.raw(sheet, r1, c1)
                     mode = request.get("mode", "copy")
-                    require(mode in ("copy", "series"), "INVALID_ARGUMENT", "Fill mode must be copy or series")
+                    require(mode in ("copy", "series", "down", "right"), "INVALID_ARGUMENT", "Fill mode must be copy, series, down or right")
+                    # Snapshot independent seeds before writing any destination.
+                    seeds = {}
+                    seed_bytes = 0
+                    for row, col in ([(r1,c) for c in range(c1,c2+1)] if mode=="down" else
+                                     [(r,c1) for r in range(r1,r2+1)] if mode=="right" else [(r1,c1)]):
+                        seeds[row,col] = self.raw(sheet,row,col)
+                        seed_bytes += len(encoded(seeds[row,col]).encode())
+                        require(seed_bytes<=4*1024*1024,"LIMIT","Fill seeds exceed 4 MiB; select a smaller range")
                     if mode == "series":
                         seed = typed(source)
                         require(seed and seed["kind"] == "number", "INVALID_ARGUMENT", "Numeric series requires a numeric top-left seed")
@@ -709,12 +717,14 @@ class Workbook:
                         require(math.isfinite(step), "INVALID_ARGUMENT", "Series step must be finite")
                     for row in range(r1, r2+1):
                         for col in range(c1, c2+1):
-                            item = dict(source) if source else None
+                            seed_row,seed_col = (r1,col) if mode=="down" else (row,c1) if mode=="right" else (r1,c1)
+                            raw_seed = seeds[seed_row,seed_col]
+                            item = dict(raw_seed) if raw_seed else None
                             if mode == "series":
                                 item["source"] = str(seed["value"] + step*((row-r1)*(c2-c1+1)+col-c1))
                                 item["kind"] = "number"
                             elif item and typed(item)["kind"] == "formula":
-                                item["source"] = translate(item["source"], row-r1, col-c1)
+                                item["source"] = translate(item["source"], row-seed_row, col-seed_col)
                             self.put(sheet, row, col, item)
                 elif kind == "move":
                     require(request.get("mode", "all") == "all", "UNSUPPORTED_PASTE_MODE", "Cut supports full paste only; use Copy for special paste")

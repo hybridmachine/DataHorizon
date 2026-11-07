@@ -1043,6 +1043,28 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void directionalFillUsesIndependentSeedsAndUndo() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("fill.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","1"}},
+            QJsonObject{{"row",1},{"col",2},{"source","=A1+1"},{"style",QJsonObject{{"bold",true}}}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model();auto *grid=window.findChild<QTableView *>("grid");
+        grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(2,1)),QItemSelectionModel::ClearAndSelect);
+        window.findChild<QAction *>("fillDownAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(2,1)).toString(),QString("2"),5000);
+        QCOMPARE(model->data(model->index(2,1),Qt::EditRole).toString(),QString("=A3+1"));
+        QVERIFY(model->cell(model->index(2,1))["style"].toObject()["bold"].toBool());
+        grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(2,2)),QItemSelectionModel::ClearAndSelect);
+        window.findChild<QAction *>("fillRightAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(2,2)).toString(),QString("1"),5000);
+        window.submit({{"action","undo"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(2,1)).toString(),QString("2"),5000);
+        QCOMPARE(model->data(model->index(2,1),Qt::EditRole).toString(),QString("=A3+1"));
+    }
     void clearCommandsDistinguishInputsFormatsAndAllWithUndo() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
