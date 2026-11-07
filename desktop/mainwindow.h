@@ -6,6 +6,7 @@
 #include <QMainWindow>
 #include <QProcess>
 #include <QMap>
+#include <QJsonArray>
 
 class QTableView;
 class QLineEdit;
@@ -67,6 +68,8 @@ private:
     void listDialog();
     void applyList();
     void findDialog(bool replace);
+    void clearFindResults();
+    void navigateFind(int direction);
     void changeSheet(int index);
     void changeStructure(bool columns, bool remove);
     void reportReferenceWarnings(const QJsonObject &receipt);
@@ -114,6 +117,10 @@ private:
     QAction *m_undo = nullptr, *m_redo = nullptr;
     QJsonObject m_info;
     QJsonObject m_listSpec;
+    QJsonObject m_findScope;
+    QJsonArray m_findMatches;
+    int m_findIndex = -1, m_findTotal = 0;
+    QAction *m_findNext = nullptr, *m_findPrevious = nullptr;
     QJsonObject m_draftTarget;
     QJsonObject m_recoveredDraft;
     QJsonObject m_enterRequest, m_enterNavigation;

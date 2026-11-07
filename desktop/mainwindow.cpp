@@ -296,7 +296,12 @@ void MainWindow::buildUi() {
         if (ok) { command["action"]="fill"; command["mode"]="series"; command["step"]=step; command["label"]="Fill series"; submit(command); }
     });
     add(edit, tr("Refresh stored data"), QKeySequence::Refresh, [this] { if (!m_busy) refresh(); });
-    add(edit, tr("Find in selection…"), QKeySequence::Find, [this] { findDialog(false); });
+    add(edit, tr("Find in selection…"), QKeySequence::Find, [this] { findDialog(false); })->setObjectName("findAction");
+    m_findNext=add(edit,tr("Find next in results"),QKeySequence::FindNext,[this]{navigateFind(1);});
+    m_findPrevious=add(edit,tr("Find previous in results"),QKeySequence::FindPrevious,[this]{navigateFind(-1);});
+    m_findNext->setObjectName("findNextAction");m_findPrevious->setObjectName("findPreviousAction");
+    clearFindResults();
+    connect(m_model,&QAbstractItemModel::modelReset,this,&MainWindow::clearFindResults);
     add(edit, tr("Replace all in selection…"), QKeySequence::Replace, [this] { findDialog(true); });
     add(edit, tr("Reconcile unknown operation"), {}, [this] { reconcile(); });
     add(formatMenu, tr("Bold"), QKeySequence::Bold, [this] { format({{"bold", !m_model->cell(m_grid->currentIndex())["style"].toObject()["bold"].toBool()}}); }, true);
@@ -990,6 +995,7 @@ void MainWindow::restartService() {
 
 void MainWindow::setBusy(bool busy, const QString &message) {
     m_busy = busy || m_releasing;
+    if(m_busy) clearFindResults();
     m_model->setBusy(m_busy); m_toolbar->setEnabled(!m_busy); m_tabs->setEnabled(!m_busy);
     if(m_freezeAction) m_freezeAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenRows.contains(0));
     syncSource();
@@ -1689,11 +1695,37 @@ void MainWindow::applyList() {
     });
 }
 
+void MainWindow::clearFindResults() {
+    m_findScope={};m_findMatches={};m_findIndex=-1;m_findTotal=0;
+    if(m_findNext)m_findNext->setEnabled(false);
+    if(m_findPrevious)m_findPrevious->setEnabled(false);
+}
+
+void MainWindow::navigateFind(int direction) {
+    if(m_busy || m_unknown || m_findMatches.isEmpty())return;
+    if(m_model->projected() || !matchesTarget(m_findScope)) {clearFindResults();issue("Find results expired. Search the selection again.");return;}
+    const auto scope=m_findScope;captureGridDraft(false);if(!resolveDraft())return;
+    if(m_busy || m_unknown || !matchesTarget(scope) || scope!=m_findScope) {clearFindResults();return;}
+    const int count=m_findMatches.size();
+    const int next=m_findIndex<0?(direction<0?count-1:0):(m_findIndex+direction+count)%count;
+    const auto match=m_findMatches[next].toObject();const int row=match["row"].toInt(),col=match["col"].toInt();
+    if(intersectsHidden(row,col,row,col)) {issue("The next match is hidden. Show its row/column before navigating to it.");return;}
+    const auto index=m_model->index(row-1,col-1);m_grid->setCurrentIndex(index);
+    m_grid->selectionModel()->select(index,QItemSelectionModel::ClearAndSelect);
+    if(m_grid->currentIndex()!=index)return;
+    m_findIndex=next;
+    if(m_frozenTop->active() && row==1) {m_frozenTop->syncSelection();m_frozenTop->view()->scrollTo(m_frozenTop->view()->model()->index(0,col-1));m_frozenTop->view()->setFocus();}
+    else {m_grid->scrollTo(index);m_grid->setFocus();}
+    m_status->setText(m_findTotal>count?tr("Find %1 of first %2 / %3 matches • Narrow the search for remaining matches").arg(next+1).arg(count).arg(m_findTotal):tr("Find %1 of %2 matches • Wraparound within searched selection").arg(next+1).arg(count));
+}
+
 void MainWindow::findDialog(bool replace) {
-    if (m_busy) return;
+    if(m_busy || m_unknown || m_info.isEmpty())return;
     auto scope = selectedRange(); if (scope.isEmpty()) return;
     scope=targetContext(scope);
     const auto workbook=m_info["id"].toString();
+    captureGridDraft(false);if(!resolveDraft())return;
+    if(m_busy || !matchesTarget(scope)) {issue("Search target changed. Review the scope again.");return;}
     bool ok;
     auto needle = QInputDialog::getText(this, tr("Find in selected rectangle"), tr("Case-sensitive text"), QLineEdit::Normal, {}, &ok);
     if (!ok || needle.isEmpty()) return;
@@ -1712,7 +1744,13 @@ void MainWindow::findDialog(bool replace) {
             || scope["sheet"].toString()!=m_model->sheet()) { issue("Search inputs changed. Refresh and review the scope again."); return; }
         QStringList locations; for (const auto &value : result["matches"].toArray()) locations.append(value.toObject()["address"].toString());
         issue(tr("%1 matching cells: %2%3").arg(result["count"].toInt()).arg(locations.join(", ")).arg(result["truncated"].toBool() ? " (first 500 shown)" : ""));
-        if (!replace || result["count"].toInt() == 0) return;
+        if(!replace) {
+            m_findScope=scope;m_findMatches=result["matches"].toArray();m_findTotal=result["count"].toInt();m_findIndex=-1;
+            m_findNext->setEnabled(!m_findMatches.isEmpty());m_findPrevious->setEnabled(!m_findMatches.isEmpty());
+            if(!m_findMatches.isEmpty())navigateFind(1);
+            return;
+        }
+        if(result["count"].toInt()==0)return;
         bool ok; auto replacement = QInputDialog::getText(this, tr("Replace all"), tr("Replacement text"), QLineEdit::Normal, {}, &ok);
         if (!ok) return;
         if (QMessageBox::question(this, tr("Review Replace All"), tr("Replace text in %1 matching cells as one atomic operation? Required rules can reject the entire change. Formula result replacement is blocked; use formula source to edit a formula.").arg(result["count"].toInt())) != QMessageBox::Yes) return;
