@@ -8,7 +8,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 from .engine import EngineError, MAX_CELLS, encoded, integer, require, typed
-from .formula import FormulaError, Parser, address, coordinates, split_ref, translate
+from .formula import SUPPORTED_FUNCTIONS, FormulaError, Parser, address, coordinates, split_ref, translate
 
 S = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -93,7 +93,7 @@ def local_formula(source, bounds=None, sheet_names=None):
         while pending:
             item=pending.pop()
             if item[0]=="call":
-                require(item[1] in ("SUM","IF"),"UNSUPPORTED_FORMULA",f"Unsupported function: {item[1]}")
+                require(item[1] in SUPPORTED_FUNCTIONS,"UNSUPPORTED_FORMULA",f"Unsupported function: {item[1]}")
                 pending.extend(item[2])
             elif item[0] in ("binary","range"):
                 if item[0]=="range":

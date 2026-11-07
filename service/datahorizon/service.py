@@ -20,7 +20,7 @@ from urllib.parse import unquote, urlsplit
 import uuid
 
 from .engine import EngineError, MAX_CELLS, Workbook, boolean, encoded, require
-from .formula import MAX_COLS, MAX_ROWS
+from .formula import MAX_COLS, MAX_ROWS, SUPPORTED_FUNCTIONS
 from .csv_import import COLUMN_TYPES, ENCODINGS, preview_csv
 from .jobs import PreparationJobs
 from .interchange import xlsx_preview, xlsx_export, preparation_scope
@@ -30,7 +30,7 @@ from .recovery import inspect_native
 CAPABILITIES = {
     "api_version": 1, "format_version": 1, "max_operation_cells": MAX_CELLS,
     "max_viewport_cells": 4096, "max_clipboard_cells":MAX_CELLS, "max_request_bytes": 4 * 1024 * 1024,
-    "formulas": ["arithmetic", "references", "SUM", "IF"],
+    "formulas": ["arithmetic", "references", *sorted(SUPPORTED_FUNCTIONS)],
     "operations": ["workbook_import", "edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
     "interchange": ["csv", "xlsx", "ods"], "managed_sql": False, "remote_binding": False,
     "follow_up_work": False, "chunked_jobs": False, "preparation_jobs": True,

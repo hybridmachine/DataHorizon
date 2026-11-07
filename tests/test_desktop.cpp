@@ -1043,6 +1043,20 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void aggregateFunctionsRenderThroughTheManagedGrid() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("functions.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QJsonArray cells{QJsonObject{{"row",1},{"col",1},{"source","2"}},QJsonObject{{"row",2},{"col",1},{"source","4"}}};
+        const QStringList functions{"AVERAGE","MIN","MAX","COUNT","COUNTA"};
+        for(int i=0;i<functions.size();++i) cells.append(QJsonObject{{"row",1},{"col",i+2},{"source","="+functions[i]+"(A1:A2)"}});
+        window.submit({{"action","edit"},{"cells",cells}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        const QStringList expected{"3","2","4","2","2"};
+        for(int i=0;i<expected.size();++i) QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,i+1)).toString(),expected[i],5000);
+    }
     void installedRuntimeResolutionNeverFallsBackToDevelopmentSources() {
         QTemporaryDir temp; const auto bin=temp.filePath("bin"); QVERIFY(QDir().mkpath(bin));
         auto missing=resolveServicePaths(bin); QVERIFY(!missing.error.isEmpty()); QVERIFY(!missing.developmentFallback);

@@ -1,0 +1,35 @@
+Local macOS, November 7, 2026. Hosted Actions have no credits.
+C++ build passed.
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   57.28 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   24.77 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  82.06 sec
+
+Aggregate contracts:
+test_arity_invalid_text_overflow_and_cross_sheet_ranges (test_formula_extensions.AggregateTests.test_arity_invalid_text_overflow_and_cross_sheet_ranges) ... ok
+test_errors_counting_cycles_and_limits_are_distinct (test_formula_extensions.AggregateTests.test_errors_counting_cycles_and_limits_are_distinct) ... ok
+test_managed_reopen_and_both_interchange_formats (test_formula_extensions.AggregateTests.test_managed_reopen_and_both_interchange_formats) ... ok
+test_numeric_reference_and_direct_scalar_coercions (test_formula_extensions.AggregateTests.test_numeric_reference_and_direct_scalar_coercions) ... ok
+test_sdk_hook_validation_uses_new_functions_transactionally (test_formula_extensions.AggregateTests.test_sdk_hook_validation_uses_new_functions_transactionally) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.548s
+
+OK
+
+Native Cocoa scale 2:
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::aggregateFunctionsRenderThroughTheManagedGrid()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 630ms
+********* Finished testing of DesktopTests *********
+
+Self-review checked scalar/reference coercions, COUNT/COUNTA ordinary errors versus cycle/resource errors, aggregate overflow, arity, range target inheritance, required-hook rollback and XLSX/ODS review registry parity.
+No new platform/release qualification or raised limits are claimed.

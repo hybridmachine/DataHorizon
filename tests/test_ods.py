@@ -61,7 +61,7 @@ class OdsTests(unittest.TestCase):
         self.assertIn("Unsupported ODS value type",result["issues"][0]["message"])
 
     def test_unsupported_formulas_and_error_or_missing_caches_block_complete_payload(self):
-        for source in ('of:=[Other.A1]','of:=2^3^2','of:=AVERAGE([.A1])','oooc:=1+1'):
+        for source in ('of:=[Other.A1]','of:=2^3^2','of:=MEDIAN([.A1])','oooc:=1+1'):
             data=fixture(f'<table:table-row><table:table-cell table:formula="{source}" office:value-type="float" office:value="8"/></table:table-row>')
             result=preview(data); self.assertFalse(result["can_import"]); self.assertEqual(result["cells"],[])
             self.assertEqual(preview(data,mode="values")["cells"][0]["source"],"8")
