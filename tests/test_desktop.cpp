@@ -21,6 +21,7 @@
 #include <QSettings>
 #include <QAbstractButton>
 #include <QPushButton>
+#include <QProgressDialog>
 #include <QAbstractItemDelegate>
 #include <QClipboard>
 #include <QComboBox>
@@ -1040,6 +1041,21 @@ private slots:
         QCOMPARE(tabs->count(),1);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
+    }
+    void cancellingCsvPreparationCannotOpenReviewOrWriteCells() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("cancel.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        window.importCsvText("must not be written");
+        auto *progress=window.findChild<QProgressDialog *>("csvPreparationProgress"); QVERIFY(progress);
+        auto *cancel=progress->findChild<QPushButton *>(); QVERIFY(cancel); cancel->click();
+        auto *issues=window.findChild<QPlainTextEdit *>(); QVERIFY(issues);
+        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("preparation cancelled"),5000);
+        QCOMPARE(changed.count(),0); QVERIFY(!qobject_cast<QMessageBox *>(QApplication::activeModalWidget()));
+        QCOMPARE(window.model()->data(window.model()->index(0,0)).toString(),QString());
     }
     void csvEncodingAndDelimiterOptionsDecodeBeforeReviewAndRejectInvalidBytes() {
         const bool originalDialogs=QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);

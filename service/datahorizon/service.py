@@ -22,6 +22,7 @@ import uuid
 from .engine import EngineError, MAX_CELLS, Workbook, boolean, encoded, require
 from .formula import MAX_COLS, MAX_ROWS
 from .csv_import import COLUMN_TYPES, ENCODINGS, preview_csv
+from .jobs import PreparationJobs
 
 CAPABILITIES = {
     "api_version": 1, "format_version": 1, "max_operation_cells": MAX_CELLS,
@@ -29,7 +30,8 @@ CAPABILITIES = {
     "formulas": ["arithmetic", "references", "SUM", "IF"],
     "operations": ["edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
     "interchange": ["csv"], "managed_sql": False, "remote_binding": False,
-    "follow_up_work": False, "chunked_jobs": False,
+    "follow_up_work": False, "chunked_jobs": False, "preparation_jobs": True,
+    "max_preparation_jobs":4, "preparation_job_seconds":10, "preparation_retention_seconds":300,
     "max_open_workbooks":8, "max_open_handles":128,
     "max_concurrent_requests":16, "max_header_bytes":65536, "request_read_timeout_seconds":10,
 }
@@ -38,6 +40,10 @@ ROUTES = {
     "/v1/capabilities": ("get", "Preview capabilities"),
     "/v1/open": ("post", "Create or open a server-local native workbook"),
     "/v1/import/csv/preview": ("post", "Decode CSV and review explicit column conversions without mutation"),
+    "/v1/import/csv/jobs": ("post", "Start a cancellable CSV preparation; never writes workbook data"),
+    "/v1/jobs/{job}": ("get", "Ephemeral preparation status, progress and reviewed result"),
+    "/v1/jobs/{job}/cancel": ("post", "Cancel preparation or discard its completed result"),
+    "/v1/jobs/{job}/release": ("post", "Release terminal preparation storage"),
     "/v1/workbooks/{workbook}": ("get", "Workbook state and sheets"),
     "/v1/workbooks/{workbook}/range": ("post", "Bounded consistent viewport read"),
     "/v1/workbooks/{workbook}/clipboard": ("post", "Consistent full-source clipboard read, at most 10,000 cells and 4 MiB"),
@@ -156,16 +162,20 @@ def openapi():
             "filters":{"type":"array","maxItems":8,"items":{"type":"object","required":["col","op"],"properties":{"col":col,"op":{"type":"string","enum":["=","<>",">","<",">=","<=","contains"]},"value":scalar}}}},
             "example":{"sheet":"Sheet1","r2":10,"c2":4,"header":True,"sort":[{"col":2,"descending":True}]}}
     })
+    schemas["PreparationRequest"] = {**schemas["CsvPreviewRequest"], "required":["job_id"],
+        "properties":{**schemas["CsvPreviewRequest"]["properties"],"job_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,100}$"}},
+        "description":"Ephemeral, idempotent input preparation: one active job, four retained jobs, ten seconds each, five-minute retention. No mutation or chunked commit. Reuse the same ID and input after a lost acknowledgement. Apply reviewed inputs as one ordinary managed edit."}
+    schemas["JobAction"] = {"type":"object","properties":{}}
     paths = {}
     for path, (method, summary) in ROUTES.items():
         parameters = [{"name": name, "in": "path", "required": True, "schema": {"type": "string"}}
-                      for name in ("workbook", "operation") if "{" + name + "}" in path]
+                      for name in ("workbook", "operation", "job") if "{" + name + "}" in path]
         operation = {"summary": summary, "parameters": parameters,
                      "responses": {"200": {"description": "JSON result"}, **{str(status):{"description":"Structured error; inspect outcome and operation_id before deciding whether a mutation finished"} for status in (400,401,403,404,408,409,413,500,503)},
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "list":"ListRequest","find":"FindRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
@@ -219,6 +229,7 @@ class Service(ThreadingHTTPServer):
         self._path_locks, self._opening = {}, set()
         self._reserved_handles = 0
         self._stopping = False
+        self.jobs = PreparationJobs()
         super().__init__(("127.0.0.1", port), RequestHandler)
 
     def process_request(self, request, client_address):
@@ -254,6 +265,7 @@ class Service(ThreadingHTTPServer):
 
     def server_close(self):
         super().server_close()
+        self.jobs.close()
         with self.registry_lock:
             self._stopping = True
             books = set(self.workbooks.values())
@@ -335,7 +347,14 @@ class Service(ThreadingHTTPServer):
             return self._open(body)
         if method == "POST" and path == "/v1/import/csv/preview":
             return preview_csv(body)
+        if method == "POST" and path == "/v1/import/csv/jobs":
+            return self.jobs.start(body, preview_csv)
         parts = path.strip("/").split("/")
+        if len(parts) in (3,4) and parts[:2] == ["v1","jobs"]:
+            if method == "GET" and len(parts) == 3:
+                return self.jobs.access(parts[2])
+            if method == "POST" and len(parts) == 4 and parts[3] in ("cancel","release"):
+                return self.jobs.access(parts[2],parts[3])
         require(len(parts) >= 3 and parts[:2] == ["v1", "workbooks"], "NOT_FOUND", "Unknown API resource", 404)
         with self.registry_lock:
             book = self.workbooks.get(parts[2])

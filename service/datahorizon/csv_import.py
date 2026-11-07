@@ -15,7 +15,8 @@ COLUMN_LABELS = {"text":"Text","number":"Number","boolean":"Boolean",
 MAX_SOURCE_BYTES = 3*1024*1024
 
 
-def preview_csv(request):
+def preview_csv(request, checkpoint=lambda completed, phase: None):
+    checkpoint(0, "Decoding")
     require(("csv" in request) != ("csv_base64" in request), "INVALID_CSV",
             "Provide exactly one of csv text or csv_base64 bytes")
     delimiter = request.get("delimiter", ",")
@@ -51,6 +52,7 @@ def preview_csv(request):
     rows, count = [], 0
     try:
         for row in csv.reader(io.StringIO(text,newline=""),delimiter=delimiter,strict=True):
+            checkpoint(count, "Parsing")
             require(len(rows)<MAX_CELLS,"LIMIT","CSV preview/import exceeds 10,000 records")
             count += len(row)
             require(count<=MAX_CELLS,"LIMIT","CSV preview/import exceeds 10,000 cells")
@@ -62,12 +64,13 @@ def preview_csv(request):
     result = {"rows":rows,"cells":count,"default_kind":"text","encoding":encoding,"delimiter":delimiter,
               "report":[f"Encoding: {encoding}; delimiter: {delimiter!r}.",
                         "All columns remain Text, preserving leading zeros and formula-like text."]}
-    convert_columns(request,result)
+    convert_columns(request,result,checkpoint)
     require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","CSV preview exceeds 4 MiB; select a smaller file")
+    checkpoint(count, "Ready for review")
     return result
 
 
-def convert_columns(request,result):
+def convert_columns(request,result,checkpoint=lambda completed, phase: None):
     rows = result["rows"]
     width = max(map(len,rows),default=0)
     types = request.get("column_types",{})
@@ -83,6 +86,7 @@ def convert_columns(request,result):
         return
     inputs, errors, issues, converted, ambiguous, examples = [], 0, [], 0, 0, []
     for row_number,row in enumerate(rows,1):
+        checkpoint(row_number-1, "Converting rows")
         items=[]
         for column,value in enumerate(row,1):
             kind = "text" if header and row_number==1 else types.get(str(column),"text")
