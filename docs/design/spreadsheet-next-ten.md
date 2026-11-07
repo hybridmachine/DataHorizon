@@ -68,3 +68,18 @@ References: Microsoft [AND](https://support.microsoft.com/en-us/excel/functions/
 ## PR record
 
 1. [Aggregate functions #35](https://github.com/hybridmachine/DataHorizon/pull/35): locally verified, self-reviewed and merged.
+2. [Logical functions #36](https://github.com/hybridmachine/DataHorizon/pull/36): locally verified, self-reviewed and merged.
+
+## IFERROR contract
+
+IFERROR requires two arguments. It returns the first scalar result, evaluating
+its fallback only after an ordinary spreadsheet error (#REF!, #DIV/0!, #VALUE!,
+#NAME?, #NUM!, #N/A or #NULL!). A failed fallback remains visible. Cycles and
+parser/calculation resource limits are never converted to a fallback. Storage,
+invalid native input and required-hook failures are not spreadsheet errors and
+are not caught. Empty/NULL results become empty Text; native inputs stay intact.
+Direct first-argument ranges and evaluated array results are unavailable. An
+unused fallback is not evaluated, including a range or error expression.
+
+The function participates in the shared registry and XLSX/ODS scalar formula tier.
+See Microsoft's [IFERROR contract](https://support.microsoft.com/en-us/excel/functions/iferror-function).

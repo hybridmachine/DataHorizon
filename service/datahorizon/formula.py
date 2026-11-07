@@ -4,7 +4,7 @@ import math
 import re
 import time
 
-SUPPORTED_FUNCTIONS = {"SUM", "IF", "AVERAGE", "MIN", "MAX", "COUNT", "COUNTA", "AND", "OR", "NOT"}
+SUPPORTED_FUNCTIONS = {"SUM", "IF", "AVERAGE", "MIN", "MAX", "COUNT", "COUNTA", "AND", "OR", "NOT", "IFERROR"}
 CELL_ERRORS = {"#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#NUM!", "#N/A", "#NULL!"}
 NUMBER_TEXT = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\Z")
 
@@ -549,6 +549,15 @@ class Calculator:
             return [self.cell(*target) for target in self.range_targets(node,sheet)]
         if kind == "call":
             name, args = node[1:]
+            if name=="IFERROR":
+                if len(args)!=2: raise FormulaError("#NAME?","IFERROR requires two arguments")
+                if args[0][0]=="range": raise FormulaError("#VALUE!","IFERROR requires scalar expressions")
+                try: value=self.evaluate(args[0],sheet)
+                except FormulaError as error:
+                    if error.code not in CELL_ERRORS: raise
+                    value=self.evaluate(args[1],sheet)
+                if isinstance(value,list): raise FormulaError("#VALUE!","IFERROR array results are unavailable")
+                return "" if value is None else value
             if name == "IF" and len(args) in (2, 3):
                 condition = self.evaluate(args[0], sheet)
                 if not isinstance(condition, (int, float, bool, type(None))):

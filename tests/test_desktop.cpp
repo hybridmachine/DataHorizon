@@ -1043,6 +1043,20 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void iferrorRendersFallbackWithoutHidingCircularReferences() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("iferror.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{
+            QJsonObject{{"row",1},{"col",1},{"source","=IFERROR(1/0,42)"}},
+            QJsonObject{{"row",1},{"col",2},{"source","=IFERROR(7,1/0)"}},
+            QJsonObject{{"row",1},{"col",3},{"source","=IFERROR(C1,0)"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        const QStringList expected{"42","7","#CYCLE!"};
+        for(int i=0;i<expected.size();++i) QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,i)).toString(),expected[i],5000);
+    }
     void logicalFunctionsRenderThroughTheManagedGrid() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
