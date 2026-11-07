@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from datahorizon.engine import Workbook
+from datahorizon.engine import Workbook,EngineError
 from datahorizon.formula import Calculator,FormulaError,Parser
 from datahorizon.interchange import xlsx_export,xlsx_preview
 from datahorizon.ods import ods_export,ods_preview
@@ -118,3 +118,41 @@ class LogicalTests(unittest.TestCase):
             self.assertEqual([c['value'] for c in book.read(r2=1,c2=2)['cells']],[7,14])
             with self.assertRaises(APIError): book.set(1,1,'=IF(OR(FALSE,0),1,-1)')
             self.assertEqual([c['value'] for c in book.read(r2=1,c2=2)['cells']],[7,14])
+
+
+class IfErrorTests(unittest.TestCase):
+    def test_lazy_fallback_ordinary_errors_and_blank_conversion(self):
+        for source,expected in [('IFERROR(7,1/0)',7),('IFERROR(1/0,42)',42),('IFERROR(#REF!,"missing")','missing'),('IFERROR(UnknownFunction(),"unknown")','unknown'),('IFERROR(1e9999,9)',9),('IFERROR(A1,9)',''),('IFERROR(1/0,A1)','')]:
+            self.assertEqual(evaluate(source),expected)
+        with self.assertRaises(FormulaError) as failure: evaluate('IFERROR(1/0,2/0)')
+        self.assertEqual(failure.exception.code,'#DIV/0!')
+        self.assertEqual(evaluate('COUNT(IFERROR(1/0,""))'),0)
+        self.assertEqual(evaluate('COUNTA(IFERROR(1/0,""))'),1)
+
+    def test_arity_arrays_cycles_and_limits_remain_visible(self):
+        for source,code in [('IFERROR()','#NAME?'),('IFERROR(1)','#NAME?'),('IFERROR(1,2,3)','#NAME?'),('IFERROR(A1:A2,0)','#VALUE!'),('IFERROR(1/0,A1:A2)','#VALUE!'),('IFERROR(SUM(A1:A1048576),0)','#LIMIT!')]:
+            with self.assertRaises(FormulaError) as failure: evaluate(source)
+            self.assertEqual(failure.exception.code,code)
+        cells={('Sheet1',1,1):{'source':'=IFERROR(A1,0)','kind':'formula','style':{}}}
+        with self.assertRaises(FormulaError) as failure: evaluate('IFERROR(A1,0)',cells)
+        self.assertEqual(failure.exception.code,'#CYCLE!')
+        with self.assertRaises(FormulaError) as failure: evaluate('IFERROR(1,0)',seconds=-1)
+        self.assertEqual(failure.exception.code,'#LIMIT!')
+        self.assertEqual(evaluate('IFERROR(7,A1:A2)'),7)
+
+    def test_fallback_uses_same_required_hook_transaction_and_file_tier(self):
+        from datahorizon.client import APIError,LocalService
+        with tempfile.TemporaryDirectory() as temp,LocalService(handler=Path(__file__).parent/'fixtures'/'validation_hook.py') as client,client.open(Path(temp)/'iferror.dhwb',create=True) as book:
+            book.set(1,1,'=IFERROR(1/0,7)')
+            self.assertEqual([c['value'] for c in book.read(r2=1,c2=2)['cells']],[7,14])
+            with self.assertRaises(APIError): book.set(1,1,'=IFERROR(1/0,-1)')
+            self.assertEqual([c['value'] for c in book.read(r2=1,c2=2)['cells']],[7,14])
+        snapshot={'state':'s','range':[1,1,1,1],'cells':[{'row':1,'col':1,'source':'=IFERROR(1/0,7)','kind':'formula','value':7,'calculation':'current','style':{}}]}
+        for export,preview in ((xlsx_export,xlsx_preview),(ods_export,ods_preview)):
+            reviewed=preview(export(snapshot,{}));self.assertTrue(reviewed['can_import'],reviewed)
+            self.assertEqual(evaluate(reviewed['cells'][0]['source']),7)
+
+    def test_storage_failures_are_never_formula_fallbacks(self):
+        def unavailable(*args): raise EngineError("STORAGE_ERROR","injected read failure")
+        calc=Calculator(unavailable,lambda name:name)
+        with self.assertRaises(EngineError): calc.evaluate(Parser('IFERROR(A1,0)').parse(),'Sheet1')
