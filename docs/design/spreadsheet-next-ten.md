@@ -155,3 +155,18 @@ undoable operation; required handlers and all existing range/history/time limits
 apply atomically. Seed snapshots are additionally capped at 4 MiB. Top-left copy
 and row-major numeric series remain separate menu actions. Multi-step patterns
 and Excel's automatic series inference are outside this tier.
+
+7. [Directional fill #41](https://github.com/hybridmachine/DataHorizon/pull/41): locally verified, self-reviewed and merged.
+
+## Address range contract
+
+The address field accepts one current-sheet cell or rectangle, case-insensitive,
+with optional absolute markers and surrounding whitespace: `$B$2:D20`. Reversed
+endpoints normalize the rectangle and retain the first endpoint as the active
+cell. Bounds remain A1:XFD1048576 and rectangles are limited to 10,000 cells.
+Invalid, hidden-intersecting or projected targets retain the old selection.
+Single frozen-row cells navigate in the visible pane; unfreeze before selecting
+a rectangle that includes the frozen top row. Drafts require existing
+Save/Discard/Cancel resolution before navigation, with target/state rechecked
+after the dialog. Navigation does not mutate data or invoke hooks. Sheet names,
+multiple areas, entire row/column notation and named ranges remain outside this tier.
