@@ -159,3 +159,12 @@ and formats); Format → Clear formatting retains exact inputs/types. Each uses
 one managed range edit with ordinary Undo/Redo, required-handler rejection and
 the existing 10,000-cell/visibility/state guards. No confirmation is added to these
 ordinary reversible edits. See [the clear contract](spreadsheet-next-ten.md#clear-command-contract).
+
+
+Implemented selection summary (November 7, 2026): a separate accessible status
+label reports Count, Sum and Average for one visible source rectangle. It reads
+stored data across the entire bounded rectangle, including offscreen cells.
+Text/Booleans participate in Count only; errors withhold numeric aggregates.
+Unavailable reasons and full results appear in the tooltip. Unsubmitted drafts
+are excluded. Debounce/coalescing and stale-response guards keep navigation
+responsive; no extra modal flow or change event is introduced.

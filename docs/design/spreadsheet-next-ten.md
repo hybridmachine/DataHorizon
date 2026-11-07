@@ -1,8 +1,8 @@
 # Next ten spreadsheet implementation increments
 
 November 7, 2026. No next-ten batch was previously recorded after PR #34.
-The default scope follows the remaining M3–M5 spreadsheet foundation, with an
-optional direction question pending. Execute in order, one implementation PR at
+The executed default scope follows the remaining M3–M5 spreadsheet foundation.
+Execute in order, one implementation PR at
 a time: commit/push, publish, self-review/fix and merge before starting the next.
 Hosted Actions have no credits; use local verification and preserve explicit
 platform/release limits.
@@ -65,8 +65,6 @@ References: Microsoft [AND](https://support.microsoft.com/en-us/excel/functions/
 [OR](https://support.microsoft.com/en-us/excel/functions/or-function), and
 [NOT](https://support.microsoft.com/en-us/excel/functions/not-function).
 
-
-
 ## IFERROR contract
 
 IFERROR requires two arguments. It returns the first scalar result, evaluating
@@ -97,7 +95,6 @@ References: Microsoft [ROUND](https://support.microsoft.com/en-us/excel/function
 [ROUNDUP](https://support.microsoft.com/en-us/excel/functions/roundup-function), and
 [ROUNDDOWN](https://support.microsoft.com/en-us/excel/functions/rounddown-function).
 
-
 ## Percentage format contract
 
 Native style `format: percent2` displays numeric fractions as two-decimal
@@ -118,13 +115,6 @@ no schema mutation or silent input/format substitution is introduced.
 Independent openpyxl/odfpy producers/consumers are exercised by
 `tests/verify_percentage_consumers.py` using the existing build-only environment.
 
-## PR record
-
-1. [Aggregate functions #35](https://github.com/hybridmachine/DataHorizon/pull/35): locally verified, self-reviewed and merged.
-2. [Logical functions #36](https://github.com/hybridmachine/DataHorizon/pull/36): locally verified, self-reviewed and merged.
-3. [IFERROR #37](https://github.com/hybridmachine/DataHorizon/pull/37): locally verified, self-reviewed and merged.
-4. [Numeric functions #38](https://github.com/hybridmachine/DataHorizon/pull/38): locally verified, self-reviewed and merged.
-
 Percentage mapping references: Microsoft [built-in number formats](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.spreadsheet.numberingformat?view=openxml-3.0.1)
 and the [ODF 1.3 schema](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.pdf).
 
@@ -139,10 +129,6 @@ ordinary named Undo/Redo; required input-change handlers can reject the entire
 clear. Format-only changes do not invent input-change events. Existing selection,
 hidden/projection, stale-state and size guards apply; read-only clears are refused.
 
-5. [Percentage formatting #39](https://github.com/hybridmachine/DataHorizon/pull/39): locally verified, self-reviewed and merged.
-
-6. [Clear commands #40](https://github.com/hybridmachine/DataHorizon/pull/40): locally verified, self-reviewed and merged.
-
 ## Directional fill contract
 
 Fill down (Ctrl+D) snapshots each selected column's top cell and copies it down.
@@ -155,8 +141,6 @@ undoable operation; required handlers and all existing range/history/time limits
 apply atomically. Seed snapshots are additionally capped at 4 MiB. Top-left copy
 and row-major numeric series remain separate menu actions. Multi-step patterns
 and Excel's automatic series inference are outside this tier.
-
-7. [Directional fill #41](https://github.com/hybridmachine/DataHorizon/pull/41): locally verified, self-reviewed and merged.
 
 ## Address range contract
 
@@ -171,8 +155,6 @@ Save/Discard/Cancel resolution before navigation, with target/state rechecked
 after the dialog. Navigation does not mutate data or invoke hooks. Sheet names,
 multiple areas, entire row/column notation and named ranges remain outside this tier.
 
-8. [Range navigation #42](https://github.com/hybridmachine/DataHorizon/pull/42): locally verified, self-reviewed and merged.
-
 ## Find navigation contract
 
 Find in selection retains its original case-sensitive source/display rectangle;
@@ -186,3 +168,52 @@ state again. Unsubmitted drafts use Save/Discard/Cancel. A hidden next match is
 reported and retains the current result position until shown. Single frozen-row
 matches focus the visible pane. Find/Next/Previous are read-only and do not
 invoke change handlers. Replace All retains its separate reviewed atomic flow.
+
+## Selection summary contract
+
+`POST /v1/workbooks/{workbook}/summary` and SDK `book.summary(sheet=..., **scope)`
+read one rectangle of stored inputs in one SQLite read transaction. Limits are
+10,000 selected cells, 4 MiB selected source/style bytes, two seconds and the
+existing shared formula parser/dependency/cache budgets. A concurrent WAL writer
+cannot mix old and new values in a summary; the next read observes its new state.
+No history, receipts, hooks or stored calculation-cache updates are produced.
+Read-only workbooks are supported. Projected row lists are refused.
+
+Count includes every non-NULL value (including empty Text and formula errors),
+but excludes absent cells, native NULL and styled empty auto cells. Numeric
+count/sum/average use actual numeric values, excluding Text and Booleans. Formula
+results participate and percentage fractions remain unscaled. Empty numeric sets
+have sum 0 and no average. Any formula error, including cycles/resource errors,
+makes both sum and average unavailable, with total errors and the first 100
+locations/codes reported. Running-subtotal overflow is #NUM! and also makes both
+unavailable even if a mathematical mean could be finite. No partial numeric
+aggregate is presented. Budget or invalid-input failures return structured errors.
+
+The desktop debounces selection changes by 250 ms, coalesces to one outstanding
+summary read per service connection, and rejects superseded selection/state or
+connection replies. Operations, service loss, model reset and external refresh
+invalidate summaries; detected state changes request ordinary stored-data refresh,
+never historical change handlers. One visible source rectangle is required;
+oversized, hidden-intersecting, multiple-area and list selections show an explicit
+unavailable explanation. The summary has its own accessible status label, with
+full text in its tooltip and stored-data/draft semantics. It does not replace
+storage/calculation status or show per-viewport totals. Sum and average use 12
+significant display digits; REST returns the underlying finite binary64 values.
+
+## PR record
+
+1. [Aggregate functions #35](https://github.com/hybridmachine/DataHorizon/pull/35): locally verified, self-reviewed and merged.
+2. [Logical functions #36](https://github.com/hybridmachine/DataHorizon/pull/36): locally verified, self-reviewed and merged.
+3. [IFERROR #37](https://github.com/hybridmachine/DataHorizon/pull/37): locally verified, self-reviewed and merged.
+4. [Numeric functions #38](https://github.com/hybridmachine/DataHorizon/pull/38): locally verified, self-reviewed and merged.
+5. [Percentage formatting #39](https://github.com/hybridmachine/DataHorizon/pull/39): locally verified, self-reviewed and merged.
+6. [Clear commands #40](https://github.com/hybridmachine/DataHorizon/pull/40): locally verified, self-reviewed and merged.
+7. [Directional fill #41](https://github.com/hybridmachine/DataHorizon/pull/41): locally verified, self-reviewed and merged.
+8. [Range navigation #42](https://github.com/hybridmachine/DataHorizon/pull/42): locally verified, self-reviewed and merged.
+9. [Find navigation #43](https://github.com/hybridmachine/DataHorizon/pull/43): locally verified, self-reviewed and merged.
+
+10. [Selection summaries and batch verification #44](https://github.com/hybridmachine/DataHorizon/pull/44): local build, contract, native and package qualification evidence recorded.
+
+[Final local evidence](evidence/spreadsheet-batch-verification.txt) and the
+[qualification report](evidence/spreadsheet-ten-qualification.json) preserve the
+source candidate and archive inventory/hash. Platform/manual/distribution gates remain open.

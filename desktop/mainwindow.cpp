@@ -463,6 +463,16 @@ void MainWindow::buildUi() {
     m_status = new QLabel(tr("Starting local service…")); m_status->setAccessibleName(tr("Storage and calculation status"));
     m_status->setObjectName("storageStatus");
     statusBar()->addWidget(m_status, 1);
+    m_summary=new QLabel(this);m_summary->setObjectName("selectionSummary");m_summary->setAccessibleName(tr("Selection summary"));
+    m_summary->setMinimumWidth(0);m_summary->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
+    statusBar()->addPermanentWidget(m_summary,1);
+    m_summaryTimer=new QTimer(this);m_summaryTimer->setSingleShot(true);m_summaryTimer->setInterval(250);
+    connect(m_summaryTimer,&QTimer::timeout,this,&MainWindow::requestSummary);
+    connect(m_grid->selectionModel(),&QItemSelectionModel::selectionChanged,this,&MainWindow::queueSummary);
+    connect(m_model,&QAbstractItemModel::modelReset,this,&MainWindow::queueSummary);
+    connect(m_client,&RestClient::configured,this,[this]{
+        ++m_summaryFlight;m_summaryInFlight=false;m_summaryKey={};queueSummary();
+    });
     m_hiddenButton=new QPushButton(this); m_hiddenButton->setObjectName("showHiddenButton");
     m_hiddenButton->hide(); statusBar()->addPermanentWidget(m_hiddenButton);
     connect(m_hiddenButton,&QPushButton::clicked,this,[this]{showHidden(true,true);});
@@ -722,7 +732,7 @@ void MainWindow::applyVisibility() {
     m_hiddenButton->setAccessibleName(m_hiddenButton->text());
     m_hiddenButton->setToolTip(tr("Show all hidden rows and columns on this sheet.")); m_hiddenButton->setVisible(any);
     updateFrozenRow();
-    ensureVisibleCurrent();
+    ensureVisibleCurrent();queueSummary();
 }
 
 void MainWindow::updateFrozenRow() {
@@ -1000,6 +1010,7 @@ void MainWindow::setBusy(bool busy, const QString &message) {
     if(m_freezeAction) m_freezeAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenRows.contains(0));
     syncSource();
     if (!message.isEmpty()) m_status->setText(m_releasing ? "Closing workbook…" : message);
+    queueSummary();
 }
 
 void MainWindow::issue(const QString &message) {
@@ -1692,6 +1703,69 @@ void MainWindow::applyList() {
             .arg(result["matching"].toInt()).arg(result["total"].toInt()));
         applyEnterNavigation();
         syncSource(); emit workbookReady();
+    });
+}
+
+void MainWindow::queueSummary() {
+    if(!m_summary || !m_summaryTimer)return;
+    QJsonObject key;QString reason;
+    if(m_busy || m_unknown || m_info.isEmpty())reason=tr("Summary unavailable while workbook state is changing.");
+    else if(m_model->projected())reason=tr("Clear the list view to summarize one source rectangle.");
+    else {
+        const auto ranges=m_grid->selectionModel()->selection();
+        if(ranges.size()!=1)reason=tr("Select one rectangle to summarize stored cells.");
+        else {
+            const auto &range=ranges.first();
+            if(qint64(range.height())*range.width()>10000)reason=tr("Summary selection exceeds 10,000 cells.");
+            else if(intersectsHidden(range.top()+1,range.left()+1,range.bottom()+1,range.right()+1))reason=tr("Show hidden cells in this rectangle before summarizing it.");
+            else key=targetContext({{"r1",range.top()+1},{"c1",range.left()+1},{"r2",range.bottom()+1},{"c2",range.right()+1}});
+        }
+    }
+    if(!key.isEmpty() && key==m_summaryKey)return;
+    ++m_summaryGeneration;m_summaryTimer->stop();m_summaryKey=key;
+    if(key.isEmpty()) {m_summary->setText(tr("Summary unavailable"));m_summary->setToolTip(reason);return;}
+    m_summary->setText(tr("Summary…"));m_summary->setToolTip(tr("Reading stored selection; unsubmitted drafts are excluded."));m_summaryTimer->start();
+}
+
+void MainWindow::requestSummary() {
+    const auto key=m_summaryKey;const auto generation=m_summaryGeneration;
+    if(key.isEmpty() || m_busy || m_unknown || m_summaryInFlight || !matchesTarget(key))return;
+    m_summaryInFlight=true;const auto flight=++m_summaryFlight;
+    auto request=key;request.remove("workbook");request.remove("expected_state");
+    m_client->request(base()+"/summary",request,[this,key,generation,flight](QJsonObject result,QString error){
+        if(flight!=m_summaryFlight)return;
+        m_summaryInFlight=false;
+        if(generation!=m_summaryGeneration || key!=m_summaryKey || m_busy || m_unknown || !matchesTarget(key)) {
+            if(!m_summaryKey.isEmpty() && !m_busy && !m_unknown)m_summaryTimer->start();
+            return;
+        }
+        if(!error.isEmpty()) {m_summary->setText(tr("Summary unavailable"));m_summary->setToolTip(error);return;}
+        if(!result["state"].isString()) {
+            m_summary->setText(tr("Summary unavailable"));m_summary->setToolTip(tr("Invalid selection summary response."));return;
+        }
+        if(result["state"]!=key["expected_state"]) {
+            m_summary->setText(tr("Summary unavailable"));m_summary->setToolTip(tr("Stored data changed. Refreshing the workbook."));
+            m_model->externalChange();return;
+        }
+        const QJsonArray rectangle{key["r1"],key["c1"],key["r2"],key["c2"]};
+        const bool unavailable=result["error_count"].toInt()>0 || result["numeric_error"].isString();
+        if((!unavailable && (!result["sum"].isDouble() || (result["numeric_count"].toInt()>0 && !result["average"].isDouble())))
+            || result["sheet"]!=key["sheet"] || result["range"].toArray()!=rectangle || !result["count"].isDouble()
+            || !result["numeric_count"].isDouble() || !result["selected_cells"].isDouble() || !result["error_count"].isDouble()
+            || !(result["sum"].isDouble() || result["sum"].isNull()) || !(result["average"].isDouble() || result["average"].isNull())
+            || !(result["numeric_error"].isString() || result["numeric_error"].isNull())) {
+            m_summary->setText(tr("Summary unavailable"));m_summary->setToolTip(tr("Invalid selection summary response."));return;
+        }
+        QString text;
+        if(result["error_count"].toInt()>0 || !result["numeric_error"].isNull())
+            text=tr("Count %1 • Sum/average unavailable").arg(result["count"].toInt());
+        else text=tr("Count %1 • Sum %2 • Average %3").arg(result["count"].toInt())
+            .arg(QString::number(result["sum"].toDouble(),'g',12))
+            .arg(result["average"].isNull()?tr("—"):QString::number(result["average"].toDouble(),'g',12));
+        m_summary->setText(text);
+        m_summary->setToolTip(text+tr("\n%1 selected cells; %2 numeric values; %3 formula errors. Stored values, excluding unsubmitted drafts; Text/Booleans excluded from numeric summary. Percentage fractions stay unscaled.")
+            .arg(result["selected_cells"].toInt()).arg(result["numeric_count"].toInt()).arg(result["error_count"].toInt())
+            +(result["numeric_error"].isString()?tr("\nNumeric subtotal overflow (#NUM!)."):QString()));
     });
 }
 

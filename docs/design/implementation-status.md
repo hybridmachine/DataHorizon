@@ -38,8 +38,17 @@ operation and rejects activated required handlers until structure events are
 defined. XLSX shared formulas and explicit ODS cell-style parent chains have
 bounded expansion/resolution and independent producer/consumer fixtures. Read-only
 recovery inspection reports bounded input/style/formula-syntax issues without
-running code or repairs. The [latest batch](workbook-next-five.md) records scope,
+running code or repairs. The [preceding workbook batch](workbook-next-five.md) records scope,
 local qualification/archive tooling and remaining platform/distribution gates.
+
+The [ten spreadsheet increments](spreadsheet-next-ten.md) add thirteen shared
+scalar functions (aggregate, logical, IFERROR and decimal rounding tiers), native
+percentage formatting with XLSX/ODS mapping, atomic Clear Formatting/Clear All,
+independent Fill Down/Right, bounded address ranges, scoped Find Next/Previous
+and stored-selection count/sum/average through REST/SDK. Errors, exact input
+kinds, transactional hooks and existing size limits remain explicit. Local batch
+verification is recorded in [the final evidence](evidence/spreadsheet-batch-verification.txt);
+Windows/Linux, accessibility, clean-machine/runtime and distribution gates remain open.
 
 ## Milestone ledger
 
@@ -48,9 +57,9 @@ local qualification/archive tooling and remaining platform/distribution gates.
 | M0 | [Initial contracts](initial-contracts.md), [compatibility](compatibility-v0.md), [native schema](native-format-v1.md), keyboard/state rules and numeric budgets recorded | Resolve deferred cases at their named milestones; no claim that historical PDFs have been regenerated |
 | M1 | Qt 6.12/C++17 builds locally; bounded TEMP/native SQLite capture and service/Python execution comparisons with typed changes, transaction/worker failures and receipts; sparse/dense/long-text/large-disk, formula-chain and Qt scroll/input harnesses with local evidence and CI artifact collection | Production framework/runtime and capture-binding adoption, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
 | M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle; restart/reopen and warned unknown-outcome recovery | Broader failure injection, clean-machine packaging evidence and service lifecycle hardening |
-| M3 | Typed entry, A1 limits, SUM/IF/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
+| M3 | Typed entry, A1 limits, staged scalar functions/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
 | M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations and row/column reference transforms, wrap/borders and local sizing/hide/frozen-row preferences with destructive-operation fixtures | Formula-aware Cut, hook-aware structure events, portable view metadata, additional frozen edges/cross-pane range selection and platform conventions |
-| M5 | Explicit full-scope projected lists, stable source row edits, multikey sort/filter, scoped source/display find/replace, strict CSV encodings/delimiters, reviewed column types and snapshot export | Persistent record identities/list definitions, filtered range semantics, native date/time and locale conversion, progress/cancellation and large jobs |
+| M5 | Explicit full-scope projected lists, stable source row edits, multikey sort/filter, scoped source/display find/replace/navigation and snapshot summaries, strict CSV encodings/delimiters, reviewed column types and snapshot export | Persistent record identities/list definitions, filtered range semantics, native date/time and locale conversion, progress/cancellation and large jobs |
 | M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures | Broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
 | M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
 | M8 | Shared engine and REST boundaries retained; unsupported APIs reject explicitly | Relational schema/tooling, proven managed SQL capture, workbook code/macros/functions/packages, remote TLS/mTLS/password access and additional wireframes |

@@ -16,6 +16,7 @@ void RestClient::configure(const QString &url, const QString &token) {
     ++m_generation;
     m_url = url;
     m_token = token;
+    emit configured();
 }
 
 void RestClient::request(const QString &path, const QJsonObject &body, Callback callback, bool post) {

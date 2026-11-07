@@ -147,6 +147,10 @@ class WorkbookClient:
         self._ensure_open()
         return self.client.request(self.base + "/range", {"sheet": sheet, "r1": r1, "c1": c1, "r2": r2, "c2": c2})
 
+    def summary(self, sheet="Sheet1", **scope):
+        self._ensure_open()
+        return self.client.request(self.base+"/summary",{"sheet":sheet,**scope})
+
     def export_spreadsheet(self, format="xlsx", **scope):
         self._ensure_open()
         if format not in ("xlsx","ods"): raise ValueError("Unsupported spreadsheet format")

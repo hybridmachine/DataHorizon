@@ -29,7 +29,7 @@ from .recovery import inspect_native
 
 CAPABILITIES = {
     "api_version": 1, "format_version": 1, "max_operation_cells": MAX_CELLS,
-    "max_viewport_cells": 4096, "max_clipboard_cells":MAX_CELLS, "max_request_bytes": 4 * 1024 * 1024,
+    "max_summary_cells":MAX_CELLS, "max_viewport_cells": 4096, "max_clipboard_cells":MAX_CELLS, "max_request_bytes": 4 * 1024 * 1024,
     "formulas": ["arithmetic", "references", *sorted(SUPPORTED_FUNCTIONS)],
     "operations": ["workbook_import", "edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
     "interchange": ["csv", "xlsx", "ods"], "managed_sql": False, "remote_binding": False,
@@ -56,6 +56,7 @@ ROUTES = {
     "/v1/workbooks/{workbook}/range": ("post", "Bounded consistent viewport read"),
     "/v1/workbooks/{workbook}/clipboard": ("post", "Consistent full-source clipboard read, at most 10,000 cells and 4 MiB"),
     "/v1/workbooks/{workbook}/list": ("post", "Explicit full-scope sorted/filtered list projection"),
+    "/v1/workbooks/{workbook}/summary": ("post", "Count and numeric summary of one bounded stored-data snapshot"),
     "/v1/workbooks/{workbook}/find": ("post", "Find in a declared source or display scope"),
     "/v1/workbooks/{workbook}/operations": ("post", "Atomic managed operation"),
     "/v1/workbooks/{workbook}/operations/{operation}": ("get", "Durable outcome lookup"),
@@ -110,6 +111,15 @@ def openapi():
             "reference_warnings":{"type":"integer","description":"Newly broken reference expressions in a row/column operation"},
             "reference_issues":{"type":"array","maxItems":100,"description":"First 100 affected formula locations after the structure change","items":{"type":"object","properties":{"sheet":sheet,"row":row,"col":col}}}}},
     }
+    schemas["SummaryRequest"]={"type":"object","additionalProperties":False,"properties":{"sheet":sheet,**rectangle},
+        "description":"One rectangle up to 10,000 cells, 4 MiB stored input/style budget and 2 seconds; shared formula budgets apply. No hooks or history writes. Count includes non-NULL values and formula errors, including empty Text. Numeric summaries exclude Text/Booleans and are unavailable on any formula error or nonfinite running subtotal. Numeric values are unformatted (percentage fractions unscaled).",
+        "example":{"sheet":"Sheet1","r1":1,"c1":1,"r2":100,"c2":3}}
+    schemas["Summary"]={"type":"object","required":["state","sheet","range","selected_cells","count","numeric_count","sum","average","error_count","errors","errors_truncated","numeric_error"],"properties":{
+        "state":{"type":"string"},"sheet":sheet,"range":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"integer"}},
+        **{key:{"type":"integer","minimum":0} for key in ("selected_cells","count","numeric_count","error_count")},
+        "sum":{"type":"number","nullable":True},"average":{"type":"number","nullable":True},
+        "numeric_error":{"type":"string","nullable":True,"description":"#NUM! for nonfinite running subtotal"},
+        "errors_truncated":{"type":"boolean"},"errors":{"type":"array","maxItems":100,"items":{"type":"object","required":["row","col","code"],"properties":{"row":row,"col":col,"code":{"type":"string"}}}}}}
     schemas["ClipboardRequest"] = {**schemas["RangeRequest"],
         "properties":{key:value for key,value in schemas["RangeRequest"]["properties"].items() if key!="preview"},
         "description":"Full inputs and calculated values, at most 10,000 cells and a 4 MiB response; no viewport previews. Without coordinates, reads default to A1."}
@@ -195,12 +205,14 @@ def openapi():
                      "security": [{"localToken": []}]}
         if method == "post":
             name = "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
-                "list":"ListRequest","find":"FindRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
+                "summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
         for status in ("400","401","403","404","409","413","500","503"):
             operation["responses"][status]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}
-        if path.endswith("/operations"):
+        if path.endswith("/summary"):
+            operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Summary"}}}
+        elif path.endswith("/operations"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Receipt"}}}
         elif path.endswith("/{operation}"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"oneOf":[{"$ref":"#/components/schemas/Receipt"},{"$ref":"#/components/schemas/Error"}]}}}
@@ -412,6 +424,8 @@ class Service(ThreadingHTTPServer):
             return book.read(body.get("sheet", "Sheet1"), {**body,"preview":False},limit=MAX_CELLS)
         if method == "POST" and suffix == ["list"]:
             return book.list_view(body.get("sheet", "Sheet1"), body)
+        if method == "POST" and suffix == ["summary"]:
+            return book.summary(body.get("sheet","Sheet1"),body)
         if method == "POST" and suffix == ["find"]:
             return book.find(body.get("sheet", "Sheet1"), body)
         if method == "POST" and suffix == ["operations"]:

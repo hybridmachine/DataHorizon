@@ -47,6 +47,37 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+class DelayedSummaryServer : public QTcpServer {
+public:
+    struct Pending {QPointer<QTcpSocket> socket;QJsonObject range;};
+    QList<Pending> requests;
+    QString state,sheet;
+    DelayedSummaryServer(QString version,QString source):state(version),sheet(source) {
+        connect(this,&QTcpServer::newConnection,this,[this]{
+            auto *socket=nextPendingConnection();connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
+            connect(socket,&QTcpSocket::readyRead,socket,[this,socket]{
+                const auto bytes=socket->property("request").toByteArray()+socket->readAll();socket->setProperty("request",bytes);
+                const int end=bytes.indexOf("\r\n\r\n");if(end<0 || socket->property("handled").toBool())return;
+                const int length=QRegularExpression("Content-Length: (\\d+)",QRegularExpression::CaseInsensitiveOption).match(QString::fromLatin1(bytes.left(end))).captured(1).toInt();
+                if(bytes.size()<end+4+length)return;socket->setProperty("handled",true);
+                if(bytes.contains("/summary HTTP/"))requests.append({socket,QJsonDocument::fromJson(bytes.mid(end+4)).object()});
+                else send(socket,{{"state",state},{"sheet",sheet},{"cells",QJsonArray{}}});
+            });
+        });
+    }
+    void respond(int index,double sum) {
+        const auto &pending=requests.at(index);const auto &r=pending.range;
+        send(pending.socket,{{"state",state},{"sheet",sheet},{"range",QJsonArray{r["r1"],r["c1"],r["r2"],r["c2"]}},
+            {"count",1},{"numeric_count",1},{"selected_cells",1},{"sum",sum},{"average",sum},{"error_count",0},{"numeric_error",QJsonValue::Null}});
+    }
+    void respondInvalid(int index) {send(requests.at(index).socket,{{"state",state},{"sheet",sheet}});}
+private:
+    static void send(QTcpSocket *socket,QJsonObject result) {
+        const auto body=QJsonDocument(result).toJson(QJsonDocument::Compact);
+        socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(body.size())+"\r\n\r\n"+body);socket->disconnectFromHost();
+    }
+};
+
 class DelayedClipboardServer : public QTcpServer {
 public:
     struct Pending { QPointer<QTcpSocket> socket; QJsonObject range; };
@@ -1042,6 +1073,66 @@ private slots:
         QCOMPARE(tabs->count(),1);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
+    }
+    void selectionSummaryReadsWholeStoredRectangleAndHandlesErrorsAndViewGuards() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("summary.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{
+            QJsonObject{{"row",1},{"col",1},{"source","0.125"},{"style",QJsonObject{{"format","percent2"}}}},
+            QJsonObject{{"row",2},{"col",1},{"source","=2+2"}},QJsonObject{{"row",3},{"col",1},{"source","12"},{"kind","text"}},
+            QJsonObject{{"row",4},{"col",1},{"source","TRUE"}},QJsonObject{{"row",5},{"col",1},{"source",""},{"kind","text"}},
+            QJsonObject{{"row",6},{"col",1},{"source","NULL"},{"kind","null"}},QJsonObject{{"row",1000},{"col",1},{"source","3"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();auto *label=window.findChild<QLabel *>("selectionSummary");
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(999,0)),QItemSelectionModel::ClearAndSelect);
+        QTRY_COMPARE_WITH_TIMEOUT(label->text(),QString("Count 6 • Sum 7.125 • Average 2.375"),5000);
+        QVERIFY(label->toolTip().contains("1000 selected cells; 3 numeric"));QVERIFY(changed.isEmpty());
+        window.resize(700,500);QTest::qWait(30);QVERIFY(label->width()<window.width());QCOMPARE(label->accessibleName(),QString("Selection summary"));
+        if(qEnvironmentVariableIsSet("DATAHORIZON_SUMMARY_SCREENSHOT"))window.grab().save(qEnvironmentVariable("DATAHORIZON_SUMMARY_SCREENSHOT"));
+        grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(10000,0)),QItemSelectionModel::ClearAndSelect);
+        QCOMPARE(label->text(),QString("Summary unavailable"));QVERIFY(label->toolTip().contains("10,000"));
+        grid->setCurrentIndex(model->index(1,0));window.findChild<QAction *>("hideRowsAction")->trigger();
+        grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(2,0)),QItemSelectionModel::ClearAndSelect);
+        QVERIFY(label->toolTip().contains("hidden"));window.findChild<QPushButton *>("showHiddenButton")->click();
+        QTRY_COMPARE_WITH_TIMEOUT(label->text(),QString("Count 3 • Sum 4.125 • Average 2.0625"),5000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",1},{"source","=1/0"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(2,0)),QItemSelectionModel::ClearAndSelect);
+        QTRY_COMPARE_WITH_TIMEOUT(label->text(),QString("Count 3 • Sum/average unavailable"),5000);
+        QVERIFY(label->toolTip().contains("1 formula errors"));
+        window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"header",false}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);QVERIFY(label->toolTip().contains("list view"));
+    }
+    void selectionSummaryCoalescesAndDiscardsSupersededRepliesAndConnections() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("summary-late.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *model=window.model();auto *grid=window.findChild<QTableView *>("grid");auto *label=window.findChild<QLabel *>("selectionSummary");
+        DelayedSummaryServer server(model->state(),model->sheet());QVERIFY(server.listen(QHostAddress::LocalHost,0));
+        auto *client=window.findChild<RestClient *>();client->configure("http://127.0.0.1:"+QString::number(server.serverPort()),"token");
+        grid->setCurrentIndex(model->index(0,0));
+        QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),1,3000);
+        for(int col=1;col<=8;++col)grid->setCurrentIndex(model->index(0,col));
+        QTest::qWait(350);QCOMPARE(server.requests.size(),1);QCOMPARE(label->text(),QString("Summary…"));
+        server.respond(0,100);QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),2,3000);
+        QCOMPARE(server.requests[1].range["c1"].toInt(),9);QCOMPARE(label->text(),QString("Summary…"));
+        server.respond(1,9);QTRY_COMPARE_WITH_TIMEOUT(label->text(),QString("Count 1 • Sum 9 • Average 9"),3000);
+        grid->setCurrentIndex(model->index(0,9));QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),3,3000);
+        DelayedSummaryServer replacement(model->state(),model->sheet());QVERIFY(replacement.listen(QHostAddress::LocalHost,0));
+        client->configure("http://127.0.0.1:"+QString::number(replacement.serverPort()),"token");
+        QTRY_COMPARE_WITH_TIMEOUT(replacement.requests.size(),1,3000);replacement.respond(0,10);
+        QTRY_COMPARE_WITH_TIMEOUT(label->text(),QString("Count 1 • Sum 10 • Average 10"),3000);
+        server.respond(2,200);QTest::qWait(50);QCOMPARE(label->text(),QString("Count 1 • Sum 10 • Average 10"));
+        const auto issues=window.findChild<QPlainTextEdit *>()->toPlainText();
+        grid->setCurrentIndex(model->index(0,10));QTRY_COMPARE_WITH_TIMEOUT(replacement.requests.size(),2,3000);
+        replacement.respondInvalid(1);QTRY_COMPARE_WITH_TIMEOUT(label->text(),QString("Summary unavailable"),3000);
+        QVERIFY(label->toolTip().contains("Invalid selection summary response"));QCOMPARE(window.findChild<QPlainTextEdit *>()->toPlainText(),issues);
     }
     void scopedFindNavigatesWrapsAndInvalidatesAfterEdits() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
