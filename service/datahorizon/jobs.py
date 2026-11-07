@@ -14,12 +14,12 @@ class PreparationJobs:
         self.capacity, self.seconds, self.retention = capacity, seconds, retention
         self.stopping = False
 
-    def start(self, request, prepare):
+    def start(self, request, prepare, kind="csv"):
         job_id = request.get("job_id")
         require(isinstance(job_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", job_id),
                 "INVALID_JOB", "job_id must be 1-100 ASCII letters, digits, underscores or hyphens")
         payload = {key:value for key,value in request.items() if key != "job_id"}
-        fingerprint = hashlib.sha256(encoded(payload).encode()).hexdigest()
+        fingerprint = hashlib.sha256(encoded({"kind":kind,"request":payload}).encode()).hexdigest()
         with self.lock:
             require(not self.stopping, "SERVICE_STOPPING", "Service is stopping", 503)
             now = time.monotonic()

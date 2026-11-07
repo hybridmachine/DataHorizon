@@ -40,3 +40,39 @@ Python tests (15 optional-binding skips) and 89 existing Qt checks. The added
 Qt cancellation check passes offscreen and on Cocoa at scale 2. Review verified
 no write phase, cancellation/publication ordering, bounded admission and storage,
 replay and worker shutdown; expiry now applies to status reads as well as starts.
+
+## XLSX inputs and formulas
+
+The UTF-8 transitional SpreadsheetML tier imports one selected sheet's stored
+cells (at most 10,000), preserving sparse coordinates relative to destination
+A1, literal Text/leading zeros, finite numbers, Booleans and implemented local
+formulas. Offsetting translates relative references; absolute markers remain.
+Absent source cells leave destination cells unchanged. The service prepares the
+entire applicable input payload before review; any invalid/unsupported cell
+blocks all of it. Apply uses the ordinary shared engine with hooks and history.
+A separate values option imports cached results with an explicit freshness
+warning. Missing/error caches block it. Shared/array formulas, external and
+cross-sheet references, names and functions outside SUM/IF are unavailable in
+formula mode. ISO date cells stay Text; serial dates remain numbers with omitted
+display formatting in this initial tier. Native date support is not implied.
+
+Export produces one selected-sheet rectangle at its original coordinates from
+one immutable engine read. Formula mode preserves implemented local source and
+requests recalculation without cached values. References outside the rectangle
+or to other sheets block it; users may expand the selection or choose fresh
+calculated values. Calculation errors block values export. Native NULL becomes
+empty; other sheets/code/queries/relationships/history/view preferences are
+omitted. The native workbook remains the authoritative copy. Import/export
+reports state these transformations before Apply/save; cancellation writes no
+file or cells. Qt writes export files through QSaveFile after native-path/alias
+and reviewed-state checks.
+
+The stdlib ZIP/XML implementation never extracts files, resolves external
+resources or activates code. Packages are limited to 3 MiB compressed, 16 MiB
+expanded, 128 unique parts, 100,000 XML nodes/64 levels per part and four MiB per
+response. Encrypted packages, DTDs/entities and non-UTF-8 XML reject explicitly.
+These are interchange limits, not a large-workbook or full Excel compatibility
+claim. Format mapping follows [Microsoft's cell schema](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.spreadsheet.cell)
+and [formula documentation](https://learn.microsoft.com/en-us/office/open-xml/spreadsheet/working-with-formulas).
+Independent, build-only openpyxl checks read exported inputs/formulas and write
+fixtures accepted by the importer. No third-party service dependency is added.

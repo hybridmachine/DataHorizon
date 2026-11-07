@@ -1042,6 +1042,30 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void xlsxImportReviewAndExportUseTheManagedGrid() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("xlsx.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QFile fixture(QStringLiteral(DATAHORIZON_FIXTURES "/inputs.xlsx")); QVERIFY(fixture.open(QIODevice::ReadOnly));
+        const auto data=fixture.readAll();
+        answerNextDialog(QMessageBox::Cancel); window.importSpreadsheetBytes(data);
+        auto *status=window.findChild<QLabel *>("status"); Q_UNUSED(status);
+        QTRY_VERIFY_WITH_TIMEOUT(!window.findChild<QProgressDialog *>("xlsxPreparationProgress"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!QApplication::activeModalWidget(),5000);
+        QCOMPARE(window.model()->data(window.model()->index(0,0)).toString(),QString());
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        answerNextDialog(QMessageBox::Yes); window.importSpreadsheetBytes(data);
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14"),5000);
+        auto *grid=window.findChild<QTableView *>(); QVERIFY(grid);
+        grid->selectionModel()->select(QItemSelection(window.model()->index(0,0),window.model()->index(0,2)),QItemSelectionModel::ClearAndSelect);
+        const auto output=temp.filePath("copy.xlsx");
+        answerNextDialog(QMessageBox::Yes); window.exportSpreadsheetTo(output);
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(output),5000);
+        QFile exported(output); QVERIFY(exported.open(QIODevice::ReadOnly)); QVERIFY(exported.readAll().startsWith("PK"));
+    }
     void cancellingCsvPreparationCannotOpenReviewOrWriteCells() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);

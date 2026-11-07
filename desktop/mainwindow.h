@@ -27,6 +27,8 @@ public:
     void submit(QJsonObject operation);
     void importCsvText(const QString &text, QJsonObject target = {});
     void importCsvBytes(const QByteArray &bytes, const QString &encoding = "utf-8-sig", const QString &delimiter = ",", QJsonObject target = {});
+    void importSpreadsheetBytes(const QByteArray &bytes, const QString &format = "xlsx", const QString &mode = "formulas", int sheetIndex = 1, QJsonObject target = {});
+    void exportSpreadsheetTo(const QString &path, const QString &format = "xlsx", const QString &mode = "formulas", QJsonObject target = {});
     void exportCsvTo(const QString &path, QJsonObject target = {});
     void showList(QJsonObject scope);
     static bool isRecoveryPath(QString path);
@@ -54,7 +56,9 @@ private:
     void format(const QJsonObject &style, QJsonObject target = {});
     void importCsv();
     void previewCsv(QJsonObject request, QJsonObject target);
-    void prepareCsv(QJsonObject request, RestClient::Callback callback);
+    void prepareImport(QJsonObject request, RestClient::Callback callback, const QString &format = "csv");
+    void importSpreadsheet(const QString &format);
+    void exportSpreadsheet(const QString &format);
     bool csvTypesDialog(QJsonObject &request, const QJsonObject &preview);
     QJsonObject csvImportTarget() const;
     void exportCsv();

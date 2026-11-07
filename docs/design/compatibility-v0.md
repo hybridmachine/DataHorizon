@@ -57,14 +57,14 @@ background results that can overwrite a newer input state.
 
 ## Import and export
 
-| Feature | Native v1 | CSV import | CSV export | XLSX / ODS |
+| Feature | Native v1 | CSV import / export | XLSX | ODS |
 | --- | --- | --- | --- | --- |
-| Typed values | Preserved | Text by default; explicit Number/Boolean and date-to-Text conversion | Canonical displayed values without number format | Unavailable |
-| Leading-zero text | Preserved | Preserved | Preserved as characters; receiving application may infer types | Unavailable |
-| Formula source | Preserved | Formula-like text remains literal | Evaluated values only | Unavailable |
-| Supported styles | Preserved | Existing destination styles retained | Omitted, reported before export | Unavailable |
-| Sheets | Preserved | At selected cell on one sheet | Explicit selected rectangle | Unavailable |
-| Code / queries / relationships | Planned metadata, not implemented | No code activation | Omitted | Unavailable |
+| Typed values | Preserved | Explicit reviewed types / canonical values | Text, finite numbers, Booleans; serial dates remain numbers | Unavailable |
+| Leading-zero text | Preserved | Preserved as text; CSV receivers may infer types | Preserved as Text | Unavailable |
+| Formula source | Preserved | Literal Text / evaluated values | Implemented local formulas or explicit cached/fresh values | Unavailable |
+| Supported styles | Preserved | Destination styles retained / omitted | Omitted and reported | Unavailable |
+| Sheets | Preserved | At selected cell / selected rectangle | One sheet at destination / one rectangle at source coordinates | Unavailable |
+| Code / queries / relationships | Planned metadata | No code activation / omitted | Omitted and reported; no code activation | Unavailable |
 
 CSV import supports explicitly selected UTF-8 (optional BOM), UTF-16 (required
 BOM), Windows-1252 and Latin-1, with strict decoding. The GUI offers comma,
@@ -156,3 +156,13 @@ Freeze top row supports one editable source row with shared cached values,
 synchronized columns and local persistence. It is suspended in projected lists
 or while row 1 is hidden. Multiple edges and cross-pane range selection remain
 unavailable.
+
+### XLSX input tier
+
+Bounded XLSX sheet import and selection export are now available through the
+REST interface, SDK and desktop. Text/numbers/Booleans and implemented local
+formulas have separate support from formatting and advanced features. Every
+review includes a conversion report; unsupported cells block import, while
+unsupported non-cell features are reported as omitted. See the exact
+[interchange contract](interchange-next-five.md#xlsx-inputs-and-formulas).
+ODS and XLSX style mapping remain outside this first slice.

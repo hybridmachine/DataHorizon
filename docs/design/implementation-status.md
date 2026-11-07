@@ -100,7 +100,7 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 ## Next dependencies
 
 The [next interchange/recovery increments](interchange-next-five.md) begin with
-cancellable, bounded CSV preparation jobs. Progress and result discard precede
+cancellable, bounded CSV preparation jobs and XLSX input/formula interchange. Progress and result discard precede
 an explicit atomic managed Apply; no chunked commits or larger limits are claimed.
 
 
