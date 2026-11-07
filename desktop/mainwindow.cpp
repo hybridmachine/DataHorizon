@@ -208,6 +208,8 @@ void MainWindow::buildUi() {
     file->addSeparator();
     add(file, tr("Import CSV…"), {}, [this] { importCsv(); });
     add(file, tr("Export selection as CSV…"), {}, [this] { exportCsv(); });
+    add(file, tr("Import XLSX…"), {}, [this] { importSpreadsheet("xlsx"); });
+    add(file, tr("Export selection as XLSX…"), {}, [this] { exportSpreadsheet("xlsx"); });
     add(file, tr("Recovery workbooks…"), {}, [this] {
         if (m_busy) return;
         auto path = QFileDialog::getOpenFileName(this, tr("Open recovery workbook"), QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)+"/recovery", tr("DataHorizon (*.dhwb)"));
@@ -1346,11 +1348,12 @@ void MainWindow::importCsvBytes(const QByteArray &bytes, const QString &encoding
     previewCsv({{"csv_base64",QString::fromLatin1(bytes.toBase64())},{"encoding",encoding},{"delimiter",delimiter}},target);
 }
 
-void MainWindow::prepareCsv(QJsonObject request, RestClient::Callback callback) {
+void MainWindow::prepareImport(QJsonObject request, RestClient::Callback callback, const QString &format) {
+    const auto label=format.toUpper();
     const auto id=QUuid::createUuid().toString(QUuid::WithoutBraces);
     const auto resource="/v1/jobs/"+id;
-    auto *progress=new QProgressDialog(tr("Preparing CSV…"),tr("Cancel"),0,0,this);
-    progress->setObjectName("csvPreparationProgress"); progress->setWindowModality(Qt::WindowModal);
+    auto *progress=new QProgressDialog(tr("Preparing %1…").arg(label),tr("Cancel"),0,0,this);
+    progress->setObjectName(format+"PreparationProgress"); progress->setWindowModality(Qt::WindowModal);
     progress->setMinimumDuration(0); progress->setAutoClose(false); progress->setAutoReset(false);
     auto cancelled=std::make_shared<bool>(false);
     connect(progress,&QProgressDialog::canceled,this,[this,resource,cancelled]{
@@ -1358,7 +1361,7 @@ void MainWindow::prepareCsv(QJsonObject request, RestClient::Callback callback) 
         m_client->request(resource+"/cancel",{},[](QJsonObject,QString){});
     });
     auto *timer=new QTimer(progress); timer->setInterval(100);
-    auto finish=[this,progress,timer,resource,cancelled,callback](QJsonObject job,QString error) {
+    auto finish=[this,progress,timer,resource,cancelled,callback,label](QJsonObject job,QString error) {
         if(error.isEmpty() && job["status"]=="running") {
             progress->setLabelText(tr("%1 • %2 processed").arg(job["phase"].toString()).arg(job["completed"].toInt()));
             timer->start(); return;
@@ -1366,7 +1369,7 @@ void MainWindow::prepareCsv(QJsonObject request, RestClient::Callback callback) 
         timer->stop(); progress->hide(); progress->deleteLater();
         if(error.isEmpty()) {
             m_client->request(resource+"/release",{},[](QJsonObject,QString){});
-            if(*cancelled || job["status"]=="cancelled") error=tr("CSV preparation cancelled. No workbook changes were made.");
+            if(*cancelled || job["status"]=="cancelled") error=tr("%1 preparation cancelled. No workbook changes were made.").arg(label);
             else if(job["status"]!="completed") error=job["error"].toObject()["message"].toString(tr("CSV preparation failed."));
         }
         callback(error.isEmpty()?job["result"].toObject():QJsonObject{},error);
@@ -1375,7 +1378,7 @@ void MainWindow::prepareCsv(QJsonObject request, RestClient::Callback callback) 
         timer->stop(); m_client->request(resource,{},finish,false);
     });
     request["job_id"]=id;
-    m_client->request("/v1/import/csv/jobs",request,finish);
+    m_client->request("/v1/import/"+format+"/jobs",request,finish);
 }
 
 void MainWindow::previewCsv(QJsonObject request, QJsonObject target) {
@@ -1390,7 +1393,7 @@ void MainWindow::previewCsv(QJsonObject request, QJsonObject target) {
     const int row=target["row"].toInt(), col=target["col"].toInt();
     const auto targetName=target["name"].toString();
     setBusy(true,"Previewing CSV for "+targetName);
-    prepareCsv(request, [this,row,col,targetName,validTarget,target,request](QJsonObject preview, QString error) mutable {
+    prepareImport(request, [this,row,col,targetName,validTarget,target,request](QJsonObject preview, QString error) mutable {
         if (!error.isEmpty() || !validTarget()) { setBusy(false); issue(error.isEmpty()?"CSV import target changed; import cancelled.":error); return; }
         QStringList lines,shortLines;
         const auto rows = preview["rows"].toArray();
@@ -1671,4 +1674,85 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
         }
     }
     return QMainWindow::eventFilter(object, event);
+}
+
+void MainWindow::importSpreadsheet(const QString &format) {
+    if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected()) return;
+    auto target=csvImportTarget(); if(target.isEmpty()) return;
+    captureGridDraft(false); if(!resolveDraft() || !matchesTarget(target)) return;
+    const auto path=QFileDialog::getOpenFileName(this,tr("Import %1 at selected cell").arg(format.toUpper()),{},format.toUpper()+" (*."+format+")");
+    if(path.isEmpty() || !matchesTarget(target)) return;
+    QFile file(path); if(!file.open(QIODevice::ReadOnly) || file.size()>3*1024*1024) { issue("Spreadsheet must be readable and at most 3 MiB."); return; }
+    const auto bytes=file.read(3*1024*1024+1);
+    if(file.error()!=QFileDevice::NoError || bytes.size()>3*1024*1024) { issue("Spreadsheet read failed or exceeds 3 MiB."); return; }
+    QDialog dialog(this); dialog.setWindowTitle(tr("Spreadsheet import options"));
+    QFormLayout layout(&dialog); QSpinBox sheet(&dialog); sheet.setRange(1,64);
+    QComboBox mode(&dialog); mode.addItem(tr("Preserve supported formulas"),"formulas"); mode.addItem(tr("Cached values (freshness unverified)"),"values");
+    layout.addRow(tr("Sheet number"),&sheet); layout.addRow(tr("Inputs"),&mode);
+    QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog); layout.addRow(&buttons);
+    connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept); connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    if(dialog.exec()!=QDialog::Accepted || !matchesTarget(target)) return;
+    importSpreadsheetBytes(bytes,format,mode.currentData().toString(),sheet.value(),target);
+}
+
+void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &format, const QString &mode, int sheetIndex, QJsonObject target) {
+    if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected()) return;
+    if(target.isEmpty()) target=csvImportTarget();
+    if(target.isEmpty()) return;
+    captureGridDraft(false); if(!resolveDraft() || !matchesTarget(target)) return;
+    setBusy(true,tr("Preparing %1 import…").arg(format.toUpper()));
+    prepareImport({{"file_base64",QString::fromLatin1(bytes.toBase64())},{"mode",mode},{"sheet_index",sheetIndex},
+                   {"row",target["row"]},{"col",target["col"]}},
+        [this,target,format](QJsonObject preview,QString error) {
+        if(!error.isEmpty() || !matchesTarget(target) || m_model->projected()) { setBusy(false); issue(error.isEmpty()?"Import target changed; import cancelled.":error); return; }
+        QStringList report; for(const auto &line:preview["report"].toArray()) report.append(line.toString());
+        for(const auto &entry:preview["issues"].toArray()) { const auto item=entry.toObject(); report.append(item["cell"].toString()+": "+item["message"].toString()); }
+        const bool allowed=preview["can_import"].toBool();
+        QMessageBox review(QMessageBox::Question,tr("Review spreadsheet import"),
+            tr("Import %1 stored cells from %2 at %3?").arg(preview["stored_cells"].toInt()).arg(preview["sheet"].toString().left(80)).arg(target["name"].toString()),
+            QMessageBox::Yes|QMessageBox::Cancel,this);
+        review.setOption(QMessageBox::Option::DontUseNativeDialog); review.setTextFormat(Qt::PlainText); review.setDefaultButton(QMessageBox::Cancel);
+        review.setInformativeText(allowed?tr("Review the conversion report in Details before applying. Unsupported features listed there are omitted; the source file is retained."):tr("Import blocked. Details lists unsupported or invalid cells. No cells will be applied."));
+        review.setDetailedText(report.join('\n')); review.button(QMessageBox::Yes)->setEnabled(allowed);
+        const auto choice=review.exec(); setBusy(false);
+        if(choice!=QMessageBox::Yes || !allowed || !matchesTarget(target) || m_model->projected()) return;
+        submit({{"action","edit"},{"label","Import "+format.toUpper()},{"cells",preview["cells"]},
+                {"workbook",target["workbook"]},{"sheet",target["sheet"]},{"expected_state",target["expected_state"]}});
+    },format);
+}
+
+void MainWindow::exportSpreadsheet(const QString &format) {
+    if(m_busy) return;
+    auto range=selectedRange(); if(range.isEmpty()) return;
+    const auto target=targetContext(range);
+    bool ok=false;
+    const auto choice=QInputDialog::getItem(this,tr("Spreadsheet export"),tr("Export selected cells as"),
+        {tr("Inputs and supported formulas"),tr("Calculated values")},0,false,&ok);
+    if(!ok || !matchesTarget(target)) return;
+    const auto path=QFileDialog::getSaveFileName(this,tr("Export %1 selection").arg(format.toUpper()),{},format.toUpper()+" (*."+format+")");
+    if(!path.isEmpty()) exportSpreadsheetTo(path,format,choice==tr("Calculated values")?"values":"formulas",target);
+}
+
+void MainWindow::exportSpreadsheetTo(const QString &path, const QString &format, const QString &mode, QJsonObject target) {
+    if(m_busy || path.isEmpty()) return;
+    if(target.isEmpty()) { const auto range=selectedRange(); if(range.isEmpty()) return; target=targetContext(range); }
+    if(!matchesTarget(target) || intersectsHidden(target["r1"].toInt(1),target["c1"].toInt(1),target["r2"].toInt(1),target["c2"].toInt(1))) { issue("Review a visible export selection first."); return; }
+    const auto native=m_info["path"].toString(); if(sameFile(path,native)) { issue("Export destination is the native workbook. Choose a different file."); return; }
+    auto request=target; request.remove("workbook"); request.remove("expected_state"); request["mode"]=mode;
+    setBusy(true,"Preparing spreadsheet snapshot…");
+    m_client->request(base()+"/export/"+format,request,[this,path,native,target](QJsonObject result,QString error) {
+        if(!error.isEmpty() || !matchesTarget(target) || result["state"]!=target["expected_state"]) { setBusy(false); issue(error.isEmpty()?"Export inputs changed; review again.":error); return; }
+        QStringList report; for(const auto &line:result["report"].toArray()) report.append(line.toString());
+        QMessageBox review(QMessageBox::Question,tr("Review spreadsheet export"),tr("Save this selection snapshot?"),QMessageBox::Yes|QMessageBox::Cancel,this);
+        review.setOption(QMessageBox::Option::DontUseNativeDialog); review.setTextFormat(Qt::PlainText); review.setDefaultButton(QMessageBox::Cancel);
+        review.setInformativeText(report.join('\n'));
+        const auto choice=review.exec(); setBusy(false);
+        if(choice!=QMessageBox::Yes || !matchesTarget(target)) return;
+        if(sameFile(path,native)) { issue("Export destination resolves to the native workbook. Choose another file."); return; }
+        const auto data=QByteArray::fromBase64(result["file_base64"].toString().toLatin1(),QByteArray::AbortOnBase64DecodingErrors);
+        if(data.isEmpty()) { issue("Invalid spreadsheet snapshot response."); return; }
+        QSaveFile file(path);
+        if(!file.open(QIODevice::WriteOnly) || file.write(data)!=data.size() || !file.commit()) issue("Spreadsheet destination failed: "+file.errorString());
+        else m_status->setText("Spreadsheet exported • Native workbook retained");
+    });
 }
