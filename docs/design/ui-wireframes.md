@@ -153,3 +153,9 @@ Qt feasibility references (official documentation):
 - [QDialogButtonBox](https://doc.qt.io/qt-6/qdialogbuttonbox.html)
 - [QStyle](https://doc.qt.io/qt-6/qstyle.html)
 - [QKeySequence](https://doc.qt.io/qt-6/qkeysequence.html)
+
+The implemented Edit menu distinguishes Clear contents from Clear all (contents
+and formats); Format → Clear formatting retains exact inputs/types. Each uses
+one managed range edit with ordinary Undo/Redo, required-handler rejection and
+the existing 10,000-cell/visibility/state guards. No confirmation is added to these
+ordinary reversible edits. See [the clear contract](spreadsheet-next-ten.md#clear-command-contract).

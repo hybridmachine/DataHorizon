@@ -127,3 +127,16 @@ Independent openpyxl/odfpy producers/consumers are exercised by
 
 Percentage mapping references: Microsoft [built-in number formats](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.spreadsheet.numberingformat?view=openxml-3.0.1)
 and the [ODF 1.3 schema](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.pdf).
+
+## Clear command contract
+
+Edit → Clear contents removes inputs and retains styles. Format → Clear formatting
+replaces each selected style with an empty style, preserving exact source/kind,
+including numeric inputs shown as Text, formulas, explicit empty Text and NULL.
+Edit → Clear all removes both inputs and styles. Clearing a styled empty cell can
+remove its sparse native record. All three use one reviewed `edit` operation and
+ordinary named Undo/Redo; required input-change handlers can reject the entire
+clear. Format-only changes do not invent input-change events. Existing selection,
+hidden/projection, stale-state and size guards apply; read-only clears are refused.
+
+5. [Percentage formatting #39](https://github.com/hybridmachine/DataHorizon/pull/39): locally verified, self-reviewed and merged.

@@ -1043,6 +1043,50 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void clearCommandsDistinguishInputsFormatsAndAllWithUndo() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("clear.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{
+            QJsonObject{{"row",1},{"col",1},{"source","=1/8"},{"style",QJsonObject{{"format","percent2"},{"bold",true}}}},
+            QJsonObject{{"row",1},{"col",2},{"source","00123"},{"kind","text"},{"style",QJsonObject{{"background","#12ab34"}}}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *grid=window.findChild<QTableView *>("grid"); auto *model=window.model();
+        auto select=[&]{grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(0,1)),QItemSelectionModel::ClearAndSelect);};
+        select(); window.findChild<QAction *>("clearFormatsAction")->trigger(); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("0.125"),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,1)).toString(),QString("00123"),5000);
+        QVERIFY(model->cell(model->index(0,0))["style"].toObject().isEmpty());
+        window.submit({{"action","undo"}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("12.50%"),5000);
+        select(); window.findChild<QAction *>("clearAllAction")->trigger(); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString(),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,1)).toString(),QString(),5000);
+        QVERIFY(model->cell(model->index(0,0))["style"].toObject().isEmpty());
+        window.submit({{"action","undo"}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("12.50%"),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,1)).toString(),QString("00123"),5000);
+        select(); window.findChild<QAction *>("clearContentsAction")->trigger(); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),7,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString(),5000);
+        QCOMPARE(model->cell(model->index(0,0))["style"].toObject()["format"].toString(),QString("percent2"));
+    }
+    void rejectedClearAllRetainsInputsAndHandlerGeneratedCells() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false; options.handler=QString(DATAHORIZON_FIXTURES)+"/validation_hook.py";
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("reject-clear.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"},{"style",QJsonObject{{"bold",true}}}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model(); auto *grid=window.findChild<QTableView *>("grid");
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,1)).toString(),QString("14"),5000);
+        grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(0,1)),QItemSelectionModel::ClearAndSelect);
+        QSignalSpy changed(&window,&MainWindow::operationFinished); window.findChild<QAction *>("clearAllAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000); QVERIFY(!changed[0][0].toBool());
+        QCOMPARE(model->data(model->index(0,0)).toString(),QString("7")); QCOMPARE(model->data(model->index(0,1)).toString(),QString("14"));
+    }
     void percentageActionPreservesFormulaAndSupportsUndo() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
