@@ -1,0 +1,39 @@
+Local macOS, November 7, 2026. Hosted Actions have no credits.
+C++ build passed.
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   57.11 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   24.94 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  82.06 sec
+
+Formula extension contracts:
+test_arity_invalid_text_overflow_and_cross_sheet_ranges (test_formula_extensions.AggregateTests.test_arity_invalid_text_overflow_and_cross_sheet_ranges) ... ok
+test_errors_counting_cycles_and_limits_are_distinct (test_formula_extensions.AggregateTests.test_errors_counting_cycles_and_limits_are_distinct) ... ok
+test_managed_reopen_and_both_interchange_formats (test_formula_extensions.AggregateTests.test_managed_reopen_and_both_interchange_formats) ... ok
+test_numeric_reference_and_direct_scalar_coercions (test_formula_extensions.AggregateTests.test_numeric_reference_and_direct_scalar_coercions) ... ok
+test_sdk_hook_validation_uses_new_functions_transactionally (test_formula_extensions.AggregateTests.test_sdk_hook_validation_uses_new_functions_transactionally) ... ok
+test_boolean_numeric_text_reference_and_blank_contracts (test_formula_extensions.LogicalTests.test_boolean_numeric_text_reference_and_blank_contracts) ... ok
+test_both_interchange_formats_preserve_boolean_function_sources (test_formula_extensions.LogicalTests.test_both_interchange_formats_preserve_boolean_function_sources) ... ok
+test_eager_errors_arity_and_resource_guards (test_formula_extensions.LogicalTests.test_eager_errors_arity_and_resource_guards) ... ok
+test_logical_conditions_participate_in_required_transactional_validation (test_formula_extensions.LogicalTests.test_logical_conditions_participate_in_required_transactional_validation) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.552s
+
+OK
+
+Native Cocoa scale 2:
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::logicalFunctionsRenderThroughTheManagedGrid()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 762ms
+********* Finished testing of DesktopTests *********
+
+Self-review checked eager AND/OR errors, unchanged lazy IF, Text/reference/blank rules, scalar NOT, arity and budget failures, managed handler rejection and both interchange formats.
+Other-platform/manual qualification remains open.

@@ -4,7 +4,7 @@ import math
 import re
 import time
 
-SUPPORTED_FUNCTIONS = {"SUM", "IF", "AVERAGE", "MIN", "MAX", "COUNT", "COUNTA"}
+SUPPORTED_FUNCTIONS = {"SUM", "IF", "AVERAGE", "MIN", "MAX", "COUNT", "COUNTA", "AND", "OR", "NOT"}
 CELL_ERRORS = {"#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#NUM!", "#N/A", "#NULL!"}
 NUMBER_TEXT = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\Z")
 
@@ -475,6 +475,29 @@ class Calculator:
                     for item in value: yield item,True
                 else: yield value,arg[0]=="ref"
 
+    @staticmethod
+    def logical_value(value):
+        if value is None: return False
+        if type(value) in (bool,int,float): return bool(value)
+        if isinstance(value,str) and value.upper() in ("TRUE","FALSE"): return value.upper()=="TRUE"
+        raise FormulaError("#VALUE!","Expected numeric, Boolean or TRUE/FALSE text")
+
+    def logical(self,name,args,sheet):
+        if name=="NOT":
+            if len(args)!=1: raise FormulaError("#NAME?","NOT requires one scalar argument")
+            return not self.logical_value(self.evaluate(args[0],sheet))
+        if not 1<=len(args)<=255: raise FormulaError("#NAME?",name+" requires 1-255 arguments")
+        result=name=="AND"; count=0
+        for value,referenced in self.argument_values(args,sheet):
+            self.check()
+            if isinstance(value,FormulaError): raise value
+            if value is None or (referenced and isinstance(value,str)): continue
+            logical=self.logical_value(value); count+=1
+            # Evaluate every argument: Python's any/all would hide later errors.
+            result=(result and logical) if name=="AND" else (result or logical)
+        if not count: raise FormulaError("#VALUE!","Logical aggregate has no numeric or Boolean inputs")
+        return result
+
     def aggregate(self,name,args,sheet):
         if not 1<=len(args)<=255: raise FormulaError("#NAME?",name+" requires 1-255 arguments")
         count=0; total=0.0; extreme=None
@@ -532,6 +555,8 @@ class Calculator:
                     raise FormulaError("#VALUE!", "IF condition must be numeric or boolean")
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
+            if name in ("AND","OR","NOT"):
+                return self.logical(name,args,sheet)
             if name in ("AVERAGE","MIN","MAX","COUNT","COUNTA"):
                 return self.aggregate(name,args,sheet)
             if name == "SUM":
