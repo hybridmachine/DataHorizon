@@ -69,6 +69,7 @@ private:
     QJsonObject csvImportTarget() const;
     void listDialog();
     void applyList();
+    void updateListSummary();
     void findDialog(bool replace);
     void queueSummary();
     void requestSummary();
@@ -117,7 +118,7 @@ private:
     QTableView *m_grid = nullptr;
     QLineEdit *m_address = nullptr, *m_source = nullptr;
     QTabBar *m_tabs = nullptr;
-    QLabel *m_status = nullptr, *m_summary = nullptr;
+    QLabel *m_status = nullptr, *m_summary = nullptr, *m_listSummary = nullptr;
     QTimer *m_summaryTimer = nullptr;
     QJsonObject m_summaryKey;
     quint64 m_summaryGeneration = 0, m_summaryFlight = 0;
