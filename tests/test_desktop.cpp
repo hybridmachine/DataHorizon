@@ -1042,6 +1042,20 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void interruptedAtomicExportRetainsOldOrCommittedDestination() {
+        QTemporaryDir temp; const auto path=temp.filePath("export.xlsx");
+        QFile original(path); QVERIFY(original.open(QIODevice::WriteOnly)); original.write("retained"); original.close();
+        auto helper=QCoreApplication::applicationDirPath()+"/savefile_crash";
+#ifdef Q_OS_WIN
+        helper+=".exe";
+#endif
+        for(const auto &phase:{QString("before"),QString("after")}) {
+            QProcess process; process.start(helper,{path,phase}); QVERIFY(process.waitForStarted()); QVERIFY(process.waitForFinished(10000));
+            QCOMPARE(process.exitCode(),73);
+            QFile result(path); QVERIFY(result.open(QIODevice::ReadOnly));
+            QCOMPARE(result.readAll(),phase=="before"?QByteArray("retained"):QByteArray("replacement"));
+        }
+    }
     void nativeInspectionPreservesTheOpenWorkbookAndEditorDraft() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);

@@ -420,7 +420,12 @@ class Service(ThreadingHTTPServer):
             return book.operation(unquote(suffix[1]))
         if method == "POST" and suffix == ["snapshot"]:
             require(isinstance(body.get("path"), str), "INVALID_PATH", "Snapshot path is required")
-            return book.snapshot(body["path"])
+            try: return book.snapshot(body["path"])
+            except (EngineError,OSError,sqlite3.Error) as error:
+                if not isinstance(error,EngineError):
+                    error=EngineError("SNAPSHOT_FAILED",f"Native copy failed: {error}. Retain the source and preserve any destination for inspection",409)
+                error.body.update(destination=body["path"],copy_outcome="incomplete",destination_requires_inspection=True)
+                raise error
         if method == "POST" and suffix in (["export", "xlsx"],["export","ods"]):
             require("rows" not in body,"INVALID_ARGUMENT","Spreadsheet export requires a contiguous rectangle")
             whole=preparation_scope(body)=="workbook"

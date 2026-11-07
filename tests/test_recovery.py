@@ -141,3 +141,117 @@ os._exit(74)
             import json
             self.assertTrue(json.loads(result.stdout)["readonly"])
             self.assertEqual(hashlib.sha256(path.read_bytes()).digest(),digest)
+
+    def test_input_inspection_reports_invalid_types_styles_formula_syntax_and_preserves_bytes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"inputs.dhwb"
+            with closing(Workbook(path,create=True)) as book:
+                edit(book,"retained")
+                identity=book.sheet("Sheet1")
+            with closing(sqlite3.connect(path)) as db,db:
+                db.executemany("INSERT INTO cells VALUES(?,?,?,?,?,?)",[
+                    (identity,2,1,"not-a-number","number","{}"),(identity,3,1,"x","text",'{"bold":"yes"}'),
+                    (identity,4,1,"=SUM(","formula","{}"),(identity,5,1,b"bytes","text","{}")])
+            original=path.read_bytes(); report=inspect_native(path)
+            self.assertEqual(path.read_bytes(),original)
+            self.assertTrue(report["inputs"]["complete"]); self.assertFalse(report["inputs"]["inputs_valid"])
+            self.assertEqual(report["inputs"]["checked_cells"],5)
+            self.assertEqual({i["row"] for i in report["inputs"]["issues"]},{2,3,4,5})
+            self.assertEqual(report["inputs"]["issue_count"],4)
+
+    def test_input_inspection_limits_never_claim_unchecked_data_is_valid(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"limit.dhwb"
+            with closing(Workbook(path,create=True)) as book:
+                identity=book.sheet("Sheet1")
+            with closing(sqlite3.connect(path)) as db,db:
+                db.executemany("INSERT INTO cells VALUES(?,?,1,'7','number','{}')",[(identity,r) for r in range(1,10002)])
+            result=inspect_native(path)["inputs"]
+            self.assertFalse(result["complete"]); self.assertFalse(result["inputs_valid"])
+            self.assertEqual(result["stop_reason"],"cell_limit"); self.assertEqual(result["checked_cells"],10000)
+            with closing(sqlite3.connect(path)) as db,db:
+                db.execute("DELETE FROM cells"); db.execute("INSERT INTO cells VALUES(?,1,1,?,'text','{}')",(identity,'x'*(1024*1024+1)))
+            result=inspect_native(path)["inputs"]
+            self.assertFalse(result["complete"]); self.assertEqual(result["issues"][0]["code"],"INPUT_SCAN_FAILED")
+
+    def test_real_sqlite_full_rolls_back_data_and_retains_unknown_operation_for_reconciliation(self):
+        with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/"full.dhwb",create=True)) as book:
+            edit(book,"retained")
+            pages=book.db.execute("PRAGMA page_count").fetchone()[0]
+            book.db.execute(f"PRAGMA max_page_count={pages}")
+            with self.assertRaises(EngineError) as failure: edit(book,"x"*60000,"disk-full")
+            self.assertEqual(failure.exception.body["outcome"],"unknown")
+            self.assertFalse(book.db.in_transaction)
+            self.assertEqual(book.read("Sheet1",{})["cells"][0]["value"],"retained")
+            with self.assertRaises(EngineError) as unknown: book.operation("disk-full")
+            self.assertEqual(unknown.exception.body["outcome"],"unknown")
+            book.db.execute("PRAGMA max_page_count=2147483646")
+            edit(book,"recovered","after-full")
+            self.assertEqual(book.operation("after-full")["outcome"],"committed")
+
+    def test_real_readonly_snapshot_destination_failure_retains_source_and_existing_destination(self):
+        with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/"source.dhwb",create=True)) as book:
+            edit(book,"retained"); target=Path(temp)/"readonly.dhwb"
+            with closing(Workbook(target,create=True)) as existing: edit(existing,"destination")
+            original=target.read_bytes(); connect=sqlite3.connect
+            def readonly(database,*args,**kwargs):
+                return connect(str(database).replace("mode=rw","mode=ro"),*args,**kwargs)
+            # The fixture reserves an already existing read-only destination to reach backup itself.
+            identity=(target.stat().st_dev,target.stat().st_ino)
+            with patch("datahorizon.engine._reserve_destination",return_value=identity),patch("datahorizon.engine.sqlite3.connect",side_effect=readonly):
+                with self.assertRaises(sqlite3.OperationalError): book.snapshot(target)
+            self.assertEqual(target.read_bytes(),original)
+            self.assertEqual(book.read("Sheet1",{})["cells"][0]["value"],"retained")
+
+    def test_snapshot_reservation_permission_and_capacity_failures_create_no_success(self):
+        import errno
+        with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/"source.dhwb",create=True)) as book:
+            edit(book,"retained")
+            for number in (errno.ENOSPC,errno.EACCES):
+                target=Path(temp)/str(number)
+                with patch("datahorizon.engine.os.open",side_effect=OSError(number,os.strerror(number))):
+                    with self.assertRaises(OSError): book.snapshot(target)
+                self.assertFalse(target.exists())
+            self.assertEqual(book.read("Sheet1",{})["cells"][0]["value"],"retained")
+
+    def test_snapshot_api_explains_incomplete_destination_without_overwriting_existing_file(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client,client.open(Path(temp)/"source.dhwb",create=True) as book:
+            target=Path(temp)/"existing.dhwb"; target.write_bytes(b"retain existing destination")
+            with self.assertRaises(APIError) as failure: client.request(book.base+"/snapshot",{"path":str(target)})
+            self.assertEqual(failure.exception.body["copy_outcome"],"incomplete")
+            self.assertTrue(failure.exception.body["destination_requires_inspection"])
+            self.assertEqual(target.read_bytes(),b"retain existing destination")
+            book.set(1,1,"7")
+            self.assertEqual(book.read()["cells"][0]["value"],7)
+
+    def test_input_inspection_byte_and_time_limits_restore_connection_state(self):
+        from contextlib import contextmanager
+        from datahorizon.recovery import inspect_inputs
+        with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/"source.dhwb",create=True)) as book:
+            edit(book,"retained")
+            old=book.db.getlimit(sqlite3.SQLITE_LIMIT_LENGTH)
+            with patch("datahorizon.recovery.INSPECTION_BYTES",1): result=inspect_inputs(book)
+            self.assertFalse(result["complete"]); self.assertEqual(result["stop_reason"],"byte_limit")
+            @contextmanager
+            def expired(*args):
+                raise EngineError("TIMEOUT","injected")
+                yield
+            with patch("datahorizon.recovery.sql_deadline",expired): result=inspect_inputs(book)
+            self.assertFalse(result["complete"]); self.assertEqual(result["stop_reason"],"time_limit")
+            self.assertFalse(book.db.in_transaction); self.assertEqual(book.db.getlimit(sqlite3.SQLITE_LIMIT_LENGTH),old)
+            edit(book,"still writable","after-inspect")
+
+    def test_external_commit_between_input_scan_and_metadata_requires_new_inspection(self):
+        import datahorizon.recovery as recovery
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"source.dhwb"
+            with closing(Workbook(path,create=True)) as book: edit(book,"old")
+            scan=recovery.inspect_inputs
+            def change_after_scan(book):
+                result=scan(book)
+                with closing(sqlite3.connect(path)) as db,db: db.execute("UPDATE cells SET source='external'")
+                return result
+            with patch("datahorizon.recovery.inspect_inputs",side_effect=change_after_scan),self.assertRaises(EngineError) as failure:
+                inspect_native(path)
+            self.assertEqual(failure.exception.body["code"],"STALE_STATE")
+            self.assertTrue(inspect_native(path)["inputs"]["inputs_valid"])
