@@ -26,6 +26,7 @@
 #include <QProgressDialog>
 #include <QAbstractItemDelegate>
 #include <QClipboard>
+#include <QMenu>
 #include <QComboBox>
 #include <QCheckBox>
 #include <QSpinBox>
@@ -1078,6 +1079,18 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void filteredExportWritesOnlyReviewedVisibleSnapshotAndRetainsDestinationOnCancelError() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);
+        const auto native=temp.filePath("list-export.dhwb");window.openBook(native,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);window.submit({{"action","edit"},{"cells",QJsonArray{
+            QJsonObject{{"row",1},{"col",1},{"source","ID"}},QJsonObject{{"row",1},{"col",2},{"source","Value"}},QJsonObject{{"row",2},{"col",1},{"source","00123"},{"kind","text"}},QJsonObject{{"row",2},{"col",2},{"source","=1/4"},{"style",QJsonObject{{"format","percent2"}}}},QJsonObject{{"row",3},{"col",1},{"source","Z"}},QJsonObject{{"row",3},{"col",2},{"source","TRUE"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",2},{"header",true},{"sort",QJsonArray{QJsonObject{{"col",1},{"descending",true}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QSignalSpy edits(&window,&MainWindow::operationFinished);
+        bool accept=true;int reviews=0;QTimer timer;connect(&timer,&QTimer::timeout,&window,[&]{if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))if(box->objectName()=="listExportReview"){QVERIFY(box->informativeText().contains("formula inputs converted"));++reviews;box->button(accept?QMessageBox::Yes:QMessageBox::Cancel)->click();}});timer.start(10);
+        for(const auto &format:{QString("csv"),QString("xlsx"),QString("ods")}){const auto path=temp.filePath("result."+format);window.exportListTo(path,format);QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(path),5000);QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));const auto bytes=file.readAll();if(format=="csv")QCOMPARE(bytes,QByteArray("ID,Value\r\nZ,TRUE\r\n00123,0.25\r\n"));else QVERIFY(bytes.startsWith("PK"));}
+        QCOMPARE(reviews,3);QVERIFY(edits.isEmpty());const auto keep=temp.filePath("keep.csv");{QFile file(keep);QVERIFY(file.open(QIODevice::WriteOnly));file.write("keep");}
+        accept=false;window.exportListTo(keep);QTRY_COMPARE_WITH_TIMEOUT(reviews,4,5000);QTest::qWait(20);{QFile file(keep);QVERIFY(file.open(QIODevice::ReadOnly));QCOMPARE(file.readAll(),QByteArray("keep"));}
+        window.exportListTo(native);QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("destination is the native workbook"));
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",2},{"source","=1/0"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);window.exportListTo(keep);QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("List values blocked"),5000);QCOMPARE(reviews,4);QFile file(keep);QVERIFY(file.open(QIODevice::ReadOnly));QCOMPARE(file.readAll(),QByteArray("keep"));
+    }
     void filteredCopyUsesDisplayedValuesAndStylesAndPreservesClipboardOnEmpty() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
         QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("list-copy.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
@@ -1878,7 +1891,8 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
         auto *import=window.findChild<QAction *>("importAction"); QVERIFY(import);
         int imports=0,exports=0;
-        for(auto *action:window.findChildren<QAction *>()) {
+        auto *fileMenu=qobject_cast<QMenu *>(import->parent());QVERIFY(fileMenu);
+        for(auto *action:fileMenu->actions()) {
             imports+=action->text().startsWith("Import"); exports+=action->text().startsWith("Export");
         }
         QCOMPARE(imports,1); QCOMPARE(exports,1);
