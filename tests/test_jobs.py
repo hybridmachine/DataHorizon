@@ -54,12 +54,16 @@ class PreparationTests(unittest.TestCase):
             result=self.terminal(jobs,"timeout")
             self.assertEqual(result["error"]["code"],"TIMEOUT")
             with self.assertRaises(EngineError) as failure: jobs.start({"job_id":"next","csv":"7"},preview_csv)
+            jobs.retention=300
             self.assertEqual(failure.exception.body["code"],"JOB_LIMIT")
             jobs.retention=0; jobs.seconds=2
             jobs.start({"job_id":"next","csv":"7"},preview_csv)
+            jobs.retention=300
             self.assertEqual(self.terminal(jobs,"next")["result"]["rows"],[["7"]])
             self.assertNotIn("result",jobs.access("next","cancel"))
-            jobs.access("next","release")
+            jobs.entries["next"]["finished"]=time.monotonic()-301
+            with self.assertRaises(EngineError) as expired: jobs.access("next")
+            self.assertEqual(expired.exception.body["code"],"JOB_NOT_FOUND")
             jobs.start({"job_id":"bad","csv":'"unterminated'},preview_csv)
             self.assertEqual(self.terminal(jobs,"bad")["error"]["code"],"INVALID_CSV")
         finally: jobs.close()

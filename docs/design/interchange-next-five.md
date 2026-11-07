@@ -4,7 +4,7 @@ November 6, 2026. Continue after PR #23 in dependency order. Implement, locally
 verify, publish/review/fix and merge each PR before starting the next. Hosted CI
 remains unavailable under the user's local verification authorization.
 
-1. Cancellable CSV preparation jobs, progress and explicit atomic Apply.
+1. [Cancellable CSV preparation, PR #24](https://github.com/hybridmachine/DataHorizon/pull/24), progress and explicit atomic Apply.
 2. Bounded XLSX input/formula import and snapshot export with conversion reports.
 3. XLSX formatting fidelity for the native style tier, with explicit loss reports.
 4. Bounded ODS input/formula/style import and snapshot export.
@@ -34,3 +34,9 @@ Preparation never runs hooks or mutates data. Confirmed Apply submits one ordina
 managed edit with hooks, durable receipts, rollback and Undo/Redo. Once Apply is
 submitted its existing outcome lookup contract applies; cancelling preparation
 cannot undo that commit.
+
+[Job verification](evidence/jobs-verification.txt): complete CTest passes 231
+Python tests (15 optional-binding skips) and 89 existing Qt checks. The added
+Qt cancellation check passes offscreen and on Cocoa at scale 2. Review verified
+no write phase, cancellation/publication ordering, bounded admission and storage,
+replay and worker shutdown; expiry now applies to status reads as well as starts.

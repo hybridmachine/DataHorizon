@@ -1,0 +1,43 @@
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   46.05 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   24.00 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  70.06 sec
+
+Complete Python suite: 231 tests, 15 optional binding skips. Existing Qt suite: 89 checks.
+Added cancellation regression (offscreen):
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+QWARN  : DesktopTests::cancellingCsvPreparationCannotOpenReviewOrWriteCells() qt.qpa.fonts: Populating font family aliases took 69 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost. 
+QWARN  : DesktopTests::cancellingCsvPreparationCannotOpenReviewOrWriteCells() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::cancellingCsvPreparationCannotOpenReviewOrWriteCells() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::cancellingCsvPreparationCannotOpenReviewOrWriteCells() This plugin does not support propagateSizeHints()
+PASS   : DesktopTests::cancellingCsvPreparationCannotOpenReviewOrWriteCells()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 569ms
+********* Finished testing of DesktopTests *********
+
+Reviewed job regressions:
+test_failed_timeout_capacity_expiry_and_discard_completed_result (test_jobs.PreparationTests.test_failed_timeout_capacity_expiry_and_discard_completed_result) ... ok
+test_progress_idempotence_conflict_admission_cancel_and_release (test_jobs.PreparationTests.test_progress_idempotence_conflict_admission_cancel_and_release) ... ok
+test_rest_sdk_result_applies_once_through_ordinary_managed_edit (test_jobs.PreparationTests.test_rest_sdk_result_applies_once_through_ordinary_managed_edit) ... ok
+test_shutdown_cancels_and_joins_active_worker (test_jobs.PreparationTests.test_shutdown_cancels_and_joins_active_worker) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.154s
+
+OK
+
+Cocoa scale 2 cancellation:
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::cancellingCsvPreparationCannotOpenReviewOrWriteCells()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 881ms
+********* Finished testing of DesktopTests *********
