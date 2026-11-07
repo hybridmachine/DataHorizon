@@ -1,0 +1,31 @@
+Local macOS, November 7, 2026. Hosted Actions credits exhausted.
+C++ build passed.
+
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   59.06 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   25.64 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  84.70 sec
+
+test_clear_all_required_handler_rejection_leaves_both_inputs_and_styles (test_clear_commands.ClearTests.test_clear_all_required_handler_rejection_leaves_both_inputs_and_styles) ... ok
+test_clear_formats_preserves_numeric_text_empty_text_null_and_formulas (test_clear_commands.ClearTests.test_clear_formats_preserves_numeric_text_empty_text_null_and_formulas) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.405s
+
+OK
+
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::clearCommandsDistinguishInputsFormatsAndAllWithUndo()
+PASS   : DesktopTests::rejectedClearAllRetainsInputsAndHandlerGeneratedCells()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 1343ms
+********* Finished testing of DesktopTests *********
+
+Self-review: exact stored source/kind and styles, sparse empty cells, Undo, managed hook rollback and stale-target guards. No new release qualification.

@@ -273,15 +273,8 @@ void MainWindow::buildUi() {
     add(edit, tr("&Paste"), QKeySequence::Paste, [this] { paste(); }, true)->setObjectName("pasteAction");
     add(edit, tr("Paste values only"), QKeySequence(tr("Ctrl+Shift+V")), [this] { paste(true); });
     add(edit, tr("Paste formats only"), {}, [this] { paste(false, true); });
-    add(edit, tr("Clear contents"), QKeySequence(Qt::Key_Delete), [this] {
-        auto range = selectedRange(); if (range.isEmpty()) return;
-        auto command=targetContext(range);
-        QJsonArray cells;
-        for (int r = range["r1"].toInt(); r <= range["r2"].toInt(); ++r)
-            for (int c = range["c1"].toInt(); c <= range["c2"].toInt(); ++c)
-                cells.append(QJsonObject{{"row", r}, {"col", c}, {"source", ""}});
-        command["action"]="edit"; command["label"]="Clear contents"; command["cells"]=cells; submit(command);
-    });
+    add(edit,tr("Clear contents"),QKeySequence(Qt::Key_Delete),[this]{clearCells("contents");})->setObjectName("clearContentsAction");
+    add(edit,tr("Clear all (contents and formats)"),{},[this]{clearCells("all");})->setObjectName("clearAllAction");
     add(edit, tr("Fill from top-left"), QKeySequence(tr("Ctrl+D")), [this] {
         auto command = selectedRange(); if (command.isEmpty()) return;
         command["action"] = "fill"; command["label"] = "Fill range"; submit(command);
@@ -302,6 +295,7 @@ void MainWindow::buildUi() {
     add(formatMenu, tr("Wrap text"), {}, [this] { format({{"wrap", !m_model->cell(m_grid->currentIndex())["style"].toObject()["wrap"].toBool()}}); })->setObjectName("wrapTextAction");
     add(formatMenu, tr("All cell borders"), {}, [this] { format({{"border","box"}}); })->setObjectName("allBordersAction");
     add(formatMenu, tr("Clear cell borders"), {}, [this] { format({{"border","none"}}); })->setObjectName("clearBordersAction");
+    add(formatMenu,tr("Clear formatting"),{},[this]{clearCells("formats");})->setObjectName("clearFormatsAction");
     add(formatMenu, tr("General"), {}, [this] { format({{"format", "general"}}); });
     add(formatMenu, tr("Text"), {}, [this] { format({{"format", "text"}}); });
     add(formatMenu, tr("Two decimal places"), {}, [this] { format({{"format", "fixed2"}}); }, true);
@@ -1205,6 +1199,25 @@ QJsonObject MainWindow::targetContext(QJsonObject arguments) const {
 bool MainWindow::matchesTarget(const QJsonObject &target) const {
     return target["workbook"]==m_info["id"] && target["sheet"].toString()==m_model->sheet()
         && target["expected_state"]==m_info["state"];
+}
+
+void MainWindow::clearCells(const QString &mode) {
+    if(m_busy || m_unknown || m_info.isEmpty()) return;
+    if(m_info["readonly"].toBool()) {issue("Workbook is read-only. Clearing is unavailable.");return;}
+    if(!QStringList{"contents","formats","all"}.contains(mode)) {issue("Unknown clear action.");return;}
+    const auto range=selectedRange(); if(range.isEmpty()) return;
+    auto command=targetContext(range); QJsonArray cells;
+    for(int row=range["r1"].toInt();row<=range["r2"].toInt();++row)
+        for(int col=range["c1"].toInt();col<=range["c2"].toInt();++col) {
+            QJsonObject item{{"row",row},{"col",col}};
+            if(mode=="all") item["clear"]=true;
+            else if(mode=="formats") {item["style"]=QJsonObject{};item["replace_style"]=true;}
+            else item["clear_input"]=true;
+            cells.append(item);
+        }
+    command["action"]="edit";command["cells"]=cells;
+    command["label"]=mode=="all"?tr("Clear all"):mode=="formats"?tr("Clear formatting"):tr("Clear contents");
+    submit(command);
 }
 
 void MainWindow::format(const QJsonObject &style, QJsonObject target) {

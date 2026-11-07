@@ -54,6 +54,7 @@ private:
     void save(bool copy);
     void copy(bool cut = false);
     void paste(bool valuesOnly = false, bool formatsOnly = false);
+    void clearCells(const QString &mode);
     void format(const QJsonObject &style, QJsonObject target = {});
     void importFile();
     void exportFile();
