@@ -215,6 +215,33 @@ Moving/renaming the native file or using another computer does not carry these
 preferences. Relational saved queries and native portable view metadata remain
 later milestone work.
 
+## Paged Find
+
+Find Next/Previous now wrap over every match in the original bounded source or
+display rectangle, retaining one page of at most 500 locations. Crossing a page
+boundary re-runs the bounded search with offset/limit and requires the initial
+input state. State/count/page/order/scope validation prevents mixing results;
+source Text previews stay capped at 256 characters. The status shows the global
+position and total, rather than asking users to narrow a 500-result truncation.
+
+REST Find accepts offset 0–10,000 and limit 1–500. Later pages require
+expected_state; any supplied state must match the read snapshot. SDK `find`
+supplies its reviewed state. Each page uses a fresh read transaction, a shared
+two-second budget, the existing 10,000-cell scope and 8-MiB matched-data limit.
+No server result cache, retained transaction, hooks, history or revision writes
+are introduced. Source and formatted-display searches remain case-sensitive
+literal substrings. Replace All still evaluates its full scope atomically.
+
+One page request is outstanding at a time; Find navigation is disabled during
+that read. New searches, busy operations, model/workbook/sheet resets and service
+reconfiguration invalidate pending pages. A moved selection, newly edited source
+draft or open cell editor cancels a delayed jump. Save/Discard/Cancel and hidden
+match guards remain. Stale/invalid pages clear navigation and ask for refresh and
+search again. Cached current-page coordinates remain usable until a managed state
+change or explicit external refresh invalidates them; direct SQLite edits are
+not polled continuously. Paging is bounded re-evaluation, not an unlimited search
+or a persistent cursor over externally changing records.
+
 ## Completed PRs
 
 1. [Formula-aware Cut #45](https://github.com/hybridmachine/DataHorizon/pull/45): locally verified, self-reviewed and merged.
@@ -234,3 +261,7 @@ later milestone work.
 8. [Export filtered values #52](https://github.com/hybridmachine/DataHorizon/pull/52): locally verified, self-reviewed and merged.
 
 9. [Saved named list views #53](https://github.com/hybridmachine/DataHorizon/pull/53): locally verified, self-reviewed and merged.
+
+10. [Paged Find #54](https://github.com/hybridmachine/DataHorizon/pull/54): locally verified, self-reviewed and merged.
+
+Final [batch verification](evidence/editing-batch-verification.txt) and [candidate report](evidence/editing-batch-qualification.json) record the local build/tests/native/install/archive evidence. Platform/manual/runtime/distribution gates remain open.

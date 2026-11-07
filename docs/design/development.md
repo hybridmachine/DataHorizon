@@ -101,8 +101,8 @@ display previews, showing an ellipsis until loaded, and loads complete long
 inputs separately before enabling editing. Select a rectangle for paste, fill, styles, CSV, search
 or a declared list. Copy retains formulas in the application's clipboard format;
 external applications receive displayed TSV. Cut retains its source until an
-atomic managed Paste commits; it is restricted to the same sheet in workbooks
-without formulas. An expired Cut is rejected. Cut supports full paste; use Copy
+atomic managed Paste commits; same-sheet references follow the bounded
+[formula-aware move contract](editing-lists-next-ten.md#formula-aware-cut). An expired Cut is rejected. Cut supports full paste; use Copy
 for values-only or formats-only paste. Paste values retains destination styles
 and rejects error/pending calculation results. Copying an absent cell preserves
 blank semantics. CSV review remains bound to the workbook, sheet, address and

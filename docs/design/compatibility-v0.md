@@ -133,13 +133,13 @@ up to eight keys and eight AND filters are accepted by REST and the GUI
 [criteria editor](editing-lists-next-ten.md#expanded-criteria-editor). Type order is blank, number, text, boolean; text comparison is
 case-sensitive. A list header is explicit. Filter edits can remove a record from
 the view; Clear restores the source sheet. Range operations on projections are
-blocked. Persistent lists and a stable record-ID schema are later work.
+blocked. Portable native list definitions and a stable record-ID schema are later work.
 Saving an edited cell keeps its source row and column selected through resorting
 while that row remains visible. If a filter removes it, select the first
 remaining row. Invalid non-object filter/sort criteria return a validation error.
 
 Find supports case-sensitive literal substring search over source or display,
-returning a count and first 500 locations in row-major order. Replace All runs
+returning a full-scope count and state-checked pages of up to 500 locations in row-major order. Later pages require the initial state. Replace All runs
 in one managed transaction. Display replacement supports Text only and preserves
 its type and apostrophe escape. Unchanged replacements do not rewrite inputs.
 Use source replacement for numbers, booleans and formulas; their displays may

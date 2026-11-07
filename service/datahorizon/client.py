@@ -147,6 +147,10 @@ class WorkbookClient:
         self._ensure_open()
         return self.client.request(self.base + "/range", {"sheet": sheet, "r1": r1, "c1": c1, "r2": r2, "c2": c2})
 
+    def find(self,needle,sheet="Sheet1",**scope):
+        self._ensure_open()
+        return self.client.request(self.base+"/find",{"sheet":sheet,"needle":needle,"expected_state":self.state,**scope})
+
     def export_list(self,format="csv",sheet="Sheet1",**criteria):
         self._ensure_open()
         if format not in ("csv","xlsx","ods"):raise ValueError("Unsupported list export format")

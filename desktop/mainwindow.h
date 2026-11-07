@@ -82,6 +82,8 @@ private:
     void requestSummary();
     void clearFindResults();
     void navigateFind(int direction);
+    void showFindMatch(int index);
+    bool validFindPage(const QJsonObject &result,const QJsonObject &scope,int offset) const;
     void changeSheet(int index);
     void changeStructure(bool columns, bool remove);
     void reportReferenceWarnings(const QJsonObject &receipt);
@@ -141,7 +143,9 @@ private:
     bool m_navigationPending = false, m_navigationExtending = false, m_applyingNavigation = false;
     QPersistentModelIndex m_navigationAnchor;
     QJsonArray m_findMatches;
-    int m_findIndex = -1, m_findTotal = 0;
+    int m_findIndex = -1, m_findTotal = 0, m_findPageOffset = 0;
+    quint64 m_findGeneration = 0;
+    bool m_findLoading = false;
     QAction *m_findNext = nullptr, *m_findPrevious = nullptr;
     QJsonObject m_draftTarget;
     QJsonObject m_recoveredDraft;
