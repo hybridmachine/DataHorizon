@@ -156,3 +156,37 @@ class IfErrorTests(unittest.TestCase):
         def unavailable(*args): raise EngineError("STORAGE_ERROR","injected read failure")
         calc=Calculator(unavailable,lambda name:name)
         with self.assertRaises(EngineError): calc.evaluate(Parser('IFERROR(A1,0)').parse(),'Sheet1')
+
+
+class NumericTests(unittest.TestCase):
+    def test_decimal_ties_directions_negative_digits_and_zero(self):
+        for source,expected in [('ABS(-7)',7),('ABS(TRUE)',1),('ABS(A1)',0),('ROUND(2.5,0)',3),('ROUND(-2.5,0)',-3),('ROUND(1.005,2)',1.01),('ROUND(125,-1)',130),('ROUND(-125,-1)',-130),('ROUNDUP(-1.21,1)',-1.3),('ROUNDDOWN(-1.29,1)',-1.2),('ROUND(-0.01,0)',0),('ROUND(1e308,15)',1e308),('ROUND(1e-308,15)',0)]:
+            self.assertEqual(evaluate(source),expected,source)
+
+    def test_arity_text_array_and_digit_bounds_are_explicit(self):
+        for source,code in [('ABS()','#NAME?'),('ABS(1,2)','#NAME?'),('ROUND(1)','#NAME?'),('ROUND(1,2,3)','#NAME?'),('ROUND(1,16)','#NUM!'),('ROUND(1,-16)','#NUM!'),('ROUND(1,1.5)','#VALUE!'),('ROUND("2",0)','#VALUE!'),('ABS(A1:A2)','#VALUE!'),('ROUND(1,1/0)','#DIV/0!')]:
+            with self.assertRaises(FormulaError) as failure: evaluate(source)
+            self.assertEqual(failure.exception.code,code,source)
+        with self.assertRaises(FormulaError) as failure: evaluate('IFERROR(ROUND(SUM(A1:A1048576),0),0)')
+        self.assertEqual(failure.exception.code,'#LIMIT!')
+
+    def test_file_roundtrips_and_required_hook_rejection(self):
+        from datahorizon.client import APIError,LocalService
+        with tempfile.TemporaryDirectory() as temp,LocalService(handler=Path(__file__).parent/'fixtures'/'validation_hook.py') as client,client.open(Path(temp)/'numeric.dhwb',create=True) as book:
+            book.set(1,1,'=ROUND(2.5,0)')
+            self.assertEqual([c['value'] for c in book.read(r2=1,c2=2)['cells']],[3,6])
+            with self.assertRaises(APIError): book.set(1,1,'=ROUND(-2.5,0)')
+            self.assertEqual([c['value'] for c in book.read(r2=1,c2=2)['cells']],[3,6])
+        functions=[('=ABS(-7)',7),('=ROUND(-2.5,0)',-3),('=ROUNDUP(-1.21,1)',-1.3),('=ROUNDDOWN(-1.29,1)',-1.2)]
+        snapshot={'state':'s','range':[1,1,1,4],'cells':[{'row':1,'col':i,'source':source,'kind':'formula','value':value,'calculation':'current','style':{}} for i,(source,value) in enumerate(functions,1)]}
+        for export,preview in ((xlsx_export,xlsx_preview),(ods_export,ods_preview)):
+            reviewed=preview(export(snapshot,{}));self.assertTrue(reviewed['can_import'],reviewed)
+            self.assertEqual([evaluate(c['source']) for c in reviewed['cells']],[v for _,v in functions])
+
+    def test_rounding_is_independent_of_ambient_decimal_traps(self):
+        from decimal import localcontext,Rounded
+        with localcontext() as outer:
+            outer.prec=2; outer.traps[Rounded]=True
+            self.assertEqual(evaluate('ROUND(1.005,2)'),1.01)
+            self.assertEqual(evaluate('ROUNDUP(1.234,2)'),1.24)
+            self.assertTrue(outer.traps[Rounded])

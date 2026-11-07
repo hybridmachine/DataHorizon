@@ -83,3 +83,21 @@ unused fallback is not evaluated, including a range or error expression.
 
 The function participates in the shared registry and XLSX/ODS scalar formula tier.
 See Microsoft's [IFERROR contract](https://support.microsoft.com/en-us/excel/functions/iferror-function).
+
+## Numeric function contract
+
+ABS takes one scalar; ROUND/ROUNDUP/ROUNDDOWN take a number and an integer digit
+count in [-15,15]. Numbers, Booleans and blank/NULL use existing arithmetic
+coercion; Text and arrays are #VALUE!. Invalid arity is #NAME?, fractional digits
+are #VALUE!, and out-of-range digits/nonfinite results are #NUM!. Rounding uses
+the shortest decimal spelling of the binary64 value, a bounded decimal context,
+and returns binary64. ROUND ties go away from zero; ROUNDUP goes away from zero,
+ROUNDDOWN toward zero. Negative digits round tens/hundreds/etc.; zero results
+normalize their sign. Locale parsing, broader digit ranges and complete Excel
+numeric equivalence are not promised. Shared budgets, hooks and file tiers apply.
+
+References: Microsoft [ROUND](https://support.microsoft.com/en-us/excel/functions/round-function),
+[ROUNDUP](https://support.microsoft.com/en-us/excel/functions/roundup-function), and
+[ROUNDDOWN](https://support.microsoft.com/en-us/excel/functions/rounddown-function).
+
+3. [IFERROR #37](https://github.com/hybridmachine/DataHorizon/pull/37): locally verified, self-reviewed and merged.

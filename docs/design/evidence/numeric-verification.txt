@@ -1,0 +1,56 @@
+Local macOS, November 7, 2026. Hosted Actions have no credits.
+C++ build passed.
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   57.40 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   25.28 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  82.69 sec
+
+Complete final Python suite after decimal-context review correction:
+Test project /Users/btabone/source/DataHorizon/build
+    Start 2: service
+1/1 Test #2: service ..........................   Passed   25.39 sec
+
+100% tests passed out of 1
+
+Total Test time (real) =  25.39 sec
+
+Formula-extension contracts:
+test_arity_invalid_text_overflow_and_cross_sheet_ranges (test_formula_extensions.AggregateTests.test_arity_invalid_text_overflow_and_cross_sheet_ranges) ... ok
+test_errors_counting_cycles_and_limits_are_distinct (test_formula_extensions.AggregateTests.test_errors_counting_cycles_and_limits_are_distinct) ... ok
+test_managed_reopen_and_both_interchange_formats (test_formula_extensions.AggregateTests.test_managed_reopen_and_both_interchange_formats) ... ok
+test_numeric_reference_and_direct_scalar_coercions (test_formula_extensions.AggregateTests.test_numeric_reference_and_direct_scalar_coercions) ... ok
+test_sdk_hook_validation_uses_new_functions_transactionally (test_formula_extensions.AggregateTests.test_sdk_hook_validation_uses_new_functions_transactionally) ... ok
+test_arity_arrays_cycles_and_limits_remain_visible (test_formula_extensions.IfErrorTests.test_arity_arrays_cycles_and_limits_remain_visible) ... ok
+test_fallback_uses_same_required_hook_transaction_and_file_tier (test_formula_extensions.IfErrorTests.test_fallback_uses_same_required_hook_transaction_and_file_tier) ... ok
+test_lazy_fallback_ordinary_errors_and_blank_conversion (test_formula_extensions.IfErrorTests.test_lazy_fallback_ordinary_errors_and_blank_conversion) ... ok
+test_storage_failures_are_never_formula_fallbacks (test_formula_extensions.IfErrorTests.test_storage_failures_are_never_formula_fallbacks) ... ok
+test_boolean_numeric_text_reference_and_blank_contracts (test_formula_extensions.LogicalTests.test_boolean_numeric_text_reference_and_blank_contracts) ... ok
+test_both_interchange_formats_preserve_boolean_function_sources (test_formula_extensions.LogicalTests.test_both_interchange_formats_preserve_boolean_function_sources) ... ok
+test_eager_errors_arity_and_resource_guards (test_formula_extensions.LogicalTests.test_eager_errors_arity_and_resource_guards) ... ok
+test_logical_conditions_participate_in_required_transactional_validation (test_formula_extensions.LogicalTests.test_logical_conditions_participate_in_required_transactional_validation) ... ok
+test_arity_text_array_and_digit_bounds_are_explicit (test_formula_extensions.NumericTests.test_arity_text_array_and_digit_bounds_are_explicit) ... ok
+test_decimal_ties_directions_negative_digits_and_zero (test_formula_extensions.NumericTests.test_decimal_ties_directions_negative_digits_and_zero) ... ok
+test_file_roundtrips_and_required_hook_rejection (test_formula_extensions.NumericTests.test_file_roundtrips_and_required_hook_rejection) ... ok
+test_rounding_is_independent_of_ambient_decimal_traps (test_formula_extensions.NumericTests.test_rounding_is_independent_of_ambient_decimal_traps) ... ok
+
+----------------------------------------------------------------------
+Ran 17 tests in 0.984s
+
+OK
+
+Native Cocoa scale 2:
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::numericFunctionsRenderDecimalRoundingRules()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 399ms
+********* Finished testing of DesktopTests *********
+
+Self-review isolated the bounded decimal context from ambient precision/traps. Positive/negative ties, direction, negative digits, finite extremes, zero normalization, arity/type/bounds, resource propagation, required hooks and file round trips pass.
+Other-platform/manual/full numeric compatibility qualification remains open.
