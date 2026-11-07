@@ -159,5 +159,5 @@ in order: [XLSX #30](https://github.com/hybridmachine/DataHorizon/pull/30),
 [ODS #31](https://github.com/hybridmachine/DataHorizon/pull/31),
 [fidelity #32](https://github.com/hybridmachine/DataHorizon/pull/32), and
 [recovery #33](https://github.com/hybridmachine/DataHorizon/pull/33).
-The final qualification/packaging implementation retains the unexecuted release
-gates listed above. This batch does not close M1–M8 or qualify a public preview.
+[Qualification and packaging #34](https://github.com/hybridmachine/DataHorizon/pull/34)
+adds the final implementation and retains the unexecuted release gates listed above. This batch does not close M1–M8 or qualify a public preview.
