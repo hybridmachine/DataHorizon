@@ -188,6 +188,33 @@ read transaction ends; concurrent edits cannot mix its records. Local fixtures
 and independent openpyxl/odfpy readers verify order, identifier Text, Boolean,
 percentage values/styles and absence of formulas.
 
+## Saved named list views
+
+Data → Save named list view stores the active source rectangle, explicit header,
+ordered sort keys and typed AND filters in local desktop preferences, per native
+workbook path/identity and sheet. Apply named list view remains available after
+reopen, including read-only opens, and reviews the source coordinates and full
+criteria before evaluating current inputs. Cancel retains the current view.
+Delete removes only the named definition; the current projection and data remain.
+Replacing an existing name is explicit. Source inputs, revision/history/hooks and
+native schema are unchanged by saving, applying or deleting definitions.
+
+Names are case-sensitive, 1–64 printable characters. Each sheet retains at most
+16 names/128 KiB of serialized criteria, within the existing bounded preferences
+entry. Scope/column/grid limits, eight keys/eight scalar filters and 64-KiB filter
+Text are validated on save and load. Malformed definitions are reported and
+skipped without clamping. Oversize or duplicate saves retain earlier definitions.
+Definitions contain no old service handle, state epoch or cached row results;
+application uses the current reviewed state and connection. Local dimensions,
+hiding and frozen preferences remain independent.
+
+This is local convenience metadata, not a portable native saved-query format or
+persistent record identity. Definitions use source addresses and do not transform
+when rows/columns are inserted or deleted; review that rectangle when applying.
+Moving/renaming the native file or using another computer does not carry these
+preferences. Relational saved queries and native portable view metadata remain
+later milestone work.
+
 ## Completed PRs
 
 1. [Formula-aware Cut #45](https://github.com/hybridmachine/DataHorizon/pull/45): locally verified, self-reviewed and merged.
@@ -205,3 +232,5 @@ percentage values/styles and absence of formulas.
 7. [Copy filtered values #51](https://github.com/hybridmachine/DataHorizon/pull/51): locally verified, self-reviewed and merged.
 
 8. [Export filtered values #52](https://github.com/hybridmachine/DataHorizon/pull/52): locally verified, self-reviewed and merged.
+
+9. [Saved named list views #53](https://github.com/hybridmachine/DataHorizon/pull/53): locally verified, self-reviewed and merged.

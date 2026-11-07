@@ -20,6 +20,7 @@
 #include <QPainter>
 #include <QInputDialog>
 #include "listcriteriadialog.h"
+#include "namedlistviews.h"
 #include <QSettings>
 #include <QAbstractButton>
 #include <QPushButton>
@@ -1078,6 +1079,36 @@ private slots:
         QCOMPARE(tabs->count(),1);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
+    }
+    void namedListCriteriaValidationRejectsMalformedPreferencesWithoutClamping() {
+        QJsonObject output;const QJsonObject good{{"r1",1},{"r2",4},{"c1",1},{"c2",2},{"header",false},{"sort",QJsonArray{QJsonObject{{"col",1},{"descending",true}}}},{"filters",QJsonArray{QJsonObject{{"col",2},{"op","="},{"value",QJsonValue::Null}},QJsonObject{{"col",1},{"op","="},{"value",""}}}}};
+        QVERIFY(normalizedListView(good,output));QVERIFY(output["filters"].toArray()[0].toObject()["value"].isNull());QVERIFY(output["filters"].toArray()[1].toObject()["value"].isString());
+        for(const auto &change:{QJsonObject{{"r2",1048576}},QJsonObject{{"c1",1.5}},QJsonObject{{"sort",QJsonValue::Null}},QJsonObject{{"header",1}},QJsonObject{{"workbook","old-handle"}},QJsonObject{{"filters",QJsonArray{QJsonObject{{"col",3},{"op","="},{"value",1}}}}},QJsonObject{{"filters",QJsonArray{QJsonObject{{"col",1},{"op","contains"},{"value",false}}}}}}){auto invalid=good;for(auto it=change.begin();it!=change.end();++it)invalid[it.key()]=it.value();QVERIFY(!normalizedListView(invalid,output));}
+        QVERIFY(validListViewName("High quantity"));QVERIFY(!validListViewName(" High"));QVERIFY(!validListViewName(QString(65,'x')));QVERIFY(!validListViewName("line\nbreak"));
+    }
+    void namedListViewsRejectOversizeWithoutReplacingSavedPreferences() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("bytes.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.showList({{"r1",1},{"r2",1},{"c1",1},{"c2",1}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);window.saveNamedListView("Small");QJsonArray filters;for(int i=0;i<3;++i)filters.append(QJsonObject{{"col",1},{"op","="},{"value",QString(50000,'x')}});
+        window.showList({{"r1",1},{"r2",1},{"c1",1},{"c2",1},{"filters",filters}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);window.saveNamedListView("Too large");QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("128 KiB"));QSettings settings(options.viewStatePath,QSettings::IniFormat);const auto saved=QJsonDocument::fromJson(settings.value(settings.allKeys().first()).toByteArray()).object()["named_views"].toObject();QCOMPARE(saved.size(),1);QVERIFY(saved.contains("Small"));
+    }
+    void namedListViewsPersistReopenReviewAndReevaluateCurrentInputsReadOnly() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");const auto path=temp.filePath("named.dhwb");QString key;
+        {
+            MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+            window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","ID"}},QJsonObject{{"row",1},{"col",2},{"source","Qty"}},QJsonObject{{"row",2},{"col",1},{"source","00123"},{"kind","text"}},QJsonObject{{"row",2},{"col",2},{"source","2"}},QJsonObject{{"row",3},{"col",1},{"source","Z"}},QJsonObject{{"row",3},{"col",2},{"source","3"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+            window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",2},{"header",true},{"sort",QJsonArray{QJsonObject{{"col",2},{"descending",true}}}},{"filters",QJsonArray{QJsonObject{{"col",2},{"op",">"},{"value",1}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QSignalSpy changes(&window,&MainWindow::operationFinished);
+            window.saveNamedListView("High qty");for(int i=0;i<15;++i)window.saveNamedListView("View "+QString::number(i));window.saveNamedListView("Overflow");QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("16 names"));window.saveNamedListView("High qty");QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("already exists"));window.removeNamedListView("View 0");window.saveNamedListView("Replacement");QVERIFY(changes.isEmpty());
+            QSettings settings(options.viewStatePath,QSettings::IniFormat);key=settings.allKeys().first();const auto saved=QJsonDocument::fromJson(settings.value(key).toByteArray()).object()["named_views"].toObject();QCOMPARE(saved.size(),16);QVERIFY(!saved.contains("Overflow"));QVERIFY(saved.contains("Replacement"));const auto criteria=saved["High qty"].toObject();QVERIFY(!criteria.contains("expected_state"));QVERIFY(!criteria.contains("workbook"));QCOMPARE(criteria["r2"].toInt(),3);
+            window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",2},{"source","0"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);window.findChild<QAction *>("clearListAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);window.findChild<QAction *>("freezeFirstColumnAction")->trigger();
+        }
+        {
+            MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,false,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);QSignalSpy changes(&window,&MainWindow::operationFinished);
+            QTimer::singleShot(0,&window,[&]{auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());QVERIFY(dialog);QCOMPARE(dialog->objectName(),QString("listCriteriaDialog"));QVERIFY(dialog->windowTitle().contains("review source coordinates"));dialog->reject();});window.applyNamedListView("High qty");QVERIFY(!window.model()->projected());
+            QTimer::singleShot(0,&window,[&]{auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());QVERIFY(dialog);QVERIFY(dialog->findChild<QCheckBox *>("listHeader")->isChecked());QCOMPARE(dialog->findChild<QTableWidget *>("filterCriteria")->rowCount(),1);dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();});window.applyNamedListView("High qty");QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);QVERIFY(window.model()->projected());QCOMPARE(window.model()->rowCount(),2);QCOMPARE(window.model()->sourceRow(1),2);QVERIFY(changes.isEmpty());
+            window.removeNamedListView("High qty");QVERIFY(window.model()->projected());QSettings settings(options.viewStatePath,QSettings::IniFormat);QVERIFY(!QJsonDocument::fromJson(settings.value(key).toByteArray()).object()["named_views"].toObject().contains("High qty"));
+        }
+        {QSettings settings(options.viewStatePath,QSettings::IniFormat);auto state=QJsonDocument::fromJson(settings.value(key).toByteArray()).object();auto views=state["named_views"].toObject();views["Broken"]=QJsonObject{{"r1",1},{"r2",1000000},{"c1",1},{"c2",10}};state["named_views"]=views;settings.setValue(key,QJsonDocument(state).toJson(QJsonDocument::Compact));settings.sync();}
+        {MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,false,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Invalid saved list view"));window.applyNamedListView("Broken");QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("unavailable or invalid"));}
     }
     void filteredExportWritesOnlyReviewedVisibleSnapshotAndRetainsDestinationOnCancelError() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);
