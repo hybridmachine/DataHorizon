@@ -33,6 +33,10 @@ public:
             if(first<=last)emit headerDataChanged(orientation,first,last);
         });
     }
+    void setLimits(int rows,int columns){
+        if(rows==m_rows && columns==m_columns)return;
+        beginResetModel();m_rows=rows;m_columns=columns;endResetModel();
+    }
     int rowCount(const QModelIndex &parent={}) const override {return parent.isValid() || !m_source?0:(m_rows<0?m_source->rowCount():qMin(m_rows,m_source->rowCount()));}
     int columnCount(const QModelIndex &parent={}) const override {return parent.isValid() || !m_source?0:(m_columns<0?m_source->columnCount():qMin(m_columns,m_source->columnCount()));}
     QVariant data(const QModelIndex &cell,int role=Qt::DisplayRole) const override {return m_source && cell.isValid()?m_source->data(m_source->index(cell.row(),cell.column()),role):QVariant{};}
@@ -96,8 +100,22 @@ public:
     QList<QTableView *> views()const{return {m_top,m_left,m_corner};}
     bool active()const{return m_active;}
     bool columnActive()const{return m_columnActive;}
-    void setFrozen(bool active,int height=26){m_active=active;setRowHeight(height);apply();}
-    void setFirstColumnFrozen(bool active){m_columnActive=active;apply();}
+    int frozenRows()const{return m_active?m_rows:0;}
+    int frozenColumns()const{return m_columnActive?m_columns:0;}
+    void setFrozen(bool active,int height=26){setFrozenCounts(active?1:0,frozenColumns());setRowHeight(height);}
+    void setFirstColumnFrozen(bool active){setFrozenCounts(frozenRows(),active?1:0);}
+    void setFrozenCounts(int rows,int columns){
+        rows=qBound(0,rows,16);columns=qBound(0,columns,8);
+        if(rows==frozenRows() && columns==frozenColumns()){apply();return;}
+        QList<int> heights,widths;
+        for(int row=0;row<qMax(1,rows);++row)heights.append(sectionSize(false,row));
+        for(int col=0;col<qMax(1,columns);++col)widths.append(sectionSize(true,col));
+        m_selection.setEnabled(false);m_active=rows>0;m_columnActive=columns>0;m_rows=qMax(1,rows);m_columns=qMax(1,columns);
+        m_topModel.setLimits(m_rows,-1);m_leftModel.setLimits(-1,m_columns);m_cornerModel.setLimits(m_rows,m_columns);
+        for(int row=0;row<heights.size();++row)resize(false,row,heights[row]);
+        for(int col=0;col<widths.size();++col)resize(true,col,widths[col]);
+        apply();
+    }
     void setRowHeight(int height){resize(false,0,qBound(18,height,1000));}
     void setHiddenRows(const QSet<int> &rows){for(int row:m_hiddenRows)m_left->setRowHidden(row,false);m_hiddenRows=rows;apply();}
     void setHiddenColumns(const QSet<int> &columns){for(int col:m_hiddenColumns)m_top->setColumnHidden(col,false);m_hiddenColumns=columns;apply();}
@@ -137,8 +155,13 @@ private:
     void apply(){
         m_body->horizontalHeader()->setVisible(!m_active);m_body->verticalHeader()->setVisible(!m_columnActive);
         m_top->verticalHeader()->setVisible(!m_columnActive);m_left->horizontalHeader()->setVisible(!m_active);
-        m_body->setRowHidden(0,m_active || m_hiddenRows.contains(0));m_left->setRowHidden(0,m_active || m_hiddenRows.contains(0));
-        m_body->setColumnHidden(0,m_columnActive || m_hiddenColumns.contains(0));m_top->setColumnHidden(0,m_columnActive || m_hiddenColumns.contains(0));
+        for(int row=0;row<qMax(m_maskRows,frozenRows());++row){
+            const bool hidden=row<frozenRows() || m_hiddenRows.contains(row);m_body->setRowHidden(row,hidden);m_left->setRowHidden(row,hidden);
+        }
+        for(int col=0;col<qMax(m_maskColumns,frozenColumns());++col){
+            const bool hidden=col<frozenColumns() || m_hiddenColumns.contains(col);m_body->setColumnHidden(col,hidden);m_top->setColumnHidden(col,hidden);
+        }
+        m_maskRows=frozenRows();m_maskColumns=frozenColumns();
         for(int row:m_hiddenRows)m_left->setRowHidden(row,true);
         for(int col:m_hiddenColumns)m_top->setColumnHidden(col,true);
         setVisible(m_active);m_leftWidget->setVisible(m_columnActive);m_corner->setVisible(m_active && m_columnActive);
@@ -148,9 +171,12 @@ private:
         if(m_syncing || !m_top || !m_left || !m_corner)return;QScopedValueRollback<bool> syncing(m_syncing,true);
         const int rowHeader=m_columnActive?m_left->verticalHeader()->width():m_body->verticalHeader()->width();
         if(!m_columnActive)m_top->verticalHeader()->setFixedWidth(rowHeader);
-        const int height=m_top->horizontalHeader()->height()+m_top->rowHeight(0)+2*m_top->frameWidth();
+        int rowHeight=0,columnWidth=0;
+        for(int row=0;row<m_rows;++row)rowHeight+=m_top->rowHeight(row);
+        for(int col=0;col<m_columns;++col)columnWidth+=m_left->columnWidth(col);
+        const int height=m_top->horizontalHeader()->height()+rowHeight+2*m_top->frameWidth();
         m_top->setFixedWidth(m_body->viewport()->width()+(m_columnActive?0:rowHeader)+2*m_body->frameWidth());setFixedHeight(height);
-        const int width=rowHeader+m_left->columnWidth(0)+2*m_left->frameWidth();m_leftWidget->setFixedWidth(width);
+        const int width=rowHeader+columnWidth+2*m_left->frameWidth();m_leftWidget->setFixedWidth(width);
         m_left->setFixedHeight(m_body->viewport()->height()+(m_active?0:m_body->horizontalHeader()->height())+2*m_body->frameWidth());
         m_corner->verticalHeader()->setFixedWidth(rowHeader);m_corner->setFixedSize(width,height);
         m_top->horizontalScrollBar()->setValue(m_body->horizontalScrollBar()->value());m_left->verticalScrollBar()->setValue(m_body->verticalScrollBar()->value());
@@ -159,5 +185,6 @@ private:
     FrozenPrefixModel m_topModel,m_leftModel,m_cornerModel;
     PaneSelection m_selection;
     QSet<int> m_hiddenRows,m_hiddenColumns;
+    int m_rows=1,m_columns=1,m_maskRows=0,m_maskColumns=0;
     bool m_active=false,m_columnActive=false,m_syncing=false,m_sizing=false;
 };

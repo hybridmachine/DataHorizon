@@ -91,6 +91,7 @@ private:
     void ensureVisibleCurrent();
     bool intersectsHidden(int r1,int c1,int r2,int c2) const;
     void updateFrozenRow();
+    void freezeAtCurrent();
     bool resolveDraft();
     void submitDraft(bool advance = false, int direction = 1);
     QJsonObject enterDestination(const QModelIndex &index, int direction) const;
@@ -148,6 +149,7 @@ private:
     QSet<int> m_hiddenRows, m_hiddenColumns, m_hiddenViewRows, m_hiddenViewColumns;
     QPushButton *m_hiddenButton = nullptr;
     FrozenPanes *m_frozenTop = nullptr;
-    QAction *m_freezeAction = nullptr, *m_freezeColumnAction = nullptr;
-    bool m_freezeTop = false, m_freezeFirstColumn = false;
+    QAction *m_freezeAction = nullptr, *m_freezeColumnAction = nullptr, *m_freezePanesAction = nullptr, *m_unfreezePanesAction = nullptr;
+    int m_frozenRows = 0, m_frozenColumns = 0;
+    bool m_frozenSizeIssue = false;
 };

@@ -161,8 +161,8 @@ CSV import requires unhidden sections. Managed API coordinates are unchanged.
 Freeze top row supports one editable source row with shared cached values,
 synchronized columns and local persistence. It is suspended in projected lists
 or while row 1 is hidden. Cross-pane source-rectangle selection and Freeze first column (with an editable
-intersection) are implemented. Multiple frozen rows/columns remain outside this
-tier. See [pane semantics](editing-lists-next-ten.md#freeze-first-column).
+intersection) are implemented. Multiple frozen rows/columns are bounded to 16/8
+and available from the active cell; see [pane semantics](editing-lists-next-ten.md#freeze-selected-panes).
 
 ### XLSX input tier
 

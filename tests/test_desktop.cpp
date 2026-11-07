@@ -1074,6 +1074,61 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void frozenPrefixModelsResizeAndForwardSourceIndices() {
+        QStandardItemModel source(5,6);FrozenPrefixModel prefix(&source,2,3);
+        QAbstractItemModelTester tester(&prefix,QAbstractItemModelTester::FailureReportingMode::QtTest);
+        QCOMPARE(prefix.rowCount(),2);QCOMPARE(prefix.columnCount(),3);
+        QVERIFY(prefix.setData(prefix.index(1,2),"value",Qt::EditRole));QCOMPARE(source.data(source.index(1,2)).toString(),QString("value"));
+        prefix.setLimits(4,2);QCOMPARE(prefix.rowCount(),4);QCOMPARE(prefix.columnCount(),2);
+        source.removeRows(2,3);QCOMPARE(prefix.rowCount(),2);source.insertColumn(0);QCOMPARE(prefix.columnCount(),2);
+        prefix.setLimits(0,0);QCOMPARE(prefix.rowCount(),0);QCOMPARE(prefix.columnCount(),0);
+    }
+    void freezeSelectedPanesPreservesSizesSelectionsAndReopenWithBounds() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");const auto path=temp.filePath("multi-pane.dhwb");
+        {
+            MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+            QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+            auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();
+            grid->setRowHeight(1,49);grid->setColumnWidth(1,137);grid->setCurrentIndex(model->index(2,2));
+            QSignalSpy changed(&window,&MainWindow::operationFinished);auto *freeze=window.findChild<QAction *>("freezePanesAction");freeze->trigger();
+            auto *top=window.findChild<QTableView *>("frozenTopRow"),*left=window.findChild<QTableView *>("frozenFirstColumn"),*corner=window.findChild<QTableView *>("frozenCorner");
+            QCOMPARE(top->model()->rowCount(),2);QCOMPARE(left->model()->columnCount(),2);QCOMPARE(corner->model()->rowCount(),2);QCOMPARE(corner->model()->columnCount(),2);
+            QVERIFY(grid->isRowHidden(0));QVERIFY(grid->isRowHidden(1));QVERIFY(grid->isColumnHidden(1));QCOMPARE(top->rowHeight(1),49);QCOMPARE(left->columnWidth(1),137);
+            auto *address=window.findChild<QLineEdit *>("address");address->setText("A1:D4");QTest::keyClick(address,Qt::Key_Return);
+            QCOMPARE(grid->selectionModel()->selection().first().height(),4);QCOMPARE(corner->selectionModel()->selection().first().height(),2);
+            address->setText("B2");QTest::keyClick(address,Qt::Key_Return);QCOMPARE(window.focusWidget(),corner);
+            QTest::keyClick(corner,Qt::Key_Down,Qt::ShiftModifier);QCOMPARE(grid->currentIndex(),model->index(2,1));QCOMPARE(window.focusWidget(),left);
+            QTest::keyClick(left,Qt::Key_Right,Qt::ShiftModifier);QCOMPARE(grid->currentIndex(),model->index(2,2));QCOMPARE(window.focusWidget(),grid);
+            grid->setCurrentIndex(model->index(17,9));freeze->trigger();QCOMPARE(top->model()->rowCount(),2);QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("16 rows and 8 columns"));
+            grid->selectRow(1);window.findChild<QAction *>("hideRowsAction")->trigger();QVERIFY(!top->isVisible());QVERIFY(left->isVisible());
+            window.findChild<QPushButton *>("showHiddenButton")->click();QVERIFY(top->isVisible());
+            grid->setCurrentIndex(model->index(2,2));QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(2,2)),5000);
+            auto *source=window.findChild<QLineEdit *>("source");source->setText("draft");source->setModified(true);
+            answerNextDialog(QMessageBox::Cancel);window.findChild<QAction *>("unfreezePanesAction")->trigger();QVERIFY(corner->isVisible());QCOMPARE(source->text(),QString("draft"));
+            QTest::keyClick(source,Qt::Key_Escape);QVERIFY(changed.isEmpty());
+            window.findChild<QAction *>("unfreezePanesAction")->trigger();QVERIFY(!corner->isVisible());
+            grid->setColumnWidth(0,2000);grid->setCurrentIndex(model->index(0,1));freeze->trigger();QVERIFY(!left->isVisible());
+            QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("too little scrolling space"));
+            grid->setColumnWidth(0,110);grid->setCurrentIndex(model->index(2,2));freeze->trigger();QVERIFY(corner->isVisible());QVERIFY(changed.isEmpty());
+            if(qEnvironmentVariableIsSet("DATAHORIZON_PANES_SCREENSHOT"))window.grab().save(qEnvironmentVariable("DATAHORIZON_PANES_SCREENSHOT"));
+        }
+        {
+            MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+            QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,false,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+            auto *grid=window.findChild<QTableView *>("grid"),*corner=window.findChild<QTableView *>("frozenCorner");
+            QVERIFY(corner->isVisible());QCOMPARE(corner->model()->rowCount(),2);QCOMPARE(corner->model()->columnCount(),2);
+            QCOMPARE(corner->rowHeight(1),49);QCOMPARE(corner->columnWidth(1),137);
+            window.findChild<QAction *>("unfreezePanesAction")->trigger();QVERIFY(!corner->isVisible());QVERIFY(!grid->isRowHidden(1));QVERIFY(!grid->isColumnHidden(1));
+            QCOMPARE(grid->rowHeight(1),49);QCOMPARE(grid->columnWidth(1),137);
+        }
+        QSettings settings(options.viewStatePath,QSettings::IniFormat);QVERIFY(!settings.allKeys().isEmpty());
+        const auto key=settings.allKeys().first();auto legacy=QJsonDocument::fromJson(settings.value(key).toByteArray()).object();
+        legacy["frozen_rows"]=1000000000;legacy["frozen_columns"]="bad";legacy["freeze_top_row"]=true;legacy["freeze_first_column"]=true;
+        settings.setValue(key,QJsonDocument(legacy).toJson(QJsonDocument::Compact));settings.sync();
+        MainWindow legacyWindow(options);legacyWindow.show();QSignalSpy ready(&legacyWindow,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&legacyWindow,&MainWindow::workbookReady);legacyWindow.openBook(path,false,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *corner=legacyWindow.findChild<QTableView *>("frozenCorner");QVERIFY(corner->isVisible());QCOMPARE(corner->model()->rowCount(),1);QCOMPARE(corner->model()->columnCount(),1);
+    }
     void frozenFirstColumnWrapUsesBoundedSharedRowMeasurement() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");
         MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
