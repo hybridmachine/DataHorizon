@@ -34,6 +34,7 @@ public:
     void inspectNativeFile(const QString &path);
     void exportSpreadsheetTo(const QString &path, const QString &format = "xlsx", const QString &mode = "formulas", QJsonObject target = {});
     void exportCsvTo(const QString &path, QJsonObject target = {});
+    void exportListTo(const QString &path,const QString &format = "csv");
     void copyListValues(bool selectionOnly = false);
     void showList(QJsonObject scope);
     static bool isRecoveryPath(QString path);

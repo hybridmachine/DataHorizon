@@ -198,3 +198,5 @@ ranges follow the corresponding contracts in the same batch record. They do not
 expand filtered-edit semantics, reference-transform promises or release status.
 
 Filtered list values can be copied in display order with typed native clipboard styles; formulas become values. See [the editing/list contract](editing-lists-next-ten.md#copy-filtered-values) for visibility and snapshot limits.
+
+Filtered CSV/XLSX/ODS export uses one ordered values snapshot compressed to A1, with review of formula conversion and hidden-section exclusions. See [the filtered export contract](editing-lists-next-ten.md#export-filtered-values).

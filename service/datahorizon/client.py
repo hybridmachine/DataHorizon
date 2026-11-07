@@ -147,6 +147,11 @@ class WorkbookClient:
         self._ensure_open()
         return self.client.request(self.base + "/range", {"sheet": sheet, "r1": r1, "c1": c1, "r2": r2, "c2": c2})
 
+    def export_list(self,format="csv",sheet="Sheet1",**criteria):
+        self._ensure_open()
+        if format not in ("csv","xlsx","ods"):raise ValueError("Unsupported list export format")
+        return self.client.request(self.base+"/list/export/"+format,{"sheet":sheet,"expected_state":self.state,**criteria})
+
     def list_values(self,sheet="Sheet1",**criteria):
         self._ensure_open()
         return self.client.request(self.base+"/list/values",{"sheet":sheet,"expected_state":self.state,**criteria})

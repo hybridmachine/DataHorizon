@@ -377,6 +377,7 @@ void MainWindow::buildUi() {
     add(sheetMenu, tr("Insert selected columns…"), {}, [this] { changeStructure(true,false); })->setObjectName("insertColumnsAction");
     add(sheetMenu, tr("Delete selected columns…"), {}, [this] { changeStructure(true,true); })->setObjectName("deleteColumnsAction");
     add(dataMenu, tr("Sort / filter selected list…"), {}, [this] { listDialog(); }, true)->setObjectName("listCriteriaAction");
+    add(dataMenu,tr("Export list result values…"),{},[this]{if(m_model->projected())exportFile();else issue("Apply a list view first.");})->setObjectName("exportListValuesAction");
     add(dataMenu,tr("Copy list result values"),{},[this]{copyListValues();},true)->setObjectName("copyListValuesAction");
     add(dataMenu, tr("Clear list view"), {}, [this] { if (!m_busy) { m_listSpec = {}; refresh(); } }, true)->setObjectName("clearListAction");
 
@@ -2081,6 +2082,11 @@ void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &
 
 void MainWindow::exportFile() {
     if(m_busy || m_unknown || m_info.isEmpty()) return;
+    if(m_model->projected()){
+        const auto target=targetContext();const auto criteria=m_listSpec;const auto hiddenRows=m_hiddenRows,hiddenColumns=m_hiddenColumns;
+        ExportFileDialog dialog(this,{tr("CSV (*.csv)"),tr("Excel workbook (*.xlsx)"),tr("OpenDocument spreadsheet (*.ods)")});dialog.setWindowTitle(tr("Export visible list values (formulas become values)"));
+        if(dialog.exec()==QDialog::Accepted && matchesTarget(target) && m_model->projected() && m_listSpec==criteria && m_hiddenRows==hiddenRows && m_hiddenColumns==hiddenColumns)exportListTo(dialog.selectedFiles().value(0),dialog.format());return;
+    }
     auto range=selectedRange(); if(range.isEmpty()) return;
     auto target=targetContext(range);
     ExportFileDialog dialog(this,{tr("CSV (*.csv)"),tr("Excel workbook (*.xlsx)"),tr("OpenDocument spreadsheet (*.ods)")});
@@ -2100,6 +2106,28 @@ void MainWindow::exportFile() {
     const auto choiceIndex=choices.indexOf(choice);
     if(choiceIndex>=2) target["scope"]="workbook";
     if(ok && matchesTarget(target)) exportSpreadsheetTo(path,format,choiceIndex%2==1?"values":"formulas",target);
+}
+
+void MainWindow::exportListTo(const QString &path,const QString &format) {
+    if(m_busy || m_unknown || path.isEmpty() || !QStringList{"csv","xlsx","ods"}.contains(format))return;
+    const auto target=listValuesRequest(false);if(target.isEmpty())return;
+    const auto criteria=m_listSpec;const auto hiddenRows=m_hiddenRows,hiddenColumns=m_hiddenColumns;const auto service=m_client->url();const auto native=m_info["path"].toString();
+    if(sameFile(path,native)){issue("Export destination is the native workbook. Choose another file.");return;}
+    captureGridDraft(false);if(!resolveDraft())return;
+    if(m_busy || !matchesTarget(target) || !m_model->projected() || m_listSpec!=criteria)return;
+    auto request=target;request.remove("workbook");setBusy(true,"Preparing visible list values…");
+    m_client->request(base()+"/list/export/"+format,request,[this,target,criteria,hiddenRows,hiddenColumns,service,native,path,format](QJsonObject result,QString error){
+        if(service!=m_client->url() || !matchesTarget(target))return;
+        if(!error.isEmpty() || !m_model->projected() || m_listSpec!=criteria || m_hiddenRows!=hiddenRows || m_hiddenColumns!=hiddenColumns || result["state"]!=target["expected_state"]){setBusy(false);issue(error.isEmpty()?"List export inputs changed; review again.":error);return;}
+        QStringList report;for(const auto &line:result["report"].toArray())report.append(line.toString());
+        QMessageBox review(QMessageBox::Question,tr("Review list values export"),tr("Save this visible list snapshot?"),QMessageBox::Yes|QMessageBox::Cancel,this);review.setObjectName("listExportReview");review.setOption(QMessageBox::Option::DontUseNativeDialog);review.setTextFormat(Qt::PlainText);review.setDefaultButton(QMessageBox::Cancel);review.setInformativeText(report.join('\n'));
+        const auto choice=review.exec();setBusy(false);
+        if(choice!=QMessageBox::Yes || service!=m_client->url() || !matchesTarget(target) || !m_model->projected() || m_listSpec!=criteria || m_hiddenRows!=hiddenRows || m_hiddenColumns!=hiddenColumns)return;
+        if(sameFile(path,native)){issue("Export destination resolves to the native workbook. Choose another file.");return;}
+        const auto bytes=format=="csv"?result["csv"].toString().toUtf8():QByteArray::fromBase64(result["file_base64"].toString().toLatin1(),QByteArray::AbortOnBase64DecodingErrors);
+        if(bytes.isEmpty()){issue("Empty or invalid list export response; destination retained.");return;}
+        QSaveFile file(path);if(!file.open(QIODevice::WriteOnly) || file.write(bytes)!=bytes.size() || !file.commit())issue("List export destination failed: "+file.errorString());else m_status->setText("List values exported in display order • Native workbook retained");
+    });
 }
 
 void MainWindow::exportSpreadsheetTo(const QString &path, const QString &format, const QString &mode, QJsonObject target) {

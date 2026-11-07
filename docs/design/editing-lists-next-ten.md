@@ -166,6 +166,28 @@ clipboard unchanged. Clipboard generations, workbook/sheet/state/service and
 criteria/visibility fences discard superseded replies. This is a values-copy
 compatibility tier; source formula inputs remain in the native workbook.
 
+## Export filtered values
+
+File → Export in a list view and Data → Export list result values export the
+whole visible result in display order, compressed to A1. CSV, XLSX and ODS reuse
+the state-checked list-values snapshot. Explicit headers and local hidden-section
+exclusions follow Copy. A review reports dimensions, exclusions and formula
+conversion before an atomic destination write. Cancel, empty/error/stale results
+and invalid packages retain the destination; native workbook paths and aliases
+are rejected before preparation and again before writing.
+
+REST `POST /list/export/{csv,xlsx,ods}` and SDK `export_list` are values only.
+XLSX/ODS preserve supported scalar types/styles and percentages as unscaled
+numbers; formula-looking Text stays literal in these packages. CSV uses canonical
+unrounded scalar text and omits types/styles (blank, NULL and empty Text become
+empty fields). Formula inputs, code and native metadata remain in the source.
+No formulas are compressed or exported with misleading references. The list
+snapshot limits and existing package/response limits apply, including a 4-MiB
+JSON response cap. Package preparation uses only the captured values after the
+read transaction ends; concurrent edits cannot mix its records. Local fixtures
+and independent openpyxl/odfpy readers verify order, identifier Text, Boolean,
+percentage values/styles and absence of formulas.
+
 ## Completed PRs
 
 1. [Formula-aware Cut #45](https://github.com/hybridmachine/DataHorizon/pull/45): locally verified, self-reviewed and merged.
@@ -181,3 +203,5 @@ compatibility tier; source formula inputs remain in the native workbook.
 6. [Expanded criteria editor #50](https://github.com/hybridmachine/DataHorizon/pull/50): locally verified, self-reviewed and merged.
 
 7. [Copy filtered values #51](https://github.com/hybridmachine/DataHorizon/pull/51): locally verified, self-reviewed and merged.
+
+8. [Export filtered values #52](https://github.com/hybridmachine/DataHorizon/pull/52): locally verified, self-reviewed and merged.
