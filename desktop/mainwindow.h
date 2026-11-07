@@ -34,6 +34,7 @@ public:
     void inspectNativeFile(const QString &path);
     void exportSpreadsheetTo(const QString &path, const QString &format = "xlsx", const QString &mode = "formulas", QJsonObject target = {});
     void exportCsvTo(const QString &path, QJsonObject target = {});
+    void copyListValues(bool selectionOnly = false);
     void showList(QJsonObject scope);
     static bool isRecoveryPath(QString path);
     SheetModel *model() const { return m_model; }
@@ -67,6 +68,7 @@ private:
     void importSpreadsheetOptions(const QByteArray &bytes, const QString &format, QJsonObject target);
     bool csvTypesDialog(QJsonObject &request, const QJsonObject &preview);
     QJsonObject csvImportTarget() const;
+    QJsonObject listValuesRequest(bool selectionOnly);
     void listDialog();
     void applyList();
     void updateListSummary();

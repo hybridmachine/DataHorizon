@@ -55,6 +55,7 @@ ROUTES = {
     "/v1/workbooks/{workbook}": ("get", "Workbook state and sheets"),
     "/v1/workbooks/{workbook}/range": ("post", "Bounded consistent viewport read"),
     "/v1/workbooks/{workbook}/clipboard": ("post", "Consistent full-source clipboard read, at most 10,000 cells and 4 MiB"),
+    "/v1/workbooks/{workbook}/list/values": ("post", "State-checked list values in displayed order from one snapshot"),
     "/v1/workbooks/{workbook}/list": ("post", "Explicit full-scope sorted/filtered list projection"),
     "/v1/workbooks/{workbook}/navigate": ("post", "Bounded stored-input data-region boundary navigation"),
     "/v1/workbooks/{workbook}/summary": ("post", "Count and numeric summary of one bounded stored-data snapshot"),
@@ -187,6 +188,10 @@ def openapi():
             "filters":{"type":"array","maxItems":8,"items":{"type":"object","required":["col","op"],"properties":{"col":col,"op":{"type":"string","enum":["=","<>",">","<",">=","<=","contains"]},"value":scalar}}}},
             "example":{"sheet":"Sheet1","r2":10,"c2":4,"header":True,"sort":[{"col":2,"descending":True}]}}
     })
+    schemas["ListValuesRequest"]={"type":"object","required":["expected_state"],"properties":{**schemas["ListRequest"]["properties"],
+        "expected_state":{"type":"string","minLength":1},"view_r1":row,"view_r2":row,"select_c1":col,"select_c2":col,
+        "exclude_rows":{"type":"array","maxItems":1024,"items":row},"exclude_columns":{"type":"array","maxItems":1024,"items":col}},
+        "description":"Values and styles only, including explicit header unless excluded; formulas become typed calculated values. Empty results are valid. Two seconds, 10,000 source cells, 4 MiB response. Errors withhold the entire snapshot."}
     schemas["PreparationRequest"] = {**schemas["CsvPreviewRequest"], "required":["job_id"],
         "properties":{**schemas["CsvPreviewRequest"]["properties"],"job_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,100}$"}},
         "description":"Ephemeral, idempotent input preparation: one active job, four retained jobs, ten seconds each, five-minute retention. No mutation or chunked commit. Reuse the same ID and input after a lost acknowledgement. Apply reviewed inputs as one ordinary managed edit."}
@@ -210,7 +215,7 @@ def openapi():
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
@@ -430,6 +435,8 @@ class Service(ThreadingHTTPServer):
             return book.read(body.get("sheet", "Sheet1"), body)
         if method == "POST" and suffix == ["clipboard"]:
             return book.read(body.get("sheet", "Sheet1"), {**body,"preview":False},limit=MAX_CELLS)
+        if method == "POST" and suffix == ["list","values"]:
+            return book.list_values(body.get("sheet","Sheet1"),body)
         if method == "POST" and suffix == ["list"]:
             return book.list_view(body.get("sheet", "Sheet1"), body)
         if method == "POST" and suffix == ["navigate"]:

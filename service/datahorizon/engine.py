@@ -1151,73 +1151,134 @@ class Workbook:
         # Check in Python before addition: SQLite promotes integer overflow to REAL.
         return position+1
 
+    def _list_rows(self, sheet, args, calc, deadline):
+        r1, c1, r2, c2 = rectangle(args)
+        criteria, keys = args.get("filters", []), args.get("sort", [])
+        require(isinstance(criteria, list) and len(criteria) <= 8 and isinstance(keys, list) and len(keys) <= 8,
+                "INVALID_ARGUMENT", "At most eight filters and sort keys are supported")
+        require(all(isinstance(item,dict) for item in criteria+keys),"INVALID_ARGUMENT","Each filter and sort key must be an object")
+        for criterion in criteria:
+            integer(criterion.get("col"), c1, c2, "filter column")
+            require(criterion.get("op") in ("=", "<>", ">", "<", ">=", "<=", "contains"), "INVALID_ARGUMENT", "Unsupported filter comparison")
+            require(isinstance(criterion.get("value"), (str, float, int, bool, type(None))), "INVALID_ARGUMENT", "Filter value must be scalar")
+        for key in keys:
+            integer(key.get("col"), c1, c2, "sort column")
+            require(type(key.get("descending", False)) is bool, "INVALID_ARGUMENT", "Sort direction must be boolean")
+        require(type(args.get("header", False)) is bool, "INVALID_ARGUMENT", "Header must be explicit boolean")
+        first = r1 + int(args.get("header", False))
+        rows, cache, cache_bytes = [], {}, 0
+
+        def value(row, col):
+            nonlocal cache_bytes
+            if (row, col) not in cache:
+                scalar=calc.cell(sheet,row,col)
+                cache_bytes+=len(encoded(scalar).encode())
+                require(cache_bytes<=4*1024*1024,"READ_LIMIT","List criteria values exceed 4 MiB")
+                cache[row, col] = scalar
+            return cache[row, col]
+
+        def accepts(row, criterion):
+            left, right, op = value(row, criterion["col"]), criterion.get("value"), criterion["op"]
+            if op == "contains":
+                return isinstance(left, str) and isinstance(right, str) and right in left
+            same_type = type(left) == type(right) or (type(left) in (int, float) and type(right) in (int, float))
+            if not same_type:
+                return op == "<>"
+            if op in ("<", ">", "<=", ">=") and left is None:
+                return False
+            return {"=": lambda: left == right, "<>": lambda: left != right,
+                    ">": lambda: left > right, "<": lambda: left < right,
+                    ">=": lambda: left >= right, "<=": lambda: left <= right}[op]()
+
+        for row in range(first, r2+1):
+            require(time.monotonic()<=deadline,"TIMEOUT","List evaluation exceeded its time budget")
+            if all(accepts(row, criterion) for criterion in criteria):
+                rows.append(row)
+
+        def sort_value(value):
+            rank = 0 if value is None else 1 if type(value) in (int, float) else 2 if isinstance(value, str) else 3
+            return rank, "" if value is None else value
+
+        def compare(left, right):
+            require(time.monotonic()<=deadline,"TIMEOUT","List evaluation exceeded its time budget")
+            for key in keys:
+                a, b = sort_value(value(left, key["col"])), sort_value(value(right, key["col"]))
+                comparison = (a > b) - (a < b)
+                if comparison:
+                    return -comparison if key.get("descending") else comparison
+            return left-right
+
+        if keys:
+            rows.sort(key=cmp_to_key(compare))
+        count = len(rows)
+        if args.get("header"):
+            rows.insert(0, r1)
+        return {"rows": rows, "matching": count, "total": max(0, r2-first+1), "state": self.state(),
+                "scope": [r1, c1, r2, c2], "semantics": "presentation_only; edits target original row coordinates"}
+
     def list_view(self, sheet, args):
         """An explicit list is a presentation projection over stable source rows."""
-        r1, c1, r2, c2 = rectangle(args)
         with self.lock:
-            self.refresh()
+            deadline=time.monotonic()+2
+            self.refresh(deadline=deadline)
             self.db.execute("BEGIN")
             try:
-                self.refresh()
-                sheet, calc = self.sheet(sheet), self.calculator(seconds=2)
-                criteria, keys = args.get("filters", []), args.get("sort", [])
-                require(isinstance(criteria, list) and len(criteria) <= 8 and isinstance(keys, list) and len(keys) <= 8,
-                        "INVALID_ARGUMENT", "At most eight filters and sort keys are supported")
-                require(all(isinstance(item,dict) for item in criteria+keys),"INVALID_ARGUMENT","Each filter and sort key must be an object")
-                for criterion in criteria:
-                    integer(criterion.get("col"), c1, c2, "filter column")
-                    require(criterion.get("op") in ("=", "<>", ">", "<", ">=", "<=", "contains"), "INVALID_ARGUMENT", "Unsupported filter comparison")
-                    require(isinstance(criterion.get("value"), (str, float, int, bool, type(None))), "INVALID_ARGUMENT", "Filter value must be scalar")
-                for key in keys:
-                    integer(key.get("col"), c1, c2, "sort column")
-                    require(type(key.get("descending", False)) is bool, "INVALID_ARGUMENT", "Sort direction must be boolean")
-                require(type(args.get("header", False)) is bool, "INVALID_ARGUMENT", "Header must be explicit boolean")
-                first = r1 + int(args.get("header", False))
-                rows, cache = [], {}
-
-                def value(row, col):
-                    if (row, col) not in cache:
-                        cache[row, col] = calc.cell(sheet, row, col)
-                    return cache[row, col]
-
-                def accepts(row, criterion):
-                    left, right, op = value(row, criterion["col"]), criterion.get("value"), criterion["op"]
-                    if op == "contains":
-                        return isinstance(left, str) and isinstance(right, str) and right in left
-                    same_type = type(left) == type(right) or (type(left) in (int, float) and type(right) in (int, float))
-                    if not same_type:
-                        return op == "<>"
-                    if op in ("<", ">", "<=", ">=") and left is None:
-                        return False
-                    return {"=": lambda: left == right, "<>": lambda: left != right,
-                            ">": lambda: left > right, "<": lambda: left < right,
-                            ">=": lambda: left >= right, "<=": lambda: left <= right}[op]()
-
-                for row in range(first, r2+1):
-                    if all(accepts(row, criterion) for criterion in criteria):
-                        rows.append(row)
-
-                def sort_value(value):
-                    rank = 0 if value is None else 1 if type(value) in (int, float) else 2 if isinstance(value, str) else 3
-                    return rank, "" if value is None else value
-
-                def compare(left, right):
-                    for key in keys:
-                        a, b = sort_value(value(left, key["col"])), sort_value(value(right, key["col"]))
-                        comparison = (a > b) - (a < b)
-                        if comparison:
-                            return -comparison if key.get("descending") else comparison
-                    return left-right
-
-                if keys:
-                    rows.sort(key=cmp_to_key(compare))
-                count = len(rows)
-                if args.get("header"):
-                    rows.insert(0, r1)
-                return {"rows": rows, "matching": count, "total": max(0, r2-first+1), "state": self.state(),
-                        "scope": [r1, c1, r2, c2], "semantics": "presentation_only; edits target original row coordinates"}
+                self.refresh(deadline=deadline)
+                with sql_deadline(self.db,deadline):
+                    return self._list_rows(self.sheet(sheet),args,self.calculator(seconds=2),deadline)
             except FormulaError as error:
                 raise EngineError("CALCULATION_ERROR", f"List evaluation blocked: {error}") from error
+            finally:
+                self.db.execute("ROLLBACK")
+
+    def list_values(self, sheet, args):
+        """Evaluate criteria and read displayed values in the same input snapshot."""
+        r1,c1,r2,c2=rectangle(args)
+        expected=args.get("expected_state")
+        require(isinstance(expected,str) and bool(expected),"INVALID_ARGUMENT","List values require expected_state")
+        excluded=[]
+        for name,lower,upper in (("exclude_rows",r1,r2),("exclude_columns",c1,c2)):
+            items=args.get(name,[])
+            require(isinstance(items,list) and len(items)<=1024,"LIMIT","At most 1,024 excluded sections per axis")
+            excluded.append({integer(item,lower,upper,name) for item in items})
+        left=integer(args.get("select_c1",c1),c1,c2,"select_c1")
+        right=integer(args.get("select_c2",c2),left,c2,"select_c2")
+        with self.lock:
+            deadline=time.monotonic()+2
+            self.refresh(deadline=deadline);self.db.execute("BEGIN")
+            try:
+                self.refresh(deadline=deadline)
+                require(self.state()==expected,"STALE_STATE","List inputs changed; refresh and review again",409)
+                with sql_deadline(self.db,deadline):
+                    sheet=self.sheet(sheet);calc=self.calculator(seconds=2)
+                    result=self._list_rows(sheet,args,calc,deadline)
+                    available=result.pop("rows")
+                    first=integer(args.get("view_r1",1),1,max(1,len(available)),"view_r1")
+                    last=integer(args.get("view_r2",len(available)),first if available else 0,len(available) if available else 0,"view_r2")
+                    selected=[row for row in available[first-1:last] if row not in excluded[0]]
+                    columns=[col for col in range(left,right+1) if col not in excluded[1]]
+                    matrix=[[{} for col in columns] for row in selected]
+                    result.update(sheet=sheet,rows=matrix,source_rows=selected,source_columns=columns,
+                                  formulas_as_values=0,excluded_rows=len(available[first-1:last])-len(selected),excluded_columns=right-left+1-len(columns))
+                    rowmap={row:index for index,row in enumerate(selected)};colmap={col:index for index,col in enumerate(columns)}
+                    size=len(encoded(result).encode())
+                    for row,col,source,kind,style in self.range_cells(sheet,selected,left,right,deadline):
+                        if col not in colmap:continue
+                        item=typed({"source":source,"kind":kind,"style":json.loads(style)})
+                        value=calc.cell(sheet,row,col) if item["kind"]=="formula" else item["value"]
+                        result["formulas_as_values"]+=int(item["kind"]=="formula")
+                        scalar_kind="null" if value is None else "boolean" if type(value) is bool else "number" if type(value) in (int,float) else "text"
+                        scalar_source="NULL" if value is None else "TRUE" if value is True else "FALSE" if value is False else str(value)
+                        if item["kind"]=="blank":scalar_kind,scalar_source="auto",""
+                        cell={"source":scalar_source,"input_kind":scalar_kind,"kind":scalar_kind,"value":value,"style":item["style"],"display":display(value,item["style"]),"calculation":"current"}
+                        size+=len(encoded(cell).encode())
+                        require(size<=4*1024*1024,"READ_LIMIT","List values exceed 4 MiB; narrow the scope")
+                        matrix[rowmap[row]][colmap[col]]=cell
+                    require(time.monotonic()<=deadline,"TIMEOUT","List values exceeded their time budget")
+                    require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","List values exceed 4 MiB")
+                    return result
+            except FormulaError as error:
+                raise EngineError("CALCULATION_ERROR",f"List values blocked: {error}") from error
             finally:
                 self.db.execute("ROLLBACK")
 
