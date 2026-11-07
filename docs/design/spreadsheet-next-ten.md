@@ -65,8 +65,6 @@ References: Microsoft [AND](https://support.microsoft.com/en-us/excel/functions/
 [OR](https://support.microsoft.com/en-us/excel/functions/or-function), and
 [NOT](https://support.microsoft.com/en-us/excel/functions/not-function).
 
-
-
 ## IFERROR contract
 
 IFERROR requires two arguments. It returns the first scalar result, evaluating
@@ -97,7 +95,6 @@ References: Microsoft [ROUND](https://support.microsoft.com/en-us/excel/function
 [ROUNDUP](https://support.microsoft.com/en-us/excel/functions/roundup-function), and
 [ROUNDDOWN](https://support.microsoft.com/en-us/excel/functions/rounddown-function).
 
-
 ## Percentage format contract
 
 Native style `format: percent2` displays numeric fractions as two-decimal
@@ -118,8 +115,6 @@ no schema mutation or silent input/format substitution is introduced.
 Independent openpyxl/odfpy producers/consumers are exercised by
 `tests/verify_percentage_consumers.py` using the existing build-only environment.
 
-
-
 Percentage mapping references: Microsoft [built-in number formats](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.spreadsheet.numberingformat?view=openxml-3.0.1)
 and the [ODF 1.3 schema](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.pdf).
 
@@ -134,8 +129,6 @@ ordinary named Undo/Redo; required input-change handlers can reject the entire
 clear. Format-only changes do not invent input-change events. Existing selection,
 hidden/projection, stale-state and size guards apply; read-only clears are refused.
 
-
-
 ## Directional fill contract
 
 Fill down (Ctrl+D) snapshots each selected column's top cell and copies it down.
@@ -149,7 +142,6 @@ apply atomically. Seed snapshots are additionally capped at 4 MiB. Top-left copy
 and row-major numeric series remain separate menu actions. Multi-step patterns
 and Excel's automatic series inference are outside this tier.
 
-
 ## Address range contract
 
 The address field accepts one current-sheet cell or rectangle, case-insensitive,
@@ -162,7 +154,6 @@ a rectangle that includes the frozen top row. Drafts require existing
 Save/Discard/Cancel resolution before navigation, with target/state rechecked
 after the dialog. Navigation does not mutate data or invoke hooks. Sheet names,
 multiple areas, entire row/column notation and named ranges remain outside this tier.
-
 
 ## Find navigation contract
 
@@ -221,4 +212,8 @@ significant display digits; REST returns the underlying finite binary64 values.
 8. [Range navigation #42](https://github.com/hybridmachine/DataHorizon/pull/42): locally verified, self-reviewed and merged.
 9. [Find navigation #43](https://github.com/hybridmachine/DataHorizon/pull/43): locally verified, self-reviewed and merged.
 
-The final summary PR also records batch qualification evidence; platform/manual/distribution gates remain open.
+10. [Selection summaries and batch verification #44](https://github.com/hybridmachine/DataHorizon/pull/44): local build, contract, native and package qualification evidence recorded.
+
+[Final local evidence](evidence/spreadsheet-batch-verification.txt) and the
+[qualification report](evidence/spreadsheet-ten-qualification.json) preserve the
+source candidate and archive inventory/hash. Platform/manual/distribution gates remain open.
