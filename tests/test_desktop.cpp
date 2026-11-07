@@ -1042,6 +1042,25 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void odsImportAndExportPreserveFormattedFormulaThroughTheManagedGrid() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("ods.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QFile fixture(QStringLiteral(DATAHORIZON_FIXTURES "/inputs.ods")); QVERIFY(fixture.open(QIODevice::ReadOnly));
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        answerNextDialog(QMessageBox::Yes); window.importSpreadsheetBytes(fixture.readAll(),"ods");
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14.00"),5000);
+        QVERIFY(window.model()->data(window.model()->index(0,1),Qt::FontRole).value<QFont>().bold());
+        auto *grid=window.findChild<QTableView *>(); QVERIFY(grid);
+        grid->selectionModel()->select(QItemSelection(window.model()->index(0,0),window.model()->index(0,2)),QItemSelectionModel::ClearAndSelect);
+        const auto output=temp.filePath("copy.ods");
+        answerNextDialog(QMessageBox::Yes); window.exportSpreadsheetTo(output,"ods");
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(output),5000);
+        QFile exported(output); QVERIFY(exported.open(QIODevice::ReadOnly)); QVERIFY(exported.readAll().startsWith("PK"));
+    }
     void xlsxImportReviewAndExportUseTheManagedGrid() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);

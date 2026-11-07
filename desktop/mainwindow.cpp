@@ -210,6 +210,8 @@ void MainWindow::buildUi() {
     add(file, tr("Export selection as CSV…"), {}, [this] { exportCsv(); });
     add(file, tr("Import XLSX…"), {}, [this] { importSpreadsheet("xlsx"); });
     add(file, tr("Export selection as XLSX…"), {}, [this] { exportSpreadsheet("xlsx"); });
+    add(file, tr("Import ODS…"), {}, [this] { importSpreadsheet("ods"); });
+    add(file, tr("Export selection as ODS…"), {}, [this] { exportSpreadsheet("ods"); });
     add(file, tr("Recovery workbooks…"), {}, [this] {
         if (m_busy) return;
         auto path = QFileDialog::getOpenFileName(this, tr("Open recovery workbook"), QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)+"/recovery", tr("DataHorizon (*.dhwb)"));

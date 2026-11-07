@@ -59,12 +59,12 @@ background results that can overwrite a newer input state.
 
 | Feature | Native v1 | CSV import / export | XLSX | ODS |
 | --- | --- | --- | --- | --- |
-| Typed values | Preserved | Explicit reviewed types / canonical values | Text, finite numbers, Booleans; serial dates remain numbers | Unavailable |
-| Leading-zero text | Preserved | Preserved as text; CSV receivers may infer types | Preserved as Text | Unavailable |
-| Formula source | Preserved | Literal Text / evaluated values | Implemented local formulas or explicit cached/fresh values | Unavailable |
-| Supported styles | Preserved | Destination styles retained / omitted | Native direct styles mapped; unsupported display reported | Unavailable |
-| Sheets | Preserved | At selected cell / selected rectangle | One sheet at destination / one rectangle at source coordinates | Unavailable |
-| Code / queries / relationships | Planned metadata | No code activation / omitted | Omitted and reported; no code activation | Unavailable |
+| Typed values | Preserved | Explicit reviewed types / canonical values | Text, finite numbers, Booleans; serial dates remain numbers | Text/numbers/Booleans; ISO dates/durations become Text |
+| Leading-zero text | Preserved | Preserved as text; CSV receivers may infer types | Preserved as Text | Preserved as Text |
+| Formula source | Preserved | Literal Text / evaluated values | Implemented local formulas or explicit cached/fresh values | Local SUM/IF and arithmetic except powers; canonical syntax |
+| Supported styles | Preserved | Destination styles retained / omitted | Native direct styles mapped; unsupported display reported | Native direct styles mapped; unsupported display reported |
+| Sheets | Preserved | At selected cell / selected rectangle | One sheet at destination / one rectangle at source coordinates | One sheet / rectangle, as XLSX |
+| Code / queries / relationships | Planned metadata | No code activation / omitted | Omitted and reported; no code activation | Omitted and reported; no code activation |
 
 CSV import supports explicitly selected UTF-8 (optional BOM), UTF-16 (required
 BOM), Windows-1252 and Latin-1, with strict decoding. The GUI offers comma,
@@ -165,5 +165,5 @@ formulas have separate support from formatting and advanced features. Every
 review includes a conversion report; unsupported cells block import, while
 unsupported non-cell features are reported as omitted. See the exact
 [interchange contract](interchange-next-five.md#xlsx-inputs-and-formulas).
-ODS remains outside this slice. XLSX direct styles now follow the separate
+ODS now has a separate [bounded tier](interchange-next-five.md#ods-inputs-formulas-and-native-styles). XLSX direct styles follow the separate
 [native-style mapping](interchange-next-five.md#xlsx-native-styles).

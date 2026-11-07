@@ -115,3 +115,39 @@ CTest and final review regressions, independent readers and Cocoa scale 2.
 Review corrected ARGB handling (alpha is irrelevant to cell fills), and now
 reports tint, patterned fills and diagonal borders. The
 [native screenshot](evidence/xlsx-styles-native.png) was visually inspected.
+
+## ODS inputs, formulas and native styles
+
+ODS 1.3 uses the same ZIP/XML, preparation, response, managed Apply and export
+selection budgets as XLSX. One sheet's stored cells retain sparse coordinates;
+repeated empty extents are skipped without materializing a dense grid. Repeated
+nonempty/styled cells share the 10,000-cell limit, including row repetition.
+Text, finite numeric/percentage/currency values and Booleans retain explicit
+kinds. ISO dates/durations become Text. Paragraph whitespace follows ODF collapse
+rules while explicit spaces/tabs/line breaks remain; annotations/ruby readings
+are excluded. Formula caches are an explicit freshness-unverified alternative.
+Missing/error caches and invalid inputs block the entire applicable payload.
+
+The formula tier translates of:= local bracketed A1 references, ranges, argument
+separators, TRUE()/FALSE(), SUM/IF, arithmetic and comparisons. Quoted strings
+remain literal. Export renders the parsed expression with explicit parentheses;
+source spelling becomes canonical. Powers, cross-sheet/external references,
+matrix formulas, names and other functions are unavailable in formula mode.
+Powers are excluded until OpenFormula's different precedence has its own tested
+contract. Export requires current, error-free values, including formula caches;
+references outside the exported rectangle reject. Target coercion/function
+semantics remain a compatibility limitation, stated in the report.
+
+Direct native styles map through ODF cell/text/paragraph properties and exact
+Text/fixed2 data styles. Unsupported display and inherited/default/conditional
+formats are reported as omitted. Other sheets, code, charts, comments, merged
+presentation, names, validation, queries, relationships and view preferences are
+omitted; no code or external resource activates. Native NULL becomes empty.
+Export includes the first, uncompressed mimetype entry and manifest. Whitespace
+expansion is bounded before allocation; export caps explicit whitespace nodes
+at 50,000 and expanded package XML at 16 MiB. Independent odfpy fixtures and
+consumer checks supplement XML tests and real Qt flows; they do not qualify
+LibreOffice or native Excel interoperability.
+
+The mapping follows the [ODF schema](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html)
+and [OpenFormula standard](https://docs.oasis-open.org/office/OpenDocument/v1.3/OpenDocument-v1.3-part4-formula.html).

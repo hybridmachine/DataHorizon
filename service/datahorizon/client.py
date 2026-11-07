@@ -101,7 +101,7 @@ class Client:
 
     def prepare_spreadsheet(self, data, *, format="xlsx", sheet_index=1, mode="formulas", job_id=None):
         import base64
-        if format != "xlsx": raise ValueError("Unsupported spreadsheet format")
+        if format not in ("xlsx","ods"): raise ValueError("Unsupported spreadsheet format")
         return self.request("/v1/import/"+format+"/jobs", {"file_base64":base64.b64encode(data).decode(),
             "job_id":job_id or str(uuid.uuid4()),"sheet_index":sheet_index,"mode":mode})
 
@@ -146,7 +146,7 @@ class WorkbookClient:
 
     def export_spreadsheet(self, format="xlsx", **scope):
         self._ensure_open()
-        if format != "xlsx": raise ValueError("Unsupported spreadsheet format")
+        if format not in ("xlsx","ods"): raise ValueError("Unsupported spreadsheet format")
         return self.client.request(self.base+"/export/"+format,scope)
 
     def import_prepared(self, preview, sheet="Sheet1"):
