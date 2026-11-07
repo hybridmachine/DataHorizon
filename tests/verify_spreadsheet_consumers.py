@@ -41,3 +41,19 @@ assert cell.font.bold and cell.font.italic and cell.fill.fgColor.rgb=='FF12AB34'
 assert cell.alignment.horizontal=='center' and cell.alignment.wrap_text
 assert cell.number_format=='0.00' and cell.border.bottom.style=='thin'
 print('Independent openpyxl producer/consumer: all native style properties passed.')
+
+from pathlib import Path
+from odf.opendocument import load
+from odf.table import TableCell
+from datahorizon.ods import ods_export,ods_preview,T,O,q
+independent=Path(__file__).parent/'fixtures'/'inputs.ods'
+p=ods_preview({'file_base64':base64.b64encode(independent.read_bytes()).decode()})
+assert p['can_import'] and p['cells'][1]['style']==expected,p
+exported=ods_export(snapshot,{})
+book=load(io.BytesIO(base64.b64decode(exported['file_base64'])))
+cells=book.spreadsheet.getElementsByType(TableCell)
+assert cells[0].getAttribute('stringvalue')=='00123'
+assert cells[1].getAttribute('value')=='7'
+assert cells[2].getAttribute('formula')=='of:=([.B1]*2.0)'
+assert cells[1].getAttribute('stylename') is not None
+print('Independent odfpy producer/consumer: Text, numbers, formulas and native styles passed.')

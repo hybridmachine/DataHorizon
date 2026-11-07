@@ -7,7 +7,7 @@ remains unavailable under the user's local verification authorization.
 1. [Cancellable CSV preparation, PR #24](https://github.com/hybridmachine/DataHorizon/pull/24), progress and explicit atomic Apply.
 2. [XLSX inputs/formulas, PR #25](https://github.com/hybridmachine/DataHorizon/pull/25), with snapshot export and conversion reports.
 3. [XLSX native styles, PR #26](https://github.com/hybridmachine/DataHorizon/pull/26), with explicit loss reports.
-4. Bounded ODS input/formula/style import and snapshot export.
+4. [ODS interchange, PR #27](https://github.com/hybridmachine/DataHorizon/pull/27), with bounded input/formula/style import and snapshot export.
 5. Native recovery and interchange failure hardening, with destructive fixtures.
 
 ## Preparation jobs
@@ -115,3 +115,46 @@ CTest and final review regressions, independent readers and Cocoa scale 2.
 Review corrected ARGB handling (alpha is irrelevant to cell fills), and now
 reports tint, patterned fills and diagonal borders. The
 [native screenshot](evidence/xlsx-styles-native.png) was visually inspected.
+
+## ODS inputs, formulas and native styles
+
+ODS 1.3 uses the same ZIP/XML, preparation, response, managed Apply and export
+selection budgets as XLSX. One sheet's stored cells retain sparse coordinates;
+repeated empty extents are skipped without materializing a dense grid. Repeated
+nonempty/styled cells share the 10,000-cell limit, including row repetition.
+Text, finite numeric/percentage/currency values and Booleans retain explicit
+kinds. ISO dates/durations become Text. Paragraph whitespace follows ODF collapse
+rules while explicit spaces/tabs/line breaks remain; annotations/ruby readings
+are excluded. Formula caches are an explicit freshness-unverified alternative.
+Missing/error caches and invalid inputs block the entire applicable payload.
+
+The formula tier translates of:= local bracketed A1 references, ranges, argument
+separators, TRUE()/FALSE(), SUM/IF, arithmetic and comparisons. Quoted strings
+remain literal. Export renders the parsed expression with explicit parentheses;
+source spelling becomes canonical. Powers, cross-sheet/external references,
+matrix formulas, names and other functions are unavailable in formula mode.
+Powers are excluded until OpenFormula's different precedence has its own tested
+contract. Export requires current, error-free values, including formula caches;
+references outside the exported rectangle reject. Target coercion/function
+semantics remain a compatibility limitation, stated in the report.
+
+Direct native styles map through ODF cell/text/paragraph properties and exact
+Text/fixed2 data styles. Unsupported display and inherited/default/conditional
+formats are reported as omitted. Other sheets, code, charts, comments, merged
+presentation, names, validation, queries, relationships and view preferences are
+omitted; no code or external resource activates. Native NULL becomes empty.
+Export includes the first, uncompressed mimetype entry and manifest. Repeated input payloads preflight a 3-MiB staged byte budget. Whitespace
+expansion is bounded before allocation; export caps explicit whitespace nodes
+at 50,000 and expanded package XML at 16 MiB. Independent odfpy fixtures and
+consumer checks supplement XML tests and real Qt flows; they do not qualify
+LibreOffice or native Excel interoperability.
+
+The mapping follows the [ODF schema](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html)
+and [OpenFormula standard](https://docs.oasis-open.org/office/OpenDocument/v1.3/OpenDocument-v1.3-part4-formula.html).
+
+ODS review corrected paragraph whitespace and excluded annotation/ruby text,
+rejected unknown cell types, and preflighted repeated source bytes before
+expansion/serialization. A repeated-long-text regression checks traced peak
+allocations stay below 12 MiB while rejecting an otherwise 600-MB payload.
+[ODS verification](evidence/ods-verification.txt) records the final regressions,
+full suites, independent producer/consumer and native Cocoa scale 2.
