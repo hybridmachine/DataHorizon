@@ -191,7 +191,7 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
     selected=integer(request.get("sheet_index",1),1,64,"sheet_index"); selected_mode=mode(request)
     report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct/inherited cell styles replace destination inputs/styles.",
             "Other sheets, code, charts, comments, merged presentation, names, validation, conditional/default/row/column formatting, dimensions and advanced fonts are omitted; code never activates.",
-            "Percentage/currency retain numeric magnitude; currency codes and unsupported display are omitted. Dates and durations become ISO Text. Formula syntax is translated canonically; only local SUM/IF and arithmetic/comparison formulas without powers are supported."]
+            "Percentage/currency retain numeric magnitude; currency codes and unsupported display are omitted. Dates and durations become ISO Text. Formula syntax is translated canonically; only the published native function tier and arithmetic/comparison formulas without powers are supported."]
     if selected_mode=="values": report.append("Formula caches become values with unverified freshness; missing/error caches block Apply.")
     with package(request) as archive:
         try: require(archive.read("mimetype")==MIME.encode(),"INVALID_SPREADSHEET","Package is not an ODS spreadsheet")

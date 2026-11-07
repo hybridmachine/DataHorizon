@@ -4,6 +4,10 @@ import math
 import re
 import time
 
+SUPPORTED_FUNCTIONS = {"SUM", "IF", "AVERAGE", "MIN", "MAX", "COUNT", "COUNTA"}
+CELL_ERRORS = {"#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#NUM!", "#N/A", "#NULL!"}
+NUMBER_TEXT = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\Z")
+
 MAX_ROWS, MAX_COLS = 1_048_576, 16_384
 REF = r"(?:(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z_0-9]*)!)?\$?[A-Za-z]{1,3}\$?[1-9][0-9]*"
 TOKEN = re.compile(
@@ -436,6 +440,74 @@ class Calculator:
         name, row, col = split_ref(ref)
         return self.resolve_sheet(name) if name is not None else sheet, row, col
 
+    def range_targets(self,node,sheet):
+        if node[2][0] != "ref" or node[3][0] != "ref":
+            raise FormulaError("#REF!", "Range endpoints must be cell references")
+        first=self.reference(node[2][1],sheet)
+        last_name,_,_=split_ref(node[3][1])
+        last=self.reference(node[3][1],first[0] if last_name is None else sheet)
+        if first[0]!=last[0]: raise FormulaError("#REF!","3D ranges are unsupported")
+        r1,r2=sorted((first[1],last[1])); c1,c2=sorted((first[2],last[2]))
+        if (r2-r1+1)*(c2-c1+1)>10_000: raise FormulaError("#LIMIT!","Range exceeds 10,000 cells")
+        for row in range(r1,r2+1):
+            for col in range(c1,c2+1): yield first[0],row,col
+
+    def argument_values(self,args,sheet):
+        """Keep reference provenance and cell errors for range-aware functions."""
+        for arg in args:
+            if arg[0]=="range":
+                try:
+                    for target in self.range_targets(arg,sheet):
+                        try: value=self.cell(*target)
+                        except FormulaError as error:
+                            if error.code not in CELL_ERRORS: raise
+                            value=error
+                        yield value,True
+                except FormulaError as error:
+                    if error.code not in CELL_ERRORS: raise
+                    yield error,True
+            else:
+                try: value=self.evaluate(arg,sheet)
+                except FormulaError as error:
+                    if error.code not in CELL_ERRORS: raise
+                    value=error
+                if isinstance(value,list):
+                    for item in value: yield item,True
+                else: yield value,arg[0]=="ref"
+
+    def aggregate(self,name,args,sheet):
+        if not 1<=len(args)<=255: raise FormulaError("#NAME?",name+" requires 1-255 arguments")
+        count=0; total=0.0; extreme=None
+        for value,referenced in self.argument_values(args,sheet):
+            self.check()
+            if isinstance(value,FormulaError):
+                if name=="COUNTA": count+=1; continue
+                if name=="COUNT": continue
+                raise value
+            if name=="COUNTA":
+                count+=value is not None
+                continue
+            if type(value) not in (int,float):
+                if referenced or value is None: continue
+                if type(value) is bool: value=int(value)
+                elif isinstance(value,str) and NUMBER_TEXT.fullmatch(value.strip()): value=float(value.strip())
+                elif name=="COUNT": continue
+                else: raise FormulaError("#VALUE!",name+" requires numeric direct arguments")
+            if not math.isfinite(value):
+                if name=="COUNT": continue
+                raise FormulaError("#NUM!","Non-finite aggregate input")
+            count+=1
+            if name=="AVERAGE":
+                total+=value
+                if not math.isfinite(total): raise FormulaError("#NUM!","AVERAGE subtotal exceeds the finite range")
+            elif name in ("MIN","MAX"):
+                extreme=value if extreme is None else (min(extreme,value) if name=="MIN" else max(extreme,value))
+        if name=="AVERAGE":
+            if not count: raise FormulaError("#DIV/0!","AVERAGE has no numeric inputs")
+            return total/count
+        if name in ("COUNT","COUNTA"): return count
+        return extreme if extreme is not None else 0
+
     def evaluate(self, node, sheet):
         self.check()
         kind = node[0]
@@ -451,18 +523,7 @@ class Calculator:
             value = numeric(self.evaluate(node[2], sheet))
             return -value if node[1] == "-" else value
         if kind == "range":
-            if node[2][0] != "ref" or node[3][0] != "ref":
-                raise FormulaError("#REF!", "Range endpoints must be cell references")
-            first = self.reference(node[2][1], sheet)
-            last_name, _, _ = split_ref(node[3][1])
-            last = self.reference(node[3][1], first[0] if last_name is None else sheet)
-            if first[0] != last[0]:
-                raise FormulaError("#REF!", "3D ranges are unsupported")
-            r1, r2 = sorted((first[1], last[1]))
-            c1, c2 = sorted((first[2], last[2]))
-            if (r2-r1+1)*(c2-c1+1) > 10_000:
-                raise FormulaError("#LIMIT!", "Range exceeds 10,000 cells")
-            return [self.cell(first[0], r, c) for r in range(r1, r2+1) for c in range(c1, c2+1)]
+            return [self.cell(*target) for target in self.range_targets(node,sheet)]
         if kind == "call":
             name, args = node[1:]
             if name == "IF" and len(args) in (2, 3):
@@ -471,6 +532,8 @@ class Calculator:
                     raise FormulaError("#VALUE!", "IF condition must be numeric or boolean")
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
+            if name in ("AVERAGE","MIN","MAX","COUNT","COUNTA"):
+                return self.aggregate(name,args,sheet)
             if name == "SUM":
                 total = 0
                 for arg in args:

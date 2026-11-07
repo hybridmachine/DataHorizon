@@ -113,6 +113,10 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 ## Next dependencies
 
+The [next ten spreadsheet increments](spreadsheet-next-ten.md) extend the M3–M5
+foundation. The first tier adds AVERAGE/MIN/MAX/COUNT/COUNTA with shared engine,
+transactional hook and XLSX/ODS contracts. Local evidence is recorded per PR.
+
 The [workbook compatibility/recovery/qualification increments](workbook-next-five.md)
 now add bounded whole-workbook XLSX/ODS with atomic empty-destination import and
 consistent multi-sheet export, XLSX shared-formula expansion, ODS parent-cell-style

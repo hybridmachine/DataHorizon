@@ -43,6 +43,7 @@ ranges, structured references, external workbooks and 3D ranges are unsupported.
 | Function | Signature and behavior |
 | --- | --- |
 | SUM | Zero or more scalar/range arguments; add numeric values, ignore text, blanks and booleans; propagate referenced formula errors |
+| AVERAGE/MIN/MAX/COUNT/COUNTA | 1–255 arguments; numeric/reference coercions, error counting and bounded behavior follow the [new formula tier](spreadsheet-next-ten.md#aggregate-function-contract) |
 | IF | Two or three arguments; numeric/boolean/blank condition; evaluate only the selected branch; omitted false branch is FALSE |
 
 Double-quoted strings and TRUE/FALSE are supported. Unsupported function or

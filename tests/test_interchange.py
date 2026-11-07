@@ -50,7 +50,7 @@ class XlsxTests(unittest.TestCase):
 
     def test_unsupported_or_invalid_cell_blocks_all_inputs_and_cached_values_is_explicit(self):
         bad=('<c r="A1"><f>Other!A1</f><v>8</v></c>', '<c r="A1"><f t="shared" si="1">A2</f><v>8</v></c>',
-             '<c r="A1"><f>AVERAGE(A2:A3)</f><v>8</v></c>', '<c r="A1" t="e"><v>#N/A</v></c>',
+             '<c r="A1"><f>MEDIAN(A2:A3)</f><v>8</v></c>', '<c r="A1" t="e"><v>#N/A</v></c>',
              '<c r="XFE1"><v>8</v></c>','<c r="A1"><v>9007199254740992</v></c>',
              '<c r="A1" t="s"><v>900</v></c>','<c r="A1"><v>NaN</v></c>')
         for cell in bad:
