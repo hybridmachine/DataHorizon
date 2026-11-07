@@ -52,6 +52,24 @@ class RecoveryTests(unittest.TestCase):
                 self.assertEqual(path.read_bytes(),foreign)
                 self.assertFalse((Path(temp)/"copy.dhwb").exists())
 
+    def test_late_identity_io_failure_rolls_back_without_detached_receipt_or_writer_lock(self):
+        with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/"source.dhwb",create=True)) as book:
+            edit(book,"old")
+            unavailable=False; verify=book.verify_file
+            def check():
+                if unavailable: raise OSError("Injected identity I/O failure")
+                verify()
+            def hook(_):
+                nonlocal unavailable
+                unavailable=True
+            with patch.object(book,"verify_file",side_effect=check),patch.object(book,"run_hooks",side_effect=hook):
+                with self.assertRaises(EngineError) as failure: edit(book,"new","late")
+            self.assertEqual(failure.exception.body["outcome"],"unknown")
+            self.assertFalse(book.db.in_transaction)
+            self.assertEqual(book.read("Sheet1",{})["cells"][0]["value"],"old")
+            with self.assertRaises(EngineError): book.operation("late")
+            edit(book,"next","recovered")
+
     def test_snapshot_late_integrity_failure_keeps_destination_and_never_claims_success(self):
         with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/"source.dhwb",create=True)) as book:
             edit(book,"retained"); target=Path(temp)/"failed-copy.dhwb"

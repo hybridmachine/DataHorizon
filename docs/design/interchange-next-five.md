@@ -8,7 +8,7 @@ remains unavailable under the user's local verification authorization.
 2. [XLSX inputs/formulas, PR #25](https://github.com/hybridmachine/DataHorizon/pull/25), with snapshot export and conversion reports.
 3. [XLSX native styles, PR #26](https://github.com/hybridmachine/DataHorizon/pull/26), with explicit loss reports.
 4. [ODS interchange, PR #27](https://github.com/hybridmachine/DataHorizon/pull/27), with bounded input/formula/style import and snapshot export.
-5. Native recovery and interchange failure hardening, with destructive fixtures.
+5. [Native recovery/failure hardening, PR #28](https://github.com/hybridmachine/DataHorizon/pull/28), with destructive fixtures.
 
 ## Preparation jobs
 
@@ -194,3 +194,27 @@ XLSX/ODS cancelled reviews and destination failures retain existing files; nativ
 aliases reject. QSaveFile retains its atomic replacement behavior. The GUI modal
 fixtures identify dialogs by stable object names because macOS ignores message
 box window titles; bounded cleanup prevents a failed assertion waiting forever.
+
+The final recovery review also fenced failure receipts after identity I/O errors:
+the engine rolls back and releases its writer transaction, leaves the outcome
+unknown, and does not publish into an unverified/detached file. New regressions
+verify retained source, no invented receipt, released locks and a subsequent
+managed edit. The existing create-time path-replacement fixture also passes
+with the additional opening snapshot checks.
+
+## Final local evidence
+
+All five increments were implemented, published, reviewed, corrected as needed
+and merged sequentially. [Final verification](evidence/interchange-verification.txt)
+passes 257 Python tests without skips in the existing optional-binding environment
+and 94 Qt checks. Native Cocoa acceptance passes at [scale 1](evidence/interchange-native-1.json)
+and [scale 2](evidence/interchange-native-2.json); all five new native flows pass
+at scale 2. Independent openpyxl/odfpy producer/consumer and installed-app
+managed edit/calculation smoke pass. The final hosted run starts no jobs.
+
+Larger/chunked imports, whole-workbook/cross-sheet interchange, broader formula
+and file compatibility, full input validation during recovery, disk-full and
+power-loss qualification, native Excel/LibreOffice acceptance, clean-machine
+packaging and hosted Windows/Linux/macOS qualification remain open. These five
+bounded increments do not close M1–M8 release gates. Next work should extend the
+published compatibility/recovery fixtures before increasing file or job limits.

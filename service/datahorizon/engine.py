@@ -787,6 +787,18 @@ class Workbook:
                     except sqlite3.Error:
                         pass
                     raise EngineError("OUTCOME_UNKNOWN","Rollback could not be confirmed; reconcile the operation ID",500,"unknown",operation_id=operation) from rollback_error
+                try:
+                    self.verify_file()
+                except (EngineError,OSError) as changed:
+                    # Do not publish a failed receipt into a detached file or
+                    # leave its writer transaction open after a path failure.
+                    try: self.db.execute("ROLLBACK")
+                    except sqlite3.Error as rollback_error:
+                        raise EngineError("OUTCOME_UNKNOWN","File identity and rollback require reconciliation",500,"unknown",operation_id=operation) from rollback_error
+                    if isinstance(changed,EngineError):
+                        changed.body.update(outcome="unknown",operation_id=operation)
+                        raise changed
+                    raise EngineError("OUTCOME_UNKNOWN","Native file identity could not be confirmed; retain the original file and reconcile its operation ID",409,"unknown",operation_id=operation) from changed
                 if isinstance(error, EngineError):
                     error.body.update(outcome="rolled_back", operation_id=operation)
                     failure=error

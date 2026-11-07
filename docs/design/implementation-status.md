@@ -104,7 +104,10 @@ cancellable, bounded CSV preparation jobs, XLSX input/formula/style and ODS
 interchange, plus bounded native integrity/inspection and process-crash recovery. Progress and result discard precede
 an explicit atomic managed Apply; no chunked commits or larger limits are claimed. Each increment was locally
 verified and reviewed before sequential merge; hosted platform qualification
-remains blocked. See the conversion tiers and final evidence in that ledger.
+remains blocked. [Final local verification](evidence/interchange-verification.txt)
+passes 257 Python tests without optional-binding skips, 94 Qt checks, Cocoa
+scales 1/2, native interchange/recovery flows and installed-app smoke. See the
+conversion tiers and remaining gates in that ledger.
 
 
 The next [five editing and CSV increments](editing-csv-next-five.md) continue

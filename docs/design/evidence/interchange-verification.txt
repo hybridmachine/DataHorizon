@@ -1,0 +1,57 @@
+Final local verification on the reviewed implementation. Hosted run 42337891133 failed without starting jobs. No new hosted/platform qualification is claimed.
+
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   48.56 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   23.54 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  72.10 sec
+
+Complete CTest summaries:
+Totals: 94 passed, 0 failed, 0 skipped, 0 blacklisted, 48148ms
+Ran 257 tests in 23.399s
+OK (skipped=15)
+
+Complete Python suite in the existing optional APSW environment:
+Ran 257 tests in 23.823s
+OK
+
+Final recovery regressions:
+test_abrupt_exit_after_commit_retains_receipt_and_stored_input (test_recovery.RecoveryTests.test_abrupt_exit_after_commit_retains_receipt_and_stored_input) ... ok
+test_abrupt_exit_recovers_spilled_managed_edits_without_replaying_hooks (test_recovery.RecoveryTests.test_abrupt_exit_recovers_spilled_managed_edits_without_replaying_hooks) ... ok
+test_late_identity_io_failure_rolls_back_without_detached_receipt_or_writer_lock (test_recovery.RecoveryTests.test_late_identity_io_failure_rolls_back_without_detached_receipt_or_writer_lock) ... ok
+test_observed_source_replacement_blocks_reads_writes_receipts_and_snapshot (test_recovery.RecoveryTests.test_observed_source_replacement_blocks_reads_writes_receipts_and_snapshot) ... ok
+test_open_integrity_has_a_shared_deadline_and_does_not_modify_rejected_source (test_recovery.RecoveryTests.test_open_integrity_has_a_shared_deadline_and_does_not_modify_rejected_source) ... ok
+test_rest_sdk_inspection_is_readonly_has_no_handle_and_activates_no_required_hook (test_recovery.RecoveryTests.test_rest_sdk_inspection_is_readonly_has_no_handle_and_activates_no_required_hook) ... ok
+test_snapshot_late_integrity_failure_keeps_destination_and_never_claims_success (test_recovery.RecoveryTests.test_snapshot_late_integrity_failure_keeps_destination_and_never_claims_success) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.402s
+
+OK
+
+Native Cocoa scale 2 import/recovery/failure flows:
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::cancellingCsvPreparationCannotOpenReviewOrWriteCells()
+PASS   : DesktopTests::xlsxImportReviewAndExportUseTheManagedGrid()
+PASS   : DesktopTests::odsImportAndExportPreserveFormattedFormulaThroughTheManagedGrid()
+PASS   : DesktopTests::nativeInspectionPreservesTheOpenWorkbookAndEditorDraft()
+PASS   : DesktopTests::spreadsheetExportFailuresPreserveExistingFilesAndNativeAliases()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 2488ms
+********* Finished testing of DesktopTests *********
+
+Independent spreadsheet producer/consumer:
+Independent openpyxl producer/consumer: Text, numbers, formulas passed.
+Independent openpyxl producer/consumer: all native style properties passed.
+Independent odfpy producer/consumer: Text, numbers, formulas and native styles passed.
+
+Installed application:
+Installed application: managed edit and calculation passed
+
+Review fixes: opening identity check immediately after data-version capture; stable Qt message-box object names with bounded automation; rollback/release without a failed receipt when source identity cannot be verified. Interrupted owned Qt fixtures and their service children were stopped; all corrected runs pass.
