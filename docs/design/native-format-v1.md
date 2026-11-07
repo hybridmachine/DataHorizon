@@ -26,7 +26,7 @@ subsequent display formatting. Explicit `text` preserves leading zeros and
 empty strings. Explicit `null` has a null typed value; absence has no row.
 CSV date conversions store normalized YYYY-MM-DD as `text`; they do not add a
 native date kind or change format v1. See [the CSV typing contract](editing-csv-next-five.md#csv-column-typing).
-`style` is a JSON object: format (`general`, `text`, `fixed2`), wrap/bold/italic
+`style` is a JSON object: format (`general`, `text`, `fixed2`, `percent2`), wrap/bold/italic
 booleans, align (`left`, `center`, `right`), background (`#RRGGBB`), and border
 (`none`, `box`). Applying a
 format never retypes existing input. Text format changes subsequent auto entry.
@@ -104,3 +104,9 @@ outcome rather than claiming a receipt in a different file. Read-only inspection
 through the common REST interface performs no repair, code activation or
 recalculation. Process-crash fixtures and exact limits are documented in
 [the recovery increment](interchange-next-five.md#native-recovery-and-failure-hardening).
+
+
+`percent2` is an additive native-v1 style token: finite numeric fractions display
+as two-decimal percentages without changing inputs/kinds. Older readers that do
+not recognize it can reject that cell style; they must not rewrite the input or
+silently substitute another format. See the [percentage tier](spreadsheet-next-ten.md#percentage-format-contract).

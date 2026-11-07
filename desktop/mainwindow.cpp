@@ -305,6 +305,8 @@ void MainWindow::buildUi() {
     add(formatMenu, tr("General"), {}, [this] { format({{"format", "general"}}); });
     add(formatMenu, tr("Text"), {}, [this] { format({{"format", "text"}}); });
     add(formatMenu, tr("Two decimal places"), {}, [this] { format({{"format", "fixed2"}}); }, true);
+    auto *percentAction=add(formatMenu,tr("Percentage (two decimal places)"),{},[this]{format({{"format","percent2"}});});
+    percentAction->setObjectName("percentFormatAction"); percentAction->setToolTip(tr("Display numeric fractions: 0.125 becomes 12.50%. Stored values stay unchanged."));
     for (const auto &align : {QString("left"), QString("center"), QString("right")})
         add(formatMenu, tr("Align %1").arg(align), {}, [this, align] { format({{"align", align}}); });
     add(formatMenu, tr("Cell background…"), {}, [this] {

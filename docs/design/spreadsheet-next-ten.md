@@ -65,10 +65,7 @@ References: Microsoft [AND](https://support.microsoft.com/en-us/excel/functions/
 [OR](https://support.microsoft.com/en-us/excel/functions/or-function), and
 [NOT](https://support.microsoft.com/en-us/excel/functions/not-function).
 
-## PR record
 
-1. [Aggregate functions #35](https://github.com/hybridmachine/DataHorizon/pull/35): locally verified, self-reviewed and merged.
-2. [Logical functions #36](https://github.com/hybridmachine/DataHorizon/pull/36): locally verified, self-reviewed and merged.
 
 ## IFERROR contract
 
@@ -100,4 +97,33 @@ References: Microsoft [ROUND](https://support.microsoft.com/en-us/excel/function
 [ROUNDUP](https://support.microsoft.com/en-us/excel/functions/roundup-function), and
 [ROUNDDOWN](https://support.microsoft.com/en-us/excel/functions/rounddown-function).
 
+
+## Percentage format contract
+
+Native style `format: percent2` displays numeric fractions as two-decimal
+percentages (0.125 → 12.50%). It changes no source, input kind or numeric magnitude.
+Text, Booleans and NULL retain their usual displays. Scaling/formatting uses an
+isolated bounded decimal context with half-even display rounding, including
+finite extremes that would overflow a binary64 multiplication by 100. This is a
+presentation operation with ordinary history and format-copy behavior. Values
+CSV export keeps the underlying unscaled number. Percent-suffixed entry and locale
+parsing remain outside this tier; enter numeric fractions or explicit Text.
+
+XLSX maps built-in format 10 or exact custom `0.00%`; ODS maps a simple two-decimal
+percentage style with a trailing % token. Other percentage patterns still report
+an omitted display. Exports retain ratios and write supported percentage styles;
+ODS numeric values use the percentage value type. Native v1 stores the new style
+token in its existing JSON field. Older readers may reject the unsupported token;
+no schema mutation or silent input/format substitution is introduced.
+Independent openpyxl/odfpy producers/consumers are exercised by
+`tests/verify_percentage_consumers.py` using the existing build-only environment.
+
+## PR record
+
+1. [Aggregate functions #35](https://github.com/hybridmachine/DataHorizon/pull/35): locally verified, self-reviewed and merged.
+2. [Logical functions #36](https://github.com/hybridmachine/DataHorizon/pull/36): locally verified, self-reviewed and merged.
 3. [IFERROR #37](https://github.com/hybridmachine/DataHorizon/pull/37): locally verified, self-reviewed and merged.
+4. [Numeric functions #38](https://github.com/hybridmachine/DataHorizon/pull/38): locally verified, self-reviewed and merged.
+
+Percentage mapping references: Microsoft [built-in number formats](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.spreadsheet.numberingformat?view=openxml-3.0.1)
+and the [ODF 1.3 schema](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.pdf).

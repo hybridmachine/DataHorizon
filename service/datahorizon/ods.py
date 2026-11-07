@@ -162,9 +162,10 @@ class OdsStyles:
             fmt=self.formats.get(data_name)
             require(fmt is not None,"INVALID_SPREADSHEET","Missing ODS number style")
             number=fmt.find(q(N,"number"))
+            simple_number=number is not None and number.get(q(N,"decimal-places"))=="2" and number.get(q(N,"grouping"),"false")=="false" and number.get(q(N,"min-integer-digits"),"1")=="1" and set(number.attrib)<={q(N,"decimal-places"),q(N,"min-integer-digits"),q(N,"grouping")}
             if fmt.tag==q(N,"text-style") and len(fmt)==1 and fmt[0].tag==q(N,"text-content"): result["format"]="text"
-            elif fmt.tag==q(N,"number-style") and len(fmt)==1 and number is not None and number.get(q(N,"decimal-places"))=="2" and number.get(q(N,"grouping"),"false")=="false" and number.get(q(N,"min-integer-digits"),"1")=="1" and set(number.attrib)<= {q(N,"decimal-places"),q(N,"min-integer-digits"),q(N,"grouping")}:
-                result["format"]="fixed2"
+            elif fmt.tag==q(N,"number-style") and len(fmt)==1 and simple_number: result["format"]="fixed2"
+            elif fmt.tag==q(N,"percentage-style") and len(fmt)==2 and simple_number and fmt[0].tag==q(N,"number") and fmt[1].tag==q(N,"text") and fmt[1].text=="%": result["format"]="percent2"
             else: self.loss("Unsupported ODS number/date/currency display formats are omitted; typed values are retained.")
         for prop in item:
             if prop.tag==q(Y,"text-properties"):
@@ -191,7 +192,7 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
     selected=integer(request.get("sheet_index",1),1,64,"sheet_index"); selected_mode=mode(request)
     report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct/inherited cell styles replace destination inputs/styles.",
             "Other sheets, code, charts, comments, merged presentation, names, validation, conditional/default/row/column formatting, dimensions and advanced fonts are omitted; code never activates.",
-            "Percentage/currency retain numeric magnitude; currency codes and unsupported display are omitted. Dates and durations become ISO Text. Formula syntax is translated canonically; only the published native function tier and arithmetic/comparison formulas without powers are supported."]
+            "Percentage/currency retain numeric magnitude. Supported two-decimal percentage styles map; currency codes and other unsupported display are omitted. Dates and durations become ISO Text. Formula syntax is translated canonically; only the published native function tier and arithmetic/comparison formulas without powers are supported."]
     if selected_mode=="values": report.append("Formula caches become values with unverified freshness; missing/error caches block Apply.")
     with package(request) as archive:
         try: require(archive.read("mimetype")==MIME.encode(),"INVALID_SPREADSHEET","Package is not an ODS spreadsheet")
@@ -277,6 +278,8 @@ def ods_export(snapshot,request):
     automatic=node(root,q(O,"automatic-styles"))
     number=node(automatic,q(N,"number-style"),**{q(Y,"name"):"N2"}); node(number,q(N,"number"),**{q(N,"decimal-places"):"2",q(N,"min-integer-digits"):"1"})
     textstyle=node(automatic,q(N,"text-style"),**{q(Y,"name"):"NT"}); node(textstyle,q(N,"text-content"))
+    percentage=node(automatic,q(N,"percentage-style"),**{q(Y,"name"):"NP"})
+    node(percentage,q(N,"number"),**{q(N,"decimal-places"):"2",q(N,"min-integer-digits"):"1"}); node(percentage,q(N,"text"),"%")
     style_ids={}
     for cell in [c for s in snapshots for c in s["cells"]]:
         style=cell.get("style",{}); key=encoded(style)
@@ -284,7 +287,7 @@ def ods_export(snapshot,request):
         require(len(style_ids)<1024,"LIMIT","ODS export exceeds 1,024 styles")
         name="S"+str(len(style_ids)); style_ids[key]=name
         attrs={q(Y,"name"):name,q(Y,"family"):"table-cell"}
-        if style.get("format") in ("fixed2","text"): attrs[q(Y,"data-style-name")]="N2" if style["format"]=="fixed2" else "NT"
+        if style.get("format") in ("fixed2","text","percent2"): attrs[q(Y,"data-style-name")]={"fixed2":"N2","text":"NT","percent2":"NP"}[style["format"]]
         out=node(automatic,q(Y,"style"),**attrs)
         text={}; props={}; paragraph={}
         if style.get("bold"): text[q(F,"font-weight")]="bold"
@@ -312,7 +315,7 @@ def ods_export(snapshot,request):
             if cell["kind"]=="formula" and selected_mode=="formulas": out.set(q(T,"formula"),native_to_ods(cell["source"],None if whole else sheet["range"],names if whole else None))
             value=cell.get("value")
             if type(value) is bool: out.set(q(O,"value-type"),"boolean"); out.set(q(O,"boolean-value"),str(value).lower())
-            elif type(value) in (float,int): out.set(q(O,"value-type"),"float"); out.set(q(O,"value"),str(value))
+            elif type(value) in (float,int): out.set(q(O,"value-type"),"percentage" if cell.get("style",{}).get("format")=="percent2" else "float"); out.set(q(O,"value"),str(value))
             elif value is not None:
                 require(not any((ord(c)<32 and c not in "\t\n\r") or ord(c) in (65534,65535) for c in value),"UNSUPPORTED_CELL","ODS cannot represent this cell's XML control characters")
                 out.set(q(O,"value-type"),"string"); out.set(q(O,"string-value"),value)
@@ -351,5 +354,5 @@ def ods_preview(request,checkpoint=lambda completed,phase:None):
         root=read_xml(archive,"content.xml")
         names=[s.get(q(T,"name"),"") for s in root.findall(f'{q(O,"body")}/{q(O,"spreadsheet")}/{q(T,"table")}')]
     result=prepare_workbook(request,checkpoint,names,_ods_preview)
-    result["report"].append("Date/duration values become ISO Text. Percentage/currency retain magnitudes; currency codes and unsupported display are omitted. Named sheet references replace sheet-relative movement semantics.")
+    result["report"].append("Date/duration values become ISO Text. Percentage/currency retain magnitudes; two-decimal percentage styles map. Currency codes and other unsupported display are omitted. Named sheet references replace sheet-relative movement semantics.")
     return result
