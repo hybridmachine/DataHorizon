@@ -368,7 +368,7 @@ void MainWindow::buildUi() {
     auto *central = new QWidget(this); auto *layout = new QVBoxLayout(central);
     layout->setContentsMargins(4, 4, 4, 4); layout->setSpacing(4);
     auto *formula = new QHBoxLayout;
-    m_address = new QLineEdit("A1"); m_address->setObjectName("address"); m_address->setAccessibleName(tr("Cell address")); m_address->setMaximumWidth(130);
+    m_address = new QLineEdit("A1"); m_address->setObjectName("address"); m_address->setAccessibleName(tr("Cell address")); m_address->setMaximumWidth(180); m_address->setToolTip(tr("Cell or range, for example B2:D20 (up to 10,000 cells)"));
     m_source = new QLineEdit; m_source->setObjectName("source"); m_source->setAccessibleName(tr("Cell input or formula")); m_source->setPlaceholderText(tr("Value or formula"));
     m_source->setMaxLength(65536);
     m_source->installEventFilter(this);
@@ -484,16 +484,30 @@ void MainWindow::buildUi() {
     connect(m_source, &QLineEdit::returnPressed, this, [this] {
         submitDraft();
     });
-    connect(m_address, &QLineEdit::returnPressed, this, [this] {
-        if (m_model->projected()) { issue("Clear the list view before navigating by source address."); return; }
-        const auto match = QRegularExpression("^([A-Za-z]{1,3})([1-9][0-9]{0,6})$").match(m_address->text().trimmed());
-        int col = 0;
-        for (auto ch : match.captured(1).toUpper()) col = col*26+ch.unicode()-'A'+1;
-        int row = match.captured(2).toInt();
-        if (!match.hasMatch() || row > 1048576 || col > 16384) { issue("Address must be within A1:XFD1048576."); return; }
-        if(m_hiddenRows.contains(row-1) || m_hiddenColumns.contains(col-1)) { issue("That address is hidden. Show hidden rows or columns before navigating there."); return; }
+    connect(m_address,&QLineEdit::returnPressed,this,[this] {
+        if(m_busy || m_unknown || m_info.isEmpty()) return;
+        if(m_model->projected()) {issue("Clear the list view before navigating by source address.");return;}
+        const auto match=QRegularExpression("^\\$?([A-Za-z]{1,3})\\$?([1-9][0-9]{0,6})(?::\\$?([A-Za-z]{1,3})\\$?([1-9][0-9]{0,6}))?$").match(m_address->text().trimmed());
+        auto column=[](const QString &name){int value=0;for(auto ch:name.toUpper())value=value*26+ch.unicode()-'A'+1;return value;};
+        const int row=match.captured(2).toInt(),col=column(match.captured(1));
+        const int endRow=match.captured(4).isEmpty()?row:match.captured(4).toInt();
+        const int endCol=match.captured(3).isEmpty()?col:column(match.captured(3));
+        if(!match.hasMatch() || qMax(row,endRow)>1048576 || qMax(col,endCol)>16384) {
+            issue("Use a cell or rectangular range within A1:XFD1048576, such as B2:D20.");return;
+        }
+        const int r1=qMin(row,endRow),r2=qMax(row,endRow),c1=qMin(col,endCol),c2=qMax(col,endCol);
+        if(qint64(r2-r1+1)*(c2-c1+1)>10000) {issue("Address range exceeds the 10,000-cell selection limit.");return;}
+        if(intersectsHidden(r1,c1,r2,c2)) {issue("That address range includes hidden cells. Show hidden rows or columns before navigating there.");return;}
+        if(m_frozenTop->active() && r1==1 && (r2>r1 || c2>c1)) {issue("Unfreeze the top row before selecting a range that includes it.");return;}
+        const auto target=targetContext();captureGridDraft(false);if(!resolveDraft())return;
+        if(m_busy || !matchesTarget(target)) {issue("Navigation target changed. Enter the address again.");return;}
         m_address->setModified(false);
-        auto index = m_model->index(row-1, col-1); m_grid->setCurrentIndex(index); m_grid->scrollTo(index); m_grid->setFocus();
+        const auto current=m_model->index(row-1,col-1);
+        m_grid->selectionModel()->setCurrentIndex(current,QItemSelectionModel::NoUpdate);
+        m_grid->selectionModel()->select(QItemSelection(m_model->index(r1-1,c1-1),m_model->index(r2-1,c2-1)),QItemSelectionModel::ClearAndSelect);
+        if(m_frozenTop->active() && row==1) {
+            m_frozenTop->syncSelection();m_frozenTop->view()->scrollTo(m_frozenTop->view()->model()->index(0,col-1));m_frozenTop->view()->setFocus();
+        } else {m_grid->scrollTo(current);m_grid->setFocus();}
     });
     setBusy(true);
 }

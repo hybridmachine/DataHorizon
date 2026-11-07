@@ -1043,6 +1043,38 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void addressRangesNormalizeBoundsAndProtectDraftsAndViewGuards() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("ranges.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();
+        auto *address=window.findChild<QLineEdit *>("address");auto *source=window.findChild<QLineEdit *>("source");
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        auto go=[&](QString value){address->setText(value);QTest::keyClick(address,Qt::Key_Return);};
+        go(" $d$5:$b$2 ");QCOMPARE(grid->currentIndex(),model->index(4,3));
+        auto rect=grid->selectionModel()->selection().first();QCOMPARE(rect.top(),1);QCOMPARE(rect.left(),1);QCOMPARE(rect.bottom(),4);QCOMPARE(rect.right(),3);
+        const auto saved=grid->selectionModel()->selection();
+        for(const auto &bad:QStringList{"A0","XFE1","A1048577","A1:XFD1048576","Sheet1!A1","A1,B2"}) {go(bad);QCOMPARE(grid->selectionModel()->selection(),saved);}
+        go("XFD1048576");QCOMPARE(grid->currentIndex(),model->index(1048575,16383));
+        go("B2:C3");QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(1,1)),5000);
+        source->setFocus();source->setText("draft");source->setModified(true);
+        answerNextDialog(QMessageBox::Cancel);go("E5:F6");QCOMPARE(grid->currentIndex(),model->index(1,1));QCOMPARE(source->text(),QString("draft"));
+        answerNextDialog(QMessageBox::Discard);go("E5:F6");QCOMPARE(grid->currentIndex(),model->index(4,4));
+        go("B2");window.findChild<QAction *>("hideRowsAction")->trigger();
+        const auto visible=grid->currentIndex();go("A1:B3");QCOMPARE(grid->currentIndex(),visible);
+        window.findChild<QPushButton *>("showHiddenButton")->click();
+        window.findChild<QAction *>("freezeTopRowAction")->trigger();
+        go("C1");QCOMPARE(grid->currentIndex(),model->index(0,2));
+        QCOMPARE(window.focusWidget(),window.findChild<QTableView *>("frozenTopRow"));
+        go("A1:B2");QCOMPARE(grid->currentIndex(),model->index(0,2));
+        window.findChild<QAction *>("freezeTopRowAction")->trigger();
+        window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"header",false}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        const auto projected=grid->currentIndex();go("B2:C3");QCOMPARE(grid->currentIndex(),projected);
+        QTest::qWait(50);QVERIFY(changed.isEmpty());
+    }
     void directionalFillUsesIndependentSeedsAndUndo() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);
