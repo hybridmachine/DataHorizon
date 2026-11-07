@@ -420,6 +420,46 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
+    def summary(self, sheet, args):
+        """Stored selection, one read snapshot, no hooks/history/cache writes."""
+        require("rows" not in args,"INVALID_ARGUMENT","Summary requires one rectangle, not projected rows")
+        r1,c1,r2,c2=rectangle(args)
+        with self.lock:
+            deadline=time.monotonic()+2
+            self.refresh(deadline=deadline)
+            self.db.execute("BEGIN")
+            try:
+                self.refresh(deadline=deadline)
+                with sql_deadline(self.db,deadline):
+                    sheet=self.sheet(sheet);calc=self.calculator(seconds=max(0,deadline-time.monotonic()))
+                    count=numeric_count=error_count=source_bytes=0
+                    total=0.0;numeric_error=None;errors=[]
+                    for row,col,source,kind,style in self.range_cells(sheet,range(r1,r2+1),c1,c2,deadline):
+                        require(time.monotonic()<=deadline,"TIMEOUT","Summary exceeded its time budget")
+                        source_bytes+=len(source.encode())+len(style.encode())
+                        require(source_bytes<=4*1024*1024,"READ_LIMIT","Summary inputs exceed 4 MiB; select a smaller rectangle")
+                        item=typed({"source":source,"kind":kind,"style":json.loads(style)})
+                        try:
+                            value=calc.cell(sheet,row,col) if item["kind"]=="formula" else item["value"]
+                        except FormulaError as error:
+                            count+=1;error_count+=1
+                            if len(errors)<100:errors.append({"row":row,"col":col,"code":error.code})
+                            continue
+                        if value is not None:count+=1
+                        if type(value) in (int,float):
+                            numeric_count+=1
+                            if numeric_error is None:
+                                total+=value
+                                if not math.isfinite(total):numeric_error="#NUM!"
+                    available=not error_count and numeric_error is None
+                    return {"state":self.state(),"sheet":sheet,"range":[r1,c1,r2,c2],
+                            "selected_cells":(r2-r1+1)*(c2-c1+1),"count":count,"numeric_count":numeric_count,
+                            "sum":total if available else None,
+                            "average":total/numeric_count if available and numeric_count else None,
+                            "error_count":error_count,"errors":errors,"errors_truncated":error_count>len(errors),"numeric_error":numeric_error}
+            finally:
+                self.db.execute("ROLLBACK")
+
     def read_workbook(self):
         """One bounded read transaction, including every sheet and formula dependency."""
         from .interchange import validate_sheet_names

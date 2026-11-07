@@ -1,0 +1,95 @@
+Local macOS November 7, 2026. Hosted Actions have exhausted credits.
+C++ build and full local qualification passed.
+Source candidate: df1c7c508801c0f4acbca183cfe4194a1fcebfe6f496e7b2d2635c64da741c74
+
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   63.56 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   26.09 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  89.65 sec
+
+Qt full-suite result: 121 passed, 0 failed, 0 skipped.
+Base Python suite: 310 tests, 15 optional-binding skips.
+Optional-binding environment: 
+----------------------------------------------------------------------
+Ran 310 tests in 26.722s
+
+OK
+
+summary-focused:
+test_input_budget_reports_failure_instead_of_partial_results (test_selection_summary.SummaryTests.test_input_budget_reports_failure_instead_of_partial_results) ... ok
+test_scalar_types_errors_overflow_empty_ranges_and_limits (test_selection_summary.SummaryTests.test_scalar_types_errors_overflow_empty_ranges_and_limits) ... ok
+test_sdk_readonly_no_handler_history_or_operation_receipt (test_selection_summary.SummaryTests.test_sdk_readonly_no_handler_history_or_operation_receipt) ... ok
+test_snapshot_survives_external_writer_and_next_summary_refreshes (test_selection_summary.SummaryTests.test_snapshot_survives_external_writer_and_next_summary_refreshes) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.282s
+
+OK
+
+summary-native:
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::selectionSummaryReadsWholeStoredRectangleAndHandlesErrorsAndViewGuards()
+PASS   : DesktopTests::selectionSummaryCoalescesAndDiscardsSupersededRepliesAndConnections()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 4033ms
+********* Finished testing of DesktopTests *********
+
+spreadsheet-ten-workbook-consumers:
+{
+  "producers_consumers": {
+    "openpyxl": "3.1.5",
+    "odfpy": "1.4.1"
+  },
+  "checks": [
+    {
+      "format": "xlsx",
+      "mode": "formulas",
+      "sheets": 3,
+      "input_rows": 16,
+      "summary": 224,
+      "passed": true
+    },
+    {
+      "format": "xlsx",
+      "mode": "values",
+      "sheets": 3,
+      "input_rows": 16,
+      "summary": 224,
+      "passed": true
+    },
+    {
+      "format": "ods",
+      "mode": "formulas",
+      "sheets": 3,
+      "input_rows": 16,
+      "summary": 224,
+      "passed": true
+    },
+    {
+      "format": "ods",
+      "mode": "values",
+      "sheets": 3,
+      "input_rows": 16,
+      "summary": 224,
+      "passed": true
+    }
+  ],
+  "native_excel_libreoffice_acceptance": false
+}
+
+spreadsheet-ten-percentage-consumers:
+openpyxl percentage producer/consumer: style retained, numeric fraction unscaled.
+odfpy percentage producer/consumer: style retained, numeric fraction unscaled.
+
+Local qualification: native Cocoa scale 1 and 2, staged installation, relocated managed edit/calculation with developer overrides removed, explicit missing-service failure, and SHA-256/inventory-verified 71-file preview archive all passed. See spreadsheet-ten-qualification.json. Archive remains local at build/spreadsheet-ten-qualification/DataHorizon-preview.tar.gz.
+
+Visual inspection of build/selection-summary.png confirmed a separate readable summary/status layout; full values remain in the tooltip. Native automation is synthetic, not physical keyboard or screen-reader certification. Independent library consumers do not certify native Excel/LibreOffice fidelity.
+
+Self-review checked one-snapshot/state semantics, exact types and empty/error counts, formula/cache/source/time limits, conservative overflow, no partial numeric aggregates, no mutation/hook/history writes, read-only SDK/OpenAPI parity, hidden/projected/large-selection refusal, request coalescing and late reply/connection invalidation. Existing managed/direct access and release limits are unchanged. Windows/Linux automation, manual accessibility/platform/clean-machine/runtime/signing/license gates remain open; release_qualified=false.

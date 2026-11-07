@@ -65,7 +65,7 @@ background results that can overwrite a newer input state.
 | --- | --- | --- | --- | --- |
 | Typed values | Preserved | Explicit reviewed types / canonical values | Text, finite numbers, Booleans; serial dates remain numbers | Text/numbers/Booleans; ISO dates/durations become Text |
 | Leading-zero text | Preserved | Preserved as text; CSV receivers may infer types | Preserved as Text | Preserved as Text |
-| Formula source | Preserved | Literal Text / evaluated values | Implemented local formulas or explicit cached/fresh values | Local SUM/IF and arithmetic except powers; canonical syntax |
+| Formula source | Preserved | Literal Text / evaluated values | Implemented local formulas or explicit cached/fresh values | Shared scalar function tier and arithmetic except powers; canonical syntax |
 | Supported styles | Preserved | Destination styles retained / omitted | Native direct styles mapped; unsupported display reported | Native direct styles mapped; unsupported display reported |
 | Sheets | Preserved | At selected cell / selected rectangle | One sheet at destination / one rectangle at source coordinates | One sheet / rectangle, as XLSX |
 | Code / queries / relationships | Planned metadata | No code activation / omitted | Omitted and reported; no code activation | Omitted and reported; no code activation |
@@ -189,3 +189,9 @@ The [formula/style fidelity increment](workbook-next-five.md#formula-and-style-f
 adds bounded XLSX shared-formula expansion and explicit ODS parent-cell-style
 inheritance. Unsupported arrays/data tables/default styles still report or block
 as documented; this does not widen the calculation function tier.
+
+
+Selected-range status summaries follow the [snapshot summary contract](spreadsheet-next-ten.md#selection-summary-contract).
+Find navigation, clear distinctions, independent directional fills and address
+ranges follow the corresponding contracts in the same batch record. They do not
+expand filtered-edit semantics, reference-transform promises or release status.

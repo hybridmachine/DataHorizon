@@ -16,6 +16,7 @@ class QPlainTextEdit;
 class QToolBar;
 class QPushButton;
 class FrozenTopRow;
+class QTimer;
 
 struct StartupOptions { QString url, token, handler, recoveryDirectory, initialWorkbook, viewStatePath; bool automaticWorkbook = true; };
 
@@ -68,6 +69,8 @@ private:
     void listDialog();
     void applyList();
     void findDialog(bool replace);
+    void queueSummary();
+    void requestSummary();
     void clearFindResults();
     void navigateFind(int direction);
     void changeSheet(int index);
@@ -111,7 +114,11 @@ private:
     QTableView *m_grid = nullptr;
     QLineEdit *m_address = nullptr, *m_source = nullptr;
     QTabBar *m_tabs = nullptr;
-    QLabel *m_status = nullptr;
+    QLabel *m_status = nullptr, *m_summary = nullptr;
+    QTimer *m_summaryTimer = nullptr;
+    QJsonObject m_summaryKey;
+    quint64 m_summaryGeneration = 0, m_summaryFlight = 0;
+    bool m_summaryInFlight = false;
     QPlainTextEdit *m_issues = nullptr;
     QToolBar *m_toolbar = nullptr;
     QAction *m_undo = nullptr, *m_redo = nullptr;
