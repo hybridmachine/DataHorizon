@@ -1,0 +1,11 @@
+{
+  "producers": {
+    "openpyxl": "3.1.5",
+    "odfpy": "1.4.1"
+  },
+  "scope": "Build-only producer fixtures; no native application acceptance claim",
+  "sha256": {
+    "fidelity.xlsx": "76279b138de23ba5e73588cb4ea286bc06aa31d424da44ac1815ed168d81e1d3",
+    "fidelity.ods": "c2230c83ef5bcb8e61bc9ba0add75d2d381b44c27f7dd370f477b661b0261e47"
+  }
+}

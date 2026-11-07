@@ -177,3 +177,9 @@ workbook atomically and rejects required handlers; success clears history.
 Export uses one bounded read transaction and translates stable native IDs to names.
 Aggregate limits and omissions remain explicit in the
 [workbook contract](workbook-next-five.md). Single-selection tiers remain available.
+
+
+The [formula/style fidelity increment](workbook-next-five.md#formula-and-style-fidelity)
+adds bounded XLSX shared-formula expansion and explicit ODS parent-cell-style
+inheritance. Unsupported arrays/data tables/default styles still report or block
+as documented; this does not widen the calculation function tier.

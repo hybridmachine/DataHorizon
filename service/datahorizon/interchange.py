@@ -130,6 +130,43 @@ def xlsx_text(item):
                        (child.findtext(f"{{{S}}}t") or "") if child.tag==f"{{{S}}}r" else "" for child in item))
 
 
+class SharedFormulas:
+    """Expand only stored shared members, never a group's potentially empty rectangle."""
+    def __init__(self,cells):
+        self.groups={}
+        for cell in cells:
+            formula=cell.find(f"{{{S}}}f")
+            if formula is None or formula.get("t")!="shared" or not formula.text: continue
+            key=formula.get("si","")
+            require(re.fullmatch(r"[0-9]{1,8}",key) is not None,"INVALID_SPREADSHEET","Invalid shared formula group")
+            require(key not in self.groups,"INVALID_SPREADSHEET","Duplicate shared formula master")
+            ends=formula.get("ref","").split(":")
+            require(1<=len(ends)<=2,"INVALID_SPREADSHEET","Invalid shared formula extent")
+            try:
+                r1,c1=coordinates(ends[0]); r2,c2=coordinates(ends[-1]); row,col=coordinates(cell.get("r",""))
+            except FormulaError as error: raise EngineError("INVALID_SPREADSHEET","Invalid shared formula coordinates") from error
+            require(r1<=row<=r2 and c1<=col<=c2 and (r2-r1+1)*(c2-c1+1)<=MAX_CELLS,
+                    "LIMIT","Shared formula extent must contain its master and at most 10,000 cells")
+            source="="+formula.text
+            typed({"source":source,"kind":"formula","style":{}})
+            self.groups[key]=(row,col,(r1,c1,r2,c2),source)
+
+    def source(self,cell,formula):
+        kind=formula.get("t","normal")
+        require(formula.get("ca","0") in ("0","1","false","true"),"INVALID_SPREADSHEET","Invalid formula calculation flag")
+        if kind=="normal":
+            require(set(formula.attrib)<={"t","ca"},"UNSUPPORTED_FORMULA","Unsupported formula metadata")
+            return "="+(formula.text or "")
+        require(kind=="shared" and set(formula.attrib)<={"t","si","ref","ca"},"UNSUPPORTED_FORMULA","Only ordinary and bounded shared formulas are available")
+        key=formula.get("si","")
+        require(key in self.groups,"INVALID_SPREADSHEET","Shared formula has no master")
+        origin_row,origin_col,(r1,c1,r2,c2),source=self.groups[key]
+        row,col=coordinates(cell.get("r",""))
+        require(r1<=row<=r2 and c1<=col<=c2,"INVALID_SPREADSHEET","Shared formula member lies outside its master extent")
+        require(formula.text or "ref" not in formula.attrib,"INVALID_SPREADSHEET","Only the shared master may declare an extent")
+        return translate(source,row-origin_row,col-origin_col)
+
+
 def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None):
     selected=integer(request.get("sheet_index",1),1,64,"sheet_index")
     selected_mode=mode(request)
@@ -169,7 +206,15 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         styles=XlsxStyles(archive,style_path or "xl/styles.xml")
         edits,issues,seen=[],[],set()
         count=0
-        for cell in root.findall(f"{{{S}}}sheetData/{{{S}}}row/{{{S}}}c"):
+        stored=root.findall(f"{{{S}}}sheetData/{{{S}}}row/{{{S}}}c")
+        require(len(stored)<=MAX_CELLS,"LIMIT","Import exceeds 10,000 stored cells")
+        shared_formulas=None
+        if selected_mode=="formulas":
+            try: shared_formulas=SharedFormulas(stored)
+            except EngineError as error:
+                shared_formulas=SharedFormulas([])
+                issues.append({"cell":"shared formula groups","message":str(error)[:200]})
+        for cell in stored:
             count+=1; checkpoint(count,"Reading cells")
             require(count<=MAX_CELLS,"LIMIT","Import exceeds 10,000 stored cells")
             location=cell.get("r","")
@@ -181,8 +226,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
                 value=cell.findtext(f"{{{S}}}v")
                 kind=cell.get("t","n")
                 if formula is not None and selected_mode=="formulas":
-                    require(not formula.attrib,"UNSUPPORTED_FORMULA","Shared, array and data-table formulas are unavailable")
-                    item={"source":local_formula("="+(formula.text or ""),sheet_names=sheet_names),"kind":"formula"}
+                    item={"source":local_formula(shared_formulas.source(cell,formula),sheet_names=sheet_names),"kind":"formula"}
                 elif kind=="inlineStr":
                     item={"source":xlsx_text(cell.find(f"{{{S}}}is")),"kind":"text"}
                 elif kind=="s":
@@ -203,6 +247,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
                 edits.append({"row":row,"col":col,**item})
             except (EngineError,FormulaError,UnicodeError) as error:
                 if len(issues)<100: issues.append({"cell":location,"message":str(error)[:200]})
+        if shared_formulas and shared_formulas.groups: report.append("Shared formulas expand to explicit per-cell sources with relative/absolute reference translation; caches are discarded.")
         report.extend(styles.report())
         result={"cells":edits if not issues else [],"can_import":bool(edits) and not issues,"issues":issues,
                 "sheet":sheets[selected-1].get("name",""),"sheets":[s.get("name","") for s in sheets],"report":report,"stored_cells":count}
@@ -296,6 +341,7 @@ def validate_sheet_names(names):
     require(0<len(names)<=64,"LIMIT","Provide 1-64 sheets")
     for name in names:
         Workbook.check_name(name)
+        require(not any(ord(c) in (65534,65535) for c in name),"INVALID_NAME","Sheet names contain characters unavailable in spreadsheet XML")
         require(name.strip() and not name.startswith("'") and not name.endswith("'"),"INVALID_NAME","Spreadsheet sheet names cannot be blank or start/end with apostrophes")
     require(len({fold_name(n) for n in names})==len(names),"INVALID_NAME","Duplicate sheet names are unavailable")
     return names

@@ -106,7 +106,8 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 
 The [workbook compatibility/recovery/qualification increments](workbook-next-five.md)
 now add bounded whole-workbook XLSX/ODS with atomic empty-destination import and
-consistent multi-sheet export. Local verification is authoritative while hosted
+consistent multi-sheet export, XLSX shared-formula expansion, ODS parent-cell-style
+resolution and independent producer/consumer fixtures. Local verification is authoritative while hosted
 Actions credits are exhausted; Windows/Linux and manual acceptance remain open.
 
 The [next interchange/recovery increments](interchange-next-five.md) begin with

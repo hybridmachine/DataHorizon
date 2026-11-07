@@ -1,0 +1,35 @@
+Local macOS verification, November 6, 2026; hosted Actions have no credits.
+C++ build passed.
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   53.20 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   24.04 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  77.24 sec
+
+Final Python suite after snapshot review correction:
+Test project /Users/btabone/source/DataHorizon/build
+    Start 2: service
+1/1 Test #2: service ..........................   Passed   24.12 sec
+
+100% tests passed out of 1
+
+Total Test time (real) =  24.13 sec
+
+Focused formula/style/provenance checks:
+test_broken_shared_groups_block_every_cell (test_fidelity.FidelityTests.test_broken_shared_groups_block_every_cell) ... ok
+test_checked_independent_producer_workbooks_calculate_and_retain_styles (test_fidelity.FidelityTests.test_checked_independent_producer_workbooks_calculate_and_retain_styles) ... ok
+test_ods_inherits_parent_properties_and_child_resets (test_fidelity.FidelityTests.test_ods_inherits_parent_properties_and_child_resets) ... ok
+test_shared_formulas_expand_relative_absolute_and_quoted_text (test_fidelity.FidelityTests.test_shared_formulas_expand_relative_absolute_and_quoted_text) ... ok
+test_snapshot_does_not_reparse_formulas_without_native_ids (test_fidelity.FidelityTests.test_snapshot_does_not_reparse_formulas_without_native_ids) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.028s
+
+OK
+
+Independent consumer details: workbook-consumers.json (four passing format/mode combinations).
+Self-review corrected unnecessary formula reparsing during snapshot creation and retained all-input rejection for malformed shared groups. Native application and Windows/Linux acceptance remain unexecuted.
