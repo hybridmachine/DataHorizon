@@ -436,7 +436,7 @@ class ServiceTests(unittest.TestCase):
                     schema=methods["post"]["requestBody"]["content"]["application/json"]["schema"]
                     self.assertIn(schema["$ref"].rsplit("/",1)[-1],schemas,path)
             with client.open(Path(temp)/"examples.dhwb",create=True) as book:
-                sequence=("edit","paste","fill","move","replace_all","undo","redo", "sheet_add","sheet_rename","sheet_duplicate","sheet_reorder","sheet_delete",
+                sequence=("workbook_import","edit","paste","fill","move","replace_all","undo","redo", "sheet_add","sheet_rename","sheet_duplicate","sheet_reorder","sheet_delete",
                           "rows_insert","rows_delete","columns_insert","columns_delete")
                 self.assertEqual(set(sequence),set(mapping))
                 for action in sequence:

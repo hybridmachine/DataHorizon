@@ -102,11 +102,11 @@ class Client:
     def prepare_csv(self, request, job_id=None):
         return self.request("/v1/import/csv/jobs", {**request,"job_id":job_id or str(uuid.uuid4())})
 
-    def prepare_spreadsheet(self, data, *, format="xlsx", sheet_index=1, mode="formulas", job_id=None):
+    def prepare_spreadsheet(self, data, *, format="xlsx", sheet_index=1, mode="formulas", scope="selection", job_id=None):
         import base64
         if format not in ("xlsx","ods"): raise ValueError("Unsupported spreadsheet format")
         return self.request("/v1/import/"+format+"/jobs", {"file_base64":base64.b64encode(data).decode(),
-            "job_id":job_id or str(uuid.uuid4()),"sheet_index":sheet_index,"mode":mode})
+            "job_id":job_id or str(uuid.uuid4()),"sheet_index":sheet_index,"mode":mode,"scope":scope})
 
     def preparation(self, job_id, action=None):
         path = "/v1/jobs/"+quote(job_id,safe="")
@@ -155,6 +155,8 @@ class WorkbookClient:
     def import_prepared(self, preview, sheet="Sheet1"):
         if preview.get("can_import") is not True:
             raise ValueError("Correct import issues and review again before Apply")
+        if preview.get("scope")=="workbook":
+            return self.apply("workbook_import",sheets=preview["workbook_sheets"],label="Import workbook")
         return self.apply("edit",sheet,cells=preview["cells"],label="Import spreadsheet")
 
     def apply(self, action, sheet="Sheet1", operation_id=None, **arguments):

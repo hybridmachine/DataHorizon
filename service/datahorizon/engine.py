@@ -416,6 +416,57 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
+    def read_workbook(self):
+        """One bounded read transaction, including every sheet and formula dependency."""
+        from .interchange import validate_sheet_names
+        with self.lock:
+            deadline=time.monotonic()+5
+            self.refresh(deadline=deadline)
+            self.db.execute("BEGIN")
+            try:
+                self.refresh(deadline=deadline)
+                with sql_deadline(self.db,deadline):
+                    catalog=list(self.db.execute("SELECT id,name FROM sheets ORDER BY position,id LIMIT 65"))
+                    validate_sheet_names([name for _,name in catalog])
+                    rows=self.db.execute("SELECT sheet_id,row,col,source,kind,style FROM cells ORDER BY sheet_id,row,col LIMIT ?",(MAX_CELLS+1,))
+                    result={"state":self.state(),"sheets":[{"name":name,"cells":[]} for _,name in catalog]}
+                    targets={key:result["sheets"][index]["cells"] for index,(key,_) in enumerate(catalog)}
+                    calc=self.calculator(seconds=2); size=0
+                    for count,(sheet,row,col,source,kind,style) in enumerate(rows,1):
+                        require(count<=MAX_CELLS,"LIMIT","Workbook export exceeds 10,000 stored cells")
+                        require(time.monotonic()<=deadline,"TIMEOUT","Workbook export exceeded its time budget")
+                        item=typed({"source":source,"kind":kind,"style":json.loads(style)})
+                        cell={"row":row,"col":col,"source":source,"kind":item["kind"],"style":item["style"]}
+                        try:
+                            value=calc.cell(sheet,row,col) if item["kind"]=="formula" else item["value"]
+                            cell.update(value=value,calculation="current")
+                        except FormulaError as error:
+                            cell.update(value=None,calculation="error",error=str(error))
+                        if item["kind"]=="formula":
+                            for identity,name in catalog:
+                                cell["source"]=rename_sheet_references(cell["source"],identity,name)
+                        size+=len(encoded(cell).encode())
+                        require(size<=4*1024*1024,"READ_LIMIT","Workbook snapshot exceeds 4 MiB")
+                        targets[sheet].append(cell)
+                    return result
+            finally:
+                self.db.execute("ROLLBACK")
+
+    def import_workbook(self,request):
+        from .interchange import validate_sheet_names
+        require(not self.handler,"UNSUPPORTED_HOOK_SCOPE","Whole-workbook import with required handlers needs a structure-event contract")
+        require(self.db.execute("SELECT 1 FROM cells LIMIT 1").fetchone() is None,"DESTINATION_NOT_EMPTY","Whole-workbook import requires an empty destination; create a new workbook")
+        sheets=request.get("sheets")
+        require(isinstance(sheets,list) and all(isinstance(s,dict) for s in sheets),"INVALID_ARGUMENT","sheets must be an array of sheet objects")
+        validate_sheet_names([s.get("name") for s in sheets])
+        require(all(isinstance(s.get("cells"),list) for s in sheets),"INVALID_ARGUMENT","Each sheet needs cells")
+        require(sum(len(s["cells"]) for s in sheets)<=MAX_CELLS,"LIMIT","Workbook import exceeds 10,000 stored cells")
+        self.db.execute("DELETE FROM sheets")
+        for index,sheet in enumerate(sheets):
+            identity=str(uuid.uuid4())
+            self.db.execute("INSERT INTO sheets VALUES(?,?,?)",(identity,sheet["name"],index))
+            if sheet["cells"]: self.apply_edit(identity,sheet["cells"])
+
     def put(self, sheet, row, col, item):
         integer(row, 1, MAX_ROWS, "row")
         integer(col, 1, MAX_COLS, "col")
@@ -579,7 +630,7 @@ class Workbook:
                     raise EngineError("INVALID_ARGUMENT","Request text must be valid Unicode") from error
                 require("label" not in request or isinstance(request["label"],str),"INVALID_ARGUMENT","Operation label must be text")
                 kind = request.get("action")
-                structural = isinstance(kind, str) and (kind.startswith("sheet_") or kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"))
+                structural = isinstance(kind, str) and (kind.startswith("sheet_") or kind == "workbook_import" or kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"))
                 reference_report = {}
                 sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
                 if kind == "edit":
@@ -713,6 +764,8 @@ class Workbook:
                         self.put(*key, wanted)
                 elif kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"):
                     reference_report = self.change_structure(request)
+                elif kind == "workbook_import":
+                    self.import_workbook(request)
                 elif kind == "sheet_add":
                     name = request.get("name", "Sheet")
                     self.check_name(name)

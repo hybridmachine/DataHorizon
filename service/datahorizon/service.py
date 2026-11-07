@@ -23,7 +23,7 @@ from .engine import EngineError, MAX_CELLS, Workbook, boolean, encoded, require
 from .formula import MAX_COLS, MAX_ROWS
 from .csv_import import COLUMN_TYPES, ENCODINGS, preview_csv
 from .jobs import PreparationJobs
-from .interchange import xlsx_preview, xlsx_export
+from .interchange import xlsx_preview, xlsx_export, preparation_scope
 from .ods import ods_preview, ods_export
 from .recovery import inspect_native
 
@@ -31,7 +31,7 @@ CAPABILITIES = {
     "api_version": 1, "format_version": 1, "max_operation_cells": MAX_CELLS,
     "max_viewport_cells": 4096, "max_clipboard_cells":MAX_CELLS, "max_request_bytes": 4 * 1024 * 1024,
     "formulas": ["arithmetic", "references", "SUM", "IF"],
-    "operations": ["edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
+    "operations": ["workbook_import", "edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
     "interchange": ["csv", "xlsx", "ods"], "managed_sql": False, "remote_binding": False,
     "follow_up_work": False, "chunked_jobs": False, "preparation_jobs": True,
     "max_preparation_jobs":4, "preparation_job_seconds":10, "preparation_retention_seconds":300,
@@ -47,8 +47,8 @@ ROUTES = {
     "/v1/import/csv/jobs": ("post", "Start a cancellable CSV preparation; never writes workbook data"),
     "/v1/import/ods/jobs": ("post", "Prepare one bounded ODS sheet with formula/style conversion review"),
     "/v1/workbooks/{workbook}/export/ods": ("post", "Bounded ODS selection snapshot and conversion report"),
-    "/v1/import/xlsx/jobs": ("post", "Prepare one XLSX sheet with explicit conversion review"),
-    "/v1/workbooks/{workbook}/export/xlsx": ("post", "Bounded XLSX selection snapshot and conversion report"),
+    "/v1/import/xlsx/jobs": ("post", "Prepare bounded selected-sheet or whole-workbook XLSX with conversion review"),
+    "/v1/workbooks/{workbook}/export/xlsx": ("post", "Bounded XLSX selection or whole-workbook snapshot and conversion report"),
     "/v1/jobs/{job}": ("get", "Ephemeral preparation status, progress and reviewed result"),
     "/v1/jobs/{job}/cancel": ("post", "Cancel preparation or discard its completed result"),
     "/v1/jobs/{job}/release": ("post", "Release terminal preparation storage"),
@@ -130,6 +130,7 @@ def openapi():
         "replace_all": (["needle","replacement"],{"sheet":sheet,**rectangle,**search,"replacement":{"type":"string"}},
                         {"r1":1,"c1":1,"r2":3,"c2":1,"needle":"7","replacement":"9"}),
         "undo": ([],{},{}), "redo": ([],{},{}),
+        "workbook_import": (["sheets"],{"sheets":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","required":["name","cells"],"properties":{"name":name,"cells":{"type":"array","items":{"$ref":"#/components/schemas/CellEdit"}}}}}},{"sheets":[{"name":"Sheet1","cells":[]}]}),
         "sheet_add": ([],{"name":{**name,"default":"Sheet"}},{"name":"Other"}),
         "sheet_rename": (["sheet","name"],{"sheet":sheet,"name":name},{"sheet":"Other","name":"Renamed"}),
         "sheet_duplicate": (["sheet","name"],{"sheet":sheet,"name":name},{"sheet":"Renamed","name":"Copy"}),
@@ -176,10 +177,12 @@ def openapi():
     schemas["SpreadsheetPreparation"] = {"type":"object","required":["job_id","file_base64"],"properties":{
         "job_id":schemas["PreparationRequest"]["properties"]["job_id"],
         "file_base64":{"type":"string","format":"byte","description":"At most 3 MiB of ZIP data / 16 MiB expanded, 128 entries"},
+        "scope":{"type":"string","enum":["selection","workbook"],"default":"selection"},
         "sheet_index":{"type":"integer","minimum":1,"maximum":64,"default":1},"row":row,"col":col,
         "mode":{"type":"string","enum":["formulas","values"],"default":"formulas"}},
-        "description":"Selected sheet inputs only, at most 10,000 stored cells. Values mode uses unverified formula caches. Issues block the entire applicable payload. Explicit reviewed Apply is one managed edit; no code activation."}
+        "description":"Selected sheet or whole-workbook inputs, at most 10,000 stored cells total. Whole-workbook XLSX requires an empty destination and no required handler, replaces sheets atomically and clears history. Values mode uses unverified formula caches. Issues block the entire applicable payload. Explicit reviewed Apply is one managed edit; no code activation."}
     schemas["SpreadsheetExport"] = {**schemas["CsvExportRequest"],"properties":{**schemas["CsvExportRequest"]["properties"],
+        "scope":{"type":"string","enum":["selection","workbook"],"default":"selection"},
         "mode":{"type":"string","enum":["formulas","values"],"default":"formulas"}}}
     schemas["JobAction"] = {"type":"object","properties":{}}
     paths = {}
@@ -420,7 +423,9 @@ class Service(ThreadingHTTPServer):
             return book.snapshot(body["path"])
         if method == "POST" and suffix in (["export", "xlsx"],["export","ods"]):
             require("rows" not in body,"INVALID_ARGUMENT","Spreadsheet export requires a contiguous rectangle")
-            snapshot=book.read(body.get("sheet","Sheet1"),{**body,"preview":False},limit=MAX_CELLS)
+            whole=preparation_scope(body)=="workbook"
+            require(not whole or suffix[1]=="xlsx","INVALID_ARGUMENT","Workbook scope is currently XLSX only")
+            snapshot=book.read_workbook() if whole else book.read(body.get("sheet","Sheet1"),{**body,"preview":False},limit=MAX_CELLS)
             return (xlsx_export if suffix[1]=="xlsx" else ods_export)(snapshot,body)
         if method == "POST" and suffix == ["export", "csv"]:
             return book.csv_export(body.get("sheet", "Sheet1"), body)

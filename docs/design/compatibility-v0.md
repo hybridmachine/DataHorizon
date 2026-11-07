@@ -167,3 +167,13 @@ unsupported non-cell features are reported as omitted. See the exact
 [interchange contract](interchange-next-five.md#xlsx-inputs-and-formulas).
 ODS now has a separate [bounded tier](interchange-next-five.md#ods-inputs-formulas-and-native-styles). XLSX direct styles follow the separate
 [native-style mapping](interchange-next-five.md#xlsx-native-styles).
+
+
+## Whole-workbook interchange
+
+XLSX now supports `scope=workbook`: all sheet names/order, empty sheets, mapped
+inputs/styles and supported cross-sheet formulas. Import replaces an empty
+workbook atomically and rejects required handlers; success clears history.
+Export uses one bounded read transaction and translates stable native IDs to names.
+Aggregate limits and omissions remain explicit in the
+[workbook contract](workbook-next-five.md). Single-selection tiers remain available.
