@@ -1,0 +1,22 @@
+Local macOS November 7, 2026. C++ build passed; hosted credits exhausted.
+
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   65.92 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   26.50 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  92.43 sec
+
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::frozenPaneSelectionCrossesByKeyboardMouseAndAddressWithoutEdits()
+PASS   : DesktopTests::frozenTopRowEditsAlignsAndPersistsWithoutCoveringBody()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 1567ms
+********* Finished testing of DesktopTests *********
+
+Self-review: canonical anchor/current/rectangle, Qt selection/current signal ordering, visible cross-boundary drag and Shift selection, draft cancellation, source cache sharing, original scroll/header/editor/read-only/persistence behavior and range-operation guards. Edge drag auto-scroll and additional frozen edges are separate tasks. No new release qualification.

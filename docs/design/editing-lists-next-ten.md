@@ -37,3 +37,21 @@ see final coalesced inputs and may reject all changes; Undo/Redo includes moved
 cells, rewritten references and generated changes. No structure-event bypass or
 schema change is introduced. This is a declared scalar compatibility stage, not
 complete Excel move semantics.
+
+## Cross-pane selection
+
+Frozen panes and the body mirror one source-coordinate current cell and one
+canonical rectangle. Plain/Shift arrows, Shift-click and left-button drag across
+the visible top/body boundary use the same anchor; address ranges may include
+the frozen row. Drag updates occur over visible cells (edge auto-scroll is not
+introduced). Proxy selections show the rectangle's intersection without their
+own cell caches. Body scrolling is retained when selecting the frozen header.
+Hidden sections retain existing visibility/range-operation guards; list views
+suspend freezing. Draft cancellation preserves the earlier rectangle and input.
+Navigation produces no managed edits; range commands still use ordinary guards,
+one atomic engine operation and Undo. Existing cell editors, headers, read-only
+behavior, native geometry, resize synchronization and local preferences remain.
+
+## Completed PRs
+
+1. [Formula-aware Cut #45](https://github.com/hybridmachine/DataHorizon/pull/45): locally verified, self-reviewed and merged.

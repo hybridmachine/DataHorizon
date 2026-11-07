@@ -160,8 +160,8 @@ CSV import requires unhidden sections. Managed API coordinates are unchanged.
 
 Freeze top row supports one editable source row with shared cached values,
 synchronized columns and local persistence. It is suspended in projected lists
-or while row 1 is hidden. Multiple edges and cross-pane range selection remain
-unavailable.
+or while row 1 is hidden. Cross-pane source-rectangle selection is implemented; multiple frozen edges
+remain outside this tier. See [selection semantics](editing-lists-next-ten.md#cross-pane-selection).
 
 ### XLSX input tier
 

@@ -513,7 +513,6 @@ void MainWindow::buildUi() {
         const int r1=qMin(row,endRow),r2=qMax(row,endRow),c1=qMin(col,endCol),c2=qMax(col,endCol);
         if(qint64(r2-r1+1)*(c2-c1+1)>10000) {issue("Address range exceeds the 10,000-cell selection limit.");return;}
         if(intersectsHidden(r1,c1,r2,c2)) {issue("That address range includes hidden cells. Show hidden rows or columns before navigating there.");return;}
-        if(m_frozenTop->active() && r1==1 && (r2>r1 || c2>c1)) {issue("Unfreeze the top row before selecting a range that includes it.");return;}
         const auto target=targetContext();captureGridDraft(false);if(!resolveDraft())return;
         if(m_busy || !matchesTarget(target)) {issue("Navigation target changed. Enter the address again.");return;}
         m_address->setModified(false);
