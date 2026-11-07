@@ -462,7 +462,7 @@ void MainWindow::buildUi() {
     add(help, tr("Preview capabilities"), {}, [this] {
         m_client->request("/v1/capabilities", {}, [this](QJsonObject, QString error) {
             if (!error.isEmpty()) issue(error);
-            else QMessageBox::information(this, tr("Development preview"), tr("Qt Widgets/C++ desktop • SQLite • Python REST service\n\nAvailable: cell entry, bounded viewports, SUM/IF formulas, copy/paste, fill, wrap/borders, cell Undo/Redo, bounded sheet and row/column edits, list views, scoped search and CSV. Sheet sizes, hiding and Freeze top row use local desktop preferences.\n\nUnavailable: Excel/ODS interchange, unrestricted reference transforms, managed SQL, workbook code authoring and remote binding.\n\nThese limits are recorded in docs/design/implementation-status.md."));
+            else QMessageBox::information(this, tr("Development preview"), tr("Qt Widgets/C++ desktop • SQLite • Python REST service\n\nAvailable: cell entry, bounded viewports, SUM/IF formulas, copy/paste, fill, wrap/borders, cell Undo/Redo, bounded sheet and row/column edits, list views, scoped search, CSV and bounded XLSX/ODS selection/workbook interchange. Sheet sizes, hiding and Freeze top row use local desktop preferences.\n\nUnavailable: unrestricted reference transforms, managed SQL, workbook code authoring and remote binding.\n\nThese limits are recorded in docs/design/implementation-status.md."));
         }, false);
     });
     add(help, tr("About DataHorizon"), {}, [this] { QMessageBox::about(this, tr("DataHorizon"), tr("DataHorizon 0.1 development preview\nGUI: GNU GPL version 3.\nOther component licenses remain undecided.\nSee repository licensing materials.")); });
@@ -1776,7 +1776,7 @@ void MainWindow::exportFile() {
     auto range=selectedRange(); if(range.isEmpty()) return;
     auto target=targetContext(range);
     ExportFileDialog dialog(this,{tr("CSV (*.csv)"),tr("Excel workbook (*.xlsx)"),tr("OpenDocument spreadsheet (*.ods)")});
-    dialog.setWindowTitle(tr("Export selection"));
+    dialog.setWindowTitle(tr("Export data"));
     if(dialog.exec()!=QDialog::Accepted || !matchesTarget(target)) return;
     const auto path=dialog.selectedFiles().value(0), format=dialog.format();
     if(path.isEmpty()) return;

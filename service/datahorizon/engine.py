@@ -444,7 +444,10 @@ class Workbook:
                             cell.update(value=None,calculation="error",error=str(error))
                         if item["kind"]=="formula":
                             for identity,name in catalog:
-                                cell["source"]=rename_sheet_references(cell["source"],identity,name)
+                                if identity in cell["source"]:
+                                    try: cell["source"]=rename_sheet_references(cell["source"],identity,name)
+                                    except FormulaError as error:
+                                        raise EngineError("UNSUPPORTED_FORMULA",f"Cannot export formula at {sheet}!{address(row,col)}: {error}") from error
                         size+=len(encoded(cell).encode())
                         require(size<=4*1024*1024,"READ_LIMIT","Workbook snapshot exceeds 4 MiB")
                         targets[sheet].append(cell)

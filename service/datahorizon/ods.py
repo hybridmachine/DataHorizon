@@ -136,13 +136,27 @@ class OdsStyles:
     def loss(self,message):
         if len(self.losses)<100: self.losses.add(message)
 
+    def resolved(self,name):
+        chain=[]; seen=set()
+        while name is not None:
+            require(name not in seen and len(chain)<32,"INVALID_SPREADSHEET","ODS style inheritance is cyclic or exceeds 32 levels")
+            seen.add(name)
+            item=self.styles.get(name)
+            require(item is not None,"INVALID_SPREADSHEET","Missing ODS cell or parent style")
+            chain.append(item); name=item.get(q(Y,"parent-style-name"))
+        result=ET.Element(q(Y,"style")); props={}
+        for item in reversed(chain):
+            result.attrib.update(item.attrib)
+            for child in item:
+                if child.tag not in props: props[child.tag]=ET.SubElement(result,child.tag)
+                props[child.tag].attrib.update(child.attrib)
+        return result
+
     def style(self,name):
         if name is None: return {}
         if name in self.cache: return self.cache[name]
-        item=self.styles.get(name)
-        require(item is not None,"INVALID_SPREADSHEET","Missing ODS cell style")
+        item=self.resolved(name)
         result={}
-        if item.get(q(Y,"parent-style-name")): self.loss("Parent-style inheritance is omitted; direct properties are mapped.")
         data_name=item.get(q(Y,"data-style-name"))
         if data_name:
             fmt=self.formats.get(data_name)
@@ -175,8 +189,8 @@ class OdsStyles:
 
 def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None):
     selected=integer(request.get("sheet_index",1),1,64,"sheet_index"); selected_mode=mode(request)
-    report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct native styles replace destination inputs/styles.",
-            "Other sheets, code, charts, comments, merged presentation, names, validation, conditional/inherited/row/column formatting, dimensions and advanced fonts are omitted; code never activates.",
+    report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct/inherited cell styles replace destination inputs/styles.",
+            "Other sheets, code, charts, comments, merged presentation, names, validation, conditional/default/row/column formatting, dimensions and advanced fonts are omitted; code never activates.",
             "Percentage/currency retain numeric magnitude; currency codes and unsupported display are omitted. Dates and durations become ISO Text. Formula syntax is translated canonically; only local SUM/IF and arithmetic/comparison formulas without powers are supported."]
     if selected_mode=="values": report.append("Formula caches become values with unverified freshness; missing/error caches block Apply.")
     with package(request) as archive:

@@ -59,3 +59,28 @@ The translation follows the named-sheet reference grammar in the
 This is a bounded compatibility tier, with independent XML fixtures and odfpy
 consumption; it does not claim native LibreOffice acceptance. Local evidence is
 in `evidence/workbook-ods-verification.txt`.
+
+## Formula and style fidelity
+
+XLSX ordinary formula metadata (`t=normal`, supported recalculation flag) and
+bounded shared groups are supported. Stored members are translated relative to
+one unambiguous master, including absolute components and untouched string literals.
+Only actual stored members expand; a declared rectangle never creates absent cells.
+Missing/duplicate masters, invalid extents/members and unsupported metadata block
+all inputs. Arrays, data tables and unsupported functions remain unavailable.
+See Microsoft's [shared formula metadata](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.spreadsheet.cellformula?view=openxml-3.0.1).
+
+ODS explicit table-cell parent chains resolve at most 32 levels with cycle and
+missing-parent rejection. Child attributes override supported inherited properties,
+including explicit normal fonts, transparent fills and no-wrap. Default styles,
+row/column formatting and unsupported properties remain outside this tier.
+
+`tests/fixtures/generate_fidelity.py` creates checked, hashed openpyxl/odfpy files;
+`fidelity-provenance.json` identifies their actual producers. Core tests need no
+third-party dependencies. `tests/verify_workbook_consumers.py` independently reads
+formula/values exports for both formats, 16 styled formula rows, three sheets and
+a cross-sheet total. Build-only dependencies are pinned in
+`tests/requirements-fidelity.txt`. These files are not represented as having been
+produced or accepted by native Excel/LibreOffice. Their application qualification
+remains an explicit platform gate. Evidence: `evidence/fidelity-verification.txt`
+and `evidence/workbook-consumers.json`.
