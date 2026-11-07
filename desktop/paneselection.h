@@ -42,6 +42,10 @@ public:
             }
         });
     }
+    void focusCurrent() {
+        auto *pane=m_enabled?paneFor(m_body->currentIndex()):m_body;
+        if(pane) {const auto cell=m_body->currentIndex();pane->scrollTo(pane->model()->index(cell.row(),cell.column()));pane->setFocus();}
+    }
     void setEnabled(bool enabled) {m_enabled=enabled;m_dragging=false;m_anchor=m_body->currentIndex();if(enabled)sync();}
     void sync() {
         if(!m_enabled || m_selecting)return;
