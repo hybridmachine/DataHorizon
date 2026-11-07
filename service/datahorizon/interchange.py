@@ -74,6 +74,8 @@ def read_xml(archive,path):
 
 def local_formula(source, bounds=None):
     """The interchange tier preserves only implemented, local A1 formulas."""
+    require(not any((ord(c)<32 and c not in "\t\n\r") or ord(c) in (65534,65535) for c in source),
+            "UNSUPPORTED_FORMULA","Formula contains characters unavailable in spreadsheet XML")
     try:
         pending=[Parser(source[1:]).parse()]
         while pending:
@@ -95,12 +97,19 @@ def local_formula(source, bounds=None):
 
 
 def text_decode(value):
-    return re.sub(r"_x([0-9A-Fa-f]{4})_",lambda m:chr(int(m[1],16)),value)
+    text=re.sub(r"_x([0-9A-Fa-f]{4})_",lambda m:chr(int(m[1],16)),value)
+    return text.encode("utf-16-le","surrogatepass").decode("utf-16-le")
 
 
 def text_encode(value):
     value=re.sub(r"_x[0-9A-Fa-f]{4}_",lambda m:"_x005F_"+m[0][1:],value)
-    return "".join(f"_x{ord(c):04X}_" if ord(c)<32 and c not in "\t\n" else c for c in value)
+    return "".join(f"_x{ord(c):04X}_" if (ord(c)<32 and c not in "\t\n") or ord(c) in (65534,65535) else c for c in value)
+
+
+def xlsx_text(item):
+    if item is None: return ""
+    return text_decode("".join((child.text or "") if child.tag==f"{{{S}}}t" else
+                       (child.findtext(f"{{{S}}}t") or "") if child.tag==f"{{{S}}}r" else "" for child in item))
 
 
 def xlsx_preview(request,checkpoint=lambda completed,phase:None):
@@ -129,7 +138,7 @@ def xlsx_preview(request,checkpoint=lambda completed,phase:None):
         shared=[]
         if "xl/sharedStrings.xml" in archive.namelist():
             for item in read_xml(archive,"xl/sharedStrings.xml"):
-                shared.append(text_decode("".join(t.text or "" for t in item.iter(f"{{{S}}}t"))))
+                shared.append(xlsx_text(item))
                 require(len(shared)<=MAX_CELLS,"LIMIT","Shared strings exceed 10,000 entries")
         features=sorted({item.tag.rsplit("}",1)[-1] for item in root if item.tag!=f"{{{S}}}sheetData"})
         report.append("Worksheet features outside cell inputs: "+", ".join(features[:40]))
@@ -152,7 +161,7 @@ def xlsx_preview(request,checkpoint=lambda completed,phase:None):
                     require(not formula.attrib,"UNSUPPORTED_FORMULA","Shared, array and data-table formulas are unavailable")
                     item={"source":local_formula("="+(formula.text or "")),"kind":"formula"}
                 elif kind=="inlineStr":
-                    item={"source":text_decode("".join(t.text or "" for t in cell.findall(f"{{{S}}}is//{{{S}}}t"))),"kind":"text"}
+                    item={"source":xlsx_text(cell.find(f"{{{S}}}is")),"kind":"text"}
                 elif kind=="s":
                     require(value is not None and re.fullmatch(r"[0-9]+",value) is not None and int(value)<len(shared),"INVALID_SPREADSHEET","Invalid shared string index")
                     item={"source":shared[int(value)],"kind":"text"}
@@ -198,6 +207,7 @@ def xlsx_export(snapshot,request):
             if type(value) is bool: out.set("t","b"); node(out,"v","1" if value else "0")
             elif type(value) in (int,float): node(out,"v",str(value))
             elif value is not None:
+                require(len(value.encode("utf-16-le"))//2<=32767,"LIMIT","XLSX text exceeds Excel's 32,767-character cell limit")
                 out.set("t","inlineStr"); inline=node(out,"is")
                 node(inline,"t",text_encode(value),**{"xml:space":"preserve"})
     workbook=ET.Element("workbook",xmlns=S,**{"xmlns:r":R})

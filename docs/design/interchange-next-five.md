@@ -5,7 +5,7 @@ verify, publish/review/fix and merge each PR before starting the next. Hosted CI
 remains unavailable under the user's local verification authorization.
 
 1. [Cancellable CSV preparation, PR #24](https://github.com/hybridmachine/DataHorizon/pull/24), progress and explicit atomic Apply.
-2. Bounded XLSX input/formula import and snapshot export with conversion reports.
+2. [XLSX inputs/formulas, PR #25](https://github.com/hybridmachine/DataHorizon/pull/25), with snapshot export and conversion reports.
 3. XLSX formatting fidelity for the native style tier, with explicit loss reports.
 4. Bounded ODS input/formula/style import and snapshot export.
 5. Native recovery and interchange failure hardening, with destructive fixtures.
@@ -76,3 +76,10 @@ claim. Format mapping follows [Microsoft's cell schema](https://learn.microsoft.
 and [formula documentation](https://learn.microsoft.com/en-us/office/open-xml/spreadsheet/working-with-formulas).
 Independent, build-only openpyxl checks read exported inputs/formulas and write
 fixtures accepted by the importer. No third-party service dependency is added.
+
+XLSX review corrections exclude phonetic annotations from shared/inline text,
+decode UTF-16 surrogate escapes once, preserve XML control/noncharacter text
+through Excel escapes, reject unavailable formula characters and enforce Excel's
+32,767 UTF-16-unit text limit on export. Unsupported inputs never yield partial
+Apply data. [Local verification](evidence/xlsx-verification.txt) records complete
+CTest, final service regressions, native Cocoa scale 2 and independent readers.

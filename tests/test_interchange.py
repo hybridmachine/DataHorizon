@@ -62,7 +62,7 @@ class XlsxTests(unittest.TestCase):
         self.assertFalse(preview(fixture('<c r="A1"><f>A2</f></c>'),mode="values")["can_import"])
 
     def test_roundtrip_preserves_literal_controls_empty_text_numbers_and_formula_sources(self):
-        texts=["00123","=1+1","","line\nnext\r\t\0","_x0041_","é & < >"]
+        texts=["00123","=1+1","","line\nnext\r\t\0\ufffe","_x0041_","é & < > 😀"]
         cells=[{"row":1,"col":c,"kind":"text","value":text,"source":text,"calculation":"current","style":{}} for c,text in enumerate(texts,1)]
         cells.extend([{"row":2,"col":1,"kind":"number","value":7,"source":"7","calculation":"current","style":{}},
                       {"row":2,"col":2,"kind":"formula","source":"=A2*2","calculation":"current","value":14,"style":{}}])
@@ -75,6 +75,13 @@ class XlsxTests(unittest.TestCase):
             root=ET.fromstring(archive.read("xl/worksheets/sheet1.xml"))
             self.assertEqual(root.find(f".//{{{S}}}f").text,"A2*2")
             self.assertIn("fullCalcOnLoad",archive.read("xl/workbook.xml").decode())
+
+    def test_phonetic_annotations_are_omitted_and_utf16_escapes_decode_once(self):
+        result=preview(fixture('<c r="A1" t="s"><v>0</v></c>',shared='<si><t>字_xD83D__xDE00__x005F_x0041_</t><rPh><t>phonetic</t></rPh></si>'))
+        self.assertEqual(result["cells"][0]["source"],"字😀_x0041_")
+        snapshot={"state":"s","range":[1,1,1,1],"cells":[{"row":1,"col":1,"kind":"text","value":"x"*32768,"calculation":"current","style":{}}]}
+        with self.assertRaises(EngineError) as failure: xlsx_export(snapshot,{})
+        self.assertEqual(failure.exception.body["code"],"LIMIT")
 
     def test_export_blocks_dangling_references_and_error_values(self):
         snapshot={"state":"snapshot","range":[1,1,1,1],"cells":[{"row":1,"col":1,"kind":"formula","source":"=A2","value":7,"calculation":"current","style":{}}]}
