@@ -1,0 +1,30 @@
+Local macOS November 7, 2026. C++ build passed. Hosted credits exhausted.
+
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   59.19 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   26.00 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  85.20 sec
+
+test_down_and_right_snapshot_inputs_formulas_styles_blanks_and_history (test_directional_fill.FillTests.test_down_and_right_snapshot_inputs_formulas_styles_blanks_and_history) ... ok
+test_required_handler_rejects_fill_atomically (test_directional_fill.FillTests.test_required_handler_rejects_fill_atomically) ... ok
+test_right_uses_each_rows_left_seed_and_absolute_components (test_directional_fill.FillTests.test_right_uses_each_rows_left_seed_and_absolute_components) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.233s
+
+OK
+
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::directionalFillUsesIndependentSeedsAndUndo()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 665ms
+********* Finished testing of DesktopTests *********
+
+Self-review checked seed snapshots, formula offsets/absolute components, typed/styled/absent cells, rollback, history and unchanged budgets. No new platform qualification.

@@ -275,10 +275,19 @@ void MainWindow::buildUi() {
     add(edit, tr("Paste formats only"), {}, [this] { paste(false, true); });
     add(edit,tr("Clear contents"),QKeySequence(Qt::Key_Delete),[this]{clearCells("contents");})->setObjectName("clearContentsAction");
     add(edit,tr("Clear all (contents and formats)"),{},[this]{clearCells("all");})->setObjectName("clearAllAction");
-    add(edit, tr("Fill from top-left"), QKeySequence(tr("Ctrl+D")), [this] {
+    add(edit, tr("Fill from top-left"), {}, [this] {
         auto command = selectedRange(); if (command.isEmpty()) return;
         command["action"] = "fill"; command["label"] = "Fill range"; submit(command);
     });
+    for(const auto &mode:QStringList{"down","right"}) {
+        auto *action=add(edit,mode=="down"?tr("Fill down"):tr("Fill right"),
+            QKeySequence(mode=="down"?tr("Ctrl+D"):tr("Ctrl+R")),[this,mode]{
+                auto command=selectedRange();if(command.isEmpty())return;
+                command=targetContext(command);command["action"]="fill";command["mode"]=mode;
+                command["label"]=mode=="down"?tr("Fill down"):tr("Fill right");submit(command);
+            });
+        action->setObjectName(mode=="down"?"fillDownAction":"fillRightAction");
+    }
     add(edit, tr("Fill numeric series…"), {}, [this] {
         if (m_busy) return;
         auto command = selectedRange(); if (command.isEmpty()) return;

@@ -123,7 +123,7 @@ def openapi():
                   "mode":{"type":"string","enum":["all","values","formats"],"default":"all"},
                   "rows":{"type":"array","minItems":1,"items":{"type":"array","items":{"$ref":"#/components/schemas/ClipboardCell"}},"description":"At most 10,000 total cells. Missing origin coordinates default to destination. Values-only paste rejects formula errors and pending results."}},
                   {"row":2,"col":1,"rows":[[{"source":"8","input_kind":"text"}]]}),
-        "fill": ([],{"sheet":sheet,**rectangle,"mode":{"type":"string","enum":["copy","series"],"default":"copy"},"step":{"type":"number","default":1}},
+        "fill": ([],{"sheet":sheet,**rectangle,"mode":{"type":"string","enum":["copy","series","down","right"],"default":"copy"},"step":{"type":"number","default":1}},
                  {"r1":1,"c1":1,"r2":2,"c2":1,"mode":"series","step":2}),
         "move": (["row","col","cut_state"],{"sheet":sheet,**rectangle,"row":row,"col":col,"cut_state":{"type":"string","description":"State captured by Cut; must still match"},"mode":{"type":"string","enum":["all"],"default":"all"}},
                  {"r1":1,"c1":1,"r2":1,"c2":1,"row":3,"col":1,"cut_state":"copy-from-workbook-info"}),

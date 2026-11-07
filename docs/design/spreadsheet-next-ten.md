@@ -140,3 +140,18 @@ clear. Format-only changes do not invent input-change events. Existing selection
 hidden/projection, stale-state and size guards apply; read-only clears are refused.
 
 5. [Percentage formatting #39](https://github.com/hybridmachine/DataHorizon/pull/39): locally verified, self-reviewed and merged.
+
+6. [Clear commands #40](https://github.com/hybridmachine/DataHorizon/pull/40): locally verified, self-reviewed and merged.
+
+## Directional fill contract
+
+Fill down (Ctrl+D) snapshots each selected column's top cell and copies it down.
+Fill right (Ctrl+R) snapshots each selected row's left cell and copies it right.
+Both copy exact input kinds/styles and translate relative formula references
+from each seed, retaining absolute reference components. Empty seeds clear
+corresponding destinations; explicit empty Text and NULL keep their kinds.
+The seed edge is included and stays unchanged. Each fill is one managed,
+undoable operation; required handlers and all existing range/history/time limits
+apply atomically. Seed snapshots are additionally capped at 4 MiB. Top-left copy
+and row-major numeric series remain separate menu actions. Multi-step patterns
+and Excel's automatic series inference are outside this tier.
