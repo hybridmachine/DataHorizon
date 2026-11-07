@@ -96,6 +96,9 @@ class Client:
                 raise ValueError("Invalid JSON error response")
             raise APIError(error.code, body) from error
 
+    def inspect_native(self, path):
+        return self.request("/v1/recovery/inspect", {"path":str(Path(path).expanduser().resolve())})
+
     def prepare_csv(self, request, job_id=None):
         return self.request("/v1/import/csv/jobs", {**request,"job_id":job_id or str(uuid.uuid4())})
 

@@ -158,3 +158,39 @@ expansion/serialization. A repeated-long-text regression checks traced peak
 allocations stay below 12 MiB while rejecting an otherwise 600-MB payload.
 [ODS verification](evidence/ods-verification.txt) records the final regressions,
 full suites, independent producer/consumer and native Cocoa scale 2.
+
+## Native recovery and failure hardening
+
+Native opening now runs catalog/coordinate validation and SQLite quick_check in
+one read transaction with a shared five-second cooperative SQLite deadline.
+Snapshot verification includes quick_check within its existing five-second
+backup/validation budget. Invalid/expired checks close connections and preserve
+the source and failed copy for inspection. Successful inspection is not a claim
+that every input, formula or export feature is compatible.
+
+An open workbook retains its filesystem device/inode identity. Observed removal
+or replacement stops reads, receipt lookup, mutation admission/precommit and
+snapshot copying with FILE_CHANGED. A filesystem without stable file identity
+rejects opening. A replacement is never silently treated as the previous native
+workbook. Operation IDs remain unknown when admission or receipt lookup cannot
+be tied to the original file; retain that file and reconcile its ID before any
+retry. Checks detect observed replacements; they do not coordinate arbitrary
+OS-level renames or hostile writers between filesystem calls. Ordinary SQLite
+content edits retain their existing refresh/no-handler-replay contract.
+
+Read-only native/recovery inspection is available in Qt, REST, SDK and CLI
+(`python -m datahorizon.cli FILE inspect`). It validates storage/native metadata,
+returns a report and no persistent client handle, and activates no required
+handler or code. It never repairs or recalculates inputs. A hot journal requiring
+writable recovery may reject read-only inspection; preserve a native copy for
+further work. Existing workbook identity and editor drafts stay in the Qt window.
+
+Controlled child processes exit abruptly after a spilled managed write and after
+a committed edit before acknowledgement. Reopening rolls back the first without
+historical hook replay; its missing receipt remains unknown. The second retains
+the input and durable committed receipt. These are local SQLite process-crash
+fixtures, not power-loss, filesystem, installer or platform qualification.
+XLSX/ODS cancelled reviews and destination failures retain existing files; native
+aliases reject. QSaveFile retains its atomic replacement behavior. The GUI modal
+fixtures identify dialogs by stable object names because macOS ignores message
+box window titles; bounded cleanup prevents a failed assertion waiting forever.
