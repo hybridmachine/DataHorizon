@@ -1,0 +1,31 @@
+Local macOS November 7, 2026. C++ build passed; hosted credits exhausted.
+
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   65.76 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   26.73 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  92.50 sec
+
+test_move_preserves_outside_targets_and_rewrites_dependents_with_undo_redo_reopen (test_move_formulas.MoveTests.test_move_preserves_outside_targets_and_rewrites_dependents_with_undo_redo_reopen) ... ok
+test_overlap_absent_targets_noop_and_partial_range_reject (test_move_formulas.MoveTests.test_overlap_absent_targets_noop_and_partial_range_reject) ... ok
+test_refs_absolute_qualified_inherited_ranges_strings_and_external_targets (test_move_formulas.MoveTests.test_refs_absolute_qualified_inherited_ranges_strings_and_external_targets) ... ok
+test_required_handler_rejects_entire_move_and_dependent_rewrites (test_move_formulas.MoveTests.test_required_handler_rejects_entire_move_and_dependent_rewrites) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.287s
+
+OK
+
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::formulaAwareCutRetargetsDependentsAndSupportsUndo()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 1168ms
+********* Finished testing of DesktopTests *********
+
+Self-review: original-target semantics, absolute/name/UUID/range references, exact inputs/styles, partial-range refusal, overlap, overwritten formulas, no-op, bounded scans, Undo/Redo/replay/reopen and required-hook atomic rollback. Cross-platform release gates remain open.

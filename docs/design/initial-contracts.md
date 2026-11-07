@@ -124,7 +124,7 @@ and deletion replaces surviving targets with permanent #REF! expressions and
 reports affected formula locations. Unsupported syntax and required handlers
 reject atomically; successful structure changes clear Undo/Redo history.
 
-Cut involving formulas remains unavailable.
+Same-sheet Cut follows the [bounded move/reference contract](editing-lists-next-ten.md#formula-aware-cut).
 Whole-row/column insertion and deletion use the bounded reference transformer
 described below. Sorting freeform cells with formulas is initially restricted;
 record identity and reference-safe sorting require M5 evidence. Filtered paste

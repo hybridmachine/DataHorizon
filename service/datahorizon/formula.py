@@ -280,6 +280,48 @@ def transform_structure(source, local_sheet, target_sheet, axis, start, count, d
     return "".join(out), broken
 
 
+def move_references(source, local_sheet, target_sheet, rectangle, rows, cols, *, target_id=None):
+    """Same-sheet cut: referenced targets follow the moved rectangle, even $ refs.
+
+    Discontiguous partial range moves cannot be represented in the scalar tier.
+    Moved formulas keep their original external targets, unlike Copy/Fill.
+    """
+    parser=Parser(source[1:],track_spans=True);pending=[parser.parse()];edits=[]
+    fold=str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz")
+    r1,c1,r2,c2=rectangle
+    def targets(name):
+        return (target_id is not None and name==target_id or
+                (local_sheet if name is None else name).translate(fold)==target_sheet.translate(fold))
+    def render(ref):
+        prefix,cell=ref.rsplit("!",1) if "!" in ref else (None,ref)
+        parts=ADDRESS.fullmatch(cell);row,col=coordinates(cell)
+        result=f"{parts[1]}{column_name(col+cols)}{parts[3]}{row+rows}"
+        return prefix+"!"+result if prefix is not None else result
+    while pending:
+        node=pending.pop()
+        if node[0]=="call":pending.extend(node[2]);continue
+        if node[0]=="binary":pending.extend(node[2:]);continue
+        if node[0]=="unary":pending.append(node[2]);continue
+        if node[0] not in ("ref","range"):continue
+        first=last=node
+        if node[0]=="range":
+            first,last=node[2:]
+            if first[0]!="ref" or last[0]!="ref":raise FormulaError("#REF!","Move requires cell reference range endpoints")
+        name,row,col=split_ref(first[1]);last_name,end_row,end_col=split_ref(last[1])
+        if last is not first and last_name is None:last_name=name
+        if targets(name)!=targets(last_name):raise FormulaError("#REF!","Cannot move a range spanning different sheets")
+        if not targets(name):continue
+        low_row,high_row=sorted((row,end_row));low_col,high_col=sorted((col,end_col))
+        if high_row<r1 or low_row>r2 or high_col<c1 or low_col>c2:continue
+        if not (r1<=low_row<=high_row<=r2 and c1<=low_col<=high_col<=c2):
+            raise FormulaError("#REF!","Cut partially intersects a formula range; move its entire referenced range or use Copy")
+        for endpoint in (first,) if last is first else (first,last):
+            begin,end=parser.spans[id(endpoint)];edits.append((begin+1,end+1,render(endpoint[1])))
+    out=[];pos=0
+    for begin,end,replacement in sorted(edits):out.extend((source[pos:begin],replacement));pos=end
+    out.append(source[pos:]);return "".join(out)
+
+
 class Parser:
     def __init__(self, source, *, track_spans=False):
         self.tokens, pos = [], 0

@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 
-from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, translate, transform_structure, rename_sheet_references, delete_sheet_references
+from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, translate, move_references, transform_structure, rename_sheet_references, delete_sheet_references
 from .hooks import HookFailure, invoke
 
 MAX_CELLS = 10_000
@@ -770,23 +770,10 @@ class Workbook:
                     require(request.get("mode", "all") == "all", "UNSUPPORTED_PASTE_MODE", "Cut supports full paste only; use Copy for special paste")
                     r1, c1, r2, c2 = rectangle(request)
                     require(request.get("cut_state") == self.state(), "STALE_CUT", "Cut source changed. Copy or cut the range again", 409)
-                    with sql_deadline(self.db,self.deadline):
-                        require(self.db.execute("SELECT 1 FROM cells WHERE source LIKE '=%' AND kind IN ('auto','formula') LIMIT 1").fetchone() is None,
-                                "REFERENCE_TRANSFORM_UNAVAILABLE", "Cut is unavailable while the workbook contains formulas; use Copy")
                     dest_row, dest_col = request.get("row"), request.get("col")
                     integer(dest_row, 1, MAX_ROWS-(r2-r1), "destination row")
                     integer(dest_col, 1, MAX_COLS-(c2-c1), "destination column")
-                    sources, source_bytes = [], 0
-                    for row in range(r1,r2+1):
-                        for col in range(c1,c2+1):
-                            item=self.raw(sheet,row,col)
-                            source_bytes+=len(encoded(item).encode())
-                            require(source_bytes<=4*1024*1024,"LIMIT","Cut source exceeds 4 MiB; select a smaller range")
-                            sources.append((row,col,item))
-                    for row, col, _ in sources:
-                        self.put(sheet, row, col, None)
-                    for row, col, item in sources:
-                        self.put(sheet, dest_row+row-r1, dest_col+col-c1, item)
+                    self.move_cells(sheet,(r1,c1,r2,c2),dest_row,dest_col)
                 elif kind == "replace_all":
                     replacement = request.get("replacement")
                     require(isinstance(replacement, str), "INVALID_ARGUMENT", "Replacement must be text")
@@ -935,6 +922,38 @@ class Workbook:
     def history_cost(label,changes):
         # Compute once per receipt; never serialize all prior history for each edit.
         return len(encoded([label,[[key, *values] for key, values in changes.items()]]).encode())
+
+    def move_cells(self, sheet, rectangle, dest_row, dest_col):
+        r1,c1,r2,c2=rectangle;dr,dc=dest_row-r1,dest_col-c1
+        if dr==0 and dc==0:return
+        sources={};source_bytes=0;formulas={};scan_bytes=0
+        target_name=self.db.execute("SELECT name FROM sheets WHERE id=?",(sheet,)).fetchone()[0]
+        with sql_deadline(self.db,self.deadline):
+            for row in range(r1,r2+1):
+                for col in range(c1,c2+1):
+                    item=self.raw(sheet,row,col);source_bytes+=len(encoded(item).encode())
+                    require(source_bytes<=4*1024*1024,"LIMIT","Cut source exceeds 4 MiB; select a smaller range")
+                    sources[row,col]=item
+            for scanned,(identity,name,row,col,source,kind,style) in enumerate(self.db.execute(
+                    "SELECT c.sheet_id,s.name,c.row,c.col,c.source,c.kind,c.style FROM cells c JOIN sheets s ON s.id=c.sheet_id "
+                    "WHERE c.source LIKE '=%' AND c.kind IN ('auto','formula')"),1):
+                require(time.monotonic()<=self.deadline,"TIMEOUT","Move exceeded its time budget")
+                require(scanned<=MAX_CELLS,"LIMIT","Move reference scan exceeds 10,000 formulas")
+                scan_bytes+=len(source.encode())+len(style.encode())+128
+                require(scan_bytes<=8*1024*1024,"LIMIT","Move reference sources exceed 8 MiB")
+                moving=identity==sheet and r1<=row<=r2 and c1<=col<=c2
+                overwritten=identity==sheet and dest_row<=row<=dest_row+r2-r1 and dest_col<=col<=dest_col+c2-c1
+                if overwritten and not moving:continue
+                try:transformed=move_references(source,name,target_name,rectangle,dr,dc,target_id=sheet)
+                except FormulaError as error:
+                    raise EngineError("REFERENCE_TRANSFORM_UNAVAILABLE",f"Cannot safely move reference at {name}!{address(row,col)}: {error}") from error
+                if transformed!=source:
+                    item={"source":transformed,"kind":kind,"style":json.loads(style)};typed(item)
+                    if moving:sources[row,col]=item
+                    else:formulas[identity,row,col]=item
+            for row,col in sources:self.put(sheet,row,col,None)
+            for (row,col),item in sources.items():self.put(sheet,row+dr,col+dc,item)
+            for key,item in formulas.items():self.put(*key,item)
 
     def delete_sheet(self, target):
         target_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
