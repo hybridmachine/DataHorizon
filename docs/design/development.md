@@ -355,8 +355,19 @@ desktop tests, not required in the deployed end-user bundle.
 
 ## Interchange and recovery
 
-File menu commands import one bounded XLSX/ODS sheet at the selected cell and
-export a selected rectangle. Review the conversion report before Apply/save.
+File → Import… accepts CSV, TSV, TXT, XLSX and ODS, detecting the type from the
+filename extension without a separate format choice. The picker filters to
+supported files; unsupported extensions also reject after selection. TSV defaults
+to Tab while CSV/TXT default to Comma, with the existing encoding/delimiter review.
+XLSX/ODS retain sheet/input options and conversion review.
+
+File → Export… opens one save dialog with a Format dropdown for CSV, XLSX or ODS.
+The filename follows the selected format, including a conflicting supported
+suffix; normalization happens before overwrite confirmation. The Qt file dialog
+keeps this dropdown available on all platforms, following Qt's
+[documented filters and suffix behavior](https://doc.qt.io/qt-6.8/qfiledialog.html). CSV retains its values/loss
+review; spreadsheet exports retain their formula/value choice and conversion
+report. Imports target the selected cell and exports use the selected rectangle.
 See [the exact input/formula/style tiers](interchange-next-five.md). CSV/XLSX/ODS
 preparation has cancellable progress; Apply remains one managed operation with
 required hooks and a durable receipt. The independent openpyxl/odfpy tools in

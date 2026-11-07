@@ -22,6 +22,11 @@ and range expansion/contraction. The desktop confirms history clearing and
 reports newly broken references with locations. Explicit list projections support multikey sorting and filters
 over the entire declared scope, stable source-coordinate edits, counts and clear.
 Scoped find/replace and UTF-8 CSV are implemented within the declared tier.
+One File → Import… command detects supported extensions; File → Export… selects
+CSV/XLSX/ODS in its file dialog's Format dropdown. Existing options, conversion
+reviews and managed operation safeguards apply. [Unified-dialog verification](evidence/unified-dialogs-verification.txt)
+passes 102 Qt checks and 257 Python tests (15 optional-binding skips), native
+Cocoa scale-2 routing/overwrite flows and installed-app smoke; see [PR #29](https://github.com/hybridmachine/DataHorizon/pull/29).
 
 The Supplies arithmetic is verified: amounts 7, 5, 6; total 18; Pen quantity 6
 produces 7.5 and total 20.5. Quantity >2 returns Pen and Folder. Reopen retains
