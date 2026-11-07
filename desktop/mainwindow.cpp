@@ -3,6 +3,7 @@
 #include "servicepaths.h"
 #include "frozenpanes.h"
 #include "listcriteriadialog.h"
+#include "namedlistviews.h"
 #include <QGridLayout>
 #include <QApplication>
 #include <QClipboard>
@@ -377,6 +378,9 @@ void MainWindow::buildUi() {
     add(sheetMenu, tr("Insert selected columns…"), {}, [this] { changeStructure(true,false); })->setObjectName("insertColumnsAction");
     add(sheetMenu, tr("Delete selected columns…"), {}, [this] { changeStructure(true,true); })->setObjectName("deleteColumnsAction");
     add(dataMenu, tr("Sort / filter selected list…"), {}, [this] { listDialog(); }, true)->setObjectName("listCriteriaAction");
+    add(dataMenu,tr("Save named list view…"),{},[this]{namedListDialog(0);})->setObjectName("saveNamedListViewAction");
+    add(dataMenu,tr("Apply named list view…"),{},[this]{namedListDialog(1);})->setObjectName("applyNamedListViewAction");
+    add(dataMenu,tr("Delete named list view…"),{},[this]{namedListDialog(2);})->setObjectName("deleteNamedListViewAction");
     add(dataMenu,tr("Export list result values…"),{},[this]{if(m_model->projected())exportFile();else issue("Apply a list view first.");})->setObjectName("exportListValuesAction");
     add(dataMenu,tr("Copy list result values"),{},[this]{copyListValues();},true)->setObjectName("copyListValuesAction");
     add(dataMenu, tr("Clear list view"), {}, [this] { if (!m_busy) { m_listSpec = {}; refresh(); } }, true)->setObjectName("clearListAction");
@@ -625,7 +629,7 @@ void MainWindow::saveViewState() {
     QSettings settings(viewSettingsPath(),QSettings::IniFormat);
     auto hidden=[](const QSet<int> &values){QJsonArray result; QList<int> sorted=values.values(); std::sort(sorted.begin(),sorted.end()); for(int value:sorted) result.append(value); return result;};
     settings.setValue(m_viewKey,QJsonDocument(QJsonObject{{"rows",encode(m_rowSizes)},{"columns",encode(m_columnSizes)},
-        {"hidden_rows",hidden(m_hiddenRows)},{"hidden_columns",hidden(m_hiddenColumns)},{"freeze_top_row",m_frozenRows>0},{"freeze_first_column",m_frozenColumns>0},{"frozen_rows",m_frozenRows},{"frozen_columns",m_frozenColumns}}).toJson(QJsonDocument::Compact));
+        {"hidden_rows",hidden(m_hiddenRows)},{"hidden_columns",hidden(m_hiddenColumns)},{"freeze_top_row",m_frozenRows>0},{"freeze_first_column",m_frozenColumns>0},{"frozen_rows",m_frozenRows},{"frozen_columns",m_frozenColumns},{"named_views",m_namedViews}}).toJson(QJsonDocument::Compact));
     settings.sync();
     if(settings.status()!=QSettings::NoError && !m_shuttingDown) issue("Could not save desktop view preferences. Workbook data remains stored.");
 }
@@ -635,7 +639,7 @@ void MainWindow::restoreViewState() {
     const auto identity=m_info["path"].toString()+"/"+m_info["workbook_id"].toString()+"/"+m_model->sheet();
     const auto key="views/v1/"+QString::fromLatin1(QCryptographicHash::hash(identity.toUtf8(),QCryptographicHash::Sha256).toHex());
     if(key!=m_viewKey) {
-        saveViewState(); m_viewKey=key; m_rowSizes.clear(); m_columnSizes.clear();
+        saveViewState(); m_viewKey=key; m_rowSizes.clear(); m_columnSizes.clear();m_namedViews={};
         m_hiddenRows.clear(); m_hiddenColumns.clear();
         QSettings settings(viewSettingsPath(),QSettings::IniFormat);
         const auto bytes=settings.value(key).toByteArray();
@@ -650,6 +654,12 @@ void MainWindow::restoreViewState() {
             }
             return result;
         };
+        const auto views=state.value("named_views");bool invalid=false;
+        if(!views.isUndefined()) {
+            if(!views.isObject() || views.toObject().size()>16 || QJsonDocument(views.toObject()).toJson(QJsonDocument::Compact).size()>128*1024)invalid=true;
+            else {const auto names=views.toObject();for(auto it=names.begin();it!=names.end();++it){QJsonObject scope;if(validListViewName(it.key()) && it.value().isObject() && normalizedListView(it.value().toObject(),scope))m_namedViews[it.key()]=scope;else invalid=true;}}
+        }
+        if(invalid)issue("Invalid saved list view preferences were ignored. Workbook data is unchanged.");
         m_rowSizes=decode(state["rows"].toObject(),1048576,18,1000);
         m_columnSizes=decode(state["columns"].toObject(),16384,30,2000);
         auto hidden=[](const QJsonArray &values,int maximum){
@@ -1796,6 +1806,45 @@ void MainWindow::exportCsvTo(const QString &path, QJsonObject target) {
         if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit()) issue("CSV destination failed: " + file.errorString());
         else m_status->setText("CSV exported • Native workbook retained");
     });
+}
+
+void MainWindow::saveNamedListView(const QString &name,bool replace) {
+    if(m_busy || m_unknown || m_info.isEmpty())return;
+    if(!m_model->projected() || m_listSpec.isEmpty()){issue("Apply a list view before saving its criteria.");return;}
+    if(!validListViewName(name)){issue("View names need 1–64 printable characters without surrounding spaces.");return;}
+    if(m_namedViews.contains(name) && !replace){issue("A view with this name already exists. Choose another name or explicitly replace it.");return;}
+    QJsonObject scope;if(!normalizedListView(m_listSpec,scope)){issue("These list criteria cannot be saved by the desktop tier.");return;}
+    const auto target=targetContext();const auto criteria=m_listSpec;captureGridDraft(false);if(!resolveDraft())return;
+    if(m_busy || !matchesTarget(target) || !m_model->projected() || criteria!=m_listSpec)return;
+    auto views=m_namedViews;views[name]=scope;if(views.size()>16 || QJsonDocument(views).toJson(QJsonDocument::Compact).size()>128*1024){issue("Saved views exceed 16 names or 128 KiB total. Remove a view or narrow its criteria.");return;}
+    m_namedViews=views;saveViewState();m_status->setText("Named list view saved on this computer • Source coordinates; criteria only");
+}
+
+void MainWindow::applyNamedListView(const QString &name) {
+    if(m_busy || m_unknown || m_info.isEmpty())return;
+    QJsonObject scope;if(!m_namedViews.contains(name) || !normalizedListView(m_namedViews.value(name).toObject(),scope)){issue("Saved list view is unavailable or invalid.");return;}
+    scope=targetContext(scope);const auto saved=m_namedViews.value(name);const auto key=m_viewKey;const auto service=m_client->url();
+    captureGridDraft(false);if(!resolveDraft())return;
+    if(service!=m_client->url() || m_busy || !matchesTarget(scope) || key!=m_viewKey || saved!=m_namedViews.value(name))return;
+    ListCriteriaDialog dialog(scope,this);dialog.setWindowTitle(tr("Apply saved view: %1 (review source coordinates)").arg(name));
+    if(dialog.exec()==QDialog::Accepted && service==m_client->url() && !m_busy && key==m_viewKey && matchesTarget(scope) && saved==m_namedViews.value(name))showList(dialog.scope());
+}
+
+void MainWindow::removeNamedListView(const QString &name) {
+    if(m_busy || m_unknown || m_info.isEmpty() || !m_namedViews.contains(name))return;
+    m_namedViews.remove(name);saveViewState();m_status->setText("Named list view deleted on this computer • Current projection retained");
+}
+
+void MainWindow::namedListDialog(int action) {
+    if(m_busy || m_unknown || m_info.isEmpty())return;
+    const auto target=targetContext();const auto key=m_viewKey;const auto views=m_namedViews;bool ok=false;QString name;
+    if(action==0) {
+        if(!m_model->projected()){issue("Apply a list view before saving it.");return;}
+        name=QInputDialog::getText(this,tr("Save named list view on this computer"),tr("Name (source coordinates and criteria; at most 16 views per sheet)"),QLineEdit::Normal,{},&ok).trimmed();
+    } else {if(views.isEmpty()){issue("No named list views saved for this sheet on this computer.");return;}name=QInputDialog::getItem(this,action==1?tr("Apply named list view"):tr("Delete named list view"),tr("Saved view"),views.keys(),0,false,&ok);}
+    if(!ok || name.isEmpty() || m_busy || !matchesTarget(target) || m_viewKey!=key || m_namedViews!=views)return;
+    if(action==0){bool replace=false;if(views.contains(name)){replace=QMessageBox::question(this,tr("Replace named view"),tr("Replace the saved criteria for %1?").arg(name),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)==QMessageBox::Yes;if(!replace || !matchesTarget(target) || key!=m_viewKey || views!=m_namedViews)return;}saveNamedListView(name,replace);}
+    else if(action==1)applyNamedListView(name);else removeNamedListView(name);
 }
 
 void MainWindow::listDialog() {

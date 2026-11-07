@@ -34,6 +34,9 @@ public:
     void inspectNativeFile(const QString &path);
     void exportSpreadsheetTo(const QString &path, const QString &format = "xlsx", const QString &mode = "formulas", QJsonObject target = {});
     void exportCsvTo(const QString &path, QJsonObject target = {});
+    void saveNamedListView(const QString &name,bool replace = false);
+    void applyNamedListView(const QString &name);
+    void removeNamedListView(const QString &name);
     void exportListTo(const QString &path,const QString &format = "csv");
     void copyListValues(bool selectionOnly = false);
     void showList(QJsonObject scope);
@@ -70,6 +73,7 @@ private:
     bool csvTypesDialog(QJsonObject &request, const QJsonObject &preview);
     QJsonObject csvImportTarget() const;
     QJsonObject listValuesRequest(bool selectionOnly);
+    void namedListDialog(int action);
     void listDialog();
     void applyList();
     void updateListSummary();
@@ -130,7 +134,7 @@ private:
     QToolBar *m_toolbar = nullptr;
     QAction *m_undo = nullptr, *m_redo = nullptr;
     QJsonObject m_info;
-    QJsonObject m_listSpec;
+    QJsonObject m_listSpec,m_namedViews;
     QJsonObject m_findScope;
     QList<QAction *> m_navigationActions;
     quint64 m_navigationGeneration = 0, m_navigationFlight = 0;
