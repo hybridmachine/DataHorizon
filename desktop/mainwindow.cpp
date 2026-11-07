@@ -217,6 +217,11 @@ void MainWindow::buildUi() {
         auto path = QFileDialog::getOpenFileName(this, tr("Open recovery workbook"), QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)+"/recovery", tr("DataHorizon (*.dhwb)"));
         if (!path.isEmpty()) openBook(path);
     });
+    add(file,tr("Inspect native/recovery file…"),{},[this]{
+        if(m_busy) return;
+        const auto path=QFileDialog::getOpenFileName(this,tr("Inspect native file without modifying it"),recoveryDirectory(),tr("DataHorizon (*.dhwb)"));
+        if(!path.isEmpty()) inspectNativeFile(path);
+    });
     file->addSeparator();
     add(file, tr("&Close"), QKeySequence::Close, [this] { close(); });
     add(file, tr("Restart local service"), {}, [this] { restartService(); })->setObjectName("restartServiceAction");
@@ -1713,6 +1718,7 @@ void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &
         QMessageBox review(QMessageBox::Question,tr("Review spreadsheet import"),
             tr("Import %1 stored cells from %2 at %3?").arg(preview["stored_cells"].toInt()).arg(preview["sheet"].toString().left(80)).arg(target["name"].toString()),
             QMessageBox::Yes|QMessageBox::Cancel,this);
+        review.setObjectName("spreadsheetImportReview");
         review.setOption(QMessageBox::Option::DontUseNativeDialog); review.setTextFormat(Qt::PlainText); review.setDefaultButton(QMessageBox::Cancel);
         review.setInformativeText(allowed?tr("Review the conversion report in Details before applying. Unsupported features listed there are omitted; the source file is retained."):tr("Import blocked. Details lists unsupported or invalid cells. No cells will be applied."));
         review.setDetailedText(report.join('\n')); review.button(QMessageBox::Yes)->setEnabled(allowed);
@@ -1747,6 +1753,7 @@ void MainWindow::exportSpreadsheetTo(const QString &path, const QString &format,
         QStringList report; for(const auto &line:result["report"].toArray()) report.append(line.toString());
         QMessageBox review(QMessageBox::Question,tr("Review spreadsheet export"),tr("Save this selection snapshot?"),QMessageBox::Yes|QMessageBox::Cancel,this);
         review.setOption(QMessageBox::Option::DontUseNativeDialog); review.setTextFormat(Qt::PlainText); review.setDefaultButton(QMessageBox::Cancel);
+        review.setObjectName("spreadsheetExportReview");
         review.setInformativeText(report.join('\n'));
         const auto choice=review.exec(); setBusy(false);
         if(choice!=QMessageBox::Yes || !matchesTarget(target)) return;
@@ -1756,5 +1763,20 @@ void MainWindow::exportSpreadsheetTo(const QString &path, const QString &format,
         QSaveFile file(path);
         if(!file.open(QIODevice::WriteOnly) || file.write(data)!=data.size() || !file.commit()) issue("Spreadsheet destination failed: "+file.errorString());
         else m_status->setText("Spreadsheet exported • Native workbook retained");
+    });
+}
+
+
+void MainWindow::inspectNativeFile(const QString &path) {
+    if(m_busy || path.isEmpty()) return;
+    setBusy(true,"Inspecting native file read-only…");
+    m_client->request("/v1/recovery/inspect",{{"path",path}},[this](QJsonObject result,QString error){
+        setBusy(false,error.isEmpty()?"Native inspection complete":"Native inspection failed");
+        if(!error.isEmpty()) { issue(error); return; }
+        QStringList report; for(const auto &line:result["report"].toArray()) report.append(line.toString());
+        QMessageBox box(QMessageBox::Information,tr("Native file inspection"),tr("SQLite and native metadata checks passed."),QMessageBox::Ok,this);
+        box.setObjectName("nativeInspectionReview");
+        box.setOption(QMessageBox::Option::DontUseNativeDialog); box.setTextFormat(Qt::PlainText);
+        box.setInformativeText(result["path"].toString()+"\n"+report.join('\n')); box.exec();
     });
 }

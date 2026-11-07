@@ -25,6 +25,7 @@ from .csv_import import COLUMN_TYPES, ENCODINGS, preview_csv
 from .jobs import PreparationJobs
 from .interchange import xlsx_preview, xlsx_export
 from .ods import ods_preview, ods_export
+from .recovery import inspect_native
 
 CAPABILITIES = {
     "api_version": 1, "format_version": 1, "max_operation_cells": MAX_CELLS,
@@ -41,6 +42,7 @@ CAPABILITIES = {
 ROUTES = {
     "/v1/capabilities": ("get", "Preview capabilities"),
     "/v1/open": ("post", "Create or open a server-local native workbook"),
+    "/v1/recovery/inspect": ("post", "Read-only native-file inspection without code activation or repair"),
     "/v1/import/csv/preview": ("post", "Decode CSV and review explicit column conversions without mutation"),
     "/v1/import/csv/jobs": ("post", "Start a cancellable CSV preparation; never writes workbook data"),
     "/v1/import/ods/jobs": ("post", "Prepare one bounded ODS sheet with formula/style conversion review"),
@@ -189,7 +191,7 @@ def openapi():
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "list":"ListRequest","find":"FindRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
@@ -359,6 +361,10 @@ class Service(ThreadingHTTPServer):
             return CAPABILITIES
         if method == "POST" and path == "/v1/open":
             return self._open(body)
+        if method == "POST" and path == "/v1/recovery/inspect":
+            require(isinstance(body.get("path"),str) and bool(body["path"]),"INVALID_PATH","Native file path is required")
+            with self._path_access(Path(body["path"]).expanduser().resolve()):
+                return inspect_native(body["path"])
         if method == "POST" and path == "/v1/import/csv/preview":
             return preview_csv(body)
         if method == "POST" and path == "/v1/import/csv/jobs":

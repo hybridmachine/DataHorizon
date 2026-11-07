@@ -37,7 +37,7 @@ formula source; values export contains 20.5. Formatting renders 20.50.
 | M3 | Typed entry, A1 limits, SUM/IF/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
 | M4 | Bulk copy/paste/cut restrictions, series, styles, cell Undo/Redo, bounded sheet operations and row/column reference transforms, wrap/borders and local sizing/hide/frozen-row preferences with destructive-operation fixtures | Formula-aware Cut, hook-aware structure events, portable view metadata, additional frozen edges/cross-pane range selection and platform conventions |
 | M5 | Explicit full-scope projected lists, stable source row edits, multikey sort/filter, scoped source/display find/replace, strict CSV encodings/delimiters, reviewed column types and snapshot export | Persistent record identities/list definitions, filtered range semantics, native date/time and locale conversion, progress/cancellation and large jobs |
-| M6 | Native snapshots/recovery, read-only opens, conservative external refresh and bounded CSV | XLSX/ODS import/export fixtures and conversion reports, comprehensive disk/permission/crash recovery, bundled runtime, follow-up execution semantics |
+| M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures | Broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
 | M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
 | M8 | Shared engine and REST boundaries retained; unsupported APIs reject explicitly | Relational schema/tooling, proven managed SQL capture, workbook code/macros/functions/packages, remote TLS/mTLS/password access and additional wireframes |
 
@@ -100,8 +100,14 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 ## Next dependencies
 
 The [next interchange/recovery increments](interchange-next-five.md) begin with
-cancellable, bounded CSV preparation jobs and XLSX input/formula interchange. Progress and result discard precede
-an explicit atomic managed Apply; no chunked commits or larger limits are claimed.
+cancellable, bounded CSV preparation jobs, XLSX input/formula/style and ODS
+interchange, plus bounded native integrity/inspection and process-crash recovery. Progress and result discard precede
+an explicit atomic managed Apply; no chunked commits or larger limits are claimed. Each increment was locally
+verified and reviewed before sequential merge; hosted platform qualification
+remains blocked. [Final local verification](evidence/interchange-verification.txt)
+passes 257 Python tests without optional-binding skips, 94 Qt checks, Cocoa
+scales 1/2, native interchange/recovery flows and installed-app smoke. See the
+conversion tiers and remaining gates in that ledger.
 
 
 The next [five editing and CSV increments](editing-csv-next-five.md) continue

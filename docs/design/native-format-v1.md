@@ -91,3 +91,16 @@ Cell borders use the native style `border: "box"` or `"none"`. The desktop
 Format menu applies or clears all four edges on each selected cell using one
 managed edit. Borders use the system text color with a two-logical-pixel stroke.
 Per-edge patterns, line/color selection and merged-cell borders are unavailable.
+
+## Bounded recovery validation
+
+Opening validates native schema/catalog/coordinates and SQLite quick_check in
+one read transaction under a shared five-second cooperative deadline. Snapshots
+include quick_check in their existing backup/validation budget. Open handles
+retain filesystem identity and stop on observed path replacement/removal;
+ordinary direct SQLite content edits still use the external-refresh contract.
+A failed identity check around a mutation preserves its operation ID and unknown
+outcome rather than claiming a receipt in a different file. Read-only inspection
+through the common REST interface performs no repair, code activation or
+recalculation. Process-crash fixtures and exact limits are documented in
+[the recovery increment](interchange-next-five.md#native-recovery-and-failure-hardening).

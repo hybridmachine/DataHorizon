@@ -92,6 +92,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("create")
     commands.add_parser("info")
+    commands.add_parser("inspect",help="Inspect a native file read-only without code activation or repair")
     read = commands.add_parser("read")
     read.add_argument("address")
     read.add_argument("--sheet", default="Sheet1")
@@ -123,22 +124,27 @@ def main():
             return
         context = nullcontext(Client(args.url, os.environ["DATAHORIZON_TOKEN"])) if args.url else LocalService(args.handler)
         with context as client:
-            with client.open(args.file, create=args.command == "create", readonly=args.readonly) as book:
-                if args.command in ("create", "info"):
-                    result = book.info
-                elif args.command == "read":
-                    result = book.read(args.sheet, row, col, row, col)
-                elif args.command == "set":
-                    result = book.set(row, col, args.source, args.sheet, args.kind)
-                elif args.command == "apply":
-                    request = json.load(sys.stdin)
-                    if not isinstance(request, dict):
-                        raise ValueError("Operation JSON must be an object")
-                    result = book.apply(request.pop("action"), request.pop("sheet", args.sheet), **request)
-                else:
-                    result = book.outcome(args.operation_id)
-                output=json.dumps(result, allow_nan=False)
+            if args.command == "inspect":
+                result=client.inspect_native(args.file)
+                output=json.dumps(result,allow_nan=False)
                 releasing=True
+            else:
+                with client.open(args.file, create=args.command == "create", readonly=args.readonly) as book:
+                    if args.command in ("create", "info"):
+                        result = book.info
+                    elif args.command == "read":
+                        result = book.read(args.sheet, row, col, row, col)
+                    elif args.command == "set":
+                        result = book.set(row, col, args.source, args.sheet, args.kind)
+                    elif args.command == "apply":
+                        request = json.load(sys.stdin)
+                        if not isinstance(request, dict):
+                            raise ValueError("Operation JSON must be an object")
+                        result = book.apply(request.pop("action"), request.pop("sheet", args.sheet), **request)
+                    else:
+                        result = book.outcome(args.operation_id)
+                    output=json.dumps(result, allow_nan=False)
+                    releasing=True
         releasing=False
         emit_result(output,result,args.command)
     except (APIError, OSError, HTTPException, ValueError, TypeError, KeyError, RuntimeError, FormulaError, sqlite3.Error) as error:

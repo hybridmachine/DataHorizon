@@ -28,6 +28,7 @@ public:
     void importCsvText(const QString &text, QJsonObject target = {});
     void importCsvBytes(const QByteArray &bytes, const QString &encoding = "utf-8-sig", const QString &delimiter = ",", QJsonObject target = {});
     void importSpreadsheetBytes(const QByteArray &bytes, const QString &format = "xlsx", const QString &mode = "formulas", int sheetIndex = 1, QJsonObject target = {});
+    void inspectNativeFile(const QString &path);
     void exportSpreadsheetTo(const QString &path, const QString &format = "xlsx", const QString &mode = "formulas", QJsonObject target = {});
     void exportCsvTo(const QString &path, QJsonObject target = {});
     void showList(QJsonObject scope);

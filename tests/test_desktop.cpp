@@ -1042,6 +1042,70 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
     }
+    void nativeInspectionPreservesTheOpenWorkbookAndEditorDraft() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        const auto path=temp.filePath("inspect.dhwb");
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        const auto sheet=window.model()->sheet();
+        auto *source=window.findChild<QLineEdit *>("source"); QVERIFY(source);
+        source->setText("retained draft"); source->setModified(true);
+        bool inspected=false; QTimer answer; answer.setInterval(10);
+        connect(&answer,&QTimer::timeout,&window,[&]{
+            if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                if(box->objectName()=="nativeInspectionReview") { inspected=true; box->button(QMessageBox::Ok)->click(); }
+            }
+        });
+        QTimer::singleShot(4000,&window,[]{
+            for(auto *widget:QApplication::topLevelWidgets()) if(auto *box=qobject_cast<QMessageBox *>(widget)) {
+                qWarning()<<"Inspection fixture unexpected modal"<<box->objectName()<<box->text();
+                if(auto *button=box->button(QMessageBox::Ok)) button->click(); else box->reject();
+            }
+        });
+        answer.start(); window.inspectNativeFile(path);
+        QTRY_VERIFY_WITH_TIMEOUT(inspected,5000); answer.stop();
+        QCOMPARE(opened.count(),1); QCOMPARE(window.model()->sheet(),sheet);
+        QCOMPARE(source->text(),QString("retained draft")); QVERIFY(source->isModified());
+        source->setModified(false);
+    }
+    void spreadsheetExportFailuresPreserveExistingFilesAndNativeAliases() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        const auto native=temp.filePath("native.dhwb");
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(native,true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QFile source(native); QVERIFY(source.open(QIODevice::ReadOnly)); const auto original=source.readAll(); source.close();
+        const auto alias=temp.filePath("native-alias.xlsx"); QVERIFY(QFile::link(native,alias));
+        auto *issues=window.findChild<QPlainTextEdit *>(); QVERIFY(issues);
+        for(const auto &format:{QString("xlsx"),QString("ods")}) {
+            window.exportSpreadsheetTo(alias,format); QVERIFY(issues->toPlainText().contains("native workbook"));
+            const auto existing=temp.filePath("retained."+format); QFile file(existing); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("retained"); file.close();
+            bool reviewed=false; QTimer answer; answer.setInterval(10);
+            connect(&answer,&QTimer::timeout,&window,[&]{
+                if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                    if(box->objectName()=="spreadsheetExportReview") { reviewed=true; box->button(QMessageBox::Cancel)->click(); }
+                }
+            });
+            QTimer::singleShot(5000,&answer,[]{
+                for(auto *widget:QApplication::topLevelWidgets()) if(auto *box=qobject_cast<QMessageBox *>(widget)) {
+                    if(auto *button=box->button(QMessageBox::Cancel)) button->click(); else if(auto *button=box->button(QMessageBox::Ok)) button->click();
+                }
+            });
+            answer.start(); window.exportSpreadsheetTo(existing,format);
+            QTRY_VERIFY_WITH_TIMEOUT(reviewed,5000); answer.stop();
+            QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(),QByteArray("retained")); file.close();
+            const auto directory=temp.filePath("directory-"+format); QVERIFY(QDir().mkdir(directory));
+            answerNextDialog(QMessageBox::Yes); window.exportSpreadsheetTo(directory,format);
+            QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("Spreadsheet destination failed"),5000);
+            issues->clear();
+        }
+        QVERIFY(source.open(QIODevice::ReadOnly)); QCOMPARE(source.readAll(),original);
+    }
     void odsImportAndExportPreserveFormattedFormulaThroughTheManagedGrid() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);

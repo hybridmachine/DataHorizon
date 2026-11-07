@@ -352,3 +352,17 @@ installed by the application or base runtime tests.
 `python3 tests/package_smoke.py build/package` checks the installed native app;
 on headless Linux run it with `xvfb-run -a`. Offscreen Qt is used for the regular
 desktop tests, not required in the deployed end-user bundle.
+
+## Interchange and recovery
+
+File menu commands import one bounded XLSX/ODS sheet at the selected cell and
+export a selected rectangle. Review the conversion report before Apply/save.
+See [the exact input/formula/style tiers](interchange-next-five.md). CSV/XLSX/ODS
+preparation has cancellable progress; Apply remains one managed operation with
+required hooks and a durable receipt. The independent openpyxl/odfpy tools in
+`build/interchange-venv` are verification-only, not service dependencies.
+
+`PYTHONPATH=service python3 -m datahorizon.cli /path/book.dhwb inspect` performs
+read-only native metadata/integrity inspection through REST without activating
+code or repairing the file. Qt exposes the same operation in the File menu.
+Preserve the native workbook and operation ID when an outcome remains unknown.

@@ -76,6 +76,11 @@ def sql_deadline(db, deadline):
         db.set_progress_handler(None,0)
 
 
+def check_integrity(db,deadline):
+    with sql_deadline(db,deadline):
+        require(db.execute("PRAGMA quick_check").fetchone()[0]=="ok", "CORRUPT", "SQLite integrity check failed; preserve the file for recovery",409)
+
+
 def valid_uuid(value):
     if not isinstance(value,str):
         return False
@@ -102,8 +107,8 @@ def _verify_destination(path, identity):
     try:
         current = path.lstat()
     except FileNotFoundError as error:
-        raise EngineError("FILE_CHANGED","The reserved workbook path was removed",409) from error
-    require((current.st_dev,current.st_ino)==identity,"FILE_CHANGED","The reserved workbook path was replaced",409)
+        raise EngineError("FILE_CHANGED","The native workbook path was removed; reopen the intended file",409) from error
+    require((current.st_dev,current.st_ino)==identity,"FILE_CHANGED","The native workbook path was replaced; reopen the intended file",409)
 
 
 def integer(value, lower, upper, name):
@@ -232,6 +237,10 @@ class Workbook:
             # Exclusive creation never truncates an existing workbook.
             created_identity = _reserve_destination(self.path)
         require(self.path.is_file(), "NOT_FOUND", "Workbook file does not exist", 404)
+        current=self.path.stat()
+        require(bool(current.st_ino),"FILE_IDENTITY_UNAVAILABLE","This filesystem cannot identify an open native workbook",409)
+        self.file_identity=(current.st_dev,current.st_ino)
+        self._opening_deadline=time.monotonic()+5
         self.db = None
         try:
             self.db = sqlite3.connect(self.path.as_uri() + ("?mode=ro" if readonly else "?mode=rw"),
@@ -245,10 +254,19 @@ class Workbook:
                 self.db.execute("INSERT INTO dh_meta VALUES(1,1,?,0)", (str(uuid.uuid4()),))
                 self.db.execute("INSERT INTO sheets VALUES(?,?,0)", (str(uuid.uuid4()), "Sheet1"))
                 self.db.execute("COMMIT")
-            self.validate()
-            require(self.db.execute("PRAGMA quick_check").fetchone()[0] == "ok", "CORRUPT", "SQLite integrity check failed")
-            self.id = self.db.execute("SELECT workbook_id FROM dh_meta").fetchone()[0]
-            self.version = self.data_version()
+            self.verify_file()
+            self.db.execute("BEGIN")
+            try:
+                self.version = self.data_version()
+                self.verify_file()
+                self.validate()
+                check_integrity(self.db,self._opening_deadline)
+                self.id = self.db.execute("SELECT workbook_id FROM dh_meta").fetchone()[0]
+                self.verify_file()
+            finally:
+                try: self.db.execute("ROLLBACK")
+                except sqlite3.Error: pass
+            del self._opening_deadline
             _verify_destination(self.path,created_identity)
         except Exception:
             if self.db is not None:
@@ -257,12 +275,15 @@ class Workbook:
             # another process. Preserve failed destinations for inspection.
             raise
 
+    def verify_file(self):
+        _verify_destination(self.path,self.file_identity)
+
     def close(self):
         self.db.close()
 
     def validate(self, db=None, *, deadline=None):
         db = self.db if db is None else db
-        deadline = time.monotonic()+5 if deadline is None else deadline
+        deadline = getattr(self,"_opening_deadline",time.monotonic()+5) if deadline is None else deadline
         with sql_deadline(db,deadline):
             require(schema_signature(db) == EXPECTED_SCHEMA,
                     "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
@@ -292,6 +313,7 @@ class Workbook:
         return self.db.execute("PRAGMA data_version").fetchone()[0]
 
     def refresh(self, *, deadline=None):
+        self.verify_file()
         current = self.data_version()
         if current != self.version:
             self.validate(deadline=deadline)
@@ -481,6 +503,10 @@ class Workbook:
 
     def operation(self, operation_id):
         with self.lock:
+            try: self.verify_file()
+            except EngineError as error:
+                error.body.update(outcome="unknown",operation_id=operation_id)
+                raise
             row = self.db.execute("SELECT result FROM operations WHERE id=?", (operation_id,)).fetchone()
             if row is None:
                 raise EngineError("OUTCOME_UNKNOWN", "No durable receipt. Do not assume rollback or repeat the operation",
@@ -510,6 +536,7 @@ class Workbook:
         fingerprint = hashlib.sha256(encoded(request).encode()).hexdigest()
         with self.lock:
             try:
+                self.verify_file()
                 receipt = self.recorded_operation(operation, fingerprint)
                 if receipt is not None:
                     return receipt
@@ -722,6 +749,8 @@ class Workbook:
                 result.update(reference_report)
                 self.db.execute("INSERT INTO operations VALUES(?,?,?)", (operation, fingerprint, encoded(result)))
                 require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
+                self.verify_file()
+                require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
                 self.db.execute("COMMIT")
                 in_transaction = False
                 if structural:
@@ -758,6 +787,18 @@ class Workbook:
                     except sqlite3.Error:
                         pass
                     raise EngineError("OUTCOME_UNKNOWN","Rollback could not be confirmed; reconcile the operation ID",500,"unknown",operation_id=operation) from rollback_error
+                try:
+                    self.verify_file()
+                except (EngineError,OSError) as changed:
+                    # Do not publish a failed receipt into a detached file or
+                    # leave its writer transaction open after a path failure.
+                    try: self.db.execute("ROLLBACK")
+                    except sqlite3.Error as rollback_error:
+                        raise EngineError("OUTCOME_UNKNOWN","File identity and rollback require reconciliation",500,"unknown",operation_id=operation) from rollback_error
+                    if isinstance(changed,EngineError):
+                        changed.body.update(outcome="unknown",operation_id=operation)
+                        raise changed
+                    raise EngineError("OUTCOME_UNKNOWN","Native file identity could not be confirmed; retain the original file and reconcile its operation ID",409,"unknown",operation_id=operation) from changed
                 if isinstance(error, EngineError):
                     error.body.update(outcome="rolled_back", operation_id=operation)
                     failure=error
@@ -1045,6 +1086,7 @@ class Workbook:
     def snapshot(self, path):
         with self.lock:
             deadline = time.monotonic()+SNAPSHOT_SECONDS
+            self.verify_file()
             destination = Path(path).expanduser().resolve()
             require(destination != self.path, "SAME_FILE", "Choose a different path")
             identity = _reserve_destination(destination)
@@ -1056,6 +1098,8 @@ class Workbook:
                 self.db.backup(target,pages=256,progress=progress,sleep=0.01)
                 _verify_destination(destination,identity)
                 self.validate(target,deadline=deadline)
+                check_integrity(target,deadline)
+                self.verify_file()
                 _verify_destination(destination,identity)
             finally:
                 target.close()
