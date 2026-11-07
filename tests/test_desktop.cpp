@@ -50,7 +50,7 @@
 class DelayedSummaryServer : public QTcpServer {
 public:
     struct Pending {QPointer<QTcpSocket> socket;QJsonObject range;};
-    QList<Pending> requests;
+    QList<Pending> requests,navigationRequests;
     QString state,sheet;
     DelayedSummaryServer(QString version,QString source):state(version),sheet(source) {
         connect(this,&QTcpServer::newConnection,this,[this]{
@@ -60,7 +60,8 @@ public:
                 const int end=bytes.indexOf("\r\n\r\n");if(end<0 || socket->property("handled").toBool())return;
                 const int length=QRegularExpression("Content-Length: (\\d+)",QRegularExpression::CaseInsensitiveOption).match(QString::fromLatin1(bytes.left(end))).captured(1).toInt();
                 if(bytes.size()<end+4+length)return;socket->setProperty("handled",true);
-                if(bytes.contains("/summary HTTP/"))requests.append({socket,QJsonDocument::fromJson(bytes.mid(end+4)).object()});
+                if(bytes.contains("/navigate HTTP/"))navigationRequests.append({socket,QJsonDocument::fromJson(bytes.mid(end+4)).object()});
+                else if(bytes.contains("/summary HTTP/"))requests.append({socket,QJsonDocument::fromJson(bytes.mid(end+4)).object()});
                 else send(socket,{{"state",state},{"sheet",sheet},{"cells",QJsonArray{}}});
             });
         });
@@ -70,6 +71,7 @@ public:
         send(pending.socket,{{"state",state},{"sheet",sheet},{"range",QJsonArray{r["r1"],r["c1"],r["r2"],r["c2"]}},
             {"count",1},{"numeric_count",1},{"selected_cells",1},{"sum",sum},{"average",sum},{"error_count",0},{"numeric_error",QJsonValue::Null}});
     }
+    void respondNavigation(int index,int row,int col) {send(navigationRequests.at(index).socket,{{"state",state},{"sheet",sheet},{"row",row},{"col",col},{"basis","stored_inputs"}});}
     void respondInvalid(int index) {send(requests.at(index).socket,{{"state",state},{"sheet",sheet}});}
 private:
     static void send(QTcpSocket *socket,QJsonObject result) {
@@ -1073,6 +1075,68 @@ private slots:
         QCOMPARE(tabs->count(),1);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
+    }
+    void dataBoundaryNavigationExtendsFromSequenceAnchorAndProtectsDrafts() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("data-nav.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QJsonArray cells;for(int row:{1,2,3,10})cells.append(QJsonObject{{"row",row},{"col",1},{"source",QString::number(row)}});
+        cells.append(QJsonObject{{"row",10},{"col",2},{"source","20"}});cells.append(QJsonObject{{"row",10},{"col",3},{"source","30"}});
+        window.submit({{"action","edit"},{"cells",cells}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model();auto *grid=window.findChild<QTableView *>("grid");auto *source=window.findChild<QLineEdit *>("source");
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        auto action=[&](QString name){return window.findChild<QAction *>(name);};
+        grid->setCurrentIndex(model->index(0,0));grid->setFocus();QTest::keyClick(grid,Qt::Key_Down,Qt::ControlModifier);QTRY_COMPARE_WITH_TIMEOUT(grid->currentIndex(),model->index(2,0),5000);
+        action("dataJumpUpAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(grid->currentIndex(),model->index(0,0),5000);
+        action("dataExtendDownAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(grid->currentIndex(),model->index(2,0),5000);
+        action("dataExtendDownAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(grid->currentIndex(),model->index(9,0),5000);
+        action("dataExtendRightAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(grid->currentIndex(),model->index(9,2),5000);
+        QCOMPARE(grid->selectionModel()->selection().first().top(),0);QCOMPARE(grid->selectionModel()->selection().first().left(),0);QCOMPARE(grid->selectionModel()->selection().first().width(),3);
+        QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(9,2)),5000);source->setText("retained draft");source->setModified(true);
+        answerNextDialog(QMessageBox::Cancel);action("dataJumpDownAction")->trigger();QCOMPARE(grid->currentIndex(),model->index(9,2));QCOMPARE(source->text(),QString("retained draft"));
+        QTest::keyClick(source,Qt::Key_Escape);grid->selectRow(2);window.findChild<QAction *>("hideRowsAction")->trigger();grid->setCurrentIndex(model->index(0,0));
+        action("dataJumpDownAction")->trigger();QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("data boundary is hidden"),5000);QCOMPARE(grid->currentIndex(),model->index(0,0));
+        window.findChild<QPushButton *>("showHiddenButton")->click();
+        QCOMPARE(action("dataJumpDownAction")->shortcutContext(),Qt::WidgetShortcut);
+        QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(0,0)),5000);source->setFocus();source->setText("draft words");source->setModified(true);
+        bool unexpectedDialog=false;QTimer cancel;cancel.setInterval(10);connect(&cancel,&QTimer::timeout,&window,[&]{if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())){unexpectedDialog=true;if(auto *button=box->button(QMessageBox::Cancel))button->click();}});
+        cancel.start();QTest::keyClick(source,Qt::Key_Left,Qt::ControlModifier);QTest::qWait(50);cancel.stop();QVERIFY(!unexpectedDialog);QCOMPARE(source->text(),QString("draft words"));
+        QTest::keyClick(source,Qt::Key_Escape);QVERIFY(changed.isEmpty());
+        window.showList({{"r1",1},{"r2",10},{"c1",1},{"c2",3},{"header",false}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QVERIFY(!action("dataJumpDownAction")->isEnabled());
+    }
+    void dataBoundaryNavigationDiscardsMovedSelectionEditorAndConnectionReplies() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("nav-late.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *model=window.model();auto *grid=window.findChild<QTableView *>("grid");QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(0,0)),5000);
+        DelayedSummaryServer server(model->state(),model->sheet());QVERIFY(server.listen(QHostAddress::LocalHost,0));auto *client=window.findChild<RestClient *>();
+        client->configure("http://127.0.0.1:"+QString::number(server.serverPort()),"token");int completed=0;
+        connect(client->findChild<QNetworkAccessManager *>(),&QNetworkAccessManager::finished,&window,[&](QNetworkReply *reply){if(reply->url().path().endsWith("/navigate"))++completed;});
+        auto *down=window.findChild<QAction *>("dataJumpDownAction");down->trigger();QTRY_COMPARE_WITH_TIMEOUT(server.navigationRequests.size(),1,3000);
+        grid->setCurrentIndex(model->index(0,1));server.respondNavigation(0,100,1);QTRY_COMPARE_WITH_TIMEOUT(completed,1,3000);QCOMPARE(grid->currentIndex(),model->index(0,1));
+        down->trigger();QTRY_COMPARE_WITH_TIMEOUT(server.navigationRequests.size(),2,3000);QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(0,1)),5000);
+        grid->edit(model->index(0,1));QPointer<QLineEdit> editor=grid->findChild<QLineEdit *>();QVERIFY(editor);editor->setText("new editor draft");
+        server.respondNavigation(1,100,2);QTRY_COMPARE_WITH_TIMEOUT(completed,2,3000);QCOMPARE(grid->currentIndex(),model->index(0,1));QCOMPARE(editor->text(),QString("new editor draft"));
+        QTest::keyClick(editor,Qt::Key_Escape);QTRY_VERIFY_WITH_TIMEOUT(editor.isNull(),3000);
+        down->trigger();QTRY_COMPARE_WITH_TIMEOUT(server.navigationRequests.size(),3,3000);
+        DelayedSummaryServer replacement(model->state(),model->sheet());QVERIFY(replacement.listen(QHostAddress::LocalHost,0));client->configure("http://127.0.0.1:"+QString::number(replacement.serverPort()),"token");
+        down->trigger();QTRY_COMPARE_WITH_TIMEOUT(replacement.navigationRequests.size(),1,3000);replacement.respondNavigation(0,5,2);QTRY_COMPARE_WITH_TIMEOUT(grid->currentIndex(),model->index(4,1),3000);
+        server.respondNavigation(2,9,2);QTest::qWait(50);QCOMPARE(grid->currentIndex(),model->index(4,1));
+    }
+    void frozenPaneTabAndEditorTabAdvanceAcrossSourceColumns() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("pane-tab.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *model=window.model();auto *grid=window.findChild<QTableView *>("grid");
+        window.findChild<QAction *>("freezeTopRowAction")->trigger();window.findChild<QAction *>("freezeFirstColumnAction")->trigger();
+        auto *corner=window.findChild<QTableView *>("frozenCorner"),*top=window.findChild<QTableView *>("frozenTopRow"),*left=window.findChild<QTableView *>("frozenFirstColumn");
+        QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(0,0)),5000);corner->edit(corner->model()->index(0,0));auto *editor=corner->findChild<QLineEdit *>();QVERIFY(editor);editor->setText("=2+3");QTest::keyClick(editor,Qt::Key_Tab);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);QTRY_COMPARE_WITH_TIMEOUT(grid->currentIndex(),model->index(0,1),5000);QCOMPARE(window.focusWidget(),top);
+        QTest::keyClick(top,Qt::Key_Backtab);QCOMPARE(grid->currentIndex(),model->index(0,0));QCOMPARE(window.focusWidget(),corner);
+        QTest::keyClick(corner,Qt::Key_Down);QCOMPARE(grid->currentIndex(),model->index(1,0));QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(1,0)),5000);
+        left->edit(left->model()->index(1,0));editor=left->findChild<QLineEdit *>();QVERIFY(editor);editor->setText("left entry");QTest::keyClick(editor,Qt::Key_Tab);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QTRY_COMPARE_WITH_TIMEOUT(grid->currentIndex(),model->index(1,1),5000);QCOMPARE(window.focusWidget(),grid);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(1,0)).toString(),QString("left entry"),5000);
     }
     void frozenPrefixModelsResizeAndForwardSourceIndices() {
         QStandardItemModel source(5,6);FrozenPrefixModel prefix(&source,2,3);

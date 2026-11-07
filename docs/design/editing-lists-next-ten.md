@@ -66,7 +66,7 @@ Projected lists suspend both edges; hiding column A suspends its edge until show
 as hiding row 1 suspends the top edge. Draft capture/resolution and Save cover every pane. Automatic wrapping includes
 frozen cells within the existing 64-row × 16-column loaded-preview measurement
 budget, with one shared row height. Plain/Shift arrows and Enter cross panes;
-Tab-specific traversal is part of the later keyboard-navigation increment.
+The keyboard-navigation increment below completes Tab traversal across source columns.
 There are no data/history/hook changes from freezing or navigation. The following increment extends
 these panes to multiple rows/columns. Native automation and visual QA
 cover layout, distant scrolling, selection, corner editing, persistence and guards;
@@ -91,6 +91,38 @@ visibility, size and geometry checks protect the reviewed freeze request. Freezi
 and navigation do not emit managed edits, hooks or history entries. The wrapping
 measurement cap includes prefix cells and scrolling cells together.
 
+## Data-aware navigation
+
+Grid Ctrl+Arrow jumps within stored inputs: when the current and adjacent cells
+are populated, jump to the end of that contiguous run; otherwise seek the next
+populated cell or the grid edge. Formulas (including error/empty-result formulas),
+Booleans and explicit empty Text are populated. Absent, native NULL and styled
+empty auto cells are empty. Derived results are not evaluated. This is a source
+input boundary, not a guessed record/list boundary.
+
+`POST /v1/workbooks/{workbook}/navigate` and SDK `book.navigate(row,col,direction)`
+use one read snapshot and a reviewed state precondition, with up to 10,000 candidate
+stored cells plus the start cell, 4 MiB inputs and two seconds. Limits, invalid
+inputs and stale states return structured errors without a partial target. No
+hooks, receipts, recalculation cache/history writes or revision changes occur.
+Vertical scans can hit the time budget on wide, unindexed workbooks; no unlimited
+scan/index guarantee is introduced.
+
+Ctrl+Shift+Arrow extends from the active cell at the beginning of a jump sequence;
+repeated jump extensions retain that anchor. Other selection/navigation resets
+the sequence. Large rectangles remain cheap selections; existing mutation/copy/
+summary size and visibility guards still apply. Projected lists disable these
+source commands; a hidden target is reported without moving the selection.
+
+Shortcuts are scoped to the grid/pane itself and leave source-bar and in-cell
+text editing keys alone. Drafts are resolved before a read. One navigation read
+is outstanding at a time. Selection/state/connection changes and newly opened
+editors or edited drafts fence off late replies. Frozen panes use the same source
+coordinates and visible focus. Tab/Shift+Tab, including acknowledged editor commits,
+traverse source columns across pane boundaries; source-grid edges stop traversal.
+Unfrozen editor Tab behavior is retained. These are read/navigation primitives,
+not managed edits or historical handler replay.
+
 ## Completed PRs
 
 1. [Formula-aware Cut #45](https://github.com/hybridmachine/DataHorizon/pull/45): locally verified, self-reviewed and merged.
@@ -98,3 +130,5 @@ measurement cap includes prefix cells and scrolling cells together.
 2. [Cross-pane selection #46](https://github.com/hybridmachine/DataHorizon/pull/46): locally verified, self-reviewed and merged.
 
 3. [Freeze first column #47](https://github.com/hybridmachine/DataHorizon/pull/47): locally verified, self-reviewed and merged.
+
+4. [Selected frozen panes #48](https://github.com/hybridmachine/DataHorizon/pull/48): locally verified, self-reviewed and merged.
