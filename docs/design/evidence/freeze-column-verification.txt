@@ -1,0 +1,24 @@
+Local macOS November 7, 2026. C++ build passed; hosted credits exhausted.
+
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   67.35 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   26.06 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  93.41 sec
+
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::frozenFirstColumnWrapUsesBoundedSharedRowMeasurement()
+PASS   : DesktopTests::frozenFirstColumnAlignsEditsSelectsAndPersistsWithCorner()
+PASS   : DesktopTests::frozenTopRowEditsAlignsAndPersistsWithoutCoveringBody()
+PASS   : DesktopTests::frozenPaneSelectionCrossesByKeyboardMouseAndAddressWithoutEdits()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 3046ms
+********* Finished testing of DesktopTests *********
+
+Self-review: shared prefix models/cache/current/selection; top/left/corner layout, distant scrolling, hidden-section real sizes and user resizing/fit/reset; bounded wrapping; all-pane draft capture, Save and visible-pane focus; source-coordinate projected hiding, list suspension and read-only/reopen preferences. Export tests explicitly target the main grid. Native fixture waits for deferred editor deletion. Visual inspection of build/freeze-column.png confirmed aligned panes with no body-cell overlays. Pane Tab traversal remains for the keyboard increment. No new platform/manual/release qualification.

@@ -52,6 +52,28 @@ Navigation produces no managed edits; range commands still use ordinary guards,
 one atomic engine operation and Undo. Existing cell editors, headers, read-only
 behavior, native geometry, resize synchronization and local preferences remain.
 
+## Freeze first column
+
+View → Freeze first column is independent of Freeze top row. Their intersection
+has an editable corner pane. All panes forward source values, flags and edits
+through the same REST-backed SheetModel cache and canonical selection. Scrolling,
+source row/column dimensions, headers and keyboard focus are synchronized without
+covering body cells. Sizing dialogs/fit/reset and header dragging update hidden
+source sections and their visible panes, including saved custom dimensions.
+
+The preference is local per workbook path/sheet, including read-only opens.
+Projected lists suspend both edges; hiding column A suspends its edge until shown,
+as hiding row 1 suspends the top edge. Draft capture/resolution and Save cover every pane. Automatic wrapping includes
+frozen cells within the existing 64-row × 16-column loaded-preview measurement
+budget, with one shared row height. Plain/Shift arrows and Enter cross panes;
+Tab-specific traversal is part of the later keyboard-navigation increment.
+There are no data/history/hook changes from freezing or navigation. Multiple
+frozen rows/columns remain the next increment. Native automation and visual QA
+cover layout, distant scrolling, selection, corner editing, persistence and guards;
+physical input/screen-reader/cross-platform release acceptance remains open.
+
 ## Completed PRs
 
 1. [Formula-aware Cut #45](https://github.com/hybridmachine/DataHorizon/pull/45): locally verified, self-reviewed and merged.
+
+2. [Cross-pane selection #46](https://github.com/hybridmachine/DataHorizon/pull/46): locally verified, self-reviewed and merged.

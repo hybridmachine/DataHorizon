@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "mainwindow.h"
 #include "servicepaths.h"
-#include "frozentoprow.h"
+#include "frozenpanes.h"
+#include <QGridLayout>
 #include <QApplication>
 #include <QClipboard>
 #include <QCheckBox>
@@ -392,7 +393,7 @@ void MainWindow::buildUi() {
     m_grid->setAlternatingRowColors(false);
     connect(m_model,&QAbstractItemModel::modelAboutToBeReset,this,[this]{
         QScopedValueRollback<bool> applying(m_applyingView,true);
-        m_frozenTop->setFrozen(false);
+        m_frozenTop->setFrozen(false);m_frozenTop->setFirstColumnFrozen(false);
         for(int row:m_hiddenViewRows) m_grid->setRowHidden(row,false);
         for(int col:m_hiddenViewColumns) m_grid->setColumnHidden(col,false);
         m_hiddenViewRows.clear(); m_hiddenViewColumns.clear();
@@ -405,20 +406,22 @@ void MainWindow::buildUi() {
     auto *viewSaveTimer=new QTimer(this); viewSaveTimer->setSingleShot(true); viewSaveTimer->setInterval(250);
     connect(viewSaveTimer,&QTimer::timeout,this,&MainWindow::saveViewState);
     auto recordSize=[this,viewSaveTimer](bool columns,int section,int size){
-        if(m_applyingView || m_viewKey.isEmpty()) return;
+        if(m_applyingView || m_viewKey.isEmpty() || size<=0) return;
         auto &sizes=columns?m_columnSizes:m_rowSizes;
         const int source=columns?section:m_model->sourceRow(section);
         if(source<0) return;
         if(!sizes.contains(source) && sizes.size()>=1024) {
             QScopedValueRollback<bool> applying(m_applyingView,true);
-            if(columns) m_grid->setColumnWidth(section,110); else m_grid->setRowHeight(section,26);
+            if(m_frozenTop)m_frozenTop->resizeSection(columns,section,columns?110:26);
+            else if(columns)m_grid->setColumnWidth(section,110);else m_grid->setRowHeight(section,26);
             issue("Only 1,024 custom sizes per axis are supported. Reset sizes before adding more."); return;
         }
         size=qBound(columns?30:18,size,columns?2000:1000);
         sizes[source]=size;
         if(columns) m_sizedColumns.insert(section); else { m_sizedRows.insert(section); m_wrappedRows.remove(section); }
         QScopedValueRollback<bool> applying(m_applyingView,true);
-        if(columns) m_grid->setColumnWidth(section,size); else m_grid->setRowHeight(section,size);
+        if(m_frozenTop)m_frozenTop->resizeSection(columns,section,size);
+        else if(columns)m_grid->setColumnWidth(section,size);else m_grid->setRowHeight(section,size);
         viewSaveTimer->start();
     };
     connect(m_grid->horizontalHeader(),&QHeaderView::sectionResized,this,[recordSize](int section,int,int size){recordSize(true,section,size);});
@@ -429,21 +432,26 @@ void MainWindow::buildUi() {
     connect(m_grid->verticalScrollBar(),&QScrollBar::valueChanged,wrapTimer,qOverload<>(&QTimer::start));
     connect(m_grid->horizontalScrollBar(),&QScrollBar::valueChanged,wrapTimer,qOverload<>(&QTimer::start));
     connect(m_grid->horizontalHeader(),&QHeaderView::sectionResized,wrapTimer,qOverload<>(&QTimer::start));
-    auto *gridArea=new QWidget(central); auto *gridLayout=new QVBoxLayout(gridArea);
+    auto *gridArea=new QWidget(central); auto *gridLayout=new QGridLayout(gridArea);
     gridLayout->setContentsMargins(0,0,0,0); gridLayout->setSpacing(0);
-    m_frozenTop=new FrozenTopRow(m_grid,gridArea);
+    m_frozenTop=new FrozenPanes(m_grid,gridArea);
     connect(m_frozenTop->view()->verticalHeader(),&QHeaderView::sectionResized,this,[this,recordSize](int row,int,int size){
         if(row!=0 || m_applyingView) return;
         recordSize(false,0,size);
         QScopedValueRollback<bool> applying(m_applyingView,true);
         m_frozenTop->setRowHeight(m_rowSizes.value(0,26));
     });
-    auto *frozenDelegate=new CellDelegate(m_frozenTop->view());
-    frozenDelegate->canEdit=[this]{return !m_source->isModified();};
-    frozenDelegate->enterPressed=[this](const QModelIndex &index,int direction){m_enterRequest=enterDestination(index,direction);};
-    connect(frozenDelegate,&QAbstractItemDelegate::closeEditor,this,[this]{m_enterRequest={};});
-    m_frozenTop->view()->setItemDelegate(frozenDelegate);
-    gridLayout->addWidget(m_frozenTop); gridLayout->addWidget(m_grid,1); layout->addWidget(gridArea,1);
+    for(auto *pane:m_frozenTop->views()) {
+        connect(pane->horizontalHeader(),&QHeaderView::sectionResized,wrapTimer,qOverload<>(&QTimer::start));
+        connect(pane->horizontalHeader(),&QHeaderView::sectionResized,this,[recordSize](int section,int,int size){recordSize(true,section,size);});
+        connect(pane->verticalHeader(),&QHeaderView::sectionResized,this,[recordSize](int section,int,int size){recordSize(false,section,size);});
+        auto *delegate=new CellDelegate(pane);delegate->canEdit=[this]{return !m_source->isModified();};
+        delegate->enterPressed=[this](const QModelIndex &index,int direction){m_enterRequest=enterDestination(index,direction);};
+        connect(delegate,&QAbstractItemDelegate::closeEditor,this,[this]{m_enterRequest={};});pane->setItemDelegate(delegate);
+    }
+    gridLayout->addWidget(m_frozenTop,0,1);gridLayout->addWidget(m_frozenTop->cornerView(),0,0);
+    gridLayout->addWidget(m_frozenTop->leftWidget(),1,0);gridLayout->addWidget(m_grid,1,1);
+    gridLayout->setRowStretch(1,1);gridLayout->setColumnStretch(1,1);layout->addWidget(gridArea,1);
     m_freezeAction=add(view,tr("Freeze top row"),{},[this]{
         if(m_busy || m_unknown || m_info.isEmpty() || m_model->projected() || m_hiddenRows.contains(0)) {
             QSignalBlocker blocker(m_freezeAction); m_freezeAction->setChecked(m_frozenTop->active());
@@ -457,6 +465,14 @@ void MainWindow::buildUi() {
         m_freezeTop=requested; updateFrozenRow(); saveViewState();
     });
     m_freezeAction->setCheckable(true); m_freezeAction->setObjectName("freezeTopRowAction");
+    m_freezeColumnAction=add(view,tr("Freeze first column"),{},[this]{
+        const bool requested=m_freezeColumnAction->isChecked();const auto target=targetContext();const auto key=m_viewKey;
+        if(m_busy || m_unknown || m_info.isEmpty() || m_model->projected() || m_hiddenColumns.contains(0)) {updateFrozenRow();issue("Clear the list view and show column A before changing Freeze first column.");return;}
+        captureGridDraft(false);if(!resolveDraft()){updateFrozenRow();return;}
+        if(m_busy || m_unknown || !matchesTarget(target) || key!=m_viewKey || m_model->projected() || m_hiddenColumns.contains(0)) {updateFrozenRow();issue("View changed. Review Freeze first column again.");return;}
+        m_freezeFirstColumn=requested;updateFrozenRow();saveViewState();
+    });
+    m_freezeColumnAction->setCheckable(true);m_freezeColumnAction->setObjectName("freezeFirstColumnAction");
     m_tabs = new QTabBar; m_tabs->setObjectName("sheets"); m_tabs->setAccessibleName(tr("Worksheets")); m_tabs->setExpanding(false);
     layout->addWidget(m_tabs);
     setCentralWidget(central);
@@ -519,9 +535,7 @@ void MainWindow::buildUi() {
         const auto current=m_model->index(row-1,col-1);
         m_grid->selectionModel()->setCurrentIndex(current,QItemSelectionModel::NoUpdate);
         m_grid->selectionModel()->select(QItemSelection(m_model->index(r1-1,c1-1),m_model->index(r2-1,c2-1)),QItemSelectionModel::ClearAndSelect);
-        if(m_frozenTop->active() && row==1) {
-            m_frozenTop->syncSelection();m_frozenTop->view()->scrollTo(m_frozenTop->view()->model()->index(0,col-1));m_frozenTop->view()->setFocus();
-        } else {m_grid->scrollTo(current);m_grid->setFocus();}
+        m_frozenTop->focusCurrent();
     });
     setBusy(true);
 }
@@ -530,32 +544,34 @@ void MainWindow::fitVisibleWrappedRows() {
     QScopedValueRollback<bool> applying(m_applyingView,true);
     // Only inspect loaded visible cells; never resize a million-row model to
     // contents or fetch full sources to measure presentation.
-    const int firstRow=qMax(0,m_grid->rowAt(0)), firstCol=qMax(0,m_grid->columnAt(0));
-    const int lastRow=qMin(m_model->rowCount()-1,firstRow+63);
-    const int lastCol=qMin(m_model->columnCount()-1,firstCol+15);
-    const auto previous=m_wrappedRows;
-    for(int row:previous) if(row<firstRow || row>lastRow) {
-        m_grid->setRowHeight(row,26); m_wrappedRows.remove(row);
+    QList<int> rows,columns;
+    if(m_frozenTop->active())rows.append(0);
+    if(m_frozenTop->columnActive())columns.append(0);
+    for(int row=qMax(0,m_grid->rowAt(0));row<m_model->rowCount() && rows.size()<64;++row) {
+        if(m_grid->rowViewportPosition(row)>m_grid->viewport()->height())break;
+        if(!m_grid->isRowHidden(row) && !rows.contains(row))rows.append(row);
     }
-    for(int row=firstRow;row<=lastRow;++row) {
-        if(m_grid->rowViewportPosition(row)>m_grid->viewport()->height()) break;
-        if(m_grid->isRowHidden(row)) continue;
-        if(m_rowSizes.contains(m_model->sourceRow(row))) continue;
-        int height=26; bool loaded=false;
-        for(int col=firstCol;col<=lastCol;++col) {
-            if(m_grid->columnViewportPosition(col)>m_grid->viewport()->width()) break;
-            if(m_grid->isColumnHidden(col)) continue;
+    for(int col=qMax(0,m_grid->columnAt(0));col<m_model->columnCount() && columns.size()<16;++col) {
+        if(m_grid->columnViewportPosition(col)>m_grid->viewport()->width())break;
+        if(!m_grid->isColumnHidden(col) && !columns.contains(col))columns.append(col);
+    }
+    const auto previous=m_wrappedRows;
+    for(int row:previous)if(!rows.contains(row)){m_frozenTop->resizeSection(false,row,26);m_wrappedRows.remove(row);}
+    for(int row:rows) {
+        if(m_rowSizes.contains(m_model->sourceRow(row)))continue;
+        int height=26;bool loaded=false;
+        for(int col:columns) {
             const auto index=m_model->index(row,col);
             if(!m_model->loaded(index)) continue;
             loaded=true;
             if(!m_model->cell(index)["style"].toObject()["wrap"].toBool()) continue;
             const QFontMetrics metrics(qvariant_cast<QFont>(m_model->data(index,Qt::FontRole)));
-            const auto bounds=metrics.boundingRect(QRect(0,0,qMax(1,m_grid->columnWidth(col)-8),0),Qt::TextWordWrap,
+            const auto bounds=metrics.boundingRect(QRect(0,0,qMax(1,m_frozenTop->sectionSize(true,col)-8),0),Qt::TextWordWrap,
                                                   m_model->data(index).toString());
             height=qMax(height,qMin(260,bounds.height()+8));
         }
         if(loaded && (height>26 || m_wrappedRows.contains(row))) {
-            if(m_grid->rowHeight(row)!=height) m_grid->setRowHeight(row,height);
+            if(m_grid->rowHeight(row)!=height) m_frozenTop->resizeSection(false,row,height);
             if(height>26) m_wrappedRows.insert(row); else m_wrappedRows.remove(row);
         }
     }
@@ -574,7 +590,7 @@ void MainWindow::saveViewState() {
     QSettings settings(viewSettingsPath(),QSettings::IniFormat);
     auto hidden=[](const QSet<int> &values){QJsonArray result; QList<int> sorted=values.values(); std::sort(sorted.begin(),sorted.end()); for(int value:sorted) result.append(value); return result;};
     settings.setValue(m_viewKey,QJsonDocument(QJsonObject{{"rows",encode(m_rowSizes)},{"columns",encode(m_columnSizes)},
-        {"hidden_rows",hidden(m_hiddenRows)},{"hidden_columns",hidden(m_hiddenColumns)},{"freeze_top_row",m_freezeTop}}).toJson(QJsonDocument::Compact));
+        {"hidden_rows",hidden(m_hiddenRows)},{"hidden_columns",hidden(m_hiddenColumns)},{"freeze_top_row",m_freezeTop},{"freeze_first_column",m_freezeFirstColumn}}).toJson(QJsonDocument::Compact));
     settings.sync();
     if(settings.status()!=QSettings::NoError && !m_shuttingDown) issue("Could not save desktop view preferences. Workbook data remains stored.");
 }
@@ -608,7 +624,7 @@ void MainWindow::restoreViewState() {
         };
         m_hiddenRows=hidden(state["hidden_rows"].toArray(),1048576);
         m_hiddenColumns=hidden(state["hidden_columns"].toArray(),16384);
-        m_freezeTop=state["freeze_top_row"].toBool();
+        m_freezeTop=state["freeze_top_row"].toBool();m_freezeFirstColumn=state["freeze_first_column"].toBool();
     }
     for(auto it=m_rowSizes.begin();it!=m_rowSizes.end();++it) {
         const int row=m_model->viewRow(it.key());
@@ -641,16 +657,17 @@ void MainWindow::resizeSections(bool columns) {
     const auto key=m_viewKey; const auto state=m_info["state"];
     bool ok=false;
     const int size=QInputDialog::getInt(this,columns?tr("Column width"):tr("Row height"),
-        tr("Logical pixels (saved on this computer)"),columns?m_grid->columnWidth(sections.first):m_grid->rowHeight(sections.first),
+        tr("Logical pixels (saved on this computer)"),m_frozenTop->sectionSize(columns,sections.first),
         columns?30:18,columns?2000:1000,1,&ok);
     if(!ok) return;
     if(key!=m_viewKey || state!=m_info["state"] || m_busy || m_unknown) { issue("View changed while the size dialog was open. Select the rows or columns again."); return; }
     for(int section=sections.first;section<=sections.second;++section)
         if(!columns && m_model->sourceRow(section)!=sources[section-sections.first]) { issue("List order changed. Select the rows again."); return; }
     for(int section=sections.first;section<=sections.second;++section) {
-        if(columns) m_grid->setColumnWidth(section,size);
-        else if(section==0 && m_frozenTop->active()) {m_rowSizes[0]=size; m_frozenTop->setRowHeight(size);}
-        else m_grid->setRowHeight(section,size);
+        m_frozenTop->resizeSection(columns,section,size);
+        const int source=sources[section-sections.first];
+        if(columns){m_columnSizes[source]=size;m_sizedColumns.insert(section);}
+        else {m_rowSizes[source]=size;m_sizedRows.insert(section);m_wrappedRows.remove(section);}
     }
     saveViewState();
 }
@@ -675,15 +692,15 @@ void MainWindow::fitColumns() {
     }
     auto sizes=m_columnSizes; for(auto it=widths.begin();it!=widths.end();++it) sizes[it.key()]=it.value();
     if(sizes.size()>1024) { issue("Fit exceeds the 1,024 custom widths. Reset sizes first."); return; }
-    for(auto it=widths.begin();it!=widths.end();++it) m_grid->setColumnWidth(it.key(),it.value());
+    for(auto it=widths.begin();it!=widths.end();++it){m_frozenTop->resizeSection(true,it.key(),it.value());m_columnSizes[it.key()]=it.value();m_sizedColumns.insert(it.key());}
     saveViewState();
 }
 
 void MainWindow::resetDimensions() {
     if(m_busy || m_unknown || m_info.isEmpty()) return;
     QScopedValueRollback<bool> applying(m_applyingView,true);
-    for(int row:m_sizedRows) m_grid->setRowHeight(row,26);
-    for(int col:m_sizedColumns) m_grid->setColumnWidth(col,110);
+    for(int row:m_sizedRows) m_frozenTop->resizeSection(false,row,26);
+    for(int col:m_sizedColumns) m_frozenTop->resizeSection(true,col,110);
     m_rowSizes.clear(); m_columnSizes.clear(); m_sizedRows.clear(); m_sizedColumns.clear();
     saveViewState(); fitVisibleWrappedRows();
     updateFrozenRow();
@@ -699,9 +716,10 @@ void MainWindow::ensureVisibleCurrent() {
     const auto current=m_grid->currentIndex(); if(!current.isValid()) return;
     int row=current.row(), col=current.column();
     auto hiddenRow=[this](int index){return m_grid->isRowHidden(index) && !(index==0 && m_frozenTop->active());};
-    if(!hiddenRow(row) && !m_grid->isColumnHidden(col)) return;
+    auto hiddenColumn=[this](int index){return m_grid->isColumnHidden(index) && !(index==0 && m_frozenTop->columnActive());};
+    if(!hiddenRow(row) && !hiddenColumn(col)) return;
     for(int attempts=0;attempts<=1024 && hiddenRow(row);++attempts) row=(row+1)%qMax(1,m_model->rowCount());
-    for(int attempts=0;attempts<=1024 && m_grid->isColumnHidden(col);++attempts) col=(col+1)%m_model->columnCount();
+    for(int attempts=0;attempts<=1024 && hiddenColumn(col);++attempts) col=(col+1)%m_model->columnCount();
     m_grid->setCurrentIndex(m_model->index(row,col));
 }
 
@@ -738,6 +756,8 @@ void MainWindow::updateFrozenRow() {
     QScopedValueRollback<bool> applying(m_applyingView,true);
     const bool active=m_freezeTop && !m_model->projected() && !m_hiddenRows.contains(0);
     m_frozenTop->setFrozen(active,m_rowSizes.value(0,26));
+    m_frozenTop->setHiddenRows(m_hiddenViewRows);
+    m_frozenTop->setFirstColumnFrozen(m_freezeFirstColumn && !m_model->projected() && !m_hiddenColumns.contains(0));
     m_frozenTop->setHiddenColumns(m_hiddenColumns);
     // Turning freeze off must restore an independently hidden row 1.
     if(!active && m_hiddenRows.contains(0) && m_model->viewRow(0)>=0) m_grid->setRowHidden(m_model->viewRow(0),true);
@@ -747,6 +767,10 @@ void MainWindow::updateFrozenRow() {
     }
     QSignalBlocker blocker(m_freezeAction); m_freezeAction->setChecked(active);
     m_freezeAction->setEnabled(!m_busy && !m_unknown && !m_model->projected() && !m_hiddenRows.contains(0));
+    if(m_freezeColumnAction) {
+        QSignalBlocker blocker(m_freezeColumnAction);m_freezeColumnAction->setChecked(m_freezeFirstColumn);
+        m_freezeColumnAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenColumns.contains(0));
+    }
 }
 
 void MainWindow::hideSections(bool columns) {
@@ -1006,6 +1030,7 @@ void MainWindow::setBusy(bool busy, const QString &message) {
     m_busy = busy || m_releasing;
     if(m_busy) clearFindResults();
     m_model->setBusy(m_busy); m_toolbar->setEnabled(!m_busy); m_tabs->setEnabled(!m_busy);
+    if(m_freezeColumnAction)m_freezeColumnAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenColumns.contains(0));
     if(m_freezeAction) m_freezeAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenRows.contains(0));
     syncSource();
     if (!message.isEmpty()) m_status->setText(m_releasing ? "Closing workbook…" : message);
@@ -1058,7 +1083,7 @@ void MainWindow::applyEnterNavigation() {
     const auto target=m_enterNavigation; m_enterNavigation={};
     if (target["workbook"]!=m_info["id"] || target["sheet"].toString()!=m_model->sheet() || m_source->isModified()) return;
     const auto next=m_model->index(m_model->viewRow(target["row"].toInt()-1),target["col"].toInt()-1);
-    if (next.isValid()) { m_grid->setCurrentIndex(next); m_grid->scrollTo(next); syncSource(); }
+    if (next.isValid()) { m_grid->setCurrentIndex(next); m_frozenTop->focusCurrent(); syncSource(); }
 }
 
 void MainWindow::submitDraft(bool advance, int direction) {
@@ -1104,7 +1129,7 @@ void MainWindow::submitDraft(bool advance, int direction) {
         m_draftSubmissionId=m_pendingId;
         if (!destination.isEmpty()) { m_enterNavigation=destination; m_enterNavigation["operation_id"]=m_pendingId; }
     }
-    m_grid->setFocus();
+    m_frozenTop->focusCurrent();
 }
 
 bool MainWindow::resolveDraft() {
@@ -1126,7 +1151,7 @@ void MainWindow::captureGridDraft(bool needsReview) {
     if (!m_pendingId.isEmpty() || m_source->isModified()) return;
     auto *delegate=dynamic_cast<CellDelegate *>(m_grid->itemDelegate());
     auto draft=delegate?delegate->takeDraft():QJsonObject{};
-    if(draft.isEmpty()) if(auto *frozenDelegate=dynamic_cast<CellDelegate *>(m_frozenTop->view()->itemDelegate())) draft=frozenDelegate->takeDraft();
+    for(auto *pane:m_frozenTop->views())if(draft.isEmpty())if(auto *delegate=dynamic_cast<CellDelegate *>(pane->itemDelegate()))draft=delegate->takeDraft();
     if (draft.isEmpty()) return;
     m_draftTarget={{"workbook",m_info["id"]},{"sheet",m_model->sheet()},{"state",m_info["state"]},
                    {"row",m_model->sourceRow(draft["view_row"].toInt())+1},{"col",draft["col"]},{"input_kind",draft["input_kind"]}};
@@ -1290,10 +1315,8 @@ void MainWindow::save(bool copy) {
     if (m_unknown || m_info.isEmpty()) return;
     m_saveMode = copy ? 2 : 1;
     if (m_busy) { if (m_pendingId.isEmpty()) m_saveMode=0; return; }
+    captureGridDraft(false);
     if (m_source->isModified()) { m_source->returnPressed(); return; }
-    if (auto *editor=qobject_cast<QLineEdit *>(QApplication::focusWidget()); editor && m_grid->isAncestorOf(editor)) {
-        m_grid->setFocus(); if (m_busy) return;
-    }
     m_saveMode=0;
     if (copy || isRecoveryPath(m_info["path"].toString())) saveCopy(!copy);
     else m_status->setText("Stored automatically • Save confirmed");
@@ -1787,8 +1810,7 @@ void MainWindow::navigateFind(int direction) {
     m_grid->selectionModel()->select(index,QItemSelectionModel::ClearAndSelect);
     if(m_grid->currentIndex()!=index)return;
     m_findIndex=next;
-    if(m_frozenTop->active() && row==1) {m_frozenTop->syncSelection();m_frozenTop->view()->scrollTo(m_frozenTop->view()->model()->index(0,col-1));m_frozenTop->view()->setFocus();}
-    else {m_grid->scrollTo(index);m_grid->setFocus();}
+    m_frozenTop->focusCurrent();
     m_status->setText(m_findTotal>count?tr("Find %1 of first %2 / %3 matches • Narrow the search for remaining matches").arg(next+1).arg(count).arg(m_findTotal):tr("Find %1 of %2 matches • Wraparound within searched selection").arg(next+1).arg(count));
 }
 
@@ -1869,7 +1891,7 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
             submitDraft(true,key->modifiers().testFlag(Qt::ShiftModifier)?-1:1); return true;
         }
         if (key->key()==Qt::Key_Escape) {
-            m_source->setModified(false); clearRecoveredDraft(); syncSource(); m_grid->setFocus(); return true;
+            m_source->setModified(false); clearRecoveredDraft(); syncSource(); m_frozenTop->focusCurrent(); return true;
         }
     }
     return QMainWindow::eventFilter(object, event);
