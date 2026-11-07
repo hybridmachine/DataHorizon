@@ -62,7 +62,7 @@ background results that can overwrite a newer input state.
 | Typed values | Preserved | Explicit reviewed types / canonical values | Text, finite numbers, Booleans; serial dates remain numbers | Unavailable |
 | Leading-zero text | Preserved | Preserved as text; CSV receivers may infer types | Preserved as Text | Unavailable |
 | Formula source | Preserved | Literal Text / evaluated values | Implemented local formulas or explicit cached/fresh values | Unavailable |
-| Supported styles | Preserved | Destination styles retained / omitted | Omitted and reported | Unavailable |
+| Supported styles | Preserved | Destination styles retained / omitted | Native direct styles mapped; unsupported display reported | Unavailable |
 | Sheets | Preserved | At selected cell / selected rectangle | One sheet at destination / one rectangle at source coordinates | Unavailable |
 | Code / queries / relationships | Planned metadata | No code activation / omitted | Omitted and reported; no code activation | Unavailable |
 
@@ -165,4 +165,5 @@ formulas have separate support from formatting and advanced features. Every
 review includes a conversion report; unsupported cells block import, while
 unsupported non-cell features are reported as omitted. See the exact
 [interchange contract](interchange-next-five.md#xlsx-inputs-and-formulas).
-ODS and XLSX style mapping remain outside this first slice.
+ODS remains outside this slice. XLSX direct styles now follow the separate
+[native-style mapping](interchange-next-five.md#xlsx-native-styles).

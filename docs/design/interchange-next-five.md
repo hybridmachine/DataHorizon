@@ -83,3 +83,29 @@ through Excel escapes, reject unavailable formula characters and enforce Excel's
 32,767 UTF-16-unit text limit on export. Unsupported inputs never yield partial
 Apply data. [Local verification](evidence/xlsx-verification.txt) records complete
 CTest, final service regressions, native Cocoa scale 2 and independent readers.
+
+## XLSX native styles
+
+Import maps direct cell formats to the existing native style tier. General,
+Text and fixed2 map from built-ins 0/49/2 and exact custom equivalents. Bold,
+italic, left/center/right alignment, wrap, opaque solid RGB fill and four thin
+borders map to native properties. Borders use the native default color. Default
+and styled-empty cells replace destination styles, including removing prior
+formatting, in the same managed edit as the imported source. Input kinds stay
+explicit: a numeric cell with Text display formatting remains numeric. Undo and
+required hooks cover sources and styles together.
+
+The report lists unsupported number formats, date/time display serials,
+partial/thick borders, theme/indexed/translucent fills and alignment properties.
+Font family/size/color, rich-text runs, named-style inheritance, conditional
+formatting, row/column defaults and dimensions are outside this tier and reported
+as omitted. Dates are not silently interpreted as native dates. Styles and shared
+strings follow local workbook part relationships; invalid indices or missing
+related parts block the entire applicable input payload.
+
+Export writes direct cell styles with a complete stylesheet and package
+relationship. At most 1,024 distinct native styles are exported; input tables
+are bounded at 4,096 entries. Existing ZIP/XML/response limits remain. Independent
+openpyxl producer/consumer checks exercise every mapped property; the Qt fixture
+is produced by openpyxl and verifies calculated fixed2 display and emphasis.
+Mapping follows [Microsoft's cell format documentation](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.spreadsheet.cellformat).

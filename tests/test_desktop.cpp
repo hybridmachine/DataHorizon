@@ -1058,7 +1058,9 @@ private slots:
         QSignalSpy changed(&window,&MainWindow::operationFinished);
         answerNextDialog(QMessageBox::Yes); window.importSpreadsheetBytes(data);
         QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000);
-        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14"),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14.00"),5000);
+        QVERIFY(window.model()->data(window.model()->index(0,1),Qt::FontRole).value<QFont>().bold());
+        if(qEnvironmentVariableIsSet("DATAHORIZON_XLSX_SCREENSHOT")) window.grab().save(qEnvironmentVariable("DATAHORIZON_XLSX_SCREENSHOT"));
         auto *grid=window.findChild<QTableView *>(); QVERIFY(grid);
         grid->selectionModel()->select(QItemSelection(window.model()->index(0,0),window.model()->index(0,2)),QItemSelectionModel::ClearAndSelect);
         const auto output=temp.filePath("copy.xlsx");
