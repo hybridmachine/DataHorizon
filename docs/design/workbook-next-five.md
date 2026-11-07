@@ -84,3 +84,31 @@ a cross-sheet total. Build-only dependencies are pinned in
 produced or accepted by native Excel/LibreOffice. Their application qualification
 remains an explicit platform gate. Evidence: `evidence/fidelity-verification.txt`
 and `evidence/workbook-consumers.json`.
+
+## Recovery failures and bounded input inspection
+
+Read-only inspection now checks source types, native value rules, style JSON and
+formula syntax in one bounded input snapshot. It reports up to 100 located issues,
+total issues, checked cells/bytes and an explicit complete/valid flag. Limits are
+10,000 cells, 8 MiB and five seconds, with a 1-MiB SQLite record limit; hitting any
+bound cannot claim unchecked inputs are valid. Style JSON is limited to 64 KiB.
+Formula syntax checks do not evaluate formulas or promise function/export parity.
+The scan is tied to the state whose opening integrity checks passed; an external
+commit before final metadata requires a new inspection. No repair, recalculation,
+code activation or historical hook replay occurs. The desktop shows issues/limits,
+and REST/SDK/CLI retain structured results.
+
+Snapshot API errors now identify an incomplete copy and a destination that must
+be preserved/inspected, including reservation and backup failures. Existing files
+are never overwritten by native snapshot creation. Real SQLite page-capacity
+exhaustion and read-only backup targets test storage failure behavior. Controlled
+ENOSPC/EACCES reservation failures supplement those tests. A SQLite full error that
+ends its transaction without a durable receipt remains unknown for reconciliation;
+it is never reported as a successful write or silently retried.
+
+A Qt child process exits abruptly before/after QSaveFile commit, verifying that
+an existing interchange destination retains either its old bytes or the committed
+replacement. Existing native transaction-crash and lost-acknowledgement fixtures
+remain in force. These are process/SQLite/injected-I/O fixtures, **not** physical
+disk-full, power-loss or filesystem durability qualification. Evidence is in
+`evidence/recovery-failures-verification.txt`.

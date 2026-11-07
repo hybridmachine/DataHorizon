@@ -1827,7 +1827,15 @@ void MainWindow::inspectNativeFile(const QString &path) {
         setBusy(false,error.isEmpty()?"Native inspection complete":"Native inspection failed");
         if(!error.isEmpty()) { issue(error); return; }
         QStringList report; for(const auto &line:result["report"].toArray()) report.append(line.toString());
-        QMessageBox box(QMessageBox::Information,tr("Native file inspection"),tr("SQLite and native metadata checks passed."),QMessageBox::Ok,this);
+        const auto inputs=result["inputs"].toObject();
+        QMessageBox box(QMessageBox::Information,tr("Native file inspection"),
+            inputs["inputs_valid"].toBool()?tr("Storage and bounded input checks passed."):tr("Storage checks passed. Input inspection found issues or reached a limit; review Details."),QMessageBox::Ok,this);
+        QStringList details;
+        for(const auto &entry:inputs["issues"].toArray()) {
+            const auto item=entry.toObject();
+            details.append(item["sheet"].toString()+"!"+QString::number(item["row"].toInt())+","+QString::number(item["col"].toInt())+": "+item["code"].toString()+" — "+item["message"].toString());
+        }
+        box.setDetailedText(details.join('\n'));
         box.setObjectName("nativeInspectionReview");
         box.setOption(QMessageBox::Option::DontUseNativeDialog); box.setTextFormat(Qt::PlainText);
         box.setInformativeText(result["path"].toString()+"\n"+report.join('\n')); box.exec();

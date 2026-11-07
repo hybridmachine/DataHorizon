@@ -1,0 +1,37 @@
+Local macOS verification, November 6, 2026. Hosted builds have no credits.
+C++ build passed, including the test-only atomic-save crash helper.
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   57.15 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   25.72 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  82.88 sec
+
+Recovery contracts:
+test_abrupt_exit_after_commit_retains_receipt_and_stored_input (test_recovery.RecoveryTests.test_abrupt_exit_after_commit_retains_receipt_and_stored_input) ... ok
+test_abrupt_exit_recovers_spilled_managed_edits_without_replaying_hooks (test_recovery.RecoveryTests.test_abrupt_exit_recovers_spilled_managed_edits_without_replaying_hooks) ... ok
+test_external_commit_between_input_scan_and_metadata_requires_new_inspection (test_recovery.RecoveryTests.test_external_commit_between_input_scan_and_metadata_requires_new_inspection) ... ok
+test_input_inspection_byte_and_time_limits_restore_connection_state (test_recovery.RecoveryTests.test_input_inspection_byte_and_time_limits_restore_connection_state) ... ok
+test_input_inspection_limits_never_claim_unchecked_data_is_valid (test_recovery.RecoveryTests.test_input_inspection_limits_never_claim_unchecked_data_is_valid) ... ok
+test_input_inspection_reports_invalid_types_styles_formula_syntax_and_preserves_bytes (test_recovery.RecoveryTests.test_input_inspection_reports_invalid_types_styles_formula_syntax_and_preserves_bytes) ... ok
+test_late_identity_io_failure_rolls_back_without_detached_receipt_or_writer_lock (test_recovery.RecoveryTests.test_late_identity_io_failure_rolls_back_without_detached_receipt_or_writer_lock) ... ok
+test_observed_source_replacement_blocks_reads_writes_receipts_and_snapshot (test_recovery.RecoveryTests.test_observed_source_replacement_blocks_reads_writes_receipts_and_snapshot) ... ok
+test_open_integrity_has_a_shared_deadline_and_does_not_modify_rejected_source (test_recovery.RecoveryTests.test_open_integrity_has_a_shared_deadline_and_does_not_modify_rejected_source) ... ok
+test_real_readonly_snapshot_destination_failure_retains_source_and_existing_destination (test_recovery.RecoveryTests.test_real_readonly_snapshot_destination_failure_retains_source_and_existing_destination) ... ok
+test_real_sqlite_full_rolls_back_data_and_retains_unknown_operation_for_reconciliation (test_recovery.RecoveryTests.test_real_sqlite_full_rolls_back_data_and_retains_unknown_operation_for_reconciliation) ... ok
+test_rest_sdk_inspection_is_readonly_has_no_handle_and_activates_no_required_hook (test_recovery.RecoveryTests.test_rest_sdk_inspection_is_readonly_has_no_handle_and_activates_no_required_hook) ... ok
+test_snapshot_api_explains_incomplete_destination_without_overwriting_existing_file (test_recovery.RecoveryTests.test_snapshot_api_explains_incomplete_destination_without_overwriting_existing_file) ... ok
+test_snapshot_late_integrity_failure_keeps_destination_and_never_claims_success (test_recovery.RecoveryTests.test_snapshot_late_integrity_failure_keeps_destination_and_never_claims_success) ... ok
+test_snapshot_reservation_permission_and_capacity_failures_create_no_success (test_recovery.RecoveryTests.test_snapshot_reservation_permission_and_capacity_failures_create_no_success) ... ok
+
+----------------------------------------------------------------------
+Ran 15 tests in 0.645s
+
+OK
+
+Native Cocoa scale 2: interrupted atomic export and inspection/draft preservation; four checks passed.
+Self-review tied the input scan to the state whose opening checks passed, added stale-inspection rejection, restored SQLite limits/transactions on failure and bounded nested invalid style JSON handling.
+Power-loss, physical disk-full/filesystem behavior and Windows/Linux remain unqualified.
