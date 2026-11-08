@@ -66,6 +66,15 @@ automatic retry of unknown writes or automatic replay of user code.
 
 ## Evidence ledger
 
+Task 2 implements a process-local index capped at 4,096 nodes/50,000 dependency
+edges and 4 MiB of estimated cached-result payload. Both branches of parsed
+conditionals are indexed conservatively; unresolved/unrepresentable dependencies
+disable reuse rather than changing lazy evaluation. Capacity exhaustion discards
+the index and leaves ordinary bounded evaluation available. Volatile dependencies
+are transitive; hook reads use independent transactional calculators. Committed
+cell changes invalidate their dependent closure; structure/external refresh clears
+the index. No native derived cache is trusted after reopen.
+
 Each PR records local build/test commands and reviewed head in its description.
 Final consolidated evidence lives under `docs/design/evidence/`. The ten tasks
 target the documented remaining engineering gaps; full Excel compatibility,
