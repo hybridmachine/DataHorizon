@@ -79,3 +79,22 @@ change rounds also share one clock, even when context.value creates a fresh
 calculator to observe prior transactional edits. Read-only calculation never
 changes revision/history or runs change hooks. Values can change between two
 snapshots with the same stored-input state token; it is not a clock token.
+
+## Arithmetic and ordering
+
+Native date/datetime plus/minus a numeric day offset uses civil Gregorian days,
+rounded to microseconds. Whole-day offsets preserve date; fractions promote to
+datetime. Adding a time to a date/datetime combines its clock as an offset;
+time plus time/numeric days wraps within 24 hours. Subtraction of two calendar
+values or two times returns elapsed days. Date/datetime comparisons promote dates
+to midnight; clocks compare only with clocks. Other temporal operators/type
+mixtures fail explicitly. Text conversion/concatenation uses ISO; numeric
+aggregates do not implicitly include native temporal values. Exact lookups and
+conditional equality distinguish temporal values from Text and numeric serials.
+
+List sorting groups blank, numbers, temporal values (calendar then clocks), Text,
+then Booleans, with chronological ordering and stable source rows. Filters use
+an explicit `value_kind` (`date`, `time`, `datetime`) and ISO `value`; omitted
+kind preserves existing scalar behavior. Date and datetime filters compare at
+midnight. Contains is Text-only. GUI filter types and local saved definitions
+retain this discriminator. Existing scope, response and calculation limits apply.

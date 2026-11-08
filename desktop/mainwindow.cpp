@@ -2072,7 +2072,7 @@ void MainWindow::updateListSummary() {
     for(const auto &value:spec["sort"].toArray()){const auto key=value.toObject();keys.append(SheetModel::columnName(key["col"].toInt())+(key["descending"].toBool()?QString("↓"):QString("↑")));}
     for(const auto &value:spec["filters"].toArray()) {
         const auto filter=value.toObject();const QJsonValue scalar=filter.contains("value")?filter["value"]:QJsonValue(QJsonValue::Null);
-        const QString type=scalar.isNull()?"NULL":scalar.isBool()?"Boolean":scalar.isDouble()?"Number":"Text";
+        const QString type=filter.contains("value_kind")?filter["value_kind"].toString():scalar.isNull()?"NULL":scalar.isBool()?"Boolean":scalar.isDouble()?"Number":"Text";
         const auto encoded=QString::fromUtf8(QJsonDocument(QJsonArray{scalar}).toJson(QJsonDocument::Compact));
         filters.append(SheetModel::columnName(filter["col"].toInt())+" "+filter["op"].toString()+" "+type+" "+encoded.mid(1,encoded.size()-2).left(120));
     }

@@ -7,7 +7,7 @@ import time
 from datetime import date, timedelta
 
 from .functions import FUNCTIONS
-from .temporal import Temporal, from_serial, utc_clock
+from .temporal import Temporal, from_serial, utc_clock, temporal_key, temporal_arithmetic
 
 SUPPORTED_FUNCTIONS = frozenset(FUNCTIONS)
 CELL_ERRORS = {"#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#NUM!", "#N/A", "#NULL!"}
@@ -433,6 +433,7 @@ MAX_TEXT_BYTES=65536
 def scalar_text(value):
     """Unformatted invariant scalar spelling; never parse Text as a number."""
     if value is None:return ""
+    if isinstance(value,Temporal):return str(value)
     if type(value) is str:return value
     if type(value) is bool:return "TRUE" if value else "FALSE"
     if type(value) in (int,float):
@@ -461,7 +462,7 @@ class Criterion:
             match=re.match(r"^(<=|>=|<>|=|<|>)(.*)\Z",value,re.S)
             if match:self.op,value=match[1],match[2]
             if NUMBER_TEXT.fullmatch(value.strip()):value=float(value.strip())
-        self.value=value;self.kind="boolean" if type(value) is bool else "number" if type(value) in (int,float) else "text"
+        self.value=value;self.kind="temporal" if isinstance(value,Temporal) else "boolean" if type(value) is bool else "number" if type(value) in (int,float) else "text"
         if self.kind=="number" and not math.isfinite(value):raise FormulaError("#NUM!","Criteria must be finite")
         if self.kind=="text":
             value=value.casefold();i=0
@@ -489,6 +490,10 @@ class Criterion:
     def matches(self,left):
         self.calculator.check()
         if isinstance(left,FormulaError):return False
+        if self.kind=="temporal":
+            if not isinstance(left,Temporal) or temporal_key(left)[0]!=temporal_key(self.value)[0]:return self.op=="<>"
+            left=temporal_key(left);right=temporal_key(self.value)
+            return {"=":lambda:left==right,"<>":lambda:left!=right,"<":lambda:left<right,">":lambda:left>right,"<=":lambda:left<=right,">=":lambda:left>=right}[self.op]()
         if self.kind=="number":
             if left is None:left=0
             elif isinstance(left,str):
@@ -498,7 +503,7 @@ class Criterion:
         elif self.kind=="boolean":compatible=type(left) is bool
         else:
             if left is None and not self.value and not self.wildcards:left=""
-            compatible=isinstance(left,str)
+            compatible=type(left) is str
             if compatible:
                 self.calculator.text_work(left);left=left.casefold()
                 if self.wildcards:
@@ -749,6 +754,7 @@ class Calculator:
         return {"ISBLANK":value is None,"ISNUMBER":type(value) in (int,float),"ISTEXT":type(value) is str,"ISLOGICAL":type(value) is bool,"ISERROR":False,"ISNA":False}[name]
 
     def exact_lookup_key(self,value):
+        if isinstance(value,Temporal):return temporal_key(value)
         if isinstance(value,list):raise FormulaError("#VALUE!","Lookup value must be scalar")
         if value is None:return "blank",None
         if type(value) is bool:return "boolean",value
@@ -1069,6 +1075,9 @@ class Calculator:
                 raise FormulaError("#VALUE!", "Array expressions are unsupported; use a range-aware function")
             if op=="&":return self.concatenate_values((left,right))
             if op in ("=", "<>", "<", ">", "<=", ">="):
+                if isinstance(left,Temporal) or isinstance(right,Temporal):
+                    if not isinstance(left,Temporal) or not isinstance(right,Temporal) or temporal_key(left)[0]!=temporal_key(right)[0]:raise FormulaError("#VALUE!","Comparison types differ")
+                    left,right=temporal_key(left)[1],temporal_key(right)[1]
                 if left is None or right is None:
                     # Blank comparisons permit numeric/Boolean coercion only.
                     left, right = numeric(left), numeric(right)
@@ -1078,6 +1087,10 @@ class Calculator:
                 return {"=": lambda: left == right, "<>": lambda: left != right,
                         "<": lambda: left < right, ">": lambda: left > right,
                         "<=": lambda: left <= right, ">=": lambda: left >= right}[op]()
+            if isinstance(left,Temporal) or isinstance(right,Temporal):
+                try:return temporal_arithmetic(left,right,op)
+                except TypeError as error:raise FormulaError("#VALUE!",str(error)) from error
+                except (ValueError,OverflowError) as error:raise FormulaError("#NUM!",str(error)) from error
             left, right = numeric(left), numeric(right)
             if op == "/" and right == 0:
                 raise FormulaError("#DIV/0!")

@@ -20,7 +20,7 @@ from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, tran
 from .hooks import HookFailure, invoke
 from .formats import numeric_display, numeric_spec, temporal_display, TEMPORAL_FORMATS
 from .borders import SIDES, BORDER_STYLES
-from .temporal import Temporal, utc_clock, KINDS as TEMPORAL_KINDS
+from .temporal import Temporal, utc_clock, temporal_key, KINDS as TEMPORAL_KINDS
 
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
@@ -1215,6 +1215,11 @@ class Workbook:
             integer(criterion.get("col"), c1, c2, "filter column")
             require(criterion.get("op") in ("=", "<>", ">", "<", ">=", "<=", "contains"), "INVALID_ARGUMENT", "Unsupported filter comparison")
             require(isinstance(criterion.get("value"), (str, float, int, bool, type(None))), "INVALID_ARGUMENT", "Filter value must be scalar")
+            require("value_kind" not in criterion or criterion["value_kind"] in TEMPORAL_KINDS,"INVALID_ARGUMENT","Unsupported filter value_kind")
+            require(criterion.get("op")!="contains" or "value_kind" not in criterion,"INVALID_ARGUMENT","Contains requires Text")
+        try:
+            criteria=[{**item,"value":Temporal(item["value"],item["value_kind"])} if "value_kind" in item else item for item in criteria]
+        except ValueError as error:raise EngineError("INVALID_ARGUMENT",str(error)) from error
         for key in keys:
             integer(key.get("col"), c1, c2, "sort column")
             require(type(key.get("descending", False)) is bool, "INVALID_ARGUMENT", "Sort direction must be boolean")
@@ -1234,7 +1239,10 @@ class Workbook:
         def accepts(row, criterion):
             left, right, op = value(row, criterion["col"]), criterion.get("value"), criterion["op"]
             if op == "contains":
-                return isinstance(left, str) and isinstance(right, str) and right in left
+                return type(left) is str and type(right) is str and right in left
+            if isinstance(left,Temporal) or isinstance(right,Temporal):
+                if not isinstance(left,Temporal) or not isinstance(right,Temporal) or temporal_key(left)[0]!=temporal_key(right)[0]:return op=="<>"
+                left,right=temporal_key(left)[1],temporal_key(right)[1]
             same_type = type(left) == type(right) or (type(left) in (int, float) and type(right) in (int, float))
             if not same_type:
                 return op == "<>"
@@ -1250,7 +1258,8 @@ class Workbook:
                 rows.append(row)
 
         def sort_value(value):
-            rank = 0 if value is None else 1 if type(value) in (int, float) else 2 if isinstance(value, str) else 3
+            if isinstance(value,Temporal):return 2,temporal_key(value)
+            rank = 0 if value is None else 1 if type(value) in (int, float) else 3 if isinstance(value, str) else 4
             return rank, "" if value is None else value
 
         def compare(left, right):

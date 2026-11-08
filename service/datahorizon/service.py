@@ -204,7 +204,7 @@ def openapi():
         "CsvExportRequest":{"type":"object","properties":{"sheet":sheet,**rectangle},"example":{"sheet":"Sheet1","r2":10,"c2":4}},
         "ListRequest":{"type":"object","properties":{"sheet":sheet,**rectangle,"header":{"type":"boolean","default":False},
             "sort":{"type":"array","maxItems":8,"items":{"type":"object","required":["col"],"properties":{"col":col,"descending":{"type":"boolean","default":False}}}},
-            "filters":{"type":"array","maxItems":8,"items":{"type":"object","required":["col","op"],"properties":{"col":col,"op":{"type":"string","enum":["=","<>",">","<",">=","<=","contains"]},"value":scalar}}}},
+            "filters":{"type":"array","maxItems":8,"items":{"type":"object","required":["col","op"],"properties":{"col":col,"op":{"type":"string","enum":["=","<>",">","<",">=","<=","contains"]},"value":scalar,"value_kind":{"type":"string","enum":["date","time","datetime"]}}}}},
             "example":{"sheet":"Sheet1","r2":10,"c2":4,"header":True,"sort":[{"col":2,"descending":True}]}}
     })
     schemas["ListValuesRequest"]={"type":"object","required":["expected_state"],"properties":{**schemas["ListRequest"]["properties"],
