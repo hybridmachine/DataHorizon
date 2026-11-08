@@ -264,6 +264,8 @@ void MainWindow::buildUi() {
     auto *dataMenu = menuBar()->addMenu(tr("&Data"));
     auto *calculate=dataMenu->addAction(tr("Recalculate selection in background…"));calculate->setObjectName("calculateSelectionAction");connect(calculate,&QAction::triggered,this,&MainWindow::calculateSelection);
     auto *view = menuBar()->addMenu(tr("&View"));
+    auto *savePortable=view->addAction(tr("Save view in workbook"));savePortable->setObjectName("savePortableViewAction");connect(savePortable,&QAction::triggered,this,[this]{portableView(true);});
+    auto *loadPortable=view->addAction(tr("Load view from workbook"));loadPortable->setObjectName("loadPortableViewAction");connect(loadPortable,&QAction::triggered,this,[this]{portableView(false);});
     auto *help = menuBar()->addMenu(tr("&Help"));
     auto *functionHelp=help->addAction(tr("Formula functions…"));functionHelp->setObjectName("functionHelpAction");connect(functionHelp,&QAction::triggered,this,&MainWindow::showFunctionHelp);
     connect(m_client,&RestClient::configured,this,[this]{m_functionCatalog={};for(auto *line:findChildren<QLineEdit *>())if(auto *formula=dynamic_cast<FormulaLineEdit *>(line))formula->setCatalog({});});
@@ -667,6 +669,22 @@ void MainWindow::fitVisibleWrappedRows() {
 QString MainWindow::viewSettingsPath() const {
     if(!m_options.viewStatePath.isEmpty()) return m_options.viewStatePath;
     return qEnvironmentVariable("DATAHORIZON_VIEW_STATE",QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)+"/views.ini");
+}
+
+void MainWindow::portableView(bool save) {
+    if(m_busy || m_unknown || m_info.isEmpty() || (save && m_info["readonly"].toBool()))return;
+    const auto target=targetContext();const auto key=m_viewKey;captureGridDraft(false);if(!resolveDraft() || !matchesTarget(target))return;
+    if(save){saveViewState();QSettings settings(viewSettingsPath(),QSettings::IniFormat);const auto payload=QJsonDocument::fromJson(settings.value(key).toByteArray()).object();auto request=target;request["action"]="metadata_set";request["namespace"]="presentation";request["id"]="view";request["payload"]=payload;request["label"]="Save portable view";submit(request);return;}
+    auto request=target;request.remove("workbook");request["expected_state"]=target["expected_state"];
+    m_client->request(base()+"/metadata/read",request,[this,target,key](QJsonObject result,QString error){
+        if(!error.isEmpty()){issue(error);return;}if(!matchesTarget(target) || m_viewKey!=key || m_source->isModified())return;
+        QJsonObject view;bool found=false;for(const auto &value:result["objects"].toArray()){const auto item=value.toObject();if(item["namespace"]=="presentation" && item["id"]=="view"){view=item["payload"].toObject();found=true;}}
+        if(!found){issue("No portable view is stored for this sheet.");return;}
+        QScopedValueRollback<bool> applying(m_applyingView,true);
+        for(int row:m_sizedRows)m_grid->setRowHeight(row,26);for(int col:m_sizedColumns)m_grid->setColumnWidth(col,100);
+        for(int row:m_hiddenRows)m_grid->setRowHidden(row,false);for(int col:m_hiddenColumns)m_grid->setColumnHidden(col,false);
+        m_sizedRows.clear();m_sizedColumns.clear();QSettings settings(viewSettingsPath(),QSettings::IniFormat);settings.setValue(key,QJsonDocument(view).toJson(QJsonDocument::Compact));settings.sync();m_viewKey.clear();restoreViewState();m_status->setText(tr("Loaded portable view and named lists • Inputs retained"));
+    });
 }
 
 void MainWindow::saveViewState() {

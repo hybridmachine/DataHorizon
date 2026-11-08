@@ -72,7 +72,7 @@ def native_contracts():
             assert copied.id == original['id']
             assert copied.db.execute('SELECT * FROM cells ORDER BY row,col').fetchall() == expected
         with closing(sqlite3.connect(copy)) as direct, direct:
-            direct.execute('UPDATE dh_meta SET format_version=3')
+            direct.execute('UPDATE dh_meta SET format_version=4')
         try:
             Workbook(copy)
         except EngineError as error:
@@ -80,7 +80,7 @@ def native_contracts():
         else:
             raise AssertionError('Future version accepted')
         with closing(sqlite3.connect(copy)) as direct:
-            assert direct.execute('SELECT format_version FROM dh_meta').fetchone()[0] == 3
+            assert direct.execute('SELECT format_version FROM dh_meta').fetchone()[0] == 4
         return {'typed_input_kinds': ['text_identifier', 'null', 'empty_text', 'formula', 'absence', 'styled_blank'],
                 'stored_cell_columns': columns, 'read_preserves_inputs': True, 'external_handler_replay': False,
                 'external_formula_display': '10.00', 'stale_write_code': stale_code,

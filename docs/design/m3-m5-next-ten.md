@@ -74,6 +74,15 @@ Data → Recalculate selection runs with a modeless cancel/progress control and
 reports its original snapshot without replacing newer grid values or drafts.
 Automatic continuous viewport recalculation is outside this first explicit-job tier.
 
+Task 5 lazily upgrades to native v3 with a reserved metadata table. Portable
+presentation supports current bounded dimensions/hiding/freezing and up to 16 named
+list definitions; standalone named criteria use a separate namespace. State-checked
+metadata_set/delete operations have durable receipts and do not emit input events.
+Metadata changes are not cell Undo entries; local read-only preferences remain
+available. View → Save/Load view in workbook explicitly transfers between local
+preferences and native storage. Native copies and sheet duplication retain the
+portable tier; unsupported full SQL/query views remain M8 work.
+
 ## Evidence ledger
 
 Task 4 opts in through a top-level `on_structure(context,event)` function in the

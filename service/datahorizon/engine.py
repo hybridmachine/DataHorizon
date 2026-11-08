@@ -44,6 +44,13 @@ CREATE TABLE operations (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result 
 """
 
 
+METADATA_SCHEMA="""
+CREATE TABLE dh_objects (namespace TEXT NOT NULL, id TEXT NOT NULL,
+ sheet_id TEXT NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+ payload TEXT NOT NULL, PRIMARY KEY(namespace,sheet_id,id)) WITHOUT ROWID;
+"""
+
+
 def encoded(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
@@ -234,16 +241,17 @@ def schema_signature(db):
         "SELECT type,name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name")]
 
 
-def expected_schema():
+def expected_schema(source=SCHEMA):
     db = sqlite3.connect(":memory:")
     try:
-        db.executescript(SCHEMA)
+        db.executescript(source)
         return schema_signature(db)
     finally:
         db.close()
 
 
 EXPECTED_SCHEMA = expected_schema()
+EXPECTED_SCHEMA3 = expected_schema(SCHEMA+METADATA_SCHEMA)
 
 
 class Workbook:
@@ -306,6 +314,10 @@ class Workbook:
         if self._calculation_jobs is not None:self._calculation_jobs.close()
         self.db.close()
 
+    def ensure_metadata(self):
+        if self.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]<3:
+            self.db.execute(METADATA_SCHEMA);self.db.execute('UPDATE dh_meta SET format_version=3')
+
     def calculation_jobs(self):
         if self._calculation_jobs is None:
             from .calculation_jobs import CalculationJobs
@@ -316,15 +328,24 @@ class Workbook:
         db = self.db if db is None else db
         deadline = getattr(self,"_opening_deadline",time.monotonic()+5) if deadline is None else deadline
         with sql_deadline(db,deadline):
-            require(schema_signature(db) == EXPECTED_SCHEMA,
+            signature=schema_signature(db)
+            require(signature in (EXPECTED_SCHEMA,EXPECTED_SCHEMA3),
                     "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
             meta = db.execute("SELECT format_version,revision,workbook_id FROM dh_meta WHERE singleton=1").fetchall()
-            require(len(meta) == 1 and meta[0][0] in (1,2) and type(meta[0][1]) is int and meta[0][1] >= 0,
+            require(len(meta) == 1 and meta[0][0] in (1,2,3) and type(meta[0][1]) is int and meta[0][1] >= 0,
                     "FORMAT_VERSION", "Unsupported or invalid native format", 409)
             for source,kind in db.execute("SELECT source,kind FROM cells WHERE kind IN ('date','time','datetime')"):
                 require(time.monotonic() <= deadline,"TIMEOUT","Temporal validation exceeded its time budget")
-                require(meta[0][0] == 2,"FORMAT_VERSION","Temporal inputs require native format 2",409)
+                require(meta[0][0] >= 2,"FORMAT_VERSION","Temporal inputs require native format 2",409)
                 typed({"source":source,"kind":kind,"style":{}})
+            require(signature == (EXPECTED_SCHEMA3 if meta[0][0]==3 else EXPECTED_SCHEMA),"FORMAT_VERSION","Native schema/version mismatch",409)
+            if meta[0][0]==3:
+                from .metadata import validate
+                for count,(namespace,identifier,payload) in enumerate(db.execute("SELECT namespace,id,substr(payload,1,1048577) FROM dh_objects"),1):
+                    require(count<=256 and time.monotonic()<=deadline,"LIMIT","Native metadata exceeds validation bounds")
+                    value=json.loads(payload)
+                    if namespace in ("presentation","list"):validate(namespace,identifier,value)
+                    else:require(namespace=="records","INVALID_FORMAT","Unknown native metadata")
             require(valid_uuid(meta[0][2]) and (not hasattr(self,"id") or meta[0][2] == self.id),
                     "INVALID_FORMAT","Invalid or changed workbook identity",409)
             positions = set()
@@ -798,7 +819,17 @@ class Workbook:
                 before_catalog=self.structure_hook(operation,request,'before',None) if structural else None
                 reference_report = {}
                 sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
-                if kind == "edit":
+                if kind in ('metadata_set','metadata_delete'):
+                    from .metadata import validate,name
+                    identity=self.sheet(request.get('sheet','Sheet1'));namespace=request.get('namespace');identifier=name(request.get('id'))
+                    require(namespace in ('presentation','list'),'INVALID_METADATA','Unsupported metadata namespace')
+                    if kind=='metadata_set':payload=validate(namespace,identifier,request.get('payload'))
+                    self.ensure_metadata()
+                    if kind=='metadata_set':
+                        self.db.execute('INSERT INTO dh_objects VALUES(?,?,?,?) ON CONFLICT(namespace,sheet_id,id) DO UPDATE SET payload=excluded.payload',(namespace,identifier,identity,encoded(payload)))
+                        require(self.db.execute('SELECT count(*)<=256 AND sum(length(payload))<=16777216 FROM dh_objects').fetchone()[0],'LIMIT','Native metadata exceeds 256 objects/16 MiB')
+                    else:self.db.execute('DELETE FROM dh_objects WHERE namespace=? AND sheet_id=? AND id=?',(namespace,identity,identifier))
+                elif kind == "edit":
                     self.apply_edit(sheet, request.get("cells"))
                 elif kind == "paste":
                     rows = request.get("rows")
@@ -1129,6 +1160,9 @@ class Workbook:
             self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (new_id,new_name,self.next_sheet_position()))
             for row, col, item in cells:
                 self.put(new_id,row,col,item)
+            if self.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=3:
+                self.db.execute("INSERT INTO dh_objects SELECT namespace,id,?,payload FROM dh_objects WHERE sheet_id=? AND namespace IN ('presentation','list')",(new_id,target))
+                require(self.db.execute('SELECT count(*)<=256 AND coalesce(sum(length(payload)),0)<=16777216 FROM dh_objects').fetchone()[0],'LIMIT','Native metadata exceeds its budget')
 
     def rename_references(self, target, new_name):
         old_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]

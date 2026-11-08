@@ -159,7 +159,7 @@ class TemporalStorageTests(unittest.TestCase):
 
     def test_v1_temporal_and_unknown_versions_fail_without_migration(self):
         self.apply(cells=[dict(row=1,col=1,source="2024-02-29",kind="date")])
-        for version in (1,3):
+        for version in (1,4):
             with sqlite3.connect(self.path) as direct:direct.execute("UPDATE dh_meta SET format_version=?",(version,))
             with self.assertRaises(EngineError) as caught:self.book.info()
             self.assertEqual(caught.exception.body["code"],"FORMAT_VERSION")
