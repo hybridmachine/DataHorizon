@@ -71,6 +71,18 @@ bool sameFile(const QString &left, const QString &right) {
     return std::filesystem::equivalent(QFileInfo(left).filesystemFilePath(), QFileInfo(right).filesystemFilePath(), error);
 }
 
+bool saveCsvSnapshot(const QString &path,const QJsonObject &result,const QString &native,QString &error) {
+    const auto companion=path+".dh-types.json";
+    if(sameFile(path,native) || sameFile(companion,native) || QFileInfo::exists(companion)){error="Choose another CSV path: its companion exists or a destination identifies the native workbook.";return false;}
+    const auto data=result["csv"].toString().toUtf8();QSaveFile csv(path);
+    if(!csv.open(QIODevice::WriteOnly) || csv.write(data)!=data.size()){error="CSV destination failed: "+csv.errorString();return false;}
+    if(result.contains("temporal_schema")){
+        QSaveFile types(companion);const auto metadata=QJsonDocument(result["temporal_schema"].toObject()).toJson();
+        if(!types.open(QIODevice::WriteOnly) || types.write(metadata)!=metadata.size() || !types.commit()){error="CSV companion failed: "+types.errorString();return false;}
+    }
+    if(!csv.commit()){error="CSV commit failed; any companion was preserved for inspection: "+csv.errorString();return false;}return true;
+}
+
 class ExportFileDialog : public QFileDialog {
 public:
     ExportFileDialog(QWidget *parent, const QStringList &filters) : QFileDialog(parent) {
@@ -1794,10 +1806,14 @@ void MainWindow::importFile() {
     const auto bytes=file.read(maxBytes+1);
     if (file.error()!=QFileDevice::NoError || bytes.size()>maxBytes) { issue("Import file read failed or exceeds 3 MiB."); return; }
     if (extension=="xlsx" || extension=="ods") importSpreadsheetOptions(bytes,extension,target);
-    else importCsvOptions(bytes,target,extension=="tsv"?"\t":",");
+    else {
+        QJsonObject schema;QFile companion(path+".dh-types.json");
+        if(companion.exists()) {if(!companion.open(QIODevice::ReadOnly) || companion.size()>1024*1024){issue("CSV temporal companion must be readable and at most 1 MiB.");return;}QJsonParseError error;const auto doc=QJsonDocument::fromJson(companion.read(1024*1024+1),&error);if(error.error!=QJsonParseError::NoError || !doc.isObject()){issue("Invalid CSV temporal companion JSON.");return;}schema=doc.object();}
+        importCsvOptions(bytes,target,extension=="tsv"?"\t":",",schema);
+    }
 }
 
-void MainWindow::importCsvOptions(const QByteArray &bytes, QJsonObject target, const QString &defaultDelimiter) {
+void MainWindow::importCsvOptions(const QByteArray &bytes, QJsonObject target, const QString &defaultDelimiter, QJsonObject temporalSchema) {
     QDialog dialog(this); dialog.setWindowTitle(tr("CSV import options")); dialog.setObjectName("csvOptionsDialog");
     QFormLayout layout(&dialog);
     QComboBox encoding(&dialog); encoding.setObjectName("csvEncoding");
@@ -1808,6 +1824,7 @@ void MainWindow::importCsvOptions(const QByteArray &bytes, QJsonObject target, c
     delimiter.addItem(tr("Tab"),"\t"); delimiter.addItem(tr("Pipe"),"|");
     delimiter.setCurrentIndex(delimiter.findData(defaultDelimiter));
     layout.addRow(tr("Encoding"),&encoding); layout.addRow(tr("Delimiter"),&delimiter);
+    QCheckBox restore(tr("Restore date/time types from the companion file"),&dialog);restore.setChecked(!temporalSchema.isEmpty());restore.setVisible(!temporalSchema.isEmpty());layout.addRow(&restore);
     QLabel note(tr("Choose the file's encoding. Invalid bytes stop the import. Review parsed Text cells before applying."),&dialog);
     note.setWordWrap(true); layout.addRow(&note);
     QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog); layout.addRow(&buttons);
@@ -1815,7 +1832,7 @@ void MainWindow::importCsvOptions(const QByteArray &bytes, QJsonObject target, c
     connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
     if(dialog.exec()!=QDialog::Accepted) return;
     if (!matchesTarget(target) || m_model->projected()) { issue("CSV import target changed; import cancelled."); return; }
-    importCsvBytes(bytes,encoding.currentData().toString(),delimiter.currentData().toString(),target);
+    importCsvBytes(bytes,encoding.currentData().toString(),delimiter.currentData().toString(),target,restore.isChecked()?temporalSchema:QJsonObject{});
 }
 
 QJsonObject MainWindow::csvImportTarget() const {
@@ -1832,9 +1849,9 @@ void MainWindow::importCsvText(const QString &text, QJsonObject target) {
     previewCsv({{"csv",text}},target);
 }
 
-void MainWindow::importCsvBytes(const QByteArray &bytes, const QString &encoding, const QString &delimiter, QJsonObject target) {
+void MainWindow::importCsvBytes(const QByteArray &bytes, const QString &encoding, const QString &delimiter, QJsonObject target, QJsonObject temporalSchema) {
     if(bytes.size()>3*1024*1024) { issue("CSV source exceeds 3 MiB."); return; }
-    previewCsv({{"csv_base64",QString::fromLatin1(bytes.toBase64())},{"encoding",encoding},{"delimiter",delimiter}},target);
+    auto request=QJsonObject{{"csv_base64",QString::fromLatin1(bytes.toBase64())},{"encoding",encoding},{"delimiter",delimiter}};if(!temporalSchema.isEmpty())request["temporal_schema"]=temporalSchema;previewCsv(request,target);
 }
 
 void MainWindow::prepareImport(QJsonObject request, RestClient::Callback callback, const QString &format) {
@@ -1928,7 +1945,7 @@ void MainWindow::previewCsv(QJsonObject request, QJsonObject target) {
         review.setDetailedText(report.join('\n')+tr("\n\nPreview (first 8 rows/columns, 120 characters per field):\n")+lines.join('\n'));
         review.button(QMessageBox::Yes)->setText(tr("Import"));
         auto *typesButton=review.addButton(tr("Column types…"),QMessageBox::ActionRole); typesButton->setObjectName("csvTypesButton");
-        typesButton->setEnabled(preview["columns"].toInt()>0);
+        typesButton->setEnabled(preview["columns"].toInt()>0 && !request.contains("temporal_schema"));
         const bool canImport=preview["can_import"].toBool(); review.button(QMessageBox::Yes)->setEnabled(canImport);
         const auto choice=review.exec();
         if (!validTarget()) { setBusy(false); issue("CSV import target changed; import cancelled."); return; }
@@ -1960,8 +1977,8 @@ bool MainWindow::csvTypesDialog(QJsonObject &request, const QJsonObject &preview
     QSpinBox column(&dialog); column.setObjectName("csvTypeColumn"); column.setRange(1,preview["columns"].toInt());
     QComboBox type(&dialog); type.setObjectName("csvColumnType");
     type.addItem(tr("Text (preserve exactly)"),"text"); type.addItem(tr("Number (invariant decimal)"),"number");
-    type.addItem(tr("Boolean (TRUE/FALSE)"),"boolean"); type.addItem(tr("Date YYYY-MM-DD → ISO Text"),"date_iso");
-    type.addItem(tr("Date M/D/YYYY → ISO Text"),"date_mdy"); type.addItem(tr("Date D/M/YYYY → ISO Text"),"date_dmy");
+    type.addItem(tr("Boolean (TRUE/FALSE)"),"boolean"); type.addItem(tr("Date YYYY-MM-DD → native date"),"date_iso");
+    type.addItem(tr("Date M/D/YYYY → native date"),"date_mdy"); type.addItem(tr("Date D/M/YYYY → native date"),"date_dmy"); type.addItem(tr("Time HH:MM:SS"),"time_iso"); type.addItem(tr("Datetime YYYY-MM-DDTHH:MM:SS"),"datetime_iso");
     QCheckBox header(tr("First record is a header; keep it as Text"),&dialog); header.setObjectName("csvHeader");
     header.setChecked(request["header"].toBool());
     QLabel sample(&dialog); sample.setTextFormat(Qt::PlainText); sample.setWordWrap(true);
@@ -2008,10 +2025,8 @@ void MainWindow::exportCsvTo(const QString &path, QJsonObject target) {
         if (!error.isEmpty()) { issue(error); return; }
         if (!matchesTarget(target) || result["state"]!=target["expected_state"]) { issue("Reviewed export inputs changed. Export cancelled."); return; }
         if (sameFile(path,workbookPath)) { issue("CSV destination resolves to the native workbook. Choose a different file."); return; }
-        QSaveFile file(path);
-        auto data = result["csv"].toString().toUtf8();
-        if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit()) issue("CSV destination failed: " + file.errorString());
-        else m_status->setText("CSV exported • Native workbook retained");
+        QString failure;if(!saveCsvSnapshot(path,result,workbookPath,failure))issue(failure);
+        else m_status->setText(result.contains("temporal_schema")?"CSV and date/time companion exported":"CSV exported • Native workbook retained");
     });
 }
 
@@ -2462,7 +2477,8 @@ void MainWindow::exportListTo(const QString &path,const QString &format) {
         const auto choice=review.exec();setBusy(false);
         if(choice!=QMessageBox::Yes || service!=m_client->url() || !matchesTarget(target) || !m_model->projected() || m_listSpec!=criteria || m_hiddenRows!=hiddenRows || m_hiddenColumns!=hiddenColumns)return;
         if(sameFile(path,native)){issue("Export destination resolves to the native workbook. Choose another file.");return;}
-        const auto bytes=format=="csv"?result["csv"].toString().toUtf8():QByteArray::fromBase64(result["file_base64"].toString().toLatin1(),QByteArray::AbortOnBase64DecodingErrors);
+        if(format=="csv"){QString failure;if(!saveCsvSnapshot(path,result,native,failure))issue(failure);else m_status->setText("List CSV and available date/time companion exported");return;}
+        const auto bytes=QByteArray::fromBase64(result["file_base64"].toString().toLatin1(),QByteArray::AbortOnBase64DecodingErrors);
         if(bytes.isEmpty()){issue("Empty or invalid list export response; destination retained.");return;}
         QSaveFile file(path);if(!file.open(QIODevice::WriteOnly) || file.write(bytes)!=bytes.size() || !file.commit())issue("List export destination failed: "+file.errorString());else m_status->setText("List values exported in display order • Native workbook retained");
     });

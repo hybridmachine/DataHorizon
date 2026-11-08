@@ -14,6 +14,7 @@ from datahorizon.temporal import Temporal, from_serial, to_serial
 from datahorizon.engine import Workbook, EngineError, display
 from datahorizon.client import LocalService, APIError
 from datahorizon.formula import Calculator, Parser, FormulaError
+from datahorizon.csv_import import preview_csv
 
 
 def evaluate(source):
@@ -75,6 +76,20 @@ class TemporalContractTests(unittest.TestCase):
 
 
 class TemporalStorageTests(unittest.TestCase):
+    def test_csv_companion_preserves_mixed_dates_and_text_and_rejects_mismatch(self):
+        self.apply(cells=[dict(row=1,col=1,source="2024-02-29",kind="date"),dict(row=2,col=1,source="2024-02-29",kind="text"),dict(row=3,col=1,source="12:34:56.123456",kind="time"),dict(row=4,col=1,source="=DATE(2024,2,29)+.5")])
+        exported=self.book.csv_export("Sheet1",dict(r2=4))
+        request=dict(csv=exported["csv"],temporal_schema=exported["temporal_schema"])
+        preview=preview_csv(request)
+        self.assertEqual([row[0]["kind"] for row in preview["inputs"]],["date","text","time","datetime"])
+        self.assertEqual(preview["inputs"][2][0]["source"],"12:34:56.123456")
+        with self.assertRaises(EngineError):preview_csv({**request,"csv":request["csv"]+"\n"})
+        with self.assertRaises(EngineError):preview_csv({**request,"column_types":{"1":"text"}})
+        plain=preview_csv(dict(csv=exported["csv"]))
+        self.assertNotIn("inputs",plain)
+        converted=preview_csv(dict(csv="2024-02-29,12:34:56,2024-02-29T12:34:56",column_types={"1":"date_iso","2":"time_iso","3":"datetime_iso"}))
+        self.assertEqual([item["kind"] for item in converted["inputs"][0]],["date","time","datetime"])
+
     def test_chronological_sort_and_explicit_typed_filters(self):
         self.apply(cells=[dict(row=row,col=1,source=source,kind=kind) for row,source,kind in ((1,"2024-03-01","date"),(2,"2024-02-29T12:00:00","datetime"),(3,"2024-02-29","date"),(4,"2024-02-29","text"),(5,"=DATE(2024,1,1)","formula"))])
         spec=dict(r2=5,sort=[dict(col=1)])

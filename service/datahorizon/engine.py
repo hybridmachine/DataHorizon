@@ -21,6 +21,7 @@ from .hooks import HookFailure, invoke
 from .formats import numeric_display, numeric_spec, temporal_display, TEMPORAL_FORMATS
 from .borders import SIDES, BORDER_STYLES
 from .temporal import Temporal, utc_clock, temporal_key, KINDS as TEMPORAL_KINDS
+from .csv_types import temporal_schema
 
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
@@ -1428,15 +1429,21 @@ class Workbook:
                           "report":["Values only; formulas, styles, code and native metadata are omitted.",
                                     "Blank, NULL and empty text all become empty CSV fields."]}
                 output_bytes = len(encoded(result).encode())
+                temporal_entries=[]
                 for row in range(r1, r2+1):
                     # Values export uses canonical text, independent of number format.
                     row_output = io.StringIO(newline="")
-                    csv.writer(row_output).writerow([interchange_text(calc.cell(sheet, row, col)) for col in range(c1, c2+1)])
+                    values=[calc.cell(sheet,row,col) for col in range(c1,c2+1)]
+                    temporal_entries.extend({"row":row-r1+1,"col":col+1,"kind":value.kind} for col,value in enumerate(values) if isinstance(value,Temporal))
+                    csv.writer(row_output).writerow([interchange_text(value) for value in values])
                     text = row_output.getvalue()
                     output_bytes += len(encoded(text).encode())-2  # Exclude each string's enclosing quotes.
                     require(output_bytes <= 4*1024*1024, "LIMIT", "CSV response exceeds 4 MiB; export a smaller selection")
                     output.write(text)
                 result["csv"] = output.getvalue()
+                if temporal_entries:
+                    result["temporal_schema"]=temporal_schema(result["csv"],temporal_entries)
+                    result["report"].append("ISO date/time values require the companion temporal_schema to restore native kinds automatically; CSV alone is untyped.")
                 require(len(encoded(result).encode()) <= 4*1024*1024, "LIMIT", "CSV response exceeds 4 MiB; export a smaller selection")
                 return result
             except FormulaError as error:

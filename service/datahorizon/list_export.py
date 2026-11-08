@@ -4,6 +4,7 @@ import io
 from .engine import encoded,interchange_text,require
 from .interchange import xlsx_export
 from .ods import ods_export
+from .csv_types import temporal_schema
 
 
 def export_list(book,format,request):
@@ -21,6 +22,10 @@ def export_list(book,format,request):
         for row in rows:writer.writerow([interchange_text(cell.get('value')) for cell in row])
         result={'csv':output.getvalue(),'state':values['state'],'report':report+[
             'CSV uses canonical, unrounded values and omits styles/types. Blank, NULL and empty Text become empty fields.']}
+        entries=[dict(row=r,col=c,kind=cell['value_kind']) for r,row in enumerate(rows,1) for c,cell in enumerate(row,1) if cell.get('value_kind') in ('date','time','datetime')]
+        if entries:
+            result['temporal_schema']=temporal_schema(result['csv'],entries)
+            result['report'].append('Keep the temporal companion to restore native date/time kinds; CSV alone is untyped.')
     else:
         cells=[{**cell,'row':r,'col':c} for r,row in enumerate(rows,1) for c,cell in enumerate(row,1) if cell]
         snapshot={'cells':cells,'state':values['state'],'sheet':values['sheet'],'range':[1,1,len(rows),len(columns)]}

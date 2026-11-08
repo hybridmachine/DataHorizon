@@ -30,7 +30,7 @@ public:
     void openBook(const QString &path, bool create = false, bool readonly = false);
     void submit(QJsonObject operation);
     void importCsvText(const QString &text, QJsonObject target = {});
-    void importCsvBytes(const QByteArray &bytes, const QString &encoding = "utf-8-sig", const QString &delimiter = ",", QJsonObject target = {});
+    void importCsvBytes(const QByteArray &bytes, const QString &encoding = "utf-8-sig", const QString &delimiter = ",", QJsonObject target = {}, QJsonObject temporalSchema = {});
     void importSpreadsheetBytes(const QByteArray &bytes, const QString &format = "xlsx", const QString &mode = "formulas", int sheetIndex = 1, QJsonObject target = {});
     void inspectNativeFile(const QString &path);
     void exportSpreadsheetTo(const QString &path, const QString &format = "xlsx", const QString &mode = "formulas", QJsonObject target = {});
@@ -83,7 +83,7 @@ private:
     void format(const QJsonObject &style, QJsonObject target = {}, bool replaceStyle = false);
     void importFile();
     void exportFile();
-    void importCsvOptions(const QByteArray &bytes, QJsonObject target, const QString &delimiter);
+    void importCsvOptions(const QByteArray &bytes, QJsonObject target, const QString &delimiter, QJsonObject temporalSchema = {});
     void previewCsv(QJsonObject request, QJsonObject target);
     void prepareImport(QJsonObject request, RestClient::Callback callback, const QString &format = "csv");
     void importSpreadsheetOptions(const QByteArray &bytes, const QString &format, QJsonObject target);
