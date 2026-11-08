@@ -16,6 +16,7 @@
 #include <QTextLayout>
 #include <functional>
 #include "formulasyntax.h"
+#include "referencecycle.h"
 
 struct FormulaCursorContext {
     int start=-1,end=-1,argument=0;QString prefix,function;bool quoted=false;
@@ -67,6 +68,12 @@ public:
         const auto suffix=text().mid(context.end);const auto insertion=name+(suffix.trimmed().startsWith('(')?QString():QString("("));
         m_updating=true;setSelection(context.start,context.end-context.start);insert(insertion);m_updating=false;m_completer->popup()->hide();updateAssistance(false);return true;
     }
+    bool cycleReference(){
+        if(!editableFormula())return false;
+        const auto change=cycleFormulaReference(text(),cursorPosition(),selectionStart(),selectedText().size());if(change.start<0)return false;
+        if(text().size()-change.length+change.replacement.size()>maxLength() || (text().left(change.start)+change.replacement+text().mid(change.start+change.length)).toUtf8().size()>65536)return false;
+        dismissAssistance();setCursorPosition(0);setSelection(change.start,change.length);insert(change.replacement);updateAssistance(false);return true;
+    }
     void updateAssistance(bool suggestions){
         if(m_updating)return;if(!editableFormula()){dismissAssistance();return;}const auto context=formulaCursorContext(text(),cursorPosition());QString hint;
         if(!context.quoted && m_functions.contains(context.function)){const auto f=m_functions.value(context.function).toObject();hint=f["signature"].toString()+tr(" • Argument %1").arg(context.argument)+"\n"+f["summary"].toString();}
@@ -85,7 +92,7 @@ protected:
         painter.setBrush(Qt::NoBrush);painter.setPen(QPen(QColor("#009e73"),1.5));if(m_syntax.matchFirst>=0){painter.drawRect(span(m_syntax.matchFirst,1));painter.drawRect(span(m_syntax.matchLast,1));}
         painter.setPen(QPen(QColor("#d43f3a"),1.5));for(int i=0;i<qMin(16,m_syntax.unmatched.size());++i)painter.drawRect(span(m_syntax.unmatched[i],1));
     }
-    void keyPressEvent(QKeyEvent *key)override{if(completionKey(key)){key->accept();return;}if(key->key()==Qt::Key_Space && key->modifiers()==Qt::ControlModifier && editableFormula()){const auto c=formulaCursorContext(text(),cursorPosition());if(c.start>=0 && !c.quoted){m_completer->setCompletionPrefix(c.prefix);m_completer->complete();m_completer->popup()->setCurrentIndex(m_completer->completionModel()->index(0,0));}return;}QLineEdit::keyPressEvent(key);}
+    void keyPressEvent(QKeyEvent *key)override{if(key->key()==Qt::Key_F4 && key->modifiers()==Qt::NoModifier && cycleReference()){key->accept();return;}if(completionKey(key)){key->accept();return;}if(key->key()==Qt::Key_Space && key->modifiers()==Qt::ControlModifier && editableFormula()){const auto c=formulaCursorContext(text(),cursorPosition());if(c.start>=0 && !c.quoted){m_completer->setCompletionPrefix(c.prefix);m_completer->complete();m_completer->popup()->setCurrentIndex(m_completer->completionModel()->index(0,0));}return;}QLineEdit::keyPressEvent(key);}
     void focusOutEvent(QFocusEvent *event)override{m_hint->hide();QLineEdit::focusOutEvent(event);}
     void hideEvent(QHideEvent *event)override{dismissAssistance();QLineEdit::hideEvent(event);}
     void changeEvent(QEvent *event)override{if(event->type()==QEvent::EnabledChange && !isEnabled())dismissAssistance();QLineEdit::changeEvent(event);}

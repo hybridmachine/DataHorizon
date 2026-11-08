@@ -9,7 +9,7 @@
 struct FormulaReferenceCue {int start=0,length=0,r1=0,c1=0,r2=0,c2=0;QString sheet,source;QColor color;};
 struct FormulaSyntaxCues {QList<FormulaReferenceCue> references;QList<int> unmatched;int matchFirst=-1,matchLast=-1;bool truncated=false;QString parentheses;};
 
-inline FormulaSyntaxCues formulaSyntaxCues(const QString &text,int cursor) {
+inline FormulaSyntaxCues formulaSyntaxCues(const QString &text,int cursor,int referenceLimit=64) {
     FormulaSyntaxCues result;if(!text.startsWith('=') || text.size()>65536)return result;
     static const QString endpoint="(?:(?:'((?:[^']|'')+)'|([A-Za-z_][A-Za-z_0-9]*))!)?(\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]*)";
     static const QRegularExpression reference(endpoint+"(?![A-Za-z_0-9]|\\s*\\()(?:\\s*:\\s*"+endpoint+"(?![A-Za-z_0-9]|\\s*\\())?");
@@ -25,7 +25,7 @@ inline FormulaSyntaxCues formulaSyntaxCues(const QString &text,int cursor) {
                 bool valid=coordinates(match.captured(3),cue.r1,cue.c1);cue.r2=cue.r1;cue.c2=cue.c1;
                 if(!match.captured(6).isEmpty()){const auto rightSheet=match.captured(4).isEmpty()?match.captured(5):match.captured(4).replace("''","'");valid=valid && (rightSheet.isEmpty() || rightSheet.toCaseFolded()==cue.sheet.toCaseFolded()) && coordinates(match.captured(6),cue.r2,cue.c2);}
                 if(cue.r1>cue.r2)std::swap(cue.r1,cue.r2);if(cue.c1>cue.c2)std::swap(cue.c1,cue.c2);
-                if(valid){const auto key=cue.sheet.toCaseFolded()+QString("/%1/%2/%3/%4").arg(cue.r1).arg(cue.c1).arg(cue.r2).arg(cue.c2);if(!colors.contains(key))colors[key]=palette[colors.size()%palette.size()];cue.color=colors[key];if(result.references.size()<64)result.references.append(cue);else result.truncated=true;}
+                if(valid){const auto key=cue.sheet.toCaseFolded()+QString("/%1/%2/%3/%4").arg(cue.r1).arg(cue.c1).arg(cue.r2).arg(cue.c2);if(!colors.contains(key))colors[key]=palette[colors.size()%palette.size()];cue.color=colors[key];if(result.references.size()<qBound(1,referenceLimit,1024))result.references.append(cue);else result.truncated=true;}
                 i+=match.capturedLength();continue;
             }
         }

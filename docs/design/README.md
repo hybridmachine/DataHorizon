@@ -70,6 +70,7 @@ applications, and AI agents through REST.
 | [Workbook compatibility, recovery and qualification](workbook-next-five.md) | Authorized next five increments and bounded whole-workbook contracts |
 | [Next ten spreadsheet increments](spreadsheet-next-ten.md) | Formula, formatting, editing, navigation and selection-summary stages |
 | [Editing and list usability](editing-lists-next-ten.md) | Authorized next ten tasks after PR #44 |
+| [Editing and formatting usability](editing-formatting-next-ten.md) | Authorized ten tasks after PR #74 |
 | [Formula coverage follow-on](formula-coverage-next-ten.md) | Additional ten authorized after the formula editing batch |
 | [Formula editing and coverage](formula-next-ten.md) | Authorized ten tasks after PR #54 |
 | [Native format v1](native-format-v1.md) | Actual development schema and callback-free direct SQLite access |
