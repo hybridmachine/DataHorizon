@@ -122,3 +122,8 @@ Numeric styles also accept boolean `grouping` (default false), with invariant
 comma thousands and dot decimal separators. Grouping without a category means
 Number; a managed grouping-only patch preserves percentage categories and their
 effective precision. General/Text display ignores this metadata.
+
+`format: currency` displays an explicit `currency` label after the numeric value.
+The label is three uppercase ASCII letters, default USD; precision/grouping are
+shared with Number. This metadata does not perform exchange conversion or
+validate a currency registry. A precision/grouping-only patch preserves Currency.

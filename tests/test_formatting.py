@@ -62,3 +62,19 @@ class FormattingTests(unittest.TestCase):
             apply([{'row':1,'col':1,'style':{'grouping':True}}]);cell=book.read('Sheet1',{})['cells'][0]
             self.assertEqual(cell['display'],'12,345.60%');self.assertEqual(cell['value'],123.456);self.assertEqual(cell['source'],'123.456')
             self.assertEqual(book.csv_export('Sheet1',{})['csv'],'123.456\r\n')
+
+    def test_currency_labels_precision_grouping_and_packages_do_not_convert(self):
+        for bad in ('usd','US','USDD','$US','UŚD',123,None):
+            with self.assertRaises(EngineError):validate_style({'currency':bad})
+        self.assertEqual(display(-1234.5,{'format':'currency','currency':'EUR','grouping':True}),'-1,234.50 EUR')
+        self.assertEqual(display(.125,{'format':'currency'}),'0.12 USD')
+        styles=[{'format':'currency','currency':code,'decimals':n,'grouping':g} for code in ('USD','EUR','JPY','XYZ') for n in (0,2,4,15) for g in (False,True)]
+        snapshot={'state':'s','range':[1,1,len(styles),1],'cells':[{'row':r,'col':1,'source':'-1234.5','kind':'number','value':-1234.5,'calculation':'current','style':s} for r,s in enumerate(styles,1)]}
+        for export,preview in ((xlsx_export,xlsx_preview),(ods_export,ods_preview)):
+            reviewed=preview(export(snapshot,{}));self.assertTrue(reviewed['can_import'],reviewed)
+            self.assertEqual([float(c['source']) for c in reviewed['cells']],[-1234.5]*len(styles))
+            self.assertEqual([number_format_code(c['style']) for c in reviewed['cells']],[number_format_code(s) for s in styles])
+        with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/'currency.dhwb',create=True)) as book:
+            def apply(cells):book.mutate({'action':'edit','operation_id':book.state(),'expected_state':book.state(),'cells':cells})
+            apply([{'row':1,'col':1,'source':'1234.5','style':{'format':'currency','currency':'EUR'}}]);apply([{'row':1,'col':1,'style':{'decimals':3,'grouping':True}}])
+            cell=book.read('Sheet1',{})['cells'][0];self.assertEqual(cell['display'],'1,234.500 EUR');self.assertEqual(cell['value'],1234.5)

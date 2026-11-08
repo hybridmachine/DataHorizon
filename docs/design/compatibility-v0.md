@@ -227,3 +227,8 @@ outside this grammar. See [the contract](editing-formatting-next-ten.md#decimal-
 Numeric grouping maps to simple XLSX `#,##0[.zeros][%]` formats (including
 built-ins 3/4) and ODS `number:grouping`. This is an invariant comma/dot tier;
 localized separators and arbitrary custom patterns are not inferred.
+
+Explicit three-letter currency suffixes map to XLSX quoted literals and ODS
+currency-symbol styles with unscaled numeric values. Arbitrary symbols, locale
+layouts and accounting patterns remain reported outside this tier. See
+[explicit currency labels](editing-formatting-next-ten.md#explicit-currency-labels).
