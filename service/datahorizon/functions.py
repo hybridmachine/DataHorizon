@@ -52,6 +52,13 @@ LOOKUP_EXAMPLE=[dict(row=1,col=2,source='00123',kind='text'),dict(row=2,col=2,so
 register('XLOOKUP','XLOOKUP(value, lookup_range, return_range[, if_not_found[, match_mode[, search_mode]]])','Return the first exact matching value from aligned vectors.','3–6 arguments; same-shaped single-row/column ranges up to 10,000 cells. Only match_mode=0 and search_mode=1 are supported. Numbers/Booleans/Text/blank remain distinct; Text uses Unicode casefolding without numeric parsing, trimming or wildcards. Only the matched return cell and needed fallback are evaluated. Missing without fallback is #N/A. Blank returns/fallbacks become zero, empty Text remains Text. Lookup errors before a match propagate; later entries are not read. Shared work/input/deadline and Text-result limits apply.','=XLOOKUP("00123",B1:B2,C1:C2)','Pen','Lookup',LOOKUP_EXAMPLE)
 
 
+for name,formula,result in (
+    ('ISBLANK','=ISBLANK(B1)',True),('ISNUMBER','=ISNUMBER("00123")',False),
+    ('ISTEXT','=ISTEXT("00123")',True),('ISLOGICAL','=ISLOGICAL(TRUE)',True),
+    ('ISERROR','=ISERROR(1/0)',True),('ISNA','=ISNA(XLOOKUP(7,B1,C1))',True)):
+    register(name,name+'(value)','Inspect a scalar type or ordinary error without coercion.','One scalar; ranges/arrays unavailable. Blank/NULL differs from empty Text; Boolean is not Number. Ordinary errors make type predicates false; ISERROR recognizes ordinary spreadsheet errors and ISNA only #N/A. Cycles/resource failures propagate.',formula,result,'Inspection')
+
+
 def function_catalog():
     return dict(version=1,functions=deepcopy([FUNCTIONS[name] for name in sorted(FUNCTIONS)]),
                 notes=['This catalog describes the implemented development tier, not full Excel compatibility.',

@@ -12,6 +12,7 @@ from odf.table import Table,TableRow,TableCell
 from odf import teletype
 
 CASES=[('=LEN(TRIM(A1))',5),('=TRIM(A1)','00123'),('=UPPER("a")','A'),('=LOWER("B")','b'),('=LEFT(TRIM(A1),2)','00'),('=RIGHT(TRIM(A1),2)','23'),('=MID(TRIM(A1),2,3)','012'),('=A1&"X"',' 00123  X'),('=CONCAT(TRIM(A1),TRUE,0)','00123TRUE0'),('=COUNTIF(A1,"*00123*")',1),('=SUMIF(C1:C2,">0")',5),('=XLOOKUP(2,C1:C2,A1:A2)',' 00123  '),('=XLOOKUP(9,C1:C2,A1:A2,"missing")','missing')]
+CASES += [('=ISNUMBER(A1)',False),('=ISTEXT(A1)',True),('=ISERROR(1/0)',True)]
 with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/'formulas.dhwb',create=True)) as book:
     book.mutate({'action':'edit','operation_id':'seed','expected_state':book.state(),'cells':[{'row':1,'col':1,'source':' 00123  ','kind':'text'},{'row':1,'col':3,'source':'2'},{'row':2,'col':3,'source':'3'},*[{'row':r,'col':2,'source':formula} for r,(formula,result) in enumerate(CASES,1)]]})
     snapshot=book.read('Sheet1',{'r2':len(CASES),'c2':3})
@@ -29,5 +30,6 @@ with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/'formulas
                     cell=row.getElementsByType(TableCell)[1]
                     if mode=='formulas':assert cell.getAttribute('formula')
                     elif type(value) is str:assert cell.getAttribute('valuetype')=='string' and teletype.extractText(cell)==value
+                    elif type(value) is bool:assert cell.getAttribute('valuetype')=='boolean' and cell.getAttribute('booleanvalue')==str(value).lower()
                     else:assert float(cell.getAttribute('value'))==value
             print(format+' '+mode+': independent reader accepted '+str(len(CASES))+' formulas/typed values; no target recalculation claim')
