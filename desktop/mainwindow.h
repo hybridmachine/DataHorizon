@@ -54,6 +54,7 @@ private:
     void updateFormulaReferences();
     QList<QColor> formulaReferenceColors(int row,int column) const;
     void startReferencePick();
+    void pickOtherSheetReference();
     void finishReferencePick(bool insert);
     bool referenceMouseEvent(QObject *object,QEvent *event);
     void loadFunctionCatalog();
@@ -148,6 +149,7 @@ private:
     QLabel *m_formulaCues=nullptr;
     QList<FormulaReferenceCue> m_formulaReferences;
     QAction *m_pickReferenceAction = nullptr;
+    quint64 m_referenceGeneration=0;
     bool m_pickingReference=false,m_referenceDragging=false;
     QJsonObject m_referenceTarget;
     QPersistentModelIndex m_referenceCurrent;
