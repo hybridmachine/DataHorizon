@@ -71,6 +71,15 @@ class FollowOnTests(unittest.TestCase):
                     if match:self.assertEqual(calculate(formula),match.start()+1,(pattern,text))
                     else:self.errors([(formula,'#VALUE!')])
 
+    def test_textjoin_row_major_empty_fields_scalar_types_and_limits(self):
+        values={(1,2):cell('00123'),(1,3):cell(''),(2,2):cell(None),(2,3):cell(True)}
+        self.assertEqual(calculate('=TEXTJOIN("|",TRUE,B1:C2)',values),'00123|TRUE')
+        self.assertEqual(calculate('=TEXTJOIN("|",FALSE,B1:C2)',values),'00123|||TRUE')
+        self.assertEqual(calculate('=TEXTJOIN("",TRUE,1,FALSE,"=1+1")'),'1FALSE=1+1')
+        self.assertEqual(calculate('=TEXTJOIN("-",TRUE,B1)',{}),'')
+        self.errors([('=TEXTJOIN("-","TRUE",1)','#VALUE!'),('=TEXTJOIN(B1:B2,TRUE,1)','#VALUE!'),('=TEXTJOIN("-",TRUE,A1)','#CYCLE!'),('=TEXTJOIN("-",TRUE,1/0)','#DIV/0!'),('=TEXTJOIN("-",TRUE)','#NAME?'),('=TEXTJOIN("-",TRUE,B1:B10001)','#LIMIT!')])
+        self.errors([('=IFERROR(TEXTJOIN(B1,FALSE,"x","y"),"hidden")','#LIMIT!')],{(1,2):cell('😀'*16384)})
+
     def test_catalog_formulas_recalculate_after_native_package_reimport(self):
         with tempfile.TemporaryDirectory() as temp:
             for index,item in enumerate(function_catalog()['functions']):

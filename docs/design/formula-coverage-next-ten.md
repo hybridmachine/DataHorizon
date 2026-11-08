@@ -60,6 +60,8 @@ TEXTJOIN's ODS extension follows [LibreOffice](https://help.libreoffice.org/late
 
 7. [SEARCH #71](https://github.com/hybridmachine/DataHorizon/pull/71): locally built/tested, self-reviewed and merged.
 
+8. [TEXTJOIN #72](https://github.com/hybridmachine/DataHorizon/pull/72): locally built/tested, self-reviewed and merged.
+
 ## Scalar inspection tier
 
 ISBLANK recognizes blank/NULL, including a formula's scalar NULL result; empty
@@ -121,3 +123,13 @@ characters. Literal searches use bounded native substring search; wildcard
 prefix searches charge work/deadlines and use no regular-expression engine or
 unbounded suffix copies. Expensive valid patterns may return #LIMIT!, which
 IFERROR cannot hide. Unicode normalization/locale/grapheme behavior is not implied.
+
+## TEXTJOIN tier
+
+TEXTJOIN accepts a scalar delimiter, numeric/Boolean/blank ignore-empty flag and
+1–253 scalars/ranges. Row-major flattening and invariant Text conversion preserve
+identifiers. True skips blank/NULL/empty Text; false includes empty fields and
+their separators. Text flags and delimiter arrays reject. Ordinary errors,
+cycles and limits remain visible. Output accumulates through bounded concatenation
+before joining. XLSX uses `_xlfn.TEXTJOIN`; ODS uses `COM.MICROSOFT.TEXTJOIN`, with
+explicit target-support reports. Array delimiters and locale formatting are open.
