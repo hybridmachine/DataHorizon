@@ -50,6 +50,7 @@ ranges, structured references, external workbooks and 3D ranges are unsupported.
 | LEN/TRIM/UPPER/LOWER | One scalar; explicit invariant text conversion, Unicode code-point length/casing, ASCII-only TRIM, 32,767-character/64-KiB results; see [text tier](formula-next-ten.md#scalar-text-cleanup-tier) |
 | LEFT/RIGHT/MID | Unicode scalar substrings, optional LEFT/RIGHT count, 1-based MID start, explicit numeric count rules and bounded results; see [substring tier](formula-next-ten.md#substring-tier) |
 | CONCAT | 1–253 scalar/range arguments, row-major flattening, invariant Text and bounded incremental results; see [concatenation tier](formula-next-ten.md#concatenation-tier) |
+| XLOOKUP | Typed exact forward first match, lazy scalar fallback, same-shaped vectors; see [lookup tier](formula-next-ten.md#exact-lookup-tier) |
 | COUNTIF/SUMIF | Explicit bounded criteria, Unicode-folded/wildcard Text, numeric Text comparisons, aligned same-shape sums and lazy matching sum reads; see [conditional tier](formula-next-ten.md#conditional-aggregate-tier) |
 | IF | Two or three arguments; numeric/boolean/blank condition; evaluate only the selected branch; omitted false branch is FALSE |
 

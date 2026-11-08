@@ -48,6 +48,10 @@ register('COUNTIF','COUNTIF(range, criteria)','Count matching cells in one bound
 register('SUMIF','SUMIF(range, criteria[, sum_range])','Sum numeric values aligned with matching criteria cells.',CONDITIONAL_RULES+' Sum range defaults to criteria range and must have the exact same shape. Only matching sum cells are evaluated; Text/Boolean/blank sums are ignored. Matching errors and nonfinite running sums propagate.','=SUMIF(B1:B3,"Pen",C1:C3)',5,'Conditional',CONDITIONAL_EXAMPLE)
 
 
+LOOKUP_EXAMPLE=[dict(row=1,col=2,source='00123',kind='text'),dict(row=2,col=2,source='00456',kind='text'),dict(row=1,col=3,source='Pen',kind='text'),dict(row=2,col=3,source='Book',kind='text')]
+register('XLOOKUP','XLOOKUP(value, lookup_range, return_range[, if_not_found[, match_mode[, search_mode]]])','Return the first exact matching value from aligned vectors.','3–6 arguments; same-shaped single-row/column ranges up to 10,000 cells. Only match_mode=0 and search_mode=1 are supported. Numbers/Booleans/Text/blank remain distinct; Text uses Unicode casefolding without numeric parsing, trimming or wildcards. Only the matched return cell and needed fallback are evaluated. Missing without fallback is #N/A. Blank returns/fallbacks become zero, empty Text remains Text. Lookup errors before a match propagate; later entries are not read. Shared work/input/deadline and Text-result limits apply.','=XLOOKUP("00123",B1:B2,C1:C2)','Pen','Lookup',LOOKUP_EXAMPLE)
+
+
 def function_catalog():
     return dict(version=1,functions=deepcopy([FUNCTIONS[name] for name in sorted(FUNCTIONS)]),
                 notes=['This catalog describes the implemented development tier, not full Excel compatibility.',
