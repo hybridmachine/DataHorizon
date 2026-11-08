@@ -84,7 +84,7 @@ def related_part(relationships,kind):
     return path
 
 
-FUTURE_XLSX_FUNCTIONS={"CONCAT":"_xlfn.CONCAT","XLOOKUP":"_xlfn.XLOOKUP"}
+FUTURE_XLSX_FUNCTIONS={"IFNA":"_xlfn.IFNA","CONCAT":"_xlfn.CONCAT","XLOOKUP":"_xlfn.XLOOKUP"}
 FUNCTION_SPELLING=re.compile(r'"(?:[^"]|"")*"|\'(?:[^\']|\'\')*\'|([A-Za-z_][A-Za-z_0-9.]*)(?=\s*\()')
 
 

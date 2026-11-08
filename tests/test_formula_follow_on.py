@@ -25,6 +25,11 @@ class FollowOnTests(unittest.TestCase):
         self.assertIs(calculate('=ISNUMBER(1/0)'),False)
         self.errors([('=ISERROR(A1)','#CYCLE!'),('=ISNA(SUM(B1:B10001))','#LIMIT!'),('=ISERROR(B1:B2)','#VALUE!'),('=ISBLANK()','#NAME?')])
 
+    def test_ifna_only_missing_and_lazy_fallback(self):
+        self.assertEqual(calculate('=IFNA(XLOOKUP(9,B1,C1),"missing")'),'missing')
+        self.assertEqual(calculate('=IFNA("00123",1/0)'),'00123');self.assertEqual(calculate('=IFNA(B1,1/0)'),'')
+        self.errors([('=IFNA(1/0,7)','#DIV/0!'),('=IFNA(A1,7)','#CYCLE!'),('=IFNA(SUM(B1:B10001),7)','#LIMIT!'),('=IFNA(B1:B2,7)','#VALUE!'),('=IFNA(7)','#NAME?'),('=IFNA(XLOOKUP(9,B1,C1),1/0)','#DIV/0!')])
+
     def test_catalog_formulas_recalculate_after_native_package_reimport(self):
         with tempfile.TemporaryDirectory() as temp:
             for index,item in enumerate(function_catalog()['functions']):

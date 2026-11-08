@@ -59,6 +59,9 @@ for name,formula,result in (
     register(name,name+'(value)','Inspect a scalar type or ordinary error without coercion.','One scalar; ranges/arrays unavailable. Blank/NULL differs from empty Text; Boolean is not Number. Ordinary errors make type predicates false; ISERROR recognizes ordinary spreadsheet errors and ISNA only #N/A. Cycles/resource failures propagate.',formula,result,'Inspection')
 
 
+register('IFNA','IFNA(value, fallback)','Return a lazy fallback only for #N/A.','Two scalar expressions. Other ordinary errors, cycles and resource failures propagate. Successful blank/NULL becomes empty Text, as for IFERROR; arrays unavailable.','=IFNA(XLOOKUP(7,B1,C1),"missing")','missing','Logical')
+
+
 def function_catalog():
     return dict(version=1,functions=deepcopy([FUNCTIONS[name] for name in sorted(FUNCTIONS)]),
                 notes=['This catalog describes the implemented development tier, not full Excel compatibility.',
