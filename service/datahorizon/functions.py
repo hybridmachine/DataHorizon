@@ -33,6 +33,12 @@ register('UPPER','UPPER(text)','Convert Text to Unicode uppercase.',TEXT_RULES+'
 register('LOWER','LOWER(text)','Convert Text to Unicode lowercase.',TEXT_RULES+' Uses Python Unicode casing, independent of locale; casing can expand characters.','=LOWER("Data")','data','Text')
 
 
+SUBSTRING_RULES=TEXT_RULES.removeprefix('One scalar argument. ')+' Positions/counts require numeric/Boolean/blank scalars, never numeric Text; finite fractional values truncate toward zero. Negative counts and MID start below 1 are #VALUE!. Counts beyond the input clamp through slicing; no padding. Unicode code points, not bytes or grapheme clusters.'
+register('LEFT','LEFT(text[, count])','Return the first count characters (default 1).',SUBSTRING_RULES,'=LEFT("Data",2)','Da','Text')
+register('RIGHT','RIGHT(text[, count])','Return the last count characters (default 1).',SUBSTRING_RULES,'=RIGHT("Data",2)','ta','Text')
+register('MID','MID(text, start, count)','Return characters at a 1-based starting position.',SUBSTRING_RULES,'=MID("Data",2,2)','at','Text')
+
+
 def function_catalog():
     return dict(version=1,functions=deepcopy([FUNCTIONS[name] for name in sorted(FUNCTIONS)]),
                 notes=['This catalog describes the implemented development tier, not full Excel compatibility.',
