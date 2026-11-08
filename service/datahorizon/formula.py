@@ -586,6 +586,22 @@ class Calculator:
         self.count+=max(0,(len(text)+255)//256-1)
         self.check()
 
+    def substring(self,name,args,sheet):
+        if not (len(args)==3 if name=="MID" else len(args) in (1,2)):raise FormulaError("#NAME?",name+" has an unsupported argument count")
+        if any(arg[0]=="range" for arg in args):raise FormulaError("#VALUE!",name+" requires scalar arguments")
+        text=scalar_text(self.evaluate(args[0],sheet));self.text_work(text)
+        def count(arg,minimum):
+            value=numeric(self.evaluate(arg,sheet))
+            if not math.isfinite(value):raise FormulaError("#NUM!","Non-finite text position")
+            if value<minimum:raise FormulaError("#VALUE!","Text positions/counts are outside their supported range")
+            return int(value)
+        if name=="MID":
+            start=count(args[1],1)-1;length=count(args[2],0);result=text[start:start+length]
+        else:
+            length=count(args[1],0) if len(args)==2 else 1
+            result=text[:length] if name=="LEFT" else text[-length:] if length else ""
+        result=bounded_text(result);self.check();return result
+
     def text_function(self,name,args,sheet):
         if len(args)!=1:raise FormulaError("#NAME?",name+" requires one scalar argument")
         if args[0][0]=="range":raise FormulaError("#VALUE!",name+" requires a scalar argument")
@@ -662,6 +678,8 @@ class Calculator:
                     raise FormulaError("#VALUE!", "IF condition must be numeric or boolean")
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
+            if name in ("LEFT","RIGHT","MID"):
+                return self.substring(name,args,sheet)
             if name in ("LEN","TRIM","UPPER","LOWER"):
                 return self.text_function(name,args,sheet)
             if name in ("ABS","ROUND","ROUNDUP","ROUNDDOWN"):

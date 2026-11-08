@@ -122,6 +122,22 @@ compatibility version. XLSX/ODS formulas and typed values round-trip in the
 supported tier; independent readers verify stored formulas/types, not target
 recalculation. XLSX still enforces its separate UTF-16 text-size limit.
 
+## Substring tier
+
+LEFT/RIGHT take Text and an optional count (default one); MID takes Text, a
+1-based start and count. They share scalar Text conversion, Unicode code-point,
+error, result and work limits with the cleanup tier. Counts/positions accept
+numeric/Boolean/blank scalars, with finite fractions truncated toward zero;
+numeric Text is rejected. Negative counts and MID starts below one are #VALUE!.
+Zero counts and starts beyond the input return empty Text; oversized positive
+counts clamp without padding or allocating the requested size. Direct range
+arguments reject before scanning. Inputs, including leading zeros, remain intact.
+
+XLSX preserves supported formula sources; ODS may canonicalize numeric literals
+(e.g. 2 to 2.0) while preserving the parsed expression. Values remain typed Text.
+The shared function catalog, engine, GUI and package gates advertise the same tier;
+no byte/grapheme counting or locale-dependent numeric conversion is implied.
+
 ## Completed PRs
 
 1. [Function catalog #55](https://github.com/hybridmachine/DataHorizon/pull/55): local build/full CTest and native help checks passed; self-reviewed and merged.
@@ -133,3 +149,5 @@ recalculation. XLSX still enforces its separate UTF-16 text-size limit.
 4. [Reference/parenthesis cues #58](https://github.com/hybridmachine/DataHorizon/pull/58): locally verified, visually inspected, self-reviewed and merged.
 
 5. [Scalar text cleanup #59](https://github.com/hybridmachine/DataHorizon/pull/59): locally verified, self-reviewed and merged.
+
+6. [Substring functions #60](https://github.com/hybridmachine/DataHorizon/pull/60): locally verified, self-reviewed and merged.
