@@ -104,3 +104,22 @@ class FormattingTests(unittest.TestCase):
         root=ET.Element(q(O,'document-content'));ET.SubElement(root,q(Y,'font-face'),{q(Y,'name'):'Face','{urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0}font-family':"'DejaVu Sans'"})
         style=ET.SubElement(root,q(Y,'style'),{q(Y,'name'):'S',q(Y,'family'):'table-cell'});ET.SubElement(style,q(Y,'text-properties'),{q(Y,'font-name'):'Face',q(F,'font-size'):'16pt',q(F,'color'):'#12AB34'})
         self.assertEqual(OdsStyles([root]).style('S'),{'font_family':'DejaVu Sans','font_size':16,'text_color':'#12ab34'})
+
+    def test_border_edges_partial_patches_presets_history_and_packages(self):
+        from datahorizon.borders import SIDES,BORDER_STYLES,border_edges
+        for bad in ('double','hair',True,None,2):
+            with self.assertRaises(EngineError):validate_style({'border_left':bad})
+        styles=[{'border_'+side:line,'font_family':'Arial'} for side in SIDES for line in BORDER_STYLES]
+        styles += [{'border':'box','border_left':'none','border_bottom':'dashed'}]
+        snapshot={'state':'s','range':[1,1,len(styles),1],'cells':[{'row':r,'col':1,'source':'00123','kind':'text','value':'00123','calculation':'current','style':s} for r,s in enumerate(styles,1)]}
+        for export,preview in ((xlsx_export,xlsx_preview),(ods_export,ods_preview)):
+            reviewed=preview(export(snapshot,{}));self.assertTrue(reviewed['can_import'],reviewed)
+            self.assertEqual([border_edges(c['style']) for c in reviewed['cells']],[border_edges(s) for s in styles]);self.assertTrue(all(c['source']=='00123' for c in reviewed['cells']))
+        with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/'edges.dhwb',create=True)) as book:
+            def apply(action='edit',**args):book.mutate({'action':action,'operation_id':book.state()+str(len(book.undo)),'expected_state':book.state(),**args})
+            apply(cells=[{'row':1,'col':1,'source':'=2+3','style':{'border':'box','border_top':'dotted'}}]);apply(cells=[{'row':1,'col':1,'style':{'border_left':'medium'}}]);cell=book.read('Sheet1',{})['cells'][0];self.assertEqual(border_edges(cell['style']),{'left':'medium','right':'thin','top':'dotted','bottom':'thin'})
+            apply(cells=[{'row':1,'col':1,'style':{'border':'none'}}]);self.assertTrue(all(v=='none' for v in border_edges(book.read('Sheet1',{})['cells'][0]['style']).values()))
+            apply('undo');self.assertEqual(book.read('Sheet1',{})['cells'][0]['style']['border_left'],'medium');self.assertEqual(book.read('Sheet1',{})['cells'][0]['source'],'=2+3')
+            before=book.state()
+            with self.assertRaises(EngineError):apply(cells=[{'row':1,'col':1,'source':'9'},{'row':1,'col':2,'style':{'border_top':'double'}}])
+            self.assertEqual(book.state(),before)

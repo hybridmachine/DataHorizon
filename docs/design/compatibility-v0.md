@@ -237,3 +237,8 @@ Explicit portable font families, integer 6–72pt sizes and RGB text colors map 
 XLSX fonts and ODS text properties, including ODS named font-face references.
 Fonts are not embedded; target fallback/layout can differ. Theme/tinted colors,
 fractional sizes and advanced typography remain reported as outside this tier.
+
+Individual thin/medium/thick/dashed/dotted border edges map to XLSX styles and
+bounded ODS per-edge width/pattern attributes. Border colors explicitly map to
+native palette/export black. Diagonal edges, other patterns and widths remain
+reported outside this tier; adjacent-cell conflict/layout can differ by target.

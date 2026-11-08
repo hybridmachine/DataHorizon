@@ -2,6 +2,7 @@
 import re
 
 from .engine import encoded, require, validate_style, EngineError
+from .borders import SIDES, BORDER_STYLES, border_edges
 from .formats import number_format_code, simple_number_style
 from .interchange import S,R,node,read_xml
 
@@ -70,10 +71,12 @@ class XlsxStyles:
         border=self.index(xf.get("borderId","0"),self.borders)
         sides=[border.find(f"{{{S}}}{side}") for side in ("left","right","top","bottom")]
         styles=[side.get("style") if side is not None else None for side in sides]
-        if all(style=="thin" for style in styles):
-            result["border"]="box"
-            self.loss("Border colors map to the native default color.")
-        elif any(styles): self.loss("Partial or non-thin borders are omitted.")
+        if all(style=="thin" for style in styles):result["border"]="box"
+        else:
+            for side,style in zip(SIDES,styles):
+                if style in BORDER_STYLES and style!="none":result["border_"+side]=style
+                elif style not in (None,"none"):self.loss("Partial mapping: unsupported border line styles are omitted.")
+        if any(style in BORDER_STYLES and style!="none" for style in styles):self.loss("Border colors map to the native default color.")
         if any(edge.tag.rsplit("}",1)[-1] not in ("left","right","top","bottom") and edge.get("style") for edge in border):
             self.loss("Diagonal and additional border edges are omitted.")
         alignment=xf.find(f"{{{S}}}alignment")
@@ -87,7 +90,7 @@ class XlsxStyles:
         return result
 
     def report(self):
-        return ["Mapped direct cell styles replace destination styles: general/Text/number/percentage/explicit currency labels with 0–15 decimal places, bold/italic, alignment, wrapping, solid RGB fill and thin box borders.",
+        return ["Mapped direct cell styles replace destination styles: general/Text/number/percentage/explicit currency labels with 0–15 decimal places, bold/italic, alignment, wrapping, solid RGB fill and individual solid/dashed/dotted border edges.",
                 "Rich-text runs, named-style inheritance, conditional formatting, row/column defaults and dimensions are omitted.",*sorted(self.losses)]
 
 
@@ -126,8 +129,8 @@ def export_styles(cells):
         border=node(borders,"border")
         for side in ("left","right","top","bottom","diagonal"):
             edge=node(border,side)
-            if side!="diagonal" and style.get("border")=="box":
-                edge.set("style","thin"); node(edge,"color",rgb="FF000000")
+            if side!="diagonal" and border_edges(style)[side]!="none":
+                edge.set("style",border_edges(style)[side]); node(edge,"color",rgb="FF000000")
     bases=node(root,"cellStyleXfs",count="1"); node(bases,"xf",numFmtId="0",fontId="0",fillId="0",borderId="0")
     xfs=node(root,"cellXfs",count=str(len(styles)))
     for index,style in enumerate(styles):

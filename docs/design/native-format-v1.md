@@ -132,3 +132,9 @@ Font styles add `font_family` (1–64 trimmed characters, no ASCII controls, com
 quotes or backslash), `font_size` (integer 6–72pt) and `text_color` (`#RRGGBB`).
 Unspecified properties use application defaults. Requested family names persist
 when platform fallback renders them. These remain additive format-v1 metadata.
+
+Per-edge styles add `border_left`, `border_right`, `border_top`, `border_bottom`:
+none/thin/medium/thick/dashed/dotted. Missing edges inherit legacy box (thin),
+otherwise none. Managed legacy border presets clear earlier edge overrides;
+explicit new edge fields in that patch take precedence. Native metadata remains
+exact; interchange can canonicalize all-thin edges to legacy box.
