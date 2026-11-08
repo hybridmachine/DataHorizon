@@ -3,12 +3,19 @@
 No locale or host timezone participates. Temporal is a JSON-compatible ISO
 string carrying a distinct in-process kind; wire responses expose value_kind.
 """
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 import math
 import re
 
 KINDS = ("date", "time", "datetime")
 DAY_US = 86_400_000_000
+
+
+def utc_clock():
+    """A calculation's UTC civil sample, independent of the host timezone."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 PATTERNS = {
     "date": r"[0-9]{4}-[0-9]{2}-[0-9]{2}",
     "time": r"[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?",

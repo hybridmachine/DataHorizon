@@ -20,7 +20,7 @@ from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, tran
 from .hooks import HookFailure, invoke
 from .formats import numeric_display, numeric_spec, temporal_display, TEMPORAL_FORMATS
 from .borders import SIDES, BORDER_STYLES
-from .temporal import Temporal, KINDS as TEMPORAL_KINDS
+from .temporal import Temporal, utc_clock, KINDS as TEMPORAL_KINDS
 
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
@@ -372,13 +372,13 @@ class Workbook:
         except (ValueError, TypeError) as error:
             raise EngineError("INVALID_INPUT", "Invalid externally stored cell metadata") from error
 
-    def calculator(self, seconds=0.25):
+    def calculator(self, seconds=0.25, *, clock=None):
         def resolve(name):
             try:
                 return self.sheet(name)
             except EngineError as error:
                 raise FormulaError("#REF!", "Referenced sheet does not exist") from error
-        return Calculator(lambda s, r, c: typed(self.raw(s, r, c)), resolve, seconds)
+        return Calculator(lambda s, r, c: typed(self.raw(s, r, c)), resolve, seconds, clock=clock)
 
     def range_cells(self, sheet, rows, c1, c2, deadline):
         for row in rows:
@@ -570,6 +570,7 @@ class Workbook:
                         try:
                             value=calc.cell(sheet,row,col) if item["kind"]=="formula" else item["value"]
                             cell.update(value=value,calculation="current")
+                            if isinstance(value,Temporal):cell["value_kind"]=value.kind
                         except FormulaError as error:
                             cell.update(value=None,calculation="error",error=str(error))
                         if item["kind"]=="formula":
@@ -671,6 +672,7 @@ class Workbook:
     def run_hooks(self, operation):
         if not self.handler:
             return
+        clock=utc_clock()
         for _ in range(16):
             if not self.pending:
                 return
@@ -685,7 +687,7 @@ class Workbook:
                 if method == "get":
                     return self.raw(sheet, row, col)
                 if method == "value":
-                    return self.calculator().cell(sheet, row, col)
+                    return self.calculator(clock=clock).cell(sheet, row, col)
                 require(method == "set", "INVALID_HOOK", "Unknown handler context method")
                 self.apply_edit(sheet, [{**args, "row": row, "col": col}])
                 return None

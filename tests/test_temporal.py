@@ -7,6 +7,8 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime
+from unittest.mock import patch
 
 from datahorizon.temporal import Temporal, from_serial, to_serial
 from datahorizon.engine import Workbook, EngineError, display
@@ -64,6 +66,35 @@ class TemporalContractTests(unittest.TestCase):
 
 
 class TemporalStorageTests(unittest.TestCase):
+    def test_hook_clock_and_generated_temporal_upgrade_roll_back_with_parent(self):
+        self.apply(cells=[dict(row=1,col=2,source="=NOW()"),dict(row=1,col=3,source="=NOW()")])
+        self.book.handler=Path(__file__).parent/"fixtures"/"temporal_hook.py"
+        with patch("datahorizon.engine.utc_clock",return_value=datetime(2024,12,31,23,59,59)) as clock:
+            with self.assertRaises(EngineError):self.apply(cells=[dict(row=1,col=1,source="-1")])
+            self.assertEqual(clock.call_count,1)
+            self.assertEqual(self.book.info()["format_version"],1)
+            self.assertIsNone(self.book.raw(self.book.sheet("Sheet1"),2,1))
+            self.apply(cells=[dict(row=1,col=1,source="1")])
+            self.assertEqual(clock.call_count,2)
+            self.assertEqual(self.book.info()["format_version"],2)
+            self.assertEqual(self.book.read("Sheet1",dict(r1=2,r2=2))["cells"][0]["value_kind"],"date")
+
+    def test_volatile_clock_is_one_sample_per_snapshot_and_never_writes(self):
+        self.apply(cells=[dict(row=1,col=1,source="=NOW()"),dict(row=2,col=1,source="=NOW()"),dict(row=3,col=1,source="=TODAY()")])
+        state=self.book.state();revision=self.book.info()["state"]
+        first=datetime(2024,12,31,23,59,59,123456);second=datetime(2025,1,1)
+        with patch("datahorizon.formula.utc_clock",side_effect=[first,second]) as clock:
+            cells=self.book.read_workbook()["sheets"][0]["cells"]
+            self.assertEqual([c["value"] for c in cells],["2024-12-31T23:59:59.123456"]*2+["2024-12-31"])
+            self.assertEqual([c["value_kind"] for c in cells],["datetime","datetime","date"])
+            self.assertEqual(clock.call_count,1)
+            self.assertEqual(self.book.read("Sheet1",dict(r2=3))["cells"][2]["value"],"2025-01-01")
+            self.assertEqual(clock.call_count,2)
+        self.assertEqual(self.book.state(),state);self.assertEqual(self.book.info()["state"],revision)
+        for formula in ("TODAY(1)","NOW(1)"):
+            with self.assertRaises(FormulaError) as error:evaluate(formula)
+            self.assertEqual(error.exception.code,"#NAME?")
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.path=Path(self.temp.name)/"dates.dhwb"
         self.book=Workbook(self.path,create=True)

@@ -7,7 +7,7 @@ import time
 from datetime import date, timedelta
 
 from .functions import FUNCTIONS
-from .temporal import Temporal, from_serial
+from .temporal import Temporal, from_serial, utc_clock
 
 SUPPORTED_FUNCTIONS = frozenset(FUNCTIONS)
 CELL_ERRORS = {"#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#NUM!", "#N/A", "#NULL!"}
@@ -509,8 +509,9 @@ class Criterion:
 
 
 class Calculator:
-    def __init__(self, read, resolve_sheet, seconds=0.25):
+    def __init__(self, read, resolve_sheet, seconds=0.25, *, clock=None):
         self.read, self.resolve_sheet = read, resolve_sheet
+        self.clock = utc_clock() if clock is None else clock
         self.cache, self.active = {}, set()
         self.deadline, self.count = time.monotonic() + seconds, 0
         self.bytes = 0
@@ -1004,6 +1005,9 @@ class Calculator:
             return [self.cell(*target) for target in self.range_targets(node,sheet)]
         if kind == "call":
             name, args = node[1:]
+            if name in ("TODAY","NOW"):
+                if args:raise FormulaError("#NAME?",name+" takes no arguments")
+                return Temporal(self.clock.date().isoformat(),"date") if name=="TODAY" else Temporal(self.clock.isoformat(),"datetime")
             if name in ("DATE","YEAR","MONTH","DAY"):return self.calendar_function(name,args,sheet)
             if name in ("TIME","HOUR","MINUTE","SECOND"):return self.clock_function(name,args,sheet)
             if name in ("IFERROR","IFNA"):
