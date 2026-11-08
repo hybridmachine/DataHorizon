@@ -1,0 +1,6 @@
+M3–M5 completion batch, started November 8, 2026
+
+Task 1: Debug build passed; 2 executable baseline conformance tests passed.
+Command: PYTHONPATH=service python3 -m unittest discover -s tests -p test_m3_m5_contracts.py -v
+Delivery: one published-head author review and merge per task; self-reviews are not independent approvals.
+Final qualification evidence is appended as implementation proceeds. Hosted CI is not used.
