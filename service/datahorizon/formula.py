@@ -631,6 +631,26 @@ class Calculator:
         except (ValueError,OverflowError) as error:
             raise FormulaError("#NUM!",str(error)) from error
 
+    def clock_function(self,name,args,sheet):
+        if len(args)!=(3 if name=="TIME" else 1):raise FormulaError("#NAME?",name+" has invalid arity")
+        values=[self.scalar_value(arg,sheet) for arg in args]
+        try:
+            if name=="TIME":
+                hour,minute,second=[int(numeric(value)) for value in values]
+                if any(not 0<=part<=32767 for part in (hour,minute,second)):raise ValueError("TIME components must be 0–32767")
+                total=(hour*3600+minute*60+second)%86400
+                return Temporal(f"{total//3600:02}:{total//60%60:02}:{total%60:02}","time")
+            value=values[0]
+            if isinstance(value,Temporal):
+                if value.kind=="date":return 0
+            else:
+                serial=numeric(value)
+                if serial<0:raise ValueError("Clock serial must be nonnegative")
+                value=from_serial(serial,"time")
+            return getattr(value.parsed(),{"HOUR":"hour","MINUTE":"minute","SECOND":"second"}[name])
+        except (ValueError,OverflowError) as error:
+            raise FormulaError("#NUM!",str(error)) from error
+
     def textjoin(self,args,sheet):
         if not 3<=len(args)<=255:raise FormulaError("#NAME?","TEXTJOIN requires delimiter, ignore_empty and 1–253 values")
         if args[0][0]=="range" or args[1][0]=="range":raise FormulaError("#VALUE!","TEXTJOIN delimiter/flag must be scalar")
@@ -985,6 +1005,7 @@ class Calculator:
         if kind == "call":
             name, args = node[1:]
             if name in ("DATE","YEAR","MONTH","DAY"):return self.calendar_function(name,args,sheet)
+            if name in ("TIME","HOUR","MINUTE","SECOND"):return self.clock_function(name,args,sheet)
             if name in ("IFERROR","IFNA"):
                 if len(args)!=2: raise FormulaError("#NAME?",name+" requires two arguments")
                 if args[0][0]=="range": raise FormulaError("#VALUE!",name+" requires scalar expressions")

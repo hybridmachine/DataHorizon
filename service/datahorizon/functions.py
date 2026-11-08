@@ -10,6 +10,9 @@ def register(name, signature, summary, rules, formula, result, category, inputs=
 
 
 register('DATE','DATE(year, month, day)','Construct a typed Gregorian date.','Three scalar numeric/Boolean/blank arguments, fractions truncate. Years 0–1899 add 1900; years outside 0–9999 fail. Month/day overflow normalizes using the real Gregorian calendar; 1900-02-29 normalizes to March 1. Result outside years 0001–9999 is #NUM!. Text and ranges fail.','=DATE(2024,2,29)','2024-02-29','Date/time')
+register('TIME','TIME(hour, minute, second)','Construct a typed civil clock.','Three scalar numeric/Boolean/blank components, fractions truncate toward zero. Each truncated component must be 0–32767. Overflow wraps within 24 hours. Text/ranges fail; invalid components are #NUM!.','=TIME(27,0,0)','03:00:00','Date/time')
+for name,part,result in (('HOUR','hour',12),('MINUTE','minute',34),('SECOND','second',56)):
+    register(name,name+'(time)','Extract the '+part+'.','One scalar native time/datetime, date (midnight), or nonnegative numeric serial. Uses fractional serial day. Blank/Boolean numeric coercions apply; Text/ranges fail. SECOND discards fractional seconds.','='+name+'(TIME(12,34,56))',result,'Date/time')
 for name,part,result in (('YEAR','year',2024),('MONTH','month',2),('DAY','day',29)):
     register(name,name+'(date)','Extract the Gregorian '+part+'.','One scalar date/datetime or numeric 1900-system serial. Time-only and Text fail; blank/Boolean numeric coercions apply. Fractional serial days are discarded. Serial 60 is #NUM!.','='+name+'(DATE(2024,2,29))',result,'Date/time')
 

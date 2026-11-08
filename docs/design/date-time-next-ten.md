@@ -65,3 +65,10 @@ departure from Excel's fictitious leap day. YEAR/MONTH/DAY accept dates,
 datetimes or explicit numeric 1900 serials; they reject time-only values and
 Text. Ranges fail; ordinary formula errors propagate. See catalog rules for
 arity, blank/Boolean coercion and bounds. [Excel DATE reference](https://support.microsoft.com/en-us/excel/functions/date-function).
+
+TIME truncates each numeric/Boolean/blank component, accepts 0–32767 and wraps
+the total within one day. Negative components are outside this explicit tier.
+HOUR/MINUTE/SECOND accept time/datetime, date as midnight, or a nonnegative
+numeric serial's fractional day. SECOND discards fractional seconds. Text and
+ranges fail. These functions return native time or numeric components, not
+localized Text. [Excel TIME reference](https://support.microsoft.com/en-gb/excel/functions/time-function).
