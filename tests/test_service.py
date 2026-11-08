@@ -437,7 +437,7 @@ class ServiceTests(unittest.TestCase):
                     self.assertIn(schema["$ref"].rsplit("/",1)[-1],schemas,path)
             with client.open(Path(temp)/"examples.dhwb",create=True) as book:
                 sequence=("workbook_import","edit","paste","fill","move","replace_all","undo","redo", "sheet_add","sheet_rename","sheet_duplicate","sheet_reorder","sheet_delete",
-                          "rows_insert","rows_delete","columns_insert","columns_delete","metadata_set","metadata_delete")
+                          "rows_insert","rows_delete","columns_insert","columns_delete","metadata_set","metadata_delete","list_declare","list_reconcile","list_forget")
                 self.assertEqual(set(sequence),set(mapping))
                 for action in sequence:
                     with self.subTest(action=action):
