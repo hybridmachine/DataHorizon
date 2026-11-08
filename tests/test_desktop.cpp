@@ -21,6 +21,7 @@
 #include <QInputDialog>
 #include "listcriteriadialog.h"
 #include "namedlistviews.h"
+#include "functionhelp.h"
 #include <QSettings>
 #include <QAbstractButton>
 #include <QPushButton>
@@ -1092,6 +1093,11 @@ private slots:
         QCOMPARE(tabs->count(),1);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
+    }
+    void functionHelpReadsServiceCatalogSearchesExamplesWithoutEditing() {
+        StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy edits(&window,&MainWindow::operationFinished);
+        bool reviewed=false;QTimer timer;connect(&timer,&QTimer::timeout,&window,[&]{if(auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget()))if(dialog->objectName()=="functionHelpDialog"){
+            auto *search=dialog->findChild<QLineEdit *>("functionSearch");auto *list=dialog->findChild<QListWidget *>("functionList");auto *details=dialog->findChild<QPlainTextEdit *>("functionDetails");QVERIFY(list->count()>=15);search->setText("iferror");QVERIFY(list->currentItem());QCOMPARE(list->currentItem()->text(),QString("IFERROR"));QVERIFY(details->toPlainText().contains("IFERROR(value, fallback)"));QVERIFY(details->toPlainText().contains("=IFERROR(1/0,9)"));search->setText("missing-function");QCOMPARE(list->currentRow(),-1);QVERIFY(details->toPlainText().isEmpty());reviewed=true;dialog->reject();}});timer.start(10);window.findChild<QAction *>("functionHelpAction")->trigger();QTRY_VERIFY_WITH_TIMEOUT(reviewed,5000);QVERIFY(edits.isEmpty());
     }
     void namedListCriteriaValidationRejectsMalformedPreferencesWithoutClamping() {
         QJsonObject output;const QJsonObject good{{"r1",1},{"r2",4},{"c1",1},{"c2",2},{"header",false},{"sort",QJsonArray{QJsonObject{{"col",1},{"descending",true}}}},{"filters",QJsonArray{QJsonObject{{"col",2},{"op","="},{"value",QJsonValue::Null}},QJsonObject{{"col",1},{"op","="},{"value",""}}}}};

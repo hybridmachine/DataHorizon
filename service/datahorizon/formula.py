@@ -5,7 +5,9 @@ import math
 import re
 import time
 
-SUPPORTED_FUNCTIONS = {"SUM", "IF", "AVERAGE", "MIN", "MAX", "COUNT", "COUNTA", "AND", "OR", "NOT", "IFERROR", "ABS", "ROUND", "ROUNDUP", "ROUNDDOWN"}
+from .functions import FUNCTIONS
+
+SUPPORTED_FUNCTIONS = frozenset(FUNCTIONS)
 CELL_ERRORS = {"#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#NUM!", "#N/A", "#NULL!"}
 NUMBER_TEXT = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\Z")
 

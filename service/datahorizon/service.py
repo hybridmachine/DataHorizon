@@ -27,6 +27,7 @@ from .interchange import xlsx_preview, xlsx_export, preparation_scope
 from .ods import ods_preview, ods_export
 from .recovery import inspect_native
 from .list_export import export_list
+from .functions import function_catalog
 
 CAPABILITIES = {
     "api_version": 1, "format_version": 1, "max_operation_cells": MAX_CELLS,
@@ -41,6 +42,7 @@ CAPABILITIES = {
 }
 
 ROUTES = {
+    "/v1/functions": ("get", "Implemented formula signatures, rules and worked examples; no workbook required"),
     "/v1/capabilities": ("get", "Preview capabilities"),
     "/v1/open": ("post", "Create or open a server-local native workbook"),
     "/v1/recovery/inspect": ("post", "Read-only native-file inspection without code activation or repair"),
@@ -117,6 +119,7 @@ def openapi():
             "reference_warnings":{"type":"integer","description":"Newly broken reference expressions in a row/column operation"},
             "reference_issues":{"type":"array","maxItems":100,"description":"First 100 affected formula locations after the structure change","items":{"type":"object","properties":{"sheet":sheet,"row":row,"col":col}}}}},
     }
+    schemas["FunctionCatalog"]={"type":"object","required":["version","functions","notes"],"properties":{"version":{"type":"integer","enum":[1]},"notes":{"type":"array","items":{"type":"string"}},"functions":{"type":"array","items":{"type":"object","required":["name","signature","summary","rules","examples","category"],"properties":{**{key:{"type":"string"} for key in ("name","signature","summary","rules","category")},"examples":{"type":"array","items":{"type":"object","properties":{"formula":{"type":"string"},"result":scalar}}}}}}}}
     schemas["NavigationRequest"]={"type":"object","required":["row","col","direction","expected_state"],"properties":{
         "sheet":sheet,"row":row,"col":col,"direction":{"type":"string","enum":["up","down","left","right"]},"expected_state":{"type":"string"}},
         "description":"Current and adjacent populated inputs move to the end of their contiguous run; otherwise seek the next populated input or grid edge. Formula inputs and empty Text count as populated; native NULL/styled empty auto cells do not. One snapshot, 10,000 candidate stored cells/4 MiB inputs/2 seconds, no evaluation/hooks/writes. Limits reject without a partial target.",
@@ -226,7 +229,9 @@ def openapi():
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
         for status in ("400","401","403","404","409","413","500","503"):
             operation["responses"][status]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}
-        if path.endswith("/navigate"):
+        if path=="/v1/functions":
+            operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/FunctionCatalog"}}}
+        elif path.endswith("/navigate"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Navigation"}}}
         elif path.endswith("/summary"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Summary"}}}
@@ -390,6 +395,8 @@ class Service(ThreadingHTTPServer):
                             self._opening.discard(path)
 
     def dispatch(self, method, path, body):
+        if method=="GET" and path=="/v1/functions":
+            return function_catalog()
         if method == "GET" and path == "/v1/capabilities":
             return CAPABILITIES
         if method == "POST" and path == "/v1/open":

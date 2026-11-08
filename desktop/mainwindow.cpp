@@ -4,6 +4,7 @@
 #include "frozenpanes.h"
 #include "listcriteriadialog.h"
 #include "namedlistviews.h"
+#include "functionhelp.h"
 #include <QGridLayout>
 #include <QApplication>
 #include <QClipboard>
@@ -237,6 +238,8 @@ void MainWindow::buildUi() {
     auto *dataMenu = menuBar()->addMenu(tr("&Data"));
     auto *view = menuBar()->addMenu(tr("&View"));
     auto *help = menuBar()->addMenu(tr("&Help"));
+    auto *functionHelp=help->addAction(tr("Formula functions…"));functionHelp->setObjectName("functionHelpAction");connect(functionHelp,&QAction::triggered,this,&MainWindow::showFunctionHelp);
+    connect(m_client,&RestClient::configured,this,[this]{m_functionCatalog={};});
     m_toolbar = addToolBar(tr("Workbook"));
     m_toolbar->setObjectName("workbookToolbar");
     auto add = [this](QMenu *menu, const QString &label, const QKeySequence &key, auto callback, bool toolbar = false) {
@@ -899,6 +902,14 @@ void MainWindow::showHidden(bool rows,bool columns) {
     if(rows) m_hiddenRows.clear();
     if(columns) m_hiddenColumns.clear();
     applyVisibility(); saveViewState();
+}
+
+void MainWindow::showFunctionHelp() {
+    if(m_client->url().isEmpty()){issue("Connect to a service to read its implemented function catalog.");return;}
+    m_client->request("/v1/functions",{},[this](QJsonObject catalog,QString error){
+        if(!error.isEmpty() || !validFunctionCatalog(catalog)){issue(error.isEmpty()?"Invalid function catalog response.":error);return;}
+        m_functionCatalog=catalog;FunctionHelpDialog dialog(catalog,this);dialog.exec();
+    },false);
 }
 
 void MainWindow::startService() {

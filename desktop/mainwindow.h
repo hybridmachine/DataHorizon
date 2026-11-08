@@ -50,6 +50,7 @@ protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
+    void showFunctionHelp();
     void startService();
     void buildUi();
     void newBook();
@@ -135,7 +136,7 @@ private:
     QPlainTextEdit *m_issues = nullptr;
     QToolBar *m_toolbar = nullptr;
     QAction *m_undo = nullptr, *m_redo = nullptr;
-    QJsonObject m_info;
+    QJsonObject m_info,m_functionCatalog;
     QJsonObject m_listSpec,m_namedViews;
     QJsonObject m_findScope;
     QList<QAction *> m_navigationActions;
