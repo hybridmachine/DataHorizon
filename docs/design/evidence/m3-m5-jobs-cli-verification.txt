@@ -1,0 +1,19 @@
+PYTHONPATH=service python3 -m unittest discover -s tests -p test_operation_jobs.py -v
+test_atomic_mode_ignores_batch_count_and_readonly_refuses_before_admission (test_operation_jobs.OperationJobTests.test_atomic_mode_ignores_batch_count_and_readonly_refuses_before_admission) ... ok
+test_batched_cancel_resume_and_crash_gap_never_replays_committed_batch (test_operation_jobs.OperationJobTests.test_batched_cancel_resume_and_crash_gap_never_replays_committed_batch) ... ok
+test_cancel_inside_atomic_rolls_back_and_after_last_commit_is_committed (test_operation_jobs.OperationJobTests.test_cancel_inside_atomic_rolls_back_and_after_last_commit_is_committed) ... ok
+test_close_cancels_worker_waiting_for_engine_without_post_close_write (test_operation_jobs.OperationJobTests.test_close_cancels_worker_waiting_for_engine_without_post_close_write) ... ok
+test_large_csv_stage_and_global_sorted_read_pages_stale_withholding (test_operation_jobs.OperationJobTests.test_large_csv_stage_and_global_sorted_read_pages_stale_withholding) ... ok
+test_missing_receipt_remains_unknown_and_cannot_release_or_cancel_away (test_operation_jobs.OperationJobTests.test_missing_receipt_remains_unknown_and_cannot_release_or_cancel_away) ... ok
+test_rest_cancellation_does_not_wait_for_writer_lock (test_operation_jobs.OperationJobTests.test_rest_cancellation_does_not_wait_for_writer_lock) ... ok
+test_rest_sdk_cli_disk_staging_and_review (test_operation_jobs.OperationJobTests.test_rest_sdk_cli_disk_staging_and_review) ... ok
+test_sdk_job_execution_preserves_pending_operation_guard (test_operation_jobs.OperationJobTests.test_sdk_job_execution_preserves_pending_operation_guard) ... ok
+test_staging_seal_digest_atomic_and_receipt_reopen (test_operation_jobs.OperationJobTests.test_staging_seal_digest_atomic_and_receipt_reopen) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 1.356s
+
+OK
+
+Managed file CLI fixture (temporary native file, create/append/seal/start/resume/status/read/release):
+Managed file CLI: staged across service restarts; stale start refused; explicit sealed-plan resume committed once; Text/date survived; retained receipt and release passed

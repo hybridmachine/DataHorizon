@@ -11,7 +11,7 @@ from unittest.mock import patch
 import uuid
 
 from datahorizon.engine import Workbook,EngineError
-from datahorizon.client import LocalService
+from datahorizon.client import LocalService,UnknownOutcome,MetadataRefreshError
 from datahorizon.service import openapi,Service
 
 
@@ -112,6 +112,25 @@ class OperationJobTests(unittest.TestCase):
             self.start(job);self.book.close()
         self.settled(job['job_id']);self.assertEqual(self.jobs.view(job['job_id'])['status'],'cancelled')
         self.book=Workbook(self.path);self.jobs=self.book.operation_jobs();self.assertEqual(self.book.read('Sheet1',dict(r2=3))['cells'],[])
+
+    def test_atomic_mode_ignores_batch_count_and_readonly_refuses_before_admission(self):
+        job=self.create(batch_size=1)
+        self.jobs.append(job['job_id'],[dict(row=r,col=1,source='1') for r in range(1,1001)]);self.jobs.append(job['job_id'],[dict(row=1001,col=1,source='1')]);job=self.jobs.seal(job['job_id'])
+        self.book.close();self.book=Workbook(self.path,readonly=True);self.jobs=self.book.operation_jobs()
+        with self.assertRaises(EngineError) as error:self.start(job,True)
+        self.assertEqual(error.exception.body['code'],'READ_ONLY');self.assertEqual(self.jobs.view(job['job_id'])['batches'],[]);self.assertTrue(self.jobs.release(job['job_id'])['released'])
+
+    def test_sdk_job_execution_preserves_pending_operation_guard(self):
+        with LocalService() as client,client.open(Path(self.temp.name)/'pending.dhwb',create=True) as book:
+            book.pending_operation='retain-unknown-operation'
+            try:
+                with patch.object(client,'request',side_effect=AssertionError('Do not send a job execution before reconciliation')):
+                    for action in ('start','resume'):
+                        with self.assertRaises(UnknownOutcome) as error:book.operation_job('retained-job',action,plan_digest='reviewed',expected_state=book.state)
+                        self.assertEqual(error.exception.operation_id,book.pending_operation)
+                    book._refresh_receipt=dict(operation_id=book.pending_operation,outcome='committed')
+                    with self.assertRaises(MetadataRefreshError):book.operation_job('retained-job','start')
+            finally:book.pending_operation=None;book._refresh_receipt=None
 
     def test_rest_sdk_cli_disk_staging_and_review(self):
         with LocalService() as client,client.open(Path(self.temp.name)/'rest.dhwb',create=True) as book:

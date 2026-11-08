@@ -168,6 +168,9 @@ class WorkbookClient:
     def operation_job(self,job_id,action='status',**arguments):
         self._ensure_open()
         if action not in ('status','append','seal','start','resume','cancel','release'):raise ValueError('Unknown job action')
+        if action in ('start','resume') and self.pending_operation:
+            if self._refresh_receipt is not None:raise MetadataRefreshError(self._refresh_receipt,'Refresh before executing a job')
+            raise UnknownOutcome(self.pending_operation)
         # Job IDs survive transport errors; never automatically repeat start/resume.
         return self.client.request(self.base+'/operation-jobs/'+quote(job_id,safe='')+'/'+action,arguments)
 

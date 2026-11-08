@@ -1,0 +1,68 @@
+{
+  "reviews": "Author self-reviews; no independent approval claimed",
+  "pull_requests": [
+    {
+      "pr": 95,
+      "head": "43f6f62f631e37b0d966d2c88cf52961436fe8eb",
+      "merged_at": "2026-11-08T17:54:10Z",
+      "review_at_head_before_merge": true,
+      "review_state": "COMMENTED"
+    },
+    {
+      "pr": 96,
+      "head": "3a936d3512479f0c807389eeb170db2fac997827",
+      "merged_at": "2026-11-08T17:57:25Z",
+      "review_at_head_before_merge": true,
+      "review_state": "COMMENTED"
+    },
+    {
+      "pr": 97,
+      "head": "95043f94dccaef08ed4f704cc1b6f1453ff26d7d",
+      "merged_at": "2026-11-08T18:02:45Z",
+      "review_at_head_before_merge": true,
+      "review_state": "COMMENTED"
+    },
+    {
+      "pr": 98,
+      "head": "b3e23ef430d578844b4542b5acdb341313966855",
+      "merged_at": "2026-11-08T18:06:44Z",
+      "review_at_head_before_merge": true,
+      "review_state": "COMMENTED"
+    },
+    {
+      "pr": 99,
+      "head": "f91b053405200514b3174bb1a6ae74b1554c49f2",
+      "merged_at": "2026-11-08T18:12:53Z",
+      "review_at_head_before_merge": true,
+      "review_state": "COMMENTED"
+    },
+    {
+      "pr": 100,
+      "head": "e89810622cc5bb2120bc0995b1f3beda1e57633e",
+      "merged_at": "2026-11-08T18:19:08Z",
+      "review_at_head_before_merge": true,
+      "review_state": "COMMENTED"
+    },
+    {
+      "pr": 101,
+      "head": "d278d320a487d5ef3c593cd203fad3ec4750bd40",
+      "merged_at": "2026-11-08T18:29:06Z",
+      "review_at_head_before_merge": true,
+      "review_state": "COMMENTED"
+    },
+    {
+      "pr": 102,
+      "head": "c6b58745f52ebbdd3f58700d3d9bb5ff6750b569",
+      "merged_at": "2026-11-08T18:42:35Z",
+      "review_at_head_before_merge": true,
+      "review_state": "COMMENTED"
+    },
+    {
+      "pr": 103,
+      "head": "3487522a2f01f5b72ab6831583f47e2f5fd58b92",
+      "merged_at": "2026-11-08T18:59:30Z",
+      "review_at_head_before_merge": true,
+      "review_state": "COMMENTED"
+    }
+  ]
+}

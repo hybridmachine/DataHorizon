@@ -100,7 +100,7 @@ class OperationJobs:
         with self.lock,self.journal(identifier) as (db,meta),db:
             require(meta['status']=='staging','JOB_SEALED','Job is not staging',409)
             require('source_path' not in meta['options'] or meta.get('source_complete'),'JOB_STAGING','CSV staging must finish before review',409)
-            require((meta['total']+meta['batch_size']-1)//meta['batch_size']<=1000,'LIMIT','At most 1,000 explicit batches per job')
+            require(meta['mode']=='atomic' or (meta['total']+meta['batch_size']-1)//meta['batch_size']<=1000,'LIMIT','At most 1,000 explicit batches per job')
             if meta['mode']=='atomic':require(meta['bytes']<=3*1024*1024,'LIMIT','Atomic job payload exceeds the ordinary request budget')
             digest=hashlib.sha256(encoded({k:meta[k] for k in ('action','mode','sheet','options','total')}).encode())
             for (payload,) in db.execute('SELECT payload FROM cells ORDER BY seq'):digest.update(payload.encode());digest.update(b'\n')
@@ -197,6 +197,7 @@ class OperationJobs:
             self.book.refresh()
             require(self.recover(identifier),'OUTCOME_UNKNOWN','Reconcile the pending native operation before resuming',409)
             with self.journal(identifier) as (db,meta),db:
+                require(meta['action']!='edit' or not self.book.readonly,'READ_ONLY','Open the native file writable before executing an edit job',403)
                 require(db.execute('SELECT count(*) FROM attempts').fetchone()[0]<1000,'LIMIT','Job has exhausted 1,000 admitted attempts')
                 require(request.get('expected_state')==self.book.state() and request.get('plan_digest')==meta['plan_digest'] and meta['plan_digest'] is not None,'STALE_PLAN','Review the sealed plan and current workbook before execution',409)
                 require(meta['status'] in (('prepared','cancelled','failed','interrupted','stale','running') if resume else ('prepared',)),'INVALID_JOB_STATE','Use explicit resume for partially executed jobs',409)
