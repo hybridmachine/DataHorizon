@@ -43,8 +43,22 @@ class FormattingTests(unittest.TestCase):
 
     def test_every_precision_preserves_numeric_values_and_display_codes_in_packages(self):
         styles=[{'format':mode,'decimals':places} for mode in ('number','percent') for places in range(16)]
+        styles += [{**s,'grouping':True} for s in styles]
         snapshot={'state':'s','range':[1,1,len(styles),1],'cells':[{'row':r,'col':1,'source':'0.125','kind':'number','value':.125,'calculation':'current','style':style} for r,style in enumerate(styles,1)]}
         for export,preview in ((xlsx_export,xlsx_preview),(ods_export,ods_preview)):
             result=preview(export(snapshot,{}));self.assertTrue(result['can_import'],result)
             self.assertEqual([float(c['source']) for c in result['cells']],[.125]*len(styles))
             self.assertEqual([number_format_code(c['style']) for c in result['cells']],[number_format_code(s) for s in styles])
+
+    def test_grouping_is_invariant_keeps_magnitudes_and_rejects_non_boolean(self):
+        for bad in (0,1,'true',None):
+            with self.assertRaises(EngineError):validate_style({'grouping':bad})
+        self.assertEqual(display(-12345.625,{'format':'number','decimals':3,'grouping':True}),'-12,345.625')
+        self.assertEqual(display(123.456,{'format':'percent','decimals':1,'grouping':True}),'12,345.6%')
+        self.assertEqual(display('0012345',{'grouping':True}),'0012345')
+        with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/'g.dhwb',create=True)) as book:
+            def apply(cells):return book.mutate({'action':'edit','operation_id':book.state(),'expected_state':book.state(),'cells':cells})
+            apply([{'row':1,'col':1,'source':'123.456','style':{'format':'percent2','decimals':8}}])
+            apply([{'row':1,'col':1,'style':{'grouping':True}}]);cell=book.read('Sheet1',{})['cells'][0]
+            self.assertEqual(cell['display'],'12,345.60%');self.assertEqual(cell['value'],123.456);self.assertEqual(cell['source'],'123.456')
+            self.assertEqual(book.csv_export('Sheet1',{})['csv'],'123.456\r\n')

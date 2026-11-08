@@ -132,7 +132,7 @@ def rectangle(args, limit=MAX_CELLS):
 
 def validate_style(style):
     require(isinstance(style, dict), "INVALID_STYLE", "Style must be an object")
-    allowed = {"format", "bold", "italic", "align", "background", "wrap", "border", "decimals"}
+    allowed = {"format", "bold", "italic", "align", "background", "wrap", "border", "decimals", "grouping"}
     require(not set(style) - allowed, "UNSUPPORTED_STYLE", "Unsupported style property")
     for key, value in style.items():
         if key == "format":
@@ -606,7 +606,8 @@ class Workbook:
                     item.update(source=edit["source"], kind=edit.get("kind", "auto"))
                 if "style" in edit:
                     style=validate_style(edit["style"])
-                    if "decimals" in style and "format" not in style and not edit.get("replace_style"):
+                    if ("decimals" in style or "grouping" in style) and "format" not in style and not edit.get("replace_style"):
+                        if "decimals" not in style and item["style"].get("format") in ("fixed2","percent2"): style={**style,"decimals":2}
                         style={**style,"format":"percent" if item["style"].get("format") in ("percent","percent2") else "number"}
                     item["style"] = style if edit.get("replace_style") else validate_style({**item["style"], **style})
                 # Text format affects subsequent entry, never retypes an existing

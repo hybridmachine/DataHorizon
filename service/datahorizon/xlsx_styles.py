@@ -43,7 +43,7 @@ class XlsxStyles:
         custom=self.formats.get(fmt)
         if fmt=="49" or custom=="@": result["format"]="text"
         else:
-            code=custom if custom is not None else {"0":"General","1":"0","2":"0.00","9":"0%","10":"0.00%"}.get(fmt,"")
+            code=custom if custom is not None else {"0":"General","1":"0","2":"0.00","3":"#,##0","4":"#,##0.00","9":"0%","10":"0.00%"}.get(fmt,"")
             mapped=simple_number_style(code)
             if mapped: result.update(mapped)
             elif code!="General": self.loss(f"Number format {fmt} ({custom or 'built-in'}) is omitted; numeric inputs remain numbers, including date/time serials.")

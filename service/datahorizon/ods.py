@@ -163,10 +163,10 @@ class OdsStyles:
             fmt=self.formats.get(data_name)
             require(fmt is not None,"INVALID_SPREADSHEET","Missing ODS number style")
             number=fmt.find(q(N,"number"))
-            simple_number=number is not None and re.fullmatch(r"[0-9]|1[0-5]",number.get(q(N,"decimal-places"),"")) is not None and number.get(q(N,"grouping"),"false")=="false" and number.get(q(N,"min-integer-digits"),"1")=="1" and set(number.attrib)<={q(N,"decimal-places"),q(N,"min-integer-digits"),q(N,"grouping")}
+            simple_number=number is not None and re.fullmatch(r"[0-9]|1[0-5]",number.get(q(N,"decimal-places"),"")) is not None and number.get(q(N,"grouping"),"false") in ("false","true") and number.get(q(N,"min-integer-digits"),"1")=="1" and set(number.attrib)<={q(N,"decimal-places"),q(N,"min-integer-digits"),q(N,"grouping")}
             if fmt.tag==q(N,"text-style") and len(fmt)==1 and fmt[0].tag==q(N,"text-content"): result["format"]="text"
-            elif fmt.tag==q(N,"number-style") and len(fmt)==1 and simple_number: result.update(simple_number_style("0"+("."+"0"*int(number.get(q(N,"decimal-places"))) if int(number.get(q(N,"decimal-places"))) else "")))
-            elif fmt.tag==q(N,"percentage-style") and len(fmt)==2 and simple_number and fmt[0].tag==q(N,"number") and fmt[1].tag==q(N,"text") and fmt[1].text=="%": result.update(simple_number_style("0"+("."+"0"*int(number.get(q(N,"decimal-places"))) if int(number.get(q(N,"decimal-places"))) else "")+"%"))
+            elif fmt.tag==q(N,"number-style") and len(fmt)==1 and simple_number: result.update(simple_number_style(("#,##0" if number.get(q(N,"grouping"))=="true" else "0")+("."+"0"*int(number.get(q(N,"decimal-places"))) if int(number.get(q(N,"decimal-places"))) else "")))
+            elif fmt.tag==q(N,"percentage-style") and len(fmt)==2 and simple_number and fmt[0].tag==q(N,"number") and fmt[1].tag==q(N,"text") and fmt[1].text=="%": result.update(simple_number_style(("#,##0" if number.get(q(N,"grouping"))=="true" else "0")+("."+"0"*int(number.get(q(N,"decimal-places"))) if int(number.get(q(N,"decimal-places"))) else "")+"%"))
             else: self.loss("Unsupported ODS number/date/currency display formats are omitted; typed values are retained.")
         for prop in item:
             if prop.tag==q(Y,"text-properties"):
@@ -293,9 +293,9 @@ def ods_export(snapshot,request):
         spec=numeric_spec(style)
         if spec:
             if spec not in numeric_ids:
-                mode_name,places=spec; data_name="NF"+str(len(numeric_ids));numeric_ids[spec]=data_name
+                mode_name,places,grouped=spec; data_name="NF"+str(len(numeric_ids));numeric_ids[spec]=data_name
                 fmt=node(automatic,q(N,"percentage-style" if mode_name=="percent" else "number-style"),**{q(Y,"name"):data_name})
-                node(fmt,q(N,"number"),**{q(N,"decimal-places"):str(places),q(N,"min-integer-digits"):"1"})
+                node(fmt,q(N,"number"),**{q(N,"decimal-places"):str(places),q(N,"min-integer-digits"):"1",q(N,"grouping"):str(grouped).lower()})
                 if mode_name=="percent": node(fmt,q(N,"text"),"%")
             attrs[q(Y,"data-style-name")]=numeric_ids[spec]
         out=node(automatic,q(Y,"style"),**attrs)

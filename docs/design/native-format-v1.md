@@ -117,3 +117,8 @@ General/Text ignore it and legacy fixed2/percent2 always remain two places.
 Precision-only managed patches preserve percentage categories. This additive
 style extension does not alter schema version 1, stored inputs or numeric types;
 older services can reject the new properties instead of silently dropping them.
+
+Numeric styles also accept boolean `grouping` (default false), with invariant
+comma thousands and dot decimal separators. Grouping without a category means
+Number; a managed grouping-only patch preserves percentage categories and their
+effective precision. General/Text display ignores this metadata.

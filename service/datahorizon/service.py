@@ -101,6 +101,7 @@ def openapi():
             "example":{"sheet":"Sheet1","r1":1,"c1":1,"r2":32,"c2":16}},
         "Style":{"type":"object","additionalProperties":False,"properties":{
             "format":{"type":"string","enum":["general","text","fixed2","percent2","number","percent"]},
+            "grouping":{"type":"boolean","description":"Invariant comma thousands grouping for numeric categories; dot decimal separator. A grouping-only patch preserves percentages and precision."},
             "decimals":{"type":"integer","minimum":0,"maximum":15,"description":"Number/percent precision; legacy fixed2/percent2 always use two places. A precision-only patch preserves percentage families."},
             "bold":{"type":"boolean"},"italic":{"type":"boolean"},"wrap":{"type":"boolean"},
             "align":{"type":"string","enum":["left","center","right"]},
