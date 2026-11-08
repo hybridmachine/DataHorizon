@@ -75,6 +75,7 @@ private:
     void paste(bool valuesOnly = false, bool formatsOnly = false);
     void clearCells(const QString &mode);
     void showFormatCells();
+    void adjustDecimals(int change);
     void format(const QJsonObject &style, QJsonObject target = {}, bool replaceStyle = false);
     void importFile();
     void exportFile();

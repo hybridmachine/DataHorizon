@@ -2,6 +2,7 @@
 import re
 
 from .engine import encoded, require
+from .formats import number_format_code, simple_number_style
 from .interchange import S,R,node,read_xml
 
 
@@ -41,9 +42,11 @@ class XlsxStyles:
         fmt=xf.get("numFmtId","0")
         custom=self.formats.get(fmt)
         if fmt=="49" or custom=="@": result["format"]="text"
-        elif fmt=="2" or custom=="0.00": result["format"]="fixed2"
-        elif fmt=="10" or custom=="0.00%": result["format"]="percent2"
-        elif fmt!="0" and custom!="General": self.loss(f"Number format {fmt} ({custom or 'built-in'}) is omitted; numeric inputs remain numbers, including date/time serials.")
+        else:
+            code=custom if custom is not None else {"0":"General","1":"0","2":"0.00","9":"0%","10":"0.00%"}.get(fmt,"")
+            mapped=simple_number_style(code)
+            if mapped: result.update(mapped)
+            elif code!="General": self.loss(f"Number format {fmt} ({custom or 'built-in'}) is omitted; numeric inputs remain numbers, including date/time serials.")
         font=self.index(xf.get("fontId","0"),self.fonts)
         if enabled(font.find(f"{{{S}}}b")): result["bold"]=True
         if enabled(font.find(f"{{{S}}}i")): result["italic"]=True
@@ -74,7 +77,7 @@ class XlsxStyles:
         return result
 
     def report(self):
-        return ["Mapped direct cell styles replace destination styles: general/Text/fixed2/percent2, bold/italic, alignment, wrapping, solid RGB fill and thin box borders.",
+        return ["Mapped direct cell styles replace destination styles: general/Text/number/percentage with 0–15 decimal places, bold/italic, alignment, wrapping, solid RGB fill and thin box borders.",
                 "Font family/size/color, rich-text runs, named-style inheritance, conditional formatting, row/column defaults and dimensions are omitted.",*sorted(self.losses)]
 
 
@@ -87,6 +90,13 @@ def export_styles(cells):
             require(len(styles)<1024,"LIMIT","XLSX export exceeds 1,024 distinct native styles")
             mapping[key]=len(styles); styles.append(cell["style"])
     root=ET.Element("styleSheet",xmlns=S)
+    codes={}
+    for style in styles:
+        code=number_format_code(style)
+        if code not in ("General","@","0.00","0.00%") and code not in codes: codes[code]=str(164+len(codes))
+    if codes:
+        formats=node(root,"numFmts",count=str(len(codes)))
+        for code,identifier in codes.items(): node(formats,"numFmt",numFmtId=identifier,formatCode=code)
     fonts=node(root,"fonts",count=str(len(styles)))
     fills=node(root,"fills",count=str(len(styles)+2))
     node(node(fills,"fill"),"patternFill",patternType="none")
@@ -108,7 +118,7 @@ def export_styles(cells):
     bases=node(root,"cellStyleXfs",count="1"); node(bases,"xf",numFmtId="0",fontId="0",fillId="0",borderId="0")
     xfs=node(root,"cellXfs",count=str(len(styles)))
     for index,style in enumerate(styles):
-        xf=node(xfs,"xf",numFmtId={"general":"0","text":"49","fixed2":"2","percent2":"10"}[style.get("format","general")],
+        xf=node(xfs,"xf",numFmtId=({"General":"0","@":"49","0.00":"2","0.00%":"10"}.get(number_format_code(style)) or codes[number_format_code(style)]),
                 fontId=str(index),fillId=str(index+2) if "background" in style else "0",borderId=str(index),xfId="0",
                 applyFont="1",applyFill="1",applyBorder="1",applyNumberFormat="1",applyAlignment="1")
         alignment={}

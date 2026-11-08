@@ -100,7 +100,8 @@ def openapi():
             "description":"At most 4,096 viewport cells and a 4 MiB response. Without coordinates, reads default to A1.",
             "example":{"sheet":"Sheet1","r1":1,"c1":1,"r2":32,"c2":16}},
         "Style":{"type":"object","additionalProperties":False,"properties":{
-            "format":{"type":"string","enum":["general","text","fixed2","percent2"]},
+            "format":{"type":"string","enum":["general","text","fixed2","percent2","number","percent"]},
+            "decimals":{"type":"integer","minimum":0,"maximum":15,"description":"Number/percent precision; legacy fixed2/percent2 always use two places. A precision-only patch preserves percentage families."},
             "bold":{"type":"boolean"},"italic":{"type":"boolean"},"wrap":{"type":"boolean"},
             "align":{"type":"string","enum":["left","center","right"]},
             "border":{"type":"string","enum":["none","box"]},

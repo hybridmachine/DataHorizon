@@ -1,0 +1,35 @@
+"""Invariant numeric display and the deliberately small portable format grammar."""
+from decimal import Context, Decimal, localcontext
+import re
+
+
+def numeric_spec(style):
+    mode=style.get("format", "number" if "decimals" in style else "general")
+    if mode not in ("fixed2","percent2","number","percent"): return None
+    return ("percent" if mode in ("percent","percent2") else "number",
+            2 if mode in ("fixed2","percent2") else style.get("decimals",2))
+
+
+def numeric_display(value,style):
+    spec=numeric_spec(style)
+    if spec is None: return format(value,".15g")
+    mode,places=spec
+    if mode=="percent":
+        with localcontext(Context(prec=340)):
+            return f"{Decimal(str(value))*100:.{places}f}%"
+    return f"{value:.{places}f}"
+
+
+def number_format_code(style):
+    spec=numeric_spec(style)
+    if spec is None: return "@" if style.get("format")=="text" else "General"
+    mode,places=spec
+    return "0"+("."+"0"*places if places else "")+("%" if mode=="percent" else "")
+
+
+def simple_number_style(code):
+    match=re.fullmatch(r"0(?:\.(0{1,15}))?(%)?",code)
+    if not match: return None
+    places=len(match[1] or "");mode="percent" if match[2] else "number"
+    if places==2: return {"format":"percent2" if match[2] else "fixed2"}
+    return {"format":mode,"decimals":places}

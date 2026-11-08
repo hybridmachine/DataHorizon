@@ -1,6 +1,5 @@
 """SQLite transaction owner. All managed clients enter through these operations."""
 
-from decimal import Context, Decimal, localcontext
 import csv
 from contextlib import contextmanager
 from functools import cmp_to_key
@@ -19,6 +18,7 @@ import uuid
 
 from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, translate, move_references, transform_structure, rename_sheet_references, delete_sheet_references
 from .hooks import HookFailure, invoke
+from .formats import numeric_display
 
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
@@ -132,11 +132,13 @@ def rectangle(args, limit=MAX_CELLS):
 
 def validate_style(style):
     require(isinstance(style, dict), "INVALID_STYLE", "Style must be an object")
-    allowed = {"format", "bold", "italic", "align", "background", "wrap", "border"}
+    allowed = {"format", "bold", "italic", "align", "background", "wrap", "border", "decimals"}
     require(not set(style) - allowed, "UNSUPPORTED_STYLE", "Unsupported style property")
     for key, value in style.items():
         if key == "format":
-            require(value in ("general", "text", "fixed2", "percent2"), "UNSUPPORTED_STYLE", "Unsupported number format")
+            require(value in ("general", "text", "fixed2", "percent2", "number", "percent"), "UNSUPPORTED_STYLE", "Unsupported number format")
+        elif key == "decimals":
+            require(type(value) is int and 0 <= value <= 15, "INVALID_STYLE", "Decimal places must be an integer from 0 to 15")
         elif key == "align":
             require(value in ("left", "center", "right"), "INVALID_STYLE", "Invalid alignment")
         elif key == "background":
@@ -192,10 +194,7 @@ def display(value, style):
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
     if isinstance(value, (float, int)):
-        if style.get("format")=="percent2":
-            with localcontext(Context(prec=340)):
-                return f"{Decimal(str(value))*100:.2f}%"
-        return f"{value:.2f}" if style.get("format") == "fixed2" else format(value, ".15g")
+        return numeric_display(value, style)
     return str(value)
 
 
@@ -607,6 +606,8 @@ class Workbook:
                     item.update(source=edit["source"], kind=edit.get("kind", "auto"))
                 if "style" in edit:
                     style=validate_style(edit["style"])
+                    if "decimals" in style and "format" not in style and not edit.get("replace_style"):
+                        style={**style,"format":"percent" if item["style"].get("format") in ("percent","percent2") else "number"}
                     item["style"] = style if edit.get("replace_style") else validate_style({**item["style"], **style})
                 # Text format affects subsequent entry, never retypes an existing
                 # number/formula merely because its presentation changed.
