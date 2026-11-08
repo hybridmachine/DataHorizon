@@ -9,6 +9,11 @@ def register(name, signature, summary, rules, formula, result, category, inputs=
                            examples=[dict(formula=formula,result=result,**({"inputs":inputs} if inputs else {}))],category=category)
 
 
+register('DATE','DATE(year, month, day)','Construct a typed Gregorian date.','Three scalar numeric/Boolean/blank arguments, fractions truncate. Years 0–1899 add 1900; years outside 0–9999 fail. Month/day overflow normalizes using the real Gregorian calendar; 1900-02-29 normalizes to March 1. Result outside years 0001–9999 is #NUM!. Text and ranges fail.','=DATE(2024,2,29)','2024-02-29','Date/time')
+for name,part,result in (('YEAR','year',2024),('MONTH','month',2),('DAY','day',29)):
+    register(name,name+'(date)','Extract the Gregorian '+part+'.','One scalar date/datetime or numeric 1900-system serial. Time-only and Text fail; blank/Boolean numeric coercions apply. Fractional serial days are discarded. Serial 60 is #NUM!.','='+name+'(DATE(2024,2,29))',result,'Date/time')
+
+
 register('SUM','SUM(value, …)','Add numeric scalars and ranges.','Text, blanks and Booleans are ignored. Referenced errors propagate; nonfinite subtotals fail. Zero arguments returns zero.','=SUM(2,3)',5,'Aggregate')
 for name,summary,example,result in (
     ('AVERAGE','Arithmetic mean of numeric inputs.','=AVERAGE(2,4)',3),
