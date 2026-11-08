@@ -47,6 +47,11 @@ class FollowOnTests(unittest.TestCase):
         self.errors([('=IFERROR(REPLACE(B1,1,0,C1),"hidden")','#LIMIT!')],{(1,2):cell('x'*20000),(1,3):cell('x'*20000)})
         self.assertEqual(calculate('=REPLACE(B1,1,40000,"ok")',{(1,2):cell('x'*40000)}),'ok')
 
+    def test_find_literal_case_unicode_empty_and_start_errors(self):
+        for formula,expected in [('=FIND("a","Data")',2),('=FIND("a","Data",3)',4),('=FIND("*","a*b")',2),('=FIND("a","😀á")',2),('=FIND("","abc",4)',4),('=FIND("",B1)',1),('=FIND(23,"00123")',4),('=FIND("b","abc",2.9)',2)]:self.assertEqual(calculate(formula),expected)
+        self.errors([('=FIND("A","Data")','#VALUE!'),('=FIND("x","abc",0)','#VALUE!'),('=FIND("","abc",5)','#VALUE!'),('=FIND("a","abc","1")','#VALUE!'),('=FIND(B1:B2,"x")','#VALUE!'),('=FIND(A1,"x")','#CYCLE!'),('=FIND("a")','#NAME?'),('=FIND("é","é")','#VALUE!')])
+        self.assertEqual(calculate('=FIND("z",B1)',{(1,2):cell('x'*50000+'z')}),50001)
+
     def test_catalog_formulas_recalculate_after_native_package_reimport(self):
         with tempfile.TemporaryDirectory() as temp:
             for index,item in enumerate(function_catalog()['functions']):

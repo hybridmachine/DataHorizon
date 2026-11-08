@@ -56,6 +56,8 @@ TEXTJOIN's ODS extension follows [LibreOffice](https://help.libreoffice.org/late
 
 5. [REPLACE #69](https://github.com/hybridmachine/DataHorizon/pull/69): locally built/tested, self-reviewed and merged.
 
+6. [FIND #70](https://github.com/hybridmachine/DataHorizon/pull/70): locally built/tested, self-reviewed and merged.
+
 ## Scalar inspection tier
 
 ISBLANK recognizes blank/NULL, including a formula's scalar NULL result; empty
@@ -97,3 +99,12 @@ inserts; beyond-end starts append, and oversized counts remove the remaining
 suffix without padding. Numeric/Boolean/blank counts use finite truncation;
 numeric Text and starts below one reject. Prefix/replacement/suffix go through
 bounded concatenation, retaining exact Text identifiers and resource/error rules.
+
+## FIND tier
+
+FIND performs case-sensitive literal substring search and returns a 1-based
+Unicode code-point position. Start defaults to one; numeric/Boolean starts use
+finite truncation and must lie in 1 through Text length+1. Empty needle returns
+the start; a missing match is #VALUE!. Wildcards remain literal, normalization
+forms stay distinct, and numeric Text start arguments reject. Scalar conversion,
+input work/deadlines and visible cycle/resource errors remain shared.
