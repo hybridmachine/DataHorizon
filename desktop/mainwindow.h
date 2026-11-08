@@ -58,6 +58,7 @@ private:
     bool referenceMouseEvent(QObject *object,QEvent *event);
     void loadFunctionCatalog();
     void showFunctionHelp();
+    void traceFormula(const QString &direction);
     void startService();
     void buildUi();
     void newBook();

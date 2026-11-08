@@ -61,6 +61,14 @@ explicit formula/reference, snapshot, draft, visibility and late-reply limits.
 local candidate; this does not qualify Windows/Linux, screen readers, physical
 interaction, clean-machine runtime or distribution.
 
+The [formula editing and coverage batch](formula-next-ten.md) adds a shared
+function catalog/help, source and cell completion/hints, draft reference picking,
+reference/parenthesis cues, scalar text/substring/concatenation functions,
+conditional aggregates, typed exact XLOOKUP and snapshot-checked direct syntactic
+tracing. Shared resource, type, hook and XLSX/ODS compatibility contracts remain
+explicit. [Local verification](evidence/formula-batch-verification.txt) records
+this batch; broader formula parity and platform/release gates remain open.
+
 ## Milestone ledger
 
 | Increment | Evidence and scope | Remaining before full milestone closure |
