@@ -62,6 +62,7 @@ class FormattingTests(unittest.TestCase):
             apply([{'row':1,'col':1,'style':{'grouping':True}}]);cell=book.read('Sheet1',{})['cells'][0]
             self.assertEqual(cell['display'],'12,345.60%');self.assertEqual(cell['value'],123.456);self.assertEqual(cell['source'],'123.456')
             self.assertEqual(book.csv_export('Sheet1',{})['csv'],'123.456\r\n')
+            apply([{'row':1,'col':1,'style':{'format':'general','decimals':14}}]);apply([{'row':1,'col':1,'style':{'grouping':True}}]);self.assertEqual(book.read('Sheet1',{})['cells'][0]['display'],'123.46')
 
     def test_currency_labels_precision_grouping_and_packages_do_not_convert(self):
         for bad in ('usd','US','USDD','$US','UŚD',123,None):

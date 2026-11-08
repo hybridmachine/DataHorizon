@@ -150,6 +150,10 @@ class WorkbookClient:
         self._ensure_open()
         return self.client.request(self.base + "/range", {"sheet": sheet, "r1": r1, "c1": c1, "r2": r2, "c2": c2})
 
+    def read_styles(self,sheet="Sheet1",r1=1,c1=1,r2=1,c2=1):
+        self._ensure_open()
+        return self.client.request(self.base+"/styles",dict(sheet=sheet,r1=r1,c1=c1,r2=r2,c2=c2,expected_state=self.state))
+
     def trace(self,row,col,direction="precedents",sheet="Sheet1"):
         self._ensure_open()
         return self.client.request(self.base+"/trace",dict(sheet=sheet,row=row,col=col,direction=direction,expected_state=self.state))

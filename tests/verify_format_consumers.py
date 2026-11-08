@@ -37,4 +37,4 @@ with tempfile.TemporaryDirectory() as temp:
         props=style_objects[cell.getAttribute('stylename')].getElementsByType(TextProperties)[0];assert props.getAttribute('fontfamily')==style['font_family'] and props.getAttribute('fontsize')=='16pt' and props.getAttribute('color')=='#12ab34'
         fmt=formats[mapped[cell.getAttribute('stylename')]];assert int(fmt.getElementsByType(Number)[0].getAttribute('decimalplaces'))==style['decimals'];assert (fmt.getElementsByType(Number)[0].getAttribute('grouping')=='true')==style.get('grouping',False)
         if style['format']=='currency':assert str(fmt.getElementsByType(CurrencySymbol)[0].firstChild)==style['currency']
-    print('openpyxl and odfpy accepted',len(styles),'numeric style cases; typed values and precision retained')
+    print('openpyxl and odfpy accepted',len(styles),'numeric/font/border cases; typed values, precision and style properties retained')

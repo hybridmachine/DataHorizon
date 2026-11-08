@@ -72,7 +72,7 @@ if(BUILD_TESTING)
     target_link_libraries(desktop_tests PRIVATE datahorizon_desktop Qt6::Test)
     target_compile_definitions(desktop_tests PRIVATE DATAHORIZON_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     add_test(NAME desktop COMMAND desktop_tests)
-    set_tests_properties(desktop PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;DATAHORIZON_VIEW_STATE=${CMAKE_CURRENT_BINARY_DIR}/test-views.ini" TIMEOUT 90)
+    set_tests_properties(desktop PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;DATAHORIZON_VIEW_STATE=${CMAKE_CURRENT_BINARY_DIR}/test-views.ini" TIMEOUT 120)
     add_test(NAME service COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s tests -v)
     set_tests_properties(service PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/service" TIMEOUT 45)

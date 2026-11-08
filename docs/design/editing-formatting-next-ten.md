@@ -198,3 +198,42 @@ Unsupported patterns/thicknesses are reported. All-thin edges may canonicalize
 to `box` on import; effective edges and inputs are preserved, with native exact
 metadata retained through history/reopen. See [ODF border properties](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html).
 Evidence: `evidence/border-edges-verification.txt`.
+
+10. [Format painter #84](https://github.com/hybridmachine/DataHorizon/pull/84): locally built/tested and author-reviewed before merge.
+
+## Format painter
+
+Select one visible source rectangle (at most 10,000 cells), then Format painter
+in the Format menu or toolbar. A crosshair and status indicate readiness. Click
+a destination to copy the pattern's exact shape, or drag a rectangle whose row
+and column counts are exact multiples of that pattern. The one-shot painter
+replaces all cell styles, including clearing destination styles where the source
+style is empty. It preserves stored source/kind/formulas and the system clipboard.
+One ordinary managed edit, receipt and Undo cover the destination.
+
+Body and frozen panes share destination geometry; the ready pattern can cross
+sheets in the same unchanged workbook. Out-of-grid, hidden, projected, oversized
+or nonmultiple targets reject without partial painting. Escape, another keyboard
+command, input/address editing, service changes or managed operations cancel the
+mode. Draft/scope/state/generation fences drop late style reads; opening a new
+cell editor while a read is pending also cancels it. Read-only GUI handles do
+not paint. External changes are caught by state checks before any mutation.
+
+The shared REST `POST /v1/workbooks/{id}/styles` and SDK `read_styles` read one
+state-checked, dense rectangle of style objects, including `{}` for absent
+styles. Limits are 10,000 cells, 4 MiB response and two seconds. The style query
+selects metadata only; it does not load sources, evaluate formulas or invoke
+Python. Ordinary external-file refresh/validation still applies. Read-only
+handles can read styles. Painting uses existing edit `replace_style`, preserving
+transaction ownership and history; style-only changes do not replay input change
+handlers. Export/import use the style contracts above.
+
+Final local candidate, native scale checks, installed relocation, package
+inventory and all-ten verification: `evidence/editing-formatting-batch-verification.txt`.
+This is still a development preview, with Windows/Linux and manual/release gates
+open. Larger process suites now have a 120-second default desktop-test budget;
+individual operation deadlines are unchanged (macOS 180s / Windows 300s retained).
+
+Final numeric review also verifies that ignored precision metadata under General/
+Text does not reappear when using grouping or toolbar precision controls: these
+start from the numeric default of two places unless a numeric category is active.

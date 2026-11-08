@@ -340,3 +340,9 @@ Numeric formatting extends the shared Style schema with Number/Percentage and
 0–15 decimal places. It remains an ordinary bounded style edit, preserving typed
 inputs, formula source, transaction ownership and history. See
 [decimal precision](editing-formatting-next-ten.md#decimal-precision).
+
+Style-only snapshots use state-checked REST `/styles` / SDK `read_styles`: one
+dense rectangle, at most 10,000 cells / 4 MiB / two seconds, without formula
+calculation, hooks or source/value payloads. Format painter copies exact style
+patterns through ordinary edit/replace_style, preserving input types/formulas
+and one operation's Undo. See [the painter contract](editing-formatting-next-ten.md#format-painter).

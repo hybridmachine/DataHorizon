@@ -26,9 +26,10 @@ subsequent display formatting. Explicit `text` preserves leading zeros and
 empty strings. Explicit `null` has a null typed value; absence has no row.
 CSV date conversions store normalized YYYY-MM-DD as `text`; they do not add a
 native date kind or change format v1. See [the CSV typing contract](editing-csv-next-five.md#csv-column-typing).
-`style` is a JSON object: format (`general`, `text`, `fixed2`, `percent2`), wrap/bold/italic
-booleans, align (`left`, `center`, `right`), background (`#RRGGBB`), and border
-(`none`, `box`). Applying a
+`style` is a JSON object: format (`general`, `text`, `fixed2`, `percent2`,
+`number`, `percent`, `currency`), numeric precision/grouping/currency label,
+font family/size/text color, wrap/bold/italic booleans, alignment, RGB fill and
+legacy/per-edge borders. The additive property contracts are specified below. Applying a
 format never retypes existing input. Text format changes subsequent auto entry.
 
 For example, from an independent SQLite connection:

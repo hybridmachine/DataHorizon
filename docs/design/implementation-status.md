@@ -78,6 +78,17 @@ with independent XLSX/ODS consumers and transactional hook rollback fixtures.
 records the frozen candidate, installed relocation and archive. These remain
 explicit bounded native tiers, with the full M0–M8 completion criteria unchanged.
 
+The [editing and formatting usability batch](editing-formatting-next-ten.md)
+adds F4 reference cycling, cross-sheet draft reference picking, trace navigation,
+a unified Format Cells dialog, 0–15-place precision, invariant grouping, explicit
+currency labels, portable fonts/RGB text color, individual border edges and a
+one-shot range-pattern format painter. Style extensions preserve input types
+and formula sources across shared managed edits/history and bounded XLSX/ODS
+mappings with explicit loss reports. State-checked style-only REST/SDK snapshots
+avoid input evaluation for painter copies. [Final local verification](evidence/editing-formatting-batch-verification.txt)
+records the frozen candidate and package checks; all existing M0–M8 and platform/
+manual/release completion gates remain open.
+
 ## Milestone ledger
 
 | Increment | Evidence and scope | Remaining before full milestone closure |

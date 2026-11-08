@@ -18,7 +18,7 @@ import uuid
 
 from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, translate, move_references, transform_structure, rename_sheet_references, delete_sheet_references
 from .hooks import HookFailure, invoke
-from .formats import numeric_display
+from .formats import numeric_display, numeric_spec
 from .borders import SIDES, BORDER_STYLES
 
 MAX_CELLS = 10_000
@@ -428,6 +428,29 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
+    def read_styles(self, sheet, args):
+        r1,c1,r2,c2=rectangle(args)
+        expected=args.get("expected_state")
+        require(isinstance(expected,str) and bool(expected),"INVALID_ARGUMENT","Style reads require expected_state")
+        with self.lock:
+            deadline=time.monotonic()+2;self.refresh(deadline=deadline);self.db.execute("BEGIN")
+            try:
+                self.refresh(deadline=deadline)
+                require(expected==self.state(),"STALE_STATE","Workbook changed. Copy formatting again",409)
+                sheet=self.sheet(sheet);rows=[];response={"state":self.state(),"sheet":sheet,"range":[r1,c1,r2,c2],"rows":rows}
+                size=len(encoded(response).encode())
+                with sql_deadline(self.db,deadline):
+                    for row in range(r1,r2+1):
+                        require(time.monotonic()<=deadline,"TIMEOUT","Style read exceeded two seconds")
+                        # Select only style metadata: large inputs and broken formulas are irrelevant.
+                        stored={col:validate_style(json.loads(style)) for col,style in self.db.execute("SELECT col,style FROM cells WHERE sheet_id=? AND row=? AND col BETWEEN ? AND ? ORDER BY col",(sheet,row,c1,c2))}
+                        values=[stored.get(col,{}) for col in range(c1,c2+1)]
+                        size+=len(encoded(values).encode())+int(bool(rows));require(size<=4*1024*1024,"READ_LIMIT","Style response exceeds 4 MiB; copy a smaller range")
+                        rows.append(values)
+                require(time.monotonic()<=deadline,"TIMEOUT","Style read exceeded two seconds")
+                return response
+            finally:self.db.execute("ROLLBACK")
+
     def navigate(self, sheet, args):
         row=integer(args.get("row"),1,MAX_ROWS,"row");col=integer(args.get("col"),1,MAX_COLS,"col")
         direction=args.get("direction")
@@ -616,7 +639,8 @@ class Workbook:
                 if "style" in edit:
                     style=validate_style(edit["style"])
                     if ("decimals" in style or "grouping" in style) and "format" not in style and not edit.get("replace_style"):
-                        if "decimals" not in style and item["style"].get("format") in ("fixed2","percent2"): style={**style,"decimals":2}
+                        if "decimals" not in style:
+                            current=numeric_spec(item["style"]);style={**style,"decimals":current[1] if current else 2}
                         style={**style,"format":"percent" if item["style"].get("format") in ("percent","percent2") else "currency" if item["style"].get("format")=="currency" else "number"}
                     previous=item["style"]
                     if "border" in style: previous={key:value for key,value in previous.items() if key not in {"border_"+side for side in SIDES}}
