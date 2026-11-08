@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 
 from .engine import EngineError, MAX_CELLS, encoded, integer, require, typed, validate_style
 from .formula import Parser, split_ref
+from .borders import SIDES, border_edges, parse_ods_border, ODS_BORDERS
 from .formats import numeric_spec, simple_number_style
 from .interchange import map_formula_functions, import_edits, local_formula, mode, node, package, read_xml, xml, preparation_scope, prepare_workbook, validate_sheet_names, workbook_report
 
@@ -194,10 +195,20 @@ class OdsStyles:
                 if color and re.fullmatch(r"#[0-9a-fA-F]{6}",color): result["background"]=color.lower()
                 elif color not in (None,"transparent"): self.loss("Unsupported ODS fill is omitted.")
                 if prop.get(q(F,"wrap-option"))=="wrap": result["wrap"]=True
-                border=prop.get(q(F,"border"))
-                if border and re.fullmatch(r"(?:0\.75pt|1px) solid #[0-9a-fA-F]{6}",border): result["border"]="box"
-                elif border not in (None,"none"): self.loss("Unsupported ODS border thickness/pattern is omitted.")
-                if any(key.rsplit("}",1)[-1].startswith("border-") for key in prop.attrib): self.loss("Partial ODS borders are omitted.")
+                base=prop.get(q(F,"border"));base_style=parse_ods_border(base);edges={side:base_style or "none" for side in SIDES};has_border=base is not None
+                if base is not None and base_style is None:self.loss("Unsupported ODS border thickness/pattern is omitted.")
+                for side in SIDES:
+                    value=prop.get(q(F,"border-"+side))
+                    if value is None:continue
+                    has_border=True;mapped=parse_ods_border(value)
+                    if mapped is None:self.loss("Unsupported ODS border thickness/pattern is omitted.")
+                    else:edges[side]=mapped
+                if all(value=="thin" for value in edges.values()):result["border"]="box"
+                else:
+                    for side,value in edges.items():
+                        if value!="none":result["border_"+side]=value
+                if has_border and any(v!="none" for v in edges.values()):self.loss("ODS border colors map to the native default color.")
+
         self.cache[name]=result
         return result
 
@@ -322,7 +333,8 @@ def ods_export(snapshot,request):
         if "align" in style: paragraph[q(F,"text-align")]=style["align"]
         if style.get("wrap"): props[q(F,"wrap-option")]="wrap"
         if "background" in style: props[q(F,"background-color")]=style["background"]
-        if style.get("border")=="box": props[q(F,"border")]="0.75pt solid #000000"
+        if "border" in style or any("border_"+side in style for side in SIDES):
+            for side,value in border_edges(style).items():props[q(F,"border-"+side)]=ODS_BORDERS[value]
         if props: node(out,q(Y,"table-cell-properties"),**props)
         if paragraph: node(out,q(Y,"paragraph-properties"),**paragraph)
         if text: node(out,q(Y,"text-properties"),**text)

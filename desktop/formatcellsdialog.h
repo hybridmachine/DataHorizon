@@ -7,6 +7,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QJsonObject>
+#include <QMap>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -34,6 +35,7 @@ public:
         auto *alignment=tab(tr("Alignment"));m_align=combo("cellAlignment",alignment,tr("Horizontal"),{{tr("Left"),"left"},{tr("Center"),"center"},{tr("Right"),"right"}});m_wrap=check("cellWrap",alignment,tr("Wrap text"));
         auto *fill=tab(tr("Fill"));m_background=new QLineEdit(this);m_background->setObjectName("cellBackground");m_background->setAccessibleName(tr("Background RGB color"));m_background->setPlaceholderText(tr("Keep existing, or #RRGGBB"));m_background->setMaxLength(7);fill->addRow(tr("Background"),m_background);auto *choose=new QPushButton(tr("Choose color…"),this);choose->setAutoDefault(false);fill->addRow(choose);connect(choose,&QPushButton::clicked,this,[this]{const auto color=QColorDialog::getColor(QColor(m_background->text()),this,tr("Cell background"));if(color.isValid())m_background->setText(color.name(QColor::HexRgb));});
         auto *border=tab(tr("Border"));m_border=combo("cellBorder",border,tr("Borders on each cell"),{{tr("None"),"none"},{tr("All edges (thin)"),"box"}});
+        for(const auto &side:QStringList{"left","right","top","bottom"})m_edges[side]=combo("border_"+side,border,tr("%1 edge").arg(side),{{tr("None"),"none"},{tr("Thin"),"thin"},{tr("Medium"),"medium"},{tr("Thick"),"thick"},{tr("Dashed"),"dashed"},{tr("Dotted"),"dotted"}});
         auto *help=new QLabel(tr("Keep existing and partially checked boxes preserve each cell's formatting. Choose only the properties you want to change."),this);help->setWordWrap(true);layout->addWidget(help);
         m_reset=new QCheckBox(tr("Clear all existing formatting before applying these choices"),this);m_reset->setObjectName("resetAllFormats");layout->addWidget(m_reset);
         m_error=new QLabel(this);m_error->setObjectName("formatValidation");m_error->setWordWrap(true);layout->addWidget(m_error);m_buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,this);layout->addWidget(m_buttons);connect(m_buttons,&QDialogButtonBox::accepted,this,&QDialog::accept);connect(m_buttons,&QDialogButtonBox::rejected,this,&QDialog::reject);connect(m_background,&QLineEdit::textChanged,this,[this]{validate();});connect(m_family,&QLineEdit::textChanged,this,[this]{validate();});connect(m_textColor,&QLineEdit::textChanged,this,[this]{validate();});validate();
@@ -41,6 +43,7 @@ public:
     QJsonObject patch()const {
         QJsonObject result;for(const auto &pair:QList<QPair<QString,QComboBox *>>{{"format",m_format},{"align",m_align},{"border",m_border}})if(!pair.second->currentData().toString().isEmpty())result[pair.first]=pair.second->currentData().toString();
         for(const auto &pair:QList<QPair<QString,QCheckBox *>>{{"bold",m_bold},{"italic",m_italic},{"wrap",m_wrap}})if(pair.second->checkState()!=Qt::PartiallyChecked)result[pair.first]=pair.second->isChecked();
+        for(auto it=m_edges.cbegin();it!=m_edges.cend();++it)if(!it.value()->currentData().toString().isEmpty())result["border_"+it.key()]=it.value()->currentData().toString();
         if(!m_family->text().isEmpty())result["font_family"]=m_family->text();
         if(m_size->value()>=6)result["font_size"]=m_size->value();
         if(!m_textColor->text().isEmpty())result["text_color"]=m_textColor->text().toLower();
@@ -55,5 +58,5 @@ private:
     QCheckBox *check(const QString &name,QFormLayout *layout,const QString &label){auto *field=new QCheckBox(label,this);field->setObjectName(name);field->setTristate(true);field->setCheckState(Qt::PartiallyChecked);field->setAccessibleDescription(tr("Partially checked keeps existing formatting"));layout->addRow(field);return field;}
     void validate(){const auto value=m_background->text().trimmed();const bool color=value.isEmpty() || QRegularExpression("^#[0-9a-fA-F]{6}$").match(value).hasMatch();const bool currency=!m_currency->isEnabled() || QRegularExpression("^[A-Z]{3}$").match(m_currency->text()).hasMatch();const bool textColor=m_textColor->text().isEmpty() || QRegularExpression("^#[0-9a-fA-F]{6}$").match(m_textColor->text()).hasMatch();const auto family=m_family->text();const bool familyValid=family.isEmpty() || (family==family.trimmed() && !family.contains(QRegularExpression("[\\x00-\\x1f\\x7f,\\\\\"']")));const bool valid=color && currency && textColor && familyValid;m_error->setText(!color?tr("Enter a background color as #RRGGBB, or leave it empty to keep existing fills."):!currency?tr("Enter three uppercase letters for the currency label, such as USD or EUR."):!textColor?tr("Enter text color as #RRGGBB."):!familyValid?tr("Use one font family without controls, quotes, comma or backslash."):QString());m_buttons->button(QDialogButtonBox::Ok)->setEnabled(valid);}
 
-    QSpinBox *m_size,*m_decimals;QTabWidget *m_tabs;QComboBox *m_format,*m_align,*m_border;QCheckBox *m_grouping,*m_bold,*m_italic,*m_wrap,*m_reset;QLineEdit *m_family,*m_textColor,*m_currency,*m_background;QLabel *m_error;QDialogButtonBox *m_buttons;
+    QMap<QString,QComboBox *> m_edges;QSpinBox *m_size,*m_decimals;QTabWidget *m_tabs;QComboBox *m_format,*m_align,*m_border;QCheckBox *m_grouping,*m_bold,*m_italic,*m_wrap,*m_reset;QLineEdit *m_family,*m_textColor,*m_currency,*m_background;QLabel *m_error;QDialogButtonBox *m_buttons;
 };

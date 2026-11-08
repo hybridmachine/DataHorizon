@@ -19,6 +19,7 @@ import uuid
 from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, translate, move_references, transform_structure, rename_sheet_references, delete_sheet_references
 from .hooks import HookFailure, invoke
 from .formats import numeric_display
+from .borders import SIDES, BORDER_STYLES
 
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
@@ -132,7 +133,7 @@ def rectangle(args, limit=MAX_CELLS):
 
 def validate_style(style):
     require(isinstance(style, dict), "INVALID_STYLE", "Style must be an object")
-    allowed = {"format", "bold", "italic", "align", "background", "wrap", "border", "decimals", "grouping", "currency", "font_family", "font_size", "text_color"}
+    allowed = {"format", "bold", "italic", "align", "background", "wrap", "border", "decimals", "grouping", "currency", "font_family", "font_size", "text_color", *("border_"+side for side in SIDES)}
     require(not set(style) - allowed, "UNSUPPORTED_STYLE", "Unsupported style property")
     for key, value in style.items():
         if key == "format":
@@ -149,6 +150,8 @@ def validate_style(style):
             require(value in ("left", "center", "right"), "INVALID_STYLE", "Invalid alignment")
         elif key in ("background","text_color"):
             require(isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value), "INVALID_STYLE", "Expected #RRGGBB")
+        elif key.startswith("border_"):
+            require(value in BORDER_STYLES, "INVALID_STYLE", "Unsupported border edge style")
         elif key == "border":
             require(value in ("none", "box"), "INVALID_STYLE", "Border must be none or box")
         else:
@@ -615,7 +618,9 @@ class Workbook:
                     if ("decimals" in style or "grouping" in style) and "format" not in style and not edit.get("replace_style"):
                         if "decimals" not in style and item["style"].get("format") in ("fixed2","percent2"): style={**style,"decimals":2}
                         style={**style,"format":"percent" if item["style"].get("format") in ("percent","percent2") else "currency" if item["style"].get("format")=="currency" else "number"}
-                    item["style"] = style if edit.get("replace_style") else validate_style({**item["style"], **style})
+                    previous=item["style"]
+                    if "border" in style: previous={key:value for key,value in previous.items() if key not in {"border_"+side for side in SIDES}}
+                    item["style"] = style if edit.get("replace_style") else validate_style({**previous, **style})
                 # Text format affects subsequent entry, never retypes an existing
                 # number/formula merely because its presentation changed.
                 if not preserve_inputs and "source" in edit and item["source"] != "" and item["kind"] == "auto" and item["style"].get("format") == "text":

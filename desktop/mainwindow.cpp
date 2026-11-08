@@ -9,6 +9,7 @@
 #include "referencepickerdialog.h"
 #include "tracenavigation.h"
 #include "formatcellsdialog.h"
+#include "cellborders.h"
 #include <QListWidget>
 #include <QGridLayout>
 #include <QApplication>
@@ -133,11 +134,7 @@ public:
         QStyledItemDelegate::paint(painter,option,index);
         if(referenceColors){int inset=3;for(const auto &color:referenceColors(index.row(),index.column())){painter->save();painter->setClipRect(option.rect);painter->setBrush(Qt::NoBrush);painter->setPen(QPen(color,1.5));painter->drawRect(option.rect.adjusted(inset,inset,-inset,-inset));painter->restore();inset+=3;}}
         const auto item=index.data(SheetModel::CellRole).toJsonObject();
-        if(item["style"].toObject()["border"].toString()=="box") {
-            painter->save(); painter->setClipRect(option.rect);
-            painter->setPen(QPen(QApplication::palette().color(QPalette::Text),2)); painter->setBrush(Qt::NoBrush);
-            painter->drawRect(option.rect.adjusted(1,1,-2,-2)); painter->restore();
-        }
+        paintCellBorders(painter,option.rect,item["style"].toObject(),QApplication::palette().color(QPalette::Text));
     }
     QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const override {
         if (canEdit && !canEdit()) return nullptr;

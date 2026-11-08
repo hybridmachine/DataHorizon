@@ -109,6 +109,7 @@ def openapi():
             "decimals":{"type":"integer","minimum":0,"maximum":15,"description":"Number/percent precision; legacy fixed2/percent2 always use two places. A precision-only patch preserves percentage families."},
             "bold":{"type":"boolean"},"italic":{"type":"boolean"},"wrap":{"type":"boolean"},
             "align":{"type":"string","enum":["left","center","right"]},
+            **{"border_"+side:{"type":"string","enum":["none","thin","medium","thick","dashed","dotted"]} for side in ("left","right","top","bottom")},
             "border":{"type":"string","enum":["none","box"]},
             "background":{"type":"string","pattern":"^#[0-9a-fA-F]{6}$"}}},
         "CellEdit": {"type":"object","required":["row","col"],"properties":{

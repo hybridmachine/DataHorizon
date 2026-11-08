@@ -174,3 +174,27 @@ unsupported families, rich-text runs and advanced typography remain reported.
 Fonts are not embedded and target rendering depends on available fonts. The ODS
 mapping follows [text properties in ODF 1.3](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html).
 Evidence: `evidence/font-verification.txt`.
+
+9. [Border edges and line styles #83](https://github.com/hybridmachine/DataHorizon/pull/83): locally built/tested, visually inspected and author-reviewed before merge.
+
+## Border edges and line styles
+
+Format Cells → Border independently patches left/right/top/bottom with Keep
+existing, None, Thin, Medium, Thick, Dashed or Dotted. Unchosen edges retain each
+cell's current style. Legacy All edges/None and menu presets reset prior edge
+overrides; explicit edge choices in that same patch then override the preset.
+
+Native-v1 adds `border_left|right|top|bottom` with the six values above. Missing
+edges fall back to thin for legacy `border: box`, otherwise none. Qt paints each
+cell independently (2/3/4 logical-pixel solid strokes; dashed/dotted use 2).
+These are cell edges; outer-selection borders, merged-cell borders, diagonal
+edges and conflict reconciliation between adjacent cells remain unavailable.
+Colors use the native system palette independently of text color; exports use
+black and imports report that border colors map to the native default.
+
+XLSX maps the supported edge style names. ODS maps 0.75/1.5/2.25pt solid widths,
+and 0.75pt dashed/dotted, using per-edge attributes; 1px thin imports too.
+Unsupported patterns/thicknesses are reported. All-thin edges may canonicalize
+to `box` on import; effective edges and inputs are preserved, with native exact
+metadata retained through history/reopen. See [ODF border properties](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html).
+Evidence: `evidence/border-edges-verification.txt`.

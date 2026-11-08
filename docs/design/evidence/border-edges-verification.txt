@@ -1,0 +1,24 @@
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::borderDialogPreservesOtherEdgesAndPresetsClearOverrides()
+PASS   : DesktopTests::borderPaintingUsesIndividualEdgesWidthsAndPatterns()
+QWARN  : DesktopTests::cellBordersPaintAndClearWithoutChangingInput() qt.widgets.styles.macos: drawControl: QStyle::CE_ItemViewItem invalid (nullptr) graphics context
+QWARN  : DesktopTests::cellBordersPaintAndClearWithoutChangingInput() qt.widgets.styles.macos: drawPrimitive: QStyle::PE_PanelItemViewItem invalid (nullptr) graphics context
+QWARN  : DesktopTests::cellBordersPaintAndClearWithoutChangingInput() qt.widgets.styles.macos: drawControl: QStyle::CE_ItemViewItem invalid (nullptr) graphics context
+QWARN  : DesktopTests::cellBordersPaintAndClearWithoutChangingInput() qt.widgets.styles.macos: drawPrimitive: QStyle::PE_PanelItemViewItem invalid (nullptr) graphics context
+QWARN  : DesktopTests::cellBordersPaintAndClearWithoutChangingInput() qt.widgets.styles.macos: drawControl: QStyle::CE_ItemViewItem invalid (nullptr) graphics context
+QWARN  : DesktopTests::cellBordersPaintAndClearWithoutChangingInput() qt.widgets.styles.macos: drawPrimitive: QStyle::PE_PanelItemViewItem invalid (nullptr) graphics context
+PASS   : DesktopTests::cellBordersPaintAndClearWithoutChangingInput()
+QWARN  : DesktopTests::fontControlsValidateRenderAndUndoWithoutRetyping() qt.qpa.fonts: Populating font family aliases took 67 ms. Replace uses of missing font family "DejaVu Sans" with one that exists to avoid this cost. 
+PASS   : DesktopTests::fontControlsValidateRenderAndUndoWithoutRetyping()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 2867ms
+********* Finished testing of DesktopTests *********
+
+----------------------------------------------------------------------
+Ran 375 tests in 31.383s
+
+OK
+openpyxl and odfpy accepted 38 numeric style cases; typed values and precision retained
+Visually inspected build/border-cells-cocoa.png at native scale 2: all four edge controls, help/reset and buttons remain legible without clipping/overlap. The legacy delegate-to-image probe emits macOS graphics-context warnings; its pixel assertions pass alongside the platform-independent border painter checks.

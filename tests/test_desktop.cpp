@@ -2,6 +2,7 @@
 #include "mainwindow.h"
 #include "tracenavigation.h"
 #include "formatcellsdialog.h"
+#include "cellborders.h"
 #include "servicepaths.h"
 #include "frozen_row_probe.h"
 #include "frozentoprow.h"
@@ -957,6 +958,12 @@ private slots:
         window.findChild<QAction *>("clearBordersAction")->trigger();
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000); QTRY_VERIFY_WITH_TIMEOUT(model->loaded(index),5000);
         QCOMPARE(render().pixelColor(1,20),before.pixelColor(1,20));
+    }
+    void borderDialogPreservesOtherEdgesAndPresetsClearOverrides() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("edges.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","00123"},{"kind","text"},{"style",QJsonObject{{"border","box"},{"border_top","dotted"}}}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);auto *model=window.model();auto *grid=window.findChild<QTableView *>("grid");grid->setCurrentIndex(model->index(0,0));QTimer timer;connect(&timer,&QTimer::timeout,&window,[&]{if(auto *d=window.findChild<QDialog *>("formatCellsDialog"))if(!d->property("checked").toBool()){d->setProperty("checked",true);d->findChild<QTabWidget *>("formatTabs")->setCurrentIndex(4);auto *left=d->findChild<QComboBox *>("border_left");left->setCurrentIndex(left->findData("medium"));auto *bottom=d->findChild<QComboBox *>("border_bottom");bottom->setCurrentIndex(bottom->findData("dashed"));d->grab().save("build/border-cells-"+QGuiApplication::platformName()+".png");d->accept();}});timer.start(10);window.findChild<QAction *>("formatCellsAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,0)),5000);auto style=model->cell(model->index(0,0))["style"].toObject();QCOMPARE(style["border_top"].toString(),QString("dotted"));QCOMPARE(style["border_left"].toString(),QString("medium"));QCOMPARE(model->data(model->index(0,0)).toString(),QString("00123"));window.findChild<QAction *>("clearBordersAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,0)),5000);style=model->cell(model->index(0,0))["style"].toObject();QCOMPARE(style["border"].toString(),QString("none"));QVERIFY(!style.contains("border_top"));QVERIFY(!style.contains("border_left"));window.submit({{"action","undo"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,0)),5000);QCOMPARE(model->cell(model->index(0,0))["style"].toObject()["border_left"].toString(),QString("medium"));
+    }
+    void borderPaintingUsesIndividualEdgesWidthsAndPatterns() {
+        auto render=[](const QJsonObject &style){QImage image(120,52,QImage::Format_ARGB32);image.fill(Qt::white);QPainter p(&image);paintCellBorders(&p,image.rect(),style,Qt::black);return image;};const auto left=render({{"border_left","thin"}});QCOMPARE(left.pixelColor(1,20),QColor(Qt::black));QCOMPARE(left.pixelColor(118,20),QColor(Qt::white));const auto thick=render({{"border_left","thick"}});QCOMPARE(thick.pixelColor(3,20),QColor(Qt::black));QCOMPARE(left.pixelColor(3,20),QColor(Qt::white));const auto dash=render({{"border_top","dashed"}}),dot=render({{"border_top","dotted"}});QVERIFY(dash!=dot);QVERIFY(dash!=render({{"border_top","thin"}}));
     }
     void wrappedTextRetainsInputAndFitsVisibleRows() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
