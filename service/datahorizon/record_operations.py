@@ -76,7 +76,7 @@ def edit(book,request):
     sheet=book.sheet(request.get('sheet','Sheet1'));identifier=request.get('id')
     payload=next((p for s,i,p in records.objects(book) if (s,i)==(sheet,identifier)),None)
     require(payload is not None,'LIST_NOT_FOUND','Declared list is unavailable',404)
-    require(payload['fingerprint']==records.digest(book,sheet,payload['spec']) and (sheet,identifier) not in book.unverified_records,'UNVERIFIED_RECORDS','Reconcile records before editing',409)
+    require(payload['fingerprint']==records.digest(book,sheet,payload['spec'],book.deadline,cancel_event=book.cancel_event) and (sheet,identifier) not in book.unverified_records,'UNVERIFIED_RECORDS','Reconcile records before editing',409)
     ids=request.get('record_ids');require(isinstance(ids,list) and ids and all(isinstance(i,str) for i in ids) and len(set(ids))==len(ids),'INVALID_ARGUMENT','Provide reviewed unique record IDs')
     lookup={item['id']:item['row'] for item in payload['rows']};require(all(i in lookup for i in ids),'STALE_RECORDS','A reviewed record no longer exists',409)
     cols=columns(payload['spec'],request);require(len(ids)*len(cols)<=10000,'LIMIT','Record edit exceeds 10,000 cells')

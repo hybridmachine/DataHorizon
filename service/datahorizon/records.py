@@ -3,7 +3,7 @@ import hashlib
 import json
 import time
 import uuid
-from .engine import require,integer,encoded,valid_uuid,EngineError
+from .engine import require,integer,encoded,valid_uuid,EngineError,sql_deadline
 from .metadata import list_spec,name
 
 
@@ -23,17 +23,18 @@ def objects(book):
     return [(sheet,identifier,validate(json.loads(payload))) for sheet,identifier,payload in book.db.execute("SELECT sheet_id,id,payload FROM dh_objects WHERE namespace='records' ORDER BY sheet_id,id")]
 
 
-def digest(book,sheet,spec,deadline=None):
+def digest(book,sheet,spec,deadline=None,*,cancel_event=None):
     deadline=time.monotonic()+2 if deadline is None else deadline
     value=hashlib.sha256();size=0
-    for row,col,source,kind in book.db.execute('SELECT row,col,source,kind FROM cells WHERE sheet_id=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? ORDER BY row,col',(sheet,spec['r1'],spec['r2'],spec['c1'],spec['c2'])):
-        chunk=encoded([row,col,source,kind]).encode();size+=len(chunk)
-        require(size<=8*1024*1024 and time.monotonic()<=deadline,'LIMIT','Record verification exceeded its input/time budget');value.update(chunk);value.update(b'\n')
+    with sql_deadline(book.db,deadline,cancel_event=cancel_event):
+        for row,col,source,kind,_ in book.range_cells(sheet,range(spec['r1'],spec['r2']+1),spec['c1'],spec['c2'],deadline):
+            chunk=encoded([row,col,source,kind]).encode();size+=len(chunk)
+            require(size<=8*1024*1024,'LIMIT','Record verification exceeded its input budget');value.update(chunk);value.update(b'\n')
     return value.hexdigest()
 
 
 def capture(book):
-    return {(sheet,identifier):(payload,payload['fingerprint']==digest(book,sheet,payload['spec'],book.deadline) and (sheet,identifier) not in book.unverified_records) for sheet,identifier,payload in objects(book)}
+    return {(sheet,identifier):(payload,payload['fingerprint']==digest(book,sheet,payload['spec'],book.deadline,cancel_event=book.cancel_event) and (sheet,identifier) not in book.unverified_records) for sheet,identifier,payload in objects(book)}
 
 
 def store(book,sheet,identifier,payload):
@@ -57,7 +58,7 @@ def mutate(book,request):
         require(request.get('mode') in ('retain_positions','regenerate'),'INVALID_ARGUMENT','Reconciliation requires retain_positions or regenerate')
         spec=existing['spec'];rows=existing['rows']
         if request['mode']=='regenerate':rows=[dict(item,id=str(uuid.uuid4())) for item in rows]
-    store(book,sheet,identifier,dict(spec=spec,rows=rows,fingerprint=digest(book,sheet,spec)));book.unverified_records.discard(key)
+    store(book,sheet,identifier,dict(spec=spec,rows=rows,fingerprint=digest(book,sheet,spec,book.deadline,cancel_event=book.cancel_event)));book.unverified_records.discard(key)
 
 
 def finish(book,request,context):
@@ -86,7 +87,7 @@ def finish(book,request,context):
                 if axis=='r':rows=[dict(item,row=item['row']-count if item['row']>end else item['row']) for item in rows if not start<=item['row']<=end]
                 else:
                     for key in ('sort','filters'):spec[key]=[{**item,'col':item['col']-count if item['col']>end else item['col']} for item in spec[key]]
-        store(book,sheet,identifier,dict(spec=spec,rows=rows,fingerprint=digest(book,sheet,spec)))
+        store(book,sheet,identifier,dict(spec=spec,rows=rows,fingerprint=digest(book,sheet,spec,book.deadline,cancel_event=book.cancel_event)))
 
     require(sum((p['spec']['r2']-p['spec']['r1']+1)*(p['spec']['c2']-p['spec']['c1']+1) for _,_,p in objects(book))<=10000,'LIMIT','Declared list scopes exceed 10,000 cells')
 

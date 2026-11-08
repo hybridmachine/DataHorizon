@@ -67,25 +67,39 @@ def require(condition, code, message, status=400):
         raise EngineError(code, message, status)
 
 
+_sql_guards = threading.local()
+
+
 @contextmanager
-def sql_deadline(db, deadline):
-    expired = False
+def sql_deadline(db, deadline, *, cancel_event=None):
+    connections=getattr(_sql_guards,'connections',None)
+    if connections is None:connections=_sql_guards.connections={}
+    stack=connections.setdefault(db,[])
+    reason=None
     def check():
-        nonlocal expired
-        expired = time.monotonic() > deadline
-        return int(expired)
+        nonlocal reason
+        for bound,event,_ in stack:
+            if event is not None and event.is_set():reason='CANCELLED';return 1
+            if time.monotonic()>bound:reason='TIMEOUT';return 1
+        reason=None;return 0
+    def failure():
+        return EngineError(reason,'Cancellation confirmed before commit' if reason=='CANCELLED' else 'Operation exceeded its time budget',409 if reason=='CANCELLED' else 400)
+    stack.append((deadline,cancel_event,check))
     db.set_progress_handler(check,1000)
     try:
-        require(not check(),"TIMEOUT","Operation exceeded its time budget")
+        if check():raise failure()
         yield
-        require(not check(),"TIMEOUT","Operation exceeded its time budget")
+        if check():raise failure()
     except sqlite3.Error as error:
-        if expired:
-            raise EngineError("TIMEOUT","Operation exceeded its time budget") from error
+        if reason:
+            raise failure() from error
         raise
     finally:
-        # Rollback and durable receipt recording must remain possible on timeout.
-        db.set_progress_handler(None,0)
+        stack.pop()
+        if stack:db.set_progress_handler(stack[-1][2],1000)
+        else:
+            # Rollback and durable receipt recording remain possible on timeout.
+            db.set_progress_handler(None,0);connections.pop(db,None)
 
 
 def check_integrity(db,deadline):

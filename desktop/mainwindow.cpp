@@ -62,13 +62,14 @@
 #include <QToolBar>
 #include <QUuid>
 #include <QVBoxLayout>
-#include <filesystem>
+#include "exportwriter.h"
+#include "jobcloser.h"
+#include "clipboarddata.h"
 #include <algorithm>
 
 namespace {
 bool sameFile(const QString &left, const QString &right) {
-    std::error_code error;
-    return std::filesystem::equivalent(QFileInfo(left).filesystemFilePath(), QFileInfo(right).filesystemFilePath(), error);
+    return ExportWriter::sameFile(left,right);
 }
 
 bool saveCsvSnapshot(const QString &path,const QJsonObject &result,const QString &native,QString &error) {
@@ -1271,6 +1272,18 @@ bool MainWindow::preserveUnknownOperation() {
     return true;
 }
 
+bool MainWindow::preserveJobRecovery(const QJsonObject &workbook,const QString &job,const QJsonObject &status) {
+    const auto dir=recoveryDirectory();
+    if(!QDir().mkpath(dir)){issue("Cannot create job recovery directory: "+dir);return false;}
+    if(m_jobRecoveryRecord.isEmpty())m_jobRecoveryRecord=dir+"/job-"+QUuid::createUuid().toString(QUuid::WithoutBraces)+".json";
+    QSaveFile file(m_jobRecoveryRecord);
+    const auto data=QJsonDocument(QJsonObject{{"workbook_path",workbook["path"]},{"workbook_id",workbook["workbook_id"]},{"handle",workbook["id"]},{"job_id",job},{"status",status},{"outcome","unknown"},{"instructions","Inspect this native file's retained job journal and native receipts before resuming. Closing did not confirm cancellation or handle release."}}).toJson();
+    if(!file.open(QIODevice::WriteOnly)){issue(file.errorString());return false;}
+    file.setPermissions(QFileDevice::ReadOwner|QFileDevice::WriteOwner);
+    if(file.write(data)!=data.size() || !file.commit()){issue(file.errorString());return false;}
+    return true;
+}
+
 void MainWindow::clearRecoveryRecord() {
     if (!m_recoveryRecord.isEmpty()) QFile::remove(m_recoveryRecord);
     m_recoveryRecord.clear();
@@ -1617,13 +1630,28 @@ void MainWindow::recordCommand() {
         if(reconcile){auto command=target;command["action"]="list_reconcile";command["id"]=request["id"];command["mode"]=operation;submit(command);return;}
         if(operation.contains('_') && !operation.startsWith("clear_")){
             const auto parts=operation.split('_');const auto path=QFileDialog::getSaveFileName(this,tr("Export declared records"),{},parts[0].toUpper()+" (*."+parts[0]+")");if(path.isEmpty() || !matchesTarget(target) || sameFile(path,m_info["path"].toString()))return;
-            request["mode"]=parts[1];m_client->request(base()+"/records/export/"+parts[0],request,[this,target,path](QJsonObject result,QString issueText){if(!issueText.isEmpty()){issue(issueText);return;}if(!matchesTarget(target) || result["state"]!=target["expected_state"] || sameFile(path,m_info["path"].toString()))return;QStringList report;for(const auto &line:result["report"].toArray())report.append(line.toString());QMessageBox review(QMessageBox::Question,tr("Review declared-record export"),tr("Save this projection snapshot?"),QMessageBox::Yes|QMessageBox::Cancel,this);review.setDetailedText(report.join('\n'));if(review.exec()!=QMessageBox::Yes || !matchesTarget(target) || m_source->isModified())return;const auto bytes=QByteArray::fromBase64(result["file_base64"].toString().toLatin1(),QByteArray::AbortOnBase64DecodingErrors);QSaveFile file(path);if(bytes.isEmpty() || !file.open(QIODevice::WriteOnly) || file.write(bytes)!=bytes.size() || !file.commit())issue("Declared record export failed.");else m_status->setText("Declared records exported • Native IDs retained in workbook");});return;
+            const auto native=m_info["path"].toString();
+            request["mode"]=parts[1];
+            m_client->request(base()+"/records/export/"+parts[0],request,[this,target,path,native](QJsonObject result,QString issueText){
+                if(!issueText.isEmpty()){issue(issueText);return;}
+                if(!matchesTarget(target) || result["state"]!=target["expected_state"])return;
+                QStringList report;for(const auto &line:result["report"].toArray())report.append(line.toString());
+                QMessageBox review(QMessageBox::Question,tr("Review declared-record export"),tr("Save this projection snapshot?"),QMessageBox::Yes|QMessageBox::Cancel,this);
+                review.setObjectName("recordExportReview");review.setOption(QMessageBox::Option::DontUseNativeDialog);
+                review.setTextFormat(Qt::PlainText);review.setDefaultButton(QMessageBox::Cancel);review.setDetailedText(report.join('\n'));
+                if(review.exec()!=QMessageBox::Yes || !matchesTarget(target) || m_source->isModified())return;
+                QString failure;
+                if(!ExportWriter::save(path,native,result,failure))issue(failure);
+                else m_status->setText("Declared records exported • Native IDs retained in workbook");
+            });return;
         }
         auto apply=[this,target,request,ids](QJsonArray rows,const QString &mode,bool repeat=false,const QString &scope=QString()){auto command=target;command["action"]="list_edit";command["id"]=request["id"];command["record_ids"]=ids;command["columns"]=request["columns"];command["mode"]=mode;command["rows"]=rows;command["repeat"]=repeat;if(!scope.isEmpty())command["clear_scope"]=scope;command["label"]="Edit reviewed records";submit(command);};
         if(operation.startsWith("clear_")){apply({},"clear",false,operation.mid(6));return;}
         if(operation=="all" || operation=="values" || operation=="formats"){
-            const auto *mime=QApplication::clipboard()->mimeData();QJsonArray rows;if(mime->hasFormat("application/x-datahorizon-cells")){const auto bytes=mime->data("application/x-datahorizon-cells");if(bytes.size()>4*1024*1024){issue("Clipboard exceeds 4 MiB.");return;}const auto payload=QJsonDocument::fromJson(bytes).object();if(payload["cut"].toBool()){issue("Use Copy for record-target paste.");return;}rows=payload["rows"].toArray();}
-            else {const auto text=mime->text();if(text.toUtf8().size()>3*1024*1024 || text.count('\t')+text.count('\n')+1>10000){issue("Clipboard exceeds 3 MiB or 10,000 cells.");return;}for(const auto &line:text.split('\n')){QJsonArray row;for(const auto &value:line.split('\t'))row.append(QJsonObject{{"source",value},{"input_kind","auto"},{"value",value},{"calculation","current"}});rows.append(row);}}apply(rows,operation);return;
+            QJsonObject payload;QString failure;
+            if(!ClipboardData::decode(QApplication::clipboard()->mimeData(),payload,failure,3*1024*1024)){issue(failure);return;}
+            if(payload["cut"].toBool()){issue("Use Copy for record-target paste.");return;}
+            apply(payload["rows"].toArray(),operation);return;
         }
         request["include_header"]=false;request["mode"]="all";m_client->request(base()+"/records/copy",request,[this,target,criteria,hidden,request,operation,clipboardGeneration,apply](QJsonObject result,QString error){if(!error.isEmpty()){issue(error);return;}if(!matchesTarget(target) || criteria!=m_listSpec || hidden!=m_hiddenRows || m_source->isModified() || result["state"]!=target["expected_state"])return;const auto rows=result["rows"].toArray();if(operation=="fill"){if(!rows.isEmpty())apply(QJsonArray{rows.first()},"all",true);return;}if(m_clipboardGeneration!=clipboardGeneration)return;QJsonObject payload{{"rows",rows},{"origin_row",1},{"origin_col",1},{"record_projection",true},{"cut",false}};QStringList lines;for(const auto &line:rows){QStringList fields;for(const auto &cell:line.toArray())fields.append(cell.toObject()["display"].toString());lines.append(fields.join('\t'));}auto *mime=new QMimeData;mime->setText(lines.join('\n'));mime->setData("application/x-datahorizon-cells",QJsonDocument(payload).toJson(QJsonDocument::Compact));QApplication::clipboard()->setMimeData(mime);m_status->setText("Copied declared record formulas with source coordinates");});
     });
@@ -1638,9 +1666,10 @@ void MainWindow::declareRecords() {
 }
 
 void MainWindow::operationJobs() {
-    if(m_info.isEmpty() || m_unknown || (m_busy && m_activeOperationJob.isEmpty()))return;
+    if(m_jobClosing || m_info.isEmpty() || m_unknown || (m_busy && m_activeOperationJob.isEmpty()))return;
     captureGridDraft(false);if(!resolveDraft())return;
     const auto resource=base()+"/operation-jobs",workbook=m_info["id"].toString();
+    const auto session=m_client->generation();
     QDialog dialog(this);dialog.setWindowTitle(tr("Reviewed operation jobs"));dialog.setObjectName("operationJobsDialog");dialog.resize(780,620);QFormLayout layout(&dialog);layout.setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     QLabel explanation(tr("Prepare first, review the sealed plan, then execute. Batches commit separately. Cancellation keeps committed batches. Journals remain beside the native file for explicit recovery."),&dialog);explanation.setWordWrap(true);layout.addRow(&explanation);
     QComboBox mode(&dialog);mode.setObjectName("operationJobMode");mode.addItem(tr("Stage CSV — explicit batches, Text columns"),"csv");mode.addItem(tr("Find in stored source"),"find");mode.addItem(tr("List rows, ascending first column"),"list");
@@ -1650,9 +1679,10 @@ void MainWindow::operationJobs() {
     QWidget controls(&dialog);QHBoxLayout buttons(&controls);QPushButton prepare(tr("Prepare"),&controls),inspect(tr("Inspect / retry status"),&controls),start(tr("Execute / resume…"),&controls),cancel(tr("Cancel job"),&controls),release(tr("Release journal"),&controls),next(tr("Next page"),&controls),close(tr("Close review"),&controls);prepare.setObjectName("prepareOperationJob");inspect.setObjectName("inspectOperationJob");start.setObjectName("startOperationJob");cancel.setObjectName("cancelOperationJob");close.setObjectName("closeOperationJob");for(auto *button:{&prepare,&inspect,&start,&cancel,&release,&next,&close})buttons.addWidget(button);layout.addRow(&controls);
     QJsonObject plan;QTimer timer(&dialog);timer.setInterval(150);QPointer<QDialog> guard(&dialog);bool requesting=false;int offset=0;
     auto show=[&,guard](QJsonObject value,QString error){
-        if(!guard || m_info["id"].toString()!=workbook)return;requesting=false;
+        if(!guard || session!=m_client->generation() || m_info["id"].toString()!=workbook)return;requesting=false;
         if(!error.isEmpty()){result.setPlainText(tr("Status unavailable. Keep job ID %1 and inspect again. A lost reply does not prove rollback.\n%2").arg(identifier.text(),error));timer.stop();start.setEnabled(false);return;}
-        plan=value;result.setPlainText(QString::fromUtf8(QJsonDocument(value).toJson(QJsonDocument::Indented)));const auto status=value["status"].toString();const bool active=status=="running" || status=="staging";
+        plan=value;if(m_activeOperationJob==identifier.text())m_activeJobStatus=value;
+        result.setPlainText(QString::fromUtf8(QJsonDocument(value).toJson(QJsonDocument::Indented)));const auto status=value["status"].toString();const bool active=status=="running" || status=="staging";
         identifier.setEnabled(!active && m_activeOperationJob.isEmpty());next.setEnabled(value["has_more"].toBool());
         prepare.setEnabled(!active && m_activeOperationJob.isEmpty());start.setEnabled(!active && !value["plan_digest"].toString().isEmpty() && status!="completed");
         if(active)timer.start();else timer.stop();
@@ -1661,13 +1691,39 @@ void MainWindow::operationJobs() {
     auto inspectJob=[&,guard,show]{if(!guard || requesting)return;requesting=true;m_client->request(resource+"/"+identifier.text()+"/status",{{"offset",offset}},show);};
     connect(&timer,&QTimer::timeout,&dialog,inspectJob);connect(&inspect,&QPushButton::clicked,&dialog,inspectJob);
     connect(&prepare,&QPushButton::clicked,&dialog,[&,guard,show]{if(requesting || !m_activeOperationJob.isEmpty())return;auto request=QJsonObject{{"job_id",identifier.text()},{"expected_state",m_info["state"]},{"sheet",m_model->sheet()}};if(mode.currentData()=="csv"){if(m_info["readonly"].toBool())return;request["action"]="edit";request["mode"]="batches";request["source_path"]=source.text();}else{request["action"]=mode.currentData().toString();request["r2"]=rows.value();request["c2"]=1;if(mode.currentData()=="find")request["needle"]=source.text();else request["sort"]=QJsonArray{QJsonObject{{"col",1}}};}requesting=true;m_client->request(resource,request,show);});
-    connect(&start,&QPushButton::clicked,&dialog,[&,guard,show]{if(requesting || plan["plan_digest"].toString().isEmpty() || plan["job_id"].toString()!=identifier.text())return;const auto status=plan["status"].toString();QMessageBox review(QMessageBox::Question,tr("Execute reviewed job?"),tr("Job %1: %2 cells/targets; %3 mode.\n%4 batches already committed. Cancellation keeps those commits.\n\nExecute the sealed plan shown in the report?").arg(identifier.text()).arg(plan["total"].toInt()).arg(plan["mode"].toString()).arg(plan["committed_batches"].toInt()),QMessageBox::Yes|QMessageBox::Cancel,&dialog);if(review.exec()!=QMessageBox::Yes)return;m_activeOperationJob=identifier.text();setBusy(true,tr("Job running • keep ID %1").arg(m_activeOperationJob));requesting=true;m_client->request(resource+"/"+identifier.text()+(status=="prepared"?"/start":"/resume"),{{"expected_state",m_info["state"]},{"plan_digest",plan["plan_digest"]}},show);});
+    connect(&start,&QPushButton::clicked,&dialog,[&,guard,show]{
+        if(requesting || plan["plan_digest"].toString().isEmpty() || plan["job_id"].toString()!=identifier.text())return;
+        const auto reviewed=plan;const auto job=identifier.text();requesting=true;timer.stop();
+        m_client->request(base(),{},[&,guard,show,reviewed,job](QJsonObject current,QString error){
+            if(!guard || session!=m_client->generation() || m_info["id"].toString()!=workbook)return;
+            requesting=false;
+            if(!error.isEmpty()){show({},error);return;}
+            if(current["id"].toString()!=workbook || current["workbook_id"]!=m_info["workbook_id"] || !current["state"].isString() || job!=identifier.text() || plan!=reviewed){issue("Job review context changed; inspect again.");return;}
+            if(current["readonly"].toBool() && reviewed["action"]=="edit"){issue("Open the native file writable before executing an edit job.");return;}
+            const bool resume=reviewed["status"]!="prepared" || reviewed["expected_state"]!=current["state"];
+            const auto localState=m_info["state"];
+            QMessageBox review(QMessageBox::Question,resume?tr("Resume against current inputs?"):tr("Execute reviewed job?"),
+                tr("Job %1: %2 targets; %3 mode.\n%4 batches already committed; %5 targets remain. Cancellation retains commits.\n\nOriginal state: %6\nCurrent state: %7\n\n%8")
+                    .arg(job).arg(reviewed["total"].toInt()).arg(reviewed["mode"].toString()).arg(reviewed["committed_batches"].toInt())
+                    .arg(reviewed["total"].toInt()-reviewed["next"].toInt()).arg(reviewed["expected_state"].toString(),current["state"].toString(),resume?tr("Explicitly resume this sealed plan against the current inputs?"):tr("Execute this unchanged sealed plan?")),
+                QMessageBox::Yes|QMessageBox::Cancel,&dialog);
+            review.setObjectName("operationJobExecutionReview");review.setOption(QMessageBox::Option::DontUseNativeDialog);review.setTextFormat(Qt::PlainText);review.setDefaultButton(QMessageBox::Cancel);
+            review.setDetailedText(QString::fromUtf8(QJsonDocument(reviewed).toJson(QJsonDocument::Indented)));
+            const auto choice=review.exec();
+            if(choice!=QMessageBox::Yes || !guard || session!=m_client->generation() || m_info["id"].toString()!=workbook || m_info["state"]!=localState || job!=identifier.text() || plan!=reviewed)return;
+            QJsonObject request{{"expected_state",current["state"]},{"plan_digest",reviewed["plan_digest"]}};
+            if(reviewed.contains("execution_id"))request["execution_id"]=reviewed["execution_id"];
+            m_activeOperationJob=job;m_activeJobStatus=reviewed;setBusy(true,tr("Job running • keep ID %1").arg(job));requesting=true;
+            m_client->request(resource+"/"+job+(resume?"/resume":"/start"),request,show);
+        },false);
+    });
     connect(&cancel,&QPushButton::clicked,&dialog,[&,guard,show]{if(!guard || requesting)return;requesting=true;m_client->request(resource+"/"+identifier.text()+"/cancel",{},show);});
     connect(&next,&QPushButton::clicked,&dialog,[&]{if(!requesting){offset+=100;inspectJob();}});
     connect(&release,&QPushButton::clicked,&dialog,[&,guard,show]{if(requesting || !m_activeOperationJob.isEmpty())return;requesting=true;m_client->request(resource+"/"+identifier.text()+"/release",{},show);});
     connect(&identifier,&QLineEdit::textChanged,&dialog,[&]{offset=0;plan={};});
     connect(&close,&QPushButton::clicked,&dialog,&QDialog::accept);
     if(!m_activeOperationJob.isEmpty())QTimer::singleShot(0,&dialog,inspectJob);
+    connect(m_client,&RestClient::configured,&dialog,&QDialog::reject);
     dialog.exec();timer.stop();
 }
 
@@ -1851,43 +1907,8 @@ void MainWindow::paste(bool valuesOnly, bool formatsOnly) {
     const auto *mime = QApplication::clipboard()->mimeData();
     if (!mime || !m_grid->currentIndex().isValid()) return;
     QJsonObject command;
-    constexpr int maxBytes=4*1024*1024, maxCells=10000;
-    if (mime->hasFormat("application/x-datahorizon-cells")) {
-        const auto bytes=mime->data("application/x-datahorizon-cells");
-        if (bytes.size()>maxBytes) { issue("Clipboard exceeds the 4 MiB limit. Copy a smaller selection."); return; }
-        QJsonParseError error;
-        const auto document=QJsonDocument::fromJson(bytes,&error);
-        if (error.error!=QJsonParseError::NoError || !document.isObject()) { issue("Invalid native clipboard data."); return; }
-        command=document.object();
-    }
-    else {
-        QJsonArray rows;
-        auto text = mime->text();
-        if (text.size()>maxBytes || text.toUtf8().size()>maxBytes) { issue("Clipboard exceeds the 4 MiB limit. Copy a smaller selection."); return; }
-        if (text.endsWith('\n')) text.chop(1);
-        int cells=1;
-        for (auto character:text) {
-            if ((character=='\t' || character=='\n') && ++cells>maxCells) { issue("Clipboard exceeds the 10,000-cell limit. Copy a smaller selection."); return; }
-        }
-        for (auto line : text.split('\n')) {
-            if (line.endsWith('\r')) line.chop(1);
-            QJsonArray row;
-            for (auto value : line.split('\t')) row.append(QJsonObject{{"source", value}, {"input_kind", "auto"}});
-            rows.append(row);
-        }
-        command["rows"] = rows;
-    }
-    if (command.contains("rows") || !command["cut"].toBool()) {
-        if (!command["rows"].isArray()) { issue("Invalid native clipboard rows."); return; }
-        int cells=0;
-        const auto rows=command["rows"].toArray();
-        if (rows.size()>maxCells) { issue("Clipboard exceeds the 10,000-cell limit. Copy a smaller selection."); return; }
-        for (const auto &row:rows) {
-            if (!row.isArray()) { issue("Invalid native clipboard rows."); return; }
-            cells+=row.toArray().size();
-            if (cells>maxCells) { issue("Clipboard exceeds the 10,000-cell limit. Copy a smaller selection."); return; }
-        }
-    }
+    constexpr int maxCells=ClipboardData::maxCells;QString failure;
+    if(!ClipboardData::decode(mime,command,failure)){issue(failure);return;}
     if(command["cut"].toBool()) {
         if (valuesOnly || formatsOnly) { issue("Cut supports full paste only. Use Copy for values-only or formats-only paste."); return; }
         const qint64 rows=qint64(command["r2"].toInt())-command["r1"].toInt()+1;
@@ -2461,9 +2482,29 @@ void MainWindow::findDialog(bool replace) {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
+    if(m_allowJobClose){event->accept();return;}
+    if(m_jobClosing){event->ignore();return;}
     if(!m_activeOperationJob.isEmpty()){
-        const auto answer=QMessageBox::warning(this,tr("Close with a retained job journal?"),tr("Job %1 may have committed batches. Closing requests cancellation; it cannot undo commits.\nWorkbook: %2\nKeep the ID and inspect its sidecar journal before resuming.").arg(m_activeOperationJob,m_info["path"].toString()),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel);
-        if(answer==QMessageBox::Yes)event->accept();else event->ignore();return;
+        event->ignore();
+        const auto answer=QMessageBox::warning(this,tr("Cancel job and close?"),tr("Request cancellation of job %1, inspect its outcome, then release this window's workbook handle? Committed batches remain stored.\nWorkbook: %2").arg(m_activeOperationJob,m_info["path"].toString()),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel);
+        if(answer!=QMessageBox::Yes)return;
+        const auto workbook=m_info;const auto job=m_activeOperationJob;const auto session=m_client->generation();
+        m_jobClosing=true;m_releasing=true;setBusy(true,"Cancelling job and confirming handle release…");
+        auto *closer=new JobCloser(m_client,base(),job,m_activeJobStatus,[this,workbook,job,session](QJsonObject status,QString error){
+            m_jobClosing=false;m_releasing=false;
+            if(session!=m_client->generation() || workbook["id"]!=m_info["id"])error="Service or workbook changed during close; inspect the captured job.";
+            if(error.isEmpty()){
+                m_released=true;m_activeOperationJob.clear();
+                if(!m_jobRecoveryRecord.isEmpty()){QFile::remove(m_jobRecoveryRecord);m_jobRecoveryRecord.clear();}
+                m_allowJobClose=true;close();return;
+            }
+            setBusy(false,"Job close unresolved • Inspect retained journal");issue(error);
+            if(!preserveJobRecovery(workbook,job,status))return;
+            QMessageBox review(QMessageBox::Warning,tr("Close with unresolved job cleanup?"),tr("Cancellation or handle release could not be confirmed. Closing does not prove rollback or stop further commits.\nJob: %1\nWorkbook: %2\nRecovery record: %3\n\nClose anyway and inspect the retained journal before resuming?").arg(job,workbook["path"].toString(),m_jobRecoveryRecord),QMessageBox::Yes|QMessageBox::Cancel,this);
+            review.setObjectName("unresolvedJobCloseReview");review.setOption(QMessageBox::Option::DontUseNativeDialog);review.setTextFormat(Qt::PlainText);review.setDefaultButton(QMessageBox::Cancel);
+            if(review.exec()==QMessageBox::Yes){m_allowJobClose=true;close();}
+        },this);
+        closer->start();return;
     }
 
     if (m_unknown && !m_pendingId.isEmpty()) {
@@ -2610,9 +2651,9 @@ void MainWindow::exportListTo(const QString &path,const QString &format) {
         if(choice!=QMessageBox::Yes || service!=m_client->url() || !matchesTarget(target) || !m_model->projected() || m_listSpec!=criteria || m_hiddenRows!=hiddenRows || m_hiddenColumns!=hiddenColumns)return;
         if(sameFile(path,native)){issue("Export destination resolves to the native workbook. Choose another file.");return;}
         if(format=="csv"){QString failure;if(!saveCsvSnapshot(path,result,native,failure))issue(failure);else m_status->setText("List CSV and available date/time companion exported");return;}
-        const auto bytes=QByteArray::fromBase64(result["file_base64"].toString().toLatin1(),QByteArray::AbortOnBase64DecodingErrors);
-        if(bytes.isEmpty()){issue("Empty or invalid list export response; destination retained.");return;}
-        QSaveFile file(path);if(!file.open(QIODevice::WriteOnly) || file.write(bytes)!=bytes.size() || !file.commit())issue("List export destination failed: "+file.errorString());else m_status->setText("List values exported in display order • Native workbook retained");
+        QString failure;
+        if(!ExportWriter::save(path,native,result,failure))issue(failure);
+        else m_status->setText("List values exported in display order • Native workbook retained");
     });
 }
 
@@ -2633,10 +2674,8 @@ void MainWindow::exportSpreadsheetTo(const QString &path, const QString &format,
         const auto choice=review.exec(); setBusy(false);
         if(choice!=QMessageBox::Yes || !matchesTarget(target)) return;
         if(sameFile(path,native)) { issue("Export destination resolves to the native workbook. Choose another file."); return; }
-        const auto data=QByteArray::fromBase64(result["file_base64"].toString().toLatin1(),QByteArray::AbortOnBase64DecodingErrors);
-        if(data.isEmpty()) { issue("Invalid spreadsheet snapshot response."); return; }
-        QSaveFile file(path);
-        if(!file.open(QIODevice::WriteOnly) || file.write(data)!=data.size() || !file.commit()) issue("Spreadsheet destination failed: "+file.errorString());
+        QString failure;
+        if(!ExportWriter::save(path,native,result,failure)) issue(failure);
         else m_status->setText("Spreadsheet exported • Native workbook retained");
     });
 }

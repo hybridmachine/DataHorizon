@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 import os
 import subprocess
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -10,7 +11,7 @@ import unittest
 from unittest.mock import patch
 import uuid
 
-from datahorizon.engine import Workbook,EngineError
+from datahorizon.engine import Workbook,EngineError,encoded
 from datahorizon.client import LocalService,UnknownOutcome,MetadataRefreshError
 from datahorizon.service import openapi,Service
 
@@ -42,6 +43,84 @@ class OperationJobTests(unittest.TestCase):
         self.settled(job['job_id']);self.book.close();self.book=Workbook(self.path);self.jobs=self.book.operation_jobs()
         recovered=self.jobs.view(job['job_id']);self.assertEqual(recovered['batches'][0]['receipt']['outcome'],'committed');self.assertEqual(self.book.read('Sheet1',dict(r2=3))['cells'][2]['value'],3)
         self.assertTrue(self.jobs.release(job['job_id'])['released'])
+
+    def test_released_friendly_id_gets_new_durable_execution_identity(self):
+        job=self.stage();identifier=job['job_id'];first=self.terminal(self.start(job));self.settled(identifier)
+        receipt=first['batches'][0]['receipt'];self.jobs.release(identifier)
+        self.jobs.create(dict(job_id=identifier,expected_state=self.book.state()))
+        self.jobs.append(identifier,[dict(row=1,col=1,source='changed')]);second=self.jobs.seal(identifier)
+        self.assertNotEqual(first['execution_id'],second['execution_id'])
+        second=self.terminal(self.start(second));self.settled(identifier)
+        self.assertEqual(second['status'],'completed');self.assertNotEqual(first['batches'][0]['operation_id'],second['batches'][0]['operation_id'])
+        self.assertEqual(self.book.operation(receipt['operation_id']),receipt)
+        self.assertLessEqual(len(second['batches'][0]['operation_id']),100);self.assertTrue(self.jobs.release(identifier)['released'])
+
+    def test_reviewed_execution_identity_cannot_retarget_a_recreated_job(self):
+        job=self.stage();identifier=job['job_id'];self.jobs.release(identifier)
+        self.jobs.create(dict(job_id=identifier,expected_state=self.book.state()));self.jobs.append(identifier,[dict(row=1,col=1,source='new')]);current=self.jobs.seal(identifier)
+        with self.assertRaises(EngineError) as error:
+            self.jobs.start(identifier,dict(plan_digest=current['plan_digest'],expected_state=self.book.state(),execution_id=job['execution_id']),True)
+        self.assertEqual(error.exception.body['code'],'STALE_PLAN');self.assertEqual(self.jobs.view(identifier)['batches'],[])
+        with self.assertRaises(EngineError):self.jobs.cancel(identifier,dict(execution_id=job['execution_id']))
+        self.assertEqual(self.jobs.view(identifier)['status'],'prepared')
+
+    def test_legacy_journal_upgrade_preserves_plan_and_completed_attempts(self):
+        job=self.stage();identifier=job['job_id'];result=self.terminal(self.start(job));self.settled(identifier)
+        with self.jobs.journal(identifier) as (db,meta),db:
+            meta.update(version=1,status='cancelled');meta.pop('execution_id');self.jobs.save(db,meta)
+        restored=self.terminal(self.start(job,True));self.settled(identifier)
+        self.assertEqual(restored['version'],2);self.assertEqual(restored['plan_digest'],job['plan_digest'])
+        self.assertEqual(restored['batches'],result['batches']);self.assertEqual(restored['committed_batches'],1)
+
+    def test_explicit_legacy_collision_recovery_preserves_original_receipt(self):
+        identifier='legacy';operation='job-legacy-0-1'
+        original=self.book.mutate(dict(action='edit',operation_id=operation,expected_state=self.book.state(),cells=[dict(row=1,col=1,source='old')]))
+        self.jobs.create(dict(job_id=identifier,expected_state=self.book.state()));self.jobs.append(identifier,[dict(row=1,col=1,source='new')]);job=self.jobs.seal(identifier)
+        request=dict(action='edit',operation_id=operation,expected_state=self.book.state(),cells=[dict(row=1,col=1,source='new')])
+        with self.jobs.journal(identifier) as (db,meta),db:
+            meta.update(version=1,status='unknown');meta.pop('execution_id');self.jobs.save(db,meta)
+            db.execute('INSERT INTO attempts VALUES(?,?,?,?,NULL)',(operation,0,1,encoded(request)))
+        with self.assertRaises(EngineError):self.jobs.start(identifier,dict(plan_digest='wrong',expected_state=self.book.state()),True)
+        with self.jobs.journal(identifier) as (db,_):self.assertIsNone(db.execute('SELECT result FROM attempts').fetchone()[0])
+        result=self.terminal(self.start(job,True));self.settled(identifier)
+        self.assertEqual(result['status'],'completed');self.assertEqual(result['batches'][0]['receipt']['outcome'],'not_admitted')
+        self.assertEqual(result['batches'][0]['receipt']['original_receipt'],original);self.assertEqual(self.book.operation(operation),original)
+        self.assertEqual(self.book.read('Sheet1',dict(r2=1))['cells'][0]['value'],'new');self.assertTrue(self.jobs.release(identifier)['released'])
+
+    def test_unknown_journal_version_and_failed_migration_preserve_storage(self):
+        job=self.stage();identifier=job['job_id']
+        with self.jobs.journal(identifier) as (db,meta),db:meta.update(version=99);self.jobs.save(db,meta)
+        with self.assertRaises(EngineError):self.jobs.view(identifier)
+        # Restore directly to model an old journal. Fail the transactional migration
+        # after recovery, before a batch can be admitted.
+        import sqlite3
+        with sqlite3.connect(self.jobs.path(identifier)) as db:
+            meta=json.loads(db.execute('SELECT payload FROM meta').fetchone()[0]);meta.update(version=1);meta.pop('execution_id');db.execute('UPDATE meta SET payload=?',(encoded(meta),))
+        save=self.jobs.save
+        def failing(db,meta):
+            save(db,meta)
+            if meta['version']==2:raise RuntimeError('migration interrupted')
+        with patch.object(self.jobs,'save',failing):
+            with self.assertRaises(RuntimeError):self.start(job,True)
+        result=self.jobs.view(identifier);self.assertEqual(result['version'],1);self.assertEqual(result['batches'],[])
+        self.assertEqual(self.book.read('Sheet1',dict(r2=3))['cells'],[])
+
+    def test_sidecar_storage_failures_preserve_plan_and_recover_commit_without_hook_replay(self):
+        job=self.create();identifier=job['job_id'];save=self.jobs.save
+        with patch.object(self.jobs,'save',side_effect=sqlite3.OperationalError('database or disk is full')):
+            with self.assertRaises(sqlite3.OperationalError):self.jobs.append(identifier,[dict(row=1,col=1,source='new')])
+        staged=self.jobs.view(identifier);self.assertEqual(staged['total'],0);self.assertEqual(staged['preview'],[])
+        handler=Path(self.temp.name)/'once.py';handler.write_text("def on_change(context, changes):\n    for change in changes:\n        if change['col']==1:\n            sheet=change['sheet']\n            count=context.value(sheet,1,2) or 0\n            context.set(sheet,1,2,str(count+1))\n")
+        self.book.handler=handler;self.jobs.append(identifier,[dict(row=1,col=1,source='new')]);job=self.jobs.seal(identifier);failed=[False]
+        def full_after_commit(db,meta):
+            save(db,meta)
+            if meta['next']>0 and not failed[0]:failed[0]=True;raise sqlite3.OperationalError('database or disk is full after native commit')
+        with patch.object(self.jobs,'save',full_after_commit):job=self.terminal(self.start(job));self.settled(identifier)
+        self.assertEqual(job['status'],'failed');self.assertIsNone(job['batches'][0]['receipt'])
+        self.book.close();self.book=Workbook(self.path,handler=handler);self.jobs=self.book.operation_jobs()
+        job=self.terminal(self.start(job,True));self.settled(identifier);self.assertEqual(job['status'],'completed');self.assertEqual(len(job['batches']),1)
+        self.assertEqual(self.book.read('Sheet1',dict(r2=1,c1=2,c2=2))['cells'][0]['value'],1)
+        self.assertEqual(self.book.operation(job['batches'][0]['operation_id'])['outcome'],'committed')
 
     def test_cancel_inside_atomic_rolls_back_and_after_last_commit_is_committed(self):
         job=self.stage();original=self.book.put
@@ -105,6 +184,20 @@ class OperationJobTests(unittest.TestCase):
                 if result['status']!='running':break
                 time.sleep(.005)
             self.assertEqual(result['status'],'cancelled');self.assertEqual(result['batches'][0]['receipt']['outcome'],'rolled_back')
+
+    def test_find_no_output_scan_observes_cancellation(self):
+        sheet=self.book.sheet('Sheet1')
+        self.book.db.executemany("INSERT INTO cells(sheet_id,row,col,source) VALUES(?,?,2,'unrelated')",[(sheet,r) for r in range(1,1001)])
+        job=self.create(action='find',r2=1000,needle='absent');identifier=job['job_id'];original=Workbook.range_cells
+        def cancelled(source,*args):
+            if source.readonly:
+                with self.jobs.lock:self.jobs.active[identifier][0].set()
+            yield from original(source,*args)
+        started=time.monotonic()
+        with patch.object(Workbook,'range_cells',cancelled):job=self.terminal(self.start(job));self.settled(identifier)
+        self.assertEqual(job['status'],'cancelled');self.assertEqual(job['matches'],0)
+        self.assertLess(time.monotonic()-started,3);self.assertEqual(self.book.db.execute('SELECT count(*) FROM cells').fetchone()[0],1000)
+        self.jobs.release(identifier)
 
     def test_close_cancels_worker_waiting_for_engine_without_post_close_write(self):
         job=self.stage()

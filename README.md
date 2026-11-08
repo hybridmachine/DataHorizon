@@ -12,7 +12,7 @@ Undo/Redo, wrap/borders, local sizing/hide/frozen-row preferences, list projecti
 search and CSV with strict encoding/delimiter choices and reviewed column types.
 Bounded sheet rename/duplicate/delete now update references and report broken
 links. The full implementation plan is
-still in progress; Excel/ODS, unrestricted structural references, advanced programmability
+still in progress; broader Excel/ODS fidelity, unrestricted structural references, advanced programmability
 and cross-platform release qualification remain unfinished.
 
 ## Build and run
