@@ -101,7 +101,7 @@ def openapi():
             "description":"At most 4,096 viewport cells and a 4 MiB response. Without coordinates, reads default to A1.",
             "example":{"sheet":"Sheet1","r1":1,"c1":1,"r2":32,"c2":16}},
         "Style":{"type":"object","additionalProperties":False,"properties":{
-            "format":{"type":"string","enum":["general","text","fixed2","percent2","number","percent","currency"]},
+            "format":{"type":"string","enum":["general","text","fixed2","percent2","number","percent","currency","date_iso","date_mdy","date_dmy","time24","datetime_iso"]},
             "font_family":{"type":"string","minLength":1,"maxLength":64,"description":"Single portable family without control characters, quotes, comma or backslash; unavailable fonts may render with a Qt fallback."},
             "font_size":{"type":"integer","minimum":6,"maximum":72},
             "text_color":{"type":"string","pattern":"^#[0-9a-fA-F]{6}$"},

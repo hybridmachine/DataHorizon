@@ -46,3 +46,12 @@ extension beyond Excel's display range. Time extraction uses the fractional day.
 
 Sources: [Excel date systems](https://support.microsoft.com/en-us/excel/date-systems-in-excel),
 [1900 leap-year compatibility bug](https://learn.microsoft.com/en-us/office/troubleshoot/excel/wrongly-assumes-1900-is-leap-year).
+
+## Presentation
+
+Format Cells offers invariant ISO, MM/DD/YYYY, DD/MM/YYYY, 24-hour time and ISO
+date plus time. Time formats display whole seconds; General retains fractional
+precision. Applying these styles never changes source/kind. Numeric cells are
+displayed using the 1900 serial system; invalid calendar serials show `####`.
+Text is never parsed by formatting. Time-only values retain their canonical clock
+when given a date format; dates display midnight when given a time format.

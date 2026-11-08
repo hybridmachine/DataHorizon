@@ -18,7 +18,7 @@ import uuid
 
 from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, translate, move_references, transform_structure, rename_sheet_references, delete_sheet_references
 from .hooks import HookFailure, invoke
-from .formats import numeric_display, numeric_spec
+from .formats import numeric_display, numeric_spec, temporal_display, TEMPORAL_FORMATS
 from .borders import SIDES, BORDER_STYLES
 from .temporal import Temporal, KINDS as TEMPORAL_KINDS
 
@@ -138,7 +138,7 @@ def validate_style(style):
     require(not set(style) - allowed, "UNSUPPORTED_STYLE", "Unsupported style property")
     for key, value in style.items():
         if key == "format":
-            require(value in ("general", "text", "fixed2", "percent2", "number", "percent", "currency"), "UNSUPPORTED_STYLE", "Unsupported number format")
+            require(value in ("general", "text", "fixed2", "percent2", "number", "percent", "currency", *TEMPORAL_FORMATS), "UNSUPPORTED_STYLE", "Unsupported number format")
         elif key == "font_family":
             require(isinstance(value,str) and 1 <= len(value) <= 64 and value==value.strip() and re.fullmatch(r"[^\x00-\x1f\x7f,\\\"']+",value), "INVALID_STYLE", "Font family must be 1–64 characters without controls, quotes, comma or backslash")
         elif key == "font_size":
@@ -208,6 +208,8 @@ def display(value, style):
         return ""
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
+    if isinstance(value,Temporal) or (type(value) in (int,float) and style.get("format") in TEMPORAL_FORMATS):
+        return temporal_display(value,style)
     if isinstance(value, (float, int)):
         return numeric_display(value, style)
     return str(value)

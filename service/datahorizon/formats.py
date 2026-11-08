@@ -1,6 +1,27 @@
 """Invariant numeric display and the deliberately small portable format grammar."""
 from decimal import Context, Decimal, localcontext
 import re
+from .temporal import Temporal, from_serial
+
+TEMPORAL_FORMATS = {"date_iso":"yyyy-mm-dd", "date_mdy":"mm/dd/yyyy", "date_dmy":"dd/mm/yyyy",
+                    "time24":"hh:mm:ss", "datetime_iso":"yyyy-mm-dd hh:mm:ss"}
+
+
+def temporal_display(value, style):
+    mode = style.get("format")
+    if mode not in TEMPORAL_FORMATS: return str(value)
+    if not isinstance(value,Temporal):
+        try: value=from_serial(value,"time" if mode=="time24" else "datetime")
+        except ValueError: return "####"
+    parsed=value.parsed()
+    if mode=="time24":
+        return "00:00:00" if value.kind=="date" else parsed.strftime("%H:%M:%S")
+    if value.kind=="time": return str(value)
+    day=parsed.date() if value.kind=="datetime" else parsed
+    if mode=="date_mdy":return f"{day.month:02}/{day.day:02}/{day.year:04}"
+    if mode=="date_dmy":return f"{day.day:02}/{day.month:02}/{day.year:04}"
+    if mode=="datetime_iso":return day.isoformat()+" "+("00:00:00" if value.kind=="date" else parsed.strftime("%H:%M:%S"))
+    return day.isoformat()
 
 
 def numeric_spec(style):
@@ -22,6 +43,7 @@ def numeric_display(value,style):
 
 
 def number_format_code(style):
+    if style.get("format") in TEMPORAL_FORMATS:return TEMPORAL_FORMATS[style["format"]]
     spec=numeric_spec(style)
     if spec is None: return "@" if style.get("format")=="text" else "General"
     mode,places,grouped,currency=spec
@@ -29,6 +51,8 @@ def number_format_code(style):
 
 
 def simple_number_style(code):
+    for mode,pattern in TEMPORAL_FORMATS.items():
+        if code.lower()==pattern:return {"format":mode}
     match=re.fullmatch(r'(#,##)?0(?:\.(0{1,15}))?(%|" [A-Z]{3}")?',code)
     if not match: return None
     places=len(match[2] or "");suffix=match[3] or ""

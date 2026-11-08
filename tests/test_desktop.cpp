@@ -1126,6 +1126,10 @@ private slots:
     void formatCellsDialogPatchesOnlyChosenPropertiesAndValidatesColors() {
         FormatCellsDialog dialog("A1:B2");QVERIFY(dialog.patch().isEmpty());QVERIFY(!dialog.replaceStyle());auto *fill=dialog.findChild<QLineEdit *>("cellBackground");fill->setText("red");QVERIFY(!dialog.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->isEnabled());fill->setText("#AbCdEf");QVERIFY(dialog.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->isEnabled());dialog.findChild<QCheckBox *>("fontBold")->setChecked(true);dialog.findChild<QCheckBox *>("fontItalic")->setChecked(false);auto *number=dialog.findChild<QComboBox *>("numberFormat");number->setCurrentIndex(number->findData("number"));QCOMPARE(dialog.patch(),(QJsonObject{{"background","#abcdef"},{"bold",true},{"italic",false},{"format","number"}}));dialog.findChild<QCheckBox *>("resetAllFormats")->setChecked(true);QVERIFY(dialog.replaceStyle());
     }
+    void dateFormatsDisableNumericControlsAndPatchOnlyPresentation() {
+        FormatCellsDialog dialog("A1");auto *category=dialog.findChild<QComboBox *>("numberFormat");
+        for(const auto &mode:QStringList{"date_iso","date_mdy","date_dmy","time24","datetime_iso"}){QVERIFY(category->findData(mode)>=0);category->setCurrentIndex(category->findData(mode));QVERIFY(!dialog.findChild<QSpinBox *>("decimalPlaces")->isEnabled());QVERIFY(!dialog.findChild<QCheckBox *>("numberGrouping")->isEnabled());QCOMPARE(dialog.patch(),(QJsonObject{{"format",mode}}));}
+    }
     void temporalEntryUsesManagedTypesAndRejectsChangedTargets() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("temporal.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
         auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();grid->setCurrentIndex(model->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,0)),5000);bool change=false;
