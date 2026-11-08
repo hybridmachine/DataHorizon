@@ -94,6 +94,34 @@ Programmatic startup address clears also reset their modified flag, so they do
 not masquerade as an unfinished user address draft; actual address drafts remain
 guarded.
 
+## Scalar text cleanup tier
+
+LEN/TRIM/UPPER/LOWER each take one scalar. Blank/NULL becomes empty Text; Boolean
+becomes TRUE/FALSE; finite numbers use invariant unformatted canonical text
+(safe integral values have no decimal suffix, other values retain their canonical
+Python spelling). Existing Text, including leading-zero identifiers and formula-
+looking strings, is never parsed as a number or formula. Direct ranges are rejected
+before reading their members. Ordinary referenced errors propagate; cycles and
+resource failures remain visible through IFERROR.
+
+LEN counts Unicode code points, including spaces, combining marks and variation
+selectors separately. TRIM changes only U+0020 ASCII spaces: strip outer spaces
+and collapse internal runs; tabs/newlines/NBSP remain. UPPER/LOWER use Python
+Unicode casing, independent of locale, including possible expansions. Text
+results are limited to 32,767 characters and 64 KiB UTF-8 (#LIMIT! with no
+truncation); LEN may count a longer valid input. Work charges one calculation
+step per 256 input characters in addition to ordinary AST/cell work and deadlines.
+Native schema, stored sources and history grouping remain unchanged.
+
+The common signatures are informed by Microsoft's [LEN](https://support.microsoft.com/en-us/excel/functions/len-function),
+[TRIM](https://support.microsoft.com/en-us/excel/functions/trim-function) and
+[UPPER](https://support.microsoft.com/en-us/excel/functions/upper-function) references.
+This stage explicitly chooses code-point/casing/number rules rather than claiming
+all Excel versions/locales: Unicode counting can depend on a target workbook's
+compatibility version. XLSX/ODS formulas and typed values round-trip in the
+supported tier; independent readers verify stored formulas/types, not target
+recalculation. XLSX still enforces its separate UTF-16 text-size limit.
+
 ## Completed PRs
 
 1. [Function catalog #55](https://github.com/hybridmachine/DataHorizon/pull/55): local build/full CTest and native help checks passed; self-reviewed and merged.
@@ -103,3 +131,5 @@ guarded.
 3. [Reference picking #57](https://github.com/hybridmachine/DataHorizon/pull/57): locally verified, self-reviewed and merged.
 
 4. [Reference/parenthesis cues #58](https://github.com/hybridmachine/DataHorizon/pull/58): locally verified, visually inspected, self-reviewed and merged.
+
+5. [Scalar text cleanup #59](https://github.com/hybridmachine/DataHorizon/pull/59): locally verified, self-reviewed and merged.

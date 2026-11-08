@@ -424,6 +424,27 @@ def numeric(value):
     raise FormulaError("#VALUE!", "Arithmetic requires numeric inputs")
 
 
+MAX_TEXT_CHARACTERS=32767
+MAX_TEXT_BYTES=65536
+
+
+def scalar_text(value):
+    """Unformatted invariant scalar spelling; never parse Text as a number."""
+    if value is None:return ""
+    if type(value) is str:return value
+    if type(value) is bool:return "TRUE" if value else "FALSE"
+    if type(value) in (int,float):
+        if not math.isfinite(value):raise FormulaError("#NUM!","Non-finite text conversion")
+        if value==0:return "0"
+        return str(int(value)) if value==int(value) and abs(value)<=9007199254740991 else repr(value)
+    raise FormulaError("#VALUE!","Text functions require scalar arguments")
+
+
+def bounded_text(value):
+    if len(value)>MAX_TEXT_CHARACTERS or len(value.encode())>MAX_TEXT_BYTES:raise FormulaError("#LIMIT!","Text result exceeds 32,767 characters or 64 KiB UTF-8")
+    return value
+
+
 class Calculator:
     def __init__(self, read, resolve_sheet, seconds=0.25):
         self.read, self.resolve_sheet = read, resolve_sheet
@@ -561,6 +582,20 @@ class Calculator:
         if not math.isfinite(result): raise FormulaError("#NUM!","Rounding exceeded the finite range")
         return 0.0 if result==0 else result
 
+    def text_work(self,text):
+        self.count+=max(0,(len(text)+255)//256-1)
+        self.check()
+
+    def text_function(self,name,args,sheet):
+        if len(args)!=1:raise FormulaError("#NAME?",name+" requires one scalar argument")
+        if args[0][0]=="range":raise FormulaError("#VALUE!",name+" requires a scalar argument")
+        text=scalar_text(self.evaluate(args[0],sheet));self.text_work(text)
+        if name=="LEN":return len(text)
+        if name=="TRIM":result=re.sub(" +"," ",text.strip(" "))
+        elif name=="UPPER":result=text.upper()
+        else:result=text.lower()
+        result=bounded_text(result);self.check();return result
+
     def aggregate(self,name,args,sheet):
         if not 1<=len(args)<=255: raise FormulaError("#NAME?",name+" requires 1-255 arguments")
         count=0; total=0.0; extreme=None
@@ -627,6 +662,8 @@ class Calculator:
                     raise FormulaError("#VALUE!", "IF condition must be numeric or boolean")
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
+            if name in ("LEN","TRIM","UPPER","LOWER"):
+                return self.text_function(name,args,sheet)
             if name in ("ABS","ROUND","ROUNDUP","ROUNDDOWN"):
                 return self.number_function(name,args,sheet)
             if name in ("AND","OR","NOT"):
