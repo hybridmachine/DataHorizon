@@ -85,6 +85,10 @@ register('COUNTIFS','COUNTIFS(range1, criteria1[, range2, criteria2, …])','Cou
 register('SUMIFS','SUMIFS(sum_range, range1, criteria1[, range2, criteria2, …])','Sum numeric cells satisfying every aligned criterion.',MULTIPLE_RULES+' Sum range must have the same shape. Only matching sums are evaluated; Text/Boolean/blank ignored, matching errors/nonfinite totals propagate.','=SUMIFS(C1:C3,B1:B3,"Pen",C1:C3,">2")',3,'Conditional',CONDITIONAL_EXAMPLE)
 
 
+register('INDEX','INDEX(range, row[, column])','Return one selected scalar from a bounded rectangle.','Cell/rectangular references up to 10,000 cells; only the selected cell is read. Indices are 1-based numeric/Boolean finite truncated scalars, never numeric Text or zero. Two arguments select a position in a vector; 2D rectangles require the column argument. Out of bounds is #REF!. Blank/NULL returns zero; Text remains literal within result limits. No arrays or reference-valued results.','=INDEX(C1:C2,1)','Pen','Lookup',LOOKUP_EXAMPLE)
+register('MATCH','MATCH(value, lookup_range, 0)','Return the first exact matching position in a vector.','Explicit numeric match_type 0 is required; omitted/approximate modes reject. Numbers, Boolean, Text and blank stay distinct as in XLOOKUP; Text uses Unicode casefolding, wildcard characters are literal. Forward first match, errors before match propagate, later entries unread. Missing is #N/A. One row or column up to 10,000 cells, shared work/input/deadline bounds.','=MATCH("00123",B1:B2,0)',1,'Lookup',LOOKUP_EXAMPLE)
+
+
 def function_catalog():
     return dict(version=1,functions=deepcopy([FUNCTIONS[name] for name in sorted(FUNCTIONS)]),
                 notes=['This catalog describes the implemented development tier, not full Excel compatibility.',

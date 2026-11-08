@@ -1,0 +1,111 @@
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   86.57 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   28.52 sec
+
+100% tests passed out of 2
+
+Total Test time (real) = 115.09 sec
+
+Full Qt suite: 153 passed, 0 failed.
+Base Python suite: 367 tests, 15 optional-binding skips.
+Optional binding suite: 
+Ran 367 tests in 29.665s
+
+OK
+
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::functionHelpReadsServiceCatalogSearchesExamplesWithoutEditing()
+PASS   : DesktopTests::formulaAutocompleteAndHintsStayDraftsInSourceCellAndFrozenEditors()
+PASS   : DesktopTests::referencePickingKeepsDraftTargetAcrossBodyFrozenCornerCancelAndHiddenRanges()
+QWARN  : DesktopTests::referencePickingTransfersCellDraftWithoutCommitAndRespectsTextAndReadOnly() qt.qpa.window: Window position QRect(1010,486 218x182) outside any known screen, using primary screen
+QWARN  : DesktopTests::referencePickingTransfersCellDraftWithoutCommitAndRespectsTextAndReadOnly() qt.qpa.window: Window position QRect(1010,494 412x84) outside any known screen, using primary screen
+PASS   : DesktopTests::referencePickingTransfersCellDraftWithoutCommitAndRespectsTextAndReadOnly()
+QWARN  : DesktopTests::formulaHighlightingTracksSourceAndCellDraftsWithoutMutationOrSourceChanges() qt.qpa.window: Window position QRect(790,526 218x182) outside any known screen, using primary screen
+QWARN  : DesktopTests::formulaHighlightingTracksSourceAndCellDraftsWithoutMutationOrSourceChanges() qt.qpa.window: Window position QRect(790,534 412x84) outside any known screen, using primary screen
+PASS   : DesktopTests::formulaHighlightingTracksSourceAndCellDraftsWithoutMutationOrSourceChanges()
+PASS   : DesktopTests::textCleanupFunctionsCalculateThroughSourceEditorAndKeepIdentifiers()
+PASS   : DesktopTests::substringFunctionsCalculateIdentifiersThroughTheNativeEditor()
+PASS   : DesktopTests::concatenationCalculatesThroughSourceEditorAndPreservesRawValues()
+PASS   : DesktopTests::conditionalFunctionsCalculateAlignedTotalsThroughTheNativeEditor()
+PASS   : DesktopTests::exactLookupCalculatesIdentifierKeysAndLazyFallbackInTheNativeEditor()
+PASS   : DesktopTests::formulaTracingReadsStoredReferencesWithoutMutation()
+PASS   : DesktopTests::catalogExamplesCalculateThroughNativeSourceEditor()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 10622ms
+********* Finished testing of DesktopTests *********
+
+xlsx formulas: independent reader accepted 26 formulas/typed values; no target recalculation claim
+xlsx values: independent reader accepted 26 formulas/typed values; no target recalculation claim
+ods formulas: independent reader accepted 26 formulas/typed values; no target recalculation claim
+ods values: independent reader accepted 26 formulas/typed values; no target recalculation claim
+
+Installed formula.py, functions.py and tracing.py bytes match the frozen source.
+Preceding nineteen PRs: final-head review timestamps verified before merge.
+
+{
+  "format": 1,
+  "platform": "Darwin",
+  "candidate": "058ff884c54b3aa2ad0707729ba97483663a7ecce065739a5312b50d2cb8bab3",
+  "automation_passed": true,
+  "steps": [
+    {
+      "name": "build",
+      "seconds": 0.39,
+      "returncode": 0
+    },
+    {
+      "name": "contracts",
+      "seconds": 115.15,
+      "returncode": 0
+    },
+    {
+      "name": "native-1",
+      "seconds": 1.24,
+      "returncode": 0
+    },
+    {
+      "name": "native-2",
+      "seconds": 0.92,
+      "returncode": 0
+    },
+    {
+      "name": "install",
+      "seconds": 8.07,
+      "returncode": 0
+    }
+  ],
+  "package_smoke": {
+    "platform": "Darwin",
+    "relocated_managed_edit_calculation": true,
+    "developer_overrides_removed": true,
+    "missing_service_fails_explicitly": true,
+    "runtime_dependency": "Separately installed Python unless an explicitly supplied runtime is staged",
+    "clean_machine_qualified": false
+  },
+  "archive": {
+    "name": "DataHorizon-preview.tar.gz",
+    "files": 74,
+    "sha256": "677efafb9ca2d48aee9d25a856042b9402c8c44f5b614b8abb8421bd1d1ab9c1",
+    "inventory_verified": true
+  },
+  "matrix": {
+    "platforms": {
+      "Darwin": "local automation passed; manual qualification pending",
+      "Windows": "pending",
+      "Linux": "pending"
+    },
+    "manual_gates": [
+      "physical keyboard/clipboard/native dialogs",
+      "screen-reader navigation",
+      "multiple monitors and system appearance",
+      "clean-machine installer/runtime",
+      "signing/notarization",
+      "distribution licenses/notices"
+    ],
+    "release_qualified": false
+  }
+}

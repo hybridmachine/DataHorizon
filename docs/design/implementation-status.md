@@ -69,6 +69,15 @@ tracing. Shared resource, type, hook and XLSX/ODS compatibility contracts remain
 explicit. [Local verification](evidence/formula-batch-verification.txt) records
 this batch; broader formula parity and platform/release gates remain open.
 
+The [follow-on formula coverage batch](formula-coverage-next-ten.md) adds scalar
+type/error inspection, lazy IFNA, EXACT, SUBSTITUTE, REPLACE, FIND/SEARCH,
+TEXTJOIN, aligned COUNTIFS/SUMIFS and scalar INDEX/exact MATCH. The native editor
+executes every catalog example; package reimport recalculates the same examples,
+with independent XLSX/ODS consumers and transactional hook rollback fixtures.
+[Final local verification](evidence/formula-coverage-batch-verification.txt)
+records the frozen candidate, installed relocation and archive. These remain
+explicit bounded native tiers, with the full M0–M8 completion criteria unchanged.
+
 ## Milestone ledger
 
 | Increment | Evidence and scope | Remaining before full milestone closure |

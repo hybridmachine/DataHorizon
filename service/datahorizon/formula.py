@@ -740,6 +740,32 @@ class Calculator:
             return 0 if value is None else value
         raise FormulaError("#N/A","Lookup value was not found")
 
+    def index_value(self,args,sheet):
+        if len(args) not in (2,3):raise FormulaError("#NAME?","INDEX requires range, row and optional column")
+        scope=self.range_geometry(args[0],sheet);height=scope[3]-scope[1]+1;width=scope[4]-scope[2]+1
+        row=self.integer_argument(args[1],sheet,1)
+        if len(args)==3:col=self.integer_argument(args[2],sheet,1)
+        elif height==1:row,col=1,row
+        elif width==1:col=1
+        else:raise FormulaError("#VALUE!","Two-dimensional scalar INDEX requires a column")
+        if row>height or col>width:raise FormulaError("#REF!","INDEX position exceeds its range")
+        value=self.cell(scope[0],scope[1]+row-1,scope[2]+col-1)
+        if isinstance(value,str):value=bounded_text(value)
+        self.check();return 0 if value is None else value
+
+    def match_exact(self,args,sheet):
+        if len(args)!=3:raise FormulaError("#NAME?","This MATCH tier requires explicit match_type 0")
+        mode=self.scalar_value(args[2],sheet)
+        if type(mode) not in (int,float) or mode!=0:raise FormulaError("#VALUE!","Only exact MATCH mode 0 is supported")
+        scope=self.range_geometry(args[1],sheet)
+        if scope[1]!=scope[3] and scope[2]!=scope[4]:raise FormulaError("#VALUE!","MATCH requires a single row or column")
+        key=self.exact_lookup_key(self.scalar_value(args[0],sheet));position=0
+        for row in range(scope[1],scope[3]+1):
+            for col in range(scope[2],scope[4]+1):
+                self.check();position+=1
+                if self.exact_lookup_key(self.cell(scope[0],row,col))==key:return position
+        raise FormulaError("#N/A","Lookup value was not found")
+
     def multiple_criteria(self,name,args,sheet):
         offset=1 if name=="SUMIFS" else 0
         if not 2<=len(args)-offset<=254 or (len(args)-offset)%2:raise FormulaError("#NAME?",name+" requires 1–127 range/criterion pairs")
@@ -960,6 +986,8 @@ class Calculator:
             if name=="SUBSTITUTE":return self.substitute(args,sheet)
             if name=="EXACT":return self.exact_text(args,sheet)
             if name=="XLOOKUP":return self.xlookup(args,sheet)
+            if name=="INDEX":return self.index_value(args,sheet)
+            if name=="MATCH":return self.match_exact(args,sheet)
             if name in ("COUNTIFS","SUMIFS"):return self.multiple_criteria(name,args,sheet)
             if name in ("COUNTIF","SUMIF"):
                 return self.conditional_aggregate(name,args,sheet)

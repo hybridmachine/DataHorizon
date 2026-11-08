@@ -51,6 +51,7 @@ ranges, structured references, external workbooks and 3D ranges are unsupported.
 | LEFT/RIGHT/MID | Unicode scalar substrings, optional LEFT/RIGHT count, 1-based MID start, explicit numeric count rules and bounded results; see [substring tier](formula-next-ten.md#substring-tier) |
 | CONCAT | 1–253 scalar/range arguments, row-major flattening, invariant Text and bounded incremental results; see [concatenation tier](formula-next-ten.md#concatenation-tier) |
 | ISBLANK/ISNUMBER/ISTEXT/ISLOGICAL/ISERROR/ISNA | Scalar type/error inspection without coercion; cycle/resource failures remain visible |
+| INDEX/MATCH | Scalar bounded INDEX, typed forward exact MATCH with explicit mode 0; no arrays/approximate/reference-valued results |
 | COUNTIFS/SUMIFS | 1–127 aligned AND criteria, strict same shapes, matching-only sum reads, shared work bounds |
 | TEXTJOIN | Scalar delimiter/flag, row-major ranges, explicit empty fields and bounded output |
 | SEARCH | Unicode-folded wildcard scalar Text search, original code-point positions and bounded matcher |
