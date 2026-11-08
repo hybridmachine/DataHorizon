@@ -262,6 +262,7 @@ void MainWindow::buildUi() {
     auto *formatMenu = menuBar()->addMenu(tr("F&ormat"));
     auto *sheetMenu = menuBar()->addMenu(tr("&Sheet"));
     auto *dataMenu = menuBar()->addMenu(tr("&Data"));
+    auto *localized=dataMenu->addAction(tr("Enter localized value…"));localized->setObjectName("enterLocalizedAction");connect(localized,&QAction::triggered,this,&MainWindow::enterLocalized);
     auto *declare=dataMenu->addAction(tr("Declare selected list records…"));declare->setObjectName("declareRecordsAction");connect(declare,&QAction::triggered,this,&MainWindow::declareRecords);
     auto *records=dataMenu->addAction(tr("Work with declared records…"));records->setObjectName("recordCommandAction");connect(records,&QAction::triggered,this,&MainWindow::recordCommand);
     auto *calculate=dataMenu->addAction(tr("Recalculate selection in background…"));calculate->setObjectName("calculateSelectionAction");connect(calculate,&QAction::triggered,this,&MainWindow::calculateSelection);
@@ -1654,6 +1655,14 @@ void MainWindow::calculateSelection() {
     m_client->request(base()+"/calculation/jobs",request,finish);
 }
 
+void MainWindow::enterLocalized() {
+    if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool())return;const auto current=QPersistentModelIndex(m_grid->currentIndex());if(!current.isValid())return;
+    const int row=m_model->sourceRow(current.row())+1,col=current.column()+1;const auto target=targetContext(QJsonObject{{"r1",row},{"r2",row},{"c1",col},{"c2",col}});captureGridDraft(false);if(!resolveDraft() || !matchesTarget(target))return;
+    QDialog dialog(this);dialog.setObjectName("localizedEntryDialog");dialog.setWindowTitle(tr("Enter localized value"));QFormLayout layout(&dialog);QLineEdit source(&dialog);source.setObjectName("localizedSource");source.setMaxLength(65536);QComboBox kind(&dialog),profile(&dialog);kind.setObjectName("localizedKind");profile.setObjectName("localizedProfile");for(const auto &value:QStringList{"number","date","time","datetime","timestamp_utc"})kind.addItem(value,value);for(const auto &value:QStringList{"invariant","en_US","de_DE","fr_FR"})profile.addItem(value,value);layout.addRow(tr("Source value"),&source);layout.addRow(tr("Type"),&kind);layout.addRow(tr("Conversion profile"),&profile);QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog);layout.addRow(&buttons);connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    if(dialog.exec()!=QDialog::Accepted || !matchesTarget(target) || m_grid->currentIndex()!=current)return;
+    m_client->request("/v1/convert/value",{{"source",source.text()},{"kind",kind.currentData().toString()},{"locale",profile.currentData().toString()}},[this,target,current,row,col](QJsonObject result,QString error){if(!error.isEmpty()){issue(error);return;}if(!matchesTarget(target) || m_grid->currentIndex()!=current || m_source->isModified())return;QStringList report;for(const auto &line:result["report"].toArray())report.append(line.toString());QMessageBox review(QMessageBox::Question,tr("Review value conversion"),tr("Store %1 as %2?").arg(result["cell"].toObject()["source"].toString(),result["cell"].toObject()["kind"].toString()),QMessageBox::Yes|QMessageBox::Cancel,this);review.setDetailedText(report.join('\n'));if(review.exec()!=QMessageBox::Yes || !matchesTarget(target) || m_grid->currentIndex()!=current || m_source->isModified())return;auto cell=result["cell"].toObject();cell["row"]=row;cell["col"]=col;auto command=target;command["action"]="edit";command["cells"]=QJsonArray{cell};command["label"]="Enter localized value";submit(command);});
+}
+
 void MainWindow::enterTemporal() {
     if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_address->isModified())return;
     const auto current=QPersistentModelIndex(m_grid->currentIndex());if(!current.isValid())return;
@@ -2059,9 +2068,10 @@ bool MainWindow::csvTypesDialog(QJsonObject &request, const QJsonObject &preview
     QComboBox type(&dialog); type.setObjectName("csvColumnType");
     type.addItem(tr("Text (preserve exactly)"),"text"); type.addItem(tr("Number (invariant decimal)"),"number");
     type.addItem(tr("Boolean (TRUE/FALSE)"),"boolean"); type.addItem(tr("Date YYYY-MM-DD → native date"),"date_iso");
-    type.addItem(tr("Date M/D/YYYY → native date"),"date_mdy"); type.addItem(tr("Date D/M/YYYY → native date"),"date_dmy"); type.addItem(tr("Time HH:MM:SS"),"time_iso"); type.addItem(tr("Datetime YYYY-MM-DDTHH:MM:SS"),"datetime_iso");
+    type.addItem(tr("Date M/D/YYYY → native date"),"date_mdy"); type.addItem(tr("Date D/M/YYYY → native date"),"date_dmy"); type.addItem(tr("Time HH:MM:SS"),"time_iso"); type.addItem(tr("Datetime YYYY-MM-DDTHH:MM:SS"),"datetime_iso");type.addItem(tr("Date in conversion profile"),"date_locale");type.addItem(tr("Datetime in conversion profile"),"datetime_locale");type.addItem(tr("Timestamp normalized to UTC"),"timestamp_utc");
     QCheckBox header(tr("First record is a header; keep it as Text"),&dialog); header.setObjectName("csvHeader");
     header.setChecked(request["header"].toBool());
+    QComboBox profile(&dialog);profile.setObjectName("csvLocaleProfile");for(const auto &value:QStringList{"invariant","en_US","de_DE","fr_FR"})profile.addItem(value,value);profile.setCurrentIndex(qMax(0,profile.findData(request["locale"].toString("invariant"))));layout.addRow(tr("Explicit conversion profile"),&profile);
     QLabel sample(&dialog); sample.setTextFormat(Qt::PlainText); sample.setWordWrap(true);
     QJsonObject types=request["column_types"].toObject();
     auto load=[&] {
@@ -2086,7 +2096,7 @@ bool MainWindow::csvTypesDialog(QJsonObject &request, const QJsonObject &preview
     connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept); connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
     load();
     if(dialog.exec()!=QDialog::Accepted) return false;
-    request["column_types"]=types; request["header"]=header.isChecked(); return true;
+    request["column_types"]=types; request["header"]=header.isChecked();request["locale"]=profile.currentData().toString(); return true;
 }
 
 void MainWindow::exportCsvTo(const QString &path, QJsonObject target) {
@@ -2474,11 +2484,11 @@ void MainWindow::importSpreadsheetOptions(const QByteArray &bytes, const QString
     QFormLayout layout(&dialog); QSpinBox sheet(&dialog); sheet.setRange(0,64); sheet.setValue(1);
     sheet.setSpecialValueText(tr("All sheets (empty destination)"));
     QComboBox mode(&dialog); mode.addItem(tr("Preserve supported formulas"),"formulas"); mode.addItem(tr("Cached values (freshness unverified)"),"values");
-    layout.addRow(tr("Sheet number"),&sheet); layout.addRow(tr("Inputs"),&mode);
+    layout.addRow(tr("Sheet number"),&sheet); layout.addRow(tr("Inputs"),&mode);QCheckBox utc(tr("Normalize explicit timestamp offsets to UTC (original offset omitted)"),&dialog);utc.setObjectName("importTimestampUtc");layout.addRow(&utc);
     QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog); layout.addRow(&buttons);
     connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept); connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
     if(dialog.exec()!=QDialog::Accepted || !matchesTarget(target)) return;
-    importSpreadsheetBytes(bytes,format,mode.currentData().toString(),sheet.value(),target);
+    target["timezone_policy"]=utc.isChecked()?"utc":"reject";importSpreadsheetBytes(bytes,format,mode.currentData().toString(),sheet.value(),target);
 }
 
 void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &format, const QString &mode, int sheetIndex, QJsonObject target) {
@@ -2488,7 +2498,7 @@ void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &
     captureGridDraft(false); if(!resolveDraft() || !matchesTarget(target)) return;
     setBusy(true,tr("Preparing %1 import…").arg(format.toUpper()));
     prepareImport({{"file_base64",QString::fromLatin1(bytes.toBase64())},{"mode",mode},{"sheet_index",sheetIndex},
-                   {"scope",sheetIndex==0?"workbook":"selection"},
+                   {"scope",sheetIndex==0?"workbook":"selection"},{"timezone_policy",target["timezone_policy"].toString("reject")},
                    {"row",sheetIndex==0?QJsonValue(1):target["row"]},{"col",sheetIndex==0?QJsonValue(1):target["col"]}},
         [this,target,format](QJsonObject preview,QString error) {
         if(!error.isEmpty() || !matchesTarget(target) || m_model->projected()) { setBusy(false); issue(error.isEmpty()?"Import target changed; import cancelled.":error); return; }

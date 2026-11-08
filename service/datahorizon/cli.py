@@ -101,6 +101,8 @@ def main():
     write.add_argument("source")
     write.add_argument("--kind", default="auto", choices=["auto", "text", "number", "boolean", "null", "date", "time", "datetime"])
     write.add_argument("--sheet", default="Sheet1")
+    write.add_argument("--locale",choices=["invariant","en_US","de_DE","fr_FR"])
+    write.add_argument("--timezone-policy",choices=["reject","utc"],default="reject")
     apply = commands.add_parser("apply", help="Read a complete managed operation JSON object from stdin")
     apply.add_argument("--sheet", default="Sheet1")
     outcome = commands.add_parser("outcome")
@@ -137,7 +139,9 @@ def main():
                     elif args.command == "read":
                         result = book.read(args.sheet, row, col, row, col)
                     elif args.command == "set":
-                        result = book.set(row, col, args.source, args.sheet, args.kind)
+                        if args.locale or args.timezone_policy=="utc":
+                            converted=client.convert_value(args.source,args.kind,args.locale or "invariant",args.timezone_policy);result=book.set(row,col,converted['cell']['source'],args.sheet,converted['cell']['kind']);result={**result,'conversion':converted}
+                        else:result = book.set(row, col, args.source, args.sheet, args.kind)
                     elif args.command == "apply":
                         request = json.load(sys.stdin)
                         if not isinstance(request, dict):

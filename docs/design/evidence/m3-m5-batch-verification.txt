@@ -16,3 +16,5 @@ Task 5: Debug build; native v3/REST/SDK metadata tests and Qt Save/Load view pas
 Task 6: Debug build, 4 persistent-record tests, executable OpenAPI actions and the complete Python suite passed (417 tests; 15 optional-binding skips). UUID retention through edits/sort/insert/delete/rename/reopen, external edit distrust, explicit reconciliation and transactional header-delete rejection verified.
 
 Task 7: Debug build, 4 record-operation tests, expanded OpenAPI examples, Qt visible-ID clear and complete Python suite passed (421 tests; 15 optional-binding skips). Filtered-out inputs, single Undo, per-cell formula origins, compressed XLSX referents and excluded-reference rejection verified.
+
+Task 8: Debug build, 4 locale/temporal conversion tests including managed CLI/SDK, Qt conversion review and the complete Python suite passed (425 tests; 15 optional-binding skips). Strict grouping, unsafe-integer rejection, explicit ambiguity order, default Text, timestamp UTC rollover/microseconds and opt-in XLSX offsets verified.

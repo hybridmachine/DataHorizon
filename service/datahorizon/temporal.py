@@ -16,6 +16,24 @@ def utc_clock():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def import_temporal(source,kind,timezone_policy='reject'):
+    """Import shorthand to strict native ISO; offset conversion is explicit."""
+    if timezone_policy not in ('reject','utc'):raise ValueError('timezone_policy must be reject or utc')
+    if not isinstance(source,str):raise ValueError('ISO input must be Text')
+    source=source.replace(' ','T',1) if kind=='datetime' else source
+    clock=source[11:] if kind=='datetime' else source
+    if kind in ('time','datetime') and re.fullmatch(r'[0-9]{2}:[0-9]{2}',clock):source+=':00'
+    offset=re.fullmatch(r'([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?)(Z|[+-][0-9]{2}:[0-9]{2})',source)
+    if kind=='datetime' and offset:
+        if timezone_policy!='utc':raise ValueError('Offset-bearing timestamps require explicit UTC normalization')
+        Temporal(offset[1],'datetime')
+        zone=offset[2]
+        if zone!='Z' and (int(zone[1:3])>14 or int(zone[4:])>59 or (int(zone[1:3])==14 and int(zone[4:])!=0)):raise ValueError('UTC offset must be within ±14:00')
+        try:source=datetime.fromisoformat(source).astimezone(timezone.utc).replace(tzinfo=None).isoformat()
+        except OverflowError as error:raise ValueError('UTC normalization exceeds years 0001–9999') from error
+    return Temporal(source,kind)
+
+
 PATTERNS = {
     "date": r"[0-9]{4}-[0-9]{2}-[0-9]{2}",
     "time": r"[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?",

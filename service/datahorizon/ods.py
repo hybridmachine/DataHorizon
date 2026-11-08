@@ -9,7 +9,7 @@ from .engine import EngineError, MAX_CELLS, encoded, integer, require, typed, va
 from .formula import Parser, split_ref
 from .borders import SIDES, border_edges, parse_ods_border, ODS_BORDERS
 from .formats import numeric_spec, simple_number_style
-from .temporal import Temporal, from_duration, to_duration, export_temporal_styles
+from .temporal import Temporal, from_duration, to_duration, export_temporal_styles, import_temporal
 from .interchange import map_formula_functions, import_edits, local_formula, mode, node, package, read_xml, xml, preparation_scope, prepare_workbook, validate_sheet_names, workbook_report
 
 O="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
@@ -247,6 +247,7 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         require(0<len(sheets)<=64 and selected<=len(sheets),"INVALID_SPREADSHEET","Choose an existing ODS sheet")
         roots=([read_xml(archive,"styles.xml")] if "styles.xml" in archive.namelist() else [])+[root]
         styles=OdsStyles(roots)
+        report.append("ISO shorthand normalizes to native seconds; explicit timezone_policy=utc normalizes offset timestamps to UTC civil values and omits the original offset.")
         edits=[]; issues=[]; row=1; processed=0; staged_bytes=0
         def rows(parent):
             for item in parent:
@@ -278,7 +279,7 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
                     elif kind in ("date","time"):
                         value=cell.get(q(O,"date-value") if kind=="date" else q(O,"time-value"))
                         require(value is not None,"INVALID_SPREADSHEET","Missing date/duration value")
-                        try:temporal=from_duration(value) if kind=="time" else Temporal(value,"datetime" if "T" in value else "date")
+                        try:temporal=from_duration(value) if kind=="time" else import_temporal(value,"datetime" if "T" in value or " " in value else "date",request.get("timezone_policy","reject"))
                         except ValueError as error:raise EngineError("UNSUPPORTED_CELL",str(error)) from error
                         item={"source":str(temporal),"kind":temporal.kind}
                     elif kind=="string" or cell.findall(q(X,"p")):
@@ -313,6 +314,7 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
 
 def ods_export(snapshot,request):
     selected_mode=mode(request)
+    require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
     report=["One selection at original coordinates from a consistent native state. Native direct styles map to ODS; formulas translate canonically and use current snapshot values as caches.",
             "Other sheets, code, queries, relationships, history, dimensions and view state are omitted. NULL becomes empty. Target formula/coercion compatibility can differ; retain the native workbook."]
     whole="sheets" in snapshot
