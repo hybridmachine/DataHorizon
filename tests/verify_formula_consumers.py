@@ -11,10 +11,10 @@ from odf.opendocument import load
 from odf.table import Table,TableRow,TableCell
 from odf import teletype
 
-CASES=[('=LEN(TRIM(A1))',5),('=TRIM(A1)','00123'),('=UPPER("a")','A'),('=LOWER("B")','b'),('=LEFT(TRIM(A1),2)','00'),('=RIGHT(TRIM(A1),2)','23'),('=MID(TRIM(A1),2,3)','012'),('=A1&"X"',' 00123  X'),('=CONCAT(TRIM(A1),TRUE,0)','00123TRUE0')]
+CASES=[('=LEN(TRIM(A1))',5),('=TRIM(A1)','00123'),('=UPPER("a")','A'),('=LOWER("B")','b'),('=LEFT(TRIM(A1),2)','00'),('=RIGHT(TRIM(A1),2)','23'),('=MID(TRIM(A1),2,3)','012'),('=A1&"X"',' 00123  X'),('=CONCAT(TRIM(A1),TRUE,0)','00123TRUE0'),('=COUNTIF(A1,"*00123*")',1),('=SUMIF(C1:C2,">0")',5)]
 with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/'formulas.dhwb',create=True)) as book:
-    book.mutate({'action':'edit','operation_id':'seed','expected_state':book.state(),'cells':[{'row':1,'col':1,'source':' 00123  ','kind':'text'},*[{'row':r,'col':2,'source':formula} for r,(formula,result) in enumerate(CASES,1)]]})
-    snapshot=book.read('Sheet1',{'r2':len(CASES),'c2':2})
+    book.mutate({'action':'edit','operation_id':'seed','expected_state':book.state(),'cells':[{'row':1,'col':1,'source':' 00123  ','kind':'text'},{'row':1,'col':3,'source':'2'},{'row':2,'col':3,'source':'3'},*[{'row':r,'col':2,'source':formula} for r,(formula,result) in enumerate(CASES,1)]]})
+    snapshot=book.read('Sheet1',{'r2':len(CASES),'c2':3})
     for format,export in (('xlsx',xlsx_export),('ods',ods_export)):
         for mode in ('formulas','values'):
             result=export(snapshot,{'mode':mode});path=Path(temp)/(mode+'.'+format);path.write_bytes(base64.b64decode(result['file_base64']))

@@ -161,6 +161,38 @@ These mappings follow [Microsoft's future-function list](https://learn.microsoft
 and [LibreOffice's CONCAT identifier](https://help.libreoffice.org/latest/en-US/text/scalc/01/func_concat.html).
 Independent readers verify stored names and typed values, not target recalculation.
 
+## Conditional aggregate tier
+
+COUNTIF(range, criterion) counts matching cells. SUMIF(range, criterion,
+[sum_range]) adds aligned numeric values; the sum range defaults to the criteria
+range and must have exactly the same shape. Direct cell/rectangular references
+are supported; computed arrays are not. Existing grid, 10,000-cell range, input,
+work and deadline limits apply. No partial aggregate is returned on a limit.
+
+Criteria are finite Number, typed Boolean or Text with optional =, <>, <, >,
+<=, >= prefixes. Numeric criteria Text is interpreted numerically and can match
+finite numeric Text in the source; stored inputs are not rewritten. Blank/NULL
+criteria become zero. Empty Text criteria match blank/NULL/empty Text; an explicit
+empty Text source is distinct from numeric zero. Incompatible types do not match
+ordered/equality comparisons and do match <>. Text comparisons use Unicode
+casefolding; * and ? operate on folded characters for equality/inequality, with
+~ escapes for wildcard/tilde literals. Ordered wildcard comparisons are rejected.
+Criteria Text is capped at 255 characters and matching work is budgeted. These
+are explicit native rules, not every Excel coercion/locale combination.
+
+Ordinary errors in criteria-range cells do not match; errors in the criterion
+expression, invalid references, cycles and resource failures propagate. SUMIF
+reads only matching sum cells. Text/Boolean/blank sum values are ignored; matching
+sum errors and nonfinite running totals propagate. Transactional hooks use the
+same calculator and may reject the complete parent operation. Source-state and
+interchange behavior stay within existing shared-engine snapshots.
+
+Catalog examples now carry small typed input-cell fixtures, shown in desktop
+help and verified in isolated native workbooks. This makes range-function
+examples reproducible. Common signatures/wildcards follow [Microsoft's SUMIF
+reference](https://support.microsoft.com/en-us/excel/functions/sumif-function);
+the strict same-shape policy avoids implicitly reading outside the supplied range.
+
 ## Completed PRs
 
 1. [Function catalog #55](https://github.com/hybridmachine/DataHorizon/pull/55): local build/full CTest and native help checks passed; self-reviewed and merged.
@@ -176,3 +208,5 @@ Independent readers verify stored names and typed values, not target recalculati
 6. [Substring functions #60](https://github.com/hybridmachine/DataHorizon/pull/60): locally verified, self-reviewed and merged.
 
 7. [Concatenation #61](https://github.com/hybridmachine/DataHorizon/pull/61): locally verified, self-reviewed and merged.
+
+8. [Conditional aggregates #62](https://github.com/hybridmachine/DataHorizon/pull/62): locally verified, self-reviewed and merged.
