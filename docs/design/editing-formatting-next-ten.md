@@ -53,3 +53,5 @@ native draft insertion. Changed service, target, state, cursor/selection or late
 typing cancels the reply. Expired preview disables Insert; cancellation retains
 the draft. Enter still submits one ordinary managed edit. Preview model callbacks
 are lifetime-guarded, including replies arriving after the dialog is destroyed.
+
+Unfinished/invalid address entry disables Insert until a valid Enter selection or a grid click replaces it; an older range is never used implicitly.
