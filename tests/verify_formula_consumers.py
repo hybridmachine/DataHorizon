@@ -17,6 +17,7 @@ CASES += [('=IFNA(XLOOKUP(9,C1:C2,A1:A2),"missing")',"missing")]
 CASES += [('=EXACT(A1,"00123")',False)]
 CASES += [('=SUBSTITUTE(TRIM(A1),"0","X",2)',"0X123")]
 CASES += [('=REPLACE(TRIM(A1),3,2,"AB")',"00AB3")]
+CASES += [('=FIND("123",A1)',4)]
 with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/'formulas.dhwb',create=True)) as book:
     book.mutate({'action':'edit','operation_id':'seed','expected_state':book.state(),'cells':[{'row':1,'col':1,'source':' 00123  ','kind':'text'},{'row':1,'col':3,'source':'2'},{'row':2,'col':3,'source':'3'},*[{'row':r,'col':2,'source':formula} for r,(formula,result) in enumerate(CASES,1)]]})
     snapshot=book.read('Sheet1',{'r2':len(CASES),'c2':3})
@@ -25,7 +26,7 @@ with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/'formulas
             result=export(snapshot,{'mode':mode});path=Path(temp)/(mode+'.'+format);path.write_bytes(base64.b64decode(result['file_base64']))
             if format=='xlsx':
                 wb=load_workbook(path,data_only=False);sheet=wb.active
-                for r,(formula,value) in enumerate(CASES,1):assert sheet.cell(r,2).value==(native_formula_to_xlsx(formula) if mode=='formulas' else value)
+                for r,(formula,value) in enumerate(CASES,1):assert sheet.cell(r,2).value==(native_formula_to_xlsx(formula) if mode=='formulas' else value),(formula,sheet.cell(r,2).value,value)
                 if mode=='values':assert sheet['B2'].data_type=='s'
                 wb.close()
             else:

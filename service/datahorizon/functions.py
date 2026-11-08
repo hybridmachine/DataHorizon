@@ -71,6 +71,9 @@ register('SUBSTITUTE','SUBSTITUTE(text, old_text, new_text[, occurrence])','Repl
 register('REPLACE','REPLACE(text, start, count, new_text)','Replace characters at a 1-based Unicode position.',TEXT_RULES.removeprefix('One scalar argument. ')+' Four scalars. Numeric/Boolean/blank positions/counts, finite fractions truncate; numeric Text rejected. Start at least 1, count at least 0. Beyond-end start appends; count clamps without padding. Zero count inserts. Result built with bounded concatenation.','=REPLACE("00123",3,2,"AB")','00AB3','Text')
 
 
+register('FIND','FIND(find_text, within_text[, start])','Find a case-sensitive literal Unicode Text position.',TEXT_RULES.removeprefix('One scalar argument. ')+' Two or three scalars. Returns 1-based code-point position, start defaults to 1. Numeric/Boolean start, finite fractions truncate; numeric Text rejected. Start must be 1 through length+1; empty needle returns start. Missing match is #VALUE!. Wildcards are literal; no normalization.','=FIND("a","Data",3)',4,'Text')
+
+
 def function_catalog():
     return dict(version=1,functions=deepcopy([FUNCTIONS[name] for name in sorted(FUNCTIONS)]),
                 notes=['This catalog describes the implemented development tier, not full Excel compatibility.',

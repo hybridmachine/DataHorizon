@@ -610,6 +610,15 @@ class Calculator:
         if value<minimum:raise FormulaError("#VALUE!","Position/count is below its minimum")
         return int(value)
 
+    def find_text(self,args,sheet):
+        if len(args) not in (2,3):raise FormulaError("#NAME?","FIND requires two or three scalars")
+        if any(node[0]=="range" for node in args):raise FormulaError("#VALUE!","FIND requires scalars")
+        needle=self.text_argument(args[0],sheet);text=self.text_argument(args[1],sheet);start=self.integer_argument(args[2],sheet,1) if len(args)==3 else 1
+        if start>len(text)+1:raise FormulaError("#VALUE!","Start exceeds Text length plus one")
+        position=text.find(needle,start-1);self.check()
+        if position<0:raise FormulaError("#VALUE!","Text was not found")
+        return position+1
+
     def replace_text(self,args,sheet):
         if len(args)!=4:raise FormulaError("#NAME?","REPLACE requires four scalars")
         if any(node[0]=="range" for node in args):raise FormulaError("#VALUE!","REPLACE requires scalars")
@@ -865,6 +874,7 @@ class Calculator:
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
             if name in ("ISBLANK","ISNUMBER","ISTEXT","ISLOGICAL","ISERROR","ISNA"):return self.inspect_scalar(name,args,sheet)
+            if name=="FIND":return self.find_text(args,sheet)
             if name=="REPLACE":return self.replace_text(args,sheet)
             if name=="SUBSTITUTE":return self.substitute(args,sheet)
             if name=="EXACT":return self.exact_text(args,sheet)
