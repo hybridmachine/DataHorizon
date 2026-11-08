@@ -72,3 +72,10 @@ HOUR/MINUTE/SECOND accept time/datetime, date as midnight, or a nonnegative
 numeric serial's fractional day. SECOND discards fractional seconds. Text and
 ranges fail. These functions return native time or numeric components, not
 localized Text. [Excel TIME reference](https://support.microsoft.com/en-gb/excel/functions/time-function).
+
+TODAY/NOW use an injectable Calculator clock sampled from UTC once, including
+whole-workbook cross-sheet reads. Each hook dispatch batch and its generated
+change rounds also share one clock, even when context.value creates a fresh
+calculator to observe prior transactional edits. Read-only calculation never
+changes revision/history or runs change hooks. Values can change between two
+snapshots with the same stored-input state token; it is not a clock token.
