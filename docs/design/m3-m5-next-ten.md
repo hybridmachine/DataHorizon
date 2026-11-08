@@ -142,7 +142,32 @@ Data → Operation jobs share the contract. The GUI stages CSV as Text, runs sou
 find/ascending first-column lists, reviews plans/receipts, pages results, cancels,
 releases and explicitly inspects/resumes a retained ID. Transport failure retains
 the ID and blocks editing until status reconciliation; closing describes the retained
-journal and committed-batch semantics. Wider schemas are explicit API/SDK options.
+journal and committed-batch semantics. Wider schemas are explicit API/SDK options. Managed file CLI calls reopen the
+workbook with a new input-state epoch; after reviewing a sealed plan, use explicit
+`job resume --job-id ID` with its plan_digest to accept that current state. Attached
+service callers can use start while the reviewed state is unchanged. A stale start
+refuses before native admission; no job automatically replays after reopen.
+
+Task 10 qualifies the complete local candidate with full service/Qt contracts,
+Cocoa scales 1/2, accessible interfaces and keyboard Tab order for the job dialog,
+relocated installed app plus installed SDK/service checks, and an inventoried archive.
+Independent openpyxl/odfpy readers verify filtered compressed referents, typed dates
+and frozen values. XLSX formula caches remain intentionally omitted; ODS retains
+supported cached values. Qualification also fixes atomic-mode batch-count validation,
+rejects read-only edit execution before admitting a native attempt, and preserves the
+SDK pending-operation reconciliation guard before job start/resume. Native inspection
+waits for modal activation before Tab checks; Cocoa job ID/source fields grow to
+available width, verified visually and through the final native flows.
+
+`tests/qualify_m3_m5.py` measures a native file larger than the 256-MiB service target,
+cache reuse/invalidation, 100,000 globally sorted rows across every result page,
+background calculations and cancellation/resume without duplicate batch commits.
+Fresh-process/warm viewport measurements use `tests/cache_rss_benchmark.py`. A larger
+270,000-long-text-row fixture hit the five-second native-opening budget twice on this
+host, including a serial rerun; that case is an observed limit, not qualified support.
+No opening/operation deadlines were relaxed to qualify it. Windows/Linux, physical
+input, full screen readers, clean-machine runtime, signing/notarization and distribution
+license gates remain open. Source fingerprints and exact outcomes are in the ledger.
 
 ## Evidence ledger
 

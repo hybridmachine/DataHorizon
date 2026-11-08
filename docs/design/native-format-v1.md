@@ -155,3 +155,15 @@ none/thin/medium/thick/dashed/dotted. Missing edges inherit legacy box (thin),
 otherwise none. Managed legacy border presets clear earlier edge overrides;
 explicit new edge fields in that patch take precedence. Native metadata remains
 exact; interchange can canonicalize all-thin edges to legacy box.
+
+## Operation-job sidecars
+
+Reviewed operation jobs use version-1 SQLite journals under
+`.<native-filename>.dhjobs/`, separately from native format versions 1–3. They
+retain sealed inputs, progress, admitted operation IDs and per-batch receipts.
+They are bound to workbook ID and filesystem identity; copying a workbook does
+not transfer an execution plan or authorize replay. Native snapshots, XLSX/ODS
+and CSV exclude these journals. Explicit release removes staged data and frozen
+read snapshots, while durable native operation receipts remain in `operations`.
+Missing receipts do not prove rollback; unknown attempts block automatic execution
+and release. See [job bounds and recovery](m3-m5-next-ten.md).

@@ -20,3 +20,73 @@ Task 7: Debug build, 4 record-operation tests, expanded OpenAPI examples, Qt vis
 Task 8: Debug build, 4 locale/temporal conversion tests including managed CLI/SDK, Qt conversion review and the complete Python suite passed (425 tests; 15 optional-binding skips). Strict grouping, unsafe-integer rejection, explicit ambiguity order, default Text, timestamp UTC rollover/microseconds and opt-in XLSX offsets verified.
 
 Task 9: Debug build, 8 durable-job tests and Qt staged review/execute passed. Complete Python suite passed before the final shutdown fixture (431 tests; 15 optional-binding skips); final full run: 432 tests passed with 15 optional skips, followed by the new REST cancellation regression and all 8 job tests passing after the lock fix. The final qualification reruns every test. Covers cancellation inside atomic writes, cancellation after final commit, batched resume, commit/acknowledgement crash gap, missing-receipt unknown protection, shutdown waiting for the engine, 11,000-row CSV/global sorted paging, stale withholding, REST/SDK/CLI and default Text.
+
+Task 10 final local qualification, November 8, 2026
+Code/test candidate SHA-256: 023e8053ecdb764f4d976302916720ab77fff284912c52e019bac46e93ab8865
+Fingerprint: tests/qualify_preview.py hashes normalized current CMakeLists.txt,
+desktop/, service/, tests/ and cmake/ source bytes. Documentation/evidence is
+excluded to avoid a self-referential hash. Source stayed unchanged during final
+qualification and installed-source comparison. The final native harness change
+only waits for Cocoa activation before checking Tab focus and reports failure
+outside its timer callback; three repeats at each scale passed before the final run.
+
+Commands/results:
+- cmake --build build --config Debug --parallel: passed.
+- python3 tests/qualify_preview.py --build build --config Debug --output-dir build/m3-m5-delivery-final: passed.
+  CTest: 182 Qt checks passed; 435 Python tests passed, 15 optional APSW skips.
+  Cocoa native-plugin automation at scale requests 1 and 2 passed, including
+  accessible names/roles for ten job controls, Tab order and existing grid/editor,
+  navigation, clipboard, modal-cancel, frozen-pane and shared-cache checks.
+  Relocated installed native app: managed edit/calculation, temporal types and ten
+  date/clock functions passed. Installed SDK/service: v3 views/records, locale
+  conversion, dependency invalidation, background calculation and durable jobs passed.
+  Missing launcher fails explicitly; developer override environment was removed.
+  All 28 installed Python modules matched source bytes; no extra source modules.
+  Archive: 85 inventoried files; SHA-256 c61ce85a84caa7c71e02d61c9edac1a352ca8efe09df7b7f23c96f830dea7cee.
+- PYTHONPATH=service build/capture-binding-venv/bin/python -m unittest discover -s tests -p test_native_capture.py -v: all 15 optional APSW tests passed separately.
+- Independent openpyxl 3.1.5/odfpy 1.4.1 temporal, formula, format, workbook and list
+  producer/consumer scripts passed. New filtered formula exports retain compressed
+  referents and typed dates; values mode freezes results. XLSX formula caches are
+  intentionally omitted; ODS keeps supported caches. No target-app recalculation claim.
+- QT_QPA_PLATFORM=cocoa QT_SCALE_FACTOR=2 build/desktop_tests (five new GUI flows):
+  background calculation, portable views, filtered record edits, localized entry and
+  staged job review/commit passed (7 Qt results including setup/cleanup). Screenshot
+  inspected; it shows the sealed typed inputs before execution.
+- Managed file CLI staging across service restarts passed: stale start refused,
+  explicit sealed-plan resume committed once, retained receipt, typed Text/date read
+  and explicit release passed. SDK start/resume preserves pending-operation guards.
+
+Measurements (same service sources; native acceptance harness and GUI layout fixes followed):
+- tests/qualify_m3_m5.py: 334,135,296-byte native file, 100,000 numeric cells,
+  1,000 formulas and 70,000 one-KiB Text cells. Shared dependency cache used
+  2,000 nodes/1,000 edges/143,001 estimated bytes; second read reused 1,000 results.
+  Twenty 1,000-formula range reads: median 19.010 ms, p95 19.573 ms.
+  Background calculation: 262.215 ms. Full 100,000-row global sort: 5,921.405 ms;
+  every row verified across 391 result pages (median 2.485 ms, p95 3.508 ms).
+  Cancellation after 1,000 committed cells confirmed in 9.802 ms; explicit resume
+  completed 20,000 cells with exactly 20 unique committed batches (523.147 ms).
+  Metered service peak RSS 57,671,680 bytes, below the 256-MiB workload target.
+- cache_rss_benchmark.py --samples 20 --disk-rows 70000: 334,753,792-byte native
+  file; fresh-process start/open/first-read median 286.327 ms, p95 296.244 ms;
+  fresh viewport median 2.187 ms, p95 2.268 ms; warm median 1.670 ms, p95 1.935 ms.
+  Metered service peak RSS 39,518,208 bytes. These are dataset-specific warm-OS-cache
+  measurements, with no compositor latency, OS cache purge or universal guarantee.
+- Larger 270,000-Text-row fixture hit the five-second native-opening budget twice,
+  once serially. That approximately 1.27-GB shape remains an observed limit;
+  deadlines were not relaxed. Detailed failure output is retained separately.
+
+Qualification fixes: atomic mode ignores explicit-batch count; read-only edit jobs
+refuse before admitting an operation; SDK job execution honors pending-operation
+reconciliation. Final regression coverage and package checks include all three. Visual review also
+widens the Cocoa job ID/source fields to use the available dialog width.
+
+Delivery audit: PRs #95–103 each have a published-head author review before merge
+(m3-m5-pr-audit.json); task 10's review/merge is recorded in its GitHub PR at the
+exact pushed head. Author self-reviews are not independent approvals. Hosted
+Actions was not used as build/test evidence.
+
+Remaining gates: Windows/Linux, physical input, full screen-reader navigation,
+multiple monitors/appearance, clean-machine runtime/installers, signing/notarization,
+distribution licenses, broader Excel/SQL/locale/timezone compatibility and larger
+workloads. This closes the ten declared local engineering increments, not full
+M0–M8 or release qualification. See the updated milestone ledger.

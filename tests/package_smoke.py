@@ -23,13 +23,15 @@ def smoke(prefix):
         command=[str(relocated/relative),"--smoke-test"]
         result=subprocess.run(command,cwd=temp,env=environment,capture_output=True,text=True,timeout=30)
         if result.returncode: raise RuntimeError(f"Relocated installed application failed ({result.returncode}): {result.stdout} {result.stderr}")
+        api=subprocess.run([sys.executable,'-I','-B',str(Path(__file__).with_name('installed_m3_m5.py')),str((relocated/service).parent.parent)],cwd=temp,env=environment,capture_output=True,text=True,timeout=30)
+        if api.returncode:raise RuntimeError('Relocated M3–M5 SDK/service checks failed: '+api.stdout+' '+api.stderr)
         launcher=relocated/service; disabled=launcher.with_name("launch.disabled")
         launcher.rename(disabled)
         try: missing=subprocess.run(command,cwd=temp,env=environment,capture_output=True,text=True,timeout=10)
         finally: disabled.rename(launcher)
         if missing.returncode!=4 or "installation is incomplete" not in missing.stderr:
             raise RuntimeError("Missing installed launcher did not fail explicitly; development fallback may be masking an incomplete package")
-    return {"platform":platform.system(),"relocated_managed_edit_calculation":True,"temporal_types_and_ten_functions":True,"developer_overrides_removed":True,
+    return {"platform":platform.system(),"relocated_managed_edit_calculation":True,"temporal_types_and_ten_functions":True,"m3_m5_installed_sdk_service":True,"developer_overrides_removed":True,
             "missing_service_fails_explicitly":True,"runtime_dependency":"Separately installed Python unless an explicitly supplied runtime is staged",
             "clean_machine_qualified":False}
 

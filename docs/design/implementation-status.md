@@ -95,7 +95,17 @@ invariant Format Cells categories, ten calendar/clock functions, a shared UTC
 calculation clock, civil arithmetic and typed list ordering/filters. CSV companions
 and bounded XLSX/ODS ISO/serial mappings preserve the documented temporal tier.
 [Local qualification](evidence/date-time-batch-verification.txt) records this batch;
-locale parsing, wider Excel coercion/format parity and platform/release gates remain open.
+named-zone/DST parsing, wider Excel coercion/format parity and platform/release gates
+remain open. Explicit deterministic locale profiles are covered by the following batch.
+
+The [M3–M5 completion increments](m3-m5-next-ten.md), delivered as PRs #95–104,
+add a bounded dependency/result cache, generation-bound background calculations,
+opt-in transactional structural events, native v3 portable views and declared-record
+UUIDs, reviewed filtered record edits/formula copy/export, explicit locale conversion
+and durable cancellable jobs. Shared REST/SDK/CLI operations and Qt controls retain
+the managed/direct boundary. [Consolidated evidence](evidence/m3-m5-batch-verification.txt)
+records local qualification and measured limits; the milestone ledger below remains
+a development-tier assessment, not cross-platform release acceptance.
 
 ## Milestone ledger
 
@@ -104,9 +114,9 @@ locale parsing, wider Excel coercion/format parity and platform/release gates re
 | M0 | [Initial contracts](initial-contracts.md), [compatibility](compatibility-v0.md), [native schema](native-format-v1.md), keyboard/state rules and numeric budgets recorded | Resolve deferred cases at their named milestones; no claim that historical PDFs have been regenerated |
 | M1 | Qt 6.12/C++17 builds locally; bounded TEMP/native SQLite capture and service/Python execution comparisons with typed changes, transaction/worker failures and receipts; sparse/dense/long-text/large-disk, formula-chain and Qt scroll/input harnesses with local evidence and CI artifact collection | Production framework/runtime and capture-binding adoption, cold-cache qualification and native platform performance acceptance; hosted artifacts require inspection |
 | M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle; restart/reopen and warned unknown-outcome recovery | Broader failure injection, clean-machine packaging evidence and service lifecycle hardening |
-| M3 | Typed entry, A1 limits, staged scalar functions/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
-| M4 | Typed copy/paste, formula-aware same-sheet Cut, series, styles, cell Undo/Redo, bounded sheet operations/reference transforms, wrap/borders, local dimensions/hiding, multi-edge prefix freezing and cross-pane selection | Hook-aware structure events, full Excel reference compatibility, portable view metadata and native platform/accessibility conventions |
-| M5 | Explicit full-scope projected lists, stable source-address edits, typed eight-key/filter editing, local named definitions, ordered values copy/export, paged Find, atomic Replace All and snapshot summaries, strict CSV conversion/interchange | Persistent record identities, portable native list/query definitions, formula-preserving filtered range semantics, locale conversion and wider temporal compatibility, progress/cancellation and large jobs |
+| M3 | Typed entry/date functions and scalar contracts; bounded transitive dependency reuse/invalidation; state/generation/UTC-clock background calculations with pending/error/stale/cancelled results; transactional hook reads | Broader Excel functions/coercion/reference compatibility, continuous viewport scheduling, native usability/accessibility and platform acceptance |
+| M4 | Typed/formula-aware copy, Cut/fill/history, supported sheet/row/column transforms; opt-in transactional before/after structural hooks; native v3 portable view settings; local hiding/freezing and cross-pane selection | Full Excel reference compatibility, broader presentation/view models, native platform conventions and screen-reader acceptance |
+| M5 | Portable named bounded list definitions and persistent declared-record UUIDs; explicit external-edit reconciliation; reviewed record bulk edits and formula-preserving filtered copy/XLSX/ODS export; explicit locale/temporal conversion; durable staged atomic/batched jobs, frozen global sort/find paging and cooperative cancellation | Wider locale/timezone/duration policies, larger scopes and performance qualification (including large-file opening budget), full SQL/query/relational models at M8, production job scheduling and platform/manual acceptance |
 | M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures | Broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
 | M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
 | M8 | Shared engine and REST boundaries retained; unsupported APIs reject explicitly | Relational schema/tooling, proven managed SQL capture, workbook code/macros/functions/packages, remote TLS/mTLS/password access and additional wireframes |
@@ -172,9 +182,11 @@ Linux CI provides a display with Xvfb. Unit/interaction tests use offscreen Qt.
 The [spreadsheet increments](spreadsheet-next-ten.md) through PR #44 and the
 [editing/list usability batch](editing-lists-next-ten.md) through PR #54 are complete
 within their declared development tiers, each with local verification and a
-separate reviewed/merged PR. Remaining M3–M5 work includes wider tested formula
-compatibility, hook-aware structure events, portable native views/record identity,
-wider date/time/locale semantics and large-job execution. Native keyboard/accessibility
+separate reviewed/merged PR. The [following M3–M5 batch](m3-m5-next-ten.md)
+implements bounded dependency/background calculations, hook-aware structure, portable
+views/record identity, filtered formula operations, explicit locale/temporal conversion
+and durable large-operation jobs. Broader compatibility, scale and production models
+remain in the ledger. Native keyboard/accessibility
 and Windows/Linux qualification remain required before a cross-platform release.
 
 The [workbook compatibility/recovery/qualification increments](workbook-next-five.md)

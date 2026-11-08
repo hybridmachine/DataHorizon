@@ -1641,7 +1641,7 @@ void MainWindow::operationJobs() {
     if(m_info.isEmpty() || m_unknown || (m_busy && m_activeOperationJob.isEmpty()))return;
     captureGridDraft(false);if(!resolveDraft())return;
     const auto resource=base()+"/operation-jobs",workbook=m_info["id"].toString();
-    QDialog dialog(this);dialog.setWindowTitle(tr("Reviewed operation jobs"));dialog.setObjectName("operationJobsDialog");dialog.resize(780,620);QFormLayout layout(&dialog);
+    QDialog dialog(this);dialog.setWindowTitle(tr("Reviewed operation jobs"));dialog.setObjectName("operationJobsDialog");dialog.resize(780,620);QFormLayout layout(&dialog);layout.setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     QLabel explanation(tr("Prepare first, review the sealed plan, then execute. Batches commit separately. Cancellation keeps committed batches. Journals remain beside the native file for explicit recovery."),&dialog);explanation.setWordWrap(true);layout.addRow(&explanation);
     QComboBox mode(&dialog);mode.setObjectName("operationJobMode");mode.addItem(tr("Stage CSV — explicit batches, Text columns"),"csv");mode.addItem(tr("Find in stored source"),"find");mode.addItem(tr("List rows, ascending first column"),"list");
     QLineEdit identifier(m_activeOperationJob.isEmpty()?QUuid::createUuid().toString(QUuid::WithoutBraces):m_activeOperationJob,&dialog),source(&dialog);identifier.setObjectName("operationJobId");source.setObjectName("operationJobSource");identifier.setMaxLength(64);

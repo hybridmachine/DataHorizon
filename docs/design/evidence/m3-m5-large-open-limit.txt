@@ -1,0 +1,40 @@
+Observed limit on this host, November 8, 2026. Not qualified support.
+Command (both attempts): PYTHONPATH=service python3 tests/cache_rss_benchmark.py --samples 20 --disk-rows 270000 --output build/task10-cache-rss.json
+Dataset: 100,000 numeric cells plus 270,000 one-KiB Text cells; approximately 1.27 GB in the prior identical-layout fixture. The failing runs terminate before emitting a measured-size report.
+Attempt 1 overlapped compilation; attempt 2 ran serially. Both failed the initial native open with HTTP 400 / "Operation exceeded its time budget" at the five-second validation budget. Deadlines were retained. The 70,000-Text-row fixture passed and is recorded in m3-m5-cache-rss.json. No OS cache eviction was performed.
+
+Serial failure output:
+Traceback (most recent call last):
+  File "/Users/btabone/source/DataHorizon/service/datahorizon/client.py", line 86, in request
+    with self._opener.open(request, timeout=15) as response:
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 493, in open
+    response = meth(req, response)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 602, in http_response
+    response = self.parent.error(
+        'http', request, response, code, msg, hdrs)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 531, in error
+    return self._call_chain(*args)
+           ~~~~~~~~~~~~~~~~^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 464, in _call_chain
+    result = func(*args)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/urllib/request.py", line 611, in http_error_default
+    raise HTTPError(req.full_url, code, msg, hdrs, fp)
+urllib.error.HTTPError: HTTP Error 400: Bad Request
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/btabone/source/DataHorizon/tests/cache_rss_benchmark.py", line 150, in <module>
+    if __name__=='__main__': main()
+                             ~~~~^^
+  File "/Users/btabone/source/DataHorizon/tests/cache_rss_benchmark.py", line 141, in main
+    'python':platform.python_version(),'sqlite':sqlite3.sqlite_version,**measurements(args.samples,args.disk_rows),
+                                                                         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/btabone/source/DataHorizon/tests/cache_rss_benchmark.py", line 94, in measurements
+    book=client.open(path,readonly=True)
+  File "/Users/btabone/source/DataHorizon/service/datahorizon/client.py", line 122, in open
+    info = self.request("/v1/open", {"path": str(Path(path).expanduser().resolve()), "create": create, "readonly": readonly})
+  File "/Users/btabone/source/DataHorizon/service/datahorizon/client.py", line 97, in request
+    raise APIError(error.code, body) from error
+datahorizon.client.APIError: Operation exceeded its time budget

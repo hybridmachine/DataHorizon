@@ -14,6 +14,9 @@
 #include <QJsonDocument>
 #include <QLineEdit>
 #include <QInputDialog>
+#include <QComboBox>
+#include <QSpinBox>
+#include <QPlainTextEdit>
 #include <QHeaderView>
 #include <QScrollBar>
 #include <QPushButton>
@@ -130,6 +133,23 @@ int main(int argc,char **argv) {
         require(dialogSeen,"Native-plugin sheet dialog did not appear");
         require(edits.isEmpty() && opened.count()==2,"Navigation or cancelled editor/dialog submitted an edit");
         require(model->data(model->index(0,0)).toString()=="20.5","Cancelled native interaction changed a value");
+        QJsonArray jobControls;bool jobsSeen=false,jobTabPassed=false;
+        QTimer inspectJobs;inspectJobs.setInterval(10);
+        QObject::connect(&inspectJobs,&QTimer::timeout,[&]{
+            if(auto *dialog=window.findChild<QDialog *>("operationJobsDialog")){
+                inspectJobs.stop();jobsSeen=true;
+                dialog->raise();dialog->activateWindow();const bool activated=QTest::qWaitForWindowActive(dialog,3000);
+                for(const auto &name:QStringList{"operationJobMode","operationJobId","operationJobSource","operationJobRows","operationJobReport","prepareOperationJob","inspectOperationJob","startOperationJob","cancelOperationJob","closeOperationJob"}){
+                    auto *widget=dialog->findChild<QWidget *>(name);auto *interface=widget?QAccessible::queryAccessibleInterface(widget):nullptr;
+                    jobControls.append(QJsonObject{{"control",name},{"valid",interface && interface->isValid()},{"name",interface?interface->text(QAccessible::Name):QString()},{"role",interface?int(interface->role()):0}});
+                }
+                auto *id=dialog->findChild<QLineEdit *>("operationJobId");id->setFocus(Qt::TabFocusReason);QTest::keyClick(id,Qt::Key_Tab);jobTabPassed=activated && dialog->focusWidget()==dialog->findChild<QLineEdit *>("operationJobSource");dialog->reject();
+            }
+        });
+        inspectJobs.start();watchdog.start(5000);window.findChild<QAction *>("operationJobsAction")->trigger();inspectJobs.stop();watchdog.stop();
+        require(jobsSeen && jobControls.size()==10,"Job accessibility inspection missing");
+        require(jobTabPassed,"Job dialog activation/Tab order failed");
+        for(const auto &entry:jobControls){const auto control=entry.toObject();require(control["valid"].toBool() && !control["name"].toString().isEmpty(),"Job control accessible name/role missing");}
         window.resize(560,440); QTest::qWait(100);
         grid->scrollTo(model->index(0,0));
         require(grid->viewport()->width()>100 && grid->viewport()->height()>100,"Narrow window lost usable grid geometry");
@@ -176,7 +196,7 @@ int main(int argc,char **argv) {
         QJsonObject report{{"recorded_at_utc",QDateTime::currentDateTimeUtc().toString(Qt::ISODate)},
             {"os",QSysInfo::prettyProductName()},{"qt",qVersion()},{"platform_plugin",plugin},
             {"device_pixel_ratio",window.devicePixelRatioF()},{"scale_request",qEnvironmentVariable("QT_SCALE_FACTOR","1")},
-            {"active_window",window.isActiveWindow()},{"accessible_controls",controls},
+            {"active_window",window.isActiveWindow()},{"accessible_controls",controls},{"job_accessible_controls",jobControls},{"job_dialog_tab_order",true},
             {"keyboard_edit_calculation_escape_navigation",true},{"clipboard_paste",true},
             {"acknowledged_enter_advances",true},
             {"keyboard_range_tab_and_editor_cancel",true},{"cell_editor_accessible_address",true},

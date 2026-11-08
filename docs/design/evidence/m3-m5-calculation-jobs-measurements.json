@@ -1,0 +1,42 @@
+{
+  "recorded_at_utc": "2026-11-08T19:09:52.694715+00:00",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "python": "3.14.6",
+  "dataset": {
+    "native_bytes": 334135296,
+    "numeric_cells": 100000,
+    "formulas": 1000,
+    "long_text_cells": 70000,
+    "larger_than_256_mib": true
+  },
+  "dependency_cache": {
+    "hits": 0,
+    "nodes": 2000,
+    "edges": 1000,
+    "bytes": 143001,
+    "reused_hits": 1000
+  },
+  "formula_range": {
+    "samples": 20,
+    "median_ms": 19.01,
+    "p95_ms": 19.573
+  },
+  "background_calculation_ms": 262.215,
+  "global_sort_100000_rows_ms": 5921.405,
+  "sorted_rows_verified": 100000,
+  "result_pages": {
+    "samples": 391,
+    "median_ms": 2.485,
+    "p95_ms": 3.508
+  },
+  "cancel_after_committed_cells": 1000,
+  "cancel_confirmation_ms": 9.802,
+  "resume_remaining_ms": 523.147,
+  "unique_committed_batches": 20,
+  "service_peak_rss_bytes": 57671680,
+  "limitations": [
+    "Fresh process and warm OS caches; no OS cache purge or compositor latency measurement.",
+    "The memory target applies to this single-workbook workload; no universal memory/latency guarantee.",
+    "Worker cancellation is cooperative at declared checkpoints; external side effects cannot be rolled back."
+  ]
+}
