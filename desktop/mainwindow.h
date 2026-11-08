@@ -74,6 +74,9 @@ private:
     void copy(bool cut = false);
     void paste(bool valuesOnly = false, bool formatsOnly = false);
     void clearCells(const QString &mode);
+    void startFormatPainter();
+    void cancelFormatPainter();
+    bool formatPainterMouseEvent(QObject *object,QEvent *event);
     void showFormatCells();
     void adjustDecimals(int change);
     void format(const QJsonObject &style, QJsonObject target = {}, bool replaceStyle = false);
@@ -147,6 +150,10 @@ private:
     bool m_summaryInFlight = false;
     QPlainTextEdit *m_issues = nullptr;
     QToolBar *m_toolbar = nullptr;
+    QAction *m_painterAction=nullptr,*m_painterCancel=nullptr;
+    QJsonArray m_painterRows;QJsonObject m_painterOrigin,m_painterDestination;
+    quint64 m_painterGeneration=0,m_painterDragGeneration=0;
+    bool m_painterPending=false,m_painterDragging=false;QPoint m_painterAnchor;
     QAction *m_undo = nullptr, *m_redo = nullptr;
     QJsonObject m_info,m_functionCatalog;
     QLabel *m_formulaCues=nullptr;

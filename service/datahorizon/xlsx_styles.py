@@ -90,7 +90,7 @@ class XlsxStyles:
         return result
 
     def report(self):
-        return ["Mapped direct cell styles replace destination styles: general/Text/number/percentage/explicit currency labels with 0–15 decimal places, bold/italic, alignment, wrapping, solid RGB fill and individual solid/dashed/dotted border edges.",
+        return ["Mapped direct cell styles replace destination styles: general/Text/number/percentage/explicit currency labels with 0–15 decimal places, portable font family/size/RGB color, bold/italic, alignment, wrapping, solid RGB fill and individual solid/dashed/dotted border edges.",
                 "Rich-text runs, named-style inheritance, conditional formatting, row/column defaults and dimensions are omitted.",*sorted(self.losses)]
 
 

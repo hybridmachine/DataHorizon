@@ -1,0 +1,141 @@
+Editing and formatting tasks 1–10 / November 7 local (November 8 UTC), 2026
+Frozen candidate: 9e408118e4eaf96977769b0a17f36bc31bfdda4abd2d4d2a02e2a0f3249fb259
+
+Command: python3 tests/qualify_preview.py --build build --config Debug --output-dir build/editing-formatting-final-qualification
+Debug build passed; no hosted CI used (credits exhausted).
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   98.25 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   33.03 sec
+
+100% tests passed out of 2
+
+Total Test time (real) = 131.30 sec
+
+Full CTest summary lines:
+Totals: 173 passed, 0 failed, 0 skipped, 0 blacklisted, 98083ms
+Ran 379 tests in 32.887s
+OK (skipped=15)
+
+Native Cocoa scale-2 checks covering all ten tasks:
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::referenceCycleTargetsEndpointsSelectionsAndIgnoresQuotes()
+PASS   : DesktopTests::f4ReferenceCyclesStayDraftsInSourceCellAndFrozenEditors()
+PASS   : DesktopTests::shortLivedPreviewModelIgnoresLateRangeReplies()
+PASS   : DesktopTests::crossSheetReferencePickerRetainsOriginalDraftAndQuotesNames()
+PASS   : DesktopTests::traceTargetValidationRejectsMalformedLocations()
+PASS   : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits()
+PASS   : DesktopTests::traceNavigationDropsMetadataReplyAfterSelectionChanges()
+PASS   : DesktopTests::formatCellsReadOnlyGuardDoesNotOpenAnEditor()
+PASS   : DesktopTests::formatCellsDialogPatchesOnlyChosenPropertiesAndValidatesColors()
+PASS   : DesktopTests::formatCellsAppliesOneManagedEditKeepsInputsAndRejectsChangedScopes()
+PASS   : DesktopTests::decimalControlsPreserveMixedFormatsAndOneUndo()
+PASS   : DesktopTests::groupingDialogKeepsTriStateAndChangesOnlyNumericPresentation()
+PASS   : DesktopTests::groupingFormatsSelectionThroughManagedDialogAndUndo()
+PASS   : DesktopTests::currencyDialogValidatesExplicitLabelsAndKeepsMagnitude()
+QWARN  : DesktopTests::fontControlsValidateRenderAndUndoWithoutRetyping() qt.qpa.fonts: Populating font family aliases took 64 ms. Replace uses of missing font family "DejaVu Sans" with one that exists to avoid this cost. 
+PASS   : DesktopTests::fontControlsValidateRenderAndUndoWithoutRetyping()
+PASS   : DesktopTests::borderDialogPreservesOtherEdgesAndPresetsClearOverrides()
+PASS   : DesktopTests::borderPaintingUsesIndividualEdgesWidthsAndPatterns()
+QWARN  : DesktopTests::cellBordersPaintAndClearWithoutChangingInput() qt.widgets.styles.macos: drawControl: QStyle::CE_ItemViewItem invalid (nullptr) graphics context
+QWARN  : DesktopTests::cellBordersPaintAndClearWithoutChangingInput() qt.widgets.styles.macos: drawPrimitive: QStyle::PE_PanelItemViewItem invalid (nullptr) graphics context
+QWARN  : DesktopTests::cellBordersPaintAndClearWithoutChangingInput() qt.widgets.styles.macos: drawControl: QStyle::CE_ItemViewItem invalid (nullptr) graphics context
+QWARN  : DesktopTests::cellBordersPaintAndClearWithoutChangingInput() qt.widgets.styles.macos: drawPrimitive: QStyle::PE_PanelItemViewItem invalid (nullptr) graphics context
+QWARN  : DesktopTests::cellBordersPaintAndClearWithoutChangingInput() qt.widgets.styles.macos: drawControl: QStyle::CE_ItemViewItem invalid (nullptr) graphics context
+QWARN  : DesktopTests::cellBordersPaintAndClearWithoutChangingInput() qt.widgets.styles.macos: drawPrimitive: QStyle::PE_PanelItemViewItem invalid (nullptr) graphics context
+PASS   : DesktopTests::cellBordersPaintAndClearWithoutChangingInput()
+PASS   : DesktopTests::formatPainterPatternValidatesBoundsAndRepeatsExactStyles()
+PASS   : DesktopTests::formatPainterCopiesPatternsKeepsInputsClearsStylesAndUndoes()
+PASS   : DesktopTests::formatPainterDropsLateSnapshotsAndRejectsMalformedReplies()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 23 passed, 0 failed, 0 skipped, 0 blacklisted, 11863ms
+********* Finished testing of DesktopTests *********
+
+Full optional-capture Python suite (no skips):
+
+----------------------------------------------------------------------
+Ran 379 tests in 34.194s
+
+OK
+
+Independent package consumers:
+openpyxl and odfpy accepted 38 numeric/font/border cases; typed values, precision and style properties retained
+xlsx formulas: independent reader accepted 26 formulas/typed values; no target recalculation claim
+xlsx values: independent reader accepted 26 formulas/typed values; no target recalculation claim
+ods formulas: independent reader accepted 26 formulas/typed values; no target recalculation claim
+ods values: independent reader accepted 26 formulas/typed values; no target recalculation claim
+
+Qualification report:
+{
+  "format": 1,
+  "platform": "Darwin",
+  "candidate": "9e408118e4eaf96977769b0a17f36bc31bfdda4abd2d4d2a02e2a0f3249fb259",
+  "automation_passed": true,
+  "steps": [
+    {
+      "name": "build",
+      "seconds": 0.62,
+      "returncode": 0
+    },
+    {
+      "name": "contracts",
+      "seconds": 131.36,
+      "returncode": 0
+    },
+    {
+      "name": "native-1",
+      "seconds": 1.98,
+      "returncode": 0
+    },
+    {
+      "name": "native-2",
+      "seconds": 1.05,
+      "returncode": 0
+    },
+    {
+      "name": "install",
+      "seconds": 8.69,
+      "returncode": 0
+    }
+  ],
+  "package_smoke": {
+    "platform": "Darwin",
+    "relocated_managed_edit_calculation": true,
+    "developer_overrides_removed": true,
+    "missing_service_fails_explicitly": true,
+    "runtime_dependency": "Separately installed Python unless an explicitly supplied runtime is staged",
+    "clean_machine_qualified": false
+  },
+  "archive": {
+    "name": "DataHorizon-preview.tar.gz",
+    "files": 76,
+    "sha256": "49ab5c5821d2746b053da24f9445476313e990750828913e9b025aa9f026e7a6",
+    "inventory_verified": true
+  },
+  "matrix": {
+    "platforms": {
+      "Darwin": "local automation passed; manual qualification pending",
+      "Windows": "pending",
+      "Linux": "pending"
+    },
+    "manual_gates": [
+      "physical keyboard/clipboard/native dialogs",
+      "screen-reader navigation",
+      "multiple monitors and system appearance",
+      "clean-machine installer/runtime",
+      "signing/notarization",
+      "distribution licenses/notices"
+    ],
+    "release_qualified": false
+  }
+}
+
+Installed service: all 19 Python modules match current source bytes, including formats.py/borders.py and new REST/SDK paths.
+Native dialog/painter screenshots visually inspected: build/font-cells-cocoa.png, build/border-cells-cocoa.png, build/format-painter-cocoa.png. Controls, stored identifiers, border patterns, selection and painter status remained legible.
+
+Final numeric regression: ignored General/Text decimal metadata does not reappear via grouping or toolbar controls. Painter tests cover exact blank-style replacement, retained formula kinds/Text, clipboard preservation, one Undo, pattern repetition, bounds/multiples, hidden cells, read-only guards, frozen panes, cross-sheet destinations, Escape, changed-selection/malformed replies and retained new editor drafts. Style snapshot tests cover WAL consistency, no input/calculation/hook/history access and response/deadline/rectangle limits.
+
+PRs 75–83 audited via GitHub GraphQL: all merged, each with a final-head author review submitted before merge. PR84 follows the same exact-published-head review workflow. Reviews are author self-reviews, not independent approvals. Windows/Linux, physical input/accessibility, clean-machine/runtime, signing and distribution gates remain open; this is a local development preview.

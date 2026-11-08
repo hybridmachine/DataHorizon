@@ -31,7 +31,7 @@ from .functions import function_catalog
 
 CAPABILITIES = {
     "api_version": 1, "format_version": 1, "max_operation_cells": MAX_CELLS,
-    "max_summary_cells":MAX_CELLS, "max_viewport_cells": 4096, "max_clipboard_cells":MAX_CELLS, "max_request_bytes": 4 * 1024 * 1024,
+    "max_style_cells":MAX_CELLS, "max_summary_cells":MAX_CELLS, "max_viewport_cells": 4096, "max_clipboard_cells":MAX_CELLS, "max_request_bytes": 4 * 1024 * 1024,
     "formulas": ["arithmetic", "references", "concatenation", *sorted(SUPPORTED_FUNCTIONS)],
     "operations": ["workbook_import", "edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
     "interchange": ["csv", "xlsx", "ods"], "managed_sql": False, "remote_binding": False,
@@ -56,6 +56,7 @@ ROUTES = {
     "/v1/jobs/{job}/cancel": ("post", "Cancel preparation or discard its completed result"),
     "/v1/jobs/{job}/release": ("post", "Release terminal preparation storage"),
     "/v1/workbooks/{workbook}": ("get", "Workbook state and sheets"),
+    "/v1/workbooks/{workbook}/styles": ("post", "State-checked style-only rectangle without inputs, evaluation or hooks"),
     "/v1/workbooks/{workbook}/range": ("post", "Bounded consistent viewport read"),
     "/v1/workbooks/{workbook}/clipboard": ("post", "Consistent full-source clipboard read, at most 10,000 cells and 4 MiB"),
     "/v1/workbooks/{workbook}/list/export/csv": ("post", "Export visible list values from one snapshot as CSV"),
@@ -133,6 +134,8 @@ def openapi():
         "description":"Current and adjacent populated inputs move to the end of their contiguous run; otherwise seek the next populated input or grid edge. Formula inputs and empty Text count as populated; native NULL/styled empty auto cells do not. One snapshot, 10,000 candidate stored cells/4 MiB inputs/2 seconds, no evaluation/hooks/writes. Limits reject without a partial target.",
         "example":{"row":1,"col":1,"direction":"down","expected_state":"from-workbook-info"}}
     schemas["Navigation"]={"type":"object","required":["state","sheet","row","col","basis"],"properties":{"state":{"type":"string"},"sheet":sheet,"row":row,"col":col,"basis":{"type":"string","enum":["stored_inputs"]}}}
+    schemas["StylesRequest"]={"type":"object","required":["expected_state"],"properties":{"sheet":sheet,**rectangle,"expected_state":{"type":"string","minLength":1}},"description":"Dense style-only rows including {} for absent styles. One snapshot, 10,000 cells, 4 MiB response, two seconds. No source/value reads, formula evaluation, hooks or history; read-only handles supported."}
+    schemas["Styles"]={"type":"object","required":["state","sheet","range","rows"],"properties":{"state":{"type":"string"},"sheet":sheet,"range":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"integer"}},"rows":{"type":"array","maxItems":10000,"items":{"type":"array","maxItems":10000,"items":{"$ref":"#/components/schemas/Style"}}}}}
     schemas["SummaryRequest"]={"type":"object","additionalProperties":False,"properties":{"sheet":sheet,**rectangle},
         "description":"One rectangle up to 10,000 cells, 4 MiB stored input/style budget and 2 seconds; shared formula budgets apply. No hooks or history writes. Count includes non-NULL values and formula errors, including empty Text. Numeric summaries exclude Text/Booleans and are unavailable on any formula error or nonfinite running subtotal. Numeric values are unformatted (percentage fractions unscaled).",
         "example":{"sheet":"Sheet1","r1":1,"c1":1,"r2":100,"c2":3}}
@@ -233,13 +236,15 @@ def openapi():
                      "security": [{"localToken": []}]}
         if method == "post":
             name = "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
-                "navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
+                "styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
         for status in ("400","401","403","404","409","413","500","503"):
             operation["responses"][status]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}
         if path=="/v1/functions":
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/FunctionCatalog"}}}
+        elif path.endswith("/styles"):
+            operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Styles"}}}
         elif path.endswith("/navigate"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Navigation"}}}
         elif path.endswith("/summary"):
@@ -452,6 +457,8 @@ class Service(ThreadingHTTPServer):
             return {"closed":True}
         if method == "GET" and not suffix:
             return {**book.info(), "id": handle, "workbook_id": book.id}
+        if method == "POST" and suffix == ["styles"]:
+            return book.read_styles(body.get("sheet","Sheet1"),body)
         if method == "POST" and suffix == ["range"]:
             return book.read(body.get("sheet", "Sheet1"), body)
         if method == "POST" and suffix == ["clipboard"]:

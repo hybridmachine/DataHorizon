@@ -10,6 +10,7 @@
 #include "tracenavigation.h"
 #include "formatcellsdialog.h"
 #include "cellborders.h"
+#include "formatpainter.h"
 #include <QListWidget>
 #include <QGridLayout>
 #include <QApplication>
@@ -333,6 +334,8 @@ void MainWindow::buildUi() {
     connect(m_client,&RestClient::configured,this,&MainWindow::clearFindResults);
     add(edit, tr("Replace all in selection…"), QKeySequence::Replace, [this] { findDialog(true); });
     add(edit, tr("Reconcile unknown operation"), {}, [this] { reconcile(); });
+    m_painterAction=add(formatMenu,tr("Format painter"),{},[this]{startFormatPainter();},true);m_painterAction->setObjectName("formatPainterAction");m_painterAction->setCheckable(true);m_painterAction->setToolTip(tr("Copy the selected style pattern, then click a destination or drag an exact multiple. Escape cancels."));
+    m_painterCancel=new QAction(this);m_painterCancel->setShortcut(QKeySequence(Qt::Key_Escape));m_painterCancel->setShortcutContext(Qt::WidgetWithChildrenShortcut);m_painterCancel->setEnabled(false);addAction(m_painterCancel);connect(m_painterCancel,&QAction::triggered,this,[this]{cancelFormatPainter();m_status->setText(tr("Format painter cancelled"));});
     add(formatMenu,tr("Format Cells…"),QKeySequence("Ctrl+1"),[this]{showFormatCells();})->setObjectName("formatCellsAction");
     add(formatMenu, tr("Bold"), QKeySequence::Bold, [this] { format({{"bold", !m_model->cell(m_grid->currentIndex())["style"].toObject()["bold"].toBool()}}); }, true);
     add(formatMenu, tr("Italic"), QKeySequence::Italic, [this] { format({{"italic", !m_model->cell(m_grid->currentIndex())["style"].toObject()["italic"].toBool()}}); });
@@ -420,6 +423,7 @@ void MainWindow::buildUi() {
     layout->addLayout(formula);
     auto *otherPickButton=new QToolButton(central);otherPickButton->setDefaultAction(otherReference);otherPickButton->setText(tr("Other sheet…"));otherPickButton->setObjectName("pickOtherSheetReferenceButton");otherPickButton->setFocusPolicy(Qt::NoFocus);formula->addWidget(otherPickButton);
     connect(m_source,&QLineEdit::textEdited,this,[this]{++m_referenceGeneration;});
+    connect(m_source,&QLineEdit::textEdited,this,&MainWindow::cancelFormatPainter);connect(m_address,&QLineEdit::textEdited,this,&MainWindow::cancelFormatPainter);connect(m_client,&RestClient::configured,this,&MainWindow::cancelFormatPainter);
     m_formulaCues=new QLabel(central);m_formulaCues->setObjectName("formulaSyntaxCues");m_formulaCues->setAccessibleName(tr("Formula references and parentheses"));m_formulaCues->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);m_formulaCues->hide();layout->addWidget(m_formulaCues);dynamic_cast<FormulaLineEdit *>(m_source)->syntaxChanged=[this]{updateFormulaReferences();};
     m_listSummary=new QLabel(central);m_listSummary->setObjectName("listCriteriaSummary");m_listSummary->setAccessibleName(tr("Active sort and filter criteria"));
     m_listSummary->setMinimumWidth(0);m_listSummary->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);m_listSummary->hide();layout->addWidget(m_listSummary);
@@ -536,7 +540,7 @@ void MainWindow::buildUi() {
         m_grid->addAction(action);for(auto *pane:m_frozenTop->views())pane->addAction(action);m_navigationActions.append(action);
     }
     connect(m_grid->selectionModel(),&QItemSelectionModel::selectionChanged,this,[this]{++m_navigationGeneration;if(!m_applyingNavigation)m_navigationExtending=false;});
-    connect(m_model,&QAbstractItemModel::modelReset,this,[this]{++m_navigationGeneration;m_navigationExtending=false;});
+    connect(m_model,&QAbstractItemModel::modelReset,this,[this]{if(m_painterPending || m_painterDragging || (!m_painterRows.isEmpty() && (m_model->workbook()!=m_painterOrigin["workbook"].toString() || m_model->state()!=m_painterOrigin["expected_state"].toString() || m_model->projected())))cancelFormatPainter();++m_navigationGeneration;m_navigationExtending=false;});
     connect(m_client,&RestClient::configured,this,[this]{++m_navigationFlight;++m_navigationGeneration;m_navigationPending=false;m_navigationExtending=false;});
     m_tabs = new QTabBar; m_tabs->setObjectName("sheets"); m_tabs->setAccessibleName(tr("Worksheets")); m_tabs->setExpanding(false);
     layout->addWidget(m_tabs);
@@ -945,6 +949,7 @@ void MainWindow::updateFormulaReferences() {
 }
 
 void MainWindow::startReferencePick() {
+    cancelFormatPainter();
     ++m_referenceGeneration;
     QSignalBlocker blocker(m_pickReferenceAction);m_pickReferenceAction->setChecked(false);
     if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected()){issue("Reference picking needs an editable source sheet.");return;}
@@ -1250,7 +1255,7 @@ void MainWindow::restartService() {
 }
 
 void MainWindow::setBusy(bool busy, const QString &message) {
-    if(busy)finishReferencePick(false);
+    if(busy){finishReferencePick(false);cancelFormatPainter();}
     m_busy = busy || m_releasing;
     if(m_busy){clearFindResults();++m_navigationGeneration;m_navigationExtending=false;}
     for(auto *action:m_navigationActions)action->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
@@ -1513,6 +1518,48 @@ void MainWindow::clearCells(const QString &mode) {
     submit(command);
 }
 
+void MainWindow::cancelFormatPainter() {
+    ++m_painterGeneration;m_painterPending=false;m_painterDragging=false;m_painterRows={};m_painterOrigin={};m_painterDestination={};
+    if(m_painterAction){m_painterAction->setChecked(false);m_painterAction->setProperty("ready",false);}if(m_painterCancel)m_painterCancel->setEnabled(false);
+    if(m_frozenTop){auto views=m_frozenTop->views();views.append(m_grid);for(auto *view:views)view->viewport()->unsetCursor();}
+}
+
+void MainWindow::startFormatPainter() {
+    if(m_painterPending || !m_painterRows.isEmpty()){cancelFormatPainter();return;}
+    cancelFormatPainter();if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool())return;
+    if(m_address->isModified()){issue("Finish address entry before copying formatting.");return;}
+    const auto range=selectedRange();if(range.isEmpty() || m_grid->selectionModel()->selection().size()!=1)return;const auto target=targetContext(range);const auto selection=m_grid->selectionModel()->selection();const auto current=QPersistentModelIndex(m_grid->currentIndex());const auto service=m_client->url();
+    captureGridDraft(false);if(!resolveDraft() || !matchesTarget(target) || current!=m_grid->currentIndex() || selection!=m_grid->selectionModel()->selection())return;
+    const auto generation=++m_painterGeneration,navigation=m_navigationGeneration,reference=m_referenceGeneration;m_painterPending=true;m_painterAction->setChecked(true);m_painterCancel->setEnabled(true);auto request=target;request.remove("workbook");m_status->setText(tr("Reading selected formatting…"));
+    m_client->request(base()+"/styles",request,[this,target,selection,current,service,generation,navigation,reference](QJsonObject result,QString error){
+        if(generation!=m_painterGeneration)return;
+        if(m_busy || m_unknown || !matchesTarget(target) || service!=m_client->url() || navigation!=m_navigationGeneration || reference!=m_referenceGeneration || current!=m_grid->currentIndex() || selection!=m_grid->selectionModel()->selection() || m_source->isModified() || m_address->isModified() || m_model->projected()){cancelFormatPainter();return;}
+        auto views=m_frozenTop->views();views.append(m_grid);for(auto *view:views)if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))if(delegate->hasEditor()){cancelFormatPainter();return;}
+        const auto rows=result["rows"].toArray();const QJsonArray rectangle{target["r1"],target["c1"],target["r2"],target["c2"]};
+        if(!error.isEmpty() || result["state"]!=target["expected_state"] || result["sheet"]!=target["sheet"] || (!result["range"].isArray() || result["range"].toArray()!=rectangle) || !validStylePattern(rows,target["r2"].toInt()-target["r1"].toInt()+1,target["c2"].toInt()-target["c1"].toInt()+1)){cancelFormatPainter();issue(error.isEmpty()?tr("Invalid or stale style snapshot. Copy formatting again."):error);return;}
+        m_painterPending=false;m_painterRows=rows;m_painterOrigin=target;m_painterAction->setProperty("ready",true);for(auto *view:views)view->viewport()->setCursor(Qt::CrossCursor);m_frozenTop->focusCurrent();m_status->setText(tr("Format painter ready • Click a destination or drag a multiple of %1 × %2 cells • Escape cancels").arg(rows.size()).arg(rows.first().toArray().size()));
+    });
+}
+
+bool MainWindow::formatPainterMouseEvent(QObject *object,QEvent *event) {
+    if(event->type()!=QEvent::MouseButtonPress && event->type()!=QEvent::MouseButtonRelease && event->type()!=QEvent::MouseMove)return false;
+    auto views=m_frozenTop->views();views.append(m_grid);bool viewport=false;for(auto *view:views)if(object==view->viewport())viewport=true;if(!viewport)return false;
+    const auto *mouse=static_cast<QMouseEvent *>(event);if(event->type()==QEvent::MouseButtonPress && mouse->button()!=Qt::LeftButton){cancelFormatPainter();return false;}
+    if(event->type()!=QEvent::MouseButtonPress && !m_painterDragging)return false;
+    QModelIndex cell;for(auto *view:views){if(!view->isVisible())continue;const auto point=view->viewport()->mapFromGlobal(mouse->globalPosition().toPoint());if(view->viewport()->rect().contains(point)){cell=view->indexAt(point);break;}}
+    if(event->type()==QEvent::MouseButtonPress){if(!cell.isValid())return true;m_painterAnchor=QPoint(cell.column()+1,cell.row()+1);m_painterDestination=targetContext();m_painterDragGeneration=m_navigationGeneration;m_painterDragging=true;}
+    if(event->type()!=QEvent::MouseButtonRelease)return true;
+    const auto rows=m_painterRows;const auto origin=m_painterOrigin,destination=m_painterDestination;const auto anchor=m_painterAnchor;const auto navigation=m_painterDragGeneration;cancelFormatPainter();
+    bool editor=false;for(auto *view:views)if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))editor|=delegate->hasEditor();
+    if(!cell.isValid() || m_busy || m_unknown || m_info["readonly"].toBool() || m_model->projected() || !matchesTarget(destination) || origin["workbook"]!=m_info["id"] || origin["expected_state"]!=m_info["state"] || navigation!=m_navigationGeneration || m_source->isModified() || m_address->isModified() || editor){issue("Format painter inputs changed. No formatting applied.");return true;}
+    const int r1=qMin(anchor.y(),cell.row()+1),c1=qMin(anchor.x(),cell.column()+1);int r2=qMax(anchor.y(),cell.row()+1),c2=qMax(anchor.x(),cell.column()+1);
+    if(r1==r2 && c1==c2){r2+=rows.size()-1;c2+=rows.first().toArray().size()-1;}
+    const auto edits=formatPainterEdits(rows,r1,c1,r2,c2);if(edits.isEmpty() || intersectsHidden(r1,c1,r2,c2)){issue("Choose a visible in-grid destination of at most 10,000 cells, with exact multiples of the copied pattern. No formatting applied.");return true;}
+    auto command=destination;command["action"]="edit";command["cells"]=edits;command["label"]="Paint cell formatting";
+    if(QJsonDocument(command).toJson(QJsonDocument::Compact).size()>4*1024*1024-4096){issue("Formatting request exceeds the ordinary request budget. Choose a smaller destination.");return true;}
+    submit(command);return true;
+}
+
 void MainWindow::showFormatCells() {
     if(m_busy || m_unknown || m_info.isEmpty())return;
     if(m_info["readonly"].toBool()){issue("Workbook is read-only. Formatting is unavailable.");return;}
@@ -1529,7 +1576,7 @@ void MainWindow::showFormatCells() {
 void MainWindow::adjustDecimals(int change) {
     if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool())return;
     if(m_address->isModified() || !m_model->loaded(m_grid->currentIndex())){issue("Finish address entry and wait for the active cell before adjusting decimals.");return;}
-    auto range=selectedRange();if(range.isEmpty())return;const auto target=targetContext(range);const auto current=QPersistentModelIndex(m_grid->currentIndex());const auto style=m_model->cell(current)["style"].toObject();const auto mode=style["format"].toString();const int places=(mode=="fixed2" || mode=="percent2")?2:style["decimals"].toInt(2);const int next=qBound(0,places+change,15);
+    auto range=selectedRange();if(range.isEmpty())return;const auto target=targetContext(range);const auto current=QPersistentModelIndex(m_grid->currentIndex());const auto style=m_model->cell(current)["style"].toObject();const auto mode=style["format"].toString();const bool configurable=QStringList{"number","percent","currency"}.contains(mode) || (mode.isEmpty() && (style.contains("decimals") || style.contains("grouping")));const int places=configurable?style["decimals"].toInt(2):2;const int next=qBound(0,places+change,15);
     captureGridDraft(false);if(!resolveDraft() || !matchesTarget(target) || current!=m_grid->currentIndex())return;
     format({{"decimals",next}},target);
 }
@@ -2286,6 +2333,10 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
+    if(m_painterPending || !m_painterRows.isEmpty()) {
+        if(event->type()==QEvent::KeyPress){const auto key=static_cast<QKeyEvent *>(event)->key();cancelFormatPainter();if(key==Qt::Key_Escape)return true;}
+        else if(!m_painterRows.isEmpty() && formatPainterMouseEvent(object,event))return true;
+    }
     if(m_pickingReference){
         if(object==m_source && event->type()==QEvent::MouseButtonPress)finishReferencePick(false);
         if(event->type()==QEvent::KeyPress){const auto *key=static_cast<QKeyEvent *>(event);finishReferencePick(false);if(key->key()==Qt::Key_Escape)return true;}
