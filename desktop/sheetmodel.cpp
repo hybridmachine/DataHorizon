@@ -96,10 +96,10 @@ QVariant SheetModel::data(const QModelIndex &index, int role) const {
     case Qt::ToolTipRole: return item.value("error").toString(item.value("source").toString());
     case Qt::AccessibleTextRole: return columnName(index.column()+1) + QString::number(sourceRow(index.row())+1) + ": " + item.value("display").toString();
     case Qt::FontRole: {
-        QFont font; font.setBold(style.value("bold").toBool()); font.setItalic(style.value("italic").toBool()); return font;
+        QFont font;if(style.contains("font_family"))font.setFamily(style["font_family"].toString());if(style.contains("font_size"))font.setPointSize(style["font_size"].toInt()); font.setBold(style.value("bold").toBool()); font.setItalic(style.value("italic").toBool()); return font;
     }
     case Qt::BackgroundRole: if (style.contains("background")) return QBrush(QColor(style.value("background").toString())); break;
-    case Qt::ForegroundRole: if (item.contains("error")) return QBrush(QColor("#b3261e")); break;
+    case Qt::ForegroundRole: if (item.contains("error")) return QBrush(QColor("#b3261e")); if(style.contains("text_color"))return QBrush(QColor(style["text_color"].toString()));break;
     case Qt::TextAlignmentRole: {
         auto align = style.value("align").toString();
         auto horizontal = align == "center" ? Qt::AlignHCenter : align == "right" || (align.isEmpty() && item.value("value").isDouble()) ? Qt::AlignRight : Qt::AlignLeft;

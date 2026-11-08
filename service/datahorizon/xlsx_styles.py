@@ -1,7 +1,7 @@
 """XLSX mapping for the existing native style tier; unsupported display is reported."""
 import re
 
-from .engine import encoded, require
+from .engine import encoded, require, validate_style, EngineError
 from .formats import number_format_code, simple_number_style
 from .interchange import S,R,node,read_xml
 
@@ -50,6 +50,16 @@ class XlsxStyles:
         font=self.index(xf.get("fontId","0"),self.fonts)
         if enabled(font.find(f"{{{S}}}b")): result["bold"]=True
         if enabled(font.find(f"{{{S}}}i")): result["italic"]=True
+        for key,tag in (("font_family","name"),("font_size","sz"),("text_color","color")):
+            element=font.find(f"{{{S}}}{tag}")
+            if element is None:continue
+            value=element.get("val","")
+            if key=="font_size":value=int(float(value)) if re.fullmatch(r"[0-9]{1,3}(?:\.0{1,8})?",value) else None
+            elif key=="text_color":
+                rgb=element.get("rgb","");value="#"+rgb[2:].lower() if re.fullmatch(r"[0-9a-fA-F]{8}",rgb) and element.get("tint","0") in ("0","0.0") else None
+            try:validate_style({key:value})
+            except EngineError:self.loss(f"Unsupported {key} (including theme/tinted colors or fractional/out-of-range sizes) is omitted.")
+            else:result[key]=value
         fill=self.index(xf.get("fillId","0"),self.fills)
         pattern=fill.find(f"{{{S}}}patternFill")
         if pattern is not None and pattern.get("patternType") not in (None,"none"):
@@ -78,7 +88,7 @@ class XlsxStyles:
 
     def report(self):
         return ["Mapped direct cell styles replace destination styles: general/Text/number/percentage/explicit currency labels with 0–15 decimal places, bold/italic, alignment, wrapping, solid RGB fill and thin box borders.",
-                "Font family/size/color, rich-text runs, named-style inheritance, conditional formatting, row/column defaults and dimensions are omitted.",*sorted(self.losses)]
+                "Rich-text runs, named-style inheritance, conditional formatting, row/column defaults and dimensions are omitted.",*sorted(self.losses)]
 
 
 def export_styles(cells):
@@ -103,7 +113,10 @@ def export_styles(cells):
     node(node(fills,"fill"),"patternFill",patternType="gray125")
     borders=node(root,"borders",count=str(len(styles)))
     for style in styles:
-        font=node(fonts,"font"); node(font,"sz",val="11"); node(font,"name",val="Calibri")
+        font=node(fonts,"font")
+        if "font_size" in style:node(font,"sz",val=str(style["font_size"]))
+        if "font_family" in style:node(font,"name",val=style["font_family"])
+        if "text_color" in style:node(font,"color",rgb="FF"+style["text_color"][1:].upper())
         if style.get("bold"): node(font,"b")
         if style.get("italic"): node(font,"i")
         fill=node(fills,"fill")

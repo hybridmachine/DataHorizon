@@ -1,0 +1,29 @@
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+QWARN  : DesktopTests::fontControlsValidateRenderAndUndoWithoutRetyping() qt.qpa.fonts: Populating font family aliases took 79 ms. Replace uses of missing font family "DejaVu Sans" with one that exists to avoid this cost. 
+PASS   : DesktopTests::fontControlsValidateRenderAndUndoWithoutRetyping()
+PASS   : DesktopTests::formatCellsDialogPatchesOnlyChosenPropertiesAndValidatesColors()
+PASS   : DesktopTests::currencyDialogValidatesExplicitLabelsAndKeepsMagnitude()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 2548ms
+********* Finished testing of DesktopTests *********
+
+----------------------------------------------------------------------
+Ran 373 tests in 30.945s
+
+OK
+test_currency_labels_precision_grouping_and_packages_do_not_convert (test_formatting.FormattingTests.test_currency_labels_precision_grouping_and_packages_do_not_convert) ... ok
+test_every_precision_preserves_numeric_values_and_display_codes_in_packages (test_formatting.FormattingTests.test_every_precision_preserves_numeric_values_and_display_codes_in_packages) ... ok
+test_font_import_named_faces_and_unsupported_properties_are_reported (test_formatting.FormattingTests.test_font_import_named_faces_and_unsupported_properties_are_reported) ... ok
+test_fonts_validate_and_persist_through_history_reopen_and_packages (test_formatting.FormattingTests.test_fonts_validate_and_persist_through_history_reopen_and_packages) ... ok
+test_grouping_is_invariant_keeps_magnitudes_and_rejects_non_boolean (test_formatting.FormattingTests.test_grouping_is_invariant_keeps_magnitudes_and_rejects_non_boolean) ... ok
+test_precision_bounds_types_legacy_and_extreme_display (test_formatting.FormattingTests.test_precision_bounds_types_legacy_and_extreme_display) ... ok
+test_precision_patch_preserves_mixed_families_sources_history_and_reopen (test_formatting.FormattingTests.test_precision_patch_preserves_mixed_families_sources_history_and_reopen) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.049s
+
+OK
+openpyxl and odfpy accepted 38 numeric style cases; typed values and precision retained
+Visually inspected build/font-cells-cocoa.png at native scale 2: font fields, tri-state controls, help/reset and buttons remain legible, without overlap/clipping. Missing DejaVu Sans triggers Qt fallback while the requested family remains stored. Added named-face/theme/fractional-size import coverage passed in the focused seven-test formatting suite after the full 373-test run; source implementation was unchanged.

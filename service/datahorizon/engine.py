@@ -132,18 +132,22 @@ def rectangle(args, limit=MAX_CELLS):
 
 def validate_style(style):
     require(isinstance(style, dict), "INVALID_STYLE", "Style must be an object")
-    allowed = {"format", "bold", "italic", "align", "background", "wrap", "border", "decimals", "grouping", "currency"}
+    allowed = {"format", "bold", "italic", "align", "background", "wrap", "border", "decimals", "grouping", "currency", "font_family", "font_size", "text_color"}
     require(not set(style) - allowed, "UNSUPPORTED_STYLE", "Unsupported style property")
     for key, value in style.items():
         if key == "format":
             require(value in ("general", "text", "fixed2", "percent2", "number", "percent", "currency"), "UNSUPPORTED_STYLE", "Unsupported number format")
+        elif key == "font_family":
+            require(isinstance(value,str) and 1 <= len(value) <= 64 and value==value.strip() and re.fullmatch(r"[^\x00-\x1f\x7f,\\\"']+",value), "INVALID_STYLE", "Font family must be 1–64 characters without controls, quotes, comma or backslash")
+        elif key == "font_size":
+            require(type(value) is int and 6 <= value <= 72, "INVALID_STYLE", "Font size must be an integer from 6 to 72 points")
         elif key == "currency":
             require(isinstance(value,str) and re.fullmatch(r"[A-Z]{3}",value), "INVALID_STYLE", "Currency label must be three uppercase ASCII letters")
         elif key == "decimals":
             require(type(value) is int and 0 <= value <= 15, "INVALID_STYLE", "Decimal places must be an integer from 0 to 15")
         elif key == "align":
             require(value in ("left", "center", "right"), "INVALID_STYLE", "Invalid alignment")
-        elif key == "background":
+        elif key in ("background","text_color"):
             require(isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value), "INVALID_STYLE", "Expected #RRGGBB")
         elif key == "border":
             require(value in ("none", "box"), "INVALID_STYLE", "Border must be none or box")
