@@ -34,7 +34,7 @@ CAPABILITIES = {
     "temporal_types": ["date","time","datetime"], "calculation_timezone": "UTC",
     "max_style_cells":MAX_CELLS, "max_summary_cells":MAX_CELLS, "max_viewport_cells": 4096, "max_clipboard_cells":MAX_CELLS, "max_request_bytes": 4 * 1024 * 1024,
     "formulas": ["arithmetic", "references", "concatenation", *sorted(SUPPORTED_FUNCTIONS)],
-    "operations": ["metadata_set","metadata_delete","workbook_import", "edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
+    "operations": ["list_declare","list_reconcile","list_forget","metadata_set","metadata_delete","workbook_import", "edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
     "interchange": ["csv", "xlsx", "ods"], "managed_sql": False, "remote_binding": False,
     "follow_up_work": False, "chunked_jobs": False, "preparation_jobs": True, "background_calculation":True, "structural_events":True,
     "max_preparation_jobs":4, "preparation_job_seconds":10, "preparation_retention_seconds":300,
@@ -48,6 +48,7 @@ ROUTES = {
     "/v1/workbooks/{workbook}/calculation/jobs/{job}/cancel":("post","Cancel or discard a calculation snapshot"),
     "/v1/workbooks/{workbook}/calculation/jobs/{job}/release":("post","Release a terminal calculation job"),
     "/v1/workbooks/{workbook}/metadata/read":("post","Read portable per-sheet presentation and list metadata"),
+    "/v1/workbooks/{workbook}/records/read":("post","Review persistent declared-list record identities and verification state"),
     "/v1/functions": ("get", "Implemented formula signatures, rules and worked examples; no workbook required"),
     "/v1/capabilities": ("get", "Preview capabilities"),
     "/v1/open": ("post", "Create or open a server-local native workbook"),
@@ -185,6 +186,10 @@ def openapi():
             actions[axis+"_"+verb] = (["start"],{"sheet":sheet,"start":{"type":"integer","minimum":1,"maximum":maximum},
                 "count":{"type":"integer","minimum":1,"maximum":maximum,"default":1,"description":"Must fit between start and the grid edge"}},
                 {"sheet":"Sheet1","start":2,"count":1})
+    for action in ('list_declare','list_reconcile','list_forget'):
+        extra={'spec':{'type':'object'}} if action=='list_declare' else {'mode':{'type':'string','enum':['retain_positions','regenerate']}} if action=='list_reconcile' else {}
+        example={'id':'Records',**({'spec':{'r2':3,'c2':2}} if action=='list_declare' else {'mode':'retain_positions'} if action=='list_reconcile' else {})}
+        actions[action]=(['id']+list(extra),{'sheet':sheet,'id':{'type':'string'},**extra},example)
     for action in ('metadata_set','metadata_delete'):
         actions[action]=(['namespace','id']+(['payload'] if action=='metadata_set' else []),{'sheet':sheet,'namespace':{'type':'string','enum':['presentation','list']},'id':{'type':'string','minLength':1,'maxLength':64},'payload':{'type':'object'}},{'namespace':'presentation','id':'view',**({'payload':{'frozen_rows':1}} if action=='metadata_set' else {})})
     for action, (required, properties, example) in actions.items():
@@ -247,7 +252,7 @@ def openapi():
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = "MetadataRequest" if path.endswith("/metadata/read") else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
@@ -456,6 +461,9 @@ class Service(ThreadingHTTPServer):
             return self._dispatch_book(method,parts[2],book,suffix,body)
 
     def _dispatch_book(self, method, handle, book, suffix, body):
+        if method=='POST' and suffix==['records','read']:
+            from .records import read
+            return read(book,body)
         if method=='POST' and suffix==['metadata','read']:
             from .metadata import read
             return read(book,body.get('sheet','Sheet1'),body)

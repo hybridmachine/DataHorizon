@@ -158,6 +158,16 @@ class WorkbookClient:
         self._ensure_open()
         return self.client.request(self.base+'/calculation/jobs',dict(sheet=sheet,job_id=job_id or str(uuid.uuid4()),expected_state=self.state,**scope))
 
+    def declare_list(self,identifier,sheet='Sheet1',**spec):
+        return self.apply('list_declare',sheet,id=identifier,spec=spec)
+
+    def records(self,identifier,sheet='Sheet1'):
+        self._ensure_open()
+        return self.client.request(self.base+'/records/read',dict(id=identifier,sheet=sheet,expected_state=self.state))
+
+    def reconcile_list(self,identifier,mode,sheet='Sheet1'):
+        return self.apply('list_reconcile',sheet,id=identifier,mode=mode)
+
     def metadata(self,sheet='Sheet1'):
         self._ensure_open()
         return self.client.request(self.base+'/metadata/read',dict(sheet=sheet,expected_state=self.state))

@@ -83,6 +83,17 @@ available. View → Save/Load view in workbook explicitly transfers between loca
 preferences and native storage. Native copies and sheet duplication retain the
 portable tier; unsupported full SQL/query views remain M8 work.
 
+Task 6 stores persistent UUIDs per explicitly declared source row in native v3;
+A1 coordinates and display order remain separate. Up to 16 lists and 10,000 total
+declared cells are supported. Managed edits refresh provenance; row/column structure
+updates extents and identities in the same transaction. Deleting an entire scope
+forgets its declaration; partial header deletion or deletion of a criteria column
+rejects until explicitly redeclared. Sorting/filtering never renumbers identities.
+Input fingerprints detect out-of-band scope changes across reopen; live external
+refresh conservatively distrusts declarations. Explicit retain_positions/regenerate
+reconciliation reviews current state and never replays skipped handlers. REST/SDK,
+CLI apply and Data → Declare selected list records share the engine operations.
+
 ## Evidence ledger
 
 Task 4 opts in through a top-level `on_structure(context,event)` function in the

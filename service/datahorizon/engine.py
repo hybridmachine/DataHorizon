@@ -262,6 +262,7 @@ class Workbook:
         self.lock = threading.RLock()
         self.undo, self.redo = [], []
         self.dependencies=DependencyIndex()
+        self.unverified_records=set()
         self._calculation_jobs=None
         self.epoch = str(uuid.uuid4())
         created_identity = None
@@ -341,11 +342,18 @@ class Workbook:
             require(signature == (EXPECTED_SCHEMA3 if meta[0][0]==3 else EXPECTED_SCHEMA),"FORMAT_VERSION","Native schema/version mismatch",409)
             if meta[0][0]==3:
                 from .metadata import validate
+                record_count=record_cells=0
                 for count,(namespace,identifier,payload) in enumerate(db.execute("SELECT namespace,id,substr(payload,1,1048577) FROM dh_objects"),1):
                     require(count<=256 and time.monotonic()<=deadline,"LIMIT","Native metadata exceeds validation bounds")
                     value=json.loads(payload)
                     if namespace in ("presentation","list"):validate(namespace,identifier,value)
-                    else:require(namespace=="records","INVALID_FORMAT","Unknown native metadata")
+                    else:
+                        require(namespace=="records","INVALID_FORMAT","Unknown native metadata")
+                        from .records import validate as validate_records
+                        validate_records(value)
+                        from .metadata import name
+                        name(identifier);record_count+=1;spec=value["spec"];record_cells+=(spec["r2"]-spec["r1"]+1)*(spec["c2"]-spec["c1"]+1)
+                require(record_count<=16 and record_cells<=10000,"LIMIT","Declared record scopes exceed native bounds")
             require(valid_uuid(meta[0][2]) and (not hasattr(self,"id") or meta[0][2] == self.id),
                     "INVALID_FORMAT","Invalid or changed workbook identity",409)
             positions = set()
@@ -377,6 +385,8 @@ class Workbook:
             self.undo.clear()
             self.redo.clear()
             self.dependencies.clear()
+            if self.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=3:
+                self.unverified_records.update((sheet,identifier) for sheet,identifier in self.db.execute("SELECT sheet_id,id FROM dh_objects WHERE namespace='records'"))
 
     def state(self):
         revision = self.db.execute("SELECT revision FROM dh_meta").fetchone()[0]
@@ -780,6 +790,7 @@ class Workbook:
                 self.refresh(deadline=self.deadline)
                 self.changes, self.pending = {}, {}
                 self.operation_clock=utc_clock()
+                unverified_before=set(self.unverified_records)
                 self.change_bytes = 0
                 self.db.execute("BEGIN IMMEDIATE")
                 # A different service may have committed this ID while we waited
@@ -816,10 +827,14 @@ class Workbook:
                 require("label" not in request or isinstance(request["label"],str),"INVALID_ARGUMENT","Operation label must be text")
                 kind = request.get("action")
                 structural = isinstance(kind, str) and (kind.startswith("sheet_") or kind == "workbook_import" or kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"))
+                from . import records
+                record_context=records.capture(self)
                 before_catalog=self.structure_hook(operation,request,'before',None) if structural else None
                 reference_report = {}
                 sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
-                if kind in ('metadata_set','metadata_delete'):
+                if kind in ('list_declare','list_reconcile','list_forget'):
+                    records.mutate(self,request)
+                elif kind in ('metadata_set','metadata_delete'):
                     from .metadata import validate,name
                     identity=self.sheet(request.get('sheet','Sheet1'));namespace=request.get('namespace');identifier=name(request.get('id'))
                     require(namespace in ('presentation','list'),'INVALID_METADATA','Unsupported metadata namespace')
@@ -986,6 +1001,7 @@ class Workbook:
                     raise EngineError("UNSUPPORTED_OPERATION", f"Operation is not available: {kind}")
                 if structural:self.structure_hook(operation,request,'after',before_catalog)
                 self.run_hooks(operation)
+                records.finish(self,request,record_context)
                 require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
                 self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1]}
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
@@ -1027,6 +1043,7 @@ class Workbook:
                     # this ID's failed outcome. Another service cannot steal it.
                     self.db.execute("ROLLBACK TO operation_changes")
                     self.db.execute("RELEASE operation_changes")
+                    self.unverified_records=unverified_before
                 except sqlite3.Error as rollback_error:
                     try:
                         if self.db.in_transaction: self.db.execute("ROLLBACK")

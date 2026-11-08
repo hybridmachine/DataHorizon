@@ -262,6 +262,7 @@ void MainWindow::buildUi() {
     auto *formatMenu = menuBar()->addMenu(tr("F&ormat"));
     auto *sheetMenu = menuBar()->addMenu(tr("&Sheet"));
     auto *dataMenu = menuBar()->addMenu(tr("&Data"));
+    auto *declare=dataMenu->addAction(tr("Declare selected list records…"));declare->setObjectName("declareRecordsAction");connect(declare,&QAction::triggered,this,&MainWindow::declareRecords);
     auto *calculate=dataMenu->addAction(tr("Recalculate selection in background…"));calculate->setObjectName("calculateSelectionAction");connect(calculate,&QAction::triggered,this,&MainWindow::calculateSelection);
     auto *view = menuBar()->addMenu(tr("&View"));
     auto *savePortable=view->addAction(tr("Save view in workbook"));savePortable->setObjectName("savePortableViewAction");connect(savePortable,&QAction::triggered,this,[this]{portableView(true);});
@@ -1590,6 +1591,14 @@ bool MainWindow::formatPainterMouseEvent(QObject *object,QEvent *event) {
     auto command=destination;command["action"]="edit";command["cells"]=edits;command["label"]="Paint cell formatting";
     if(QJsonDocument(command).toJson(QJsonDocument::Compact).size()>4*1024*1024-4096){issue("Formatting request exceeds the ordinary request budget. Choose a smaller destination.");return true;}
     submit(command);return true;
+}
+
+void MainWindow::declareRecords() {
+    if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected())return;
+    auto range=selectedRange();if(range.isEmpty())return;const auto target=targetContext(range);captureGridDraft(false);if(!resolveDraft() || !matchesTarget(target))return;
+    QDialog dialog(this);dialog.setWindowTitle(tr("Declare persistent list records"));dialog.setObjectName("declareRecordsDialog");QFormLayout layout(&dialog);QLineEdit name(&dialog);name.setObjectName("recordListName");name.setMaxLength(64);name.setText("Records");QCheckBox header(tr("First row is a header"),&dialog);layout.addRow(tr("List name"),&name);layout.addRow(&header);QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog);layout.addRow(&buttons);connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    if(dialog.exec()!=QDialog::Accepted || !matchesTarget(target) || selectedRange()!=range)return;
+    range["header"]=header.isChecked();auto request=target;request["action"]="list_declare";request["id"]=name.text();request["spec"]=range;request["label"]="Declare persistent list";submit(request);
 }
 
 void MainWindow::calculateSelection() {
