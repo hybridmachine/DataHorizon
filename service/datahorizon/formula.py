@@ -4,8 +4,10 @@ from decimal import Context, Decimal, InvalidOperation, localcontext, ROUND_HALF
 import math
 import re
 import time
+from datetime import date, timedelta
 
 from .functions import FUNCTIONS
+from .temporal import Temporal, from_serial
 
 SUPPORTED_FUNCTIONS = frozenset(FUNCTIONS)
 CELL_ERRORS = {"#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#NUM!", "#N/A", "#NULL!"}
@@ -610,6 +612,25 @@ class Calculator:
         if value<minimum:raise FormulaError("#VALUE!","Position/count is below its minimum")
         return int(value)
 
+    def calendar_function(self,name,args,sheet):
+        if len(args)!=(3 if name=="DATE" else 1):raise FormulaError("#NAME?",name+" has invalid arity")
+        values=[self.scalar_value(arg,sheet) for arg in args]
+        try:
+            if name=="DATE":
+                year,month,day=[int(numeric(value)) for value in values]
+                if not 0<=year<=9999:raise ValueError("DATE year must be 0–9999")
+                if year<1900:year+=1900
+                year,month0=divmod(year*12+month-1,12)
+                value=date(year,month0+1,1)+timedelta(days=day-1)
+                return Temporal(value.isoformat(),"date")
+            value=values[0]
+            if isinstance(value,Temporal):
+                if value.kind=="time":raise FormulaError("#VALUE!","Calendar extraction requires a date")
+            else:value=from_serial(numeric(value),"date")
+            return getattr(value.parsed(),{"YEAR":"year","MONTH":"month","DAY":"day"}[name])
+        except (ValueError,OverflowError) as error:
+            raise FormulaError("#NUM!",str(error)) from error
+
     def textjoin(self,args,sheet):
         if not 3<=len(args)<=255:raise FormulaError("#NAME?","TEXTJOIN requires delimiter, ignore_empty and 1–253 values")
         if args[0][0]=="range" or args[1][0]=="range":raise FormulaError("#VALUE!","TEXTJOIN delimiter/flag must be scalar")
@@ -963,6 +984,7 @@ class Calculator:
             return [self.cell(*target) for target in self.range_targets(node,sheet)]
         if kind == "call":
             name, args = node[1:]
+            if name in ("DATE","YEAR","MONTH","DAY"):return self.calendar_function(name,args,sheet)
             if name in ("IFERROR","IFNA"):
                 if len(args)!=2: raise FormulaError("#NAME?",name+" requires two arguments")
                 if args[0][0]=="range": raise FormulaError("#VALUE!",name+" requires scalar expressions")

@@ -11,6 +11,21 @@ import sys
 from datahorizon.temporal import Temporal, from_serial, to_serial
 from datahorizon.engine import Workbook, EngineError, display
 from datahorizon.client import LocalService, APIError
+from datahorizon.formula import Calculator, Parser, FormulaError
+
+
+def evaluate(source):
+    return Calculator(lambda *args:None,lambda name:name,seconds=1).evaluate(Parser(source.removeprefix("=")).parse(),"Sheet1")
+
+
+class CalendarFunctionTests(unittest.TestCase):
+    def test_date_normalization_and_extraction(self):
+        for formula,expected in (("DATE(2024,2,29)","2024-02-29"),("DATE(24,14,0)","1925-01-31"),("DATE(1900,2,29)","1900-03-01"),("DATE(2024,1,-1)","2023-12-30"),("YEAR(DATE(2024,2,29))",2024),("MONTH(61)",3),("DAY(59.9)",28)):
+            self.assertEqual(evaluate(formula),expected,formula)
+        self.assertEqual(evaluate("DATE(2024,2,29)").kind,"date")
+        for formula,code in (("DATE(-1,1,1)","#NUM!"),("DATE(9999,13,1)","#NUM!"),("DATE(1e200,1,1)","#NUM!"),("YEAR(60)","#NUM!"),("YEAR(\"2024-02-29\")","#VALUE!"),("DATE(2024,1)","#NAME?"),("YEAR(A1:A2)","#VALUE!"),("DATE(1/0,1,1)","#DIV/0!")):
+            with self.assertRaises(FormulaError) as error:evaluate(formula)
+            self.assertEqual(error.exception.code,code,formula)
 
 
 class TemporalContractTests(unittest.TestCase):

@@ -55,3 +55,13 @@ precision. Applying these styles never changes source/kind. Numeric cells are
 displayed using the 1900 serial system; invalid calendar serials show `####`.
 Text is never parsed by formatting. Time-only values retain their canonical clock
 when given a date format; dates display midnight when given a time format.
+
+## Calendar functions
+
+DATE returns a native date, with numeric components truncated toward zero,
+Excel's 0–1899 year offset and normalized month/day overflow. Normalization uses
+the real Gregorian calendar: DATE(1900,2,29) becomes 1900-03-01, an explicit
+departure from Excel's fictitious leap day. YEAR/MONTH/DAY accept dates,
+datetimes or explicit numeric 1900 serials; they reject time-only values and
+Text. Ranges fail; ordinary formula errors propagate. See catalog rules for
+arity, blank/Boolean coercion and bounds. [Excel DATE reference](https://support.microsoft.com/en-us/excel/functions/date-function).
