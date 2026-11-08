@@ -200,7 +200,7 @@ class StructureEngineTests(unittest.TestCase):
         self.assertEqual(self.book.read("Sheet1",{})["cells"][0]["error"],"#REF!")
 
     def test_unsupported_syntax_and_required_handlers_reject_before_changes(self):
-        self.apply(cells=[{"row":1,"col":1,"source":"=A1&\"x\""},{"row":4,"col":1,"source":"7"}])
+        self.apply(cells=[{"row":1,"col":1,"source":"=A1%+1"},{"row":4,"col":1,"source":"7"}])
         self.assertRollback("rows_delete","REFERENCE_TRANSFORM_UNAVAILABLE",start=3)
         self.book.handler=str(Path(__file__).parent/"fixtures"/"validation_hook.py")
         self.assertRollback("rows_insert","UNSUPPORTED_HOOK_SCOPE",start=3)

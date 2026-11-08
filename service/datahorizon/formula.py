@@ -17,7 +17,7 @@ TOKEN = re.compile(
     rf'\s*(?:(?P<ref>{REF})(?![A-Za-z_0-9]|\s*\()|'
     r'(?P<number>(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)|'
     r'(?P<string>"(?:[^"]|"")*")|(?P<error>\#REF!)|'
-    r'(?P<name>[A-Za-z_][A-Za-z_0-9]*)|(?P<op><=|>=|<>|[+*/^(),:=<>-]))'
+    r'(?P<name>[A-Za-z_][A-Za-z_0-9]*)|(?P<op><=|>=|<>|[+*/^&(),:=<>-]))'
 )
 ADDRESS = re.compile(r"(\$?)([A-Za-z]{1,3})(\$?)([1-9][0-9]*)\Z")
 QUOTED_TOKEN = re.compile(r''' "(?:[^"]|"")*" | '(?:[^']|'')*' ''', re.VERBOSE)
@@ -392,7 +392,7 @@ class Parser:
         else:
             raise FormulaError("#VALUE!", "Incomplete formula")
         precedence = {"=": 5, "<>": 5, "<": 5, ">": 5, "<=": 5, ">=": 5,
-                      "+": 10, "-": 10, "*": 20, "/": 20, "^": 40, ":": 50}
+                      "&": 7, "+": 10, "-": 10, "*": 20, "/": 20, "^": 40, ":": 50}
         while self.tokens[self.pos][1] in precedence:
             op = self.tokens[self.pos][1]
             power = precedence[op]
@@ -586,6 +586,16 @@ class Calculator:
         self.count+=max(0,(len(text)+255)//256-1)
         self.check()
 
+    def concatenate_values(self,values):
+        parts=[];characters=0;size=0
+        for value in values:
+            self.check()
+            if isinstance(value,FormulaError):raise value
+            text=scalar_text(value);self.text_work(text);characters+=len(text);size+=len(text.encode())
+            if characters>MAX_TEXT_CHARACTERS or size>MAX_TEXT_BYTES:raise FormulaError("#LIMIT!","Concatenation exceeds 32,767 characters or 64 KiB UTF-8")
+            parts.append(text)
+        self.check();return "".join(parts)
+
     def substring(self,name,args,sheet):
         if not (len(args)==3 if name=="MID" else len(args) in (1,2)):raise FormulaError("#NAME?",name+" has an unsupported argument count")
         if any(arg[0]=="range" for arg in args):raise FormulaError("#VALUE!",name+" requires scalar arguments")
@@ -678,6 +688,9 @@ class Calculator:
                     raise FormulaError("#VALUE!", "IF condition must be numeric or boolean")
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
+            if name=="CONCAT":
+                if not 1<=len(args)<=253:raise FormulaError("#NAME?","CONCAT requires 1–253 arguments")
+                return self.concatenate_values(value for value,referenced in self.argument_values(args,sheet))
             if name in ("LEFT","RIGHT","MID"):
                 return self.substring(name,args,sheet)
             if name in ("LEN","TRIM","UPPER","LOWER"):
@@ -704,6 +717,7 @@ class Calculator:
             left, right = self.evaluate(node[2], sheet), self.evaluate(node[3], sheet)
             if isinstance(left, list) or isinstance(right, list):
                 raise FormulaError("#VALUE!", "Array expressions are unsupported; use a range-aware function")
+            if op=="&":return self.concatenate_values((left,right))
             if op in ("=", "<>", "<", ">", "<=", ">="):
                 if left is None or right is None:
                     # Blank comparisons permit numeric/Boolean coercion only.

@@ -6,7 +6,7 @@ current read transaction. Work remains before a complete everyday preview.
 
 ## Formula surface
 
-`+ - * / ^`, unary signs, parentheses and comparisons `= <> < > <= >=` are
+`+ - * / ^`, scalar Text concatenation `&`, unary signs, parentheses and comparisons `= <> < > <= >=` are
 supported. Power is right-associative and binds more tightly than unary signs
 (`-2^2` is -4). Numbers use finite binary64. Overflow/nonreal results are #NUM!;
 division by zero is #DIV/0!. Text is not implicitly converted to a number in
@@ -49,6 +49,7 @@ ranges, structured references, external workbooks and 3D ranges are unsupported.
 | ABS/ROUND/ROUNDUP/ROUNDDOWN | Scalar numeric operations, explicit decimal rounding and [-15,15] integer digit bounds; see the [numeric tier](spreadsheet-next-ten.md#numeric-function-contract) |
 | LEN/TRIM/UPPER/LOWER | One scalar; explicit invariant text conversion, Unicode code-point length/casing, ASCII-only TRIM, 32,767-character/64-KiB results; see [text tier](formula-next-ten.md#scalar-text-cleanup-tier) |
 | LEFT/RIGHT/MID | Unicode scalar substrings, optional LEFT/RIGHT count, 1-based MID start, explicit numeric count rules and bounded results; see [substring tier](formula-next-ten.md#substring-tier) |
+| CONCAT | 1–253 scalar/range arguments, row-major flattening, invariant Text and bounded incremental results; see [concatenation tier](formula-next-ten.md#concatenation-tier) |
 | IF | Two or three arguments; numeric/boolean/blank condition; evaluate only the selected branch; omitted false branch is FALSE |
 
 Double-quoted strings and TRUE/FALSE are supported. Unsupported function or
