@@ -128,3 +128,26 @@ The additive native-v1 boolean maps to XLSX `#,##0[.zeros][%]` and ODS grouping
 attributes. Built-in XLSX formats 3/4 now map too. CSV retains canonical values;
 display search sees the explicitly formatted text. Unsupported localized or more
 complex custom formats remain reported. Evidence: `evidence/grouping-verification.txt`.
+
+7. [Explicit currency labels #81](https://github.com/hybridmachine/DataHorizon/pull/81): locally built/tested and author-reviewed before merge.
+
+## Explicit currency labels
+
+Format Cells → Currency uses an explicit three-uppercase-ASCII-letter label
+(default USD), 0–15 decimal places and optional comma grouping. Display places
+that label after the number, for example `-1,234.50 EUR`. This is presentation:
+labels are not validated against an ISO list, inferred from locale, or converted
+at an exchange rate. Text, Boolean, NULL, numeric inputs and formulas retain
+stored types and magnitude. Precision/grouping-only edits preserve Currency.
+
+Native-v1 adds `format: currency` and `currency: ABC` (default USD when absent).
+XLSX maps the supported number pattern followed by a quoted `" ABC"` literal;
+ODS uses number + space + explicit currency-symbol and sets the numeric cell's
+currency attribute. Import accepts this explicit suffix grammar; ambiguous
+symbols, accounting patterns and other currency layouts are reported as omitted.
+Two-letter/four-letter/lowercase/non-ASCII labels are rejected transactionally.
+Independent readers check numeric values and labels, without claiming target
+recalculation or locale-identical rendering. Evidence: `evidence/currency-verification.txt`.
+
+The portable ODS currency representation follows the [OASIS currency-style and
+currency-symbol contract](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html).

@@ -132,11 +132,13 @@ def rectangle(args, limit=MAX_CELLS):
 
 def validate_style(style):
     require(isinstance(style, dict), "INVALID_STYLE", "Style must be an object")
-    allowed = {"format", "bold", "italic", "align", "background", "wrap", "border", "decimals", "grouping"}
+    allowed = {"format", "bold", "italic", "align", "background", "wrap", "border", "decimals", "grouping", "currency"}
     require(not set(style) - allowed, "UNSUPPORTED_STYLE", "Unsupported style property")
     for key, value in style.items():
         if key == "format":
-            require(value in ("general", "text", "fixed2", "percent2", "number", "percent"), "UNSUPPORTED_STYLE", "Unsupported number format")
+            require(value in ("general", "text", "fixed2", "percent2", "number", "percent", "currency"), "UNSUPPORTED_STYLE", "Unsupported number format")
+        elif key == "currency":
+            require(isinstance(value,str) and re.fullmatch(r"[A-Z]{3}",value), "INVALID_STYLE", "Currency label must be three uppercase ASCII letters")
         elif key == "decimals":
             require(type(value) is int and 0 <= value <= 15, "INVALID_STYLE", "Decimal places must be an integer from 0 to 15")
         elif key == "align":
@@ -608,7 +610,7 @@ class Workbook:
                     style=validate_style(edit["style"])
                     if ("decimals" in style or "grouping" in style) and "format" not in style and not edit.get("replace_style"):
                         if "decimals" not in style and item["style"].get("format") in ("fixed2","percent2"): style={**style,"decimals":2}
-                        style={**style,"format":"percent" if item["style"].get("format") in ("percent","percent2") else "number"}
+                        style={**style,"format":"percent" if item["style"].get("format") in ("percent","percent2") else "currency" if item["style"].get("format")=="currency" else "number"}
                     item["style"] = style if edit.get("replace_style") else validate_style({**item["style"], **style})
                 # Text format affects subsequent entry, never retypes an existing
                 # number/formula merely because its presentation changed.
