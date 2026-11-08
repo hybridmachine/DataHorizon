@@ -587,6 +587,40 @@ class Calculator:
             if error.code not in CELL_ERRORS:raise
             return error
 
+    def exact_lookup_key(self,value):
+        if isinstance(value,list):raise FormulaError("#VALUE!","Lookup value must be scalar")
+        if value is None:return "blank",None
+        if type(value) is bool:return "boolean",value
+        if type(value) in (int,float):return "number",value
+        self.text_work(value);return "text",value.casefold()
+
+    def xlookup(self,args,sheet):
+        if not 3<=len(args)<=6:raise FormulaError("#NAME?","XLOOKUP requires 3–6 arguments in this tier")
+        if args[0][0]=="range":raise FormulaError("#VALUE!","Lookup value must be scalar")
+        for index,expected in ((4,0),(5,1)):
+            if len(args)>index:
+                if args[index][0]=="range":raise FormulaError("#VALUE!","Lookup modes must be scalar")
+                mode=self.evaluate(args[index],sheet)
+                if type(mode) not in (int,float) or mode!=expected:raise FormulaError("#VALUE!","Only exact match_mode 0 and forward search_mode 1 are supported")
+        lookup=self.range_geometry(args[1],sheet);returns=self.range_geometry(args[2],sheet)
+        shape=(lookup[3]-lookup[1]+1,lookup[4]-lookup[2]+1)
+        if min(shape)!=1 or shape!=(returns[3]-returns[1]+1,returns[4]-returns[2]+1):raise FormulaError("#VALUE!","Lookup/return ranges must be same-shaped vectors")
+        key=self.exact_lookup_key(self.evaluate(args[0],sheet))
+        for row in range(lookup[1],lookup[3]+1):
+            for col in range(lookup[2],lookup[4]+1):
+                self.check()
+                if self.exact_lookup_key(self.cell(lookup[0],row,col))!=key:continue
+                value=self.cell(returns[0],returns[1]+row-lookup[1],returns[2]+col-lookup[2])
+                if isinstance(value,str):value=bounded_text(value)
+                return 0 if value is None else value
+        if len(args)>=4:
+            if args[3][0]=="range":raise FormulaError("#VALUE!","Lookup fallback must be scalar")
+            value=self.evaluate(args[3],sheet)
+            if isinstance(value,list):raise FormulaError("#VALUE!","Lookup fallback must be scalar")
+            if isinstance(value,str):value=bounded_text(value)
+            return 0 if value is None else value
+        raise FormulaError("#N/A","Lookup value was not found")
+
     def conditional_aggregate(self,name,args,sheet):
         if not (len(args)==2 if name=="COUNTIF" else len(args) in (2,3)):raise FormulaError("#NAME?",name+" has an unsupported argument count")
         scope=self.range_geometry(args[0],sheet);sums=self.range_geometry(args[2],sheet) if len(args)==3 else scope
@@ -774,6 +808,7 @@ class Calculator:
                     raise FormulaError("#VALUE!", "IF condition must be numeric or boolean")
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
+            if name=="XLOOKUP":return self.xlookup(args,sheet)
             if name in ("COUNTIF","SUMIF"):
                 return self.conditional_aggregate(name,args,sheet)
             if name=="CONCAT":

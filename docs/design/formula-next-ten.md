@@ -193,6 +193,24 @@ examples reproducible. Common signatures/wildcards follow [Microsoft's SUMIF
 reference](https://support.microsoft.com/en-us/excel/functions/sumif-function);
 the strict same-shape policy avoids implicitly reading outside the supplied range.
 
+## Exact lookup tier
+
+XLOOKUP accepts same-shaped one-dimensional lookup/return references, searches
+forward and returns the first exact match. Optional match_mode supports only 0;
+search_mode supports only 1. Other modes, computed arrays and mismatched shapes
+reject visibly. Missing keys return #N/A or evaluate the optional scalar fallback
+lazily. Only the matched return cell is read; an unmatched return error does not
+interfere. Lookup errors encountered before the match propagate.
+
+Keys distinguish Number, Boolean, blank/NULL and Text: numeric Text identifiers
+retain leading zeros, Text uses Unicode casefolding, and wildcard characters are
+literal. Empty Text differs from blank/NULL; a blank return/fallback becomes zero.
+Text results retain the shared size/work bounds. These explicit native coercions
+and supported modes are a subset of [Microsoft's XLOOKUP interface](https://support.microsoft.com/en-us/excel/functions/xlookup-function).
+XLSX uses `_xlfn.XLOOKUP`; ODS uses [COM.MICROSOFT.XLOOKUP](https://help.libreoffice.org/latest/en-US/text/scalc/01/func_xlookup.html).
+Independent readers verify stored names/types; target application recalculation
+and approximate/reverse/binary searches are outside this stage.
+
 ## Completed PRs
 
 1. [Function catalog #55](https://github.com/hybridmachine/DataHorizon/pull/55): local build/full CTest and native help checks passed; self-reviewed and merged.
@@ -210,3 +228,5 @@ the strict same-shape policy avoids implicitly reading outside the supplied rang
 7. [Concatenation #61](https://github.com/hybridmachine/DataHorizon/pull/61): locally verified, self-reviewed and merged.
 
 8. [Conditional aggregates #62](https://github.com/hybridmachine/DataHorizon/pull/62): locally verified, self-reviewed and merged.
+
+9. [Exact XLOOKUP #63](https://github.com/hybridmachine/DataHorizon/pull/63): locally verified, self-reviewed and merged.
