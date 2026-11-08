@@ -80,6 +80,11 @@ register('SEARCH','SEARCH(find_text, within_text[, start])','Find a case-insensi
 register('TEXTJOIN','TEXTJOIN(delimiter, ignore_empty, text, …)','Join scalar/range values with a delimiter.','3–255 arguments, at most 253 values/ranges. Scalar delimiter uses invariant Text conversion; ignore_empty accepts numeric/Boolean/blank, never Text. Ranges flatten row-major. True skips blank/NULL/empty Text; false keeps empty fields. Numbers/Booleans use invariant Text spelling, existing Text stays literal. Errors/cycles/limits propagate; output bounded incrementally to 32,767 characters/64 KiB.','=TEXTJOIN("-",TRUE,"00","",123)','00-123','Text')
 
 
+MULTIPLE_RULES=CONDITIONAL_RULES+' 1–127 range/criterion pairs, aligned shapes with AND semantics. All criteria expressions and each aligned criteria cell are evaluated, so mismatches do not hide cycles/resource failures. No implicit resizing.'
+register('COUNTIFS','COUNTIFS(range1, criteria1[, range2, criteria2, …])','Count cells satisfying every aligned criterion.',MULTIPLE_RULES,'=COUNTIFS(B1:B3,"Pen",C1:C3,">2")',1,'Conditional',CONDITIONAL_EXAMPLE)
+register('SUMIFS','SUMIFS(sum_range, range1, criteria1[, range2, criteria2, …])','Sum numeric cells satisfying every aligned criterion.',MULTIPLE_RULES+' Sum range must have the same shape. Only matching sums are evaluated; Text/Boolean/blank ignored, matching errors/nonfinite totals propagate.','=SUMIFS(C1:C3,B1:B3,"Pen",C1:C3,">2")',3,'Conditional',CONDITIONAL_EXAMPLE)
+
+
 def function_catalog():
     return dict(version=1,functions=deepcopy([FUNCTIONS[name] for name in sorted(FUNCTIONS)]),
                 notes=['This catalog describes the implemented development tier, not full Excel compatibility.',

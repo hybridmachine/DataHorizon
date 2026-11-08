@@ -62,6 +62,8 @@ TEXTJOIN's ODS extension follows [LibreOffice](https://help.libreoffice.org/late
 
 8. [TEXTJOIN #72](https://github.com/hybridmachine/DataHorizon/pull/72): locally built/tested, self-reviewed and merged.
 
+9. [COUNTIFS/SUMIFS #73](https://github.com/hybridmachine/DataHorizon/pull/73): locally built/tested, self-reviewed and merged.
+
 ## Scalar inspection tier
 
 ISBLANK recognizes blank/NULL, including a formula's scalar NULL result; empty
@@ -133,3 +135,14 @@ their separators. Text flags and delimiter arrays reject. Ordinary errors,
 cycles and limits remain visible. Output accumulates through bounded concatenation
 before joining. XLSX uses `_xlfn.TEXTJOIN`; ODS uses `COM.MICROSOFT.TEXTJOIN`, with
 explicit target-support reports. Array delimiters and locale formatting are open.
+
+## Multiple criteria tier
+
+COUNTIFS/SUMIFS accept 1–127 aligned range/criterion pairs, requiring all matches.
+Every range, including the SUMIFS sum range, must have the exact same shape.
+They reuse COUNTIF's explicit numeric Text, Boolean, blank, Unicode-folded and
+wildcard criteria rules. All criteria expressions and each aligned criteria cell
+are evaluated; a mismatch cannot conceal a cycle/resource failure. Ordinary
+criteria-cell errors do not match. Only matching sum cells are read, with
+Text/Boolean/blank ignored and matching errors/nonfinite totals propagated.
+Shared cell/work/input/deadline limits and transactional hook rollback apply.

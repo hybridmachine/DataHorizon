@@ -20,6 +20,7 @@ CASES += [('=REPLACE(TRIM(A1),3,2,"AB")',"00AB3")]
 CASES += [('=FIND("123",A1)',4)]
 CASES += [('=SEARCH("*23",TRIM(A1))',1)]
 CASES += [('=TEXTJOIN("|",TRUE,TRIM(A1),C1:C2)',"00123|2|3")]
+CASES += [('=COUNTIFS(C1:C2,">0",C1:C2,"<3")',1),('=SUMIFS(C1:C2,C1:C2,">2")',3)]
 with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/'formulas.dhwb',create=True)) as book:
     book.mutate({'action':'edit','operation_id':'seed','expected_state':book.state(),'cells':[{'row':1,'col':1,'source':' 00123  ','kind':'text'},{'row':1,'col':3,'source':'2'},{'row':2,'col':3,'source':'3'},*[{'row':r,'col':2,'source':formula} for r,(formula,result) in enumerate(CASES,1)]]})
     snapshot=book.read('Sheet1',{'r2':len(CASES),'c2':3})
