@@ -440,9 +440,12 @@ def scalar_text(value):
     raise FormulaError("#VALUE!","Text functions require scalar arguments")
 
 
+def bounded_text_size(characters,byte_count):
+    if characters>MAX_TEXT_CHARACTERS or byte_count>MAX_TEXT_BYTES:raise FormulaError("#LIMIT!","Text result exceeds 32,767 characters or 64 KiB UTF-8")
+
+
 def bounded_text(value):
-    if len(value)>MAX_TEXT_CHARACTERS or len(value.encode())>MAX_TEXT_BYTES:raise FormulaError("#LIMIT!","Text result exceeds 32,767 characters or 64 KiB UTF-8")
-    return value
+    bounded_text_size(len(value),len(value.encode()));return value
 
 
 class Criterion:
@@ -600,6 +603,29 @@ class Calculator:
         if len(args)!=2:raise FormulaError("#NAME?","EXACT requires two scalars")
         if any(node[0]=="range" for node in args):raise FormulaError("#VALUE!","EXACT requires scalars")
         result=self.text_argument(args[0],sheet)==self.text_argument(args[1],sheet);self.check();return result
+
+    def integer_argument(self,node,sheet,minimum):
+        value=numeric(self.scalar_value(node,sheet))
+        if not math.isfinite(value):raise FormulaError("#NUM!","Position/count must be finite")
+        if value<minimum:raise FormulaError("#VALUE!","Position/count is below its minimum")
+        return int(value)
+
+    def substitute(self,args,sheet):
+        if len(args) not in (3,4):raise FormulaError("#NAME?","SUBSTITUTE requires 3 or 4 scalars")
+        if any(node[0]=="range" for node in args):raise FormulaError("#VALUE!","SUBSTITUTE requires scalars")
+        text,old,new=(self.text_argument(node,sheet) for node in args[:3])
+        occurrence=self.integer_argument(args[3],sheet,1) if len(args)==4 else None
+        if not old:return bounded_text(text)
+        if occurrence is None:
+            count=text.count(old);self.check()
+            bounded_text_size(len(text)+count*(len(new)-len(old)),len(text.encode())+count*(len(new.encode())-len(old.encode())))
+            result=text.replace(old,new);self.check();return result
+        begin=0
+        for _ in range(occurrence):
+            self.check();found=text.find(old,begin)
+            if found<0:return bounded_text(text)
+            begin=found+len(old)
+        return self.concatenate_values((text[:found],new,text[begin:]))
 
     def inspect_scalar(self,name,args,sheet):
         if len(args)!=1:raise FormulaError("#NAME?",name+" requires one scalar argument")
@@ -833,6 +859,7 @@ class Calculator:
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
             if name in ("ISBLANK","ISNUMBER","ISTEXT","ISLOGICAL","ISERROR","ISNA"):return self.inspect_scalar(name,args,sheet)
+            if name=="SUBSTITUTE":return self.substitute(args,sheet)
             if name=="EXACT":return self.exact_text(args,sheet)
             if name=="XLOOKUP":return self.xlookup(args,sheet)
             if name in ("COUNTIF","SUMIF"):

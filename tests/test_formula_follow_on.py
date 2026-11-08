@@ -35,6 +35,12 @@ class FollowOnTests(unittest.TestCase):
         self.errors([('=EXACT(B1:B2,1)','#VALUE!'),('=EXACT(1/0,"x")','#DIV/0!'),('=EXACT(A1,"x")','#CYCLE!'),('=EXACT(1)','#NAME?')])
         self.assertTrue(calculate('=EXACT(B1,B1)',{(1,2):cell('x'*60000)}))
 
+    def test_substitute_literals_occurrences_and_preflight_limits(self):
+        for formula,expected in [('=SUBSTITUTE("aaaa","aa","x")','xx'),('=SUBSTITUTE("aAa","a","x",2)','aAx'),('=SUBSTITUTE("00123","0","")','123'),('=SUBSTITUTE("abc","","x")','abc'),('=SUBSTITUTE("abc","b","x",99)','abc'),('=SUBSTITUTE("😀-😀","😀","X",2.9)','😀-X')]:self.assertEqual(calculate(formula),expected)
+        self.errors([('=SUBSTITUTE("a","a","x",0)','#VALUE!'),('=SUBSTITUTE("a","a","x","1")','#VALUE!'),('=SUBSTITUTE(B1:B2,"a","x")','#VALUE!'),('=SUBSTITUTE(A1,"a","x")','#CYCLE!'),('=SUBSTITUTE("a","b")','#NAME?')])
+        self.errors([('=IFERROR(SUBSTITUTE(B1,"x",C1),"hidden")','#LIMIT!')],{(1,2):cell('x'*3000),(1,3):cell('😀'*1000)})
+        self.errors([('=SUBSTITUTE(B1,"missing","")','#LIMIT!')],{(1,2):cell('x'*40000)})
+
     def test_catalog_formulas_recalculate_after_native_package_reimport(self):
         with tempfile.TemporaryDirectory() as temp:
             for index,item in enumerate(function_catalog()['functions']):
