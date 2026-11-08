@@ -83,6 +83,7 @@ private:
     void calculateSelection();
     void portableView(bool save);
     void declareRecords();
+    void recordCommand();
     void adjustDecimals(int change);
     void format(const QJsonObject &style, QJsonObject target = {}, bool replaceStyle = false);
     void importFile();

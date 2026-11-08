@@ -92,12 +92,5 @@ def finish(book,request,context):
 
 
 def read(book,request):
-    with book.lock:
-        book.refresh();book.db.execute('BEGIN')
-        try:
-            book.refresh();require(request.get('expected_state')==book.state(),'STALE_STATE','Refresh declared records first',409)
-            sheet=book.sheet(request.get('sheet','Sheet1'));identifier=name(request.get('id'));payload=next((p for s,i,p in objects(book) if (s,i)==(sheet,identifier)),None)
-            require(payload is not None,'LIST_NOT_FOUND','Declared list is unavailable',404)
-            verified=payload['fingerprint']==digest(book,sheet,payload['spec']) and (sheet,identifier) not in book.unverified_records
-            return dict(state=book.state(),sheet=sheet,id=identifier,verified=verified,spec=payload['spec'],records=payload['rows'])
-        finally:book.db.execute('ROLLBACK')
+    from .record_operations import review
+    return review(book,request)

@@ -94,6 +94,16 @@ refresh conservatively distrusts declarations. Explicit retain_positions/regener
 reconciliation reviews current state and never replays skipped handlers. REST/SDK,
 CLI apply and Data → Declare selected list records share the engine operations.
 
+Task 7 adds list_edit with reviewed unique record IDs and source columns. Full,
+values, formats, repeated-row fill and clear operations share ordinary atomic
+history/hooks; filters are not reapplied midway through a write. Copy carries
+per-cell source coordinates so relative formulas translate from their original
+positions, including paste into an ordinary sheet. XLSX/ODS projection export
+rewrites included referents into compressed coordinates and rejects excluded or
+reordered range referents instead of changing their meaning; values export is the
+explicit fallback. Native IDs remain in the native workbook. Data → Work with
+declared records provides reviewed operations, copy, fill, export and reconciliation.
+
 ## Evidence ledger
 
 Task 4 opts in through a top-level `on_structure(context,event)` function in the

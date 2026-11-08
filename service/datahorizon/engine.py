@@ -832,7 +832,10 @@ class Workbook:
                 before_catalog=self.structure_hook(operation,request,'before',None) if structural else None
                 reference_report = {}
                 sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
-                if kind in ('list_declare','list_reconcile','list_forget'):
+                if kind=='list_edit':
+                    from .record_operations import edit
+                    edit(self,request)
+                elif kind in ('list_declare','list_reconcile','list_forget'):
                     records.mutate(self,request)
                 elif kind in ('metadata_set','metadata_delete'):
                     from .metadata import validate,name
@@ -855,6 +858,7 @@ class Workbook:
                     origin_row=integer(request.get("origin_row",start_row),1,MAX_ROWS,"origin_row")
                     origin_col=integer(request.get("origin_col",start_col),1,MAX_COLS,"origin_col")
                     mode = request.get("mode", "all")
+                    record_projection=boolean(request.get("record_projection",False),"record_projection")
                     require(mode in ("all", "values", "formats"), "INVALID_ARGUMENT", "Unknown paste mode")
                     edits = []
                     for dr, values in enumerate(rows):
@@ -888,7 +892,7 @@ class Workbook:
                                     require(isinstance(source,str),"INVALID_ARGUMENT","Clipboard source must be text")
                                     input_kind = value.get("input_kind", "text")
                                     if input_kind in ("auto", "formula") and source.startswith("="):
-                                        source = translate(source, start_row-origin_row, start_col-origin_col)
+                                        source = translate(source, row-integer(value.get("row"),1,MAX_ROWS,"source row"), col-integer(value.get("col"),1,MAX_COLS,"source column")) if record_projection else translate(source, start_row-origin_row, start_col-origin_col)
                                 if not edit.get("clear_input"):
                                     edit.update(source=source, kind=input_kind)
                             if mode != "values":
