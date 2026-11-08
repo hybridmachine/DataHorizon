@@ -17,7 +17,7 @@ class TraceTests(unittest.TestCase):
             state=b.state();history=list(b.undo);b.handler='must-not-run.py'
             with patch.object(b,'calculator',side_effect=AssertionError('must not evaluate')):
                 result=b.trace('Sheet1',dict(row=1,col=1,direction='precedents',expected_state=state))
-                self.assertEqual([t['address'] for t in result['targets']],['B1:B1048576','C2']);self.assertEqual(len(result['issues']),1)
+                self.assertEqual([t['address'] for t in result['targets']],['B1:B1048576','C2']);self.assertEqual(len(result['issues']),1);self.assertEqual(result['issues'][0]['sheet_name'],'Sheet1')
                 result=b.trace('Sheet1',dict(row=1,col=1,direction='dependents',expected_state=state))
                 self.assertEqual([t['address'] for t in result['targets']],['A2'])
                 result=b.trace('Sheet1',dict(row=1048576,col=2,direction='dependents',expected_state=state))

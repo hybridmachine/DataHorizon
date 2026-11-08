@@ -1,13 +1,22 @@
 Test project /Users/btabone/source/DataHorizon/build
     Start 1: desktop
-1/2 Test #1: desktop ..........................   Passed   77.18 sec
+1/2 Test #1: desktop ..........................   Passed   78.63 sec
     Start 2: service
-2/2 Test #2: service ..........................   Passed   27.75 sec
+2/2 Test #2: service ..........................   Passed   28.77 sec
 
 100% tests passed out of 2
 
-Total Test time (real) = 104.93 sec
+Total Test time (real) = 107.41 sec
 
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::formulaTracingReadsStoredReferencesWithoutMutation()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 528ms
+********* Finished testing of DesktopTests *********
+
+All ten native feature checks before the sheet-name-only review correction:
 ********* Start testing of DesktopTests *********
 Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
 PASS   : DesktopTests::initTestCase()
@@ -31,39 +40,39 @@ Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 4601ms
 ********* Finished testing of DesktopTests *********
 
 Optional binding: 
-Ran 351 tests in 28.745s
+Ran 351 tests in 29.040s
 
 OK
 
 {
   "format": 1,
   "platform": "Darwin",
-  "candidate": "f78d77afecd4e0c07a7e0ffd83fb427264f9f5ad8510ef9ba32d1b52147b3312",
+  "candidate": "f8d1ec41087e2240eb54918ce6e0343279c71814ee7c4d8db53fbd4f050ef987",
   "automation_passed": true,
   "steps": [
     {
       "name": "build",
-      "seconds": 0.37,
+      "seconds": 10.05,
       "returncode": 0
     },
     {
       "name": "contracts",
-      "seconds": 104.98,
+      "seconds": 107.47,
       "returncode": 0
     },
     {
       "name": "native-1",
-      "seconds": 1.25,
+      "seconds": 1.26,
       "returncode": 0
     },
     {
       "name": "native-2",
-      "seconds": 0.91,
+      "seconds": 0.93,
       "returncode": 0
     },
     {
       "name": "install",
-      "seconds": 7.77,
+      "seconds": 8.21,
       "returncode": 0
     }
   ],
@@ -78,7 +87,7 @@ OK
   "archive": {
     "name": "DataHorizon-preview.tar.gz",
     "files": 74,
-    "sha256": "01afe12c77ac02347bfcd70b2794f6a852669364eae5be5fba3403ed8bd481a6",
+    "sha256": "beb653b6d68945fa8caea0e82a1db4708777a49b630e562a721ee665d074a404",
     "inventory_verified": true
   },
   "matrix": {

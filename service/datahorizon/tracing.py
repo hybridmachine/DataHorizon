@@ -56,7 +56,7 @@ def trace(book,sheet,args):
                     try:refs,broken=references(source,origin)
                     except FormulaError as error:
                         require(False,'UNSUPPORTED_FORMULA',f'Cannot completely trace {catalog[origin]}!{address(r,c)}: {error.code}')
-                    issues.extend({'sheet':origin,'address':address(r,c),'message':message} for message in broken)
+                    issues.extend({'sheet':origin,'sheet_name':catalog[origin],'address':address(r,c),'message':message} for message in broken)
                     chosen=refs if direction=='precedents' else [(origin,r,c,r,c)] if any(s==sheet and r1<=row<=r2 and c1<=col<=c2 for s,r1,c1,r2,c2 in refs) else []
                     for target in chosen:
                         if target in seen:continue

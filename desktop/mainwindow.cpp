@@ -2096,7 +2096,7 @@ void MainWindow::traceFormula(const QString &direction) {
         auto *details=new QPlainTextEdit(&dialog);details->setObjectName("formulaTraceDetails");details->setReadOnly(true);QStringList lines;
         for(const auto &value:result["targets"].toArray()){const auto target=value.toObject();lines.append(target["sheet_name"].toString()+"!"+target["address"].toString());}
         if(lines.isEmpty())lines.append(tr("No direct references found."));
-        for(const auto &value:result["issues"].toArray()){const auto problem=value.toObject();lines.append(tr("Broken reference at %1: %2").arg(problem["address"].toString(),problem["message"].toString()));}
+        for(const auto &value:result["issues"].toArray()){const auto problem=value.toObject();lines.append(tr("Broken reference at %1: %2").arg(problem["sheet_name"].toString()+"!"+problem["address"].toString(),problem["message"].toString()));}
         details->setPlainText(lines.join('\n'));layout->addWidget(details);auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close,&dialog);connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);layout->addWidget(buttons);dialog.exec();
     });
 }
