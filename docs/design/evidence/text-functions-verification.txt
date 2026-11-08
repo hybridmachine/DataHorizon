@@ -1,0 +1,22 @@
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   73.52 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   29.85 sec
+
+100% tests passed out of 2
+
+Total Test time (real) = 103.38 sec
+
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::textCleanupFunctionsCalculateThroughSourceEditorAndKeepIdentifiers()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 994ms
+********* Finished testing of DesktopTests *********
+
+xlsx formulas: independent reader accepted 4 formulas/typed values; no target recalculation claim
+xlsx values: independent reader accepted 4 formulas/typed values; no target recalculation claim
+ods formulas: independent reader accepted 4 formulas/typed values; no target recalculation claim
+ods values: independent reader accepted 4 formulas/typed values; no target recalculation claim

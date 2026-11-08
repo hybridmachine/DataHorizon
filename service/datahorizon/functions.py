@@ -26,6 +26,13 @@ for name,rule,result in (('ROUND','Half away from zero.',1.25),('ROUNDUP','Away 
     register(name,name+'(number, digits)','Round a number in decimal notation.',rule+' Two scalar numeric arguments; integer digits from -15 to 15. Uses the shortest decimal spelling of binary64 input. No implicit Text conversion. Nonfinite results fail.','='+name+'(1.254,2)',result,'Numeric')
 
 
+TEXT_RULES='One scalar argument. Blank/NULL becomes empty Text, Boolean becomes TRUE/FALSE, and numbers use invariant unformatted canonical text; existing Text is never parsed. Errors propagate. Text results are limited to 32,767 Unicode characters and 64 KiB UTF-8; limits stay visible through IFERROR.'
+register('LEN','LEN(text)','Count Unicode code points, including spaces.',TEXT_RULES+' Combining marks and variation selectors count separately; no UTF-16 unit or grapheme counting.','=LEN("Data")',4,'Text')
+register('TRIM','TRIM(text)','Remove outer ASCII spaces and collapse internal runs.',TEXT_RULES+' Only U+0020 spaces are changed; tabs, newlines and nonbreaking spaces remain.','=TRIM("  Data   Horizon  ")','Data Horizon','Text')
+register('UPPER','UPPER(text)','Convert Text to Unicode uppercase.',TEXT_RULES+' Uses Python Unicode casing, independent of locale; casing can expand characters.','=UPPER("Data")','DATA','Text')
+register('LOWER','LOWER(text)','Convert Text to Unicode lowercase.',TEXT_RULES+' Uses Python Unicode casing, independent of locale; casing can expand characters.','=LOWER("Data")','data','Text')
+
+
 def function_catalog():
     return dict(version=1,functions=deepcopy([FUNCTIONS[name] for name in sorted(FUNCTIONS)]),
                 notes=['This catalog describes the implemented development tier, not full Excel compatibility.',

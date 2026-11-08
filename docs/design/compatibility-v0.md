@@ -47,6 +47,7 @@ ranges, structured references, external workbooks and 3D ranges are unsupported.
 | AND/OR/NOT | Numeric/Boolean logical evaluation, explicit Text/reference rules and eager aggregate errors; see the [logical tier](spreadsheet-next-ten.md#logical-function-contract) |
 | IFERROR | Two scalar arguments; lazy fallback for ordinary spreadsheet errors, with cycle/resource failures kept visible; see the [IFERROR tier](spreadsheet-next-ten.md#iferror-contract) |
 | ABS/ROUND/ROUNDUP/ROUNDDOWN | Scalar numeric operations, explicit decimal rounding and [-15,15] integer digit bounds; see the [numeric tier](spreadsheet-next-ten.md#numeric-function-contract) |
+| LEN/TRIM/UPPER/LOWER | One scalar; explicit invariant text conversion, Unicode code-point length/casing, ASCII-only TRIM, 32,767-character/64-KiB results; see [text tier](formula-next-ten.md#scalar-text-cleanup-tier) |
 | IF | Two or three arguments; numeric/boolean/blank condition; evaluate only the selected branch; omitted false branch is FALSE |
 
 Double-quoted strings and TRUE/FALSE are supported. Unsupported function or
