@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "cases": [
+    {"source": "=IF(FALSE,1/0,7)", "value": 7},
+    {"source": "=SUM(TRUE,2,\"3\")", "value": 2},
+    {"source": "=1+\"2\"", "error": "#VALUE!"},
+    {"source": "=TRUE=1", "error": "#VALUE!"},
+    {"source": "=DATE(1900,3,1)-DATE(1900,2,28)", "value": 1},
+    {"source": "=YEAR(60)", "error": "#NUM!"},
+    {"source": "=DATE(2024,2,29)+TIME(12,0,0)", "value": "2024-02-29T12:00:00", "value_kind": "datetime"},
+    {"source": "=ISNUMBER(\"00123\")", "value": false},
+    {"source": "=IFERROR(1/0,9)", "value": 9},
+    {"source": "=SUUM(1,2)", "error": "#NAME?"}
+  ]
+}

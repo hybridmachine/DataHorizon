@@ -73,6 +73,7 @@ applications, and AI agents through REST.
 | [Editing and formatting usability](editing-formatting-next-ten.md) | Authorized ten tasks after PR #74 |
 | [Formula coverage follow-on](formula-coverage-next-ten.md) | Additional ten authorized after the formula editing batch |
 | [Formula editing and coverage](formula-next-ten.md) | Authorized ten tasks after PR #54 |
+| [M3–M5 completion increments](m3-m5-next-ten.md) | Dependency/calculation, structural hooks, portable lists and qualification |
 | [Date and time increments](date-time-next-ten.md) | Native types, UTC clock, arithmetic and CSV/XLSX/ODS date tiers |
 | [Native formats v1/v2](native-format-v1.md) | Actual development schema and callback-free direct SQLite access |
 | [Compatibility tier 0](compatibility-v0.md) | Implemented formulas, formatting, interchange and editing limits |
