@@ -1,0 +1,19 @@
+test_atomic_mode_ignores_batch_count_and_readonly_refuses_before_admission (test_operation_jobs.OperationJobTests.test_atomic_mode_ignores_batch_count_and_readonly_refuses_before_admission) ... ok
+test_batched_cancel_resume_and_crash_gap_never_replays_committed_batch (test_operation_jobs.OperationJobTests.test_batched_cancel_resume_and_crash_gap_never_replays_committed_batch) ... ok
+test_cancel_inside_atomic_rolls_back_and_after_last_commit_is_committed (test_operation_jobs.OperationJobTests.test_cancel_inside_atomic_rolls_back_and_after_last_commit_is_committed) ... ok
+test_close_cancels_worker_waiting_for_engine_without_post_close_write (test_operation_jobs.OperationJobTests.test_close_cancels_worker_waiting_for_engine_without_post_close_write) ... ok
+test_explicit_legacy_collision_recovery_preserves_original_receipt (test_operation_jobs.OperationJobTests.test_explicit_legacy_collision_recovery_preserves_original_receipt) ... ok
+test_large_csv_stage_and_global_sorted_read_pages_stale_withholding (test_operation_jobs.OperationJobTests.test_large_csv_stage_and_global_sorted_read_pages_stale_withholding) ... ok
+test_legacy_journal_upgrade_preserves_plan_and_completed_attempts (test_operation_jobs.OperationJobTests.test_legacy_journal_upgrade_preserves_plan_and_completed_attempts) ... ok
+test_missing_receipt_remains_unknown_and_cannot_release_or_cancel_away (test_operation_jobs.OperationJobTests.test_missing_receipt_remains_unknown_and_cannot_release_or_cancel_away) ... ok
+test_released_friendly_id_gets_new_durable_execution_identity (test_operation_jobs.OperationJobTests.test_released_friendly_id_gets_new_durable_execution_identity) ... ok
+test_rest_cancellation_does_not_wait_for_writer_lock (test_operation_jobs.OperationJobTests.test_rest_cancellation_does_not_wait_for_writer_lock) ... ok
+test_rest_sdk_cli_disk_staging_and_review (test_operation_jobs.OperationJobTests.test_rest_sdk_cli_disk_staging_and_review) ... ok
+test_sdk_job_execution_preserves_pending_operation_guard (test_operation_jobs.OperationJobTests.test_sdk_job_execution_preserves_pending_operation_guard) ... ok
+test_staging_seal_digest_atomic_and_receipt_reopen (test_operation_jobs.OperationJobTests.test_staging_seal_digest_atomic_and_receipt_reopen) ... ok
+test_unknown_journal_version_and_failed_migration_preserve_storage (test_operation_jobs.OperationJobTests.test_unknown_journal_version_and_failed_migration_preserve_storage) ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 1.617s
+
+OK

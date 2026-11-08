@@ -1,0 +1,41 @@
+{
+  "producers_consumers": {
+    "openpyxl": "3.1.5",
+    "odfpy": "1.4.1"
+  },
+  "checks": [
+    {
+      "format": "xlsx",
+      "mode": "formulas",
+      "sheets": 3,
+      "input_rows": 16,
+      "summary": 224,
+      "passed": true
+    },
+    {
+      "format": "xlsx",
+      "mode": "values",
+      "sheets": 3,
+      "input_rows": 16,
+      "summary": 224,
+      "passed": true
+    },
+    {
+      "format": "ods",
+      "mode": "formulas",
+      "sheets": 3,
+      "input_rows": 16,
+      "summary": 224,
+      "passed": true
+    },
+    {
+      "format": "ods",
+      "mode": "values",
+      "sheets": 3,
+      "input_rows": 16,
+      "summary": 224,
+      "passed": true
+    }
+  ],
+  "native_excel_libreoffice_acceptance": false
+}

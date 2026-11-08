@@ -4,6 +4,40 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## November 8 review remediation
+
+The [review remediation plan](review-remediation-plan.md) is implemented and
+verified locally in nine ordered increments. The frozen code is on local branch
+`codex/review-remediation`; its commit and exact source fingerprint are recorded
+in the [verification record](evidence/review-remediation-verification.json).
+
+Record/list/ordinary spreadsheet exports share a protected writer and recheck
+native-file aliases after final review. Durable job sidecars use independent v2
+execution identities with conservative legacy recovery. Narrow record/Find scans
+use indexed probes and nested deadline/cancellation guards. GUI resume binds a
+fresh reviewed state, and active-job close cancels, inspects terminal status and
+releases the captured handle, retaining private recovery information when cleanup
+is unresolved. Grid and record paste share bounded newline/native decoding.
+Action-specific OpenAPI schemas/examples and corrected ODS compatibility reports
+match the current supported tier.
+
+[Final qualification](evidence/review-final-qualification.json) passes both CTest
+suites: 205 Qt checks and 451 Python tests run (19 optional skips, all covered by
+separate isolated validator/capture runs). The repaired workflows pass 23 Cocoa
+checks at each scale, native accessibility/Tab checks, visually inspected native
+screenshots, independent consumers, relocated installed-app/SDK/service smoke and
+archive inventory. Native workflow automation uses Qt widget dialogs; a native
+NSAlert automation stall is recorded, and physical/native OS dialog acceptance
+remains a manual gate.
+
+Measured cancellation is 6.46 ms for a no-output Find scan and 8.42 ms after a
+committed batch on the 319.35-MiB large fixture; all 100,000 sorted rows verify and
+service peak RSS is about 54.09 MiB for that workload. Fresh-process/warm viewport
+measurements and exact scope are linked in the plan. These do not claim true
+OS-cold behavior, universal capacity, or a relaxed large-file opening deadline.
+Windows/Linux, screen readers, clean-machine runtime/distribution and the other
+milestone/release gates below remain open.
+
 ## Current result
 
 The Qt Widgets/C++ desktop runs against an authenticated localhost Python REST

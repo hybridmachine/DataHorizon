@@ -1,0 +1,9 @@
+test_filtered_bulk_clear_retains_hidden_records_and_undoes_once (test_record_operations.RecordOperationTests.test_filtered_bulk_clear_retains_hidden_records_and_undoes_once) ... ok
+test_formula_copy_paste_uses_each_original_source_coordinate (test_record_operations.RecordOperationTests.test_formula_copy_paste_uses_each_original_source_coordinate) ... ok
+test_projection_formula_export_remaps_referents_and_rejects_excluded_targets (test_record_operations.RecordOperationTests.test_projection_formula_export_remaps_referents_and_rejects_excluded_targets) ... ok
+test_reviewed_ids_and_input_validation_reject_atomically (test_record_operations.RecordOperationTests.test_reviewed_ids_and_input_validation_reject_atomically) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.040s
+
+OK

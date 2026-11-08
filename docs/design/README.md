@@ -55,6 +55,8 @@ applications, and AI agents through REST.
 | Document | Contents |
 | --- | --- |
 | [Implementation status](implementation-status.md) | Current local evidence, milestone gaps and next dependencies |
+| [Project review](../project-review-2026-11-08.md) | November 8 findings, reproductions and correction priorities |
+| [Review remediation plan](review-remediation-plan.md) | Dependency-ordered R1–R8 fixes, compatibility decisions and qualification gates |
 | [Development guide](development.md) | Build/run, API, CLI, Python, Supplies and package smoke |
 | [Initial contracts](initial-contracts.md) | M0 persistence, values, operations, budgets and explicit exclusions |
 | [SQLite capture experiment](sqlite-capture-experiment.md) | M1 capture comparison, typed old/new evidence, limits and remaining managed SQL gates |

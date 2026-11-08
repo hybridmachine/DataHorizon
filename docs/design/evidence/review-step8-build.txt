@@ -1,0 +1,18 @@
+[  0%] Built target savefile_crash_autogen_timestamp_deps
+[  0%] Built target datahorizon_desktop_autogen_timestamp_deps
+[  3%] Built target savefile_crash_autogen
+[  6%] Built target datahorizon_desktop_autogen
+[ 17%] Built target savefile_crash
+[ 37%] Built target datahorizon_desktop
+[ 37%] Built target native_acceptance_autogen_timestamp_deps
+[ 37%] Built target desktop_benchmark_autogen_timestamp_deps
+[ 37%] Built target desktop_tests_autogen_timestamp_deps
+[ 37%] Built target DataHorizon_autogen_timestamp_deps
+[ 44%] Built target desktop_benchmark_autogen
+[ 44%] Built target native_acceptance_autogen
+[ 48%] Built target desktop_tests_autogen
+[ 51%] Built target DataHorizon_autogen
+[ 72%] Built target desktop_benchmark
+[ 72%] Built target native_acceptance
+[ 82%] Built target desktop_tests
+[100%] Built target DataHorizon

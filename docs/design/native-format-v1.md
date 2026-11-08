@@ -107,7 +107,8 @@ restart or an external edit. Operation receipts remain in the file.
 Cell borders use the native style `border: "box"` or `"none"`. The desktop
 Format menu applies or clears all four edges on each selected cell using one
 managed edit. Borders use the system text color with a two-logical-pixel stroke.
-Per-edge patterns, line/color selection and merged-cell borders are unavailable.
+Per-edge patterns follow the additive edge-style tier documented below; border
+color selection and merged-cell borders remain unavailable.
 
 ## Bounded recovery validation
 
@@ -158,7 +159,7 @@ exact; interchange can canonicalize all-thin edges to legacy box.
 
 ## Operation-job sidecars
 
-Reviewed operation jobs use version-1 SQLite journals under
+Reviewed operation jobs use version-2 SQLite journals under
 `.<native-filename>.dhjobs/`, separately from native format versions 1–3. They
 retain sealed inputs, progress, admitted operation IDs and per-batch receipts.
 They are bound to workbook ID and filesystem identity; copying a workbook does
@@ -167,3 +168,13 @@ and CSV exclude these journals. Explicit release removes staged data and frozen
 read snapshots, while durable native operation receipts remain in `operations`.
 Missing receipts do not prove rollback; unknown attempts block automatic execution
 and release. See [job bounds and recovery](m3-m5-next-ten.md).
+
+Each v2 journal stores a random `execution_id` independent of its friendly job
+name; future batch IDs include that namespace. Releasing and recreating a name
+does not reuse earlier native receipt IDs. Version-1 journals remain readable;
+eligible journals reconcile old requests before transactional upgrade. Exact
+admitted requests and IDs remain unchanged. Explicit reviewed legacy conflict
+recovery retains the unrelated original receipt as `not_admitted` sidecar evidence,
+without inventing a native rollback receipt. Missing receipts still block work.
+This sidecar version does not change native schema versions 1–3; older services
+reject v2 sidecars rather than silently downgrading them.

@@ -79,6 +79,45 @@ Clients reject service redirects instead of forwarding credentials or workbook
 payloads to another endpoint. A redirected mutation retains its pending ID for
 reconciliation; a redirect body cannot supply a terminal operation receipt.
 
+## Durable job recovery and close
+
+Job create requests now have separate typed-edit, CSV, Find and list OpenAPI
+schemas; append/start/resume/status/cancel/release use action-specific bodies.
+The API explorer offers their examples. Stage edits, append bounded chunks, seal
+and inspect the returned plan. Replace example state/digest/execution tokens with
+those returned by workbook info and the inspected job before explicit execution.
+`tests/requirements-openapi.txt` supplies optional build-only validators; the
+service runtime still needs no pip packages.
+
+After a lost execution reply, inspect the retained job ID and native batch
+receipts before deciding whether to resume. A missing receipt remains unknown.
+Version-2 sidecars store a durable execution namespace; releasing/recreating a
+friendly name never reuses earlier receipt IDs. Legacy upgrade/conflict semantics
+are documented in [native storage](native-format-v1.md#operation-job-sidecars).
+
+The desktop fetches current workbook metadata before execution review. A sealed
+plan whose state changed, including after reopen, offers explicit reviewed resume
+against current inputs. An input/session/job-identity change during review refuses
+admission rather than retargeting the operation. SDK/CLI callers explicitly supply
+the reviewed current state and digest to resume; an execution identity can also
+bind the particular v2 journal incarnation.
+
+Closing a window with an active job requests cancellation asynchronously, inspects
+terminal status, then releases this window's workbook handle. A cancellation reply
+that still says running is not proof of termination. Committed batches remain
+committed. Independent services and other client handles remain usable; owned
+services are stopped only after cleanup or an explicit unresolved-close choice.
+If cancellation/status/release cannot be confirmed, a private `job-*.json` recovery
+record retains the native path, handle, job identity and last known status. Staying
+open preserves inspection; closing with the warning does not claim rollback or
+confirmed cancellation and does not delete the sidecar.
+
+Grid and record paste share bounded TSV/native decoding. CRLF and LF normalize
+consistently, one terminal record separator is removed, and intentional empty
+rows/fields remain. Grid plain text/native clipboard limits remain 4 MiB; record
+plain text remains 3 MiB, with the same 10,000-cell bound. Native source coordinates,
+types, Cut restrictions and omitted/error-value guards remain in force.
+
 ## Everyday use
 
 New creates a recoverable untitled native workbook. Submitted edits store
