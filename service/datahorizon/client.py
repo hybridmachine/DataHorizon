@@ -96,6 +96,9 @@ class Client:
                 raise ValueError("Invalid JSON error response")
             raise APIError(error.code, body) from error
 
+    def functions(self):
+        return self.request("/v1/functions")
+
     def inspect_native(self, path):
         return self.request("/v1/recovery/inspect", {"path":str(Path(path).expanduser().resolve())})
 
