@@ -50,6 +50,7 @@ protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
+    void loadFunctionCatalog();
     void showFunctionHelp();
     void startService();
     void buildUi();
