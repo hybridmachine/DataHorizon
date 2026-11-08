@@ -9,6 +9,8 @@ import runpy
 import time
 import threading
 import traceback
+import ast
+from pathlib import Path
 
 
 class HookFailure(Exception):
@@ -32,7 +34,16 @@ def _receive(pipe):
     return message
 
 
-def _worker(pipe, path, changes, operation):
+def supports_structure(path):
+    """Explicit top-level opt-in without executing the trusted module in service."""
+    try:
+        with Path(path).open('rb') as source:data=source.read(1024*1024+1)
+        if len(data)>1024*1024:return False
+        return any(isinstance(node,ast.FunctionDef) and node.name=='on_structure' for node in ast.parse(data).body)
+    except (OSError,SyntaxError,ValueError):return False
+
+
+def _worker(pipe, path, changes, operation, event='on_change'):
     class LogTail:
         def __init__(self):
             self.text=""
@@ -74,7 +85,7 @@ def _worker(pipe, path, changes, operation):
     with redirect_stdout(logs), redirect_stderr(logs):
         try:
             module = runpy.run_path(path)
-            module["on_change"](Context(), changes)
+            module[event](Context(), changes)
             _send(pipe,{"method": "done"})
         except BaseException:
             try:
@@ -86,7 +97,7 @@ def _worker(pipe, path, changes, operation):
             pipe.close()
 
 
-def invoke(path, changes, operation, dispatch, deadline):
+def invoke(path, changes, operation, dispatch, deadline, *, event='on_change'):
     # Charge startup to the same invocation budget, not a fresh post-spawn one.
     deadline = min(deadline, time.monotonic() + 2)
     parent=child=process=pump=None
@@ -111,7 +122,9 @@ def invoke(path, changes, operation, dispatch, deadline):
     try:
         context = multiprocessing.get_context("spawn")
         parent, child = context.Pipe()
-        process = context.Process(target=_worker, args=(child, str(path), changes, operation), daemon=True)
+        arguments=(child,str(path),changes,operation)
+        if event!='on_change':arguments+=(event,)
+        process = context.Process(target=_worker, args=arguments, daemon=True)
         process.start()
         child.close()
         pump=threading.Thread(target=broker_io,name='DataHorizonHookBroker',daemon=True)

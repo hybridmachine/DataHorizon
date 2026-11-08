@@ -76,6 +76,18 @@ Automatic continuous viewport recalculation is outside this first explicit-job t
 
 ## Evidence ledger
 
+Task 4 opts in through a top-level `on_structure(context,event)` function in the
+explicitly activated trusted handler file (source preflight capped at 1 MiB).
+Before/after events include bounded old/new catalogs (up to 256 sheets), action
+and structural arguments. The same transaction broker and one parent clock serve
+structural hooks and final coalesced `on_change` rounds. Files using cell changes
+must continue to implement `on_change`; no implicit fallback bypasses a required
+handler. Sheet add/rename/duplicate/reorder/delete, row/column changes and whole
+workbook import use the event contract. Existing reference-transform limits remain
+explicit; generic user code chooses business behavior. Structure still clears
+session history on commit. Failed events retain the original catalog, references,
+inputs, history and derived caches, with a durable rolled-back receipt.
+
 Task 2 implements a process-local index capped at 4,096 nodes/50,000 dependency
 edges and 4 MiB of estimated cached-result payload. Both branches of parsed
 conditionals are indexed conservatively; unresolved/unrepresentable dependencies

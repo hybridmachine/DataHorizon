@@ -17,7 +17,7 @@ import time
 import uuid
 
 from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, translate, move_references, transform_structure, rename_sheet_references, delete_sheet_references
-from .hooks import HookFailure, invoke
+from .hooks import HookFailure, invoke, supports_structure
 from .formats import numeric_display, numeric_spec, temporal_display, TEMPORAL_FORMATS
 from .borders import SIDES, BORDER_STYLES
 from .temporal import Temporal, utc_clock, temporal_key, KINDS as TEMPORAL_KINDS
@@ -607,7 +607,6 @@ class Workbook:
 
     def import_workbook(self,request):
         from .interchange import validate_sheet_names
-        require(not self.handler,"UNSUPPORTED_HOOK_SCOPE","Whole-workbook import with required handlers needs a structure-event contract")
         require(self.db.execute("SELECT 1 FROM cells LIMIT 1").fetchone() is None,"DESTINATION_NOT_EMPTY","Whole-workbook import requires an empty destination; create a new workbook")
         sheets=request.get("sheets")
         require(isinstance(sheets,list) and all(isinstance(s,dict) for s in sheets),"INVALID_ARGUMENT","sheets must be an array of sheet objects")
@@ -688,30 +687,32 @@ class Workbook:
                     item["kind"] = "formula"
             self.put(sheet, row, col, item)
 
+    def hook_dispatch(self,method,args):
+        sheet=self.sheet(args['sheet']);row,col=args['row'],args['col'];integer(row,1,MAX_ROWS,'row');integer(col,1,MAX_COLS,'col')
+        if method=='get':return self.raw(sheet,row,col)
+        if method=='value':return self.calculator(clock=self.operation_clock,transactional=True).cell(sheet,row,col)
+        require(method=='set','INVALID_HOOK','Unknown handler context method')
+        self.apply_edit(sheet,[{**args,'row':row,'col':col}])
+
+    def structure_hook(self,operation,request,phase,before):
+        if not self.handler:return
+        require(supports_structure(self.handler),'UNSUPPORTED_HOOK_SCOPE','Required handler must explicitly define top-level on_structure(context,event)')
+        catalog=[dict(id=i,name=n,position=p) for i,n,p in self.db.execute('SELECT id,name,position FROM sheets ORDER BY position,id LIMIT 257')]
+        require(len(catalog)<=256,'LIMIT','Structural events support at most 256 sheets')
+        event=dict(phase=phase,action=request['action'],arguments={k:request[k] for k in ('sheet','name','start','count','order') if k in request},before=before if before is not None else catalog,after=catalog if phase=='after' else None)
+        invoke(self.handler,event,operation,self.hook_dispatch,self.deadline,event='on_structure')
+        return catalog
+
     def run_hooks(self, operation):
         if not self.handler:
             return
-        clock=utc_clock()
         for _ in range(16):
             if not self.pending:
                 return
             batch = [self.pending[key] for key in sorted(self.pending)]
             self.pending = {}
 
-            def dispatch(method, args):
-                sheet = self.sheet(args["sheet"])
-                row, col = args["row"], args["col"]
-                integer(row, 1, MAX_ROWS, "row")
-                integer(col, 1, MAX_COLS, "col")
-                if method == "get":
-                    return self.raw(sheet, row, col)
-                if method == "value":
-                    return self.calculator(clock=clock,transactional=True).cell(sheet, row, col)
-                require(method == "set", "INVALID_HOOK", "Unknown handler context method")
-                self.apply_edit(sheet, [{**args, "row": row, "col": col}])
-                return None
-
-            invoke(self.handler, batch, operation, dispatch, self.deadline)
+            invoke(self.handler, batch, operation, self.hook_dispatch, self.deadline)
         require(not self.pending, "HOOK_RECURSION", "Required handler exceeded 16 change rounds")
 
     def operation(self, operation_id):
@@ -757,6 +758,7 @@ class Workbook:
                 self.deadline = time.monotonic() + 5
                 self.refresh(deadline=self.deadline)
                 self.changes, self.pending = {}, {}
+                self.operation_clock=utc_clock()
                 self.change_bytes = 0
                 self.db.execute("BEGIN IMMEDIATE")
                 # A different service may have committed this ID while we waited
@@ -793,6 +795,7 @@ class Workbook:
                 require("label" not in request or isinstance(request["label"],str),"INVALID_ARGUMENT","Operation label must be text")
                 kind = request.get("action")
                 structural = isinstance(kind, str) and (kind.startswith("sheet_") or kind == "workbook_import" or kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"))
+                before_catalog=self.structure_hook(operation,request,'before',None) if structural else None
                 reference_report = {}
                 sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
                 if kind == "edit":
@@ -932,13 +935,11 @@ class Workbook:
                 elif kind == "sheet_rename":
                     target = self.sheet(request.get("sheet"))
                     self.check_name(request.get("name"))
-                    require(not self.handler, "UNSUPPORTED_HOOK_SCOPE", "Sheet rename with required handlers needs a structure-event contract")
                     self.rename_references(target, request["name"])
                     self.db.execute("UPDATE sheets SET name=? WHERE id=?", (request["name"], target))
                 elif kind == "sheet_duplicate":
                     target = self.sheet(request.get("sheet"))
                     self.check_name(request.get("name"))
-                    require(not self.handler, "UNSUPPORTED_HOOK_SCOPE", "Sheet duplication with required handlers needs a structure-event contract")
                     self.duplicate_sheet(target, request["name"])
                 elif kind == "sheet_reorder":
                     order = request.get("order")
@@ -949,10 +950,10 @@ class Workbook:
                 elif kind == "sheet_delete":
                     target = self.sheet(request.get("sheet"))
                     require(self.db.execute("SELECT count(*) FROM sheets").fetchone()[0] > 1, "LAST_SHEET", "Cannot delete the last sheet")
-                    require(not self.handler, "UNSUPPORTED_HOOK_SCOPE", "Sheet deletion with an activated required handler needs a structure-event contract")
                     reference_report = self.delete_sheet(target)
                 else:
                     raise EngineError("UNSUPPORTED_OPERATION", f"Operation is not available: {kind}")
+                if structural:self.structure_hook(operation,request,'after',before_catalog)
                 self.run_hooks(operation)
                 require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
                 self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1]}
@@ -1153,7 +1154,6 @@ class Workbook:
 
     def change_structure(self, request):
         """Bounded whole-row/column changes, including references on other sheets."""
-        require(not self.handler, "UNSUPPORTED_HOOK_SCOPE", "Row/column changes with required handlers need a structure-event contract")
         target = self.sheet(request.get("sheet", "Sheet1"))
         target_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
         axis = "row" if request["action"].startswith("rows_") else "col"

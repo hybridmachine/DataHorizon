@@ -8,3 +8,5 @@ Final qualification evidence is appended as implementation proceeds. Hosted CI i
 Task 2: Debug build, 5 dependency tests and the complete Python suite passed (404 tests; 15 optional-binding skips). Transitive/range/absent/cross-sheet invalidation, unrelated reuse, external refresh, lazy errors, volatile clocks, transaction isolation and Undo verified.
 
 Task 3: Debug build, 4 background-calculation tests, the Qt control check and the full Python suite passed (408 tests; 15 optional-binding skips). Stale generation/input-state publication, cancellation, pending reads, clock metadata, REST/SDK and no-write GUI semantics verified.
+
+Task 4: Debug build and 3 structural-hook tests passed. Full Python suite ran 411 tests; only a worker-lifecycle fixture using the old private worker argument shape failed. Default on_change invocation compatibility was restored and the worker-lifecycle suite passed. Structural event rollback covers generated cells, names, absolute references and durable receipts.
