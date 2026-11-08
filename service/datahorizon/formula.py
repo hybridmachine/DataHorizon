@@ -445,6 +445,64 @@ def bounded_text(value):
     return value
 
 
+class Criterion:
+    """Bounded explicit conditional comparison; never writes/coerces stored inputs."""
+    def __init__(self,value,calculator):
+        self.calculator=calculator;self.op="=";self.pattern=[];self.wildcards=False
+        if isinstance(value,list):raise FormulaError("#VALUE!","Criteria must be scalar")
+        if value is None:value=0
+        if type(value) is str:
+            if len(value)>255:raise FormulaError("#LIMIT!","Criteria Text exceeds 255 characters")
+            match=re.match(r"^(<=|>=|<>|=|<|>)(.*)\Z",value,re.S)
+            if match:self.op,value=match[1],match[2]
+            if NUMBER_TEXT.fullmatch(value.strip()):value=float(value.strip())
+        self.value=value;self.kind="boolean" if type(value) is bool else "number" if type(value) in (int,float) else "text"
+        if self.kind=="number" and not math.isfinite(value):raise FormulaError("#NUM!","Criteria must be finite")
+        if self.kind=="text":
+            value=value.casefold();i=0
+            while i<len(value):
+                ch=value[i]
+                if ch=="~" and i+1<len(value) and value[i+1] in "*?~":i+=1;self.pattern.append(("literal",value[i]))
+                elif ch in "*?":self.pattern.append((ch,""));self.wildcards=True
+                else:self.pattern.append(("literal",ch))
+                i+=1
+            self.value="".join(ch for kind,ch in self.pattern)
+            if self.wildcards and self.op not in ("=","<>"):raise FormulaError("#VALUE!","Wildcard criteria require = or <>")
+
+    def wildcard_match(self,text):
+        p=t=0;star=-1;retry=0;steps=0
+        while t<len(text):
+            steps+=1
+            if steps%64==1:self.calculator.check()
+            if p<len(self.pattern) and (self.pattern[p][0]=="?" or self.pattern[p]==("literal",text[t])):p+=1;t+=1
+            elif p<len(self.pattern) and self.pattern[p][0]=="*":star=p;p+=1;retry=t
+            elif star>=0:retry+=1;t=retry;p=star+1
+            else:return False
+        while p<len(self.pattern) and self.pattern[p][0]=="*":p+=1
+        return p==len(self.pattern)
+
+    def matches(self,left):
+        self.calculator.check()
+        if isinstance(left,FormulaError):return False
+        if self.kind=="number":
+            if left is None:left=0
+            elif isinstance(left,str):
+                self.calculator.text_work(left)
+                if NUMBER_TEXT.fullmatch(left.strip()):left=float(left.strip())
+            compatible=type(left) in (int,float) and math.isfinite(left)
+        elif self.kind=="boolean":compatible=type(left) is bool
+        else:
+            if left is None and not self.value and not self.wildcards:left=""
+            compatible=isinstance(left,str)
+            if compatible:
+                self.calculator.text_work(left);left=left.casefold()
+                if self.wildcards:
+                    matched=self.wildcard_match(left);return matched if self.op=="=" else not matched
+        if not compatible:return self.op=="<>"
+        right=self.value
+        return {"=":lambda:left==right,"<>":lambda:left!=right,"<":lambda:left<right,">":lambda:left>right,"<=":lambda:left<=right,">=":lambda:left>=right}[self.op]()
+
+
 class Calculator:
     def __init__(self, read, resolve_sheet, seconds=0.25):
         self.read, self.resolve_sheet = read, resolve_sheet
@@ -506,17 +564,45 @@ class Calculator:
         name, row, col = split_ref(ref)
         return self.resolve_sheet(name) if name is not None else sheet, row, col
 
+    def range_geometry(self,node,sheet):
+        if node[0]=="error":raise FormulaError(node[1])
+        if node[0]=="ref":
+            target=self.reference(node[1],sheet);return target[0],target[1],target[2],target[1],target[2]
+        if node[0]!="range":raise FormulaError("#VALUE!","Expected a cell or rectangular range")
+        if node[2][0]!="ref" or node[3][0]!="ref":raise FormulaError("#REF!","Range endpoints must be cell references")
+        first=self.reference(node[2][1],sheet);last_name,_,_=split_ref(node[3][1]);last=self.reference(node[3][1],first[0] if last_name is None else sheet)
+        if first[0]!=last[0]:raise FormulaError("#REF!","3D ranges are unsupported")
+        r1,r2=sorted((first[1],last[1]));c1,c2=sorted((first[2],last[2]))
+        if (r2-r1+1)*(c2-c1+1)>10000:raise FormulaError("#LIMIT!","Range exceeds 10,000 cells")
+        return first[0],r1,c1,r2,c2
+
     def range_targets(self,node,sheet):
-        if node[2][0] != "ref" or node[3][0] != "ref":
-            raise FormulaError("#REF!", "Range endpoints must be cell references")
-        first=self.reference(node[2][1],sheet)
-        last_name,_,_=split_ref(node[3][1])
-        last=self.reference(node[3][1],first[0] if last_name is None else sheet)
-        if first[0]!=last[0]: raise FormulaError("#REF!","3D ranges are unsupported")
-        r1,r2=sorted((first[1],last[1])); c1,c2=sorted((first[2],last[2]))
-        if (r2-r1+1)*(c2-c1+1)>10_000: raise FormulaError("#LIMIT!","Range exceeds 10,000 cells")
+        target,r1,c1,r2,c2=self.range_geometry(node,sheet)
         for row in range(r1,r2+1):
-            for col in range(c1,c2+1): yield first[0],row,col
+            for col in range(c1,c2+1):yield target,row,col
+
+    def criterion_cell(self,target):
+        try:return self.cell(*target)
+        except FormulaError as error:
+            if error.code not in CELL_ERRORS:raise
+            return error
+
+    def conditional_aggregate(self,name,args,sheet):
+        if not (len(args)==2 if name=="COUNTIF" else len(args) in (2,3)):raise FormulaError("#NAME?",name+" has an unsupported argument count")
+        scope=self.range_geometry(args[0],sheet);sums=self.range_geometry(args[2],sheet) if len(args)==3 else scope
+        if (scope[3]-scope[1],scope[4]-scope[2])!=(sums[3]-sums[1],sums[4]-sums[2]):raise FormulaError("#VALUE!","SUMIF ranges require the same shape")
+        if args[1][0]=="range":raise FormulaError("#VALUE!","Criteria must be scalar")
+        criterion=Criterion(self.evaluate(args[1],sheet),self);result=0
+        for row in range(scope[1],scope[3]+1):
+            for col in range(scope[2],scope[4]+1):
+                self.check()
+                if not criterion.matches(self.criterion_cell((scope[0],row,col))):continue
+                if name=="COUNTIF":result+=1;continue
+                value=self.cell(sums[0],sums[1]+row-scope[1],sums[2]+col-scope[2])
+                if type(value) in (int,float):
+                    result+=value
+                    if not math.isfinite(result):raise FormulaError("#NUM!","SUMIF subtotal exceeds the finite range")
+        return result
 
     def argument_values(self,args,sheet):
         """Keep reference provenance and cell errors for range-aware functions."""
@@ -688,6 +774,8 @@ class Calculator:
                     raise FormulaError("#VALUE!", "IF condition must be numeric or boolean")
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
+            if name in ("COUNTIF","SUMIF"):
+                return self.conditional_aggregate(name,args,sheet)
             if name=="CONCAT":
                 if not 1<=len(args)<=253:raise FormulaError("#NAME?","CONCAT requires 1–253 arguments")
                 return self.concatenate_values(value for value,referenced in self.argument_values(args,sheet))

@@ -4,9 +4,9 @@ from copy import deepcopy
 FUNCTIONS = {}
 
 
-def register(name, signature, summary, rules, formula, result, category):
+def register(name, signature, summary, rules, formula, result, category, inputs=None):
     FUNCTIONS[name] = dict(name=name,signature=signature,summary=summary,rules=rules,
-                           examples=[dict(formula=formula,result=result)],category=category)
+                           examples=[dict(formula=formula,result=result,**({"inputs":inputs} if inputs else {}))],category=category)
 
 
 register('SUM','SUM(value, …)','Add numeric scalars and ranges.','Text, blanks and Booleans are ignored. Referenced errors propagate; nonfinite subtotals fail. Zero arguments returns zero.','=SUM(2,3)',5,'Aggregate')
@@ -40,6 +40,12 @@ register('MID','MID(text, start, count)','Return characters at a 1-based startin
 
 
 register('CONCAT','CONCAT(text, …)','Join scalar arguments and rectangular ranges in row-major order.','1–253 arguments. '+TEXT_RULES.removeprefix('One scalar argument. ')+' Blank/NULL contributes empty Text. All referenced errors propagate; no delimiter is inserted. Results are built incrementally and bounded before joining.','=CONCAT("Data"," ","Horizon")','Data Horizon','Text')
+
+
+CONDITIONAL_RULES='Cell/rectangular ranges up to 10,000 cells; shared work/input/deadline limits apply. Scalar criteria: finite numbers (including numeric criteria Text), typed Boolean, or case-insensitive Unicode-folded Text with =, <>, <, >, <=, >=. Numeric criteria may compare finite numeric Text; blank criteria become zero. Empty Text criteria match blank/NULL/empty Text. Equality/inequality supports * and ? with ~ escaping; criteria Text is capped at 255 characters. Ordinary errors in criteria-range cells do not match; cycle/resource failures propagate. This is an explicit stage, not every Excel coercion/locale.'
+CONDITIONAL_EXAMPLE=[dict(row=row,col=2,source=label,kind='text') for row,label in enumerate(('Pen','Book','Pen'),1)]+[dict(row=row,col=3,source=str(value)) for row,value in enumerate((2,5,3),1)]
+register('COUNTIF','COUNTIF(range, criteria)','Count matching cells in one bounded range.',CONDITIONAL_RULES,'=COUNTIF(B1:B3,"Pen")',2,'Conditional',CONDITIONAL_EXAMPLE)
+register('SUMIF','SUMIF(range, criteria[, sum_range])','Sum numeric values aligned with matching criteria cells.',CONDITIONAL_RULES+' Sum range defaults to criteria range and must have the exact same shape. Only matching sum cells are evaluated; Text/Boolean/blank sums are ignored. Matching errors and nonfinite running sums propagate.','=SUMIF(B1:B3,"Pen",C1:C3)',5,'Conditional',CONDITIONAL_EXAMPLE)
 
 
 def function_catalog():
