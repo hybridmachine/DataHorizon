@@ -587,6 +587,22 @@ class Calculator:
             if error.code not in CELL_ERRORS:raise
             return error
 
+    def scalar_value(self,node,sheet):
+        if node[0]=="range":raise FormulaError("#VALUE!","Scalar argument required")
+        value=self.evaluate(node,sheet)
+        if isinstance(value,list):raise FormulaError("#VALUE!","Array arguments are unavailable")
+        return value
+
+    def inspect_scalar(self,name,args,sheet):
+        if len(args)!=1:raise FormulaError("#NAME?",name+" requires one scalar argument")
+        if args[0][0]=="range":raise FormulaError("#VALUE!","Inspection requires a scalar")
+        try:value=self.evaluate(args[0],sheet)
+        except FormulaError as error:
+            if error.code not in CELL_ERRORS:raise
+            return name=="ISERROR" or name=="ISNA" and error.code=="#N/A"
+        if isinstance(value,list):raise FormulaError("#VALUE!","Array inspection is unavailable")
+        return {"ISBLANK":value is None,"ISNUMBER":type(value) in (int,float),"ISTEXT":type(value) is str,"ISLOGICAL":type(value) is bool,"ISERROR":False,"ISNA":False}[name]
+
     def exact_lookup_key(self,value):
         if isinstance(value,list):raise FormulaError("#VALUE!","Lookup value must be scalar")
         if value is None:return "blank",None
@@ -808,6 +824,7 @@ class Calculator:
                     raise FormulaError("#VALUE!", "IF condition must be numeric or boolean")
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
+            if name in ("ISBLANK","ISNUMBER","ISTEXT","ISLOGICAL","ISERROR","ISNA"):return self.inspect_scalar(name,args,sheet)
             if name=="XLOOKUP":return self.xlookup(args,sheet)
             if name in ("COUNTIF","SUMIF"):
                 return self.conditional_aggregate(name,args,sheet)
