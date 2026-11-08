@@ -6,6 +6,7 @@
 #include "namedlistviews.h"
 #include "functionhelp.h"
 #include "formulaeditor.h"
+#include "referencepickerdialog.h"
 #include <QGridLayout>
 #include <QApplication>
 #include <QClipboard>
@@ -403,6 +404,7 @@ void MainWindow::buildUi() {
     add(dataMenu,tr("Copy list result values"),{},[this]{copyListValues();},true)->setObjectName("copyListValuesAction");
     add(dataMenu, tr("Clear list view"), {}, [this] { if (!m_busy) { m_listSpec = {}; refresh(); } }, true)->setObjectName("clearListAction");
 
+    auto *otherReference=add(edit,tr("Pick reference from another sheet…"),{},[this]{pickOtherSheetReference();});otherReference->setObjectName("pickOtherSheetReferenceAction");
     m_pickReferenceAction=add(edit,tr("Pick formula reference"),{},[this]{if(m_pickingReference)finishReferencePick(false);else startReferencePick();});m_pickReferenceAction->setCheckable(true);m_pickReferenceAction->setObjectName("pickReferenceAction");
     auto *central = new QWidget(this); auto *layout = new QVBoxLayout(central);
     layout->setContentsMargins(4, 4, 4, 4); layout->setSpacing(4);
@@ -414,6 +416,8 @@ void MainWindow::buildUi() {
     formula->addWidget(m_address); formula->addWidget(new QLabel("fx")); formula->addWidget(m_source, 1);
     auto *pickButton=new QToolButton(central);pickButton->setObjectName("pickReferenceButton");pickButton->setDefaultAction(m_pickReferenceAction);pickButton->setText(tr("Pick reference"));pickButton->setFocusPolicy(Qt::NoFocus);pickButton->setToolTip(tr("Insert a clicked cell or dragged range into this formula draft. Release to insert; Escape cancels picking."));formula->addWidget(pickButton);
     layout->addLayout(formula);
+    auto *otherPickButton=new QToolButton(central);otherPickButton->setDefaultAction(otherReference);otherPickButton->setText(tr("Other sheet…"));otherPickButton->setObjectName("pickOtherSheetReferenceButton");otherPickButton->setFocusPolicy(Qt::NoFocus);formula->addWidget(otherPickButton);
+    connect(m_source,&QLineEdit::textEdited,this,[this]{++m_referenceGeneration;});
     m_formulaCues=new QLabel(central);m_formulaCues->setObjectName("formulaSyntaxCues");m_formulaCues->setAccessibleName(tr("Formula references and parentheses"));m_formulaCues->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);m_formulaCues->hide();layout->addWidget(m_formulaCues);dynamic_cast<FormulaLineEdit *>(m_source)->syntaxChanged=[this]{updateFormulaReferences();};
     m_listSummary=new QLabel(central);m_listSummary->setObjectName("listCriteriaSummary");m_listSummary->setAccessibleName(tr("Active sort and filter criteria"));
     m_listSummary->setMinimumWidth(0);m_listSummary->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);m_listSummary->hide();layout->addWidget(m_listSummary);
@@ -939,6 +943,7 @@ void MainWindow::updateFormulaReferences() {
 }
 
 void MainWindow::startReferencePick() {
+    ++m_referenceGeneration;
     QSignalBlocker blocker(m_pickReferenceAction);m_pickReferenceAction->setChecked(false);
     if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected()){issue("Reference picking needs an editable source sheet.");return;}
     auto *line=dynamic_cast<FormulaLineEdit *>(m_source);auto views=m_frozenTop->views();views.append(m_grid);
@@ -951,6 +956,23 @@ void MainWindow::startReferencePick() {
     if(!m_source->isEnabled() || m_draftTarget["workbook"]!=m_info["id"] || m_draftTarget["state"]!=m_info["state"] || m_draftTarget["input_kind"].toString()=="text")return;
     m_referenceTarget=targetContext();m_referenceCurrent=m_grid->currentIndex();m_referenceText=m_source->text();m_referenceStart=start;m_referenceLength=length;m_referencePreview.clear();m_referenceIssue.clear();m_referenceDragging=false;m_pickingReference=true;m_pickReferenceAction->setChecked(true);
     m_source->setFocus();m_source->setSelection(start,length);m_status->setText("Pick a cell or drag a range • Release inserts into the original formula draft • Escape cancels picking");
+}
+
+void MainWindow::pickOtherSheetReference() {
+    if(m_info["sheets"].toArray().size()<2 || m_info["sheets"].toArray().size()>64){issue("Reference picking needs 2–64 sheets in this tier.");return;}
+    startReferencePick();if(!m_pickingReference)return;
+    const auto scope=m_referenceTarget;const auto current=m_referenceCurrent;const auto source=m_referenceText;const int start=m_referenceStart,length=m_referenceLength;const bool modified=m_source->isModified();const auto service=m_client->url();const auto generation=m_referenceGeneration;finishReferencePick(false);
+    ReferencePickerDialog dialog(m_client,m_info["id"].toString(),m_info["state"].toString(),m_info["sheets"].toArray(),m_model->sheet(),this);
+    if(dialog.exec()!=QDialog::Accepted){m_source->setFocus();return;}
+    const auto range=dialog.range();const auto sheet=dialog.sheet(),reference=dialog.reference();if(range.isEmpty() || reference.isEmpty())return;
+    m_status->setText("Checking picked reference…");
+    m_client->request(base()+"/range",{{"sheet",sheet},{"r1",range["r1"]},{"r2",range["r1"]},{"c1",range["c1"]},{"c2",range["c1"]},{"preview",true}},[this,scope,current,source,start,length,modified,service,generation,sheet,reference](QJsonObject result,QString error){
+        if(generation!=m_referenceGeneration || service!=m_client->url())return;
+        if(m_busy || m_unknown || !matchesTarget(scope) || current!=m_grid->currentIndex() || m_model->projected() || !m_source->isEnabled() || m_source->text()!=source || m_source->isModified()!=modified || m_source->cursorPosition()!=start+length || m_source->selectionStart()!=(length?start:-1))return;
+        if(!error.isEmpty() || result["state"]!=scope["expected_state"] || result["sheet"].toString()!=sheet){issue(error.isEmpty()?"Workbook changed. Refresh and pick the reference again.":error);return;}
+        const auto replacement=source.left(start)+reference+source.mid(start+length);if(replacement.size()>m_source->maxLength() || replacement.toUtf8().size()>65536){issue("Picked reference exceeds the formula input limit. Nothing inserted.");return;}
+        m_source->setFocus();m_source->setCursorPosition(0);m_source->setSelection(start,length);m_source->insert(reference);m_source->setModified(true);m_status->setText("Cross-sheet reference inserted into original draft • Enter to submit, Escape to discard");
+    });
 }
 
 void MainWindow::finishReferencePick(bool insert) {
@@ -2227,6 +2249,7 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
     }
     if (object == m_source && event->type() == QEvent::KeyPress) {
         const auto *key=static_cast<QKeyEvent *>(event);
+        ++m_referenceGeneration;
         if(auto *line=dynamic_cast<FormulaLineEdit *>(m_source))if(line->completionKey(key))return true;
         if (key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter) {
             submitDraft(true,key->modifiers().testFlag(Qt::ShiftModifier)?-1:1); return true;

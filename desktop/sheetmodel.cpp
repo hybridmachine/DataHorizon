@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QTimer>
+#include <QPointer>
 
 SheetModel::SheetModel(RestClient *client, QObject *parent, int rows, int cols) : QAbstractTableModel(parent), m_client(client), m_rows(rows), m_cols(cols) {
     setObjectName("sheetModel");
@@ -62,10 +63,10 @@ void SheetModel::ensureSource(const QModelIndex &index) const {
     const auto key=tileKey(row,col);
     if (m_sourceLoading.contains(key) || m_sourceLoading.size()>=4) return;
     m_sourceLoading.insert(key);
-    auto *self=const_cast<SheetModel *>(this);
+    QPointer<SheetModel> self=const_cast<SheetModel *>(this);
     m_client->request("/v1/workbooks/"+m_workbook+"/range",{{"sheet",m_sheet},{"r1",row},{"r2",row},{"c1",col},{"c2",col}},
         [self,generation,key,index](QJsonObject result,QString error){
-            if (generation!=self->m_generation) return;
+            if (!self || generation!=self->m_generation) return;
             self->m_sourceLoading.remove(key);
             if (!error.isEmpty()) { emit self->issue(error); return; }
             if (result["state"].toString()!=self->m_state) { emit self->externalChange(); return; }
@@ -143,10 +144,10 @@ void SheetModel::fetch(int tileRow, int tileCol) const {
     auto key = tileKey(tileRow, tileCol);
     if (m_workbook.isEmpty() || m_loading.contains(key) || m_loading.size() >= 4) return;
     m_loading.insert(key);
-    auto *self = const_cast<SheetModel *>(this);
+    QPointer<SheetModel> self = const_cast<SheetModel *>(this);
     const int generation = m_generation;
     QTimer::singleShot(0, self, [self, key, tileRow, tileCol, generation] {
-        if (generation != self->m_generation) return;
+        if (!self || generation != self->m_generation) return;
         QJsonObject body{{"sheet", self->m_sheet}, {"r1", tileRow*32+1}, {"c1", tileCol*16+1},
                          {"r2", qMin(tileRow*32+32, 1048576)}, {"c2", qMin(tileCol*16+16, 16384)}, {"preview",true}};
         if (self->m_projected) {
@@ -157,7 +158,7 @@ void SheetModel::fetch(int tileRow, int tileCol) const {
         }
         self->m_client->request("/v1/workbooks/" + self->m_workbook + "/range", body,
             [self, generation, key, tileRow, tileCol](QJsonObject result, QString error) {
-            if (generation != self->m_generation) return;
+            if (!self || generation != self->m_generation) return;
             self->m_loading.remove(key);
             if (!error.isEmpty()) { emit self->issue(error); return; }
             if (result.value("state").toString() != self->m_state) { emit self->externalChange(); return; }

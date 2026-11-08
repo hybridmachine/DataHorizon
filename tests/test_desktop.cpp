@@ -89,7 +89,7 @@ private:
 class DelayedClipboardServer : public QTcpServer {
 public:
     struct Pending { QPointer<QTcpSocket> socket; QJsonObject range; };
-    QList<Pending> requests;
+    QList<Pending> requests;bool holdRanges=false;
     DelayedClipboardServer(const QString &state, const QString &sheet) : m_state(state), m_sheet(sheet) {
         connect(this,&QTcpServer::newConnection,this,[this] {
             auto *socket=nextPendingConnection();
@@ -101,7 +101,7 @@ public:
                     .match(QString::fromLatin1(request.left(end))).captured(1).toInt();
                 if(request.size()<end+4+length) return;
                 socket->setProperty("handled",true);
-                if(request.startsWith("POST ") && (request.contains("/clipboard HTTP/") || request.contains("/list/values HTTP/")))
+                if(request.startsWith("POST ") && (request.contains("/clipboard HTTP/") || request.contains("/list/values HTTP/") || (holdRanges && request.contains("/range HTTP/"))))
                     requests.append({socket,QJsonDocument::fromJson(request.mid(end+4)).object()});
                 else send(socket,{{"state",m_state},{"sheet",m_sheet},{"cells",QJsonArray{}}});
             });
@@ -1095,6 +1095,19 @@ private slots:
         QCOMPARE(tabs->count(),1);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
         QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
+    }
+    void shortLivedPreviewModelIgnoresLateRangeReplies() {
+        DelayedClipboardServer server("state","sheet");server.holdRanges=true;QVERIFY(server.listen(QHostAddress::LocalHost,0));RestClient client;client.configure("http://127.0.0.1:"+QString::number(server.serverPort()),"token");auto *model=new SheetModel(&client,nullptr,32,16);QPointer<SheetModel> guarded=model;model->bind("book","sheet","state",true);model->data(model->index(0,0));QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),1,5000);delete model;QVERIFY(guarded.isNull());server.respond(0,"late");QTest::qWait(100);QVERIFY(guarded.isNull());
+    }
+    void crossSheetReferencePickerRetainsOriginalDraftAndQuotesNames() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("cross-pick.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);window.submit({{"action","sheet_add"},{"name","Costs O'Brien"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);window.findChild<QTabBar *>("sheets")->setCurrentIndex(1);window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",2},{"source","4"}},QJsonObject{{"row",3},{"col",2},{"source","6"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();auto *source=window.findChild<QLineEdit *>("source");auto *tabs=window.findChild<QTabBar *>("sheets");tabs->setCurrentIndex(0);grid->setCurrentIndex(model->index(3,3));QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);const auto originalSheet=model->sheet();QSignalSpy edits(&window,&MainWindow::operationFinished);QString address="B2:B3";bool cancel=false,expire=false;int dialogs=0;
+        QTimer timer;connect(&timer,&QTimer::timeout,&window,[&]{auto *dialog=window.findChild<QDialog *>("referencePickerDialog");if(!dialog || dialog->property("checked").toBool())return;dialog->setProperty("checked",true);++dialogs;auto *preview=dialog->findChild<QTableView *>("referencePickerGrid");QCOMPARE(preview->editTriggers(),QAbstractItemView::NoEditTriggers);QCOMPARE(model->sheet(),originalSheet);QCOMPARE(grid->currentIndex(),model->index(3,3));auto *line=dialog->findChild<QLineEdit *>("referenceAddress");line->setText(address);QTest::keyClick(line,Qt::Key_Return);auto *ok=dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok);if(expire){QMetaObject::invokeMethod(preview->model(),"externalChange");QVERIFY(!ok->isEnabled());dialog->reject();}else if(cancel)dialog->reject();else ok->click();});timer.start(10);
+        source->setFocus();QTest::keyClicks(source,"=SUM(");QTest::mouseClick(window.findChild<QToolButton *>("pickOtherSheetReferenceButton"),Qt::LeftButton);QTRY_COMPARE_WITH_TIMEOUT(dialogs,1,5000);QTRY_COMPARE_WITH_TIMEOUT(source->text(),QString("=SUM('Costs O''Brien'!B2:B3"),5000);QVERIFY(edits.isEmpty());QCOMPARE(model->sheet(),originalSheet);source->undo();QCOMPARE(source->text(),QString("=SUM("));source->redo();source->setFocus();QTest::keyClicks(source,")");QTest::keyClick(source,Qt::Key_Return);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(3,3)).toString(),QString("10"),5000);
+        grid->setCurrentIndex(model->index(3,3));QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);source->setFocus();source->selectAll();QTest::keyClicks(source,"=1+");cancel=true;window.findChild<QAction *>("pickOtherSheetReferenceAction")->trigger();QCOMPARE(dialogs,2);QCOMPARE(source->text(),QString("=1+"));QCOMPARE(edits.count(),1);QTest::keyClick(source,Qt::Key_Escape);
+        cancel=false;address="B2";source->setFocus();source->selectAll();QTest::keyClicks(source,"=1+");window.findChild<QAction *>("pickOtherSheetReferenceAction")->trigger();QCOMPARE(dialogs,3);source->setFocus();QTest::keyClicks(source,"9");QTest::qWait(100);QCOMPARE(source->text(),QString("=1+9"));QTest::keyClick(source,Qt::Key_Escape);
+        expire=true;source->setFocus();source->selectAll();QTest::keyClicks(source,"=1+");window.findChild<QAction *>("pickOtherSheetReferenceAction")->trigger();QCOMPARE(dialogs,4);QCOMPARE(source->text(),QString("=1+"));QTest::keyClick(source,Qt::Key_Escape);
+        expire=false;address="B2";QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(grid->currentIndex()),5000);grid->edit(grid->currentIndex());auto *editor=grid->findChild<QLineEdit *>();QVERIFY(editor);editor->setFocus();editor->selectAll();QTest::keyClicks(editor,"=SUM(");QTest::mouseClick(window.findChild<QToolButton *>("pickOtherSheetReferenceButton"),Qt::LeftButton);QTRY_COMPARE_WITH_TIMEOUT(dialogs,5,5000);QTRY_COMPARE_WITH_TIMEOUT(source->text(),QString("=SUM('Costs O''Brien'!B2"),5000);QCOMPARE(edits.count(),1);QTest::keyClick(source,Qt::Key_Escape);
     }
     void referenceCycleTargetsEndpointsSelectionsAndIgnoresQuotes() {
         auto cycle=[](QString text,int cursor,int start=-1,int length=0){const auto change=cycleFormulaReference(text,cursor,start,length);if(change.start>=0)text.replace(change.start,change.length,change.replacement);return text;};

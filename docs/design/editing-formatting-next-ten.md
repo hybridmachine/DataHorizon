@@ -36,3 +36,20 @@ behavior; no REST mutation, hooks or history occur merely from pressing F4.
 ## Completed PRs
 
 1. [F4 reference cycling #75](https://github.com/hybridmachine/DataHorizon/pull/75): locally verified, author-reviewed and merged.
+
+2. [Cross-sheet reference picking #76](https://github.com/hybridmachine/DataHorizon/pull/76): locally verified, author-reviewed and merged.
+
+## Cross-sheet reference picking
+
+Other sheet… beside the source bar (also Edit) transfers an unsubmitted in-cell
+draft to the source editor and opens a separate read-only, virtualized preview.
+Choose another sheet and click/drag a rectangle, or enter A1/range and press Enter
+to select it. Insert reference quotes/escapes the sheet name and retains the
+original source cell, input kind and draft. The preview supports 2–64 sheets and
+at most 10,000 selected cells; no whole-workbook cache or writes are introduced.
+
+A fresh single-cell REST read verifies the captured workbook state before one
+native draft insertion. Changed service, target, state, cursor/selection or later
+typing cancels the reply. Expired preview disables Insert; cancellation retains
+the draft. Enter still submits one ordinary managed edit. Preview model callbacks
+are lifetime-guarded, including replies arriving after the dialog is destroyed.
