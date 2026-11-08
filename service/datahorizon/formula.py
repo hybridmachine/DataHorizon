@@ -740,6 +740,31 @@ class Calculator:
             return 0 if value is None else value
         raise FormulaError("#N/A","Lookup value was not found")
 
+    def multiple_criteria(self,name,args,sheet):
+        offset=1 if name=="SUMIFS" else 0
+        if not 2<=len(args)-offset<=254 or (len(args)-offset)%2:raise FormulaError("#NAME?",name+" requires 1–127 range/criterion pairs")
+        pairs=[];shape=None
+        for index in range(offset,len(args),2):
+            scope=self.range_geometry(args[index],sheet);current=(scope[3]-scope[1]+1,scope[4]-scope[2]+1)
+            if shape is not None and current!=shape:raise FormulaError("#VALUE!","Criteria ranges must have the same shape")
+            shape=current;pairs.append((scope,Criterion(self.scalar_value(args[index+1],sheet),self)))
+        sums=self.range_geometry(args[0],sheet) if offset else None
+        if sums and (sums[3]-sums[1]+1,sums[4]-sums[2]+1)!=shape:raise FormulaError("#VALUE!","Sum range must have the same shape")
+        total=0
+        for row in range(shape[0]):
+            for col in range(shape[1]):
+                self.check();matched=True
+                for scope,criterion in pairs:
+                    eligible=criterion.matches(self.criterion_cell((scope[0],scope[1]+row,scope[2]+col)))
+                    matched=matched and eligible
+                if not matched:continue
+                if not sums:total+=1;continue
+                value=self.cell(sums[0],sums[1]+row,sums[2]+col)
+                if type(value) in (int,float):
+                    total+=value
+                    if not math.isfinite(total):raise FormulaError("#NUM!","SUMIFS subtotal exceeds the finite range")
+        return total
+
     def conditional_aggregate(self,name,args,sheet):
         if not (len(args)==2 if name=="COUNTIF" else len(args) in (2,3)):raise FormulaError("#NAME?",name+" has an unsupported argument count")
         scope=self.range_geometry(args[0],sheet);sums=self.range_geometry(args[2],sheet) if len(args)==3 else scope
@@ -935,6 +960,7 @@ class Calculator:
             if name=="SUBSTITUTE":return self.substitute(args,sheet)
             if name=="EXACT":return self.exact_text(args,sheet)
             if name=="XLOOKUP":return self.xlookup(args,sheet)
+            if name in ("COUNTIFS","SUMIFS"):return self.multiple_criteria(name,args,sheet)
             if name in ("COUNTIF","SUMIF"):
                 return self.conditional_aggregate(name,args,sheet)
             if name=="CONCAT":

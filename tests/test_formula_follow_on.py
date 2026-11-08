@@ -8,6 +8,7 @@ import unittest
 from datahorizon.formula import FormulaError
 from datahorizon.functions import function_catalog
 from datahorizon.engine import Workbook
+from datahorizon.client import LocalService,APIError
 from datahorizon.interchange import xlsx_export,xlsx_preview
 from datahorizon.ods import ods_export,ods_preview
 from test_text_functions import calculate
@@ -79,6 +80,32 @@ class FollowOnTests(unittest.TestCase):
         self.assertEqual(calculate('=TEXTJOIN("-",TRUE,B1)',{}),'')
         self.errors([('=TEXTJOIN("-","TRUE",1)','#VALUE!'),('=TEXTJOIN(B1:B2,TRUE,1)','#VALUE!'),('=TEXTJOIN("-",TRUE,A1)','#CYCLE!'),('=TEXTJOIN("-",TRUE,1/0)','#DIV/0!'),('=TEXTJOIN("-",TRUE)','#NAME?'),('=TEXTJOIN("-",TRUE,B1:B10001)','#LIMIT!')])
         self.errors([('=IFERROR(TEXTJOIN(B1,FALSE,"x","y"),"hidden")','#LIMIT!')],{(1,2):cell('😀'*16384)})
+
+    def test_multiple_criteria_alignment_types_and_matching_sums(self):
+        values={(r,2):cell(label) for r,label in enumerate(('Pen','Book','pen','00123'),1)}
+        values.update({(r,3):cell(value) for r,value in enumerate((2,5,3,'04'),1)})
+        self.assertEqual(calculate('=COUNTIFS(B1:B4,"p*",C1:C4,">2")',values),1)
+        self.assertEqual(calculate('=SUMIFS(C1:C4,B1:B4,"PEN",C1:C4,">0")',values),5)
+        self.assertEqual(calculate('=COUNTIFS(C1:C4,4)',values),1)
+        self.assertEqual(calculate('=SUMIFS(C1:C4,C1:C4,4)',values),0)
+        values[2,3]=dict(source='=1/0',kind='formula',value=None)
+        self.assertEqual(calculate('=SUMIFS(C1:C4,B1:B4,"Pen")',values),5)
+        self.errors([('=SUMIFS(C1:C4,B1:B4,"Book")','#DIV/0!')],values)
+
+    def test_multiple_criteria_errors_shapes_cycles_and_work(self):
+        self.errors([('=COUNTIFS(B1,1,C1)','#NAME?'),('=SUMIFS(B1,C1)','#NAME?'),('=COUNTIFS(B1:B2,1,C1:D1,1)','#VALUE!'),('=SUMIFS(D1:D3,B1:B2,1)','#VALUE!'),('=COUNTIFS(#REF!,1)','#REF!'),('=COUNTIFS(B1,1,C1,1/0)','#DIV/0!'),('=COUNTIFS(B1:B10001,1)','#LIMIT!')])
+        self.errors([('=COUNTIFS(B1,"no match",C1,1)','#CYCLE!')],{(1,2):cell('x'),(1,3):dict(source='=A1',kind='formula',value=None)})
+        self.errors([('=SUMIFS(B1:B2,C1:C2,1)','#NUM!')],{(1,2):cell(1e308),(2,2):cell(1e308),(1,3):cell(1),(2,3):cell(1)})
+        formula='=COUNTIFS('+','.join(['B1:B1000,1']*20)+')'
+        self.errors([(formula,'#LIMIT!')])
+
+    def test_multiple_criteria_required_hook_rolls_back_parent_and_generated_edits(self):
+        with tempfile.TemporaryDirectory() as temp:
+            handler=Path(temp)/'handler.py';handler.write_text('def on_change(context, changes):\n for change in changes:\n  if (change["row"],change["col"])==(1,1):\n   total=context.value(change["sheet"],1,1)\n   context.set(change["sheet"],1,4,str(total))\n   if total>10: raise ValueError("total too large")\n')
+            with LocalService(handler=handler) as client,client.open(Path(temp)/'hook.dhwb',create=True) as book:
+                book.apply('edit',cells=[dict(row=1,col=2,source='Pen',kind='text'),dict(row=1,col=3,source='2'),dict(row=1,col=1,source='=SUMIFS(C1,B1,"Pen")')]);before=book.read(r2=1,c2=4)
+                with self.assertRaises(APIError):book.apply('edit',cells=[dict(row=1,col=1,source='=SUMIFS(C1,B1,"Pen")*10')])
+                after=book.read(r2=1,c2=4);self.assertEqual(after['state'],before['state']);self.assertEqual(after['cells'],before['cells'])
 
     def test_catalog_formulas_recalculate_after_native_package_reimport(self):
         with tempfile.TemporaryDirectory() as temp:
