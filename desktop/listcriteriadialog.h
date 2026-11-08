@@ -15,6 +15,8 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <cmath>
+#include <QDate>
+#include <QTime>
 
 class ListCriteriaDialog : public QDialog {
 public:
@@ -55,13 +57,13 @@ private:
         auto *choice=new QComboBox(view);choice->addItems(sort?QStringList{tr("Ascending"),tr("Descending")}:QStringList{"=","<>",">","<",">=","<=","contains"});view->setCellWidget(row,1,choice);
         if(sort)choice->setCurrentIndex(criterion.value("descending").toBool()?1:0);
         else {
-            choice->setCurrentText(criterion.value("op").toString("="));auto *type=new QComboBox(view);type->addItems({tr("Text"),tr("Number"),tr("Boolean"),tr("NULL")});view->setCellWidget(row,2,type);
+            choice->setCurrentText(criterion.value("op").toString("="));auto *type=new QComboBox(view);type->addItems({tr("Text"),tr("Number"),tr("Boolean"),tr("NULL"),tr("Date (ISO)"),tr("Time (ISO)"),tr("Date and time (ISO)")});view->setCellWidget(row,2,type);
             auto *value=new QLineEdit(view);value->setMaxLength(65536);view->setCellWidget(row,3,value);
             auto item=criterion.value("value");if(!criterion.isEmpty() && item.isUndefined())item=QJsonValue::Null;
             if(item.isDouble()){type->setCurrentIndex(1);value->setText(QString::number(item.toDouble(),'g',17));}
             else if(item.isBool()){type->setCurrentIndex(2);value->setText(item.toBool()?"TRUE":"FALSE");}
             else if(item.isNull()){type->setCurrentIndex(3);value->setEnabled(false);}
-            else value->setText(item.toString());
+            else {value->setText(item.toString());const int temporal=QStringList{"date","time","datetime"}.indexOf(criterion["value_kind"].toString());if(temporal>=0)type->setCurrentIndex(4+temporal);}
             connect(type,&QComboBox::currentIndexChanged,value,[value](int index){value->setEnabled(index!=3);});
         }
         view->setCurrentCell(row,0);labelRows(view,sort);
@@ -92,9 +94,14 @@ private:
                 if(!QRegularExpression("^[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$").match(input).hasMatch() || !ok || !std::isfinite(number))error=tr("Filter %1 needs a finite invariant decimal number.").arg(row+1);else value=number;}
             else if(type==2){if(text.trimmed().compare("TRUE",Qt::CaseInsensitive)==0)value=true;else if(text.trimmed().compare("FALSE",Qt::CaseInsensitive)==0)value=false;else error=tr("Filter %1 Boolean must be TRUE or FALSE.").arg(row+1);}
             else if(type==3)value=QJsonValue::Null;
+            else if(type>=4){
+                const auto pattern=type==4?QString("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"):type==5?QString("^[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?$"):QString("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?$");
+                const auto clock=type==6?text.mid(11):text;
+                if(!QRegularExpression(pattern).match(text).hasMatch() || (type!=5 && !QDate::fromString(text.left(10),"yyyy-MM-dd").isValid()) || (type!=4 && !QTime::fromString(clock.left(8),"HH:mm:ss").isValid()))error=tr("Filter %1 needs a valid ISO date/time with seconds and no timezone offset.").arg(row+1);
+            }
             if(error.isEmpty() && op=="contains" && type!=0)error=tr("Filter %1: contains requires Text.").arg(row+1);
             if(!error.isEmpty()){m_error->setText(error);return false;}
-            filters.append(QJsonObject{{"col",col},{"op",op},{"value",value}});
+            QJsonObject filter{{"col",col},{"op",op},{"value",value}};if(type>=4)filter["value_kind"]=QStringList{"date","time","datetime"}[type-4];filters.append(filter);
         }
         m_scope["header"]=m_header->isChecked();m_scope["sort"]=sort;m_scope["filters"]=filters;return true;
     }

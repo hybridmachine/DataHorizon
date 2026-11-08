@@ -27,12 +27,12 @@ inline bool normalizedListView(const QJsonObject &input,QJsonObject &result) {
             if(!integer(item["col"],input["c1"].toInt(),input["c2"].toInt()))return false;
             if(key=="sort") {if(item.contains("descending") && !item["descending"].isBool())return false;for(auto it=item.begin();it!=item.end();++it)if(it.key()!="col" && it.key()!="descending")return false;}
             else {
-                const auto scalar=item.value("value");if(!QStringList{"=","<>",">","<",">=","<=","contains"}.contains(item["op"].toString()))return false;
+                if(item.contains("value_kind") && (!QStringList{"date","time","datetime"}.contains(item["value_kind"].toString()) || !item["value"].isString() || item["op"].toString()=="contains"))return false;const auto scalar=item.value("value");if(!QStringList{"=","<>",">","<",">=","<=","contains"}.contains(item["op"].toString()))return false;
                 if(!scalar.isUndefined() && !scalar.isNull() && !scalar.isBool() && !scalar.isDouble() && !scalar.isString())return false;
                 if(scalar.isDouble() && !std::isfinite(scalar.toDouble()))return false;
                 if(scalar.isString() && scalar.toString().toUtf8().size()>65536)return false;
                 if(item["op"].toString()=="contains" && !scalar.isString())return false;
-                for(auto it=item.begin();it!=item.end();++it)if(it.key()!="col" && it.key()!="op" && it.key()!="value")return false;
+                for(auto it=item.begin();it!=item.end();++it)if(it.key()!="col" && it.key()!="op" && it.key()!="value" && it.key()!="value_kind")return false;
             }
         }
     }

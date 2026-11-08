@@ -21,6 +21,15 @@ def evaluate(source):
 
 
 class CalendarFunctionTests(unittest.TestCase):
+    def test_civil_arithmetic_comparison_and_type_separation(self):
+        for formula,expected in (("DATE(1900,3,1)-DATE(1900,2,28)",1),("DATE(2024,2,28)+1","2024-02-29"),("1+DATE(2024,2,29)","2024-03-01"),("DATE(2024,2,29)+.5","2024-02-29T12:00:00"),("DATE(2024,2,29)+TIME(12,0,0)","2024-02-29T12:00:00"),("TIME(23,0,0)+TIME(2,0,0)","01:00:00"),("TIME(12,0,0)-TIME(6,0,0)",.25),("DATE(2024,2,29)<DATE(2024,3,1)",True),("ISTEXT(DATE(2024,2,29))",False),("DATE(2024,2,29)&\"!\"","2024-02-29!")):
+            self.assertEqual(evaluate(formula),expected,formula)
+        for formula in ("DATE(2024,1,1)*2","DATE(2024,1,1)+DATE(2024,1,1)","1-DATE(2024,1,1)","DATE(2024,1,1)=\"2024-01-01\"","DATE(2024,1,1)=TIME(0,0,0)"):
+            with self.assertRaises(FormulaError) as error:evaluate(formula)
+            self.assertEqual(error.exception.code,"#VALUE!",formula)
+        with self.assertRaises(FormulaError) as error:evaluate("DATE(9999,12,31)+1")
+        self.assertEqual(error.exception.code,"#NUM!")
+
     def test_time_normalization_and_components(self):
         for formula,expected in (("TIME(27,0,0)","03:00:00"),("TIME(0,750,0)","12:30:00"),("TIME(0,0,2000)","00:33:20"),("TIME(12.9,34.9,56.9)","12:34:56"),("HOUR(1.5)",12),("MINUTE(TIME(12,34,56))",34),("SECOND(TIME(12,34,56))",56),("HOUR(DATE(2024,2,29))",0)):
             self.assertEqual(evaluate(formula),expected,formula)
@@ -66,6 +75,14 @@ class TemporalContractTests(unittest.TestCase):
 
 
 class TemporalStorageTests(unittest.TestCase):
+    def test_chronological_sort_and_explicit_typed_filters(self):
+        self.apply(cells=[dict(row=row,col=1,source=source,kind=kind) for row,source,kind in ((1,"2024-03-01","date"),(2,"2024-02-29T12:00:00","datetime"),(3,"2024-02-29","date"),(4,"2024-02-29","text"),(5,"=DATE(2024,1,1)","formula"))])
+        spec=dict(r2=5,sort=[dict(col=1)])
+        self.assertEqual(self.book.list_view("Sheet1",spec)["rows"],[5,3,2,1,4])
+        self.assertEqual(self.book.list_view("Sheet1",{**spec,"filters":[dict(col=1,op=">=",value="2024-02-29",value_kind="date")]})["rows"],[3,2,1])
+        self.assertEqual(self.book.list_view("Sheet1",{**spec,"filters":[dict(col=1,op="=",value="2024-02-29")]})["rows"],[4])
+        with self.assertRaises(EngineError):self.book.list_view("Sheet1",{**spec,"filters":[dict(col=1,op="=",value="2023-02-29",value_kind="date")]})
+
     def test_hook_clock_and_generated_temporal_upgrade_roll_back_with_parent(self):
         self.apply(cells=[dict(row=1,col=2,source="=NOW()"),dict(row=1,col=3,source="=NOW()")])
         self.book.handler=Path(__file__).parent/"fixtures"/"temporal_hook.py"
