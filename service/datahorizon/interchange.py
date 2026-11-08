@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 
 from .engine import EngineError, MAX_CELLS, encoded, integer, require, typed
 from .formula import SUPPORTED_FUNCTIONS, FormulaError, Parser, address, coordinates, split_ref, translate
-from .temporal import Temporal, from_serial, export_temporal_styles
+from .temporal import Temporal, from_serial, export_temporal_styles, import_temporal
 from .formats import TEMPORAL_FORMATS
 
 S = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -189,6 +189,7 @@ class SharedFormulas:
 def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None):
     selected=integer(request.get("sheet_index",1),1,64,"sheet_index")
     selected_mode=mode(request)
+    require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
     report=["Only the selected sheet's stored cells are imported; absent cells do not clear the destination.",
             "Dimensions, other sheets and advanced features are omitted; unsupported styles are listed below.",
             "Formulas recalculate with DataHorizon's declared compatibility tier; imported code is never activated."]
@@ -200,6 +201,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         epoch=properties.get("date1904","0") if properties is not None else "0"
         require(epoch in ("0","1","false","true"),"INVALID_SPREADSHEET","Invalid XLSX date1904 flag")
         system="1904" if epoch in ("1","true") else "1900"
+        report.append("ISO shorthand is normalized to native seconds; timezone offsets require explicit timezone_policy=utc, which stores UTC civil values and omits the original offset.")
         report.append(f"Date/time serials with supported formats use the {system} epoch; serial 60 in the 1900 system is rejected. Formula numeric literals are not epoch-shifted; native formulas use the 1900 system.")
         require(workbook.tag==f"{{{S}}}workbook","INVALID_SPREADSHEET","Only transitional SpreadsheetML XLSX is supported")
         sheets=workbook.findall(f"{{{S}}}sheets/{{{S}}}sheet")
@@ -258,7 +260,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
                     item={"source":shared[int(value)],"kind":"text"}
                 elif kind=="d":
                     require(value is not None,"INVALID_SPREADSHEET","Missing ISO date/time value")
-                    temporal=Temporal(value,"datetime" if "T" in value else "date" if "-" in value else "time")
+                    temporal=import_temporal(value,"datetime" if "T" in value or " " in value else "date" if "-" in value else "time",request.get("timezone_policy","reject"))
                     item={"source":str(temporal),"kind":temporal.kind}
                 elif kind=="str":
                     require(value is not None,"INVALID_SPREADSHEET","Missing text/date value")

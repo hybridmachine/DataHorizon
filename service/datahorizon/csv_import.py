@@ -9,11 +9,13 @@ import re
 from .engine import EngineError, MAX_CELLS, boolean, encoded, require, typed
 from .temporal import Temporal
 from .csv_types import temporal_schema
+from .conversion import convert,PROFILES
+from .temporal import import_temporal
 
 ENCODINGS = ("utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1")
-COLUMN_TYPES = ("text", "number", "boolean", "date_iso", "date_mdy", "date_dmy", "time_iso", "datetime_iso")
+COLUMN_TYPES = ("text", "number", "boolean", "date_iso", "date_mdy", "date_dmy", "time_iso", "datetime_iso", "date_locale", "datetime_locale", "timestamp_utc")
 COLUMN_LABELS = {"text":"Text","number":"Number","boolean":"Boolean",
-                 "date_iso":"Date YYYY-MM-DD","date_mdy":"Date M/D/YYYY","date_dmy":"Date D/M/YYYY", "time_iso":"Time ISO", "datetime_iso":"Datetime ISO"}
+                 "date_iso":"Date YYYY-MM-DD","date_mdy":"Date M/D/YYYY","date_dmy":"Date D/M/YYYY", "time_iso":"Time ISO", "datetime_iso":"Datetime ISO", "date_locale":"Date in selected locale", "datetime_locale":"Datetime in selected locale", "timestamp_utc":"Timestamp normalized to UTC"}
 MAX_SOURCE_BYTES = 3*1024*1024
 
 
@@ -93,6 +95,7 @@ def preview_csv(request, checkpoint=lambda completed, phase: None):
 
 
 def convert_columns(request,result,checkpoint=lambda completed, phase: None):
+    profile=request.get("locale","invariant");require(isinstance(profile,str) and profile in PROFILES,"INVALID_CONVERSION","Choose an explicit locale profile")
     rows = result["rows"]
     width = max(map(len,rows),default=0)
     types = request.get("column_types",{})
@@ -116,13 +119,16 @@ def convert_columns(request,result,checkpoint=lambda completed, phase: None):
             try:
                 if kind!="text" and value=="":
                     item={"source":"","kind":"auto"}
+                elif kind in ('date_locale','datetime_locale','timestamp_utc') or (kind=='number' and profile!='invariant'):
+                    result_kind={'date_locale':'date','datetime_locale':'datetime'}.get(kind,kind)
+                    conversion=convert(dict(source=value,kind=result_kind,locale=profile));item=conversion['cell'];ambiguous+=int(conversion['ambiguous_date']);converted+=1
                 elif kind in ("number","boolean"):
                     item["kind"]=kind
                     typed({**item,"style":{}})
                     converted+=1
                 elif kind in ("time_iso","datetime_iso"):
                     item["kind"]="time" if kind=="time_iso" else "datetime"
-                    Temporal(value,item["kind"])
+                    item["source"]=str(import_temporal(value,item["kind"]))
                     converted+=1
                 elif kind.startswith("date_"):
                     if kind=="date_iso":
@@ -156,6 +162,6 @@ def convert_columns(request,result,checkpoint=lambda completed, phase: None):
         result["inputs"]=inputs  # A failed conversion never supplies an applicable typed payload.
     selected=sorted(types.items(),key=lambda entry:int(entry[0]))
     result["report"]=[result["report"][0],
-        f"{len(types)} explicit column types (first 20): "+", ".join(f"{column}={COLUMN_LABELS[kind]}" for column,kind in selected[:20])+"; unspecified columns remain Text.",
+        f"Explicit locale profile: {profile}. "+f"{len(types)} explicit column types (first 20): "+", ".join(f"{column}={COLUMN_LABELS[kind]}" for column,kind in selected[:20])+"; unspecified columns remain Text.",
         f"{converted} typed/date values; {errors} conversion errors. First record stays Text: {'yes' if header else 'no'}.",
         f"{ambiguous} ambiguous slash dates use the explicitly selected order. Dates/times use native ISO kinds. Empty converted fields become blank."]

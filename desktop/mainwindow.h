@@ -80,6 +80,7 @@ private:
     bool formatPainterMouseEvent(QObject *object,QEvent *event);
     void showFormatCells();
     void enterTemporal();
+    void enterLocalized();
     void calculateSelection();
     void portableView(bool save);
     void declareRecords();

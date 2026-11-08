@@ -104,6 +104,17 @@ reordered range referents instead of changing their meaning; values export is th
 explicit fallback. Native IDs remain in the native workbook. Data → Work with
 declared records provides reviewed operations, copy, fill, export and reconciliation.
 
+Task 8 adds deterministic invariant/en_US/de_DE/fr_FR conversion profiles,
+strict grouping, explicit date order and reported ambiguity. Default Text and
+invariant native entry are unchanged. CSV review offers locale date/datetime and
+UTC timestamp columns; malformed/unsafe conversions withhold Apply. A read-only
+conversion endpoint, SDK set_localized, managed CLI --locale/--timezone-policy and
+Data → Enter localized value all use the same converter before ordinary edits.
+ISO import accepts omitted seconds and a space datetime separator. XLSX/ODS
+explicit timezone_policy=utc normalizes offset timestamps, reporting that the
+original offset is omitted; default offset handling still rejects. Native values
+remain civil ISO, with no named-zone/DST inference or host-locale dependency.
+
 ## Evidence ledger
 
 Task 4 opts in through a top-level `on_structure(context,event)` function in the

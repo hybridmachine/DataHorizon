@@ -102,14 +102,17 @@ class Client:
     def inspect_native(self, path):
         return self.request("/v1/recovery/inspect", {"path":str(Path(path).expanduser().resolve())})
 
+    def convert_value(self,source,kind,locale='invariant',timezone_policy='reject'):
+        return self.request('/v1/convert/value',dict(source=source,kind=kind,locale=locale,timezone_policy=timezone_policy))
+
     def prepare_csv(self, request, job_id=None):
         return self.request("/v1/import/csv/jobs", {**request,"job_id":job_id or str(uuid.uuid4())})
 
-    def prepare_spreadsheet(self, data, *, format="xlsx", sheet_index=1, mode="formulas", scope="selection", job_id=None):
+    def prepare_spreadsheet(self, data, *, format="xlsx", sheet_index=1, mode="formulas", scope="selection", job_id=None, timezone_policy="reject"):
         import base64
         if format not in ("xlsx","ods"): raise ValueError("Unsupported spreadsheet format")
         return self.request("/v1/import/"+format+"/jobs", {"file_base64":base64.b64encode(data).decode(),
-            "job_id":job_id or str(uuid.uuid4()),"sheet_index":sheet_index,"mode":mode,"scope":scope})
+            "job_id":job_id or str(uuid.uuid4()),"sheet_index":sheet_index,"mode":mode,"scope":scope,"timezone_policy":timezone_policy})
 
     def preparation(self, job_id, action=None):
         path = "/v1/jobs/"+quote(job_id,safe="")
@@ -268,6 +271,10 @@ class WorkbookClient:
         self.state = response["state"]
         self._last_receipt=dict(response)
         return response
+
+    def set_localized(self,row,col,source,kind,locale,sheet='Sheet1'):
+        converted=self.client.convert_value(source,kind,locale)
+        return self.set(row,col,converted['cell']['source'],sheet,converted['cell']['kind'])
 
     def set(self, row, col, source, sheet="Sheet1", kind="auto"):
         """Set an explicit kind; date/time/datetime require strict civil ISO strings."""

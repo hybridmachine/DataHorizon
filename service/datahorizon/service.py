@@ -52,6 +52,7 @@ ROUTES = {
     "/v1/workbooks/{workbook}/records/copy":("post","Read reviewed visible records as typed formula/value/style clipboard rows"),
     "/v1/workbooks/{workbook}/records/export/xlsx":("post","Export a formula-preserving declared-list projection"),
     "/v1/workbooks/{workbook}/records/export/ods":("post","Export a formula-preserving declared-list projection"),
+    "/v1/convert/value":("post","Review explicit locale/ISO value conversion without mutation"),
     "/v1/functions": ("get", "Implemented formula signatures, rules and worked examples; no workbook required"),
     "/v1/capabilities": ("get", "Preview capabilities"),
     "/v1/open": ("post", "Create or open a server-local native workbook"),
@@ -249,6 +250,9 @@ def openapi():
     schemas['CalculationRequest']={'type':'object','required':['job_id','expected_state'],'properties':{**schemas['RangeRequest']['properties'],'job_id':{'type':'string','pattern':'^[A-Za-z0-9_-]{1,100}$'},'expected_state':{'type':'string'}},'description':'Read-only snapshot up to 10,000 cells, 4 MiB, two-second evaluation. State and generation guard publication; one UTC clock; cancellation never writes workbook inputs.'}
     schemas['RecordRequest']={'type':'object','required':['id','expected_state'],'properties':{**schemas['ListRequest']['properties'],'id':{'type':'string'},'expected_state':{'type':'string'},'columns':{'type':'array','items':col},'mode':{'type':'string'},'include_header':{'type':'boolean'},'exclude_rows':{'type':'array','items':row}}}
     schemas['MetadataRequest']={'type':'object','required':['expected_state'],'properties':{'sheet':sheet,'expected_state':{'type':'string'}}}
+    schemas['ConversionRequest']={'type':'object','required':['source','kind'],'properties':{'source':{'type':'string','maxLength':65536},'kind':{'type':'string','enum':['number','date','time','datetime','timestamp_utc']},'locale':{'type':'string','enum':['invariant','en_US','de_DE','fr_FR']},'timezone_policy':{'type':'string','enum':['reject','utc']}}}
+    schemas['CsvPreviewRequest']['properties']['locale']=schemas['ConversionRequest']['properties']['locale']
+    schemas['SpreadsheetPreparation']['properties']['timezone_policy']={'type':'string','enum':['reject','utc'],'default':'reject'}
     paths = {}
     for path, (method, summary) in ROUTES.items():
         parameters = [{"name": name, "in": "path", "required": True, "schema": {"type": "string"}}
@@ -258,7 +262,7 @@ def openapi():
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
@@ -432,6 +436,9 @@ class Service(ThreadingHTTPServer):
                             self._opening.discard(path)
 
     def dispatch(self, method, path, body):
+        if method=='POST' and path=='/v1/convert/value':
+            from .conversion import convert
+            return convert(body)
         if method=="GET" and path=="/v1/functions":
             return function_catalog()
         if method == "GET" and path == "/v1/capabilities":
