@@ -65,6 +65,7 @@ ROUTES = {
     "/v1/workbooks/{workbook}/list": ("post", "Explicit full-scope sorted/filtered list projection"),
     "/v1/workbooks/{workbook}/navigate": ("post", "Bounded stored-input data-region boundary navigation"),
     "/v1/workbooks/{workbook}/summary": ("post", "Count and numeric summary of one bounded stored-data snapshot"),
+    "/v1/workbooks/{workbook}/trace": ("post", "Trace bounded direct syntactic references from stored inputs without evaluation"),
     "/v1/workbooks/{workbook}/find": ("post", "Find in a declared source or display scope"),
     "/v1/workbooks/{workbook}/operations": ("post", "Atomic managed operation"),
     "/v1/workbooks/{workbook}/operations/{operation}": ("get", "Durable outcome lookup"),
@@ -188,6 +189,7 @@ def openapi():
             "example":{"csv":"ID,Value\n00123,7"}},
         "SnapshotRequest":{"type":"object","required":["path"],"properties":{"path":{"type":"string","description":"New server-local destination; never overwrite an existing file"}},"example":{"path":"/tmp/copy.dhwb"}},
         "CloseRequest":{"type":"object","example":{}},
+        "TraceRequest":{"type":"object","required":["row","col","direction","expected_state"],"properties":{"sheet":sheet,"row":row,"col":col,"direction":{"enum":["precedents","dependents"],"type":"string"},"expected_state":{"type":"string","minLength":1}},"description":"Direct syntactic edges, including lazy branches; ranges stay compressed. Snapshot checked; no evaluation or hooks. Limits: 64 sheets, 10,000 formulas/AST work, 8 MiB inputs, 1,000 targets/issues, two seconds. Invalid syntax fails the whole scan; broken references reported explicitly."},
         "FindRequest":{"type":"object","required":["needle"],"properties":{"sheet":sheet,**rectangle,**search,"offset":{"type":"integer","minimum":0,"maximum":MAX_CELLS,"default":0},"limit":{"type":"integer","minimum":1,"maximum":500,"default":500},"expected_state":{"type":"string","minLength":1}},"description":"Row-major pages of up to 500 matches, previews up to 256 characters; count is over the full bounded scope. Later pages require expected_state from the initial response; any supplied state must match the same input snapshot. Each page re-evaluates the bounded search; no result cache, retained transaction or hooks. Two seconds, 10,000 source cells and 8 MiB matched data.","example":{"sheet":"Sheet1","r2":10,"c2":4,"needle":"Pen"}},
         "CsvExportRequest":{"type":"object","properties":{"sheet":sheet,**rectangle},"example":{"sheet":"Sheet1","r2":10,"c2":4}},
         "ListRequest":{"type":"object","properties":{"sheet":sheet,**rectangle,"header":{"type":"boolean","default":False},
@@ -224,7 +226,7 @@ def openapi():
                      "security": [{"localToken": []}]}
         if method == "post":
             name = "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
-                "navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
+                "navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
         for status in ("400","401","403","404","409","413","500","503"):
@@ -457,6 +459,8 @@ class Service(ThreadingHTTPServer):
             return book.navigate(body.get("sheet","Sheet1"),body)
         if method == "POST" and suffix == ["summary"]:
             return book.summary(body.get("sheet","Sheet1"),body)
+        if method == "POST" and suffix == ["trace"]:
+            return book.trace(body.get("sheet", "Sheet1"), body)
         if method == "POST" and suffix == ["find"]:
             return book.find(body.get("sheet", "Sheet1"), body)
         if method == "POST" and suffix == ["operations"]:

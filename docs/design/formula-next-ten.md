@@ -211,6 +211,27 @@ XLSX uses `_xlfn.XLOOKUP`; ODS uses [COM.MICROSOFT.XLOOKUP](https://help.libreof
 Independent readers verify stored names/types; target application recalculation
 and approximate/reverse/binary searches are outside this stage.
 
+## Direct formula tracing
+
+Edit → Trace precedents/dependents displays copyable source sheet/address lists
+for the current source-view cell. REST `POST /v1/workbooks/{workbook}/trace` and
+SDK `book.trace(row, col, direction, sheet)` use the same operation; read-only
+workbooks are supported. Requests require expected_state and use one bounded
+SQLite read transaction. They do not evaluate cells, activate hooks, write
+history or retain a dependency graph. Desktop draft resolution and source/service/
+state/current-cell fences prevent displaying a late result for another target.
+
+Edges are direct syntactic references, including unexecuted IF/fallback branches,
+not transitive dependencies or an execution trace. Rectangles stay compressed,
+including ranges larger than the calculation tier. Duplicate geometry is shown
+once; dependents identify each referencing formula once. Literal Text is ignored.
+Broken #REF!/missing-sheet references produce explicit located notices. Invalid
+syntax/unsupported range endpoints fail the whole scan, avoiding incomplete
+success claims. Limits are 64 sheets, 10,000 formula sources/AST work, 8 MiB input,
+1,000 targets/notices and two seconds; exceeding one fails without partial results.
+The dialog is a snapshot report; automatic navigation, graph indexing and
+background/transitive calculation remain future work.
+
 ## Completed PRs
 
 1. [Function catalog #55](https://github.com/hybridmachine/DataHorizon/pull/55): local build/full CTest and native help checks passed; self-reviewed and merged.
@@ -230,3 +251,5 @@ and approximate/reverse/binary searches are outside this stage.
 8. [Conditional aggregates #62](https://github.com/hybridmachine/DataHorizon/pull/62): locally verified, self-reviewed and merged.
 
 9. [Exact XLOOKUP #63](https://github.com/hybridmachine/DataHorizon/pull/63): locally verified, self-reviewed and merged.
+
+10. [Direct tracing #64](https://github.com/hybridmachine/DataHorizon/pull/64): locally verified, self-reviewed and merged.

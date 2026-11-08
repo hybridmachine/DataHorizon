@@ -150,6 +150,10 @@ class WorkbookClient:
         self._ensure_open()
         return self.client.request(self.base + "/range", {"sheet": sheet, "r1": r1, "c1": c1, "r2": r2, "c2": c2})
 
+    def trace(self,row,col,direction="precedents",sheet="Sheet1"):
+        self._ensure_open()
+        return self.client.request(self.base+"/trace",dict(sheet=sheet,row=row,col=col,direction=direction,expected_state=self.state))
+
     def find(self,needle,sheet="Sheet1",**scope):
         self._ensure_open()
         return self.client.request(self.base+"/find",{"sheet":sheet,"needle":needle,"expected_state":self.state,**scope})

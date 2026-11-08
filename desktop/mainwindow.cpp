@@ -325,6 +325,8 @@ void MainWindow::buildUi() {
     m_findNext=add(edit,tr("Find next in results"),QKeySequence::FindNext,[this]{navigateFind(1);});
     m_findPrevious=add(edit,tr("Find previous in results"),QKeySequence::FindPrevious,[this]{navigateFind(-1);});
     m_findNext->setObjectName("findNextAction");m_findPrevious->setObjectName("findPreviousAction");
+    add(edit,tr("Trace precedents…"),{},[this]{traceFormula("precedents");})->setObjectName("tracePrecedentsAction");
+    add(edit,tr("Trace dependents…"),{},[this]{traceFormula("dependents");})->setObjectName("traceDependentsAction");
     clearFindResults();
     connect(m_model,&QAbstractItemModel::modelReset,this,&MainWindow::clearFindResults);
     connect(m_client,&RestClient::configured,this,&MainWindow::clearFindResults);
@@ -2071,6 +2073,31 @@ void MainWindow::requestSummary() {
         m_summary->setToolTip(text+tr("\n%1 selected cells; %2 numeric values; %3 formula errors. Stored values, excluding unsubmitted drafts; Text/Booleans excluded from numeric summary. Percentage fractions stay unscaled.")
             .arg(result["selected_cells"].toInt()).arg(result["numeric_count"].toInt()).arg(result["error_count"].toInt())
             +(result["numeric_error"].isString()?tr("\nNumeric subtotal overflow (#NUM!)."):QString()));
+    });
+}
+
+void MainWindow::traceFormula(const QString &direction) {
+    if(m_busy || m_unknown || m_info.isEmpty() || m_model->projected())return;
+    const auto current=QPersistentModelIndex(m_grid->currentIndex());if(!current.isValid())return;
+    const auto scope=targetContext();const auto service=m_client->url();captureGridDraft(false);if(!resolveDraft())return;
+    if(m_busy || !matchesTarget(scope) || m_grid->currentIndex()!=current)return;
+    auto request=scope;request.remove("workbook");request["row"]=current.row()+1;request["col"]=current.column()+1;request["direction"]=direction;
+    setBusy(true,"Tracing stored formula references…");
+    m_client->request(base()+"/trace",request,[this,scope,service,current,direction](QJsonObject result,QString error){
+        if(service!=m_client->url() || scope["workbook"]!=m_info["id"])return;
+        setBusy(false);
+        bool editor=false;for(auto *view:m_frozenTop->views())if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))editor|=delegate->hasEditor();
+        if(auto *delegate=dynamic_cast<CellDelegate *>(m_grid->itemDelegate()))editor|=delegate->hasEditor();
+        if(!matchesTarget(scope) || m_grid->currentIndex()!=current || m_model->projected() || m_source->isModified() || editor)return;
+        if(!error.isEmpty()){issue(error);return;}
+        if(result["state"]!=scope["expected_state"] || result["sheet"]!=scope["sheet"] || result["row"].toInt()!=current.row()+1 || result["col"].toInt()!=current.column()+1 || result["direction"].toString()!=direction || result["semantics"]!="direct_syntactic" || !result["targets"].isArray() || !result["issues"].isArray() || result["targets"].toArray().size()>1000 || result["issues"].toArray().size()>1000){issue("Invalid formula trace response. Refresh and try again.");return;}
+        QDialog dialog(this);dialog.setObjectName("formulaTraceDialog");dialog.setWindowTitle(direction=="precedents"?tr("Direct precedents"):tr("Direct dependents"));dialog.resize(620,400);auto *layout=new QVBoxLayout(&dialog);
+        auto *description=new QLabel(tr("Stored formula references, including unexecuted branches. Ranges stay compressed. Snapshot: %1").arg(result["state"].toString()),&dialog);description->setWordWrap(true);layout->addWidget(description);
+        auto *details=new QPlainTextEdit(&dialog);details->setObjectName("formulaTraceDetails");details->setReadOnly(true);QStringList lines;
+        for(const auto &value:result["targets"].toArray()){const auto target=value.toObject();lines.append(target["sheet_name"].toString()+"!"+target["address"].toString());}
+        if(lines.isEmpty())lines.append(tr("No direct references found."));
+        for(const auto &value:result["issues"].toArray()){const auto problem=value.toObject();lines.append(tr("Broken reference at %1: %2").arg(problem["sheet_name"].toString()+"!"+problem["address"].toString(),problem["message"].toString()));}
+        details->setPlainText(lines.join('\n'));layout->addWidget(details);auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close,&dialog);connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);layout->addWidget(buttons);dialog.exec();
     });
 }
 

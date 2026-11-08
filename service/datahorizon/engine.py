@@ -1304,6 +1304,10 @@ class Workbook:
                     matches.append({"row": row, "col": col, "address": address(row, col), "text": text})
         return matches
 
+    def trace(self, sheet, args):
+        from .tracing import trace
+        return trace(self,sheet,args)
+
     def find(self, sheet, args):
         offset=integer(args.get("offset",0),0,MAX_CELLS,"offset")
         limit=integer(args.get("limit",500),1,500,"limit")
