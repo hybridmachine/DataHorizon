@@ -68,5 +68,6 @@ automatic retry of unknown writes or automatic replay of user code.
 
 Each PR records local build/test commands and reviewed head in its description.
 Final consolidated evidence lives under `docs/design/evidence/`. The ten tasks
-target the documented remaining engineering gaps; full Excel compatibility,+native accessibility and cross-platform release acceptance are evidence-based
+target the documented remaining engineering gaps; full Excel compatibility,
+native accessibility and cross-platform release acceptance are evidence-based
 gates rather than assumed outcomes.
