@@ -83,7 +83,7 @@ class CsvImportTests(unittest.TestCase):
                 self.assertEqual(preview["conversion_errors"],0)
                 self.assertEqual(preview["converted_cells"],3)
                 self.assertEqual([item["kind"] for item in preview["inputs"][0]],["text"]*5)
-                self.assertEqual([item["kind"] for item in preview["inputs"][1]],["text","number","boolean","text","text"])
+                self.assertEqual([item["kind"] for item in preview["inputs"][1]],["text","number","boolean","date","text"])
                 book.apply("edit",label="Import CSV",cells=self.edits(preview))
                 cells=book.read(r1=2,r2=2,c2=5)["cells"]
                 self.assertEqual([cell["value"] for cell in cells],["00123",2,True,"2026-11-05","=1+1"])
@@ -95,11 +95,11 @@ class CsvImportTests(unittest.TestCase):
                 self.assertEqual([cell["value"] for cell in reopened.read(r1=2,r2=2,c2=5)["cells"]],
                                  ["00123",2,True,"2026-11-05","=1+1"])
 
-    def test_slash_date_order_is_explicit_and_ambiguity_is_reported_as_iso_text(self):
+    def test_slash_date_order_is_explicit_and_ambiguity_is_reported_as_native_date(self):
         for kind,expected in (("date_mdy","2026-03-04"),("date_dmy","2026-04-03")):
             with self.subTest(kind=kind):
                 preview=preview_csv({"csv":"03/04/2026","column_types":{"1":kind}})
-                self.assertEqual(preview["inputs"],[[{"source":expected,"kind":"text"}]])
+                self.assertEqual(preview["inputs"],[[{"source":expected,"kind":"date"}]])
                 self.assertEqual(preview["ambiguous_dates"],1)
                 self.assertEqual(preview["date_examples"][0]["result"],expected)
         raw=preview_csv({"csv":"03/04/2026"})

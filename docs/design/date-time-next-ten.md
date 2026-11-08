@@ -98,3 +98,25 @@ an explicit `value_kind` (`date`, `time`, `datetime`) and ISO `value`; omitted
 kind preserves existing scalar behavior. Date and datetime filters compare at
 midnight. Contains is Text-only. GUI filter types and local saved definitions
 retain this discriminator. Existing scope, response and calculation limits apply.
+
+## CSV
+
+CSV fields use canonical ISO values with full native microsecond precision,
+independent of display format. Explicit ISO/slash-date column conversions now
+produce native dates; ISO time/datetime column types are also available. Default
+CSV import remains Text. Earlier stored ISO Text is not migrated automatically.
+
+Exports with temporal values include `temporal_schema`: version 1, SHA-256 of
+decoded UTF-8 CSV text, and bounded 1-based row/column/kind entries. Passing it
+to CSV preview restores only temporal kinds, including formula results and mixed
+date/Text columns. The digest, kinds, bounds and unique coordinates are validated;
+conflicting column/header overrides reject. Other types/styles remain outside
+CSV's fidelity contract. Selection and projected-list exports both carry metadata.
+
+The desktop writes `<path>.dh-types.json` beside temporal CSV exports, offers
+restoration when importing the companion, and shows it in conversion review.
+Existing companion files block export; choose a new destination. Each file uses
+QSaveFile; a two-file export cannot be atomic as a pair. A failed CSV commit can
+leave its companion for inspection, and a hash mismatch blocks restoration.
+Keep both files together; CSV alone remains portable but untyped. REST/SDK users
+retain and supply `temporal_schema` in their export/preview JSON.

@@ -7,11 +7,13 @@ import io
 import re
 
 from .engine import EngineError, MAX_CELLS, boolean, encoded, require, typed
+from .temporal import Temporal
+from .csv_types import temporal_schema
 
 ENCODINGS = ("utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1")
-COLUMN_TYPES = ("text", "number", "boolean", "date_iso", "date_mdy", "date_dmy")
+COLUMN_TYPES = ("text", "number", "boolean", "date_iso", "date_mdy", "date_dmy", "time_iso", "datetime_iso")
 COLUMN_LABELS = {"text":"Text","number":"Number","boolean":"Boolean",
-                 "date_iso":"Date YYYY-MM-DD","date_mdy":"Date M/D/YYYY","date_dmy":"Date D/M/YYYY"}
+                 "date_iso":"Date YYYY-MM-DD","date_mdy":"Date M/D/YYYY","date_dmy":"Date D/M/YYYY", "time_iso":"Time ISO", "datetime_iso":"Datetime ISO"}
 MAX_SOURCE_BYTES = 3*1024*1024
 
 
@@ -65,6 +67,26 @@ def preview_csv(request, checkpoint=lambda completed, phase: None):
               "report":[f"Encoding: {encoding}; delimiter: {delimiter!r}.",
                         "All columns remain Text, preserving leading zeros and formula-like text."]}
     convert_columns(request,result,checkpoint)
+    if "temporal_schema" in request:
+        schema=request["temporal_schema"]
+        require(not request.get("column_types") and not request.get("header"),"INVALID_CSV_TYPES","Companion types cannot be combined with column conversions or header overrides")
+        require(isinstance(schema,dict) and set(schema)=={"version","sha256","cells"} and type(schema["version"]) is int and schema["version"]==1,
+                "INVALID_CSV_TYPES","Unsupported temporal CSV companion")
+        require(schema["sha256"]==temporal_schema(text,[])["sha256"],"INVALID_CSV_TYPES","CSV companion hash does not match the decoded CSV")
+        entries=schema["cells"]
+        require(isinstance(entries,list) and len(entries)<=MAX_CELLS,"INVALID_CSV_TYPES","Temporal companion exceeds 10,000 cells")
+        inputs=[[{"source":value,"kind":"text"} for value in row] for row in rows];seen=set()
+        for item in entries:
+            require(isinstance(item,dict) and set(item)=={"row","col","kind"},"INVALID_CSV_TYPES","Invalid temporal companion entry")
+            row,col,kind=item["row"],item["col"],item["kind"]
+            require(type(row) is int and 1<=row<=len(rows) and type(col) is int and 1<=col<=len(rows[row-1]) and isinstance(kind,str) and kind in ("date","time","datetime") and (row,col) not in seen,
+                    "INVALID_CSV_TYPES","Invalid temporal companion coordinates or kind")
+            seen.add((row,col))
+            try:Temporal(rows[row-1][col-1],kind)
+            except ValueError as error:raise EngineError("INVALID_CSV_TYPES",str(error)) from error
+            inputs[row-1][col-1]["kind"]=kind
+        result.update(inputs=inputs,converted_cells=len(entries))
+        result["report"].append(f"Restored {len(entries)} native date/time kinds from the hash-checked companion; other fields remain Text.")
     require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","CSV preview exceeds 4 MiB; select a smaller file")
     checkpoint(count, "Ready for review")
     return result
@@ -98,6 +120,10 @@ def convert_columns(request,result,checkpoint=lambda completed, phase: None):
                     item["kind"]=kind
                     typed({**item,"style":{}})
                     converted+=1
+                elif kind in ("time_iso","datetime_iso"):
+                    item["kind"]="time" if kind=="time_iso" else "datetime"
+                    Temporal(value,item["kind"])
+                    converted+=1
                 elif kind.startswith("date_"):
                     if kind=="date_iso":
                         require(re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}",value) is not None,
@@ -111,6 +137,7 @@ def convert_columns(request,result,checkpoint=lambda completed, phase: None):
                         parsed=date(year,month,day)
                         ambiguous+=int(first<=12 and second<=12 and first!=second)
                     item["source"]=parsed.isoformat()
+                    item["kind"]="date"
                     converted+=1
                     if len(examples)<20:
                         examples.append({"row":row_number,"col":column,"source":value,"result":item["source"]})
@@ -131,4 +158,4 @@ def convert_columns(request,result,checkpoint=lambda completed, phase: None):
     result["report"]=[result["report"][0],
         f"{len(types)} explicit column types (first 20): "+", ".join(f"{column}={COLUMN_LABELS[kind]}" for column,kind in selected[:20])+"; unspecified columns remain Text.",
         f"{converted} typed/date values; {errors} conversion errors. First record stays Text: {'yes' if header else 'no'}.",
-        f"{ambiguous} ambiguous slash dates use the explicitly selected order. Dates are stored as ISO Text, not a native date type. Empty converted fields become blank."]
+        f"{ambiguous} ambiguous slash dates use the explicitly selected order. Dates/times use native ISO kinds. Empty converted fields become blank."]
