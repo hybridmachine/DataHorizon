@@ -158,6 +158,13 @@ class WorkbookClient:
         self._ensure_open()
         return self.client.request(self.base+'/calculation/jobs',dict(sheet=sheet,job_id=job_id or str(uuid.uuid4()),expected_state=self.state,**scope))
 
+    def metadata(self,sheet='Sheet1'):
+        self._ensure_open()
+        return self.client.request(self.base+'/metadata/read',dict(sheet=sheet,expected_state=self.state))
+
+    def set_metadata(self,namespace,identifier,payload,sheet='Sheet1'):
+        return self.apply('metadata_set',sheet,namespace=namespace,id=identifier,payload=payload)
+
     def calculation(self,job_id,action=None):
         self._ensure_open()
         if action not in (None,'cancel','release'):raise ValueError('Unknown calculation action')

@@ -30,11 +30,11 @@ from .list_export import export_list
 from .functions import function_catalog
 
 CAPABILITIES = {
-    "api_version": 1, "format_version": 2, "supported_format_versions": [1,2], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
+    "api_version": 1, "format_version": 3, "supported_format_versions": [1,2,3], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
     "temporal_types": ["date","time","datetime"], "calculation_timezone": "UTC",
     "max_style_cells":MAX_CELLS, "max_summary_cells":MAX_CELLS, "max_viewport_cells": 4096, "max_clipboard_cells":MAX_CELLS, "max_request_bytes": 4 * 1024 * 1024,
     "formulas": ["arithmetic", "references", "concatenation", *sorted(SUPPORTED_FUNCTIONS)],
-    "operations": ["workbook_import", "edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
+    "operations": ["metadata_set","metadata_delete","workbook_import", "edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
     "interchange": ["csv", "xlsx", "ods"], "managed_sql": False, "remote_binding": False,
     "follow_up_work": False, "chunked_jobs": False, "preparation_jobs": True, "background_calculation":True, "structural_events":True,
     "max_preparation_jobs":4, "preparation_job_seconds":10, "preparation_retention_seconds":300,
@@ -47,6 +47,7 @@ ROUTES = {
     "/v1/workbooks/{workbook}/calculation/jobs/{job}":("get","Read pending/current/error/stale calculation state"),
     "/v1/workbooks/{workbook}/calculation/jobs/{job}/cancel":("post","Cancel or discard a calculation snapshot"),
     "/v1/workbooks/{workbook}/calculation/jobs/{job}/release":("post","Release a terminal calculation job"),
+    "/v1/workbooks/{workbook}/metadata/read":("post","Read portable per-sheet presentation and list metadata"),
     "/v1/functions": ("get", "Implemented formula signatures, rules and worked examples; no workbook required"),
     "/v1/capabilities": ("get", "Preview capabilities"),
     "/v1/open": ("post", "Create or open a server-local native workbook"),
@@ -184,6 +185,8 @@ def openapi():
             actions[axis+"_"+verb] = (["start"],{"sheet":sheet,"start":{"type":"integer","minimum":1,"maximum":maximum},
                 "count":{"type":"integer","minimum":1,"maximum":maximum,"default":1,"description":"Must fit between start and the grid edge"}},
                 {"sheet":"Sheet1","start":2,"count":1})
+    for action in ('metadata_set','metadata_delete'):
+        actions[action]=(['namespace','id']+(['payload'] if action=='metadata_set' else []),{'sheet':sheet,'namespace':{'type':'string','enum':['presentation','list']},'id':{'type':'string','minLength':1,'maxLength':64},'payload':{'type':'object'}},{'namespace':'presentation','id':'view',**({'payload':{'frozen_rows':1}} if action=='metadata_set' else {})})
     for action, (required, properties, example) in actions.items():
         schema_name = "".join(word.title() for word in action.split("_"))+"Operation"
         mapping[action] = "#/components/schemas/"+schema_name
@@ -234,6 +237,7 @@ def openapi():
         "mode":{"type":"string","enum":["formulas","values"],"default":"formulas"}}}
     schemas["JobAction"] = {"type":"object","properties":{}}
     schemas['CalculationRequest']={'type':'object','required':['job_id','expected_state'],'properties':{**schemas['RangeRequest']['properties'],'job_id':{'type':'string','pattern':'^[A-Za-z0-9_-]{1,100}$'},'expected_state':{'type':'string'}},'description':'Read-only snapshot up to 10,000 cells, 4 MiB, two-second evaluation. State and generation guard publication; one UTC clock; cancellation never writes workbook inputs.'}
+    schemas['MetadataRequest']={'type':'object','required':['expected_state'],'properties':{'sheet':sheet,'expected_state':{'type':'string'}}}
     paths = {}
     for path, (method, summary) in ROUTES.items():
         parameters = [{"name": name, "in": "path", "required": True, "schema": {"type": "string"}}
@@ -243,7 +247,7 @@ def openapi():
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = "MetadataRequest" if path.endswith("/metadata/read") else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
@@ -452,6 +456,9 @@ class Service(ThreadingHTTPServer):
             return self._dispatch_book(method,parts[2],book,suffix,body)
 
     def _dispatch_book(self, method, handle, book, suffix, body):
+        if method=='POST' and suffix==['metadata','read']:
+            from .metadata import read
+            return read(book,body.get('sheet','Sheet1'),body)
         if method=='POST' and suffix==['calculation','jobs']:
             return book.calculation_jobs().start(body)
         if len(suffix) in (3,4) and suffix[:2]==['calculation','jobs']:

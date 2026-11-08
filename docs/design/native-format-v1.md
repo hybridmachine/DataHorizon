@@ -1,4 +1,11 @@
-# Development native formats v1 and v2
+# Development native formats v1, v2 and v3
+
+Format v3 adds reserved `dh_objects(namespace,id,sheet_id,payload)` for portable
+presentation and named list definitions. The first managed metadata write upgrades
+transactionally; v1/v2 remain readable with their original exact schema. Older
+clients reject v3. Metadata is bounded, validated on open/copy/refresh, and
+independent SQLite cell access still needs no callbacks. See [the completion
+contract](m3-m5-next-ten.md).
 
 Format v2 adds explicit `date`, `time`, and `datetime` input kinds with strict ISO
 sources defined in [the date/time contract](date-time-next-ten.md). The physical
