@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 
 from .engine import EngineError, MAX_CELLS, encoded, integer, require, typed
 from .formula import Parser, split_ref
-from .interchange import import_edits, local_formula, mode, node, package, read_xml, xml, preparation_scope, prepare_workbook, validate_sheet_names, workbook_report
+from .interchange import map_formula_functions, import_edits, local_formula, mode, node, package, read_xml, xml, preparation_scope, prepare_workbook, validate_sheet_names, workbook_report
 
 O="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
 T="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
@@ -55,7 +55,7 @@ def ods_to_native(source,sheet_names=None):
             part=re.sub(r"\b(TRUE|FALSE)\(\)",lambda m:m[1].upper(),part,flags=re.I)
             parts.append(part.replace(";",","))
     require(pos==len(source)-4,"UNSUPPORTED_FORMULA","Invalid OpenFormula syntax")
-    return local_formula("="+"".join(parts),sheet_names=sheet_names)
+    return local_formula(map_formula_functions("="+"".join(parts),{"COM.MICROSOFT.CONCAT":"CONCAT"}),sheet_names=sheet_names)
 
 
 def native_to_ods(source,bounds=None,sheet_names=None):
@@ -73,7 +73,7 @@ def native_to_ods(source,bounds=None,sheet_names=None):
             if type(value) is bool: return "TRUE()" if value else "FALSE()"
             return repr(value)
         if kind=="ref": return "["+reference(item[1])+"]"
-        if kind=="call": return item[1]+"("+";".join(map(render,item[2]))+")"
+        if kind=="call": return {"CONCAT":"COM.MICROSOFT.CONCAT"}.get(item[1],item[1])+"("+";".join(map(render,item[2]))+")"
         if kind=="binary":
             require(item[1]!="^","UNSUPPORTED_FORMULA","ODS power precedence is outside this formula tier")
             return "("+render(item[2])+item[1]+render(item[3])+")"
@@ -274,6 +274,7 @@ def ods_export(snapshot,request):
     snapshots=snapshot["sheets"] if whole else [{**snapshot,"name":"Sheet1"}]
     names=validate_sheet_names([s["name"] for s in snapshots])
     if whole: report=workbook_report()+["OpenFormula uses canonical named sheet references and current snapshot caches; sheet-relative movement semantics are not retained. NULL becomes empty."]
+    if selected_mode=="formulas" and any(map_formula_functions(c["source"],{"CONCAT":"COM.MICROSOFT.CONCAT"})!=c["source"] for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"):report.append("CONCAT uses the COM.MICROSOFT.CONCAT extension; target support is required. Choose values for other targets.")
     root=ET.Element(q(O,"document-content"),{q(O,"version"):"1.3","xmlns:of":OF})
     automatic=node(root,q(O,"automatic-styles"))
     number=node(automatic,q(N,"number-style"),**{q(Y,"name"):"N2"}); node(number,q(N,"number"),**{q(N,"decimal-places"):"2",q(N,"min-integer-digits"):"1"})

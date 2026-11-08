@@ -138,6 +138,29 @@ XLSX preserves supported formula sources; ODS may canonicalize numeric literals
 The shared function catalog, engine, GUI and package gates advertise the same tier;
 no byte/grapheme counting or locale-dependent numeric conversion is implied.
 
+## Concatenation tier
+
+The & operator joins two scalar values with precedence below arithmetic and above
+comparisons, associating left to right. CONCAT accepts 1–253 scalars/ranges and
+flattens rectangles in row-major order. Both reuse invariant unformatted scalar
+Text conversion: blank/NULL contributes empty Text, Boolean becomes TRUE/FALSE,
+and identifiers/formula-looking Text remain literal. All referenced ordinary
+errors propagate, and cycles/resource failures remain visible. CONCAT inserts no
+delimiter; delimiter/ignore-empty behavior is outside this increment.
+
+Results accumulate with character/UTF-8 preflight before joining, retaining the
+32,767-character/64-KiB and shared calculation work/deadline bounds. Arrays remain
+unavailable as ampersand operands. Copy/fill/reference transformations parse the
+new binary operator without changing stored source behavior.
+
+XLSX maps the supported CONCAT function to `_xlfn.CONCAT`; ODS uses
+`COM.MICROSOFT.CONCAT`. Import reverses only known aliases, excluding quoted Text
+and sheet names; unknown future identifiers remain unsupported. Formula export
+reports modern/extension target requirements, and values export remains available.
+These mappings follow [Microsoft's future-function list](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-xlsx/5d1b6d44-6fc1-4ecd-8fef-0b27406cc2bf)
+and [LibreOffice's CONCAT identifier](https://help.libreoffice.org/latest/en-US/text/scalc/01/func_concat.html).
+Independent readers verify stored names and typed values, not target recalculation.
+
 ## Completed PRs
 
 1. [Function catalog #55](https://github.com/hybridmachine/DataHorizon/pull/55): local build/full CTest and native help checks passed; self-reviewed and merged.
@@ -151,3 +174,5 @@ no byte/grapheme counting or locale-dependent numeric conversion is implied.
 5. [Scalar text cleanup #59](https://github.com/hybridmachine/DataHorizon/pull/59): locally verified, self-reviewed and merged.
 
 6. [Substring functions #60](https://github.com/hybridmachine/DataHorizon/pull/60): locally verified, self-reviewed and merged.
+
+7. [Concatenation #61](https://github.com/hybridmachine/DataHorizon/pull/61): locally verified, self-reviewed and merged.

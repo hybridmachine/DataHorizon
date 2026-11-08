@@ -84,6 +84,23 @@ def related_part(relationships,kind):
     return path
 
 
+FUTURE_XLSX_FUNCTIONS={"CONCAT":"_xlfn.CONCAT"}
+FUNCTION_SPELLING=re.compile(r'"(?:[^"]|"")*"|\'(?:[^\']|\'\')*\'|([A-Za-z_][A-Za-z_0-9.]*)(?=\s*\()')
+
+
+def map_formula_functions(source,mapping):
+    """Map only function identifiers, leaving strings and quoted sheet names intact."""
+    return FUNCTION_SPELLING.sub(lambda match:mapping.get(match[1].upper(),match[0]) if match[1] else match[0],source)
+
+
+def xlsx_formula_to_native(source,sheet_names=None):
+    return local_formula(map_formula_functions(source,{value.upper():key for key,value in FUTURE_XLSX_FUNCTIONS.items()}),sheet_names=sheet_names)
+
+
+def native_formula_to_xlsx(source,bounds=None,sheet_names=None):
+    return map_formula_functions(local_formula(source,bounds,sheet_names),FUTURE_XLSX_FUNCTIONS)
+
+
 def local_formula(source, bounds=None, sheet_names=None):
     """The interchange tier preserves only implemented, local A1 formulas."""
     require(not any((ord(c)<32 and c not in "\t\n\r") or ord(c) in (65534,65535) for c in source),
@@ -226,7 +243,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
                 value=cell.findtext(f"{{{S}}}v")
                 kind=cell.get("t","n")
                 if formula is not None and selected_mode=="formulas":
-                    item={"source":local_formula(shared_formulas.source(cell,formula),sheet_names=sheet_names),"kind":"formula"}
+                    item={"source":xlsx_formula_to_native(shared_formulas.source(cell,formula),sheet_names=sheet_names),"kind":"formula"}
                 elif kind=="inlineStr":
                     item={"source":xlsx_text(cell.find(f"{{{S}}}is")),"kind":"text"}
                 elif kind=="s":
@@ -266,6 +283,7 @@ def xlsx_export(snapshot,request):
     snapshots=snapshot["sheets"] if whole else [{**snapshot,"name":"Sheet1"}]
     names=validate_sheet_names([s["name"] for s in snapshots])
     if whole: report=workbook_report()+["Formula caches are omitted; target recalculation is requested."]
+    if selected_mode=="formulas" and any(map_formula_functions(c["source"],FUTURE_XLSX_FUNCTIONS)!=c["source"] for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"):report.append("Known modern functions use their _xlfn identifiers; target function/version support is required. Choose values for older targets.")
     from .xlsx_styles import export_styles
     styles,style_ids=export_styles([c for s in snapshots for c in s["cells"]])
     worksheets=[]
@@ -278,7 +296,7 @@ def xlsx_export(snapshot,request):
                 current=cell["row"]; row=node(data,"row",r=str(current))
             out=node(row,"c",r=address(cell["row"],cell["col"]),s=str(style_ids[encoded(cell.get("style",{}))]))
             if cell["kind"]=="formula" and selected_mode=="formulas":
-                node(out,"f",local_formula(cell["source"],None if whole else sheet["range"],names if whole else None)[1:])
+                node(out,"f",native_formula_to_xlsx(cell["source"],None if whole else sheet["range"],names if whole else None)[1:])
             else:
                 require(cell.get("calculation")=="current","CALCULATION_ERROR","Values export requires current, error-free values")
                 value=cell.get("value")

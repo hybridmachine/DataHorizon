@@ -39,6 +39,9 @@ register('RIGHT','RIGHT(text[, count])','Return the last count characters (defau
 register('MID','MID(text, start, count)','Return characters at a 1-based starting position.',SUBSTRING_RULES,'=MID("Data",2,2)','at','Text')
 
 
+register('CONCAT','CONCAT(text, …)','Join scalar arguments and rectangular ranges in row-major order.','1–253 arguments. '+TEXT_RULES.removeprefix('One scalar argument. ')+' Blank/NULL contributes empty Text. All referenced errors propagate; no delimiter is inserted. Results are built incrementally and bounded before joining.','=CONCAT("Data"," ","Horizon")','Data Horizon','Text')
+
+
 def function_catalog():
     return dict(version=1,functions=deepcopy([FUNCTIONS[name] for name in sorted(FUNCTIONS)]),
                 notes=['This catalog describes the implemented development tier, not full Excel compatibility.',

@@ -14,9 +14,9 @@ class MoveTests(unittest.TestCase):
         box=(1,1,2,2)
         cases=[('=$A$1+A1+Other!A1+"A1"','=\u0024A$4+A4+Other!A1+"A1"'),
                ("=SUM(('sHeEt1'!$B$2):(A1))","=SUM(('sHeEt1'!$B$5):(A4))"),
-               ("='id'!A1+'id'!B2","='id'!A4+'id'!B5"),('=SUM(D1:D2)','=SUM(D1:D2)')]
+               ("='id'!A1+'id'!B2","='id'!A4+'id'!B5"),('=SUM(D1:D2)','=SUM(D1:D2)'),('=A1&"text"','=A4&"text"')]
         for source,expected in cases:self.assertEqual(move_references(source,'Sheet1','Sheet1',box,3,0,target_id='id'),expected)
-        for source in ('=SUM(A1:C2)','=SUM(Sheet1!A1:Other!B2)','=SUM(A1:(A2+1))','=A1&"text"'):
+        for source in ('=SUM(A1:C2)','=SUM(Sheet1!A1:Other!B2)','=SUM(A1:(A2+1))','=A1%+1'):
             with self.assertRaises(FormulaError):move_references(source,'Sheet1','Sheet1',box,3,0)
 
     def test_move_preserves_outside_targets_and_rewrites_dependents_with_undo_redo_reopen(self):
