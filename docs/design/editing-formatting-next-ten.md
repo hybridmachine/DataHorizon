@@ -112,3 +112,19 @@ formats, and canonicalizes two-place styles to legacy tokens. Interchange keeps
 numeric values and effective display, rather than native style token identity.
 Earlier services may reject these additive style properties; keep the native
 workbook and use a compatible service. Evidence: `evidence/decimal-verification.txt`.
+
+6. [Thousands grouping #80](https://github.com/hybridmachine/DataHorizon/pull/80): locally built/tested and author-reviewed before merge.
+
+## Thousands grouping
+
+Format Cells has a tri-state Thousands separator control. Checked/unchecked
+sets `grouping: true|false`; partially checked keeps each cell's existing choice.
+Number/Percentage display uses comma groups of three and a dot decimal separator,
+independent of host locale. A grouping-only patch activates Number or preserves
+an existing Percentage category and its effective precision. General/Text ignore
+stored grouping metadata. Text identifiers and all stored magnitudes stay intact.
+
+The additive native-v1 boolean maps to XLSX `#,##0[.zeros][%]` and ODS grouping
+attributes. Built-in XLSX formats 3/4 now map too. CSV retains canonical values;
+display search sees the explicitly formatted text. Unsupported localized or more
+complex custom formats remain reported. Evidence: `evidence/grouping-verification.txt`.

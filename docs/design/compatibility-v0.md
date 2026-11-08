@@ -223,3 +223,7 @@ through simple XLSX zero-placeholder formats and ODS decimal-place styles.
 Two-place imports may use legacy native tokens; effective display and numeric
 magnitude are retained. Arbitrary/custom/locale/date display remains reported
 outside this grammar. See [the contract](editing-formatting-next-ten.md#decimal-precision).
+
+Numeric grouping maps to simple XLSX `#,##0[.zeros][%]` formats (including
+built-ins 3/4) and ODS `number:grouping`. This is an invariant comma/dot tier;
+localized separators and arbitrary custom patterns are not inferred.
