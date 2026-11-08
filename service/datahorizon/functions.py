@@ -74,6 +74,9 @@ register('REPLACE','REPLACE(text, start, count, new_text)','Replace characters a
 register('FIND','FIND(find_text, within_text[, start])','Find a case-sensitive literal Unicode Text position.',TEXT_RULES.removeprefix('One scalar argument. ')+' Two or three scalars. Returns 1-based code-point position, start defaults to 1. Numeric/Boolean start, finite fractions truncate; numeric Text rejected. Start must be 1 through length+1; empty needle returns start. Missing match is #VALUE!. Wildcards are literal; no normalization.','=FIND("a","Data",3)',4,'Text')
 
 
+register('SEARCH','SEARCH(find_text, within_text[, start])','Find a case-insensitive wildcard Text position.',TEXT_RULES.removeprefix('One scalar argument. ')+' Two or three scalars. 1-based original Unicode code-point positions after casefolding; * matches any folded sequence, ? one folded character, ~ escapes * ? ~. Pattern at most 255 original characters. Start defaults to 1; numeric/Boolean finite truncation, from 1 through length+1, no numeric Text. Empty pattern returns start; missing is #VALUE!. Bounded non-regex matcher; resource failures are visible.','=SEARCH("H*","Data Horizon")',6,'Text')
+
+
 def function_catalog():
     return dict(version=1,functions=deepcopy([FUNCTIONS[name] for name in sorted(FUNCTIONS)]),
                 notes=['This catalog describes the implemented development tier, not full Excel compatibility.',

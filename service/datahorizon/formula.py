@@ -610,6 +610,44 @@ class Calculator:
         if value<minimum:raise FormulaError("#VALUE!","Position/count is below its minimum")
         return int(value)
 
+    def wildcard_prefix(self,pattern,text,start):
+        p=0;t=start;star=-1;retry=start;steps=0
+        while True:
+            steps+=1
+            if steps%64==1:self.check()
+            if p==len(pattern):return True
+            kind,value=pattern[p]
+            if kind=="*":star=p;retry=t;p+=1
+            elif t<len(text) and (kind=="?" or value==text[t]):p+=1;t+=1
+            elif star>=0 and retry<len(text):retry+=1;t=retry;p=star+1
+            else:return False
+
+    def search_text(self,args,sheet):
+        if len(args) not in (2,3):raise FormulaError("#NAME?","SEARCH requires two or three scalars")
+        if any(node[0]=="range" for node in args):raise FormulaError("#VALUE!","SEARCH requires scalars")
+        needle=self.text_argument(args[0],sheet);text=self.text_argument(args[1],sheet);start=self.integer_argument(args[2],sheet,1) if len(args)==3 else 1
+        if start>len(text)+1:raise FormulaError("#VALUE!","Start exceeds Text length plus one")
+        if len(needle)>255:raise FormulaError("#LIMIT!","SEARCH pattern exceeds 255 characters")
+        needle=needle.casefold();pattern=[];i=0
+        while i<len(needle):
+            char=needle[i]
+            if char=="~" and i+1<len(needle) and needle[i+1] in "*?~":i+=1;pattern.append(("literal",needle[i]))
+            else:pattern.append((char,"") if char in "*?" else ("literal",char))
+            i+=1
+        parts=[];origins=[]
+        for position,char in enumerate(text[start-1:],start):
+            if (position-start)%256==0:self.check()
+            folded=char.casefold();parts.append(folded);origins.extend([position]*len(folded))
+        folded="".join(parts);self.text_work(folded)
+        if all(kind=="literal" for kind,_ in pattern):
+            found=folded.find("".join(value for _,value in pattern));self.check()
+            if found>=0:return origins[found] if found<len(origins) else len(text)+1
+        else:
+            for offset in range(len(folded)+1):
+                self.check()
+                if self.wildcard_prefix(pattern,folded,offset):return origins[offset] if offset<len(origins) else len(text)+1
+        raise FormulaError("#VALUE!","Text was not found")
+
     def find_text(self,args,sheet):
         if len(args) not in (2,3):raise FormulaError("#NAME?","FIND requires two or three scalars")
         if any(node[0]=="range" for node in args):raise FormulaError("#VALUE!","FIND requires scalars")
@@ -874,6 +912,7 @@ class Calculator:
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
             if name in ("ISBLANK","ISNUMBER","ISTEXT","ISLOGICAL","ISERROR","ISNA"):return self.inspect_scalar(name,args,sheet)
+            if name=="SEARCH":return self.search_text(args,sheet)
             if name=="FIND":return self.find_text(args,sheet)
             if name=="REPLACE":return self.replace_text(args,sheet)
             if name=="SUBSTITUTE":return self.substitute(args,sheet)

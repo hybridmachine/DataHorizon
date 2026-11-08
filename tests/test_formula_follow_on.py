@@ -2,6 +2,8 @@
 from contextlib import closing
 from pathlib import Path
 import tempfile
+import itertools
+import re
 import unittest
 from datahorizon.formula import FormulaError
 from datahorizon.functions import function_catalog
@@ -51,6 +53,23 @@ class FollowOnTests(unittest.TestCase):
         for formula,expected in [('=FIND("a","Data")',2),('=FIND("a","Data",3)',4),('=FIND("*","a*b")',2),('=FIND("a","😀á")',2),('=FIND("","abc",4)',4),('=FIND("",B1)',1),('=FIND(23,"00123")',4),('=FIND("b","abc",2.9)',2)]:self.assertEqual(calculate(formula),expected)
         self.errors([('=FIND("A","Data")','#VALUE!'),('=FIND("x","abc",0)','#VALUE!'),('=FIND("","abc",5)','#VALUE!'),('=FIND("a","abc","1")','#VALUE!'),('=FIND(B1:B2,"x")','#VALUE!'),('=FIND(A1,"x")','#CYCLE!'),('=FIND("a")','#NAME?'),('=FIND("é","é")','#VALUE!')])
         self.assertEqual(calculate('=FIND("z",B1)',{(1,2):cell('x'*50000+'z')}),50001)
+
+    def test_search_wildcards_unicode_mapping_and_budgets(self):
+        for formula,expected in [('=SEARCH("A","Data")',2),('=SEARCH("H*","Data Horizon")',6),('=SEARCH("~*","a*b")',2),('=SEARCH("~?","a?b")',2),('=SEARCH("~","a~b")',2),('=SEARCH("sa","ßa")',1),('=SEARCH("a","😀A")',2),('=SEARCH("s","xß",2)',2),('=SEARCH("??","ß")',1),('=SEARCH("","abc",4)',4)]:self.assertEqual(calculate(formula),expected)
+        self.errors([('=SEARCH("z","abc")','#VALUE!'),('=SEARCH("a","abc",0)','#VALUE!'),('=SEARCH(B1:B2,"x")','#VALUE!'),('=SEARCH(A1,"x")','#CYCLE!'),('=SEARCH("a")','#NAME?'),('=SEARCH("a","abc","1")','#VALUE!'),('=SEARCH("'+'a'*256+'","x")','#LIMIT!')])
+        self.errors([('=IFERROR(SEARCH("*'+'a'*200+'b",B1),"hidden")','#LIMIT!')],{(1,2):cell('a'*10000)})
+        self.assertEqual(calculate('=SEARCH("Z",B1)',{(1,2):cell('x'*50000+'z')}),50001)
+
+    def test_search_small_wildcard_language_against_independent_regex(self):
+        for length in range(5):
+            for chars in itertools.product('ab',repeat=length):
+                text=''.join(chars)
+                for pattern in ('','*','?','*a','a*','a?','a*b','*b*a','**b','?a?'):
+                    regex=''.join('.*' if ch=='*' else '.' if ch=='?' else re.escape(ch) for ch in pattern)
+                    match=re.search(regex,text)
+                    formula='=SEARCH("'+pattern+'","'+text+'")'
+                    if match:self.assertEqual(calculate(formula),match.start()+1,(pattern,text))
+                    else:self.errors([(formula,'#VALUE!')])
 
     def test_catalog_formulas_recalculate_after_native_package_reimport(self):
         with tempfile.TemporaryDirectory() as temp:
