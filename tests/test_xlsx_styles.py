@@ -42,7 +42,8 @@ class XlsxStyleTests(unittest.TestCase):
         <borders><border><bottom style="double"/></border></borders><cellXfs><xf numFmtId="14" fontId="0" fillId="0" borderId="0"><alignment horizontal="justify" textRotation="90"/></xf></cellXfs></styleSheet>'''
         result=preview(styled_fixture('<c r="A1"><v>45200</v></c>',styles))
         self.assertTrue(result["can_import"])
-        self.assertEqual(result["cells"][0]["style"],{})
+        self.assertEqual(result["cells"][0]["style"],{"format":"date_iso"})
+        self.assertEqual(result["cells"][0]["kind"],"date")
         report=" ".join(result["report"])
         for word in ("serials","theme","Partial","alignment","rotation"): self.assertIn(word,report)
         invalid=preview(styled_fixture('<c r="A1" s="99"><v>7</v></c>',styles))

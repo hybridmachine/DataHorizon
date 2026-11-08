@@ -89,6 +89,14 @@ avoid input evaluation for painter copies. [Final local verification](evidence/e
 records the frozen candidate and package checks; all existing M0–M8 and platform/
 manual/release completion gates remain open.
 
+The [date/time batch](date-time-next-ten.md) adds strict native date/time/datetime
+inputs with transactional v2 upgrades, explicit entry across managed clients,
+invariant Format Cells categories, ten calendar/clock functions, a shared UTC
+calculation clock, civil arithmetic and typed list ordering/filters. CSV companions
+and bounded XLSX/ODS ISO/serial mappings preserve the documented temporal tier.
+[Local qualification](evidence/date-time-batch-verification.txt) records this batch;
+locale parsing, wider Excel coercion/format parity and platform/release gates remain open.
+
 ## Milestone ledger
 
 | Increment | Evidence and scope | Remaining before full milestone closure |
@@ -98,7 +106,7 @@ manual/release completion gates remain open.
 | M2 | Real GUI→REST→SQLite edit, shared CLI/SDK behavior, transactional handler fixture, rejection/timeout, receipts, direct access, stale writes, schema stop, API explorer, client handle lifecycle; restart/reopen and warned unknown-outcome recovery | Broader failure injection, clean-machine packaging evidence and service lifecycle hardening |
 | M3 | Typed entry, A1 limits, staged scalar functions/arithmetic, absolute/cross-sheet references, fill, cycle/errors, fresh snapshot evaluation and Supplies assertions | Wider coercion/compatibility fixtures, usability/accessibility qualification; dependency-index/background-calculation design |
 | M4 | Typed copy/paste, formula-aware same-sheet Cut, series, styles, cell Undo/Redo, bounded sheet operations/reference transforms, wrap/borders, local dimensions/hiding, multi-edge prefix freezing and cross-pane selection | Hook-aware structure events, full Excel reference compatibility, portable view metadata and native platform/accessibility conventions |
-| M5 | Explicit full-scope projected lists, stable source-address edits, typed eight-key/filter editing, local named definitions, ordered values copy/export, paged Find, atomic Replace All and snapshot summaries, strict CSV conversion/interchange | Persistent record identities, portable native list/query definitions, formula-preserving filtered range semantics, native date/time and locale conversion, progress/cancellation and large jobs |
+| M5 | Explicit full-scope projected lists, stable source-address edits, typed eight-key/filter editing, local named definitions, ordered values copy/export, paged Find, atomic Replace All and snapshot summaries, strict CSV conversion/interchange | Persistent record identities, portable native list/query definitions, formula-preserving filtered range semantics, locale conversion and wider temporal compatibility, progress/cancellation and large jobs |
 | M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures | Broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
 | M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
 | M8 | Shared engine and REST boundaries retained; unsupported APIs reject explicitly | Relational schema/tooling, proven managed SQL capture, workbook code/macros/functions/packages, remote TLS/mTLS/password access and additional wireframes |
@@ -166,7 +174,7 @@ The [spreadsheet increments](spreadsheet-next-ten.md) through PR #44 and the
 within their declared development tiers, each with local verification and a
 separate reviewed/merged PR. Remaining M3–M5 work includes wider tested formula
 compatibility, hook-aware structure events, portable native views/record identity,
-date/time/locale semantics and large-job execution. Native keyboard/accessibility
+wider date/time/locale semantics and large-job execution. Native keyboard/accessibility
 and Windows/Linux qualification remain required before a cross-platform release.
 
 The [workbook compatibility/recovery/qualification increments](workbook-next-five.md)

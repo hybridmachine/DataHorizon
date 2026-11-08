@@ -1,0 +1,129 @@
+Date/time tasks 1–10 / November 8, 2026 local
+Frozen source candidate: c270324869837aa9bf5fa0de0228174c5ff3a514d8d425317313c166213127a1
+
+Command: python3 tests/qualify_preview.py --build build --config Debug --output-dir build/date-time-final-qualification
+Local Debug build passed. No hosted CI used; GitHub credits were unavailable.
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed  102.55 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   32.59 sec
+
+100% tests passed out of 2
+
+Total Test time (real) = 135.14 sec
+
+Full CTest suite: 177 Qt checks passed; 397 Python tests passed (15 optional-binding skips).
+Optional native-capture binding suite: 397 Python tests passed, no skips (32.835 seconds).
+
+Native Cocoa scale-2 temporal and complete catalog checks:
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::temporalCsvCompanionPreviewRestoresMixedTypes()
+PASS   : DesktopTests::temporalFilterDialogRetainsExplicitKind()
+PASS   : DesktopTests::dateFormatsDisableNumericControlsAndPatchOnlyPresentation()
+PASS   : DesktopTests::temporalEntryUsesManagedTypesAndRejectsChangedTargets()
+PASS   : DesktopTests::catalogExamplesCalculateThroughNativeSourceEditor()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 9302ms
+********* Finished testing of DesktopTests *********
+
+Independent package verification (openpyxl 3.1.5 and odfpy):
+openpyxl producer: 1899 serial native temporal types retained
+openpyxl producer: 1899 ISO native temporal types retained
+openpyxl producer: 1904 serial native temporal types retained
+openpyxl producer: 1904 ISO native temporal types retained
+odfpy producer: ISO dates and microsecond clock durations retained
+Independent XLSX/ODS consumers: formulas accepted all ten function sources/typed results; native subsecond precision verified separately; no target recalculation claim
+Independent XLSX/ODS consumers: values accepted all ten function sources/typed results; native subsecond precision verified separately; no target recalculation claim
+xlsx formulas: independent reader accepted 26 formulas/typed values; no target recalculation claim
+xlsx values: independent reader accepted 26 formulas/typed values; no target recalculation claim
+ods formulas: independent reader accepted 26 formulas/typed values; no target recalculation claim
+ods values: independent reader accepted 26 formulas/typed values; no target recalculation claim
+
+Installed service: all 21 Python modules match current source bytes, including temporal.py and csv_types.py.
+Installed relocation smoke exercises native datetime entry, civil arithmetic and all ten new functions, without developer overrides. Missing-service rejection and archive inventory passed.
+Visually inspected build/date-formats-cocoa.png: date/time category, disabled numeric controls, full labels and buttons remain legible at scale 2.
+
+Qualification report:
+{
+  "format": 1,
+  "platform": "Darwin",
+  "candidate": "c270324869837aa9bf5fa0de0228174c5ff3a514d8d425317313c166213127a1",
+  "automation_passed": true,
+  "steps": [
+    {
+      "name": "build",
+      "seconds": 0.38,
+      "returncode": 0
+    },
+    {
+      "name": "contracts",
+      "seconds": 135.18,
+      "returncode": 0
+    },
+    {
+      "name": "native-1",
+      "seconds": 1.68,
+      "returncode": 0
+    },
+    {
+      "name": "native-2",
+      "seconds": 0.91,
+      "returncode": 0
+    },
+    {
+      "name": "install",
+      "seconds": 8.17,
+      "returncode": 0
+    }
+  ],
+  "package_smoke": {
+    "platform": "Darwin",
+    "relocated_managed_edit_calculation": true,
+    "temporal_types_and_ten_functions": true,
+    "developer_overrides_removed": true,
+    "missing_service_fails_explicitly": true,
+    "runtime_dependency": "Separately installed Python unless an explicitly supplied runtime is staged",
+    "clean_machine_qualified": false
+  },
+  "archive": {
+    "name": "DataHorizon-preview.tar.gz",
+    "files": 78,
+    "sha256": "45d0c1df03d4dd8cbb46a7efc3dff12e70dc10b67282956094cc2854670d33d1",
+    "inventory_verified": true
+  },
+  "matrix": {
+    "platforms": {
+      "Darwin": "local automation passed; manual qualification pending",
+      "Windows": "pending",
+      "Linux": "pending"
+    },
+    "manual_gates": [
+      "physical keyboard/clipboard/native dialogs",
+      "screen-reader navigation",
+      "multiple monitors and system appearance",
+      "clean-machine installer/runtime",
+      "signing/notarization",
+      "distribution licenses/notices"
+    ],
+    "release_qualified": false
+  }
+}
+
+Delivery audit before final PR:
+PR #85: merged; published head 0872a29ea28c6fc465ae829e6d2bf15b18ef2774; COMMENTED author review submitted before merge.
+PR #86: merged; published head 058c733dedfa9a2ce653db3aaa6bbb402b42f9be; COMMENTED author review submitted before merge.
+PR #87: merged; published head 1151d4a2180f7b4b4eda679b9d13a517e661d330; COMMENTED author review submitted before merge.
+PR #88: merged; published head 3cb786fdbf40d4fc41dc9aaa1e6f1af4b25e5f59; COMMENTED author review submitted before merge.
+PR #89: merged; published head 97dc66dba686d2e20ee723f5f8f903b9b5988a95; COMMENTED author review submitted before merge.
+PR #90: merged; published head 109d85608cb0e02eb2384012c343aec682dbdd9e; COMMENTED author review submitted before merge.
+PR #91: merged; published head ad6e005b47a2fb6440f5088cb482238334421a50; COMMENTED author review submitted before merge.
+PR #92: merged; published head 6e23a6b52f1192dedb2d249a0cbba84863906fe9; COMMENTED author review submitted before merge.
+PR #93: merged; published head cf4f76e3343f45b814243a693f81ca7d8f2852cd; COMMENTED author review submitted before merge.
+Task 10 follows the same published-head review and merge process. Reviews are author self-reviews, not independent approvals.
+
+Covered: strict ISO/invalid dates and offsets; microseconds; both serial epochs and fake leap-day rejection; transactional v2 upgrade/rollback; native reopen/external refresh; REST/CLI/SDK entry; typed clipboard/history/list snapshots; date formats; all ten functions and executable native-editor examples; shared clock/midnight/hook rounds; civil arithmetic, sorting and filters; CSV mixed temporal/Text metadata and hash rejection; XLSX/ODS formulas and values, independent producers/consumers, durations and hidden clocks.
+
+Limits: local macOS development qualification only. Windows/Linux, physical keyboard/clipboard/native-dialog acceptance, screen readers, multiple monitors, clean-machine/runtime, signing/notarization and distribution remain open. UTC civil clock, native type distinctions, bounded serial-format grammar, external recalculation/coercion differences and CSV two-file semantics are documented in date-time-next-ten.md. This does not close the full M0–M8 milestones or certify Excel/LibreOffice compatibility.

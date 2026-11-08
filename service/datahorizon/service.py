@@ -30,7 +30,8 @@ from .list_export import export_list
 from .functions import function_catalog
 
 CAPABILITIES = {
-    "api_version": 1, "format_version": 1, "max_operation_cells": MAX_CELLS,
+    "api_version": 1, "format_version": 2, "supported_format_versions": [1,2], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
+    "temporal_types": ["date","time","datetime"], "calculation_timezone": "UTC",
     "max_style_cells":MAX_CELLS, "max_summary_cells":MAX_CELLS, "max_viewport_cells": 4096, "max_clipboard_cells":MAX_CELLS, "max_request_bytes": 4 * 1024 * 1024,
     "formulas": ["arithmetic", "references", "concatenation", *sorted(SUPPORTED_FUNCTIONS)],
     "operations": ["workbook_import", "edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],

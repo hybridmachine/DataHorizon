@@ -34,6 +34,7 @@
 #include <QProgressDialog>
 #include <QAbstractItemDelegate>
 #include <QClipboard>
+#include <QCryptographicHash>
 #include <QMenu>
 #include <QToolButton>
 #include <QComboBox>
@@ -1126,6 +1127,11 @@ private slots:
     void formatCellsDialogPatchesOnlyChosenPropertiesAndValidatesColors() {
         FormatCellsDialog dialog("A1:B2");QVERIFY(dialog.patch().isEmpty());QVERIFY(!dialog.replaceStyle());auto *fill=dialog.findChild<QLineEdit *>("cellBackground");fill->setText("red");QVERIFY(!dialog.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->isEnabled());fill->setText("#AbCdEf");QVERIFY(dialog.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->isEnabled());dialog.findChild<QCheckBox *>("fontBold")->setChecked(true);dialog.findChild<QCheckBox *>("fontItalic")->setChecked(false);auto *number=dialog.findChild<QComboBox *>("numberFormat");number->setCurrentIndex(number->findData("number"));QCOMPARE(dialog.patch(),(QJsonObject{{"background","#abcdef"},{"bold",true},{"italic",false},{"format","number"}}));dialog.findChild<QCheckBox *>("resetAllFormats")->setChecked(true);QVERIFY(dialog.replaceStyle());
     }
+    void temporalCsvCompanionPreviewRestoresMixedTypes() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("csv-temporal.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);auto *grid=window.findChild<QTableView *>("grid");grid->setCurrentIndex(window.model()->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);
+        const QByteArray csv="2024-02-29\r\n2024-02-29\r\n";const QJsonObject entry{{"row",1},{"col",1},{"kind","date"}};const QJsonObject schema{{"version",1},{"sha256",QString::fromLatin1(QCryptographicHash::hash(csv,QCryptographicHash::Sha256).toHex())},{"cells",QJsonArray{entry}}};
+        answerNextDialog(QMessageBox::Yes);QTimer::singleShot(5000,&window,[&]{for(auto *box:window.findChildren<QMessageBox *>())if(box->isVisible())box->reject();});window.importCsvBytes(csv,"utf-8",",",{},schema);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);QTRY_COMPARE_WITH_TIMEOUT(window.model()->cell(window.model()->index(0,0))["input_kind"].toString(),QString("date"),5000);QTRY_COMPARE_WITH_TIMEOUT(window.model()->cell(window.model()->index(1,0))["input_kind"].toString(),QString("text"),5000);
+    }
     void temporalFilterDialogRetainsExplicitKind() {
         const QJsonObject filter{{"col",1},{"op",">="},{"value","2024-02-29"},{"value_kind","date"}};
         ListCriteriaDialog dialog(QJsonObject{{"r1",1},{"c1",1},{"r2",10},{"c2",1},{"filters",QJsonArray{filter}}});
@@ -1134,6 +1140,7 @@ private slots:
     void dateFormatsDisableNumericControlsAndPatchOnlyPresentation() {
         FormatCellsDialog dialog("A1");auto *category=dialog.findChild<QComboBox *>("numberFormat");
         for(const auto &mode:QStringList{"date_iso","date_mdy","date_dmy","time24","datetime_iso"}){QVERIFY(category->findData(mode)>=0);category->setCurrentIndex(category->findData(mode));QVERIFY(!dialog.findChild<QSpinBox *>("decimalPlaces")->isEnabled());QVERIFY(!dialog.findChild<QCheckBox *>("numberGrouping")->isEnabled());QCOMPARE(dialog.patch(),(QJsonObject{{"format",mode}}));}
+        dialog.show();QTest::qWait(20);dialog.grab().save("build/date-formats-"+QGuiApplication::platformName()+".png");
     }
     void temporalEntryUsesManagedTypesAndRejectsChangedTargets() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("temporal.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);

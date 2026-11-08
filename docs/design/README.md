@@ -73,7 +73,8 @@ applications, and AI agents through REST.
 | [Editing and formatting usability](editing-formatting-next-ten.md) | Authorized ten tasks after PR #74 |
 | [Formula coverage follow-on](formula-coverage-next-ten.md) | Additional ten authorized after the formula editing batch |
 | [Formula editing and coverage](formula-next-ten.md) | Authorized ten tasks after PR #54 |
-| [Native format v1](native-format-v1.md) | Actual development schema and callback-free direct SQLite access |
+| [Date and time increments](date-time-next-ten.md) | Native types, UTC clock, arithmetic and CSV/XLSX/ODS date tiers |
+| [Native formats v1/v2](native-format-v1.md) | Actual development schema and callback-free direct SQLite access |
 | [Compatibility tier 0](compatibility-v0.md) | Implemented formulas, formatting, interchange and editing limits |
 | [Architecture](architecture.md) | Components, execution paths, transactions, external edits, and recovery |
 | [Data model](data-model.md) | Proposed sheets/tables/views model, identity, types, formulas, and native storage |

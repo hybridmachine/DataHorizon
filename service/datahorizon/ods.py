@@ -9,6 +9,7 @@ from .engine import EngineError, MAX_CELLS, encoded, integer, require, typed, va
 from .formula import Parser, split_ref
 from .borders import SIDES, border_edges, parse_ods_border, ODS_BORDERS
 from .formats import numeric_spec, simple_number_style
+from .temporal import Temporal, from_duration, to_duration, export_temporal_styles
 from .interchange import map_formula_functions, import_edits, local_formula, mode, node, package, read_xml, xml, preparation_scope, prepare_workbook, validate_sheet_names, workbook_report
 
 O="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
@@ -25,6 +26,22 @@ for prefix,uri in (("office",O),("table",T),("text",X),("style",Y),("fo",F),("nu
 
 
 def q(uri,name): return f"{{{uri}}}{name}"
+
+
+TEMPORAL_PARTS={
+    "date_iso":("year","-","month","-","day"),
+    "date_mdy":("month","/","day","/","year"),
+    "date_dmy":("day","/","month","/","year"),
+    "time24":("hours",":","minutes",":","seconds"),
+    "datetime_iso":("year","-","month","-","day"," ","hours",":","minutes",":","seconds"),
+}
+
+
+def temporal_format(fmt):
+    if fmt.tag not in (q(N,"date-style"),q(N,"time-style")):return None
+    parts=tuple(child.text if child.tag==q(N,"text") else child.tag.removeprefix("{"+N+"}") for child in fmt)
+    if any(child.get(q(N,"textual"))=="true" for child in fmt):return None
+    return next((mode for mode,pattern in TEMPORAL_PARTS.items() if parts==pattern),None)
 
 
 def repeat(element,name,maximum):
@@ -166,7 +183,8 @@ class OdsStyles:
             require(fmt is not None,"INVALID_SPREADSHEET","Missing ODS number style")
             number=fmt.find(q(N,"number"))
             simple_number=number is not None and re.fullmatch(r"[0-9]|1[0-5]",number.get(q(N,"decimal-places"),"")) is not None and number.get(q(N,"grouping"),"false") in ("false","true") and number.get(q(N,"min-integer-digits"),"1")=="1" and set(number.attrib)<={q(N,"decimal-places"),q(N,"min-integer-digits"),q(N,"grouping")}
-            if fmt.tag==q(N,"text-style") and len(fmt)==1 and fmt[0].tag==q(N,"text-content"): result["format"]="text"
+            if temporal_format(fmt):result["format"]=temporal_format(fmt)
+            elif fmt.tag==q(N,"text-style") and len(fmt)==1 and fmt[0].tag==q(N,"text-content"): result["format"]="text"
             elif fmt.tag==q(N,"number-style") and len(fmt)==1 and simple_number: result.update(simple_number_style(("#,##0" if number.get(q(N,"grouping"))=="true" else "0")+("."+"0"*int(number.get(q(N,"decimal-places"))) if int(number.get(q(N,"decimal-places"))) else "")))
             elif fmt.tag==q(N,"percentage-style") and len(fmt)==2 and simple_number and fmt[0].tag==q(N,"number") and fmt[1].tag==q(N,"text") and fmt[1].text=="%": result.update(simple_number_style(("#,##0" if number.get(q(N,"grouping"))=="true" else "0")+("."+"0"*int(number.get(q(N,"decimal-places"))) if int(number.get(q(N,"decimal-places"))) else "")+"%"))
             elif fmt.tag==q(N,"currency-style") and len(fmt)==3 and simple_number and fmt[0].tag==q(N,"number") and fmt[1].tag==q(N,"text") and fmt[1].text==" " and fmt[2].tag==q(N,"currency-symbol") and re.fullmatch(r"[A-Z]{3}",fmt[2].text or ""):
@@ -260,7 +278,9 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
                     elif kind in ("date","time"):
                         value=cell.get(q(O,"date-value") if kind=="date" else q(O,"time-value"))
                         require(value is not None,"INVALID_SPREADSHEET","Missing date/duration value")
-                        item={"source":value,"kind":"text"}
+                        try:temporal=from_duration(value) if kind=="time" else Temporal(value,"datetime" if "T" in value else "date")
+                        except ValueError as error:raise EngineError("UNSUPPORTED_CELL",str(error)) from error
+                        item={"source":str(temporal),"kind":temporal.kind}
                     elif kind=="string" or cell.findall(q(X,"p")):
                         item={"source":ods_text(cell),"kind":"text"}
                     else:
@@ -296,9 +316,10 @@ def ods_export(snapshot,request):
     report=["One selection at original coordinates from a consistent native state. Native direct styles map to ODS; formulas translate canonically and use current snapshot values as caches.",
             "Other sheets, code, queries, relationships, history, dimensions and view state are omitted. NULL becomes empty. Target formula/coercion compatibility can differ; retain the native workbook."]
     whole="sheets" in snapshot
-    snapshots=snapshot["sheets"] if whole else [{**snapshot,"name":"Sheet1"}]
+    snapshots=export_temporal_styles(snapshot["sheets"] if whole else [{**snapshot,"name":"Sheet1"}])
     names=validate_sheet_names([s["name"] for s in snapshots])
     if whole: report=workbook_report()+["OpenFormula uses canonical named sheet references and current snapshot caches; sheet-relative movement semantics are not retained. NULL becomes empty."]
+    report.append("Native dates/datetimes use ISO office:date-value; times use nonnegative sub-day office:time-value durations. Date/time formats map to invariant calendar styles; default temporal displays become ISO styles. Unsupported durations/offsets reject import. Target volatile clocks and serial-date arithmetic/type coercions can differ; choose values to freeze native results.")
     if selected_mode=="formulas" and any(map_formula_functions(c["source"],{"CONCAT":"COM.MICROSOFT.CONCAT","XLOOKUP":"COM.MICROSOFT.XLOOKUP","TEXTJOIN":"COM.MICROSOFT.TEXTJOIN"})!=c["source"] for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"):report.append("Known modern functions use COM.MICROSOFT extension identifiers; target support is required. Choose values for other targets.")
     root=ET.Element(q(O,"document-content"),{q(O,"version"):"1.3","xmlns:of":OF})
     automatic=node(root,q(O,"automatic-styles"))
@@ -313,6 +334,13 @@ def ods_export(snapshot,request):
         require(len(style_ids)<1024,"LIMIT","ODS export exceeds 1,024 styles")
         name="S"+str(len(style_ids)); style_ids[key]=name
         attrs={q(Y,"name"):name,q(Y,"family"):"table-cell"}
+        temporal_mode=style.get("format")
+        if temporal_mode in TEMPORAL_PARTS:
+            data_name="DT"+str(len(style_ids));fmt=node(automatic,q(N,"time-style" if temporal_mode=="time24" else "date-style"),**{q(Y,"name"):data_name})
+            for part in TEMPORAL_PARTS[temporal_mode]:
+                if part in ("-","/",":"," "):node(fmt,q(N,"text"),part)
+                else:node(fmt,q(N,part),**{q(N,"style"):"long"})
+            attrs[q(Y,"data-style-name")]=data_name
         if style.get("format") in ("fixed2","text","percent2"): attrs[q(Y,"data-style-name")]={"fixed2":"N2","text":"NT","percent2":"NP"}[style["format"]]
         spec=numeric_spec(style)
         if spec:
@@ -353,7 +381,12 @@ def ods_export(snapshot,request):
             require(cell.get("calculation")=="current","CALCULATION_ERROR","ODS export requires error-free current values")
             if cell["kind"]=="formula" and selected_mode=="formulas": out.set(q(T,"formula"),native_to_ods(cell["source"],None if whole else sheet["range"],names if whole else None))
             value=cell.get("value")
-            if type(value) is bool: out.set(q(O,"value-type"),"boolean"); out.set(q(O,"boolean-value"),str(value).lower())
+            temporal_kind=cell.get("value_kind",cell.get("kind"))
+            if isinstance(value,Temporal) or temporal_kind in ("date","time","datetime"):
+                value=Temporal(str(value),value.kind if isinstance(value,Temporal) else temporal_kind)
+                clock=value.kind=="time"
+                out.set(q(O,"value-type"),"time" if clock else "date");out.set(q(O,"time-value") if clock else q(O,"date-value"),to_duration(value) if clock else str(value))
+            elif type(value) is bool: out.set(q(O,"value-type"),"boolean"); out.set(q(O,"boolean-value"),str(value).lower())
             elif type(value) in (float,int):
                 spec=numeric_spec(cell.get("style",{}));mode_name=spec[0] if spec else "number"
                 out.set(q(O,"value-type"),{"percent":"percentage","currency":"currency"}.get(mode_name,"float"));out.set(q(O,"value"),str(value))

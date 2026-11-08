@@ -36,7 +36,7 @@ empty strings. Explicit `null` has a null typed value; absence has no row.
 The earlier CSV date tier stored normalized YYYY-MM-DD as `text`; those existing
 inputs remain Text. See [the CSV typing contract](editing-csv-next-five.md#csv-column-typing).
 `style` is a JSON object: format (`general`, `text`, `fixed2`, `percent2`,
-`number`, `percent`, `currency`), numeric precision/grouping/currency label,
+`number`, `percent`, `currency`, `date_iso`, `date_mdy`, `date_dmy`, `time24`, `datetime_iso`), numeric precision/grouping/currency label,
 font family/size/text color, wrap/bold/italic booleans, alignment, RGB fill and
 legacy/per-edge borders. The additive property contracts are specified below. Applying a
 format never retypes existing input. Text format changes subsequent auto entry.

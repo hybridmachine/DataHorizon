@@ -9,6 +9,8 @@ import xml.etree.ElementTree as ET
 
 from .engine import EngineError, MAX_CELLS, encoded, integer, require, typed
 from .formula import SUPPORTED_FUNCTIONS, FormulaError, Parser, address, coordinates, split_ref, translate
+from .temporal import Temporal, from_serial, export_temporal_styles
+from .formats import TEMPORAL_FORMATS
 
 S = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -194,6 +196,11 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
     with package(request) as archive:
         checkpoint(0,"Reading workbook")
         workbook=read_xml(archive,"xl/workbook.xml")
+        properties=workbook.find(f"{{{S}}}workbookPr")
+        epoch=properties.get("date1904","0") if properties is not None else "0"
+        require(epoch in ("0","1","false","true"),"INVALID_SPREADSHEET","Invalid XLSX date1904 flag")
+        system="1904" if epoch in ("1","true") else "1900"
+        report.append(f"Date/time serials with supported formats use the {system} epoch; serial 60 in the 1900 system is rejected. Formula numeric literals are not epoch-shifted; native formulas use the 1900 system.")
         require(workbook.tag==f"{{{S}}}workbook","INVALID_SPREADSHEET","Only transitional SpreadsheetML XLSX is supported")
         sheets=workbook.findall(f"{{{S}}}sheets/{{{S}}}sheet")
         require(0<len(sheets)<=64 and selected<=len(sheets),"INVALID_SPREADSHEET","Choose an existing sheet (at most 64)")
@@ -249,7 +256,11 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
                 elif kind=="s":
                     require(value is not None and re.fullmatch(r"[0-9]+",value) is not None and int(value)<len(shared),"INVALID_SPREADSHEET","Invalid shared string index")
                     item={"source":shared[int(value)],"kind":"text"}
-                elif kind in ("str","d"):
+                elif kind=="d":
+                    require(value is not None,"INVALID_SPREADSHEET","Missing ISO date/time value")
+                    temporal=Temporal(value,"datetime" if "T" in value else "date" if "-" in value else "time")
+                    item={"source":str(temporal),"kind":temporal.kind}
+                elif kind=="str":
                     require(value is not None,"INVALID_SPREADSHEET","Missing text/date value")
                     item={"source":text_decode(value),"kind":"text"}
                 elif kind=="b":
@@ -260,9 +271,17 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
                     item={"source":value or "","kind":"number" if value else "auto"}
                 else: raise EngineError("UNSUPPORTED_CELL",f"Unsupported cell type: {kind}")
                 item.update(style=styles.style(cell.get("s","0")),replace_style=True)
+                if item["kind"]=="number" and item["style"].get("format") in TEMPORAL_FORMATS:
+                    temporal_mode=item["style"]["format"]
+                    temporal=from_serial(float(item["source"]),"time" if temporal_mode=="time24" else "datetime" if temporal_mode=="datetime_iso" else "date",system)
+                    # A date display can conceal a non-midnight clock; retain it.
+                    if temporal_mode.startswith("date_"):
+                        complete=from_serial(float(item["source"]),"datetime",system)
+                        if complete.parsed().time().isoformat()!="00:00:00":temporal=complete
+                    item.update(source=str(temporal),kind=temporal.kind)
                 typed(item)
                 edits.append({"row":row,"col":col,**item})
-            except (EngineError,FormulaError,UnicodeError) as error:
+            except (EngineError,FormulaError,UnicodeError,ValueError,OverflowError) as error:
                 if len(issues)<100: issues.append({"cell":location,"message":str(error)[:200]})
         if shared_formulas and shared_formulas.groups: report.append("Shared formulas expand to explicit per-cell sources with relative/absolute reference translation; caches are discarded.")
         report.extend(styles.report())
@@ -280,9 +299,10 @@ def xlsx_export(snapshot,request):
             "Native cell styles are mapped. Other sheets, code, queries, relationships, history, dimensions and view preferences are omitted.",
             "Native NULL becomes an empty cell. Formula semantics follow the target application's compatibility; formula caches are omitted and recalculation is requested."]
     whole="sheets" in snapshot
-    snapshots=snapshot["sheets"] if whole else [{**snapshot,"name":"Sheet1"}]
+    snapshots=export_temporal_styles(snapshot["sheets"] if whole else [{**snapshot,"name":"Sheet1"}])
     names=validate_sheet_names([s["name"] for s in snapshots])
     if whole: report=workbook_report()+["Formula caches are omitted; target recalculation is requested."]
+    report.append("Typed dates/times export as ISO XLSX date cells with native precision. Supported numeric date formats are interpreted as serials on import. Target readers may reduce subsecond precision; volatile functions recalculate using the target clock/timezone. Native civil arithmetic and pre-March-1900/typed comparisons may differ from target serial semantics; choose values to freeze results.")
     if selected_mode=="formulas" and any(map_formula_functions(c["source"],FUTURE_XLSX_FUNCTIONS)!=c["source"] for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"):report.append("Known modern functions use their _xlfn identifiers; target function/version support is required. Choose values for older targets.")
     from .xlsx_styles import export_styles
     styles,style_ids=export_styles([c for s in snapshots for c in s["cells"]])
@@ -300,7 +320,11 @@ def xlsx_export(snapshot,request):
             else:
                 require(cell.get("calculation")=="current","CALCULATION_ERROR","Values export requires current, error-free values")
                 value=cell.get("value")
-                if type(value) is bool: out.set("t","b"); node(out,"v","1" if value else "0")
+                temporal_kind=cell.get("value_kind",cell.get("kind"))
+                if isinstance(value,Temporal) or temporal_kind in ("date","time","datetime"):
+                    value=Temporal(str(value),value.kind if isinstance(value,Temporal) else temporal_kind)
+                    out.set("t","d");node(out,"v",str(value))
+                elif type(value) is bool: out.set("t","b"); node(out,"v","1" if value else "0")
                 elif type(value) in (int,float): node(out,"v",str(value))
                 elif value is not None:
                     require(len(value.encode("utf-16-le"))//2<=32767,"LIMIT","XLSX text exceeds Excel's 32,767-character cell limit")

@@ -44,9 +44,11 @@ class XlsxStyles:
         custom=self.formats.get(fmt)
         if fmt=="49" or custom=="@": result["format"]="text"
         else:
-            code=custom if custom is not None else {"0":"General","1":"0","2":"0.00","3":"#,##0","4":"#,##0.00","9":"0%","10":"0.00%"}.get(fmt,"")
+            code=custom if custom is not None else {"0":"General","1":"0","2":"0.00","3":"#,##0","4":"#,##0.00","9":"0%","10":"0.00%","14":"mm-dd-yy","15":"d-mmm-yy","16":"d-mmm","17":"mmm-yy","18":"h:mm AM/PM","19":"h:mm:ss AM/PM","20":"h:mm","21":"h:mm:ss","22":"m/d/yy h:mm"}.get(fmt,"")
             mapped=simple_number_style(code)
-            if mapped: result.update(mapped)
+            if mapped:
+                result.update(mapped)
+                if mapped.get("format") in ("date_iso","date_mdy","date_dmy","time24","datetime_iso") and code!=number_format_code(mapped):self.loss("Date/time display is normalized to the supported invariant format; source date/time values are retained.")
             elif code!="General": self.loss(f"Number format {fmt} ({custom or 'built-in'}) is omitted; numeric inputs remain numbers, including date/time serials.")
         font=self.index(xf.get("fontId","0"),self.fonts)
         if enabled(font.find(f"{{{S}}}b")): result["bold"]=True
