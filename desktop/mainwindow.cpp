@@ -50,6 +50,8 @@
 #include <QStatusBar>
 #include <QTabBar>
 #include <QTableView>
+#include <QToolButton>
+#include <QMouseEvent>
 #include <QTimer>
 #include <QToolBar>
 #include <QUuid>
@@ -120,6 +122,7 @@ public:
     std::function<void(const QModelIndex &,int)> enterPressed;
     std::function<bool(const QModelIndex &,int)> tabPressed;
     bool hasEditor()const{return m_editor && m_index.isValid();}
+    FormulaLineEdit *activeEditor()const{return hasEditor()?dynamic_cast<FormulaLineEdit *>(m_editor.data()):nullptr;}
     void paint(QPainter *painter,const QStyleOptionViewItem &option,const QModelIndex &index) const override {
         QStyledItemDelegate::paint(painter,option,index);
         const auto item=index.data(SheetModel::CellRole).toJsonObject();
@@ -395,6 +398,7 @@ void MainWindow::buildUi() {
     add(dataMenu,tr("Copy list result values"),{},[this]{copyListValues();},true)->setObjectName("copyListValuesAction");
     add(dataMenu, tr("Clear list view"), {}, [this] { if (!m_busy) { m_listSpec = {}; refresh(); } }, true)->setObjectName("clearListAction");
 
+    m_pickReferenceAction=add(edit,tr("Pick formula reference"),{},[this]{if(m_pickingReference)finishReferencePick(false);else startReferencePick();});m_pickReferenceAction->setCheckable(true);m_pickReferenceAction->setObjectName("pickReferenceAction");
     auto *central = new QWidget(this); auto *layout = new QVBoxLayout(central);
     layout->setContentsMargins(4, 4, 4, 4); layout->setSpacing(4);
     auto *formula = new QHBoxLayout;
@@ -403,6 +407,7 @@ void MainWindow::buildUi() {
     m_source->setMaxLength(65536);
     m_source->installEventFilter(this);
     formula->addWidget(m_address); formula->addWidget(new QLabel("fx")); formula->addWidget(m_source, 1);
+    auto *pickButton=new QToolButton(central);pickButton->setObjectName("pickReferenceButton");pickButton->setDefaultAction(m_pickReferenceAction);pickButton->setText(tr("Pick reference"));pickButton->setFocusPolicy(Qt::NoFocus);pickButton->setToolTip(tr("Insert a clicked cell or dragged range into this formula draft. Release to insert; Escape cancels picking."));formula->addWidget(pickButton);
     layout->addLayout(formula);
     m_listSummary=new QLabel(central);m_listSummary->setObjectName("listCriteriaSummary");m_listSummary->setAccessibleName(tr("Active sort and filter criteria"));
     m_listSummary->setMinimumWidth(0);m_listSummary->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);m_listSummary->hide();layout->addWidget(m_listSummary);
@@ -586,6 +591,9 @@ void MainWindow::buildUi() {
         m_grid->selectionModel()->select(QItemSelection(m_model->index(r1-1,c1-1),m_model->index(r2-1,c2-1)),QItemSelectionModel::ClearAndSelect);
         m_frozenTop->focusCurrent();
     });
+    auto referenceViews=m_frozenTop->views();referenceViews.append(m_grid);for(auto *pane:referenceViews){pane->installEventFilter(this);pane->viewport()->installEventFilter(this);}
+    connect(m_model,&QAbstractItemModel::modelAboutToBeReset,this,[this]{finishReferencePick(false);});
+    connect(m_client,&RestClient::configured,this,[this]{finishReferencePick(false);});
     setBusy(true);
 }
 
@@ -910,6 +918,48 @@ void MainWindow::showHidden(bool rows,bool columns) {
     applyVisibility(); saveViewState();
 }
 
+void MainWindow::startReferencePick() {
+    QSignalBlocker blocker(m_pickReferenceAction);m_pickReferenceAction->setChecked(false);
+    if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected()){issue("Reference picking needs an editable source sheet.");return;}
+    auto *line=dynamic_cast<FormulaLineEdit *>(m_source);auto views=m_frozenTop->views();views.append(m_grid);
+    for(auto *view:views)if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))if(delegate->activeEditor())line=delegate->activeEditor();
+    if(!line || !line->isEnabled() || !line->formulaAllowed() || !line->text().startsWith('=')){issue("Edit a formula first, then place the cursor at an operand or select text to replace.");return;}
+    int start=line->selectionStart();int length=start<0?0:line->selectedText().size();if(start<0)start=line->cursorPosition();if(start==0 && length>0){start=1;--length;}const auto context=formulaCursorContext(line->text(),start);
+    if(context.quoted || (length==0 && context.start<0)){issue("Place the formula cursor outside quoted text at an operand, or select the reference to replace.");return;}
+    if(length==0){start=context.start;length=context.end-context.start;}
+    line->dismissAssistance();captureGridDraft(false);syncSource();
+    if(!m_source->isEnabled() || m_draftTarget["workbook"]!=m_info["id"] || m_draftTarget["state"]!=m_info["state"] || m_draftTarget["input_kind"].toString()=="text")return;
+    m_referenceTarget=targetContext();m_referenceCurrent=m_grid->currentIndex();m_referenceText=m_source->text();m_referenceStart=start;m_referenceLength=length;m_referencePreview.clear();m_referenceIssue.clear();m_referenceDragging=false;m_pickingReference=true;m_pickReferenceAction->setChecked(true);
+    m_source->setFocus();m_source->setSelection(start,length);m_status->setText("Pick a cell or drag a range • Release inserts into the original formula draft • Escape cancels picking");
+}
+
+void MainWindow::finishReferencePick(bool insert) {
+    if(!m_pickingReference)return;m_pickingReference=false;m_referenceDragging=false;QSignalBlocker blocker(m_pickReferenceAction);m_pickReferenceAction->setChecked(false);
+    const bool valid=!m_busy && !m_unknown && !m_model->projected() && matchesTarget(m_referenceTarget) && m_referenceCurrent==m_grid->currentIndex() && m_source->text()==m_referenceText && m_source->cursorPosition()==m_referenceStart+m_referenceLength && m_source->selectionStart()==(m_referenceLength?m_referenceStart:-1) && m_source->isEnabled();
+    if(insert && valid && m_referenceIssue.isEmpty() && !m_referencePreview.isEmpty()){
+        m_source->setFocus();m_source->setCursorPosition(0);m_source->setSelection(m_referenceStart,m_referenceLength);m_source->insert(m_referencePreview);m_source->setModified(true);if(auto *line=dynamic_cast<FormulaLineEdit *>(m_source))line->updateAssistance(false);m_status->setText("Reference inserted into formula draft • Enter to submit, Escape to discard");
+    }else if(insert && !m_referenceIssue.isEmpty())issue(m_referenceIssue);
+    else if(insert && !valid)issue("Reference picking inputs changed. No reference inserted; review the draft.");
+    else m_status->setText("Reference picking cancelled • Draft retained");
+    m_referenceTarget={};m_referencePreview.clear();m_referenceIssue.clear();
+}
+
+bool MainWindow::referenceMouseEvent(QObject *object,QEvent *event) {
+    if(event->type()!=QEvent::MouseButtonPress && event->type()!=QEvent::MouseButtonRelease && event->type()!=QEvent::MouseMove)return false;
+    auto views=m_frozenTop->views();views.append(m_grid);bool viewport=false;for(auto *view:views)if(object==view->viewport())viewport=true;if(!viewport)return false;
+    const auto *mouse=static_cast<QMouseEvent *>(event);if(event->type()==QEvent::MouseButtonPress && mouse->button()!=Qt::LeftButton)return false;
+    if(event->type()==QEvent::MouseMove && !m_referenceDragging)return false;
+    if(event->type()==QEvent::MouseButtonRelease && !m_referenceDragging)return false;
+    QModelIndex cell;for(auto *view:views){if(!view->isVisible())continue;const auto point=view->viewport()->mapFromGlobal(mouse->globalPosition().toPoint());if(view->viewport()->rect().contains(point)){cell=view->indexAt(point);break;}}
+    if(event->type()==QEvent::MouseButtonPress){if(!cell.isValid())return true;m_referenceAnchor=QPoint(cell.column()+1,cell.row()+1);m_referenceDragging=true;}
+    if(cell.isValid() && m_referenceDragging){const int r1=qMin(m_referenceAnchor.y(),cell.row()+1),r2=qMax(m_referenceAnchor.y(),cell.row()+1),c1=qMin(m_referenceAnchor.x(),cell.column()+1),c2=qMax(m_referenceAnchor.x(),cell.column()+1);
+        m_referenceIssue=qint64(r2-r1+1)*(c2-c1+1)>10000?tr("Picked reference exceeds 10,000 cells. Nothing inserted."):intersectsHidden(r1,c1,r2,c2)?tr("Show hidden cells before picking this range. Nothing inserted."):QString();
+        m_referencePreview=SheetModel::columnName(c1)+QString::number(r1);if(r1!=r2 || c1!=c2)m_referencePreview+=":"+SheetModel::columnName(c2)+QString::number(r2);
+        m_status->setText(m_referenceIssue.isEmpty()?tr("Reference preview %1 • Release to insert").arg(m_referencePreview):m_referenceIssue);
+    }
+    if(event->type()==QEvent::MouseButtonRelease){if(!cell.isValid())m_referenceIssue="Release over a visible cell. Nothing inserted.";finishReferencePick(true);}return true;
+}
+
 void MainWindow::loadFunctionCatalog() {
     m_client->request("/v1/functions",{},[this](QJsonObject catalog,QString error){
         if(!error.isEmpty() || !validFunctionCatalog(catalog))return;
@@ -1156,6 +1206,7 @@ void MainWindow::restartService() {
 }
 
 void MainWindow::setBusy(bool busy, const QString &message) {
+    if(busy)finishReferencePick(false);
     m_busy = busy || m_releasing;
     if(m_busy){clearFindResults();++m_navigationGeneration;m_navigationExtending=false;}
     for(auto *action:m_navigationActions)action->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
@@ -1266,6 +1317,7 @@ void MainWindow::submitDraft(bool advance, int direction) {
 }
 
 bool MainWindow::resolveDraft() {
+    if(m_pickingReference)finishReferencePick(false);
     if (!m_source->isModified()) return true;
     const auto answer = QMessageBox::question(this,tr("Resolve editor draft"),
         tr("Save or discard the draft for %1%2 before changing its target?")
@@ -2123,6 +2175,11 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
+    if(m_pickingReference){
+        if(object==m_source && event->type()==QEvent::MouseButtonPress)finishReferencePick(false);
+        if(event->type()==QEvent::KeyPress){const auto *key=static_cast<QKeyEvent *>(event);finishReferencePick(false);if(key->key()==Qt::Key_Escape)return true;}
+        else if(referenceMouseEvent(object,event))return true;
+    }
     if (object == m_source && event->type() == QEvent::KeyPress) {
         const auto *key=static_cast<QKeyEvent *>(event);
         if(auto *line=dynamic_cast<FormulaLineEdit *>(m_source))if(line->completionKey(key))return true;
