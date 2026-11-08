@@ -15,6 +15,7 @@ CASES=[('=LEN(TRIM(A1))',5),('=TRIM(A1)','00123'),('=UPPER("a")','A'),('=LOWER("
 CASES += [('=ISNUMBER(A1)',False),('=ISTEXT(A1)',True),('=ISERROR(1/0)',True)]
 CASES += [('=IFNA(XLOOKUP(9,C1:C2,A1:A2),"missing")',"missing")]
 CASES += [('=EXACT(A1,"00123")',False)]
+CASES += [('=SUBSTITUTE(TRIM(A1),"0","X",2)',"0X123")]
 with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/'formulas.dhwb',create=True)) as book:
     book.mutate({'action':'edit','operation_id':'seed','expected_state':book.state(),'cells':[{'row':1,'col':1,'source':' 00123  ','kind':'text'},{'row':1,'col':3,'source':'2'},{'row':2,'col':3,'source':'3'},*[{'row':r,'col':2,'source':formula} for r,(formula,result) in enumerate(CASES,1)]]})
     snapshot=book.read('Sheet1',{'r2':len(CASES),'c2':3})

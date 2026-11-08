@@ -51,6 +51,7 @@ ranges, structured references, external workbooks and 3D ranges are unsupported.
 | LEFT/RIGHT/MID | Unicode scalar substrings, optional LEFT/RIGHT count, 1-based MID start, explicit numeric count rules and bounded results; see [substring tier](formula-next-ten.md#substring-tier) |
 | CONCAT | 1–253 scalar/range arguments, row-major flattening, invariant Text and bounded incremental results; see [concatenation tier](formula-next-ten.md#concatenation-tier) |
 | ISBLANK/ISNUMBER/ISTEXT/ISLOGICAL/ISERROR/ISNA | Scalar type/error inspection without coercion; cycle/resource failures remain visible |
+| SUBSTITUTE | Literal non-overlapping scalar Text replacement, optional 1-based occurrence, preflighted result bounds |
 | EXACT | Case-sensitive invariant scalar Text equality, no Unicode normalization or formatting |
 | IFNA | Two scalar expressions, lazy fallback only for #N/A; other errors/cycles/limits propagate |
 | XLOOKUP | Typed exact forward first match, lazy scalar fallback, same-shaped vectors; see [lookup tier](formula-next-ten.md#exact-lookup-tier) |
