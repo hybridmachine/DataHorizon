@@ -1,0 +1,38 @@
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   88.57 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   30.18 sec
+
+100% tests passed out of 2
+
+Total Test time (real) = 118.76 sec
+
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::formatCellsReadOnlyGuardDoesNotOpenAnEditor()
+PASS   : DesktopTests::formatCellsDialogPatchesOnlyChosenPropertiesAndValidatesColors()
+PASS   : DesktopTests::formatCellsAppliesOneManagedEditKeepsInputsAndRejectsChangedScopes()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 2987ms
+********* Finished testing of DesktopTests *********
+
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+QWARN  : DesktopTests::formatCellsDialogPatchesOnlyChosenPropertiesAndValidatesColors() qt.qpa.fonts: Populating font family aliases took 71 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost. 
+PASS   : DesktopTests::formatCellsDialogPatchesOnlyChosenPropertiesAndValidatesColors()
+QWARN  : DesktopTests::formatCellsAppliesOneManagedEditKeepsInputsAndRejectsChangedScopes() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::formatCellsAppliesOneManagedEditKeepsInputsAndRejectsChangedScopes() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::formatCellsAppliesOneManagedEditKeepsInputsAndRejectsChangedScopes() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::formatCellsAppliesOneManagedEditKeepsInputsAndRejectsChangedScopes() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::formatCellsAppliesOneManagedEditKeepsInputsAndRejectsChangedScopes() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::formatCellsAppliesOneManagedEditKeepsInputsAndRejectsChangedScopes() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::formatCellsAppliesOneManagedEditKeepsInputsAndRejectsChangedScopes() This plugin does not support propagateSizeHints()
+PASS   : DesktopTests::formatCellsAppliesOneManagedEditKeepsInputsAndRejectsChangedScopes()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 895ms
+********* Finished testing of DesktopTests *********
+
+Native Cocoa scale-2 dialog screenshot inspected: build/format-cells-cocoa.png

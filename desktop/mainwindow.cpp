@@ -8,6 +8,7 @@
 #include "formulaeditor.h"
 #include "referencepickerdialog.h"
 #include "tracenavigation.h"
+#include "formatcellsdialog.h"
 #include <QListWidget>
 #include <QGridLayout>
 #include <QApplication>
@@ -335,6 +336,7 @@ void MainWindow::buildUi() {
     connect(m_client,&RestClient::configured,this,&MainWindow::clearFindResults);
     add(edit, tr("Replace all in selection…"), QKeySequence::Replace, [this] { findDialog(true); });
     add(edit, tr("Reconcile unknown operation"), {}, [this] { reconcile(); });
+    add(formatMenu,tr("Format Cells…"),QKeySequence("Ctrl+1"),[this]{showFormatCells();})->setObjectName("formatCellsAction");
     add(formatMenu, tr("Bold"), QKeySequence::Bold, [this] { format({{"bold", !m_model->cell(m_grid->currentIndex())["style"].toObject()["bold"].toBool()}}); }, true);
     add(formatMenu, tr("Italic"), QKeySequence::Italic, [this] { format({{"italic", !m_model->cell(m_grid->currentIndex())["style"].toObject()["italic"].toBool()}}); });
     add(formatMenu, tr("Wrap text"), {}, [this] { format({{"wrap", !m_model->cell(m_grid->currentIndex())["style"].toObject()["wrap"].toBool()}}); })->setObjectName("wrapTextAction");
@@ -1513,7 +1515,20 @@ void MainWindow::clearCells(const QString &mode) {
     submit(command);
 }
 
-void MainWindow::format(const QJsonObject &style, QJsonObject target) {
+void MainWindow::showFormatCells() {
+    if(m_busy || m_unknown || m_info.isEmpty())return;
+    if(m_info["readonly"].toBool()){issue("Workbook is read-only. Formatting is unavailable.");return;}
+    if(m_address->isModified()){issue("Finish or cancel address entry before formatting.");return;}
+    auto range=selectedRange();if(range.isEmpty())return;const auto target=targetContext(range);const auto selection=m_grid->selectionModel()->selection();const auto current=QPersistentModelIndex(m_grid->currentIndex());const auto service=m_client->url();
+    captureGridDraft(false);if(!resolveDraft() || !matchesTarget(target))return;
+    const auto first=SheetModel::columnName(range["c1"].toInt())+QString::number(range["r1"].toInt()),last=SheetModel::columnName(range["c2"].toInt())+QString::number(range["r2"].toInt());FormatCellsDialog dialog(first+(first==last?QString():":"+last),this);
+    if(dialog.exec()!=QDialog::Accepted)return;
+    bool editor=false;auto views=m_frozenTop->views();views.append(m_grid);for(auto *view:views)if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))editor|=delegate->hasEditor();
+    if(m_busy || m_unknown || service!=m_client->url() || !matchesTarget(target) || m_grid->currentIndex()!=current || m_grid->selectionModel()->selection()!=selection || m_source->isModified() || m_address->isModified() || editor){issue("Formatting target changed. Review the selection and open Format Cells again.");return;}
+    const auto style=dialog.patch();if(style.isEmpty() && !dialog.replaceStyle())return;format(style,target,dialog.replaceStyle());
+}
+
+void MainWindow::format(const QJsonObject &style, QJsonObject target, bool replaceStyle) {
     if (m_busy) return;
     if (target.isEmpty()) {
         target=selectedRange(); if (target.isEmpty()) return;
@@ -1522,7 +1537,7 @@ void MainWindow::format(const QJsonObject &style, QJsonObject target) {
     QJsonArray edits;
     for (int row = target["r1"].toInt(); row <= target["r2"].toInt(); ++row)
         for (int col = target["c1"].toInt(); col <= target["c2"].toInt(); ++col)
-            edits.append(QJsonObject{{"row", row}, {"col", col}, {"style", style}});
+            edits.append(QJsonObject{{"row", row}, {"col", col}, {"style", style}, {"replace_style",replaceStyle}});
     target["action"]="edit"; target["label"]="Format cells"; target["cells"]=edits; submit(target);
 }
 

@@ -70,3 +70,20 @@ Changed selection, draft/address entry, service, workbook or state drops the
 pending jump; it never discards an editor draft. Read-only workbooks remain
 navigable. Jumping is a local view operation, with bounded viewport reads and no
 stored edits, formula evaluation request beyond ordinary display, hooks or Undo.
+
+4. [Format Cells #78](https://github.com/hybridmachine/DataHorizon/pull/78): locally verified, visually inspected, author-reviewed and merged.
+
+## Format Cells
+
+Format → Format Cells… (Ctrl+1 through Qt platform shortcuts) provides Number,
+Font, Alignment, Fill and Border tabs for the supported styles. Keep existing
+and tri-state boxes leave each cell's unchosen properties intact; invalid RGB
+colors disable OK. Clear all formatting is explicit and can be combined with
+chosen replacements. An unchanged dialog or Cancel submits nothing.
+
+One bounded managed edit applies the selected properties or full style reset,
+without changing stored sources/kinds/formulas, and supports ordinary Undo/Redo.
+The original rectangle, state, current cell, service and draft/address fences are
+checked after the dialog. Read-only and projected/hidden scopes retain existing
+guards. Applicable interchange mappings remain the existing style tier; later
+increments extend this dialog and the shared style contract together.
