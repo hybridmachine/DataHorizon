@@ -5,6 +5,7 @@
 #include "listcriteriadialog.h"
 #include "namedlistviews.h"
 #include "functionhelp.h"
+#include "formulaeditor.h"
 #include <QGridLayout>
 #include <QApplication>
 #include <QClipboard>
@@ -114,6 +115,7 @@ public:
         connect(this,&QAbstractItemDelegate::commitData,this,clear);
         connect(this,&QAbstractItemDelegate::closeEditor,this,[clear](QWidget *editor,QAbstractItemDelegate::EndEditHint){clear(editor);});
     }
+    std::function<QJsonObject()> functionCatalog;
     std::function<bool()> canEdit;
     std::function<void(const QModelIndex &,int)> enterPressed;
     std::function<bool(const QModelIndex &,int)> tabPressed;
@@ -129,12 +131,13 @@ public:
     }
     QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const override {
         if (canEdit && !canEdit()) return nullptr;
-        auto *editor = QStyledItemDelegate::createEditor(parent, option, index);
+        Q_UNUSED(option);auto *editor=new FormulaLineEdit(parent);editor->setFrame(false);if(functionCatalog)editor->setCatalog(functionCatalog());
         if (auto *line = qobject_cast<QLineEdit *>(editor)) {
             line->setMaxLength(65536); m_editor=line; m_index=index;
             m_original=index.data(Qt::EditRole).toString();
             const auto item=index.data(SheetModel::CellRole).toJsonObject();
             m_inputKind=item["input_kind"].toString("auto");
+            editor->setFormulaAllowed(m_inputKind!="text");
             line->setAccessibleName(tr("Cell %1%2 input").arg(SheetModel::columnName(index.column()+1))
                 .arg(item["row"].toInt(index.row()+1)));
         }
@@ -155,8 +158,10 @@ protected:
         option->features.setFlag(QStyleOptionViewItem::WrapText,index.data(SheetModel::CellRole).toJsonObject()["style"].toObject()["wrap"].toBool());
     }
     bool eventFilter(QObject *object, QEvent *event) override {
+        if(event->type()==QEvent::FocusOut)if(auto *line=dynamic_cast<FormulaLineEdit *>(object))if(line->completionVisible())return false;
         if (object==m_editor && event->type()==QEvent::KeyPress) {
             const auto *key=static_cast<QKeyEvent *>(event);
+            if(auto *line=dynamic_cast<FormulaLineEdit *>(object))if(line->completionKey(key))return true;
             if((key->key()==Qt::Key_Tab || key->key()==Qt::Key_Backtab) && !(key->modifiers()&~Qt::ShiftModifier) && tabPressed
                 && tabPressed(m_index,key->key()==Qt::Key_Backtab || key->modifiers().testFlag(Qt::ShiftModifier)?-1:1)) {
                 QPointer<QLineEdit> editor=m_editor;emit commitData(editor);
@@ -187,6 +192,7 @@ MainWindow::MainWindow(const StartupOptions &options, QWidget *parent)
     m_service.setParent(this);
     m_service.setObjectName("ownedService");
     buildUi();
+    connect(this,&MainWindow::serviceReady,this,&MainWindow::loadFunctionCatalog);
     connect(QApplication::clipboard(), &QClipboard::dataChanged, this, [this] { ++m_clipboardGeneration; });
     connect(m_model, &SheetModel::editRequested, this, [this](int row, int col, const QString &source, const QString &kind) {
         const auto destination=m_enterRequest; m_enterRequest={};
@@ -239,7 +245,7 @@ void MainWindow::buildUi() {
     auto *view = menuBar()->addMenu(tr("&View"));
     auto *help = menuBar()->addMenu(tr("&Help"));
     auto *functionHelp=help->addAction(tr("Formula functions…"));functionHelp->setObjectName("functionHelpAction");connect(functionHelp,&QAction::triggered,this,&MainWindow::showFunctionHelp);
-    connect(m_client,&RestClient::configured,this,[this]{m_functionCatalog={};});
+    connect(m_client,&RestClient::configured,this,[this]{m_functionCatalog={};for(auto *line:findChildren<QLineEdit *>())if(auto *formula=dynamic_cast<FormulaLineEdit *>(line))formula->setCatalog({});});
     m_toolbar = addToolBar(tr("Workbook"));
     m_toolbar->setObjectName("workbookToolbar");
     auto add = [this](QMenu *menu, const QString &label, const QKeySequence &key, auto callback, bool toolbar = false) {
@@ -393,7 +399,7 @@ void MainWindow::buildUi() {
     layout->setContentsMargins(4, 4, 4, 4); layout->setSpacing(4);
     auto *formula = new QHBoxLayout;
     m_address = new QLineEdit("A1"); m_address->setObjectName("address"); m_address->setAccessibleName(tr("Cell address")); m_address->setMaximumWidth(180); m_address->setToolTip(tr("Cell or range, for example B2:D20 (up to 10,000 cells)"));
-    m_source = new QLineEdit; m_source->setObjectName("source"); m_source->setAccessibleName(tr("Cell input or formula")); m_source->setPlaceholderText(tr("Value or formula"));
+    m_source = new FormulaLineEdit; m_source->setObjectName("source"); m_source->setAccessibleName(tr("Cell input or formula")); m_source->setPlaceholderText(tr("Value or formula"));
     m_source->setMaxLength(65536);
     m_source->installEventFilter(this);
     formula->addWidget(m_address); formula->addWidget(new QLabel("fx")); formula->addWidget(m_source, 1);
@@ -402,7 +408,7 @@ void MainWindow::buildUi() {
     m_listSummary->setMinimumWidth(0);m_listSummary->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);m_listSummary->hide();layout->addWidget(m_listSummary);
     connect(m_model,&QAbstractItemModel::modelReset,this,&MainWindow::updateListSummary);
     m_grid = new QTableView; m_grid->setObjectName("grid"); m_grid->setAccessibleName(tr("Spreadsheet")); m_grid->setModel(m_model);
-    auto *delegate=new CellDelegate(m_grid); delegate->canEdit=[this]{return !m_source->isModified();};
+    auto *delegate=new CellDelegate(m_grid); delegate->functionCatalog=[this]{return m_functionCatalog;};delegate->canEdit=[this]{return !m_source->isModified();};
     delegate->enterPressed=[this](const QModelIndex &index,int direction){m_enterRequest=enterDestination(index,direction);};
     delegate->tabPressed=[this](const QModelIndex &index,int direction){
         if(!m_frozenTop || !(m_frozenTop->active() || m_frozenTop->columnActive()))return false;
@@ -464,7 +470,7 @@ void MainWindow::buildUi() {
         connect(pane->horizontalHeader(),&QHeaderView::sectionResized,wrapTimer,qOverload<>(&QTimer::start));
         connect(pane->horizontalHeader(),&QHeaderView::sectionResized,this,[recordSize](int section,int,int size){recordSize(true,section,size);});
         connect(pane->verticalHeader(),&QHeaderView::sectionResized,this,[recordSize](int section,int,int size){recordSize(false,section,size);});
-        auto *delegate=new CellDelegate(pane);delegate->canEdit=[this]{return !m_source->isModified();};
+        auto *delegate=new CellDelegate(pane);delegate->functionCatalog=[this]{return m_functionCatalog;};delegate->canEdit=[this]{return !m_source->isModified();};
         delegate->enterPressed=[this](const QModelIndex &index,int direction){m_enterRequest=enterDestination(index,direction);};
     delegate->tabPressed=[this](const QModelIndex &index,int direction){
         if(!m_frozenTop || !(m_frozenTop->active() || m_frozenTop->columnActive()))return false;
@@ -904,11 +910,18 @@ void MainWindow::showHidden(bool rows,bool columns) {
     applyVisibility(); saveViewState();
 }
 
+void MainWindow::loadFunctionCatalog() {
+    m_client->request("/v1/functions",{},[this](QJsonObject catalog,QString error){
+        if(!error.isEmpty() || !validFunctionCatalog(catalog))return;
+        m_functionCatalog=catalog;for(auto *line:findChildren<QLineEdit *>())if(auto *formula=dynamic_cast<FormulaLineEdit *>(line))formula->setCatalog(catalog);
+    },false);
+}
+
 void MainWindow::showFunctionHelp() {
     if(m_client->url().isEmpty()){issue("Connect to a service to read its implemented function catalog.");return;}
     m_client->request("/v1/functions",{},[this](QJsonObject catalog,QString error){
         if(!error.isEmpty() || !validFunctionCatalog(catalog)){issue(error.isEmpty()?"Invalid function catalog response.":error);return;}
-        m_functionCatalog=catalog;FunctionHelpDialog dialog(catalog,this);dialog.exec();
+        m_functionCatalog=catalog;for(auto *line:findChildren<QLineEdit *>())if(auto *formula=dynamic_cast<FormulaLineEdit *>(line))formula->setCatalog(catalog);FunctionHelpDialog dialog(catalog,this);dialog.exec();
     },false);
 }
 
@@ -1170,6 +1183,7 @@ void MainWindow::syncSource() {
         if(!addressDraft) m_address->clear();
         return;
     }
+    if(auto *line=dynamic_cast<FormulaLineEdit *>(m_source))line->setFormulaAllowed(m_model->cell(index)["input_kind"].toString()!="text");
     m_model->ensureSource(index);
     const bool ready=m_model->sourceReady(index);
     m_source->setEnabled(!m_busy && !m_info["readonly"].toBool() && ready);
@@ -2111,6 +2125,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
     if (object == m_source && event->type() == QEvent::KeyPress) {
         const auto *key=static_cast<QKeyEvent *>(event);
+        if(auto *line=dynamic_cast<FormulaLineEdit *>(m_source))if(line->completionKey(key))return true;
         if (key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter) {
             submitDraft(true,key->modifiers().testFlag(Qt::ShiftModifier)?-1:1); return true;
         }

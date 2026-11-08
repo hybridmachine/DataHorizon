@@ -10,6 +10,7 @@
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QSplitter>
+#include <QSet>
 #include <QVBoxLayout>
 
 inline bool validFunctionCatalog(const QJsonObject &catalog) {
