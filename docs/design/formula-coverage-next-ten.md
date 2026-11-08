@@ -50,6 +50,8 @@ TEXTJOIN's ODS extension follows [LibreOffice](https://help.libreoffice.org/late
 
 2. [Lazy IFNA #66](https://github.com/hybridmachine/DataHorizon/pull/66): locally built/tested, self-reviewed and merged.
 
+3. [EXACT #67](https://github.com/hybridmachine/DataHorizon/pull/67): locally built/tested, self-reviewed and merged.
+
 ## Scalar inspection tier
 
 ISBLANK recognizes blank/NULL, including a formula's scalar NULL result; empty
@@ -66,3 +68,10 @@ IFNA shares the two-scalar/lazy fallback contract with IFERROR but catches only
 #N/A. All other errors, including cycles and limits, propagate; a successful
 blank/NULL becomes empty Text. XLSX uses `_xlfn.IFNA`; ODS uses standard IFNA
 ([OpenFormula 1.3, §6.15.6](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part4-formula/OpenDocument-v1.3-os-part4-formula.pdf)).
+
+## EXACT tier
+
+EXACT compares two scalars using the existing invariant Text conversion, ignoring
+formatting. Unicode code points and case must match exactly; no normalization,
+trimming or numeric Text parsing is applied. Blank/NULL becomes empty Text.
+Both inputs are evaluated; errors/cycles/limits propagate, and ranges reject.
