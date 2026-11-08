@@ -109,6 +109,8 @@ def main():
     outcome.add_argument("operation_id")
     calculate=commands.add_parser('calculate',help='Calculate one bounded range as a background job and wait for its snapshot')
     calculate.add_argument('--sheet',default='Sheet1');calculate.add_argument('--r1',type=int,default=1);calculate.add_argument('--c1',type=int,default=1);calculate.add_argument('--r2',type=int,default=32);calculate.add_argument('--c2',type=int,default=16)
+    job=commands.add_parser('job',help='Durable reviewed operation jobs; create/append/start/resume read JSON stdin; execution waits for a terminal outcome')
+    job.add_argument('job_action',choices=['create','append','seal','status','start','resume','cancel','release']);job.add_argument('--job-id');job.add_argument('--offset',type=int,default=0);job.add_argument('--limit',type=int,default=100)
     direct = commands.add_parser("direct-sql", help="Explicit independent SQLite access; bypasses application behavior")
     direct.add_argument("sql")
     args = parser.parse_args()
@@ -147,6 +149,17 @@ def main():
                         if not isinstance(request, dict):
                             raise ValueError("Operation JSON must be an object")
                         result = book.apply(request.pop("action"), request.pop("sheet", args.sheet), **request)
+                    elif args.command=='job':
+                        import time
+                        arguments=json.load(sys.stdin) if args.job_action in ('create','append','start','resume') else {}
+                        if args.job_action=='create':result=book.create_job(job_id=args.job_id,**arguments)
+                        else:
+                            if not args.job_id:raise ValueError('--job-id is required')
+                            if args.job_action=='status':arguments.update(offset=args.offset,limit=args.limit)
+                            if args.job_action in ('start','resume'):arguments.setdefault('expected_state',book.state)
+                            result=book.operation_job(args.job_id,args.job_action,**arguments)
+                        while result.get('status') in ('running',) or (args.job_action=='create' and 'source_path' in arguments and result.get('status')=='staging'):
+                            time.sleep(.05);result=book.operation_job(result['job_id'])
                     elif args.command=='calculate':
                         import time
                         result=book.calculate(args.sheet,r1=args.r1,c1=args.c1,r2=args.r2,c2=args.c2)

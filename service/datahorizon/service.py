@@ -36,13 +36,23 @@ CAPABILITIES = {
     "formulas": ["arithmetic", "references", "concatenation", *sorted(SUPPORTED_FUNCTIONS)],
     "operations": ["list_edit","list_declare","list_reconcile","list_forget","metadata_set","metadata_delete","workbook_import", "edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
     "interchange": ["csv", "xlsx", "ods"], "managed_sql": False, "remote_binding": False,
-    "follow_up_work": False, "chunked_jobs": False, "preparation_jobs": True, "background_calculation":True, "structural_events":True,
+    "follow_up_work": False, "chunked_jobs": True, "preparation_jobs": True, "background_calculation":True, "structural_events":True,
     "max_preparation_jobs":4, "preparation_job_seconds":10, "preparation_retention_seconds":300,
     "max_open_workbooks":8, "max_open_handles":128,
     "max_concurrent_requests":16, "max_header_bytes":65536, "request_read_timeout_seconds":10,
 }
 
 ROUTES = {
+    "/v1/workbooks/{workbook}/operation-jobs":("post","Stage a reviewed edit/CSV or frozen find/list job; never starts writes"),
+    "/v1/workbooks/{workbook}/operation-jobs/{job}":("get","Inspect durable job status and batch receipts"),
+    "/v1/workbooks/{workbook}/operation-jobs/{job}/append":("post","Append up to 1,000 explicitly typed edits"),
+    "/v1/workbooks/{workbook}/operation-jobs/{job}/seal":("post","Seal a staged plan for review"),
+    "/v1/workbooks/{workbook}/operation-jobs/{job}/status":("post","Page frozen results"),
+    "/v1/workbooks/{workbook}/operation-jobs/{job}/start":("post","Execute the reviewed plan"),
+    "/v1/workbooks/{workbook}/operation-jobs/{job}/resume":("post","Explicitly continue remaining known work after receipt reconciliation"),
+    "/v1/workbooks/{workbook}/operation-jobs/{job}/cancel":("post","Cooperatively cancel; preserve committed receipts"),
+    "/v1/workbooks/{workbook}/operation-jobs/{job}/release":("post","Delete terminal sidecar staging; preserve native receipts"),
+
     "/v1/workbooks/{workbook}/calculation/jobs":("post","Start a bounded read-only background calculation"),
     "/v1/workbooks/{workbook}/calculation/jobs/{job}":("get","Read pending/current/error/stale calculation state"),
     "/v1/workbooks/{workbook}/calculation/jobs/{job}/cancel":("post","Cancel or discard a calculation snapshot"),
@@ -98,6 +108,10 @@ def openapi():
     scalar = {"oneOf":[{"type":"string","nullable":True},{"type":"number"},{"type":"boolean"}]}
     name = {"type":"string","minLength":1,"maxLength":31,"pattern":r"^[^\[\]:*?/\\!\x00-\x1f]+$"}
     schemas = {
+        "OperationJobRequest":{"type":"object","description":"Disk sidecar job. Stage at most 100,000 cells/64 MiB; atomic mode at most 10,000 cells/3 MiB. Explicit batches at most 1,000 cells and 1,000 attempts. Read scope at most 100,000 cells/256 columns. CSV source_path is a server-local file, default Text; column_types/locale are explicit. Sidecar journals are tied to this native file identity and excluded from native copies.","properties":{
+            "job_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"},"action":{"type":"string","enum":["edit","find","list"]},"mode":{"type":"string","enum":["atomic","batches"]},"sheet":sheet,"expected_state":{"type":"string"},"source_path":{"type":"string"},"batch_size":{"type":"integer","minimum":1,"maximum":1000},**rectangle}},
+        "OperationJobAction":{"type":"object","description":"append: cells array. start/resume: reviewed plan_digest and current expected_state. status: offset/limit (up to 256). Cancellation is cooperative before commit; committed batches remain committed. Missing receipts mean unknown, never safe automatic retry.","properties":{"cells":{"type":"array","maxItems":1000,"items":{"type":"object"}},"plan_digest":{"type":"string"},"expected_state":{"type":"string"},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":256}}},
+
         "Error": {"type":"object", "required":["code","message","outcome"], "properties":{
             "code":{"type":"string"},"message":{"type":"string"},
             "outcome":{"type":"string","enum":["rejected","rolled_back","unknown"]},"operation_id":{"type":"string"}}},
@@ -262,7 +276,7 @@ def openapi():
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = ("OperationJobRequest" if path.endswith("/operation-jobs") else "OperationJobAction") if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
@@ -474,6 +488,20 @@ class Service(ThreadingHTTPServer):
             return self._dispatch_book(method,parts[2],book,suffix,body)
 
     def _dispatch_book(self, method, handle, book, suffix, body):
+        if suffix and suffix[0]=='operation-jobs':
+            jobs=book.operation_jobs()
+            if method=='POST' and len(suffix)==1:return jobs.create(body)
+            if method=='GET' and len(suffix)==2:return jobs.view(suffix[1])
+            if method=='POST' and len(suffix)==3:
+                identifier,action=suffix[1:]
+                if action=='append':return jobs.append(identifier,body.get('cells'))
+                if action=='seal':return jobs.seal(identifier)
+                if action=='status':return jobs.view(identifier,body.get('offset',0),body.get('limit',100))
+                if action in ('start','resume'):return jobs.start(identifier,body,resume=action=='resume')
+                if action=='cancel':return jobs.cancel(identifier)
+                if action=='release':return jobs.release(identifier)
+            raise EngineError('NOT_FOUND','Unknown operation job action',404)
+
         if method=='POST' and suffix==['records','copy']:
             from .record_operations import copy
             return copy(book,body)

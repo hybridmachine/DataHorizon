@@ -115,6 +115,35 @@ explicit timezone_policy=utc normalizes offset timestamps, reporting that the
 original offset is omitted; default offset handling still rejects. Native values
 remain civil ISO, with no named-zone/DST inference or host-locale dependency.
 
+Task 9 adds disk-staged jobs with an explicit sealed SHA-256 plan review. CSV
+staging streams a server-local file up to 64 MiB, retaining Text unless explicit
+column types/profile were selected. Typed edit uploads use 1,000-cell/1-MiB chunks;
+atomic execution is capped at 10,000 cells/3 MiB. Explicit batch mode stages up to
+100,000 cells/64 MiB and executes at most 1,000 admitted transactions, each up to
+1,000 cells under the existing history/hook/deadline contract. Cancellation before
+commit records rollback; cancellation after a commit retains its receipt. Resume
+requires current state and the sealed plan again. Native receipt reconciliation
+recovers a commit/journal-acknowledgement gap without replay; a missing receipt
+remains unknown and blocks execution/release. Jobs never retry unknown writes.
+
+Four retained sidecar journals per native file live in `.<filename>.dhjobs/`.
+They are tied to workbook/file identity, survive reopen and are excluded from native
+copies/interchange; native operation receipts remain authoritative. Release explicitly
+deletes staging/snapshots, retaining native receipts. Read jobs snapshot to disk,
+stream up to 100,000 source cells/256 columns, spool at most 64 MiB and page at most
+256 results; list sorting covers the full declared scope. Read evaluation uses one
+recorded UTC clock, bounded calculators and a 60-second execution deadline; staging
+and batched execution have 300-second budgets with ordinary five-second commits.
+Changed inputs withhold frozen read results. These are bounded explicit jobs, not
+unbounded import, whole-database sorting or a production job scheduler.
+
+REST `/operation-jobs`, SDK create_job/operation_job, managed CLI `job` and
+Data → Operation jobs share the contract. The GUI stages CSV as Text, runs source
+find/ascending first-column lists, reviews plans/receipts, pages results, cancels,
+releases and explicitly inspects/resumes a retained ID. Transport failure retains
+the ID and blocks editing until status reconciliation; closing describes the retained
+journal and committed-batch semantics. Wider schemas are explicit API/SDK options.
+
 ## Evidence ledger
 
 Task 4 opts in through a top-level `on_structure(context,event)` function in the

@@ -264,6 +264,8 @@ class Workbook:
         self.dependencies=DependencyIndex()
         self.unverified_records=set()
         self._calculation_jobs=None
+        self._operation_jobs=None
+        self.cancel_event=None
         self.epoch = str(uuid.uuid4())
         created_identity = None
         if create:
@@ -312,8 +314,9 @@ class Workbook:
         _verify_destination(self.path,self.file_identity)
 
     def close(self):
+        if self._operation_jobs is not None:self._operation_jobs.close()
         if self._calculation_jobs is not None:self._calculation_jobs.close()
-        self.db.close()
+        with self.lock:self.db.close()
 
     def ensure_metadata(self):
         if self.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]<3:
@@ -324,6 +327,18 @@ class Workbook:
             from .calculation_jobs import CalculationJobs
             self._calculation_jobs=CalculationJobs(self)
         return self._calculation_jobs
+
+    def operation_jobs(self):
+        if self._operation_jobs is not None:return self._operation_jobs
+        with self.lock:
+            if self._operation_jobs is None:
+                from .operation_jobs import OperationJobs
+                self._operation_jobs=OperationJobs(self)
+            return self._operation_jobs
+
+    def check_operation(self):
+        require(self.cancel_event is None or not self.cancel_event.is_set(),"CANCELLED","Cancellation confirmed before commit",409)
+        require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
 
     def validate(self, db=None, *, deadline=None):
         db = self.db if db is None else db
@@ -661,8 +676,7 @@ class Workbook:
                 item = None
         key = (sheet, row, col)
         before = self.raw(*key)
-        if time.monotonic() > self.deadline:
-            raise EngineError("TIMEOUT", "Operation exceeded its time budget")
+        self.check_operation()
         if before == item:
             return
         if key not in self.changes:
@@ -770,7 +784,7 @@ class Workbook:
             raise error
         return receipt
 
-    def mutate(self, request):
+    def mutate(self, request, *, cancel_event=None):
         require(isinstance(request, dict), "INVALID_ARGUMENT", "Operation must be an object")
         operation = request.get("operation_id")
         require(isinstance(operation, str) and len(operation) <= 100 and bool(operation), "OPERATION_ID", "An operation_id is required")
@@ -780,6 +794,7 @@ class Workbook:
             raise EngineError("OPERATION_ID","operation_id must be valid Unicode text") from error
         fingerprint = hashlib.sha256(encoded(request).encode()).hexdigest()
         with self.lock:
+            self.cancel_event=cancel_event
             try:
                 self.verify_file()
                 receipt = self.recorded_operation(operation, fingerprint)
@@ -815,6 +830,7 @@ class Workbook:
             in_transaction = True
             try:
                 self.db.execute("SAVEPOINT operation_changes")
+                self.check_operation()
                 # The writer lock closes the check/write race with independent tools.
                 self.refresh(deadline=self.deadline)
                 require(request.get("expected_state") == self.state(), "STALE_STATE", "Workbook changed. Refresh and review the edit before retrying", 409)
@@ -1006,15 +1022,15 @@ class Workbook:
                 if structural:self.structure_hook(operation,request,'after',before_catalog)
                 self.run_hooks(operation)
                 records.finish(self,request,record_context)
-                require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
+                self.check_operation()
                 self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1]}
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
                 result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": len(self.changes)}
                 result.update(reference_report)
                 self.db.execute("INSERT INTO operations VALUES(?,?,?)", (operation, fingerprint, encoded(result)))
-                require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
+                self.check_operation()
                 self.verify_file()
-                require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
+                self.check_operation()
                 self.db.execute("COMMIT")
                 in_transaction = False
                 if structural:self.dependencies.clear()
@@ -1131,7 +1147,7 @@ class Workbook:
         with sql_deadline(self.db,self.deadline):
             for row, col, source, style in self.db.execute(
                     "SELECT row,col,source,style FROM cells WHERE sheet_id=? LIMIT ?",(target,MAX_CELLS+1)):
-                require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
+                self.check_operation()
                 require(len(deleted)<MAX_CELLS,"LIMIT","Sheet deletion exceeds 10,000 cells")
                 payload_bytes += len(source.encode())+len(style.encode())+128
                 require(payload_bytes<=8*1024*1024,"LIMIT","Sheet deletion sources exceed 8 MiB")
@@ -1139,7 +1155,7 @@ class Workbook:
             for scanned, (sheet, name, row, col, source, kind, style) in enumerate(self.db.execute(
                     "SELECT c.sheet_id,s.name,c.row,c.col,c.source,c.kind,c.style FROM cells c JOIN sheets s ON s.id=c.sheet_id "
                     "WHERE c.sheet_id<>? AND c.source LIKE '=%' AND c.kind IN ('auto','formula')",(target,)),1):
-                require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
+                self.check_operation()
                 require(scanned<=MAX_CELLS,"LIMIT","Sheet reference scan exceeds 10,000 formulas")
                 payload_bytes += len(source.encode())+len(style.encode())+128
                 require(payload_bytes<=8*1024*1024,"LIMIT","Sheet deletion sources exceed 8 MiB")
@@ -1238,7 +1254,7 @@ class Workbook:
                     "SELECT c.sheet_id,s.name,c.row,c.col,c.source,c.kind,c.style FROM cells c JOIN sheets s ON s.id=c.sheet_id "
                     "WHERE c.source LIKE '=%' AND c.kind IN ('auto','formula')"):
                 scanned += 1
-                require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
+                self.check_operation()
                 require(scanned<=MAX_CELLS, "LIMIT", "Structure reference scan exceeds 10,000 formulas; a large-job path is not available")
                 key = (sheet,row,col)
                 if key in moved and moved[key][0] is None:
@@ -1469,7 +1485,7 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
-    def snapshot(self, path):
+    def snapshot(self, path, *, cancel_event=None):
         with self.lock:
             deadline = time.monotonic()+SNAPSHOT_SECONDS
             self.verify_file()
@@ -1480,6 +1496,7 @@ class Workbook:
             try:
                 _verify_destination(destination,identity)
                 def progress(*_):
+                    require(cancel_event is None or not cancel_event.is_set(),"CANCELLED","Snapshot cancelled",409)
                     require(time.monotonic()<=deadline,"TIMEOUT","Snapshot exceeded its time budget; the destination is preserved for inspection")
                 self.db.backup(target,pages=256,progress=progress,sleep=0.01)
                 _verify_destination(destination,identity)
