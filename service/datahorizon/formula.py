@@ -593,6 +593,14 @@ class Calculator:
         if isinstance(value,list):raise FormulaError("#VALUE!","Array arguments are unavailable")
         return value
 
+    def text_argument(self,node,sheet):
+        text=scalar_text(self.scalar_value(node,sheet));self.text_work(text);return text
+
+    def exact_text(self,args,sheet):
+        if len(args)!=2:raise FormulaError("#NAME?","EXACT requires two scalars")
+        if any(node[0]=="range" for node in args):raise FormulaError("#VALUE!","EXACT requires scalars")
+        result=self.text_argument(args[0],sheet)==self.text_argument(args[1],sheet);self.check();return result
+
     def inspect_scalar(self,name,args,sheet):
         if len(args)!=1:raise FormulaError("#NAME?",name+" requires one scalar argument")
         if args[0][0]=="range":raise FormulaError("#VALUE!","Inspection requires a scalar")
@@ -825,6 +833,7 @@ class Calculator:
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
             if name in ("ISBLANK","ISNUMBER","ISTEXT","ISLOGICAL","ISERROR","ISNA"):return self.inspect_scalar(name,args,sheet)
+            if name=="EXACT":return self.exact_text(args,sheet)
             if name=="XLOOKUP":return self.xlookup(args,sheet)
             if name in ("COUNTIF","SUMIF"):
                 return self.conditional_aggregate(name,args,sheet)

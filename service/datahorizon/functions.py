@@ -62,6 +62,9 @@ for name,formula,result in (
 register('IFNA','IFNA(value, fallback)','Return a lazy fallback only for #N/A.','Two scalar expressions. Other ordinary errors, cycles and resource failures propagate. Successful blank/NULL becomes empty Text, as for IFERROR; arrays unavailable.','=IFNA(XLOOKUP(7,B1,C1),"missing")','missing','Logical')
 
 
+register('EXACT','EXACT(text1, text2)','Compare scalar Text with case-sensitive Unicode equality.',TEXT_RULES.removeprefix('One scalar argument. ')+' Two scalars; formatting is ignored. No trimming, case folding or Unicode normalization.','=EXACT("Data","data")',False,'Text')
+
+
 def function_catalog():
     return dict(version=1,functions=deepcopy([FUNCTIONS[name] for name in sorted(FUNCTIONS)]),
                 notes=['This catalog describes the implemented development tier, not full Excel compatibility.',

@@ -30,6 +30,11 @@ class FollowOnTests(unittest.TestCase):
         self.assertEqual(calculate('=IFNA("00123",1/0)'),'00123');self.assertEqual(calculate('=IFNA(B1,1/0)'),'')
         self.errors([('=IFNA(1/0,7)','#DIV/0!'),('=IFNA(A1,7)','#CYCLE!'),('=IFNA(SUM(B1:B10001),7)','#LIMIT!'),('=IFNA(B1:B2,7)','#VALUE!'),('=IFNA(7)','#NAME?'),('=IFNA(XLOOKUP(9,B1,C1),1/0)','#DIV/0!')])
 
+    def test_exact_case_sensitive_unicode_and_scalar_spelling(self):
+        for formula,expected in [('=EXACT("Data","data")',False),('=EXACT("00123",123)',False),('=EXACT(123,"123")',True),('=EXACT(TRUE,"TRUE")',True),('=EXACT(B1,"")',True),('=EXACT("é","é")',False),('=EXACT("x ","x")',False),('=EXACT("😀","😀")',True)]:self.assertIs(calculate(formula),expected)
+        self.errors([('=EXACT(B1:B2,1)','#VALUE!'),('=EXACT(1/0,"x")','#DIV/0!'),('=EXACT(A1,"x")','#CYCLE!'),('=EXACT(1)','#NAME?')])
+        self.assertTrue(calculate('=EXACT(B1,B1)',{(1,2):cell('x'*60000)}))
+
     def test_catalog_formulas_recalculate_after_native_package_reimport(self):
         with tempfile.TemporaryDirectory() as temp:
             for index,item in enumerate(function_catalog()['functions']):
