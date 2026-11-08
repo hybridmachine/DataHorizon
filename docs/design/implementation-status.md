@@ -34,8 +34,8 @@ formula source; values export contains 20.5. Formatting renders 20.50.
 
 Whole-workbook XLSX/ODS now preserve supported cross-sheet formulas, sheet names,
 order and empty sheets. Import replaces an empty destination in one managed
-operation and rejects activated required handlers until structure events are
-defined. XLSX shared formulas and explicit ODS cell-style parent chains have
+operation; activated handlers must explicitly opt into the transactional structural
+event contract. XLSX shared formulas and explicit ODS cell-style parent chains have
 bounded expansion/resolution and independent producer/consumer fixtures. Read-only
 recovery inspection reports bounded input/style/formula-syntax issues without
 running code or repairs. The [preceding workbook batch](workbook-next-five.md) records scope,

@@ -36,7 +36,7 @@ CAPABILITIES = {
     "formulas": ["arithmetic", "references", "concatenation", *sorted(SUPPORTED_FUNCTIONS)],
     "operations": ["workbook_import", "edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
     "interchange": ["csv", "xlsx", "ods"], "managed_sql": False, "remote_binding": False,
-    "follow_up_work": False, "chunked_jobs": False, "preparation_jobs": True, "background_calculation":True,
+    "follow_up_work": False, "chunked_jobs": False, "preparation_jobs": True, "background_calculation":True, "structural_events":True,
     "max_preparation_jobs":4, "preparation_job_seconds":10, "preparation_retention_seconds":300,
     "max_open_workbooks":8, "max_open_handles":128,
     "max_concurrent_requests":16, "max_header_bytes":65536, "request_read_timeout_seconds":10,
@@ -228,7 +228,7 @@ def openapi():
         "scope":{"type":"string","enum":["selection","workbook"],"default":"selection"},
         "sheet_index":{"type":"integer","minimum":1,"maximum":64,"default":1},"row":row,"col":col,
         "mode":{"type":"string","enum":["formulas","values"],"default":"formulas"}},
-        "description":"Selected sheet or whole-workbook inputs, at most 10,000 stored cells total. Whole-workbook XLSX/ODS requires an empty destination and no required handler, replaces sheets atomically and clears history. Values mode uses unverified formula caches. Issues block the entire applicable payload. Explicit reviewed Apply is one managed edit; no code activation."}
+        "description":"Selected sheet or whole-workbook inputs, at most 10,000 stored cells total. Whole-workbook XLSX/ODS requires an empty destination and an explicit structural hook when handlers are activated, replaces sheets atomically and clears history. Values mode uses unverified formula caches. Issues block the entire applicable payload. Explicit reviewed Apply is one managed edit; no code activation."}
     schemas["SpreadsheetExport"] = {**schemas["CsvExportRequest"],"properties":{**schemas["CsvExportRequest"]["properties"],
         "scope":{"type":"string","enum":["selection","workbook"],"default":"selection"},
         "mode":{"type":"string","enum":["formulas","values"],"default":"formulas"}}}
