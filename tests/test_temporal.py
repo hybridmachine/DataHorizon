@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from datahorizon.temporal import Temporal, from_serial, to_serial
-from datahorizon.engine import Workbook, EngineError
+from datahorizon.engine import Workbook, EngineError, display
 from datahorizon.client import LocalService, APIError
 
 
@@ -77,6 +77,17 @@ class TemporalStorageTests(unittest.TestCase):
             with sqlite3.connect(self.path) as direct:direct.execute("UPDATE dh_meta SET format_version=?",(version,))
             with self.assertRaises(EngineError) as caught:self.book.info()
             self.assertEqual(caught.exception.body["code"],"FORMAT_VERSION")
+
+    def test_temporal_formats_preserve_inputs_and_history(self):
+        self.apply(cells=[dict(row=1,col=1,source="2024-02-29T12:34:56.123456",kind="datetime")])
+        self.apply(cells=[dict(row=1,col=1,style={"format":"date_dmy"})])
+        cell=self.book.read("Sheet1",{})["cells"][0]
+        self.assertEqual(cell["display"],"29/02/2024");self.assertEqual(cell["value_kind"],"datetime")
+        self.apply("undo");self.assertEqual(self.book.read("Sheet1",{})["cells"][0]["display"],"2024-02-29T12:34:56.123456")
+        self.assertEqual(display(61,{"format":"date_iso"}),"1900-03-01")
+        self.assertEqual(display(60,{"format":"date_iso"}),"####")
+        self.assertEqual(display(.5,{"format":"time24"}),"12:00:00")
+        self.assertEqual(display("00123",{"format":"date_iso"}),"00123")
 
 
 class TemporalInterfaceTests(unittest.TestCase):
