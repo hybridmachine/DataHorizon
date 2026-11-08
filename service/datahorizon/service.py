@@ -36,13 +36,17 @@ CAPABILITIES = {
     "formulas": ["arithmetic", "references", "concatenation", *sorted(SUPPORTED_FUNCTIONS)],
     "operations": ["workbook_import", "edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
     "interchange": ["csv", "xlsx", "ods"], "managed_sql": False, "remote_binding": False,
-    "follow_up_work": False, "chunked_jobs": False, "preparation_jobs": True,
+    "follow_up_work": False, "chunked_jobs": False, "preparation_jobs": True, "background_calculation":True,
     "max_preparation_jobs":4, "preparation_job_seconds":10, "preparation_retention_seconds":300,
     "max_open_workbooks":8, "max_open_handles":128,
     "max_concurrent_requests":16, "max_header_bytes":65536, "request_read_timeout_seconds":10,
 }
 
 ROUTES = {
+    "/v1/workbooks/{workbook}/calculation/jobs":("post","Start a bounded read-only background calculation"),
+    "/v1/workbooks/{workbook}/calculation/jobs/{job}":("get","Read pending/current/error/stale calculation state"),
+    "/v1/workbooks/{workbook}/calculation/jobs/{job}/cancel":("post","Cancel or discard a calculation snapshot"),
+    "/v1/workbooks/{workbook}/calculation/jobs/{job}/release":("post","Release a terminal calculation job"),
     "/v1/functions": ("get", "Implemented formula signatures, rules and worked examples; no workbook required"),
     "/v1/capabilities": ("get", "Preview capabilities"),
     "/v1/open": ("post", "Create or open a server-local native workbook"),
@@ -96,6 +100,7 @@ def openapi():
             "create":{"type":"boolean","default":False},"readonly":{"type":"boolean","default":False}},
             "example":{"path":"/tmp/example.dhwb","create":True}},
         "RangeRequest": {"type":"object","properties":{
+            "calculation":{"type":"string","enum":["fresh","cached"],"default":"fresh","description":"Cached mode returns pending for formulas without verified nonvolatile results."},
             "preview":{"type":"boolean","default":False,"description":"Bounded display/input previews; omitted input/value fields are explicitly flagged and cannot be pasted as full data"},
             "sheet":sheet,**rectangle,
             "rows":{"type":"array","minItems":1,"maxItems":256,"items":row,"description":"Optional explicit source rows for projections; replaces r1/r2"}},
@@ -228,6 +233,7 @@ def openapi():
         "scope":{"type":"string","enum":["selection","workbook"],"default":"selection"},
         "mode":{"type":"string","enum":["formulas","values"],"default":"formulas"}}}
     schemas["JobAction"] = {"type":"object","properties":{}}
+    schemas['CalculationRequest']={'type':'object','required':['job_id','expected_state'],'properties':{**schemas['RangeRequest']['properties'],'job_id':{'type':'string','pattern':'^[A-Za-z0-9_-]{1,100}$'},'expected_state':{'type':'string'}},'description':'Read-only snapshot up to 10,000 cells, 4 MiB, two-second evaluation. State and generation guard publication; one UTC clock; cancellation never writes workbook inputs.'}
     paths = {}
     for path, (method, summary) in ROUTES.items():
         parameters = [{"name": name, "in": "path", "required": True, "schema": {"type": "string"}}
@@ -237,7 +243,7 @@ def openapi():
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
@@ -446,6 +452,12 @@ class Service(ThreadingHTTPServer):
             return self._dispatch_book(method,parts[2],book,suffix,body)
 
     def _dispatch_book(self, method, handle, book, suffix, body):
+        if method=='POST' and suffix==['calculation','jobs']:
+            return book.calculation_jobs().start(body)
+        if len(suffix) in (3,4) and suffix[:2]==['calculation','jobs']:
+            action=suffix[3] if len(suffix)==4 else None
+            require((method=='GET' and action is None) or (method=='POST' and action in ('cancel','release')),'NOT_FOUND','Unknown calculation action',404)
+            return book.calculation_jobs().access(suffix[2],action)
         if method == "POST" and suffix == ["close"]:
             with self.registry_lock:
                 last = sum(engine is book for engine in self.workbooks.values())==1

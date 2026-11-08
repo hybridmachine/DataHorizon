@@ -254,6 +254,7 @@ class Workbook:
         self.lock = threading.RLock()
         self.undo, self.redo = [], []
         self.dependencies=DependencyIndex()
+        self._calculation_jobs=None
         self.epoch = str(uuid.uuid4())
         created_identity = None
         if create:
@@ -302,7 +303,14 @@ class Workbook:
         _verify_destination(self.path,self.file_identity)
 
     def close(self):
+        if self._calculation_jobs is not None:self._calculation_jobs.close()
         self.db.close()
+
+    def calculation_jobs(self):
+        if self._calculation_jobs is None:
+            from .calculation_jobs import CalculationJobs
+            self._calculation_jobs=CalculationJobs(self)
+        return self._calculation_jobs
 
     def validate(self, db=None, *, deadline=None):
         db = self.db if db is None else db
@@ -394,6 +402,7 @@ class Workbook:
                 (sheet,row,c1,c2))
 
     def read(self, sheet, args, *, limit=4096):
+        require(args.get('calculation','fresh') in ('fresh','cached'),'INVALID_ARGUMENT','calculation must be fresh or cached')
         preview=args.get("preview",False)
         require(type(preview) is bool, "INVALID_ARGUMENT", "preview must be boolean")
         if "rows" in args:
@@ -426,6 +435,11 @@ class Workbook:
                         item = typed({"source": source, "kind": kind, "style": json.loads(style)})
                         result = {"row": row, "col": col, "source": source, "input_kind": kind, "kind": item["kind"], "style": item["style"]}
                         try:
+                            if item['kind']=='formula' and args.get('calculation')=='cached' and (sheet,row,col) not in self.dependencies.values:
+                                result.update(value=None,display='…',calculation='pending');cells.append(result)
+                                response_bytes+=len(encoded(result).encode())+1
+                                require(response_bytes<=4*1024*1024,'READ_LIMIT','Cached read exceeds 4 MiB')
+                                continue
                             value = calc.cell(sheet, row, col) if item["kind"] == "formula" else item["value"]
                             result.update(value=value, display=display(value, item["style"]), calculation="current")
                             if isinstance(value,Temporal): result["value_kind"] = value.kind

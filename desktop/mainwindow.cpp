@@ -262,6 +262,7 @@ void MainWindow::buildUi() {
     auto *formatMenu = menuBar()->addMenu(tr("F&ormat"));
     auto *sheetMenu = menuBar()->addMenu(tr("&Sheet"));
     auto *dataMenu = menuBar()->addMenu(tr("&Data"));
+    auto *calculate=dataMenu->addAction(tr("Recalculate selection in background…"));calculate->setObjectName("calculateSelectionAction");connect(calculate,&QAction::triggered,this,&MainWindow::calculateSelection);
     auto *view = menuBar()->addMenu(tr("&View"));
     auto *help = menuBar()->addMenu(tr("&Help"));
     auto *functionHelp=help->addAction(tr("Formula functions…"));functionHelp->setObjectName("functionHelpAction");connect(functionHelp,&QAction::triggered,this,&MainWindow::showFunctionHelp);
@@ -1571,6 +1572,26 @@ bool MainWindow::formatPainterMouseEvent(QObject *object,QEvent *event) {
     auto command=destination;command["action"]="edit";command["cells"]=edits;command["label"]="Paint cell formatting";
     if(QJsonDocument(command).toJson(QJsonDocument::Compact).size()>4*1024*1024-4096){issue("Formatting request exceeds the ordinary request budget. Choose a smaller destination.");return true;}
     submit(command);return true;
+}
+
+void MainWindow::calculateSelection() {
+    if(m_busy || m_unknown || m_info.isEmpty())return;
+    auto range=selectedRange();if(range.isEmpty())return;const auto target=targetContext(range);const auto service=m_client->url();const auto generation=++m_calculationGeneration;
+    auto request=range;request["sheet"]=m_model->sheet();request["expected_state"]=m_info["state"];request["job_id"]=QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const auto resource=base()+"/calculation/jobs/"+request["job_id"].toString();
+    auto *progress=new QProgressDialog(tr("Calculating stored selection…"),tr("Cancel"),0,0,this);progress->setObjectName("backgroundCalculationProgress");progress->setWindowModality(Qt::NonModal);progress->setMinimumDuration(0);progress->show();
+    auto *timer=new QTimer(progress);timer->setInterval(100);
+    connect(progress,&QProgressDialog::canceled,this,[this,resource]{m_client->request(resource+"/cancel",{},[](QJsonObject,QString){});});
+    auto finish=[this,target,service,generation,resource,progress,timer](QJsonObject result,QString error){
+        if(error.isEmpty() && result["status"]=="running"){progress->setLabelText(result["phase"].toString());timer->start();return;}
+        timer->stop();progress->hide();progress->deleteLater();m_client->request(resource+"/release",{},[](QJsonObject,QString){});
+        if(service!=m_client->url() || generation!=m_calculationGeneration || !matchesTarget(target))return;
+        if(!error.isEmpty()){issue(error);return;}const auto status=result["status"].toString();
+        if(status=="completed"){const auto snapshot=result["result"].toObject();int errors=0;for(const auto &cell:snapshot["cells"].toArray())errors+=cell.toObject()["calculation"]=="error";m_status->setText(tr("Background snapshot: %1 cells, %2 formula errors • UTC %3").arg(snapshot["cells"].toArray().size()).arg(errors).arg(result["clock"].toString()));}
+        else m_status->setText(tr("Background calculation: %1").arg(status));
+    };
+    connect(timer,&QTimer::timeout,this,[this,timer,resource,finish]{timer->stop();m_client->request(resource,{},finish,false);});
+    m_client->request(base()+"/calculation/jobs",request,finish);
 }
 
 void MainWindow::enterTemporal() {

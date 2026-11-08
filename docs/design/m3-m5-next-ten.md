@@ -64,6 +64,16 @@ committed, never cancelled-away. Atomic and explicitly batched jobs have distinc
 contracts; batches expose operation IDs, receipts and committed progress. No
 automatic retry of unknown writes or automatic replay of user code.
 
+Task 3 exposes POST `/calculation/jobs` and GET/cancel/release resources under
+an open workbook. Read-only snapshots are bounded by 10,000 cells/4 MiB and a
+two-second evaluation, carry state/generation/clock, and withhold stale results.
+Job storage is ephemeral and bounded; cancelling discards results, never inputs.
+REST/SDK cached reads return pending for uncached formulas; fresh reads retain
+synchronous behavior. `calculate` in the managed CLI waits for a terminal snapshot.
+Data → Recalculate selection runs with a modeless cancel/progress control and
+reports its original snapshot without replacing newer grid values or drafts.
+Automatic continuous viewport recalculation is outside this first explicit-job tier.
+
 ## Evidence ledger
 
 Task 2 implements a process-local index capped at 4,096 nodes/50,000 dependency

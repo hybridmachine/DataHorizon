@@ -146,13 +146,22 @@ class WorkbookClient:
             self._refresh_receipt=None
         return self.info
 
-    def read(self, sheet="Sheet1", r1=1, c1=1, r2=32, c2=16):
+    def read(self, sheet="Sheet1", r1=1, c1=1, r2=32, c2=16, *, calculation='fresh'):
         self._ensure_open()
-        return self.client.request(self.base + "/range", {"sheet": sheet, "r1": r1, "c1": c1, "r2": r2, "c2": c2})
+        return self.client.request(self.base + "/range", {"sheet": sheet, "r1": r1, "c1": c1, "r2": r2, "c2": c2,'calculation':calculation})
 
     def read_styles(self,sheet="Sheet1",r1=1,c1=1,r2=1,c2=1):
         self._ensure_open()
         return self.client.request(self.base+"/styles",dict(sheet=sheet,r1=r1,c1=c1,r2=r2,c2=c2,expected_state=self.state))
+
+    def calculate(self,sheet='Sheet1',job_id=None,**scope):
+        self._ensure_open()
+        return self.client.request(self.base+'/calculation/jobs',dict(sheet=sheet,job_id=job_id or str(uuid.uuid4()),expected_state=self.state,**scope))
+
+    def calculation(self,job_id,action=None):
+        self._ensure_open()
+        if action not in (None,'cancel','release'):raise ValueError('Unknown calculation action')
+        return self.client.request(self.base+'/calculation/jobs/'+quote(job_id,safe='')+('/'+action if action else ''),{} if action else None)
 
     def trace(self,row,col,direction="precedents",sheet="Sheet1"):
         self._ensure_open()

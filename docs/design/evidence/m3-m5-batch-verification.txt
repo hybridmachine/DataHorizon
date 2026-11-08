@@ -6,3 +6,5 @@ Delivery: one published-head author review and merge per task; self-reviews are 
 Final qualification evidence is appended as implementation proceeds. Hosted CI is not used.
 
 Task 2: Debug build, 5 dependency tests and the complete Python suite passed (404 tests; 15 optional-binding skips). Transitive/range/absent/cross-sheet invalidation, unrelated reuse, external refresh, lazy errors, volatile clocks, transaction isolation and Undo verified.
+
+Task 3: Debug build, 4 background-calculation tests, the Qt control check and the full Python suite passed (408 tests; 15 optional-binding skips). Stale generation/input-state publication, cancellation, pending reads, clock metadata, REST/SDK and no-write GUI semantics verified.
