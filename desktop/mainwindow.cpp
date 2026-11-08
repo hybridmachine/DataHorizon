@@ -118,6 +118,8 @@ public:
         connect(this,&QAbstractItemDelegate::closeEditor,this,[clear](QWidget *editor,QAbstractItemDelegate::EndEditHint){clear(editor);});
     }
     std::function<QJsonObject()> functionCatalog;
+    std::function<void()> syntaxChanged;
+    std::function<QList<QColor>(int,int)> referenceColors;
     std::function<bool()> canEdit;
     std::function<void(const QModelIndex &,int)> enterPressed;
     std::function<bool(const QModelIndex &,int)> tabPressed;
@@ -125,6 +127,7 @@ public:
     FormulaLineEdit *activeEditor()const{return hasEditor()?dynamic_cast<FormulaLineEdit *>(m_editor.data()):nullptr;}
     void paint(QPainter *painter,const QStyleOptionViewItem &option,const QModelIndex &index) const override {
         QStyledItemDelegate::paint(painter,option,index);
+        if(referenceColors){int inset=3;for(const auto &color:referenceColors(index.row(),index.column())){painter->save();painter->setClipRect(option.rect);painter->setBrush(Qt::NoBrush);painter->setPen(QPen(color,1.5));painter->drawRect(option.rect.adjusted(inset,inset,-inset,-inset));painter->restore();inset+=3;}}
         const auto item=index.data(SheetModel::CellRole).toJsonObject();
         if(item["style"].toObject()["border"].toString()=="box") {
             painter->save(); painter->setClipRect(option.rect);
@@ -134,7 +137,7 @@ public:
     }
     QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const override {
         if (canEdit && !canEdit()) return nullptr;
-        Q_UNUSED(option);auto *editor=new FormulaLineEdit(parent);editor->setFrame(false);if(functionCatalog)editor->setCatalog(functionCatalog());
+        Q_UNUSED(option);auto *editor=new FormulaLineEdit(parent);editor->setFrame(false);editor->syntaxChanged=syntaxChanged;if(functionCatalog)editor->setCatalog(functionCatalog());
         if (auto *line = qobject_cast<QLineEdit *>(editor)) {
             line->setMaxLength(65536); m_editor=line; m_index=index;
             m_original=index.data(Qt::EditRole).toString();
@@ -409,17 +412,18 @@ void MainWindow::buildUi() {
     formula->addWidget(m_address); formula->addWidget(new QLabel("fx")); formula->addWidget(m_source, 1);
     auto *pickButton=new QToolButton(central);pickButton->setObjectName("pickReferenceButton");pickButton->setDefaultAction(m_pickReferenceAction);pickButton->setText(tr("Pick reference"));pickButton->setFocusPolicy(Qt::NoFocus);pickButton->setToolTip(tr("Insert a clicked cell or dragged range into this formula draft. Release to insert; Escape cancels picking."));formula->addWidget(pickButton);
     layout->addLayout(formula);
+    m_formulaCues=new QLabel(central);m_formulaCues->setObjectName("formulaSyntaxCues");m_formulaCues->setAccessibleName(tr("Formula references and parentheses"));m_formulaCues->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);m_formulaCues->hide();layout->addWidget(m_formulaCues);dynamic_cast<FormulaLineEdit *>(m_source)->syntaxChanged=[this]{updateFormulaReferences();};
     m_listSummary=new QLabel(central);m_listSummary->setObjectName("listCriteriaSummary");m_listSummary->setAccessibleName(tr("Active sort and filter criteria"));
     m_listSummary->setMinimumWidth(0);m_listSummary->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);m_listSummary->hide();layout->addWidget(m_listSummary);
     connect(m_model,&QAbstractItemModel::modelReset,this,&MainWindow::updateListSummary);
     m_grid = new QTableView; m_grid->setObjectName("grid"); m_grid->setAccessibleName(tr("Spreadsheet")); m_grid->setModel(m_model);
-    auto *delegate=new CellDelegate(m_grid); delegate->functionCatalog=[this]{return m_functionCatalog;};delegate->canEdit=[this]{return !m_source->isModified();};
+    auto *delegate=new CellDelegate(m_grid); delegate->functionCatalog=[this]{return m_functionCatalog;};delegate->syntaxChanged=[this]{updateFormulaReferences();};delegate->referenceColors=[this](int row,int col){return formulaReferenceColors(row,col);};delegate->canEdit=[this]{return !m_source->isModified();};
     delegate->enterPressed=[this](const QModelIndex &index,int direction){m_enterRequest=enterDestination(index,direction);};
     delegate->tabPressed=[this](const QModelIndex &index,int direction){
         if(!m_frozenTop || !(m_frozenTop->active() || m_frozenTop->columnActive()))return false;
         m_enterRequest=enterDestination(index,direction,true);return true;
     };
-    connect(delegate,&QAbstractItemDelegate::closeEditor,this,[this]{m_enterRequest={};});
+    connect(delegate,&QAbstractItemDelegate::closeEditor,this,[this]{m_enterRequest={};QTimer::singleShot(0,this,[this]{updateFormulaReferences();});});
     m_grid->setItemDelegate(delegate);
     m_grid->setSelectionMode(QAbstractItemView::ContiguousSelection);
     m_grid->setSelectionBehavior(QAbstractItemView::SelectItems);
@@ -475,13 +479,13 @@ void MainWindow::buildUi() {
         connect(pane->horizontalHeader(),&QHeaderView::sectionResized,wrapTimer,qOverload<>(&QTimer::start));
         connect(pane->horizontalHeader(),&QHeaderView::sectionResized,this,[recordSize](int section,int,int size){recordSize(true,section,size);});
         connect(pane->verticalHeader(),&QHeaderView::sectionResized,this,[recordSize](int section,int,int size){recordSize(false,section,size);});
-        auto *delegate=new CellDelegate(pane);delegate->functionCatalog=[this]{return m_functionCatalog;};delegate->canEdit=[this]{return !m_source->isModified();};
+        auto *delegate=new CellDelegate(pane);delegate->functionCatalog=[this]{return m_functionCatalog;};delegate->syntaxChanged=[this]{updateFormulaReferences();};delegate->referenceColors=[this](int row,int col){return formulaReferenceColors(row,col);};delegate->canEdit=[this]{return !m_source->isModified();};
         delegate->enterPressed=[this](const QModelIndex &index,int direction){m_enterRequest=enterDestination(index,direction);};
     delegate->tabPressed=[this](const QModelIndex &index,int direction){
         if(!m_frozenTop || !(m_frozenTop->active() || m_frozenTop->columnActive()))return false;
         m_enterRequest=enterDestination(index,direction,true);return true;
     };
-        connect(delegate,&QAbstractItemDelegate::closeEditor,this,[this]{m_enterRequest={};});pane->setItemDelegate(delegate);
+        connect(delegate,&QAbstractItemDelegate::closeEditor,this,[this]{m_enterRequest={};QTimer::singleShot(0,this,[this]{updateFormulaReferences();});});pane->setItemDelegate(delegate);
     }
     gridLayout->addWidget(m_frozenTop,0,1);gridLayout->addWidget(m_frozenTop->cornerView(),0,0);
     gridLayout->addWidget(m_frozenTop->leftWidget(),1,0);gridLayout->addWidget(m_grid,1,1);
@@ -918,6 +922,20 @@ void MainWindow::showHidden(bool rows,bool columns) {
     applyVisibility(); saveViewState();
 }
 
+QList<QColor> MainWindow::formulaReferenceColors(int row,int column) const {
+    QList<QColor> result;if(!m_tabs || m_info.isEmpty())return result;const int sourceRow=m_model->sourceRow(row)+1;const auto name=m_tabs->tabText(m_tabs->currentIndex());
+    for(const auto &cue:m_formulaReferences)if((cue.sheet.isEmpty() || cue.sheet==m_model->sheet() || cue.sheet.toCaseFolded()==name.toCaseFolded()) && sourceRow>=cue.r1 && sourceRow<=cue.r2 && column+1>=cue.c1 && column+1<=cue.c2 && !result.contains(cue.color)){result.append(cue.color);if(result.size()==3)break;}
+    return result;
+}
+
+void MainWindow::updateFormulaReferences() {
+    if(m_shuttingDown || !m_formulaCues || !m_frozenTop)return;auto *line=dynamic_cast<FormulaLineEdit *>(m_source);auto views=m_frozenTop->views();views.append(m_grid);
+    for(auto *view:views)if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))if(delegate->activeEditor())line=delegate->activeEditor();
+    const auto syntax=line?line->syntaxCues():FormulaSyntaxCues{};m_formulaReferences=syntax.references;QStringList references;
+    for(int i=0;i<qMin(8,syntax.references.size());++i)references.append(syntax.references[i].source);QString text;if(!references.isEmpty())text=tr("References: %1").arg(references.join(" • "));if(syntax.references.size()>8)text+=tr(" • +%1 more").arg(syntax.references.size()-8);
+    if(!syntax.parentheses.isEmpty())text+=(text.isEmpty()?QString():QString(" • "))+syntax.parentheses;if(syntax.truncated)text+=tr(" • Visual cue limit reached (64 references / nesting 128)");m_formulaCues->setText(text.left(300));m_formulaCues->setToolTip(text);m_formulaCues->setVisible(!text.isEmpty());m_grid->setProperty("formulaReferenceCount",syntax.references.size());for(auto *view:views)view->viewport()->update();
+}
+
 void MainWindow::startReferencePick() {
     QSignalBlocker blocker(m_pickReferenceAction);m_pickReferenceAction->setChecked(false);
     if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected()){issue("Reference picking needs an editable source sheet.");return;}
@@ -1231,7 +1249,7 @@ void MainWindow::syncSource() {
     auto index = m_grid->currentIndex();
     if (!index.isValid()) {
         m_source->clear(); m_source->setModified(false); m_source->setEnabled(false); m_draftTarget={};
-        if(!addressDraft) m_address->clear();
+        if(!addressDraft){m_address->clear();m_address->setModified(false);}
         return;
     }
     if(auto *line=dynamic_cast<FormulaLineEdit *>(m_source))line->setFormulaAllowed(m_model->cell(index)["input_kind"].toString()!="text");

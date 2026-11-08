@@ -1,0 +1,22 @@
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   71.25 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   28.27 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =  99.53 sec
+
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+QWARN  : DesktopTests::formulaHighlightingTracksSourceAndCellDraftsWithoutMutationOrSourceChanges() qt.qpa.window: Window position QRect(790,526 218x46) outside any known screen, using primary screen
+QWARN  : DesktopTests::formulaHighlightingTracksSourceAndCellDraftsWithoutMutationOrSourceChanges() qt.qpa.window: Window position QRect(790,534 412x84) outside any known screen, using primary screen
+PASS   : DesktopTests::formulaHighlightingTracksSourceAndCellDraftsWithoutMutationOrSourceChanges()
+PASS   : DesktopTests::formulaAutocompleteAndHintsStayDraftsInSourceCellAndFrozenEditors()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 1932ms
+********* Finished testing of DesktopTests *********
+
+Native screenshot inspected: build/formula-cues-native.png
