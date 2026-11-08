@@ -58,6 +58,8 @@ TEXTJOIN's ODS extension follows [LibreOffice](https://help.libreoffice.org/late
 
 6. [FIND #70](https://github.com/hybridmachine/DataHorizon/pull/70): locally built/tested, self-reviewed and merged.
 
+7. [SEARCH #71](https://github.com/hybridmachine/DataHorizon/pull/71): locally built/tested, self-reviewed and merged.
+
 ## Scalar inspection tier
 
 ISBLANK recognizes blank/NULL, including a formula's scalar NULL result; empty
@@ -108,3 +110,14 @@ finite truncation and must lie in 1 through Text length+1. Empty needle returns
 the start; a missing match is #VALUE!. Wildcards remain literal, normalization
 forms stay distinct, and numeric Text start arguments reject. Scalar conversion,
 input work/deadlines and visible cycle/resource errors remain shared.
+
+## SEARCH tier
+
+SEARCH uses Unicode casefolding with * (any folded sequence), ? (one folded
+character), and ~ escapes for wildcard/tilde literals. Returned positions map
+back to 1-based original code points, including expanding folds such as ß→ss.
+Start/empty/missing/scalar rules match FIND. Patterns are capped at 255 original
+characters. Literal searches use bounded native substring search; wildcard
+prefix searches charge work/deadlines and use no regular-expression engine or
+unbounded suffix copies. Expensive valid patterns may return #LIMIT!, which
+IFERROR cannot hide. Unicode normalization/locale/grapheme behavior is not implied.
