@@ -78,6 +78,7 @@ private:
     void cancelFormatPainter();
     bool formatPainterMouseEvent(QObject *object,QEvent *event);
     void showFormatCells();
+    void enterTemporal();
     void adjustDecimals(int change);
     void format(const QJsonObject &style, QJsonObject target = {}, bool replaceStyle = false);
     void importFile();

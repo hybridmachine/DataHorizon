@@ -83,7 +83,7 @@ def openapi():
                  "r2":{**row,"description":"Inclusive final row; defaults to r1"},
                  "c2":{**col,"description":"Inclusive final column; defaults to c1"}}
     sheet = {"type":"string","minLength":1,"description":"Sheet name or stable sheet ID","default":"Sheet1"}
-    kinds = ["auto","formula","text","number","boolean","null"]
+    kinds = ["auto","formula","text","number","boolean","null","date","time","datetime"]
     scalar = {"oneOf":[{"type":"string","nullable":True},{"type":"number"},{"type":"boolean"}]}
     name = {"type":"string","minLength":1,"maxLength":31,"pattern":r"^[^\[\]:*?/\\!\x00-\x1f]+$"}
     schemas = {
@@ -115,12 +115,12 @@ def openapi():
             "background":{"type":"string","pattern":"^#[0-9a-fA-F]{6}$"}}},
         "CellEdit": {"type":"object","required":["row","col"],"properties":{
             "row":row,"col":col,"source":{"type":"string","maxLength":65536,"description":"Stored input, at most 64 KiB of UTF-8"},
-            "kind":{"type":"string","enum":kinds,"default":"auto"},
+            "kind":{"type":"string","enum":kinds,"default":"auto","description":"Explicit date/time/datetime use YYYY-MM-DD, HH:MM:SS[.ffffff], or YYYY-MM-DDTHH:MM:SS[.ffffff], without timezone offsets. Auto never guesses dates."},
             "style":{"$ref":"#/components/schemas/Style"},
             "clear":{"type":"boolean"},"clear_input":{"type":"boolean"},"replace_style":{"type":"boolean"}}},
         "ClipboardCell":{"type":"object","description":"A full clipboard cell, or {} for an absent cell. Full paste preserves input_kind and translates formula source using the origin coordinates.","properties":{
             "source":{"type":"string"},"input_kind":{"type":"string","enum":kinds,"default":"text"},
-            "kind":{"type":"string","enum":[*kinds,"blank"]},"value":scalar,"style":{"$ref":"#/components/schemas/Style"},
+            "kind":{"type":"string","enum":[*kinds,"blank"]},"value":scalar,"value_kind":{"type":"string","enum":["date","time","datetime"]},"style":{"$ref":"#/components/schemas/Style"},
             "calculation":{"type":"string","enum":["current","error","pending"]},"error":{"type":"string"},
             "source_omitted":{"type":"boolean"},"value_omitted":{"type":"boolean"}}},
         "Receipt": {"type":"object","required":["operation_id","outcome","state","changed_cells"],"properties":{
