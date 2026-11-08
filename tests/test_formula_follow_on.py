@@ -101,7 +101,7 @@ class FollowOnTests(unittest.TestCase):
 
     def test_multiple_criteria_required_hook_rolls_back_parent_and_generated_edits(self):
         with tempfile.TemporaryDirectory() as temp:
-            handler=Path(temp)/'handler.py';handler.write_text('def on_change(context, changes):\n for change in changes:\n  if (change["row"],change["col"])==(1,1):\n   total=context.value(change["sheet"],1,1)\n   if total>10: raise ValueError("total too large")\n   context.set(change["sheet"],1,4,str(total))\n')
+            handler=Path(temp)/'handler.py';handler.write_text('def on_change(context, changes):\n for change in changes:\n  if (change["row"],change["col"])==(1,1):\n   total=context.value(change["sheet"],1,1)\n   context.set(change["sheet"],1,4,str(total))\n   if total>10: raise ValueError("total too large")\n')
             with LocalService(handler=handler) as client,client.open(Path(temp)/'hook.dhwb',create=True) as book:
                 book.apply('edit',cells=[dict(row=1,col=2,source='Pen',kind='text'),dict(row=1,col=3,source='2'),dict(row=1,col=1,source='=SUMIFS(C1,B1,"Pen")')]);before=book.read(r2=1,c2=4)
                 with self.assertRaises(APIError):book.apply('edit',cells=[dict(row=1,col=1,source='=SUMIFS(C1,B1,"Pen")*10')])

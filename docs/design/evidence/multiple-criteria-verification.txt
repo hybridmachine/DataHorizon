@@ -7,7 +7,7 @@ Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 5845ms
 ********* Finished testing of DesktopTests *********
 
 
-Ran 364 tests in 29.242s
+Ran 364 tests in 28.812s
 
 OK
 
