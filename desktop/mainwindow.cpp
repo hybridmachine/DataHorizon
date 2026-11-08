@@ -337,6 +337,7 @@ void MainWindow::buildUi() {
     m_painterAction=add(formatMenu,tr("Format painter"),{},[this]{startFormatPainter();},true);m_painterAction->setObjectName("formatPainterAction");m_painterAction->setCheckable(true);m_painterAction->setToolTip(tr("Copy the selected style pattern, then click a destination or drag an exact multiple. Escape cancels."));
     m_painterCancel=new QAction(this);m_painterCancel->setShortcut(QKeySequence(Qt::Key_Escape));m_painterCancel->setShortcutContext(Qt::WidgetWithChildrenShortcut);m_painterCancel->setEnabled(false);addAction(m_painterCancel);connect(m_painterCancel,&QAction::triggered,this,[this]{cancelFormatPainter();m_status->setText(tr("Format painter cancelled"));});
     add(formatMenu,tr("Format Cells…"),QKeySequence("Ctrl+1"),[this]{showFormatCells();})->setObjectName("formatCellsAction");
+    add(edit,tr("Enter date/time…"),{},[this]{enterTemporal();})->setObjectName("enterTemporalAction");
     add(formatMenu, tr("Bold"), QKeySequence::Bold, [this] { format({{"bold", !m_model->cell(m_grid->currentIndex())["style"].toObject()["bold"].toBool()}}); }, true);
     add(formatMenu, tr("Italic"), QKeySequence::Italic, [this] { format({{"italic", !m_model->cell(m_grid->currentIndex())["style"].toObject()["italic"].toBool()}}); });
     add(formatMenu, tr("Wrap text"), {}, [this] { format({{"wrap", !m_model->cell(m_grid->currentIndex())["style"].toObject()["wrap"].toBool()}}); })->setObjectName("wrapTextAction");
@@ -1353,7 +1354,7 @@ void MainWindow::submitDraft(bool advance, int direction) {
     const auto inputKind=draft["input_kind"].toString("auto");
     const bool sameSource=m_model->sourceReady(index) && source==original["source"].toString();
     if (!sameSource || inputKind!=original["input_kind"].toString("auto")) {
-        cell["source"]=source; cell["kind"]=sameSource?inputKind:inputKind=="text"?QString("text"):QString("auto");
+        cell["source"]=source; cell["kind"]=sameSource || QStringList{"text","date","time","datetime"}.contains(inputKind)?inputKind:QString("auto");
     }
     m_source->setModified(false);
     submit({{"action","edit"},{"label","Edit cell"},{"cells",QJsonArray{cell}},
@@ -1558,6 +1559,22 @@ bool MainWindow::formatPainterMouseEvent(QObject *object,QEvent *event) {
     auto command=destination;command["action"]="edit";command["cells"]=edits;command["label"]="Paint cell formatting";
     if(QJsonDocument(command).toJson(QJsonDocument::Compact).size()>4*1024*1024-4096){issue("Formatting request exceeds the ordinary request budget. Choose a smaller destination.");return true;}
     submit(command);return true;
+}
+
+void MainWindow::enterTemporal() {
+    if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_address->isModified())return;
+    const auto current=QPersistentModelIndex(m_grid->currentIndex());if(!current.isValid())return;
+    const auto selection=m_grid->selectionModel()->selection();const auto service=m_client->url();
+    const QJsonObject range{{"r1",m_model->sourceRow(current.row())+1},{"r2",m_model->sourceRow(current.row())+1},{"c1",current.column()+1},{"c2",current.column()+1}};
+    const auto target=targetContext(range);captureGridDraft(false);if(!resolveDraft() || !matchesTarget(target))return;
+    QDialog dialog(this);dialog.setObjectName("temporalEntryDialog");dialog.setWindowTitle(tr("Enter date/time"));QFormLayout layout(&dialog);
+    QComboBox kind(&dialog);kind.setObjectName("temporalKind");kind.addItem(tr("Date"),"date");kind.addItem(tr("Time"),"time");kind.addItem(tr("Date and time"),"datetime");layout.addRow(tr("Type"),&kind);
+    QLineEdit source(&dialog);source.setObjectName("temporalSource");source.setMaxLength(32);source.setText(m_model->cell(current)["source"].toString());layout.addRow(tr("ISO value"),&source);
+    QLabel help(tr("Date: YYYY-MM-DD\nTime: HH:MM:SS[.ffffff]\nDate and time: YYYY-MM-DDTHH:MM:SS[.ffffff]\nCivil values without timezone offsets."),&dialog);layout.addRow(&help);
+    QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog);layout.addRow(&buttons);connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    if(dialog.exec()!=QDialog::Accepted)return;
+    if(m_busy || m_unknown || service!=m_client->url() || !matchesTarget(target) || m_grid->currentIndex()!=current || m_grid->selectionModel()->selection()!=selection || m_source->isModified() || m_address->isModified()){issue("Date/time target changed. Open entry again.");return;}
+    auto command=target;command["action"]="edit";command["label"]="Enter date/time";command["cells"]=QJsonArray{QJsonObject{{"row",range["r1"]},{"col",range["c1"]},{"source",source.text()},{"kind",kind.currentData().toString()}}};submit(command);
 }
 
 void MainWindow::showFormatCells() {

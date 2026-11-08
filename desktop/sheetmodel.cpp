@@ -120,7 +120,7 @@ bool SheetModel::setData(const QModelIndex &index, const QVariant &value, int ro
     if (role != Qt::EditRole || !(flags(index) & Qt::ItemIsEditable)) return false;
     const auto original=cell(index); const auto source=value.toString();
     const auto inputKind=original["input_kind"].toString("auto");
-    const auto kind=source==original["source"].toString()?inputKind:inputKind=="text"?QString("text"):QString("auto");
+    const auto kind=source==original["source"].toString() || QStringList{"text","date","time","datetime"}.contains(inputKind)?inputKind:QString("auto");
     emit editRequested(sourceRow(index.row())+1, index.column()+1, source,kind);
     return true;
 }

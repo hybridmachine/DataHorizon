@@ -232,6 +232,7 @@ class WorkbookClient:
         return response
 
     def set(self, row, col, source, sheet="Sheet1", kind="auto"):
+        """Set an explicit kind; date/time/datetime require strict civil ISO strings."""
         return self.apply("edit", sheet, cells=[{"row": row, "col": col, "source": str(source), "kind": kind}])
 
     def outcome(self, operation_id):

@@ -3,9 +3,14 @@ import tempfile
 from pathlib import Path
 import sqlite3
 import uuid
+import json
+import os
+import subprocess
+import sys
 
 from datahorizon.temporal import Temporal, from_serial, to_serial
 from datahorizon.engine import Workbook, EngineError
+from datahorizon.client import LocalService, APIError
 
 
 class TemporalContractTests(unittest.TestCase):
@@ -72,3 +77,19 @@ class TemporalStorageTests(unittest.TestCase):
             with sqlite3.connect(self.path) as direct:direct.execute("UPDATE dh_meta SET format_version=?",(version,))
             with self.assertRaises(EngineError) as caught:self.book.info()
             self.assertEqual(caught.exception.body["code"],"FORMAT_VERSION")
+
+
+class TemporalInterfaceTests(unittest.TestCase):
+    def test_rest_sdk_cli_and_automatic_text(self):
+        with tempfile.TemporaryDirectory() as temp, LocalService() as client:
+            path=Path(temp)/"entry.dhwb"
+            with client.open(path,create=True) as book:
+                for col,source,kind in ((1,"2024-02-29","date"),(2,"12:34:56","time"),(3,"2024-02-29T12:34:56","datetime"),(4,"2024-02-29","auto")):
+                    book.set(1,col,source,kind=kind)
+                cells=book.read(r2=1,c2=4)["cells"]
+                self.assertEqual([c["kind"] for c in cells],["date","time","datetime","text"])
+                with self.assertRaises(APIError):book.set(1,1,"2023-02-29",kind="date")
+                self.assertEqual(book.read(r2=1,c2=1)["cells"][0]["value"],"2024-02-29")
+            result=subprocess.run([sys.executable,"-m","datahorizon.cli",str(path),"set","A2","2025-01-01","--kind","date"],capture_output=True,text=True,env={**os.environ,"PYTHONPATH":str(Path(__file__).resolve().parents[1]/"service")})
+            self.assertEqual(result.returncode,0,result.stderr)
+            with client.open(path) as book:self.assertEqual(book.read(r1=2,r2=2,c2=1)["cells"][0]["value_kind"],"date")

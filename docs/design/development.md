@@ -180,6 +180,14 @@ records and 10,000 fields; exports are capped by the complete 4-MiB JSON respons
 
 ## CLI and Python
 
+Use Edit → Enter date/time… for an explicit ISO value in the active cell. The
+service validates the selected date/time/datetime kind; ordinary entry keeps
+date-looking text as Text. Existing typed cells retain their kind when edited.
+REST `edit` cells and SDK `book.set(..., kind="date")` accept the same kinds;
+CLI uses `set A1 2026-11-07 --kind date`. Time and datetime require seconds,
+optional 1–6 fractional digits and no timezone offset. See the
+[date/time contract](date-time-next-ten.md).
+
 ```sh
 PYTHONPATH=service python3 -m datahorizon.cli /tmp/example.dhwb create
 PYTHONPATH=service python3 -m datahorizon.cli /tmp/example.dhwb set A1 '=SUM(7,13.5)'

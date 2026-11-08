@@ -99,7 +99,7 @@ def main():
     write = commands.add_parser("set")
     write.add_argument("address")
     write.add_argument("source")
-    write.add_argument("--kind", default="auto", choices=["auto", "text", "number", "boolean", "null"])
+    write.add_argument("--kind", default="auto", choices=["auto", "text", "number", "boolean", "null", "date", "time", "datetime"])
     write.add_argument("--sheet", default="Sheet1")
     apply = commands.add_parser("apply", help="Read a complete managed operation JSON object from stdin")
     apply.add_argument("--sheet", default="Sheet1")
