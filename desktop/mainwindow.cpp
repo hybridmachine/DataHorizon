@@ -7,6 +7,8 @@
 #include "functionhelp.h"
 #include "formulaeditor.h"
 #include "referencepickerdialog.h"
+#include "tracenavigation.h"
+#include <QListWidget>
 #include <QGridLayout>
 #include <QApplication>
 #include <QClipboard>
@@ -2113,14 +2115,35 @@ void MainWindow::traceFormula(const QString &direction) {
         if(!matchesTarget(scope) || m_grid->currentIndex()!=current || m_model->projected() || m_source->isModified() || editor)return;
         if(!error.isEmpty()){issue(error);return;}
         if(result["state"]!=scope["expected_state"] || result["sheet"]!=scope["sheet"] || result["row"].toInt()!=current.row()+1 || result["col"].toInt()!=current.column()+1 || result["direction"].toString()!=direction || result["semantics"]!="direct_syntactic" || !result["targets"].isArray() || !result["issues"].isArray() || result["targets"].toArray().size()>1000 || result["issues"].toArray().size()>1000){issue("Invalid formula trace response. Refresh and try again.");return;}
-        QDialog dialog(this);dialog.setObjectName("formulaTraceDialog");dialog.setWindowTitle(direction=="precedents"?tr("Direct precedents"):tr("Direct dependents"));dialog.resize(620,400);auto *layout=new QVBoxLayout(&dialog);
-        auto *description=new QLabel(tr("Stored formula references, including unexecuted branches. Ranges stay compressed. Snapshot: %1").arg(result["state"].toString()),&dialog);description->setWordWrap(true);layout->addWidget(description);
-        auto *details=new QPlainTextEdit(&dialog);details->setObjectName("formulaTraceDetails");details->setReadOnly(true);QStringList lines;
+        for(const auto &value:result["targets"].toArray())if(!value.isObject() || !validTraceTarget(value.toObject(),m_info["sheets"].toArray())){issue("Invalid formula trace target. Refresh and try again.");return;}
+        QDialog dialog(this);dialog.setObjectName("formulaTraceDialog");dialog.setWindowTitle(direction=="precedents"?tr("Direct precedents"):tr("Direct dependents"));dialog.resize(620,520);auto *layout=new QVBoxLayout(&dialog);
+        auto *description=new QLabel(tr("Direct stored references, including unexecuted branches. Go to selected shows the first cell of a range and reveals its row and column if hidden."),&dialog);description->setWordWrap(true);layout->addWidget(description);
+        auto *details=new QPlainTextEdit(&dialog);details->setObjectName("formulaTraceDetails");details->setReadOnly(true);details->setMaximumHeight(130);QStringList lines;
         for(const auto &value:result["targets"].toArray()){const auto target=value.toObject();lines.append(target["sheet_name"].toString()+"!"+target["address"].toString());}
         if(lines.isEmpty())lines.append(tr("No direct references found."));
         for(const auto &value:result["issues"].toArray()){const auto problem=value.toObject();lines.append(tr("Broken reference at %1: %2").arg(problem["sheet_name"].toString()+"!"+problem["address"].toString(),problem["message"].toString()));}
-        details->setPlainText(lines.join('\n'));layout->addWidget(details);auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close,&dialog);connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);layout->addWidget(buttons);dialog.exec();
+        details->setPlainText(lines.join('\n'));layout->addWidget(details);
+        auto *targets=new QListWidget(&dialog);targets->setObjectName("traceTargets");targets->setAccessibleName(tr("Navigable trace targets"));for(const auto &value:result["targets"].toArray()){const auto target=value.toObject();auto *item=new QListWidgetItem(target["sheet_name"].toString()+"!"+target["address"].toString(),targets);item->setData(Qt::UserRole,QVariant::fromValue(target));}layout->addWidget(targets,1);if(targets->count())targets->setCurrentRow(0);
+        auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close,&dialog);auto *go=buttons->addButton(tr("Go to selected"),QDialogButtonBox::ActionRole);go->setObjectName("traceGoButton");go->setEnabled(targets->count()>0);QJsonObject chosen;
+        connect(go,&QPushButton::clicked,&dialog,[&]{if(auto *item=targets->currentItem()){chosen=item->data(Qt::UserRole).toJsonObject();dialog.accept();}});connect(targets,&QListWidget::itemDoubleClicked,&dialog,[go]{go->click();});connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);layout->addWidget(buttons);
+        if(dialog.exec()==QDialog::Accepted && !chosen.isEmpty())navigateTrace(chosen,scope);
     });
+}
+
+void MainWindow::navigateTrace(const QJsonObject &target,const QJsonObject &scope) {
+    if(m_busy || m_unknown || !matchesTarget(scope) || m_model->projected() || m_source->isModified() || !validTraceTarget(target,m_info["sheets"].toArray()))return;
+    const auto current=QPersistentModelIndex(m_grid->currentIndex());const auto generation=m_navigationGeneration,editorGeneration=m_referenceGeneration;const auto service=m_client->url();
+    m_status->setText("Checking trace navigation…");
+    m_client->request(base(),{},[this,target,scope,current,generation,editorGeneration,service](QJsonObject info,QString error){
+        if(service!=m_client->url() || generation!=m_navigationGeneration || editorGeneration!=m_referenceGeneration)return;
+        bool editor=false;auto views=m_frozenTop->views();views.append(m_grid);for(auto *view:views)if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))editor|=delegate->hasEditor();
+        if(m_busy || m_unknown || !matchesTarget(scope) || m_grid->currentIndex()!=current || m_model->projected() || m_source->isModified() || m_address->isModified() || editor)return;
+        if(!error.isEmpty() || info["id"]!=scope["workbook"] || info["state"]!=scope["expected_state"] || !validTraceTarget(target,info["sheets"].toArray())){issue(error.isEmpty()?"Trace results expired. Refresh and trace again.":error);return;}
+        int tab=-1;for(int i=0;i<m_tabs->count();++i)if(m_tabs->tabData(i).toString()==target["sheet"].toString())tab=i;if(tab<0){issue("Trace target sheet is unavailable. Refresh and trace again.");return;}
+        m_tabs->setCurrentIndex(tab);if(m_model->sheet()!=target["sheet"].toString())return;
+        const int row=target["r1"].toInt()-1,col=target["c1"].toInt()-1;const bool rowShown=m_hiddenRows.remove(row),columnShown=m_hiddenColumns.remove(col);if(rowShown || columnShown){applyVisibility();saveViewState();}
+        const auto cell=m_model->index(row,col);m_grid->setCurrentIndex(cell);m_grid->selectionModel()->select(cell,QItemSelectionModel::ClearAndSelect);m_grid->scrollTo(cell);m_frozenTop->focusCurrent();m_status->setText(tr("Trace target %1!%2 • Showing the first cell").arg(target["sheet_name"].toString(),target["address"].toString()));
+    },false);
 }
 
 void MainWindow::clearFindResults() {

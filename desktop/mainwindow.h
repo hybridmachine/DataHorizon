@@ -60,6 +60,7 @@ private:
     void loadFunctionCatalog();
     void showFunctionHelp();
     void traceFormula(const QString &direction);
+    void navigateTrace(const QJsonObject &target,const QJsonObject &scope);
     void startService();
     void buildUi();
     void newBook();

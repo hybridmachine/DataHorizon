@@ -1,0 +1,38 @@
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::traceTargetValidationRejectsMalformedLocations()
+PASS   : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits()
+PASS   : DesktopTests::traceNavigationDropsMetadataReplyAfterSelectionChanges()
+PASS   : DesktopTests::formulaTracingReadsStoredReferencesWithoutMutation()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 3033ms
+********* Finished testing of DesktopTests *********
+
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::traceTargetValidationRejectsMalformedLocations()
+QWARN  : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits() qt.qpa.fonts: Populating font family aliases took 85 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost. 
+QWARN  : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits() This plugin does not support propagateSizeHints()
+PASS   : DesktopTests::traceNavigationCrossesSheetsRevealsTargetsAndMakesNoEdits()
+QWARN  : DesktopTests::traceNavigationDropsMetadataReplyAfterSelectionChanges() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationDropsMetadataReplyAfterSelectionChanges() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationDropsMetadataReplyAfterSelectionChanges() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationDropsMetadataReplyAfterSelectionChanges() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationDropsMetadataReplyAfterSelectionChanges() This plugin does not support propagateSizeHints()
+QWARN  : DesktopTests::traceNavigationDropsMetadataReplyAfterSelectionChanges() This plugin does not support propagateSizeHints()
+PASS   : DesktopTests::traceNavigationDropsMetadataReplyAfterSelectionChanges()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 2067ms
+********* Finished testing of DesktopTests *********
