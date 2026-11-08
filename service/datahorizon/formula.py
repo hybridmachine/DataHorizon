@@ -610,6 +610,22 @@ class Calculator:
         if value<minimum:raise FormulaError("#VALUE!","Position/count is below its minimum")
         return int(value)
 
+    def textjoin(self,args,sheet):
+        if not 3<=len(args)<=255:raise FormulaError("#NAME?","TEXTJOIN requires delimiter, ignore_empty and 1–253 values")
+        if args[0][0]=="range" or args[1][0]=="range":raise FormulaError("#VALUE!","TEXTJOIN delimiter/flag must be scalar")
+        delimiter=self.text_argument(args[0],sheet);flag=self.scalar_value(args[1],sheet)
+        if type(flag) not in (bool,int,float,type(None)):raise FormulaError("#VALUE!","ignore_empty must be numeric, Boolean or blank")
+        def pieces():
+            first=True
+            for value,_ in self.argument_values(args[2:],sheet):
+                self.check()
+                if isinstance(value,FormulaError):raise value
+                text=scalar_text(value)
+                if flag and not text:continue
+                if not first:yield delimiter
+                yield text;first=False
+        return self.concatenate_values(pieces())
+
     def wildcard_prefix(self,pattern,text,start):
         p=0;t=start;star=-1;retry=start;steps=0
         while True:
@@ -912,6 +928,7 @@ class Calculator:
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
             if name in ("ISBLANK","ISNUMBER","ISTEXT","ISLOGICAL","ISERROR","ISNA"):return self.inspect_scalar(name,args,sheet)
+            if name=="TEXTJOIN":return self.textjoin(args,sheet)
             if name=="SEARCH":return self.search_text(args,sheet)
             if name=="FIND":return self.find_text(args,sheet)
             if name=="REPLACE":return self.replace_text(args,sheet)
