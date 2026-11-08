@@ -55,3 +55,18 @@ the draft. Enter still submits one ordinary managed edit. Preview model callback
 are lifetime-guarded, including replies arriving after the dialog is destroyed.
 
 Unfinished/invalid address entry disables Insert until a valid Enter selection or a grid click replaces it; an older range is never used implicitly.
+
+3. [Trace navigation #77](https://github.com/hybridmachine/DataHorizon/pull/77): locally verified, author-reviewed and merged.
+
+## Trace navigation
+
+Trace reports list navigable source locations. Go to selected (or double-click)
+shows the first cell of a compressed range, switches to its sheet and reveals
+that row/column if hidden. Broken references remain notices, not destinations.
+Targets must match known sheet identity/name and canonical in-grid geometry.
+
+A fresh REST metadata read verifies the original trace state before navigation.
+Changed selection, draft/address entry, service, workbook or state drops the
+pending jump; it never discards an editor draft. Read-only workbooks remain
+navigable. Jumping is a local view operation, with bounded viewport reads and no
+stored edits, formula evaluation request beyond ordinary display, hooks or Undo.
