@@ -19,6 +19,14 @@ def evaluate(source):
 
 
 class CalendarFunctionTests(unittest.TestCase):
+    def test_time_normalization_and_components(self):
+        for formula,expected in (("TIME(27,0,0)","03:00:00"),("TIME(0,750,0)","12:30:00"),("TIME(0,0,2000)","00:33:20"),("TIME(12.9,34.9,56.9)","12:34:56"),("HOUR(1.5)",12),("MINUTE(TIME(12,34,56))",34),("SECOND(TIME(12,34,56))",56),("HOUR(DATE(2024,2,29))",0)):
+            self.assertEqual(evaluate(formula),expected,formula)
+        self.assertEqual(evaluate("TIME(0,0,0)").kind,"time")
+        for formula,code in (("TIME(-1,0,0)","#NUM!"),("TIME(32768,0,0)","#NUM!"),("HOUR(-.5)","#NUM!"),("TIME(\"12\",0,0)","#VALUE!"),("SECOND(A1:A2)","#VALUE!"),("YEAR(TIME(1,2,3))","#VALUE!"),("HOUR()","#NAME?")):
+            with self.assertRaises(FormulaError) as error:evaluate(formula)
+            self.assertEqual(error.exception.code,code,formula)
+
     def test_date_normalization_and_extraction(self):
         for formula,expected in (("DATE(2024,2,29)","2024-02-29"),("DATE(24,14,0)","1925-01-31"),("DATE(1900,2,29)","1900-03-01"),("DATE(2024,1,-1)","2023-12-30"),("YEAR(DATE(2024,2,29))",2024),("MONTH(61)",3),("DAY(59.9)",28)):
             self.assertEqual(evaluate(formula),expected,formula)
