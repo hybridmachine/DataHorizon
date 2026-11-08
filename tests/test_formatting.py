@@ -78,3 +78,29 @@ class FormattingTests(unittest.TestCase):
             def apply(cells):book.mutate({'action':'edit','operation_id':book.state(),'expected_state':book.state(),'cells':cells})
             apply([{'row':1,'col':1,'source':'1234.5','style':{'format':'currency','currency':'EUR'}}]);apply([{'row':1,'col':1,'style':{'decimals':3,'grouping':True}}])
             cell=book.read('Sheet1',{})['cells'][0];self.assertEqual(cell['display'],'1,234.500 EUR');self.assertEqual(cell['value'],1234.5)
+
+    def test_fonts_validate_and_persist_through_history_reopen_and_packages(self):
+        style={'font_family':'DejaVu Sans','font_size':16,'text_color':'#12ab34','bold':True}
+        for patch in ({'font_size':True},{'font_size':5},{'font_size':73},{'font_size':12.5},{'text_color':'red'},*[{'font_family':s} for s in ('',' Arial','a,b','x\\y','a"b','a\nb','a'*65)]):
+            with self.assertRaises(EngineError):validate_style(patch)
+        snapshot={'state':'s','range':[1,1,1,1],'cells':[{'row':1,'col':1,'source':'00123','kind':'text','value':'00123','calculation':'current','style':style}]}
+        for export,preview in ((xlsx_export,xlsx_preview),(ods_export,ods_preview)):
+            reviewed=preview(export(snapshot,{}));self.assertTrue(reviewed['can_import'],reviewed);self.assertEqual(reviewed['cells'][0]['style'],style);self.assertEqual(reviewed['cells'][0]['source'],'00123')
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'fonts.dhwb'
+            with closing(Workbook(path,create=True)) as book:
+                def apply(action='edit',**args):book.mutate({'action':action,'operation_id':book.state()+str(len(book.undo)),'expected_state':book.state(),**args})
+                apply(cells=[{'row':1,'col':1,'source':'00123','kind':'text'}]);apply(cells=[{'row':1,'col':1,'style':style}]);apply('undo');self.assertEqual(book.read('Sheet1',{})['cells'][0]['style'],{});apply('redo')
+            with closing(Workbook(path)) as book:self.assertEqual(book.read('Sheet1',{})['cells'][0]['style'],style)
+
+    def test_font_import_named_faces_and_unsupported_properties_are_reported(self):
+        from test_xlsx_styles import styled_fixture,preview
+        from datahorizon.interchange import S
+        xml=f'<styleSheet xmlns="{S}"><fonts><font><name val="Calibri"/><sz val="11.0"/><color rgb="FF123ABC"/></font></fonts><fills><fill/></fills><borders><border/></borders><cellXfs><xf fontId="0" fillId="0" borderId="0"/></cellXfs></styleSheet>'
+        result=preview(styled_fixture('<c r="A1"><v>7</v></c>',xml));self.assertEqual(result['cells'][0]['style'],{'font_family':'Calibri','font_size':11,'text_color':'#123abc'})
+        bad=xml.replace('11.0','11.5').replace('rgb="FF123ABC"','theme="1"');result=preview(styled_fixture('<c r="A1"><v>7</v></c>',bad));self.assertEqual(result['cells'][0]['style'],{'font_family':'Calibri'});self.assertIn('theme',' '.join(result['report']))
+        from datahorizon.ods import OdsStyles,O,Y,F,q
+        import xml.etree.ElementTree as ET
+        root=ET.Element(q(O,'document-content'));ET.SubElement(root,q(Y,'font-face'),{q(Y,'name'):'Face','{urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0}font-family':"'DejaVu Sans'"})
+        style=ET.SubElement(root,q(Y,'style'),{q(Y,'name'):'S',q(Y,'family'):'table-cell'});ET.SubElement(style,q(Y,'text-properties'),{q(Y,'font-name'):'Face',q(F,'font-size'):'16pt',q(F,'color'):'#12AB34'})
+        self.assertEqual(OdsStyles([root]).style('S'),{'font_family':'DejaVu Sans','font_size':16,'text_color':'#12ab34'})

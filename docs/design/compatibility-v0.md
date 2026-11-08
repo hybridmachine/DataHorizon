@@ -232,3 +232,8 @@ Explicit three-letter currency suffixes map to XLSX quoted literals and ODS
 currency-symbol styles with unscaled numeric values. Arbitrary symbols, locale
 layouts and accounting patterns remain reported outside this tier. See
 [explicit currency labels](editing-formatting-next-ten.md#explicit-currency-labels).
+
+Explicit portable font families, integer 6–72pt sizes and RGB text colors map to
+XLSX fonts and ODS text properties, including ODS named font-face references.
+Fonts are not embedded; target fallback/layout can differ. Theme/tinted colors,
+fractional sizes and advanced typography remain reported as outside this tier.

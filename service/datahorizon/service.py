@@ -101,6 +101,9 @@ def openapi():
             "example":{"sheet":"Sheet1","r1":1,"c1":1,"r2":32,"c2":16}},
         "Style":{"type":"object","additionalProperties":False,"properties":{
             "format":{"type":"string","enum":["general","text","fixed2","percent2","number","percent","currency"]},
+            "font_family":{"type":"string","minLength":1,"maxLength":64,"description":"Single portable family without control characters, quotes, comma or backslash; unavailable fonts may render with a Qt fallback."},
+            "font_size":{"type":"integer","minimum":6,"maximum":72},
+            "text_color":{"type":"string","pattern":"^#[0-9a-fA-F]{6}$"},
             "currency":{"type":"string","pattern":"^[A-Z]{3}$","default":"USD","description":"Explicit label for currency display, not exchange conversion or currency validation."},
             "grouping":{"type":"boolean","description":"Invariant comma thousands grouping for numeric categories; dot decimal separator. A grouping-only patch preserves percentages and precision."},
             "decimals":{"type":"integer","minimum":0,"maximum":15,"description":"Number/percent precision; legacy fixed2/percent2 always use two places. A precision-only patch preserves percentage families."},

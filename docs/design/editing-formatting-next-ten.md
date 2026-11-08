@@ -151,3 +151,26 @@ recalculation or locale-identical rendering. Evidence: `evidence/currency-verifi
 
 The portable ODS currency representation follows the [OASIS currency-style and
 currency-symbol contract](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html).
+
+8. [Font formatting #82](https://github.com/hybridmachine/DataHorizon/pull/82): locally built/tested, visually inspected and author-reviewed before merge.
+
+## Font formatting
+
+Format Cells → Font adds a family entry with installed-font completion, integer
+6–72pt size and RGB text color, each initially Keep existing. The native style
+keys are `font_family`, `font_size`, `text_color`. Family names are 1–64 trimmed
+characters without ASCII controls, quotes, comma or backslash: one portable
+family, not a font fallback list. An unavailable family remains stored by name;
+Qt may substitute at render time. Explicit row sizes still control clipping;
+resize or fit rows for larger fonts. Calculation errors keep their visible error
+color; normal text uses the chosen color. Borders retain the system palette.
+
+Style edits preserve stored types/source and support history/reopen. Clear all
+formatting restores defaults. XLSX maps explicit name, integer size and untinted
+RGB font color; it no longer invents Calibri/11 when exporting an unspecified
+native font. ODS maps direct font attributes and resolves named font-face
+families on import. Theme/indexed/tinted colors, relative/fractional sizes,
+unsupported families, rich-text runs and advanced typography remain reported.
+Fonts are not embedded and target rendering depends on available fonts. The ODS
+mapping follows [text properties in ODF 1.3](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html).
+Evidence: `evidence/font-verification.txt`.

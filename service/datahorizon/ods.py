@@ -5,7 +5,7 @@ import re
 import zipfile
 import xml.etree.ElementTree as ET
 
-from .engine import EngineError, MAX_CELLS, encoded, integer, require, typed
+from .engine import EngineError, MAX_CELLS, encoded, integer, require, typed, validate_style
 from .formula import Parser, split_ref
 from .formats import numeric_spec, simple_number_style
 from .interchange import map_formula_functions, import_edits, local_formula, mode, node, package, read_xml, xml, preparation_scope, prepare_workbook, validate_sheet_names, workbook_report
@@ -126,13 +126,14 @@ def ods_text(cell):
 
 class OdsStyles:
     def __init__(self,roots):
-        self.styles={}; self.formats={}; self.losses=set(); self.cache={}
+        self.styles={}; self.formats={};self.fonts={}; self.losses=set(); self.cache={}
         for root in roots:
             for item in root.iter():
+                if item.tag==q(Y,"font-face"):self.fonts[item.get(q(Y,"name"))]=item.get("{urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0}font-family","")
                 if item.tag==q(Y,"style") and item.get(q(Y,"family"))=="table-cell": self.styles[item.get(q(Y,"name"))]=item
                 if item.tag in (q(N,"number-style"),q(N,"text-style"),q(N,"date-style"),q(N,"time-style"),q(N,"currency-style"),q(N,"percentage-style")):
                     self.formats[item.get(q(Y,"name"))]=item
-        require(len(self.styles)<=4096 and len(self.formats)<=4096,"LIMIT","ODS styles exceed 4,096 entries")
+        require(len(self.styles)<=4096 and len(self.formats)<=4096 and len(self.fonts)<=4096,"LIMIT","ODS styles exceed 4,096 entries")
 
     def loss(self,message):
         if len(self.losses)<100: self.losses.add(message)
@@ -174,6 +175,16 @@ class OdsStyles:
             if prop.tag==q(Y,"text-properties"):
                 if prop.get(q(F,"font-weight"))=="bold": result["bold"]=True
                 if prop.get(q(F,"font-style"))=="italic": result["italic"]=True
+                family=prop.get(q(F,"font-family"))
+                if prop.get(q(Y,"font-name")) is not None:family=self.fonts.get(prop.get(q(Y,"font-name")),"")
+                if family and len(family)>=2 and family[0]==family[-1] and family[0] in "\"'":family=family[1:-1]
+                size=prop.get(q(F,"font-size"));color=prop.get(q(F,"color"))
+                for key,value in (("font_family",family),("font_size",size),("text_color",color)):
+                    if value is None:continue
+                    if key=="font_size":value=int(float(value[:-2])) if re.fullmatch(r"[0-9]{1,3}(?:\.0{1,8})?pt",value) else None
+                    try:validate_style({key:value})
+                    except EngineError:self.loss(f"Unsupported ODS {key} is omitted; only a single portable family, integer 6–72pt and RGB color map.")
+                    else:result[key]=value.lower() if key=="text_color" else value
             elif prop.tag==q(Y,"paragraph-properties"):
                 align=prop.get(q(F,"text-align"))
                 if align in ("left","center","right","start","end"): result["align"]={"start":"left","end":"right"}.get(align,align)
@@ -194,7 +205,7 @@ class OdsStyles:
 def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None):
     selected=integer(request.get("sheet_index",1),1,64,"sheet_index"); selected_mode=mode(request)
     report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct/inherited cell styles replace destination inputs/styles.",
-            "Other sheets, code, charts, comments, merged presentation, names, validation, conditional/default/row/column formatting, dimensions and advanced fonts are omitted; code never activates.",
+            "Other sheets, code, charts, comments, merged presentation, names, validation, conditional/default/row/column formatting, dimensions and advanced typography are omitted; code never activates.",
             "Percentage/currency retain numeric magnitude. Number/percentage styles with 0–15 decimal places map; explicit three-letter currency suffix styles map; other display formats are omitted. Dates and durations become ISO Text. Formula syntax is translated canonically; only the published native function tier and arithmetic/comparison formulas without powers are supported."]
     if selected_mode=="values": report.append("Formula caches become values with unverified freshness; missing/error caches block Apply.")
     with package(request) as archive:
@@ -303,6 +314,9 @@ def ods_export(snapshot,request):
             attrs[q(Y,"data-style-name")]=numeric_ids[spec]
         out=node(automatic,q(Y,"style"),**attrs)
         text={}; props={}; paragraph={}
+        if "font_family" in style:text[q(F,"font-family")]=style["font_family"]
+        if "font_size" in style:text[q(F,"font-size")]=str(style["font_size"])+"pt"
+        if "text_color" in style:text[q(F,"color")]=style["text_color"]
         if style.get("bold"): text[q(F,"font-weight")]="bold"
         if style.get("italic"): text[q(F,"font-style")]="italic"
         if "align" in style: paragraph[q(F,"text-align")]=style["align"]

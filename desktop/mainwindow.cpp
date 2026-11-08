@@ -135,7 +135,7 @@ public:
         const auto item=index.data(SheetModel::CellRole).toJsonObject();
         if(item["style"].toObject()["border"].toString()=="box") {
             painter->save(); painter->setClipRect(option.rect);
-            painter->setPen(QPen(option.palette.color(QPalette::Text),2)); painter->setBrush(Qt::NoBrush);
+            painter->setPen(QPen(QApplication::palette().color(QPalette::Text),2)); painter->setBrush(Qt::NoBrush);
             painter->drawRect(option.rect.adjusted(1,1,-2,-2)); painter->restore();
         }
     }

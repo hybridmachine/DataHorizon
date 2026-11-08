@@ -127,3 +127,8 @@ effective precision. General/Text display ignores this metadata.
 The label is three uppercase ASCII letters, default USD; precision/grouping are
 shared with Number. This metadata does not perform exchange conversion or
 validate a currency registry. A precision/grouping-only patch preserves Currency.
+
+Font styles add `font_family` (1–64 trimmed characters, no ASCII controls, comma,
+quotes or backslash), `font_size` (integer 6–72pt) and `text_color` (`#RRGGBB`).
+Unspecified properties use application defaults. Requested family names persist
+when platform fallback renders them. These remain additive format-v1 metadata.
