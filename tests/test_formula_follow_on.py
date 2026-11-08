@@ -107,6 +107,32 @@ class FollowOnTests(unittest.TestCase):
                 with self.assertRaises(APIError):book.apply('edit',cells=[dict(row=1,col=1,source='=SUMIFS(C1,B1,"Pen")*10')])
                 after=book.read(r2=1,c2=4);self.assertEqual(after['state'],before['state']);self.assertEqual(after['cells'],before['cells'])
 
+    def test_index_match_typed_first_keys_vectors_and_selected_returns(self):
+        values={(r,2):cell(value) for r,value in enumerate(('00123',123,'Pen','pEN',True,'*',''),1)}
+        values.update({(r,3):cell(value) for r,value in enumerate(('id','number','first','second','bool','star','empty'),1)})
+        for key,position in [('"00123"',1),('123',2),('"PEN"',3),('TRUE',5),('"*"',6),('""',7)]:self.assertEqual(calculate('=MATCH('+key+',B1:B7,0)',values),position)
+        self.assertEqual(calculate('=INDEX(C1:C7,MATCH("00123",B1:B7,0))',values),'id')
+        self.assertEqual(calculate('=INDEX(B2:C2,2)',values),'number');self.assertEqual(calculate('=INDEX(B1:C2,2,2)',values),'number')
+        self.assertEqual(calculate('=INDEX(D1,1)'),0);self.assertEqual(calculate('=INDEX(D1,1)',{(1,4):cell('')}),'');self.assertEqual(calculate('=MATCH(D1,B1:B8,0)',values),8);self.assertEqual(calculate('=INDEX(C7,1)',values),'empty')
+        values[2,3]=dict(source='=1/0',kind='formula',value=None)
+        self.assertEqual(calculate('=INDEX(C1:C2,1)',values),'id')
+        self.errors([('=INDEX(C1:C2,2)','#DIV/0!')],values)
+
+    def test_index_match_modes_shapes_positions_errors_and_limits(self):
+        self.errors([('=MATCH(1,B1:B2)','#NAME?'),('=MATCH(1,B1:B2,1)','#VALUE!'),('=MATCH(1,B1:B2,FALSE)','#VALUE!'),('=MATCH(1,B1:C2,0)','#VALUE!'),('=MATCH(1,B1:B2,0)','#N/A'),('=MATCH(1,A1:A2,0)','#CYCLE!'),('=MATCH(1,B1:B10001,0)','#LIMIT!'),('=INDEX(B1:C2,1)','#VALUE!'),('=INDEX(B1:B2,0)','#VALUE!'),('=INDEX(B1:B2,-1)','#VALUE!'),('=INDEX(B1:B2,"1")','#VALUE!'),('=INDEX(B1:B2,3)','#REF!'),('=INDEX(B1:B2,1e300)','#REF!'),('=INDEX(#REF!,1)','#REF!'),('=INDEX(A1,1)','#CYCLE!'),('=INDEX(B1:B10001,1)','#LIMIT!')])
+        self.errors([('=IFERROR(INDEX(B1,1),"hidden")','#LIMIT!')],{(1,2):cell('x'*40000)})
+        self.assertEqual(calculate('=INDEX(B1:B2,1.9)',{(1,2):cell('00123')}),'00123')
+
+    def test_index_match_cross_sheet_sdk_history_reopen_readonly(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            path=Path(temp)/'lookup.dhwb'
+            with client.open(path,create=True) as book:
+                book.apply('sheet_add',name='Other');book.apply('edit',sheet='Other',cells=[dict(row=1,col=2,source='00123',kind='text'),dict(row=2,col=2,source='00456',kind='text'),dict(row=1,col=3,source='Pen',kind='text'),dict(row=2,col=3,source='Book',kind='text')])
+                book.apply('edit',cells=[dict(row=1,col=1,source='=INDEX(Other!C1:C2,MATCH("00123",Other!B1:B2,0))')]);self.assertEqual(book.read(r2=1,c2=1)['cells'][0]['value'],'Pen')
+                book.apply('edit',cells=[dict(row=1,col=1,source='=INDEX(Other!C1:C2,2)')]);self.assertEqual(book.read(r2=1,c2=1)['cells'][0]['value'],'Book')
+                book.apply('undo');self.assertEqual(book.read(r2=1,c2=1)['cells'][0]['value'],'Pen');book.apply('redo')
+            with client.open(path,readonly=True) as book:self.assertEqual(book.read(r2=1,c2=1)['cells'][0]['value'],'Book')
+
     def test_catalog_formulas_recalculate_after_native_package_reimport(self):
         with tempfile.TemporaryDirectory() as temp:
             for index,item in enumerate(function_catalog()['functions']):

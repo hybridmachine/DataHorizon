@@ -64,6 +64,8 @@ TEXTJOIN's ODS extension follows [LibreOffice](https://help.libreoffice.org/late
 
 9. [COUNTIFS/SUMIFS #73](https://github.com/hybridmachine/DataHorizon/pull/73): locally built/tested, self-reviewed and merged.
 
+10. [INDEX/MATCH #74](https://github.com/hybridmachine/DataHorizon/pull/74): locally built/tested, self-reviewed and merged.
+
 ## Scalar inspection tier
 
 ISBLANK recognizes blank/NULL, including a formula's scalar NULL result; empty
@@ -146,3 +148,30 @@ are evaluated; a mismatch cannot conceal a cycle/resource failure. Ordinary
 criteria-cell errors do not match. Only matching sum cells are read, with
 Text/Boolean/blank ignored and matching errors/nonfinite totals propagated.
 Shared cell/work/input/deadline limits and transactional hook rollback apply.
+
+## INDEX / exact MATCH tier
+
+INDEX returns one scalar from a bounded cell/rectangle. Two arguments address a
+1D vector in its natural orientation; a 2D rectangle requires explicit row and
+column. Indices are 1-based numeric/Boolean finite truncated scalars; zero,
+negative and numeric Text indices reject, out-of-bounds indices are #REF!. Only
+the selected cell is evaluated. Blank/NULL returns zero; empty/literal Text stays
+Text within result bounds. Arrays and reference-valued INDEX are outside this tier.
+
+MATCH requires explicit numeric mode 0, a scalar key and one row/column. Omitting
+the mode or requesting approximate modes rejects, preserving Excel's different
+default semantics rather than silently choosing exact search. Typed exact keys
+reuse XLOOKUP: Number/Boolean/Text/blank differ, Text casefolds, wildcard characters
+are literal. Search is forward first-match; errors encountered before a match
+propagate, later cells remain unread, and missing is #N/A. Both functions retain
+the 10,000-reference and shared work/input/deadline limits.
+
+## Final local evidence
+
+The [frozen-candidate evidence](evidence/formula-coverage-batch-verification.txt)
+records 153 Qt checks, 367 Python tests (15 optional-binding skips in the base
+environment; all pass with the binding), native scale-1/2 and cross-batch feature
+checks, all 43 catalog examples through the native source editor, 26 independent
+XLSX/ODS formula/value cases, relocated install and archive inventory. Installed
+formula/catalog/tracing modules match source bytes. Windows/Linux and manual/
+distribution gates remain open; this is a local development preview.
