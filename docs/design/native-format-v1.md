@@ -1,4 +1,13 @@
-# Development native format v1
+# Development native formats v1 and v2
+
+Format v2 adds explicit `date`, `time`, and `datetime` input kinds with strict ISO
+sources defined in [the date/time contract](date-time-next-ten.md). The physical
+schema is unchanged. New files start at v1; the first temporal write upgrades the
+metadata to v2 in its parent transaction, including hook rollback. Undo does not
+downgrade a file. This client reads v1/v2; older clients reject v2. Unknown versions
+and v1 files containing temporal inputs are rejected without repair. Temporal
+sources are checked on open, copy and external refresh within the opening budget.
+Independent SQLite access still needs no callbacks and does not run hooks.
 
 This format is experimental. No migration from future formats or production
 durability qualification is claimed. SQLite foreign keys are enabled by the
@@ -24,8 +33,8 @@ beginning `=`, finite decimal numbers, TRUE/FALSE and an apostrophe text prefix;
 other source is text. `formula` preserves source beginning `=` independently of
 subsequent display formatting. Explicit `text` preserves leading zeros and
 empty strings. Explicit `null` has a null typed value; absence has no row.
-CSV date conversions store normalized YYYY-MM-DD as `text`; they do not add a
-native date kind or change format v1. See [the CSV typing contract](editing-csv-next-five.md#csv-column-typing).
+The earlier CSV date tier stored normalized YYYY-MM-DD as `text`; those existing
+inputs remain Text. See [the CSV typing contract](editing-csv-next-five.md#csv-column-typing).
 `style` is a JSON object: format (`general`, `text`, `fixed2`, `percent2`,
 `number`, `percent`, `currency`), numeric precision/grouping/currency label,
 font family/size/text color, wrap/bold/italic booleans, alignment, RGB fill and
@@ -48,7 +57,7 @@ rotate the state token and discard session Undo/Redo. Formula values are derived
 within read snapshots rather than persisted, so reopening never trusts an old
 calculation cache. There is no replay of historical changes.
 
-Only the exact v1 schema is accepted. Additional tables, schema edits, triggers,
+Only the exact shared v1/v2 physical schema is accepted. Additional tables, schema edits, triggers,
 metadata changes or newer versions require reopening a compatible file; the
 preview does not attempt repair. User tables and managed SQL are later work.
 Validation requires workbook/sheet UUIDs, valid sheet names, distinct nonnegative

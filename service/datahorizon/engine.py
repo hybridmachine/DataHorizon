@@ -20,6 +20,7 @@ from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, tran
 from .hooks import HookFailure, invoke
 from .formats import numeric_display, numeric_spec
 from .borders import SIDES, BORDER_STYLES
+from .temporal import Temporal, KINDS as TEMPORAL_KINDS
 
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
@@ -165,10 +166,15 @@ def typed(item):
     source, kind, style = item["source"], item["kind"], item["style"]
     require(isinstance(source, str) and len(source.encode()) <= 65_536,
             "INVALID_INPUT", "Cell source must be text no larger than 64 KiB")
-    require(kind in ("auto", "text", "number", "boolean", "null", "formula"), "INVALID_INPUT", "Unknown input kind")
+    require(kind in ("auto", "text", "number", "boolean", "null", "formula", *TEMPORAL_KINDS), "INVALID_INPUT", "Unknown input kind")
     validate_style(style)
     value = source
-    if kind == "null":
+    if kind in TEMPORAL_KINDS:
+        try:
+            value = Temporal(source, kind)
+        except ValueError as error:
+            raise EngineError("INVALID_INPUT", str(error)) from error
+    elif kind == "null":
         value = None
     elif kind == "auto" and source == "":
         kind, value = "blank", None
@@ -300,8 +306,12 @@ class Workbook:
             require(schema_signature(db) == EXPECTED_SCHEMA,
                     "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
             meta = db.execute("SELECT format_version,revision,workbook_id FROM dh_meta WHERE singleton=1").fetchall()
-            require(len(meta) == 1 and meta[0][0] == 1 and type(meta[0][1]) is int and meta[0][1] >= 0,
+            require(len(meta) == 1 and meta[0][0] in (1,2) and type(meta[0][1]) is int and meta[0][1] >= 0,
                     "FORMAT_VERSION", "Unsupported or invalid native format", 409)
+            for source,kind in db.execute("SELECT source,kind FROM cells WHERE kind IN ('date','time','datetime')"):
+                require(time.monotonic() <= deadline,"TIMEOUT","Temporal validation exceeded its time budget")
+                require(meta[0][0] == 2,"FORMAT_VERSION","Temporal inputs require native format 2",409)
+                typed({"source":source,"kind":kind,"style":{}})
             require(valid_uuid(meta[0][2]) and (not hasattr(self,"id") or meta[0][2] == self.id),
                     "INVALID_FORMAT","Invalid or changed workbook identity",409)
             positions = set()
@@ -343,7 +353,7 @@ class Workbook:
             return {"id": self.id, "path": str(self.path), "state": self.state(), "readonly": self.readonly,
                     "sheets": [{"id": s, "name": n} for s, n in self.db.execute("SELECT id,name FROM sheets ORDER BY position,id")],
                     "undo": self.undo[-1][0] if self.undo else None, "redo": self.redo[-1][0] if self.redo else None,
-                    "storage": "stored", "calculation": "evaluated_on_read", "format_version": 1}
+                    "storage": "stored", "calculation": "evaluated_on_read", "format_version": self.db.execute("SELECT format_version FROM dh_meta").fetchone()[0]}
 
     def sheet(self, sheet):
         require(isinstance(sheet,str) and bool(sheet), "INVALID_ARGUMENT", "Sheet must be a nonempty name or ID")
@@ -411,6 +421,7 @@ class Workbook:
                         try:
                             value = calc.cell(sheet, row, col) if item["kind"] == "formula" else item["value"]
                             result.update(value=value, display=display(value, item["style"]), calculation="current")
+                            if isinstance(value,Temporal): result["value_kind"] = value.kind
                         except FormulaError as error:
                             result.update(value=None, display=error.code, error=str(error), calculation="error")
                         if preview:
@@ -592,6 +603,8 @@ class Workbook:
         integer(col, 1, MAX_COLS, "col")
         if item is not None:
             typed(item)
+            if item["kind"] in TEMPORAL_KINDS:
+                self.db.execute("UPDATE dh_meta SET format_version=2 WHERE format_version=1")
             if item == {"source": "", "kind": "auto", "style": {}}:
                 item = None
         key = (sheet, row, col)
@@ -798,7 +811,7 @@ class Workbook:
                                     stored = value.get("value", source)
                                     require(isinstance(stored,(str,int,float,bool,type(None))),"INVALID_ARGUMENT","Clipboard values must be scalar")
                                     source = "" if stored is None else ("TRUE" if stored is True else "FALSE" if stored is False else str(stored))
-                                    input_kind = "null" if stored is None else "boolean" if type(stored) is bool else "number" if isinstance(stored, (int, float)) else "text"
+                                    input_kind = value.get("value_kind") if value.get("value_kind") in TEMPORAL_KINDS else "null" if stored is None else "boolean" if type(stored) is bool else "number" if isinstance(stored, (int, float)) else "text"
                                 else:
                                     require(isinstance(source,str),"INVALID_ARGUMENT","Clipboard source must be text")
                                     input_kind = value.get("input_kind", "text")
@@ -1304,10 +1317,11 @@ class Workbook:
                         item=typed({"source":source,"kind":kind,"style":json.loads(style)})
                         value=calc.cell(sheet,row,col) if item["kind"]=="formula" else item["value"]
                         result["formulas_as_values"]+=int(item["kind"]=="formula")
-                        scalar_kind="null" if value is None else "boolean" if type(value) is bool else "number" if type(value) in (int,float) else "text"
+                        scalar_kind=value.kind if isinstance(value,Temporal) else "null" if value is None else "boolean" if type(value) is bool else "number" if type(value) in (int,float) else "text"
                         scalar_source="NULL" if value is None else "TRUE" if value is True else "FALSE" if value is False else str(value)
                         if item["kind"]=="blank":scalar_kind,scalar_source="auto",""
                         cell={"source":scalar_source,"input_kind":scalar_kind,"kind":scalar_kind,"value":value,"style":item["style"],"display":display(value,item["style"]),"calculation":"current"}
+                        if isinstance(value,Temporal):cell["value_kind"]=value.kind
                         size+=len(encoded(cell).encode())
                         require(size<=4*1024*1024,"READ_LIMIT","List values exceed 4 MiB; narrow the scope")
                         matrix[rowmap[row]][colmap[col]]=cell
