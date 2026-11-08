@@ -68,6 +68,9 @@ register('EXACT','EXACT(text1, text2)','Compare scalar Text with case-sensitive 
 register('SUBSTITUTE','SUBSTITUTE(text, old_text, new_text[, occurrence])','Replace literal non-overlapping Text occurrences.',TEXT_RULES.removeprefix('One scalar argument. ')+' Occurrence requires a numeric/Boolean scalar at least 1, with finite fractions truncated; numeric Text is rejected. Case-sensitive, no wildcards/normalization. Omitted occurrence replaces all; supplied occurrence is 1-based. Empty old_text leaves input unchanged. Result size is checked before replacement allocation.','=SUBSTITUTE("a-b-a","a","x",2)','a-b-x','Text')
 
 
+register('REPLACE','REPLACE(text, start, count, new_text)','Replace characters at a 1-based Unicode position.',TEXT_RULES.removeprefix('One scalar argument. ')+' Four scalars. Numeric/Boolean/blank positions/counts, finite fractions truncate; numeric Text rejected. Start at least 1, count at least 0. Beyond-end start appends; count clamps without padding. Zero count inserts. Result built with bounded concatenation.','=REPLACE("00123",3,2,"AB")','00AB3','Text')
+
+
 def function_catalog():
     return dict(version=1,functions=deepcopy([FUNCTIONS[name] for name in sorted(FUNCTIONS)]),
                 notes=['This catalog describes the implemented development tier, not full Excel compatibility.',

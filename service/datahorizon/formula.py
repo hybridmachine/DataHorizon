@@ -610,6 +610,12 @@ class Calculator:
         if value<minimum:raise FormulaError("#VALUE!","Position/count is below its minimum")
         return int(value)
 
+    def replace_text(self,args,sheet):
+        if len(args)!=4:raise FormulaError("#NAME?","REPLACE requires four scalars")
+        if any(node[0]=="range" for node in args):raise FormulaError("#VALUE!","REPLACE requires scalars")
+        text=self.text_argument(args[0],sheet);start=self.integer_argument(args[1],sheet,1);count=self.integer_argument(args[2],sheet,0);new=self.text_argument(args[3],sheet)
+        return self.concatenate_values((text[:start-1],new,text[start-1+count:]))
+
     def substitute(self,args,sheet):
         if len(args) not in (3,4):raise FormulaError("#NAME?","SUBSTITUTE requires 3 or 4 scalars")
         if any(node[0]=="range" for node in args):raise FormulaError("#VALUE!","SUBSTITUTE requires scalars")
@@ -859,6 +865,7 @@ class Calculator:
                 return self.evaluate(args[1], sheet) if condition else (
                     self.evaluate(args[2], sheet) if len(args) == 3 else False)
             if name in ("ISBLANK","ISNUMBER","ISTEXT","ISLOGICAL","ISERROR","ISNA"):return self.inspect_scalar(name,args,sheet)
+            if name=="REPLACE":return self.replace_text(args,sheet)
             if name=="SUBSTITUTE":return self.substitute(args,sheet)
             if name=="EXACT":return self.exact_text(args,sheet)
             if name=="XLOOKUP":return self.xlookup(args,sheet)

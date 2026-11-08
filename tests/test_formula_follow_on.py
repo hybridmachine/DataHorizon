@@ -41,6 +41,12 @@ class FollowOnTests(unittest.TestCase):
         self.errors([('=IFERROR(SUBSTITUTE(B1,"x",C1),"hidden")','#LIMIT!')],{(1,2):cell('x'*3000),(1,3):cell('😀'*1000)})
         self.errors([('=SUBSTITUTE(B1,"missing","")','#LIMIT!')],{(1,2):cell('x'*40000)})
 
+    def test_replace_codepoints_insert_append_counts_and_limits(self):
+        for formula,expected in [('=REPLACE("00123",3,2,"AB")','00AB3'),('=REPLACE("abc",2,0,"X")','aXbc'),('=REPLACE("abc",99,999,"X")','abcX'),('=REPLACE("😀áz",2,2,"X")','😀Xz'),('=REPLACE("abc",2.9,1.9,TRUE)','aTRUEc'),('=REPLACE("abc",1,1e300,"")','')]:self.assertEqual(calculate(formula),expected)
+        self.errors([('=REPLACE("a",0,1,"x")','#VALUE!'),('=REPLACE("a",1,-0.1,"x")','#VALUE!'),('=REPLACE("a","1",1,"x")','#VALUE!'),('=REPLACE(B1:B2,1,1,"x")','#VALUE!'),('=REPLACE(A1,1,1,"x")','#CYCLE!'),('=REPLACE("a",1,1)','#NAME?')])
+        self.errors([('=IFERROR(REPLACE(B1,1,0,C1),"hidden")','#LIMIT!')],{(1,2):cell('x'*20000),(1,3):cell('x'*20000)})
+        self.assertEqual(calculate('=REPLACE(B1,1,40000,"ok")',{(1,2):cell('x'*40000)}),'ok')
+
     def test_catalog_formulas_recalculate_after_native_package_reimport(self):
         with tempfile.TemporaryDirectory() as temp:
             for index,item in enumerate(function_catalog()['functions']):
