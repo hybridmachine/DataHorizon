@@ -1,0 +1,20 @@
+Test project /Users/btabone/source/DataHorizon/build
+    Start 1: desktop
+1/2 Test #1: desktop ..........................   Passed   77.52 sec
+    Start 2: service
+2/2 Test #2: service ..........................   Passed   27.57 sec
+
+100% tests passed out of 2
+
+Total Test time (real) = 105.11 sec
+
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::referencePickingKeepsDraftTargetAcrossBodyFrozenCornerCancelAndHiddenRanges()
+QWARN  : DesktopTests::referencePickingTransfersCellDraftWithoutCommitAndRespectsTextAndReadOnly() qt.qpa.window: Window position QRect(1010,468 218x46) outside any known screen, using primary screen
+QWARN  : DesktopTests::referencePickingTransfersCellDraftWithoutCommitAndRespectsTextAndReadOnly() qt.qpa.window: Window position QRect(1010,476 412x84) outside any known screen, using primary screen
+PASS   : DesktopTests::referencePickingTransfersCellDraftWithoutCommitAndRespectsTextAndReadOnly()
+PASS   : DesktopTests::cleanupTestCase()
+Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 1899ms
+********* Finished testing of DesktopTests *********

@@ -50,6 +50,9 @@ protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
+    void startReferencePick();
+    void finishReferencePick(bool insert);
+    bool referenceMouseEvent(QObject *object,QEvent *event);
     void loadFunctionCatalog();
     void showFunctionHelp();
     void startService();
@@ -138,6 +141,13 @@ private:
     QToolBar *m_toolbar = nullptr;
     QAction *m_undo = nullptr, *m_redo = nullptr;
     QJsonObject m_info,m_functionCatalog;
+    QAction *m_pickReferenceAction = nullptr;
+    bool m_pickingReference=false,m_referenceDragging=false;
+    QJsonObject m_referenceTarget;
+    QPersistentModelIndex m_referenceCurrent;
+    QString m_referenceText,m_referencePreview,m_referenceIssue;
+    int m_referenceStart=0,m_referenceLength=0;
+    QPoint m_referenceAnchor;
     QJsonObject m_listSpec,m_namedViews;
     QJsonObject m_findScope;
     QList<QAction *> m_navigationActions;

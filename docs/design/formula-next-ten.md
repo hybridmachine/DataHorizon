@@ -47,8 +47,30 @@ substituted with a hardcoded client function list. Assistance does not submit an
 operation, invoke hooks or change the draft's original target/type. Shared parser,
 calculation and exact-input limits remain authoritative on submission.
 
+## Click/drag reference insertion
+
+Pick reference beside the source bar (also in Edit) enables one explicit gesture
+in the current source sheet. A clicked cell or dragged rectangle is previewed in
+the status; release inserts a relative A1 reference into the draft's operand or
+selected text. Existing automatic selection/draft-resolution behavior is unchanged
+outside this mode. The original current cell, target, input type and stored state
+remain fixed. Picking in an in-cell editor transfers that unsubmitted input and
+cursor to the source bar without committing it; editing then continues there.
+
+Body, top, left and corner panes use source coordinates. One completed insertion
+is a separate native text Undo action. Escape before release cancels picking and
+retains the draft; ordinary Escape then discards the draft. Only visible cells
+can finish a gesture; hidden/intersected or over-10,000-cell ranges reject without
+inserting a partial range. No edge auto-scroll or cross-sheet picker is introduced.
+Quoted Text, explicit literal Text, read-only and projected inputs are guarded.
+Reset, service and busy-state changes cancel picking; changed target/text/cursor
+prevents insertion. Enter still performs one ordinary managed edit with existing
+formula, hook, rejection and Undo semantics. Picking itself makes no REST mutation.
+
 ## Completed PRs
 
 1. [Function catalog #55](https://github.com/hybridmachine/DataHorizon/pull/55): local build/full CTest and native help checks passed; self-reviewed and merged.
 
 2. [Autocomplete and hints #56](https://github.com/hybridmachine/DataHorizon/pull/56): locally verified, self-reviewed and merged.
+
+3. [Reference picking #57](https://github.com/hybridmachine/DataHorizon/pull/57): locally verified, self-reviewed and merged.
