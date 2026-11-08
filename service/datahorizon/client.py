@@ -161,6 +161,16 @@ class WorkbookClient:
         self._ensure_open()
         return self.client.request(self.base+'/calculation/jobs',dict(sheet=sheet,job_id=job_id or str(uuid.uuid4()),expected_state=self.state,**scope))
 
+    def create_job(self,action='edit',sheet='Sheet1',job_id=None,**options):
+        self._ensure_open()
+        return self.client.request(self.base+'/operation-jobs',dict(action=action,sheet=sheet,job_id=job_id or str(uuid.uuid4()),expected_state=self.state,**options))
+
+    def operation_job(self,job_id,action='status',**arguments):
+        self._ensure_open()
+        if action not in ('status','append','seal','start','resume','cancel','release'):raise ValueError('Unknown job action')
+        # Job IDs survive transport errors; never automatically repeat start/resume.
+        return self.client.request(self.base+'/operation-jobs/'+quote(job_id,safe='')+'/'+action,arguments)
+
     def declare_list(self,identifier,sheet='Sheet1',**spec):
         return self.apply('list_declare',sheet,id=identifier,spec=spec)
 

@@ -52,6 +52,8 @@ protected:
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
     quint64 m_calculationGeneration=0;
+    QString m_activeOperationJob;
+    void operationJobs();
     void updateFormulaReferences();
     QList<QColor> formulaReferenceColors(int row,int column) const;
     void startReferencePick();

@@ -265,6 +265,7 @@ void MainWindow::buildUi() {
     auto *localized=dataMenu->addAction(tr("Enter localized value…"));localized->setObjectName("enterLocalizedAction");connect(localized,&QAction::triggered,this,&MainWindow::enterLocalized);
     auto *declare=dataMenu->addAction(tr("Declare selected list records…"));declare->setObjectName("declareRecordsAction");connect(declare,&QAction::triggered,this,&MainWindow::declareRecords);
     auto *records=dataMenu->addAction(tr("Work with declared records…"));records->setObjectName("recordCommandAction");connect(records,&QAction::triggered,this,&MainWindow::recordCommand);
+    auto *jobs=dataMenu->addAction(tr("Operation jobs…"));jobs->setObjectName("operationJobsAction");connect(jobs,&QAction::triggered,this,&MainWindow::operationJobs);
     auto *calculate=dataMenu->addAction(tr("Recalculate selection in background…"));calculate->setObjectName("calculateSelectionAction");connect(calculate,&QAction::triggered,this,&MainWindow::calculateSelection);
     auto *view = menuBar()->addMenu(tr("&View"));
     auto *savePortable=view->addAction(tr("Save view in workbook"));savePortable->setObjectName("savePortableViewAction");connect(savePortable,&QAction::triggered,this,[this]{portableView(true);});
@@ -1290,6 +1291,7 @@ void MainWindow::restartService() {
 }
 
 void MainWindow::setBusy(bool busy, const QString &message) {
+    busy=busy || !m_activeOperationJob.isEmpty();
     if(busy){finishReferencePick(false);cancelFormatPainter();}
     m_busy = busy || m_releasing;
     if(m_busy){clearFindResults();++m_navigationGeneration;m_navigationExtending=false;}
@@ -1633,6 +1635,40 @@ void MainWindow::declareRecords() {
     QDialog dialog(this);dialog.setWindowTitle(tr("Declare persistent list records"));dialog.setObjectName("declareRecordsDialog");QFormLayout layout(&dialog);QLineEdit name(&dialog);name.setObjectName("recordListName");name.setMaxLength(64);name.setText("Records");QCheckBox header(tr("First row is a header"),&dialog);layout.addRow(tr("List name"),&name);layout.addRow(&header);QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog);layout.addRow(&buttons);connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
     if(dialog.exec()!=QDialog::Accepted || !matchesTarget(target) || selectedRange()!=range)return;
     range["header"]=header.isChecked();auto request=target;request["action"]="list_declare";request["id"]=name.text();request["spec"]=range;request["label"]="Declare persistent list";submit(request);
+}
+
+void MainWindow::operationJobs() {
+    if(m_info.isEmpty() || m_unknown || (m_busy && m_activeOperationJob.isEmpty()))return;
+    captureGridDraft(false);if(!resolveDraft())return;
+    const auto resource=base()+"/operation-jobs",workbook=m_info["id"].toString();
+    QDialog dialog(this);dialog.setWindowTitle(tr("Reviewed operation jobs"));dialog.setObjectName("operationJobsDialog");dialog.resize(780,620);QFormLayout layout(&dialog);
+    QLabel explanation(tr("Prepare first, review the sealed plan, then execute. Batches commit separately. Cancellation keeps committed batches. Journals remain beside the native file for explicit recovery."),&dialog);explanation.setWordWrap(true);layout.addRow(&explanation);
+    QComboBox mode(&dialog);mode.setObjectName("operationJobMode");mode.addItem(tr("Stage CSV — explicit batches, Text columns"),"csv");mode.addItem(tr("Find in stored source"),"find");mode.addItem(tr("List rows, ascending first column"),"list");
+    QLineEdit identifier(m_activeOperationJob.isEmpty()?QUuid::createUuid().toString(QUuid::WithoutBraces):m_activeOperationJob,&dialog),source(&dialog);identifier.setObjectName("operationJobId");source.setObjectName("operationJobSource");identifier.setMaxLength(64);
+    QSpinBox rows(&dialog);rows.setObjectName("operationJobRows");rows.setRange(1,100000);rows.setValue(10000);layout.addRow(tr("Preparation"),&mode);layout.addRow(tr("Job ID (keep for recovery)"),&identifier);layout.addRow(tr("CSV path or find Text"),&source);layout.addRow(tr("Read rows from A1 (one column)"),&rows);
+    QPlainTextEdit result(&dialog);result.setObjectName("operationJobReport");result.setReadOnly(true);result.setAccessibleName(tr("Job plan, progress and durable receipts"));layout.addRow(&result);
+    QWidget controls(&dialog);QHBoxLayout buttons(&controls);QPushButton prepare(tr("Prepare"),&controls),inspect(tr("Inspect / retry status"),&controls),start(tr("Execute / resume…"),&controls),cancel(tr("Cancel job"),&controls),release(tr("Release journal"),&controls),next(tr("Next page"),&controls),close(tr("Close review"),&controls);prepare.setObjectName("prepareOperationJob");inspect.setObjectName("inspectOperationJob");start.setObjectName("startOperationJob");cancel.setObjectName("cancelOperationJob");close.setObjectName("closeOperationJob");for(auto *button:{&prepare,&inspect,&start,&cancel,&release,&next,&close})buttons.addWidget(button);layout.addRow(&controls);
+    QJsonObject plan;QTimer timer(&dialog);timer.setInterval(150);QPointer<QDialog> guard(&dialog);bool requesting=false;int offset=0;
+    auto show=[&,guard](QJsonObject value,QString error){
+        if(!guard || m_info["id"].toString()!=workbook)return;requesting=false;
+        if(!error.isEmpty()){result.setPlainText(tr("Status unavailable. Keep job ID %1 and inspect again. A lost reply does not prove rollback.\n%2").arg(identifier.text(),error));timer.stop();start.setEnabled(false);return;}
+        plan=value;result.setPlainText(QString::fromUtf8(QJsonDocument(value).toJson(QJsonDocument::Indented)));const auto status=value["status"].toString();const bool active=status=="running" || status=="staging";
+        identifier.setEnabled(!active && m_activeOperationJob.isEmpty());next.setEnabled(value["has_more"].toBool());
+        prepare.setEnabled(!active && m_activeOperationJob.isEmpty());start.setEnabled(!active && !value["plan_digest"].toString().isEmpty() && status!="completed");
+        if(active)timer.start();else timer.stop();
+        if(!active && status!="unknown" && status!="interrupted" && m_activeOperationJob==identifier.text()){m_activeOperationJob.clear();refresh();}
+    };
+    auto inspectJob=[&,guard,show]{if(!guard || requesting)return;requesting=true;m_client->request(resource+"/"+identifier.text()+"/status",{{"offset",offset}},show);};
+    connect(&timer,&QTimer::timeout,&dialog,inspectJob);connect(&inspect,&QPushButton::clicked,&dialog,inspectJob);
+    connect(&prepare,&QPushButton::clicked,&dialog,[&,guard,show]{if(requesting || !m_activeOperationJob.isEmpty())return;auto request=QJsonObject{{"job_id",identifier.text()},{"expected_state",m_info["state"]},{"sheet",m_model->sheet()}};if(mode.currentData()=="csv"){if(m_info["readonly"].toBool())return;request["action"]="edit";request["mode"]="batches";request["source_path"]=source.text();}else{request["action"]=mode.currentData().toString();request["r2"]=rows.value();request["c2"]=1;if(mode.currentData()=="find")request["needle"]=source.text();else request["sort"]=QJsonArray{QJsonObject{{"col",1}}};}requesting=true;m_client->request(resource,request,show);});
+    connect(&start,&QPushButton::clicked,&dialog,[&,guard,show]{if(requesting || plan["plan_digest"].toString().isEmpty() || plan["job_id"].toString()!=identifier.text())return;const auto status=plan["status"].toString();QMessageBox review(QMessageBox::Question,tr("Execute reviewed job?"),tr("Job %1: %2 cells/targets; %3 mode.\n%4 batches already committed. Cancellation keeps those commits.\n\nExecute the sealed plan shown in the report?").arg(identifier.text()).arg(plan["total"].toInt()).arg(plan["mode"].toString()).arg(plan["committed_batches"].toInt()),QMessageBox::Yes|QMessageBox::Cancel,&dialog);if(review.exec()!=QMessageBox::Yes)return;m_activeOperationJob=identifier.text();setBusy(true,tr("Job running • keep ID %1").arg(m_activeOperationJob));requesting=true;m_client->request(resource+"/"+identifier.text()+(status=="prepared"?"/start":"/resume"),{{"expected_state",m_info["state"]},{"plan_digest",plan["plan_digest"]}},show);});
+    connect(&cancel,&QPushButton::clicked,&dialog,[&,guard,show]{if(!guard || requesting)return;requesting=true;m_client->request(resource+"/"+identifier.text()+"/cancel",{},show);});
+    connect(&next,&QPushButton::clicked,&dialog,[&]{if(!requesting){offset+=100;inspectJob();}});
+    connect(&release,&QPushButton::clicked,&dialog,[&,guard,show]{if(requesting || !m_activeOperationJob.isEmpty())return;requesting=true;m_client->request(resource+"/"+identifier.text()+"/release",{},show);});
+    connect(&identifier,&QLineEdit::textChanged,&dialog,[&]{offset=0;plan={};});
+    connect(&close,&QPushButton::clicked,&dialog,&QDialog::accept);
+    if(!m_activeOperationJob.isEmpty())QTimer::singleShot(0,&dialog,inspectJob);
+    dialog.exec();timer.stop();
 }
 
 void MainWindow::calculateSelection() {
@@ -2425,6 +2461,11 @@ void MainWindow::findDialog(bool replace) {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
+    if(!m_activeOperationJob.isEmpty()){
+        const auto answer=QMessageBox::warning(this,tr("Close with a retained job journal?"),tr("Job %1 may have committed batches. Closing requests cancellation; it cannot undo commits.\nWorkbook: %2\nKeep the ID and inspect its sidecar journal before resuming.").arg(m_activeOperationJob,m_info["path"].toString()),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel);
+        if(answer==QMessageBox::Yes)event->accept();else event->ignore();return;
+    }
+
     if (m_unknown && !m_pendingId.isEmpty()) {
         if (!preserveUnknownOperation()) { issue("Keep the workbook path and operation ID before exiting: "+m_pendingId); event->ignore(); return; }
         const auto answer=QMessageBox::warning(this,tr("Close with an unknown operation outcome?"),
