@@ -87,3 +87,28 @@ The original rectangle, state, current cell, service and draft/address fences ar
 checked after the dialog. Read-only and projected/hidden scopes retain existing
 guards. Applicable interchange mappings remain the existing style tier; later
 increments extend this dialog and the shared style contract together.
+
+5. [Decimal precision #79](https://github.com/hybridmachine/DataHorizon/pull/79): locally built/tested and author-reviewed before merge.
+
+## Decimal precision
+
+Number and Percentage in Format Cells accept 0–15 decimal places (default two).
+Keep existing precision is separate from category. More/Fewer decimal places in
+the toolbar use the active cell's precision, clamped to 0–15, for one selected
+rectangle; each percentage cell retains its category. One managed edit and Undo
+cover the rectangle. Numbers, formula source, identifiers, Boolean and NULL
+inputs keep their types and stored values. General/Text ignore decimal metadata.
+
+Native-v1 styles add `format: number|percent` and integer `decimals: 0..15`.
+Legacy fixed2/percent2 remain exactly two places. A precision-only style patch
+selects Number unless the existing cell is a percentage; exact replace_style
+preserves the supplied metadata, and precision without a category means Number.
+The invariant decimal separator is a dot. Percentage scales display only, using
+the existing bounded decimal display arithmetic; it never scales stored values.
+
+XLSX exports simple zero-placeholder formats; ODS uses number/percentage styles
+with explicit decimal places. Import accepts this grammar only, reports other
+formats, and canonicalizes two-place styles to legacy tokens. Interchange keeps
+numeric values and effective display, rather than native style token identity.
+Earlier services may reject these additive style properties; keep the native
+workbook and use a compatible service. Evidence: `evidence/decimal-verification.txt`.

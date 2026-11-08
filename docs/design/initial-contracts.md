@@ -335,3 +335,8 @@ Cell borders use the native style `border: "box"` or `"none"`. The desktop
 Format menu applies or clears all four edges on each selected cell using one
 managed edit. Borders use the system text color with a two-logical-pixel stroke.
 Per-edge patterns, line/color selection and merged-cell borders are unavailable.
+
+Numeric formatting extends the shared Style schema with Number/Percentage and
+0–15 decimal places. It remains an ordinary bounded style edit, preserving typed
+inputs, formula source, transaction ownership and history. See
+[decimal precision](editing-formatting-next-ten.md#decimal-precision).

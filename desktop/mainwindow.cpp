@@ -348,6 +348,7 @@ void MainWindow::buildUi() {
     add(formatMenu, tr("Two decimal places"), {}, [this] { format({{"format", "fixed2"}}); }, true);
     auto *percentAction=add(formatMenu,tr("Percentage (two decimal places)"),{},[this]{format({{"format","percent2"}});});
     percentAction->setObjectName("percentFormatAction"); percentAction->setToolTip(tr("Display numeric fractions: 0.125 becomes 12.50%. Stored values stay unchanged."));
+    for(const int change:{-1,1}){auto *action=add(formatMenu,change>0?tr("More decimal places"):tr("Fewer decimal places"),{},[this,change]{adjustDecimals(change);},true);action->setObjectName(change>0?"moreDecimalsAction":"fewerDecimalsAction");action->setToolTip(tr("Use the active cell's precision, adjusted by one (0–15), for the selection. Percentage categories stay percentages."));}
     for (const auto &align : {QString("left"), QString("center"), QString("right")})
         add(formatMenu, tr("Align %1").arg(align), {}, [this, align] { format({{"align", align}}); });
     add(formatMenu, tr("Cell background…"), {}, [this] {
@@ -1526,6 +1527,14 @@ void MainWindow::showFormatCells() {
     bool editor=false;auto views=m_frozenTop->views();views.append(m_grid);for(auto *view:views)if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))editor|=delegate->hasEditor();
     if(m_busy || m_unknown || service!=m_client->url() || !matchesTarget(target) || m_grid->currentIndex()!=current || m_grid->selectionModel()->selection()!=selection || m_source->isModified() || m_address->isModified() || editor){issue("Formatting target changed. Review the selection and open Format Cells again.");return;}
     const auto style=dialog.patch();if(style.isEmpty() && !dialog.replaceStyle())return;format(style,target,dialog.replaceStyle());
+}
+
+void MainWindow::adjustDecimals(int change) {
+    if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool())return;
+    if(m_address->isModified() || !m_model->loaded(m_grid->currentIndex())){issue("Finish address entry and wait for the active cell before adjusting decimals.");return;}
+    auto range=selectedRange();if(range.isEmpty())return;const auto target=targetContext(range);const auto current=QPersistentModelIndex(m_grid->currentIndex());const auto style=m_model->cell(current)["style"].toObject();const auto mode=style["format"].toString();const int places=(mode=="fixed2" || mode=="percent2")?2:style["decimals"].toInt(2);const int next=qBound(0,places+change,15);
+    captureGridDraft(false);if(!resolveDraft() || !matchesTarget(target) || current!=m_grid->currentIndex())return;
+    format({{"decimals",next}},target);
 }
 
 void MainWindow::format(const QJsonObject &style, QJsonObject target, bool replaceStyle) {

@@ -110,3 +110,10 @@ recalculation. Process-crash fixtures and exact limits are documented in
 as two-decimal percentages without changing inputs/kinds. Older readers that do
 not recognize it can reject that cell style; they must not rewrite the input or
 silently substitute another format. See the [percentage tier](spreadsheet-next-ten.md#percentage-format-contract).
+
+Configurable numeric display adds `format: number|percent` with optional integer
+`decimals` from 0 to 15 (default 2). Precision without a format means Number;
+General/Text ignore it and legacy fixed2/percent2 always remain two places.
+Precision-only managed patches preserve percentage categories. This additive
+style extension does not alter schema version 1, stored inputs or numeric types;
+older services can reject the new properties instead of silently dropping them.

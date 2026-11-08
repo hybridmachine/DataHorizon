@@ -217,3 +217,9 @@ Filtered list values can be copied in display order with typed native clipboard 
 Filtered CSV/XLSX/ODS export uses one ordered values snapshot compressed to A1, with review of formula conversion and hidden-section exclusions. See [the filtered export contract](editing-lists-next-ten.md#export-filtered-values).
 
 Named sort/filter definitions persist locally per workbook/sheet and are reviewed before re-applying after reopen, including read-only opens. They use source addresses and are not portable native metadata; see [saved-view limits](editing-lists-next-ten.md#saved-named-list-views).
+
+Configurable Number/Percentage display supports 0–15 decimal places, portable
+through simple XLSX zero-placeholder formats and ODS decimal-place styles.
+Two-place imports may use legacy native tokens; effective display and numeric
+magnitude are retained. Arbitrary/custom/locale/date display remains reported
+outside this grammar. See [the contract](editing-formatting-next-ten.md#decimal-precision).
