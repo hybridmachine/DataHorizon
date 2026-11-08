@@ -51,6 +51,7 @@ protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
+    quint64 m_calculationGeneration=0;
     void updateFormulaReferences();
     QList<QColor> formulaReferenceColors(int row,int column) const;
     void startReferencePick();
@@ -79,6 +80,7 @@ private:
     bool formatPainterMouseEvent(QObject *object,QEvent *event);
     void showFormatCells();
     void enterTemporal();
+    void calculateSelection();
     void adjustDecimals(int change);
     void format(const QJsonObject &style, QJsonObject target = {}, bool replaceStyle = false);
     void importFile();
