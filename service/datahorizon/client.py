@@ -161,9 +161,21 @@ class WorkbookClient:
     def declare_list(self,identifier,sheet='Sheet1',**spec):
         return self.apply('list_declare',sheet,id=identifier,spec=spec)
 
-    def records(self,identifier,sheet='Sheet1'):
+    def records(self,identifier,sheet='Sheet1',**criteria):
         self._ensure_open()
-        return self.client.request(self.base+'/records/read',dict(id=identifier,sheet=sheet,expected_state=self.state))
+        return self.client.request(self.base+'/records/read',dict(id=identifier,sheet=sheet,expected_state=self.state,**criteria))
+
+    def copy_records(self,identifier,sheet='Sheet1',**criteria):
+        self._ensure_open()
+        return self.client.request(self.base+'/records/copy',dict(id=identifier,sheet=sheet,expected_state=self.state,**criteria))
+
+    def edit_records(self,identifier,record_ids,sheet='Sheet1',**arguments):
+        return self.apply('list_edit',sheet,id=identifier,record_ids=record_ids,**arguments)
+
+    def export_records(self,identifier,format='xlsx',sheet='Sheet1',**criteria):
+        self._ensure_open()
+        if format not in ('xlsx','ods'):raise ValueError('Choose XLSX or ODS')
+        return self.client.request(self.base+'/records/export/'+format,dict(id=identifier,sheet=sheet,expected_state=self.state,**criteria))
 
     def reconcile_list(self,identifier,mode,sheet='Sheet1'):
         return self.apply('list_reconcile',sheet,id=identifier,mode=mode)

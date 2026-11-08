@@ -14,3 +14,5 @@ Task 4: Debug build and 3 structural-hook tests passed. Full Python suite ran 41
 Task 5: Debug build; native v3/REST/SDK metadata tests and Qt Save/Load view passed. Full Python run: 413 tests; one hard-coded advertised-action sequence needed metadata_set/delete added. Expanded OpenAPI execution then passed for every advertised mutation. v1/v2, reopen, snapshot, duplication, invalid payload rollback and read-only access verified.
 
 Task 6: Debug build, 4 persistent-record tests, executable OpenAPI actions and the complete Python suite passed (417 tests; 15 optional-binding skips). UUID retention through edits/sort/insert/delete/rename/reopen, external edit distrust, explicit reconciliation and transactional header-delete rejection verified.
+
+Task 7: Debug build, 4 record-operation tests, expanded OpenAPI examples, Qt visible-ID clear and complete Python suite passed (421 tests; 15 optional-binding skips). Filtered-out inputs, single Undo, per-cell formula origins, compressed XLSX referents and excluded-reference rejection verified.
