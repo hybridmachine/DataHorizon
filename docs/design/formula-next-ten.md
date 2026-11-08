@@ -67,6 +67,33 @@ Reset, service and busy-state changes cancel picking; changed target/text/cursor
 prevents insertion. Enter still performs one ordinary managed edit with existing
 formula, hook, rejection and Undo semantics. Picking itself makes no REST mutation.
 
+## Reference and parenthesis cues
+
+Automatic/formula inputs in both editors underline recognized A1 references with
+stable colors and outline matching visible source cells through the shared grid
+model. Repeated references share a color; overlapping cells show at most three
+outlines. A plain-text legend identifies the reference spellings independently
+of color. The same source-coordinate mapping works in frozen and projected views;
+other-sheet references are underlined but only current-sheet visible cells are
+outlined. No referenced cells are fetched merely to highlight them.
+
+The adjacent matching parenthesis pair is boxed, unmatched parentheses are marked
+and described, and quoted Text/sheet names do not contribute parentheses or false
+references. Native glyphs, selection and cursor painting are retained; colored
+underlines/boxes are drawn with Qt text-layout/cursor geometry and clipped to the
+editor contents. Argument tips are kept within the available screen geometry.
+
+This is tolerant, bounded visual analysis of incomplete drafts, not parser or
+calculation validation. It recognizes ordinary A1/rectangular spellings; complex
+parenthesized range spellings can appear as separate endpoint cues. Cues are capped
+at 64 references/nesting 128, with an explicit visual-limit note; source remains
+intact. Literal Text disables them. Selection, source/cell editor changes and
+cancel/close update the visible cues without stored edits, hooks or history.
+The service parser and calculation errors remain authoritative on submission.
+Programmatic startup address clears also reset their modified flag, so they do
+not masquerade as an unfinished user address draft; actual address drafts remain
+guarded.
+
 ## Completed PRs
 
 1. [Function catalog #55](https://github.com/hybridmachine/DataHorizon/pull/55): local build/full CTest and native help checks passed; self-reviewed and merged.
@@ -74,3 +101,5 @@ formula, hook, rejection and Undo semantics. Picking itself makes no REST mutati
 2. [Autocomplete and hints #56](https://github.com/hybridmachine/DataHorizon/pull/56): locally verified, self-reviewed and merged.
 
 3. [Reference picking #57](https://github.com/hybridmachine/DataHorizon/pull/57): locally verified, self-reviewed and merged.
+
+4. [Reference/parenthesis cues #58](https://github.com/hybridmachine/DataHorizon/pull/58): locally verified, visually inspected, self-reviewed and merged.

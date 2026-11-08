@@ -4,6 +4,7 @@
 #include "restclient.h"
 #include "sheetmodel.h"
 #include <QMainWindow>
+#include "formulasyntax.h"
 #include <QProcess>
 #include <QMap>
 #include <QJsonArray>
@@ -50,6 +51,8 @@ protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
+    void updateFormulaReferences();
+    QList<QColor> formulaReferenceColors(int row,int column) const;
     void startReferencePick();
     void finishReferencePick(bool insert);
     bool referenceMouseEvent(QObject *object,QEvent *event);
@@ -141,6 +144,8 @@ private:
     QToolBar *m_toolbar = nullptr;
     QAction *m_undo = nullptr, *m_redo = nullptr;
     QJsonObject m_info,m_functionCatalog;
+    QLabel *m_formulaCues=nullptr;
+    QList<FormulaReferenceCue> m_formulaReferences;
     QAction *m_pickReferenceAction = nullptr;
     bool m_pickingReference=false,m_referenceDragging=false;
     QJsonObject m_referenceTarget;
