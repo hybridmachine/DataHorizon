@@ -76,9 +76,9 @@ background results that can overwrite a newer input state.
 
 ## Import and export
 
-| Feature | Native v1 | CSV import / export | XLSX | ODS |
+| Feature | Native v1/v2 | CSV import / export | XLSX | ODS |
 | --- | --- | --- | --- | --- |
-| Typed values | Preserved | Explicit reviewed types / canonical values | Text, finite numbers, Booleans; serial dates remain numbers | Text/numbers/Booleans; ISO dates/durations become Text |
+| Typed values | Preserved; temporal inputs upgrade to v2 | Native temporal column conversions; optional hash-bound type companion | Native ISO dates/times; supported formatted serials use 1900/1904 epochs | Native ISO dates/datetimes and sub-day clock durations |
 | Leading-zero text | Preserved | Preserved as text; CSV receivers may infer types | Preserved as Text | Preserved as Text |
 | Formula source | Preserved | Literal Text / evaluated values | Implemented local formulas or explicit cached/fresh values | Shared scalar function tier and arithmetic except powers; canonical syntax |
 | Supported styles | Preserved | Destination styles retained / omitted | Native direct styles mapped; unsupported display reported | Native direct styles mapped; unsupported display reported |
@@ -92,7 +92,7 @@ quotes, NUL and line endings. Import preview is bounded by 10,000 cells/records,
 3 MiB of raw bytes and decoded UTF-8, 64 KiB per cell and a 4-MiB complete JSON
 request/response. Text is the default. Explicit per-column Number/Boolean uses
 native strict conversion and precision rules; dates require YYYY-MM-DD,
-M/D/YYYY or D/M/YYYY and normalize to ISO Text. A header option retains the
+M/D/YYYY or D/M/YYYY and normalize to native ISO dates. Explicit ISO time/datetime columns are supported. A header option retains the
 first record as Text. Invalid conversions block Apply and never fall back to
 Text; users can explicitly change the type and review again. See
 [CSV controls](editing-csv-next-five.md#csv-encoding-and-delimiters) and
@@ -221,7 +221,7 @@ Named sort/filter definitions persist locally per workbook/sheet and are reviewe
 Configurable Number/Percentage display supports 0–15 decimal places, portable
 through simple XLSX zero-placeholder formats and ODS decimal-place styles.
 Two-place imports may use legacy native tokens; effective display and numeric
-magnitude are retained. Arbitrary/custom/locale/date display remains reported
+magnitude are retained. Arbitrary/custom/locale display remains reported
 outside this grammar. See [the contract](editing-formatting-next-ten.md#decimal-precision).
 
 Numeric grouping maps to simple XLSX `#,##0[.zeros][%]` formats (including

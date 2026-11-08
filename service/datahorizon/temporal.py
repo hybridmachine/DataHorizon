@@ -111,3 +111,34 @@ def from_serial(serial, kind="datetime", system="1900"):
     except (OverflowError,ValueError) as error:
         raise ValueError("Serial exceeds years 0001–9999") from error
     return Temporal(parsed.date().isoformat() if kind == "date" else parsed.isoformat(), kind)
+
+
+def from_duration(source):
+    """ODF durations within one day are clocks; longer/negative periods fail."""
+    match=re.fullmatch(r"P(?:(0)D)?T(?:(\d{1,5})H)?(?:(\d{1,5})M)?(?:(\d{1,5}(?:\.\d{1,6})?)S)?",source)
+    if not match or not any(match[i] for i in (2,3,4)):raise ValueError("Only nonnegative ODS clock durations within one day are supported")
+    from decimal import Decimal
+    micros=int((Decimal(match[2] or 0)*3600+Decimal(match[3] or 0)*60+Decimal(match[4] or 0))*1_000_000)
+    if not 0<=micros<DAY_US:raise ValueError("ODS duration exceeds a civil clock day")
+    return Temporal((datetime(2000,1,1)+timedelta(microseconds=micros)).time().isoformat(),"time")
+
+
+def to_duration(value):
+    parsed=value.parsed()
+    seconds=f"{parsed.second:02}"+("."+f"{parsed.microsecond:06}".rstrip("0") if parsed.microsecond else "")
+    return f"PT{parsed.hour}H{parsed.minute}M{seconds}S"
+
+
+def export_temporal_styles(snapshots):
+    """Give unformatted temporal values/formulas a portable calendar display."""
+    result=[]
+    for sheet in snapshots:
+        cells=[]
+        for original in sheet["cells"]:
+            cell=dict(original);value=cell.get("value")
+            kind=value.kind if isinstance(value,Temporal) else cell.get("value_kind",cell.get("kind"))
+            if kind in KINDS and cell.get("style",{}).get("format","general")=="general":
+                cell["style"]={**cell.get("style",{}),"format":{"date":"date_iso","time":"time24","datetime":"datetime_iso"}[kind]}
+            cells.append(cell)
+        result.append({**sheet,"cells":cells})
+    return result

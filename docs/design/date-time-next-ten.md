@@ -120,3 +120,34 @@ QSaveFile; a two-file export cannot be atomic as a pair. A failed CSV commit can
 leave its companion for inspection, and a hash mismatch blocks restoration.
 Keep both files together; CSV alone remains portable but untyped. REST/SDK users
 retain and supply `temporal_schema` in their export/preview JSON.
+
+## XLSX and ODS
+
+XLSX exports temporal values as ISO `t="d"` cells (including time-only), preserving
+native fractional digits without a serial round trip. Unformatted temporal inputs
+and formula results receive portable ISO calendar styles. Formula-mode XLSX omits
+caches and requests recalculation; values mode freezes the shared native snapshot.
+Import accepts strict ISO types and numeric serials with supported date/time
+formats. Built-ins 14–22 and a bounded set of invariant patterns normalize to the
+five native styles; unknown/locale/elapsed-time formats remain reported omissions.
+Unformatted numbers stay numbers. Date-formatted serials with a hidden non-midnight
+clock become datetime, so formatting cannot discard the clock. `date1904` is
+honored; 1900 serial 60 blocks import. Serial binary64 precision can differ from
+native ISO microseconds; independent readers may retain only milliseconds.
+
+ODS date/datetime uses `office:date-value`; time uses an ISO duration in
+`office:time-value`. Only nonnegative durations below 24 hours with at most six
+fractional digits map to native clocks. Longer, negative, calendar-unit durations
+and timezone offsets block import rather than wrapping or becoming Text. Supported
+invariant calendar styles map both ways; other displays are reported omissions.
+
+Native formulas return distinct civil types. External applications use serial
+numbers and their own coercion, epoch and clock/timezone behavior. Numeric date
+literals in imported formulas are not shifted for 1904 workbooks. Civil arithmetic
+near February 1900, native type predicates/comparisons, and volatile functions can
+differ on target recalculation. Conversion reports state these limits; choose
+values to freeze native results. Native format remains the complete type/source
+authority. No external application's calculation compatibility is certified.
+
+References: [Microsoft cell-value notes](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oi29500/b9d01770-b85b-4fb2-a387-f5811719a1af),
+[ODF 1.3 schema](https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-part3-schema.html).

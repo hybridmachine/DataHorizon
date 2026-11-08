@@ -68,7 +68,7 @@ class OdsTests(unittest.TestCase):
         for attrs in ('','office:value-type="string" office:string-value="#DIV/0!"'):
             self.assertFalse(preview(fixture(f'<table:table-row><table:table-cell table:formula="of:=1/0" {attrs}/></table:table-row>'),mode="values")["can_import"])
 
-    def test_dates_become_text_and_native_styles_roundtrip(self):
+    def test_dates_use_native_types_and_native_styles_roundtrip(self):
         style={"format":"fixed2","bold":True,"italic":True,"align":"center","wrap":True,"background":"#12ab34","border":"box"}
         cells=[{"row":3,"col":2,"kind":"number","source":"7","value":7,"calculation":"current","style":style},
                {"row":3,"col":3,"kind":"formula","source":"=B3*2","value":14,"calculation":"current","style":{}},
@@ -80,7 +80,7 @@ class OdsTests(unittest.TestCase):
         self.assertEqual(parsed["cells"][1]["source"],"=(B3*2.0)")
         self.assertEqual(parsed["cells"][2]["source"],cells[2]["source"])
         dates=preview(fixture('<table:table-row><table:table-cell office:value-type="date" office:date-value="2026-11-06"/><table:table-cell office:value-type="time" office:time-value="PT2H"/></table:table-row>'))
-        self.assertEqual([(c["source"],c["kind"]) for c in dates["cells"]],[("2026-11-06","text"),("PT2H","text")])
+        self.assertEqual([(c["source"],c["kind"]) for c in dates["cells"]],[("2026-11-06","date"),("02:00:00","time")])
         with zipfile.ZipFile(io.BytesIO(base64.b64decode(exported["file_base64"]))) as archive:
             self.assertEqual(archive.infolist()[0].filename,"mimetype"); self.assertEqual(archive.infolist()[0].compress_type,zipfile.ZIP_STORED)
             self.assertIn("META-INF/manifest.xml",archive.namelist())

@@ -35,12 +35,20 @@ int main(int argc, char **argv) {
             if(smokeSubmitted) return;
             smokeSubmitted=true;
             window.submit({{"action","edit"},{"cells",QJsonArray{
-                QJsonObject{{"row",1},{"col",1},{"source","=SUM(7,13.5)"}}}}});
+                QJsonObject{{"row",1},{"col",1},{"source","=SUM(7,13.5)"}},
+                QJsonObject{{"row",2},{"col",1},{"source","=DATE(2024,2,29)+1"}},
+                QJsonObject{{"row",3},{"col",1},{"source","2024-02-29T12:34:56.123456"},{"kind","datetime"}},
+                QJsonObject{{"row",4},{"col",1},{"source","=YEAR(A2)+MONTH(A2)+DAY(A2)"}},
+                QJsonObject{{"row",5},{"col",1},{"source","=HOUR(TIME(1,2,3))+MINUTE(TIME(1,2,3))+SECOND(TIME(1,2,3))"}},
+                QJsonObject{{"row",6},{"col",1},{"source","=YEAR(TODAY())>=2020"}},
+                QJsonObject{{"row",7},{"col",1},{"source","=HOUR(NOW())>=0"}}}}});
         });
         QObject::connect(&window,&MainWindow::operationFinished,&window,[&](bool ok){if(!ok)app.exit(3);});
         auto *timer=new QTimer(&window); timer->setInterval(50);
         QObject::connect(timer,&QTimer::timeout,&window,[&]{
-            if(smokeSubmitted && window.model()->data(window.model()->index(0,0)).toString()=="20.5") app.exit(0);
+            const QStringList expected{"20.5","2024-03-01","2024-02-29T12:34:56.123456","2028","6","TRUE","TRUE"};bool valid=smokeSubmitted;
+            for(int row=0;row<expected.size();++row)valid=window.model()->data(window.model()->index(row,0)).toString()==expected[row] && valid;
+            if(valid) app.exit(0);
         });
         timer->start(); QTimer::singleShot(20000,&app,[&]{app.exit(2);});
     }

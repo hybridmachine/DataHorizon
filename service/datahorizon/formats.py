@@ -7,6 +7,18 @@ TEMPORAL_FORMATS = {"date_iso":"yyyy-mm-dd", "date_mdy":"mm/dd/yyyy", "date_dmy"
                     "time24":"hh:mm:ss", "datetime_iso":"yyyy-mm-dd hh:mm:ss"}
 
 
+def temporal_style(code):
+    aliases={"mm-dd-yy":"date_iso","d-mmm-yy":"date_iso","d-mmm":"date_iso","mmm-yy":"date_iso",
+             "m/d/yy":"date_mdy","mm/dd/yy":"date_mdy","d/m/yy":"date_dmy","dd/mm/yy":"date_dmy",
+             "h:mm":"time24","h:mm:ss":"time24","h:mm am/pm":"time24","h:mm:ss am/pm":"time24",
+             "m/d/yy h:mm":"datetime_iso","yyyy-mm-dd h:mm:ss":"datetime_iso"}
+    folded=code.lower()
+    mode=next((mode for mode,pattern in TEMPORAL_FORMATS.items() if folded==pattern),aliases.get(folded))
+    if mode is None and re.fullmatch(r"hh?:mm:ss\.0{1,6}",folded):mode="time24"
+    if mode is None and re.fullmatch(r"yyyy-mm-dd hh?:mm:ss\.0{1,6}",folded):mode="datetime_iso"
+    return {"format":mode} if mode else None
+
+
 def temporal_display(value, style):
     mode = style.get("format")
     if mode not in TEMPORAL_FORMATS: return str(value)
@@ -51,8 +63,8 @@ def number_format_code(style):
 
 
 def simple_number_style(code):
-    for mode,pattern in TEMPORAL_FORMATS.items():
-        if code.lower()==pattern:return {"format":mode}
+    temporal=temporal_style(code)
+    if temporal:return temporal
     match=re.fullmatch(r'(#,##)?0(?:\.(0{1,15}))?(%|" [A-Z]{3}")?',code)
     if not match: return None
     places=len(match[2] or "");suffix=match[3] or ""

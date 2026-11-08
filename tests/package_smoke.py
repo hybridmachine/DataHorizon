@@ -29,7 +29,7 @@ def smoke(prefix):
         finally: disabled.rename(launcher)
         if missing.returncode!=4 or "installation is incomplete" not in missing.stderr:
             raise RuntimeError("Missing installed launcher did not fail explicitly; development fallback may be masking an incomplete package")
-    return {"platform":platform.system(),"relocated_managed_edit_calculation":True,"developer_overrides_removed":True,
+    return {"platform":platform.system(),"relocated_managed_edit_calculation":True,"temporal_types_and_ten_functions":True,"developer_overrides_removed":True,
             "missing_service_fails_explicitly":True,"runtime_dependency":"Separately installed Python unless an explicitly supplied runtime is staged",
             "clean_machine_qualified":False}
 

@@ -1938,7 +1938,7 @@ void MainWindow::previewCsv(QJsonObject request, QJsonObject target) {
         // and disabled Apply state in the Qt widget on every platform.
         review.setOption(QMessageBox::Option::DontUseNativeDialog);
         review.setTextFormat(Qt::PlainText); review.setDefaultButton(QMessageBox::Cancel);
-        QString summary=tr("%1 converted values; %2 conversion errors.\n%3 ambiguous slash dates use your selected date order. Dates become ISO Text.\n\nPreview (first 2 rows / 4 columns, 40 characters per field):\n%4\n\nOpen Details for encoding, column types, conversion issues and more preview rows.")
+        QString summary=tr("%1 converted values; %2 conversion errors.\n%3 ambiguous slash dates use your selected date order. Dates/times retain native ISO types.\n\nPreview (first 2 rows / 4 columns, 40 characters per field):\n%4\n\nOpen Details for encoding, column types, conversion issues and more preview rows.")
             .arg(preview["converted_cells"].toInt()).arg(preview["conversion_errors"].toInt())
             .arg(preview["ambiguous_dates"].toInt()).arg(shortLines.join('\n'));
         review.setInformativeText(summary);
@@ -1999,7 +1999,7 @@ bool MainWindow::csvTypesDialog(QJsonObject &request, const QJsonObject &preview
         if(kind=="text") types.remove(key); else types[key]=kind;
     });
     layout.addRow(&header); layout.addRow(tr("CSV column (1-based)"),&column); layout.addRow(tr("Type"),&type); layout.addRow(&sample);
-    QLabel note(tr("Unspecified columns remain Text. Dates become ISO Text. Empty converted fields become blank. Invalid conversions block Apply; review the result before importing."),&dialog);
+    QLabel note(tr("Unspecified columns remain Text. Dates/times retain native ISO types. Empty converted fields become blank. Invalid conversions block Apply; review the result before importing."),&dialog);
     note.setWordWrap(true); layout.addRow(&note);
     QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog); layout.addRow(&buttons);
     connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept); connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
