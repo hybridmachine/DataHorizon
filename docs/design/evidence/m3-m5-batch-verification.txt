@@ -4,3 +4,5 @@ Task 1: Debug build passed; 2 executable baseline conformance tests passed.
 Command: PYTHONPATH=service python3 -m unittest discover -s tests -p test_m3_m5_contracts.py -v
 Delivery: one published-head author review and merge per task; self-reviews are not independent approvals.
 Final qualification evidence is appended as implementation proceeds. Hosted CI is not used.
+
+Task 2: Debug build, 5 dependency tests and the complete Python suite passed (404 tests; 15 optional-binding skips). Transitive/range/absent/cross-sheet invalidation, unrelated reuse, external refresh, lazy errors, volatile clocks, transaction isolation and Undo verified.

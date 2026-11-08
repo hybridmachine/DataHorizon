@@ -22,6 +22,7 @@ from .formats import numeric_display, numeric_spec, temporal_display, TEMPORAL_F
 from .borders import SIDES, BORDER_STYLES
 from .temporal import Temporal, utc_clock, temporal_key, KINDS as TEMPORAL_KINDS
 from .csv_types import temporal_schema
+from .dependencies import DependencyIndex
 
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
@@ -252,6 +253,7 @@ class Workbook:
         self.readonly, self.handler = readonly, handler
         self.lock = threading.RLock()
         self.undo, self.redo = [], []
+        self.dependencies=DependencyIndex()
         self.epoch = str(uuid.uuid4())
         created_identity = None
         if create:
@@ -345,6 +347,7 @@ class Workbook:
             self.version, self.epoch = current, str(uuid.uuid4())
             self.undo.clear()
             self.redo.clear()
+            self.dependencies.clear()
 
     def state(self):
         revision = self.db.execute("SELECT revision FROM dh_meta").fetchone()[0]
@@ -373,13 +376,14 @@ class Workbook:
         except (ValueError, TypeError) as error:
             raise EngineError("INVALID_INPUT", "Invalid externally stored cell metadata") from error
 
-    def calculator(self, seconds=0.25, *, clock=None):
+    def calculator(self, seconds=0.25, *, clock=None, transactional=False):
         def resolve(name):
             try:
                 return self.sheet(name)
             except EngineError as error:
                 raise FormulaError("#REF!", "Referenced sheet does not exist") from error
-        return Calculator(lambda s, r, c: typed(self.raw(s, r, c)), resolve, seconds, clock=clock)
+        read=lambda s,r,c: typed(self.raw(s,r,c))
+        return Calculator(read,resolve,seconds,clock=clock) if transactional else self.dependencies.calculator(read,resolve,seconds,clock)
 
     def range_cells(self, sheet, rows, c1, c2, deadline):
         for row in rows:
@@ -688,7 +692,7 @@ class Workbook:
                 if method == "get":
                     return self.raw(sheet, row, col)
                 if method == "value":
-                    return self.calculator(clock=clock).cell(sheet, row, col)
+                    return self.calculator(clock=clock,transactional=True).cell(sheet, row, col)
                 require(method == "set", "INVALID_HOOK", "Unknown handler context method")
                 self.apply_edit(sheet, [{**args, "row": row, "col": col}])
                 return None
@@ -947,6 +951,8 @@ class Workbook:
                 require(time.monotonic()<=self.deadline,"TIMEOUT","Operation exceeded its time budget")
                 self.db.execute("COMMIT")
                 in_transaction = False
+                if structural:self.dependencies.clear()
+                else:self.dependencies.invalidate(self.changes)
                 if structural:
                     self.undo.clear()
                     self.redo.clear()
