@@ -29,7 +29,7 @@ def response(peer):
     chunks=[]
     try:
         while chunk:=peer.recv(8192): chunks.append(chunk)
-    except ConnectionResetError:
+    except (ConnectionResetError,ConnectionAbortedError):
         pass  # Some platforms reset when closing with unread peer bytes.
     return b''.join(chunks)
 
@@ -91,12 +91,19 @@ class HttpLimitsTests(unittest.TestCase):
             body=json.dumps({'operation_id':'incomplete','expected_state':book.state,'action':'edit',
                              'cells':[{'row':1,'col':1,'source':'wrong'}]}).encode()
             with socket.create_connection(server.server_address) as peer:
+                started=time.monotonic()
                 peer.sendall((f'POST {book.base}/operations HTTP/1.0\r\nHost: localhost\r\nAuthorization: Bearer {server.token}\r\nContent-Length: {len(body)}\r\n\r\n').encode())
-                for byte in body[:20]:
-                    time.sleep(.04)
-                    try: peer.sendall(bytes([byte]))
-                    except OSError: break
-                raw=response(peer)
+                stopped=threading.Event()
+                def trickle():
+                    for byte in body[:20]:
+                        if stopped.wait(.04): return
+                        try: peer.sendall(bytes([byte]))
+                        except OSError: return
+                sender=threading.Thread(target=trickle,daemon=True);sender.start()
+                try: raw=response(peer)
+                finally: stopped.set();sender.join(timeout=2)
+                self.assertFalse(sender.is_alive())
+                self.assertLess(time.monotonic()-started,1.5)
                 self.assertIn(b'408',raw.split(b'\r\n')[0])
                 self.assertEqual(json.loads(raw.split(b'\r\n\r\n')[1])['code'],'REQUEST_TIMEOUT')
             self.assertEqual(book.read(r2=1,c2=1)['cells'],[])

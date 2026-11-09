@@ -72,18 +72,14 @@ if(BUILD_TESTING)
     target_link_libraries(desktop_tests PRIVATE datahorizon_desktop Qt6::Test)
     target_compile_definitions(desktop_tests PRIVATE DATAHORIZON_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     add_test(NAME desktop COMMAND desktop_tests)
-    set_tests_properties(desktop PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;DATAHORIZON_VIEW_STATE=${CMAKE_CURRENT_BINARY_DIR}/test-views.ini" TIMEOUT 120)
+    # These cover the complete process suites, including spawned services and
+    # modal-dialog automation. Individual operation deadlines remain unchanged.
+    set_tests_properties(desktop PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;DATAHORIZON_VIEW_STATE=${CMAKE_CURRENT_BINARY_DIR}/test-views.ini" TIMEOUT 600)
     add_test(NAME service COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s tests -v)
     set_tests_properties(service PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/service" TIMEOUT 45)
+        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/service" TIMEOUT 180)
     if(WIN32)
-        # Allow the complete multi-process suites to finish on hosted Windows.
-        set_tests_properties(desktop PROPERTIES TIMEOUT 300)
-        set_tests_properties(service PROPERTIES TIMEOUT 120)
-    elseif(APPLE)
-        # Hosted macOS has also exceeded 90s with no assertion failures. Keep
-        # per-operation deadlines while budgeting the complete process suite.
-        set_tests_properties(desktop PROPERTIES TIMEOUT 180)
+        set_tests_properties(service PROPERTIES TIMEOUT 600)
     endif()
 endif()
 

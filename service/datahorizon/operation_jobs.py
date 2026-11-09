@@ -15,7 +15,8 @@ import uuid
 
 from .engine import Workbook,EngineError,encoded,require,integer,boolean,typed,validate_style,rectangle,display,sql_deadline
 from .temporal import Temporal,temporal_key,utc_clock
-from .csv_import import preview_csv,ENCODINGS
+from .csv_import import preview_csv,ENCODINGS,COLUMN_TYPES
+from .conversion import PROFILES
 
 JOURNAL='''CREATE TABLE meta(singleton INTEGER PRIMARY KEY,payload TEXT NOT NULL);
 CREATE TABLE cells(seq INTEGER PRIMARY KEY,row INTEGER,col INTEGER,payload TEXT NOT NULL,UNIQUE(row,col));
@@ -36,7 +37,9 @@ class OperationJobs:
         path=self.path(identifier);require(path.is_file(),'JOB_NOT_FOUND','Operation journal is unavailable',404)
         with closing(sqlite3.connect(path,timeout=1)) as db:
             meta=json.loads(db.execute('SELECT payload FROM meta WHERE singleton=1').fetchone()[0])
-            require(meta.get('version')==1 and meta.get('workbook')==self.book.id and meta.get('identity')==list(self.book.file_identity),'JOB_CONFLICT','Journal belongs to another native file',409)
+            require(type(meta.get('version')) is int and meta['version'] in (1,2) and meta.get('workbook')==self.book.id and meta.get('identity')==list(self.book.file_identity),'JOB_CONFLICT','Unsupported journal version or another native file',409)
+            if meta['version']==2:
+                require(isinstance(meta.get('execution_id'),str) and re.fullmatch('[0-9a-f]{32}',meta['execution_id']),'JOB_CONFLICT','Invalid journal execution identity',409)
             yield db,meta
 
     @staticmethod
@@ -50,13 +53,34 @@ class OperationJobs:
             integer(request.get('row',1),1,1048576,'row');integer(request.get('col',1),1,16384,'col');boolean(request.get('header',False),'header')
         identifier=request.get('job_id');path=self.path(identifier);kind=request.get('action','edit');mode=request.get('mode','atomic')
         require(kind in ('edit','find','list') and mode in ('atomic','batches'),'INVALID_JOB','Choose edit/find/list and atomic/batches')
+        if 'source_path' in request:
+            require(kind=='edit','INVALID_JOB','CSV source_path applies only to edit jobs')
+            require(isinstance(request.get('encoding','utf-8-sig'),str) and request.get('encoding','utf-8-sig') in ENCODINGS,'INVALID_CSV_ENCODING','Unsupported CSV encoding')
+            delimiter=request.get('delimiter',',');require(isinstance(delimiter,str) and len(delimiter)==1 and delimiter not in '\r\n\0"','INVALID_CSV','Invalid CSV delimiter')
+            profile=request.get('locale','invariant');require(isinstance(profile,str) and profile in PROFILES,'INVALID_CONVERSION','Choose an explicit locale profile')
+            types=request.get('column_types',{});require(isinstance(types,dict) and all(isinstance(c,str) and re.fullmatch('[1-9][0-9]{0,4}',c) and isinstance(t,str) and t in COLUMN_TYPES for c,t in types.items()),'INVALID_CSV_TYPES','Invalid explicit CSV column types')
         with self.book.lock:
             self.book.refresh();require(request.get('expected_state')==self.book.state(),'STALE_STATE','Review current job targets',409)
             sheet=self.book.sheet(request.get('sheet','Sheet1'));state=self.book.state()
         scope_count=0
         if kind!='edit':
             r1,c1,r2,c2=rectangle(request,100000);scope_count=(r2-r1+1)*(c2-c1+1);require(request.get('c2',request.get('c1',1))-request.get('c1',1)+1<=256,'LIMIT','Large read jobs support at most 256 source columns')
-            if kind=='find':require(isinstance(request.get('needle'),str) and bool(request['needle']),'INVALID_JOB','Find needs nonempty Text')
+            boolean(request.get('header',False),'header')
+            if kind=='find':
+                require(isinstance(request.get('needle'),str) and bool(request['needle']),'INVALID_JOB','Find needs nonempty Text')
+                require(request.get('field','source') in ('source','display'),'INVALID_JOB','Find field must be source/display')
+            else:
+                for name in ('sort','filters'):
+                    items=request.get(name,[]);require(isinstance(items,list) and len(items)<=8,'INVALID_ARGUMENT','At most eight sort/filter criteria')
+                    for item in items:
+                        require(isinstance(item,dict),'INVALID_ARGUMENT','Criteria must be objects');integer(item.get('col'),c1,c2,'criteria column')
+                        if name=='sort':boolean(item.get('descending',False),'descending')
+                        else:
+                            require(item.get('op') in ('=','<>','<','>','<=','>=','contains') and type(item.get('value')) in (str,int,float,bool,type(None)),'INVALID_ARGUMENT','Invalid filter comparison/value')
+                            if 'value_kind' in item:
+                                require(item['value_kind'] in ('date','time','datetime') and item['op']!='contains','INVALID_ARGUMENT','Invalid temporal filter')
+                                try:Temporal(item.get('value'),item['value_kind'])
+                                except ValueError as error:raise EngineError('INVALID_ARGUMENT',str(error)) from error
         fingerprint=hashlib.sha256(encoded(request).encode()).hexdigest()
         self.root.mkdir(mode=0o700,parents=True,exist_ok=True)
         with self.lock:
@@ -67,7 +91,7 @@ class OperationJobs:
             else:
                 require(len(list(self.root.glob('*.sqlite')))<4,'JOB_LIMIT','Release an old operation journal first',409)
                 fd=os.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600);os.close(fd)
-                meta=dict(version=1,job_id=identifier,workbook=self.book.id,identity=list(self.book.file_identity),fingerprint=fingerprint,action=kind,mode=mode,
+                meta=dict(version=2,execution_id=uuid.uuid4().hex,job_id=identifier,workbook=self.book.id,identity=list(self.book.file_identity),fingerprint=fingerprint,action=kind,mode=mode,
                           sheet=sheet,expected_state=state,status='staging',phase='Staging',total=scope_count,bytes=0,next=0,committed_batches=0,attempt=0,plan_digest=None,
                           batch_size=batch_size,options=request,clock=utc_clock().isoformat(),processed=0,matches=0)
                 with closing(sqlite3.connect(path)) as db,db:db.executescript(JOURNAL);db.execute('INSERT INTO meta VALUES(1,?)',(encoded(meta),))
@@ -83,6 +107,7 @@ class OperationJobs:
             require(isinstance(item,dict) and not set(item)-{'row','col','source','kind','style','clear','clear_input','replace_style'},'INVALID_JOB','Unsupported staged edit field')
             integer(item.get('row'),1,1048576,'row');integer(item.get('col'),1,16384,'col')
             for flag in ('clear','clear_input','replace_style'):boolean(item.get(flag,False),flag)
+            require(item.get('kind','auto') in ('auto','formula','text','number','boolean','null','date','time','datetime'),'INVALID_INPUT','Unknown staged input kind')
             if 'source' in item:typed(dict(source=item['source'],kind=item.get('kind','auto'),style=item.get('style',{})))
             if 'style' in item:validate_style(item['style'])
             payload=encoded(item);size+=len(payload.encode());prepared.append((item,payload))
@@ -181,27 +206,47 @@ class OperationJobs:
         with self.journal(identifier) as (db,meta),db:meta['source_complete']=True;self.save(db,meta)
         self.seal(identifier)
 
-    def recover(self,identifier):
+    def recover(self,identifier,resolve_conflicts=False):
         with self.journal(identifier) as (db,meta),db:
             for operation,start,count,request in db.execute('SELECT id,start,count,request FROM attempts WHERE result IS NULL ORDER BY rowid').fetchall():
                 try:receipt=self.book.recorded_operation(operation,hashlib.sha256(request.encode()).hexdigest())
-                except EngineError as error:receipt=error.body
+                except EngineError as error:
+                    receipt=error.body
+                    if resolve_conflicts and error.body.get('code')=='OPERATION_ID_REUSED':
+                        # Explicit reviewed resume can prove this request never owned
+                        # an immutable native receipt. Preserve both images as evidence;
+                        # this is not a rolled-back native operation.
+                        self.book.verify_file();self.book.db.execute('BEGIN IMMEDIATE')
+                        try:
+                            original=self.book.db.execute('SELECT fingerprint,result FROM operations WHERE id=?',(operation,)).fetchone()
+                            if original and original[0]!=hashlib.sha256(request.encode()).hexdigest():
+                                conflict=dict(operation_id=operation,outcome='not_admitted',code='OPERATION_ID_REUSED',message='A different request owns this native receipt',original_receipt=json.loads(original[1]),original_fingerprint=original[0])
+                                db.execute('UPDATE attempts SET result=? WHERE id=?',(encoded(conflict),operation))
+                                continue
+                        finally:self.book.db.execute('ROLLBACK')
                 if receipt is None or receipt.get('outcome') not in ('committed','rolled_back') or receipt.get('operation_id')!=operation:meta.update(status='unknown',phase='Missing receipt is not proof of rollback',pending_operation=operation);self.save(db,meta);return False
                 db.execute('UPDATE attempts SET result=? WHERE id=?',(encoded(receipt),operation))
                 if receipt['outcome']=='committed':meta['next']=max(meta['next'],start+count);meta['committed_batches']+=1
+            meta.pop('pending_operation',None)
             self.save(db,meta);return True
 
     def start(self,identifier,request,resume=False):
         with self.lock:require(not self.stopping and not self.active,'JOB_BUSY','Wait for the active operation job to stop before execution',409)
         with self.book.lock:
             self.book.refresh()
-            require(self.recover(identifier),'OUTCOME_UNKNOWN','Reconcile the pending native operation before resuming',409)
+            # Validate explicit review before recovery may classify a legacy collision.
+            with self.journal(identifier) as (_,review):
+                require('execution_id' not in request or (isinstance(request['execution_id'],str) and re.fullmatch('[0-9a-f]{32}',request['execution_id']) and request['execution_id']==review.get('execution_id')),'STALE_PLAN','Job execution identity changed; inspect again',409)
+                require(review['action']!='edit' or not self.book.readonly,'READ_ONLY','Open the native file writable before executing an edit job',403)
+                require(request.get('expected_state')==self.book.state() and request.get('plan_digest')==review['plan_digest'] and review['plan_digest'] is not None,'STALE_PLAN','Review the sealed plan and current workbook before execution',409)
+            require(self.recover(identifier,resolve_conflicts=resume),'OUTCOME_UNKNOWN','Reconcile the pending native operation before resuming',409)
             with self.journal(identifier) as (db,meta),db:
                 require(meta['action']!='edit' or not self.book.readonly,'READ_ONLY','Open the native file writable before executing an edit job',403)
                 require(db.execute('SELECT count(*) FROM attempts').fetchone()[0]<1000,'LIMIT','Job has exhausted 1,000 admitted attempts')
                 require(request.get('expected_state')==self.book.state() and request.get('plan_digest')==meta['plan_digest'] and meta['plan_digest'] is not None,'STALE_PLAN','Review the sealed plan and current workbook before execution',409)
-                require(meta['status'] in (('prepared','cancelled','failed','interrupted','stale','running') if resume else ('prepared',)),'INVALID_JOB_STATE','Use explicit resume for partially executed jobs',409)
+                require(meta['status'] in (('prepared','cancelled','failed','interrupted','stale','running','unknown') if resume else ('prepared',)),'INVALID_JOB_STATE','Use explicit resume for partially executed jobs',409)
                 require(resume or meta['expected_state']==self.book.state(),'STALE_STATE','Inputs changed during staging; review and explicitly resume',409)
+                if meta['version']==1:meta.update(version=2,execution_id=uuid.uuid4().hex)
                 previous=meta['status'];meta.update(status='running',phase='Executing',expected_state=self.book.state(),attempt=meta['attempt']+1);self.save(db,meta)
             try:self.launch(identifier,self.execute)
             except EngineError:
@@ -226,7 +271,7 @@ class OperationJobs:
                 count=meta['total'] if meta['mode']=='atomic' else meta['batch_size']
                 cells=[json.loads(payload) for (payload,) in db.execute('SELECT payload FROM cells WHERE seq>=? ORDER BY seq LIMIT ?',(meta['next'],count))]
                 require(db.execute('SELECT count(*) FROM attempts').fetchone()[0]<1000,'LIMIT','At most 1,000 admitted attempts per job')
-                operation='job-'+identifier+'-'+str(meta['next'])+'-'+str(meta['attempt'])
+                operation='job-'+meta['execution_id']+'-'+str(meta['next'])+'-'+str(meta['attempt'])
                 request=dict(action='edit',operation_id=operation,expected_state=self.book.state(),sheet=meta['sheet'],cells=cells,label='Operation job '+identifier)
                 self.checkpoint(cancel,deadline)
                 with db:db.execute('INSERT INTO attempts VALUES(?,?,?,?,NULL)',(operation,meta['next'],len(cells),encoded(request)))
@@ -268,30 +313,34 @@ class OperationJobs:
             if meta['action']=='find':
                 field=options.get('field','source');require(field in ('source','display'),'INVALID_JOB','Find field must be source/display')
                 calc=source.calculator(seconds=2,clock=clock,transactional=True)
-                for row,col,raw,kind,style in source.db.execute('SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? ORDER BY row,col',(meta['sheet'],r1,r2,c1,c2)):
-                    self.checkpoint(cancel,deadline);processed+=1
-                    if processed%256==0:calc=source.calculator(seconds=2,clock=clock,transactional=True)
-                    require(len(raw.encode())<=65536,'READ_LIMIT','Find source exceeds 64 KiB')
-                    text=raw if field=='source' else display(calc.cell(meta['sheet'],row,col),json.loads(style))
-                    if options['needle'] in text:add(dict(row=row,col=col,text=text[:256]))
-                    if processed%256==0:
-                        meta.update(processed=processed,matches=matches);self.save(db,meta);db.commit()
+                with sql_deadline(source.db,deadline,cancel_event=cancel):
+                    for row,col,raw,kind,style in source.range_cells(meta['sheet'],range(r1,r2+1),c1,c2,deadline):
+                        self.checkpoint(cancel,deadline);processed+=1
+                        if processed%256==0:calc=source.calculator(seconds=2,clock=clock,transactional=True)
+                        require(len(raw.encode())<=65536,'READ_LIMIT','Find source exceeds 64 KiB')
+                        text=raw if field=='source' else display(calc.cell(meta['sheet'],row,col),json.loads(style))
+                        if options['needle'] in text:add(dict(row=row,col=col,text=text[:256]))
+                        if processed%256==0:
+                            meta.update(processed=processed,matches=matches);self.save(db,meta);db.commit()
             else:
                 first=r1+int(options.get('header',False));stride=max(1,1000//(c2-c1+1))
                 for start in range(first,r2+1,stride):
                     self.checkpoint(cancel,deadline);calc=source.calculator(seconds=2,clock=clock,transactional=True)
                     scope={**options,'r1':start,'r2':min(start+stride-1,r2),'header':False,'sort':[]}
-                    result=source._list_rows(meta['sheet'],scope,calc,deadline)
+                    with sql_deadline(source.db,deadline,cancel_event=cancel):
+                        result=source._list_rows(meta['sheet'],scope,calc,deadline)
                     for row in result['rows']:add(dict(row=row),[calc.cell(meta['sheet'],row,key['col']) for key in keys])
                     processed+=scope['r2']-start+1;meta.update(processed=processed,matches=matches);self.save(db,meta);db.commit()
             order=','.join('k'+str(index)+suffix+(' DESC' if key.get('descending',False) else ' ASC') for index,key in enumerate(keys) for suffix in ('r','v'))
             if order:
-                with sql_deadline(db,deadline):db.execute('CREATE INDEX IF NOT EXISTS result_order ON results('+order+',seq)')
+                with sql_deadline(db,deadline,cancel_event=cancel):db.execute('CREATE INDEX IF NOT EXISTS result_order ON results('+order+',seq)')
             meta.update(status='completed',phase='Frozen read snapshot ready',processed=processed,matches=matches,order=(order+',' if order else '')+'seq');self.checkpoint(cancel,deadline)
             with db:self.save(db,meta)
 
-    def cancel(self,identifier):
+    def cancel(self,identifier,request=None):
         with self.lock:
+            if request is not None and 'execution_id' in request:
+                with self.journal(identifier) as (_,meta):require(isinstance(request['execution_id'],str) and re.fullmatch('[0-9a-f]{32}',request['execution_id']) and request['execution_id']==meta.get('execution_id'),'STALE_PLAN','Job execution identity changed; inspect again',409)
             if identifier in self.active:self.active[identifier][0].set()
             else:
                 with self.journal(identifier) as (db,meta),db:

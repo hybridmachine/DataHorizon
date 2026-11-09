@@ -1,0 +1,14 @@
+********* Start testing of DesktopTests *********
+Config: Using QtTest library 6.12.0, Qt 6.12.0 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 17.0.0 (clang-1700.3.19.1)), macos 26.6.2
+PASS   : DesktopTests::initTestCase()
+PASS   : DesktopTests::recordExportRechecksNativeAliasAfterReview(xlsx)
+PASS   : DesktopTests::recordExportRechecksNativeAliasAfterReview(ods)
+PASS   : DesktopTests::recordPasteNormalizesSpreadsheetLineEndings(grid-lf-no-terminal)
+PASS   : DesktopTests::recordPasteNormalizesSpreadsheetLineEndings(grid-lf-terminal)
+PASS   : DesktopTests::recordPasteNormalizesSpreadsheetLineEndings(grid-crlf-no-terminal)
+PASS   : DesktopTests::recordPasteNormalizesSpreadsheetLineEndings(grid-crlf-terminal)
+PASS   : DesktopTests::recordPasteNormalizesSpreadsheetLineEndings(records-lf-no-terminal)
+PASS   : DesktopTests::recordPasteNormalizesSpreadsheetLineEndings(records-lf-terminal)
+PASS   : DesktopTests::recordPasteNormalizesSpreadsheetLineEndings(records-crlf-no-terminal)
+Received signal 2 (SIGINT)
+         recordPasteNormalizesSpreadsheetLineEndings function time: 115868ms, total time: 118062ms

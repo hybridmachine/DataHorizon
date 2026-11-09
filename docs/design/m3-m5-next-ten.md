@@ -127,6 +127,14 @@ recovers a commit/journal-acknowledgement gap without replay; a missing receipt
 remains unknown and blocks execution/release. Jobs never retry unknown writes.
 
 Four retained sidecar journals per native file live in `.<filename>.dhjobs/`.
+New journals use sidecar version 2 and a durable random execution identity,
+independent of the friendly job ID. Released names can be reused without batch
+receipt collisions. Version-1 journals reconcile their original requests before
+transactional upgrade; admitted IDs/receipts and the sealed plan are retained.
+Explicit reviewed resume may classify a proven legacy fingerprint collision as
+`not_admitted`, retaining the older receipt as evidence and using fresh IDs for
+new work. It never invents a rollback receipt or clears a missing-receipt unknown.
+Older clients reject v2 journals; downgrade does not reinterpret them as v1.
 They are tied to workbook/file identity, survive reopen and are excluded from native
 copies/interchange; native operation receipts remain authoritative. Release explicitly
 deletes staging/snapshots, retaining native receipts. Read jobs snapshot to disk,

@@ -1,0 +1,60 @@
+verify_workbook_consumers.py
+{
+  "producers_consumers": {
+    "openpyxl": "3.1.5",
+    "odfpy": "1.4.1"
+  },
+  "checks": [
+    {
+      "format": "xlsx",
+      "mode": "formulas",
+      "sheets": 3,
+      "input_rows": 16,
+      "summary": 224,
+      "passed": true
+    },
+    {
+      "format": "xlsx",
+      "mode": "values",
+      "sheets": 3,
+      "input_rows": 16,
+      "summary": 224,
+      "passed": true
+    },
+    {
+      "format": "ods",
+      "mode": "formulas",
+      "sheets": 3,
+      "input_rows": 16,
+      "summary": 224,
+      "passed": true
+    },
+    {
+      "format": "ods",
+      "mode": "values",
+      "sheets": 3,
+      "input_rows": 16,
+      "summary": 224,
+      "passed": true
+    }
+  ],
+  "native_excel_libreoffice_acceptance": false
+}
+
+verify_temporal_consumers.py
+openpyxl producer: 1899 serial native temporal types retained
+openpyxl producer: 1899 ISO native temporal types retained
+openpyxl producer: 1904 serial native temporal types retained
+openpyxl producer: 1904 ISO native temporal types retained
+odfpy producer: ISO dates and microsecond clock durations retained
+Independent XLSX/ODS consumers: formulas accepted all ten function sources/typed results; native subsecond precision verified separately; no target recalculation claim
+Independent XLSX/ODS consumers: values accepted all ten function sources/typed results; native subsecond precision verified separately; no target recalculation claim
+
+verify_format_consumers.py
+openpyxl and odfpy accepted 38 numeric/font/border cases; typed values, precision and style properties retained
+
+verify_list_consumers.py
+xlsx: independent consumer accepted order, Text identifier, Boolean, raw percentage value, and absence of formulas
+ods: independent consumer accepted order, Text identifier, Boolean, raw percentage value, and absence of formulas
+xlsx: independent reader accepted typed dates, compressed formula referents and frozen values; XLSX formula caches intentionally omitted
+ods: independent reader accepted typed dates, compressed formula referents and frozen values; XLSX formula caches intentionally omitted

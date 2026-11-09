@@ -1,0 +1,39 @@
+{
+  "format": 1,
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "limitations": [
+    "Warm OS caches; no true OS-cold claim.",
+    "Generated numeric inputs outside the requested column; results are dataset-specific.",
+    "Cooperative cancellation cannot interrupt blocked OS I/O."
+  ],
+  "record_verification": {
+    "stored_cells": 320000,
+    "requested_cells": 10000,
+    "matching_stored_cells": 0,
+    "milliseconds": [
+      65.08641596883535,
+      64.60412498563528,
+      65.49054104834795,
+      64.10283385775983,
+      64.23725001513958,
+      64.44645882584155,
+      64.61662496440113,
+      66.73887488432229,
+      64.32354100979865,
+      64.28329204209149
+    ],
+    "native_bytes": 21549056,
+    "probe_plan": [
+      "SEARCH cells USING PRIMARY KEY (sheet_id=? AND row=? AND col>? AND col<?)"
+    ]
+  },
+  "no_output_find": {
+    "requested_cells": 100000,
+    "status": "cancelled",
+    "matches": 0,
+    "cancel_confirmation_ms": 6.462083896622062,
+    "native_state_unchanged": true,
+    "journal_bytes": 28672,
+    "snapshot_bytes": 21549056
+  }
+}

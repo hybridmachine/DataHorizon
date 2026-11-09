@@ -29,6 +29,19 @@ def serial_package(value,epoch="0",fmt="14"):
 
 
 class TemporalInterchangeTests(unittest.TestCase):
+    def test_ods_conversion_reports_match_native_temporal_and_currency_results(self):
+        with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/'report.dhwb',create=True)) as book:
+            inputs=[dict(row=1,col=1,source='2024-02-29',kind='date'),dict(row=2,col=1,source='12:34:56',kind='time'),dict(row=3,col=1,source='2024-02-29T12:34:56',kind='datetime'),dict(row=4,col=1,source='25.75',kind='number',style=dict(format='currency',currency='USD',decimals=4,grouping=True))]
+            book.mutate(dict(action='edit',operation_id='report',expected_state=book.state(),cells=inputs))
+            package=ods_export(book.read_workbook(),dict(mode='values'))
+            for scope in ('selection','workbook'):
+                result=ods_preview({**package,'scope':scope});self.assertTrue(result['can_import'],result)
+                cells=result['cells'] if scope=='selection' else result['workbook_sheets'][0]['cells']
+                self.assertEqual([c['kind'] for c in cells],['date','time','datetime','number'])
+                self.assertEqual(cells[-1]['style'],dict(format='currency',currency='USD',decimals=4,grouping=True))
+                report=' '.join(result['report']);self.assertIn('native ISO types',report);self.assertIn('three-letter currency',report);self.assertIn('0–15',report);self.assertNotIn('ISO Text',report)
+        invalid=ods_fixture('<table:table-row><table:table-cell office:value-type="time" office:time-value="PT24H"/></table:table-row>')
+        result=ods_preview(dict(file_base64=base64.b64encode(invalid).decode()));self.assertFalse(result['can_import']);self.assertTrue(result['issues'])
     def test_xlsx_serial_epochs_hidden_clocks_and_fake_leap_day(self):
         for serial,epoch,expected in ((1,"0","1900-01-01"),(59,"0","1900-02-28"),(61,"0","1900-03-01"),(0,"1","1904-01-01"),(1.5,"1","1904-01-02T12:00:00")):
             result=xlsx_preview(serial_package(serial,epoch))

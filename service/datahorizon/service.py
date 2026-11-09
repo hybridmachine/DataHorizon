@@ -10,6 +10,7 @@ import json
 import math
 from pathlib import Path
 import secrets
+import socket
 from socketserver import TCPServer
 import sqlite3
 import sys
@@ -108,10 +109,6 @@ def openapi():
     scalar = {"oneOf":[{"type":"string","nullable":True},{"type":"number"},{"type":"boolean"}]}
     name = {"type":"string","minLength":1,"maxLength":31,"pattern":r"^[^\[\]:*?/\\!\x00-\x1f]+$"}
     schemas = {
-        "OperationJobRequest":{"type":"object","description":"Disk sidecar job. Stage at most 100,000 cells/64 MiB; atomic mode at most 10,000 cells/3 MiB. Explicit batches at most 1,000 cells and 1,000 attempts. Read scope at most 100,000 cells/256 columns. CSV source_path is a server-local file, default Text; column_types/locale are explicit. Sidecar journals are tied to this native file identity and excluded from native copies.","properties":{
-            "job_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"},"action":{"type":"string","enum":["edit","find","list"]},"mode":{"type":"string","enum":["atomic","batches"]},"sheet":sheet,"expected_state":{"type":"string"},"source_path":{"type":"string"},"batch_size":{"type":"integer","minimum":1,"maximum":1000},**rectangle}},
-        "OperationJobAction":{"type":"object","description":"append: cells array. start/resume: reviewed plan_digest and current expected_state. status: offset/limit (up to 256). Cancellation is cooperative before commit; committed batches remain committed. Missing receipts mean unknown, never safe automatic retry.","properties":{"cells":{"type":"array","maxItems":1000,"items":{"type":"object"}},"plan_digest":{"type":"string"},"expected_state":{"type":"string"},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":256}}},
-
         "Error": {"type":"object", "required":["code","message","outcome"], "properties":{
             "code":{"type":"string"},"message":{"type":"string"},
             "outcome":{"type":"string","enum":["rejected","rolled_back","unknown"]},"operation_id":{"type":"string"}}},
@@ -267,6 +264,8 @@ def openapi():
     schemas['ConversionRequest']={'type':'object','required':['source','kind'],'properties':{'source':{'type':'string','maxLength':65536},'kind':{'type':'string','enum':['number','date','time','datetime','timestamp_utc']},'locale':{'type':'string','enum':['invariant','en_US','de_DE','fr_FR']},'timezone_policy':{'type':'string','enum':['reject','utc']}}}
     schemas['CsvPreviewRequest']['properties']['locale']=schemas['ConversionRequest']['properties']['locale']
     schemas['SpreadsheetPreparation']['properties']['timezone_policy']={'type':'string','enum':['reject','utc'],'default':'reject'}
+    from .job_api import install as install_job_schemas,request_schema as job_request_schema
+    install_job_schemas(schemas)
     paths = {}
     for path, (method, summary) in ROUTES.items():
         parameters = [{"name": name, "in": "path", "required": True, "schema": {"type": "string"}}
@@ -276,7 +275,7 @@ def openapi():
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = ("OperationJobRequest" if path.endswith("/operation-jobs") else "OperationJobAction") if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
@@ -294,6 +293,9 @@ def openapi():
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Receipt"}}}
         elif path.endswith("/{operation}"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"oneOf":[{"$ref":"#/components/schemas/Receipt"},{"$ref":"#/components/schemas/Error"}]}}}
+        if '/operation-jobs' in path:
+            response='JobReleased' if path.endswith('/release') else 'OperationJobStatus'
+            operation['responses']['200']['content']={'application/json':{'schema':{'$ref':'#/components/schemas/'+response}}}
         paths[path] = {method: operation}
     return {"openapi": "3.0.3", "info": {"title": "DataHorizon local development API", "version": "0.1.0"},
             "paths": paths, "components": {"schemas":schemas,"securitySchemes": {"localToken": {"type": "http", "scheme": "bearer"}}}}
@@ -314,7 +316,7 @@ let option=document.createElement('option');option.textContent=method.toUpperCas
 select.onchange=()=>{let[path,method,op]=JSON.parse(select.value);document.querySelector('#path').value=path;document.querySelector('#method').value=method.toUpperCase();
 let ref=op.requestBody?.content?.['application/json']?.schema?.['$ref'],schema=ref?api.components.schemas[ref.split('/').pop()]:{};
 let variants=schema.oneOf?schema.oneOf.map(v=>api.components.schemas[v['$ref'].split('/').pop()]):[schema],examples=document.querySelector('#example');examples.replaceChildren();
-for(let variant of variants){let option=document.createElement('option');option.textContent=variant.example?.action||'Request';option.value=JSON.stringify(variant.example||{});examples.append(option)}
+for(let variant of variants){let option=document.createElement('option');option.textContent=variant.title||variant.example?.action||'Request';option.value=JSON.stringify(variant.example||{});examples.append(option)}
 examples.parentElement.hidden=variants.length<2;examples.onchange=()=>{document.querySelector('#body').value=JSON.stringify(JSON.parse(examples.value),null,2)};examples.onchange()};select.onchange()});
 document.querySelector('#run').onclick=async()=>{let out=document.querySelector('#result');try{
 let method=document.querySelector('#method').value,path=document.querySelector('#path').value;
@@ -365,6 +367,26 @@ class Service(ThreadingHTTPServer):
             super().process_request_thread(request,client_address)
         finally:
             self._request_slots.release()
+
+    def shutdown_request(self, request):
+        # Closing with unread input can discard the response on Windows. Send
+        # EOF first, then discard at most 64 KiB/100 ms without parsing or
+        # admitting that input. Slow peers must not hold a handler or accept loop.
+        try:
+            request.shutdown(socket.SHUT_WR)
+            deadline=time.monotonic()+.1
+            remaining=65536
+            while remaining:
+                seconds=deadline-time.monotonic()
+                if seconds<=0: break
+                request.settimeout(seconds)
+                chunk=request.recv(min(8192,remaining))
+                if not chunk: break
+                remaining-=len(chunk)
+        except OSError:
+            pass
+        finally:
+            self.close_request(request)
 
     def server_bind(self):
         # HTTPServer resolves a hostname here; a numeric loopback service has
@@ -498,7 +520,7 @@ class Service(ThreadingHTTPServer):
                 if action=='seal':return jobs.seal(identifier)
                 if action=='status':return jobs.view(identifier,body.get('offset',0),body.get('limit',100))
                 if action in ('start','resume'):return jobs.start(identifier,body,resume=action=='resume')
-                if action=='cancel':return jobs.cancel(identifier)
+                if action=='cancel':return jobs.cancel(identifier,body)
                 if action=='release':return jobs.release(identifier)
             raise EngineError('NOT_FOUND','Unknown operation job action',404)
 

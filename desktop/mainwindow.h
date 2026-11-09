@@ -53,6 +53,10 @@ protected:
 private:
     quint64 m_calculationGeneration=0;
     QString m_activeOperationJob;
+    bool m_jobClosing=false,m_allowJobClose=false;
+    QString m_jobRecoveryRecord;
+    QJsonObject m_activeJobStatus;
+    bool preserveJobRecovery(const QJsonObject &workbook,const QString &job,const QJsonObject &status);
     void operationJobs();
     void updateFormulaReferences();
     QList<QColor> formulaReferenceColors(int row,int column) const;

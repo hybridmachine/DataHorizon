@@ -1,5 +1,6 @@
 """Package integrity and truthful qualification gates; no Qt installation needed."""
 import json
+import stat
 from pathlib import Path
 import tarfile
 import tempfile
@@ -21,7 +22,8 @@ class PackagingTests(unittest.TestCase):
             output=Path(temp)/'preview.tar.gz'; manifest=package(root,output,toolchain)
             self.assertFalse(manifest['release_qualified'])
             with tarfile.open(output) as archive:
-                self.assertEqual(archive.getmember('DataHorizon-preview/bin/DataHorizon').mode,0o755)
+                self.assertEqual(archive.getmember('DataHorizon-preview/bin/DataHorizon').mode,
+                                 stat.S_IMODE((root/'bin/DataHorizon').stat().st_mode))
                 stored=json.load(archive.extractfile('DataHorizon-preview/package-manifest.json'))
                 self.assertEqual(stored['files'],manifest['files'])
             manifest['files'][0]['sha256']='invalid'

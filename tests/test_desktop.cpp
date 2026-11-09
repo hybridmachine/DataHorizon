@@ -5,6 +5,8 @@
 #include "cellborders.h"
 #include "formatpainter.h"
 #include "servicepaths.h"
+#include "exportwriter.h"
+#include "clipboarddata.h"
 #include "frozen_row_probe.h"
 #include "frozentoprow.h"
 #include <QAbstractItemModelTester>
@@ -58,6 +60,7 @@
 #include <QStyleOptionViewItem>
 #include <QTemporaryDir>
 #include <QTest>
+#include <memory>
 
 class DelayedSummaryServer : public QTcpServer {
 public:
@@ -224,9 +227,222 @@ private:
     bool m_closeFailureReleased = false;
 };
 
+class JobLifecycleServer : public QTcpServer {
+public:
+    QString failure;QStringList requests;int cancellations=0,releases=0,polls=0;bool running=false,cancelled=false,committed=false;
+    QJsonObject info,job;
+    explicit JobLifecycleServer(const QString &path){
+        info={{"id","handle"},{"workbook_id","workbook"},{"path",path},{"state","epoch:0"},{"readonly",false},{"sheets",QJsonArray{QJsonObject{{"id","sheet"},{"name","Sheet1"}}}}};
+        job={{"job_id","retained"},{"execution_id","0123456789abcdef0123456789abcdef"},{"status","prepared"},{"expected_state","epoch:0"},{"plan_digest","reviewed"},{"total",3},{"next",0},{"committed_batches",0},{"mode","batches"},{"action","edit"}};
+        connect(this,&QTcpServer::newConnection,this,[this]{auto *socket=nextPendingConnection();connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);connect(socket,&QTcpSocket::readyRead,socket,[this,socket]{
+            auto bytes=socket->property("request").toByteArray()+socket->readAll();socket->setProperty("request",bytes);const auto end=bytes.indexOf("\r\n\r\n");if(end<0 || socket->property("handled").toBool())return;
+            const auto length=QRegularExpression("Content-Length: (\\d+)",QRegularExpression::CaseInsensitiveOption).match(QString::fromLatin1(bytes.left(end))).captured(1).toInt();if(bytes.size()<end+4+length)return;socket->setProperty("handled",true);
+            const auto path=QString::fromLatin1(bytes.left(bytes.indexOf("\r\n")).split(' ').at(1));requests.append(path);QJsonObject result;bool failed=false;
+            if(path=="/v1/capabilities")result={{"api_version",1}};
+            else if(path=="/v1/open" || path=="/v1/workbooks/handle")result=info;
+            else if(path.endsWith("/close")){++releases;failed=failure=="close";result={{"closed",true}};}
+            else if(path.endsWith("/start") || path.endsWith("/resume")){running=true;job["status"]="running";result=job;}
+            else if(path.endsWith("/cancel")){++cancellations;failed=failure=="cancel";cancelled=true;result=job;}
+            else if(path.contains("/operation-jobs/")){
+                if(cancelled){++polls;failed=failure=="status";job["status"]=committed?"completed":"cancelled";if(committed){job["next"]=3;job["committed_batches"]=1;}}
+                result=job;
+            }
+            else result={{"state","epoch:0"},{"sheet","sheet"},{"cells",QJsonArray{}},{"functions",QJsonArray{}}};
+            if(failed)result={{"message","injected lost acknowledgement"},{"code","UNAVAILABLE"},{"outcome","unknown"}};
+            const auto body=QJsonDocument(result).toJson(QJsonDocument::Compact);socket->write(QByteArray("HTTP/1.1 ")+(failed?"503 Unavailable":"200 OK")+"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(body.size())+"\r\n\r\n"+body);socket->disconnectFromHost();
+        });});
+    }
+};
+
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void initTestCase(){
+        m_originalDialogAttribute=QCoreApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+        // QTest timers cannot reliably drive AppKit's separate NSAlert modal loop.
+        // Native OS dialogs remain a manual gate; these tests exercise Qt widgets.
+        QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    }
+    void cleanupTestCase(){QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs,m_originalDialogAttribute);}
+    void clipboardParserPreservesFieldsAndRejectsMalformedData(){
+        QMimeData mime;QJsonObject payload;QString error;
+        mime.setText("10\r\n\r\n20\t\r\n");QVERIFY(ClipboardData::decode(&mime,payload,error));const auto rows=payload["rows"].toArray();QCOMPARE(rows.size(),3);QCOMPARE(rows[1].toArray()[0].toObject()["source"].toString(),QString());QCOMPARE(rows[2].toArray().size(),2);
+        mime.setText(QString(10001,'\n'));QVERIFY(!ClipboardData::decode(&mime,payload,error));QVERIFY(error.contains("10,000"));
+        mime.setText(QString(100,'x'));QVERIFY(!ClipboardData::decode(&mime,payload,error,99));
+        mime.setData("application/x-datahorizon-cells","invalid");QVERIFY(!ClipboardData::decode(&mime,payload,error));
+        mime.setData("application/x-datahorizon-cells","{\"rows\":[[3]]}");QVERIFY(!ClipboardData::decode(&mime,payload,error));
+    }
+    void recordPasteNormalizesSpreadsheetLineEndings_data(){
+        QTest::addColumn<QString>("text");QTest::addColumn<bool>("records");
+        for(bool records:{false,true})for(const auto &ending:{QString("\n"),QString("\r\n")})for(bool terminal:{false,true}){
+            const auto name=QString("%1-%2-%3").arg(records?"records":"grid",ending=="\n"?"lf":"crlf",terminal?"terminal":"no-terminal");
+            QTest::newRow(qPrintable(name))<<QString("10"+ending+"20"+(terminal?ending:QString()))<<records;
+        }
+    }
+    void recordPasteNormalizesSpreadsheetLineEndings(){
+        QFETCH(QString,text);QFETCH(bool,records);QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("paste.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","list_declare"},{"id","Records"},{"spec",QJsonObject{{"r2",2},{"c2",1}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *grid=window.findChild<QTableView *>("grid");grid->setCurrentIndex(window.model()->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(grid->currentIndex()),5000);
+        auto saved=std::make_unique<QMimeData>();auto *clipboard=QApplication::clipboard();
+        if(const auto *mime=clipboard->mimeData()){for(const auto &format:mime->formats())saved->setData(format,mime->data(format));if(mime->hasImage())saved->setImageData(mime->imageData());}
+        const auto marker=QUuid::createUuid().toByteArray();const auto restore=qScopeGuard([&]{if(clipboard->mimeData()->data("application/x-datahorizon-test-marker")==marker)clipboard->setMimeData(saved.release());});
+        auto *input=new QMimeData;input->setText(text);input->setData("application/x-datahorizon-test-marker",marker);clipboard->setMimeData(input);
+        QSignalSpy edits(&window,&MainWindow::operationFinished);QTimer timer;timer.setInterval(10);connect(&timer,&QTimer::timeout,&window,[&]{
+            if(auto *dialog=window.findChild<QDialog *>("recordCommandDialog");dialog && !dialog->property("checked").toBool()){dialog->setProperty("checked",true);auto *mode=dialog->findChild<QComboBox *>("recordCommandMode");mode->setCurrentIndex(mode->findData("all"));dialog->accept();}
+            if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))if(auto *yes=box->button(QMessageBox::Yes))yes->click();
+        });timer.start();
+        if(records)window.findChild<QAction *>("recordCommandAction")->trigger();
+        else{grid->setFocus();QAction *paste=nullptr;for(auto *action:window.findChildren<QAction *>())if(action->shortcut().matches(QKeySequence::Paste)==QKeySequence::ExactMatch)paste=action;QVERIFY(paste);paste->trigger();}
+        QTRY_COMPARE_WITH_TIMEOUT(edits.count(),1,5000);timer.stop();QVERIFY(edits.first().first().toBool());QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,5000);
+        auto *client=window.findChild<RestClient *>();const auto base="/v1/workbooks/"+window.model()->workbook();const auto cells=syncRequest(client,base+"/range",{{"r2",2}})["cells"].toArray();QCOMPARE(cells.size(),2);QCOMPARE(cells[0].toObject()["value"].toInt(),10);QCOMPARE(cells[1].toObject()["value"].toInt(),20);QCOMPARE(cells[0].toObject()["input_kind"].toString(),QString("auto"));
+        window.submit({{"action","undo"}});QTRY_COMPARE_WITH_TIMEOUT(edits.count(),2,5000);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,5000);QVERIFY(syncRequest(client,base+"/range",{{"r2",2}})["cells"].toArray().isEmpty());
+    }
+    void ownedJobCloseRetainsCommittedBatchesAndReleasesHandle(){
+        QTemporaryDir temp;const auto handler=temp.filePath("handler.py");QFile code(handler);QVERIFY(code.open(QIODevice::WriteOnly));code.write("import time\ndef on_change(context, changes):\n    time.sleep(0.15)\n");code.close();
+        StartupOptions options;options.automaticWorkbook=false;options.handler=handler;options.recoveryDirectory=temp.filePath("recovery");options.viewStatePath=temp.filePath("views.ini");
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);const auto path=temp.filePath("owned.dhwb");QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *client=window.findChild<RestClient *>();const auto base="/v1/workbooks/"+window.model()->workbook();
+        auto job=syncRequest(client,base+"/operation-jobs",{{"job_id","retained"},{"expected_state",window.model()->state()},{"mode","batches"},{"batch_size",1}});QVERIFY(!job.contains("_error"));
+        QJsonArray cells;for(int row=1;row<=10;++row)cells.append(QJsonObject{{"row",row},{"col",1},{"source","owned"}});
+        QVERIFY(!syncRequest(client,base+"/operation-jobs/retained/append",{{"cells",cells}}).contains("_error"));QCOMPARE(syncRequest(client,base+"/operation-jobs/retained/seal",{})["status"].toString(),QString("prepared"));
+        int phase=0;QTimer timer;timer.setInterval(10);connect(&timer,&QTimer::timeout,&window,[&]{
+            if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())){if(auto *yes=box->button(QMessageBox::Yes))yes->click();return;}
+            auto *dialog=window.findChild<QDialog *>("operationJobsDialog");if(!dialog)return;const auto value=QJsonDocument::fromJson(dialog->findChild<QPlainTextEdit *>("operationJobReport")->toPlainText().toUtf8()).object();
+            if(phase==0){phase=1;dialog->findChild<QLineEdit *>("operationJobId")->setText("retained");dialog->findChild<QPushButton *>("inspectOperationJob")->click();}
+            else if(phase==1 && value["status"]=="prepared"){phase=2;QTimer::singleShot(0,dialog->findChild<QPushButton *>("startOperationJob"),&QPushButton::click);}
+            else if(phase==2 && value["status"]=="running" && value["committed_batches"].toInt()>0){phase=3;dialog->accept();}
+        });timer.start();window.findChild<QAction *>("operationJobsAction")->trigger();QCOMPARE(phase,3);QVERIFY(!window.close());QTRY_VERIFY_WITH_TIMEOUT(!window.isVisible(),5000);timer.stop();
+        QVERIFY(syncRequest(client,base,{},false).contains("_error"));
+        const auto reopened=syncRequest(client,"/v1/open",{{"path",path}});QVERIFY(!reopened.contains("_error"));const auto fresh="/v1/workbooks/"+reopened["id"].toString();
+        job=syncRequest(client,fresh+"/operation-jobs/retained/status",{});QCOMPARE(job["status"].toString(),QString("cancelled"));QVERIFY(job["next"].toInt()>0);QVERIFY(job["next"].toInt()<10);
+        const auto stored=syncRequest(client,fresh+"/range",{{"r2",10}})["cells"].toArray();QCOMPARE(stored.size(),job["next"].toInt());
+        syncRequest(client,fresh+"/close",{});
+    }
+    void closingActiveJobCancelsThenReleases_data(){
+        QTest::addColumn<QString>("failure");QTest::addColumn<bool>("committed");
+        QTest::newRow("cancelled")<<QString()<<false;QTest::newRow("last-commit")<<QString()<<true;
+        QTest::newRow("lost-cancel")<<QString("cancel")<<false;QTest::newRow("lost-status")<<QString("status")<<false;QTest::newRow("lost-close")<<QString("close")<<false;
+    }
+    void closingActiveJobCancelsThenReleases(){
+        QFETCH(QString,failure);QFETCH(bool,committed);QTemporaryDir temp;JobLifecycleServer server(temp.filePath("native.dhwb"));server.failure=failure;server.committed=committed;QVERIFY(server.listen(QHostAddress::LocalHost,0));
+        StartupOptions options;options.automaticWorkbook=false;options.url="http://127.0.0.1:"+QString::number(server.serverPort());options.token="token";options.recoveryDirectory=temp.filePath("recovery");options.viewStatePath=temp.filePath("views.ini");
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,5000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("native.dhwb"));QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,5000);
+        int phase=0;QTimer timer;timer.setInterval(10);connect(&timer,&QTimer::timeout,&window,[&]{
+            if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())){if(auto *yes=box->button(QMessageBox::Yes))yes->click();return;}
+            auto *dialog=window.findChild<QDialog *>("operationJobsDialog");if(!dialog)return;const auto value=QJsonDocument::fromJson(dialog->findChild<QPlainTextEdit *>("operationJobReport")->toPlainText().toUtf8()).object();
+            if(phase==0){phase=1;dialog->findChild<QLineEdit *>("operationJobId")->setText("retained");dialog->findChild<QPushButton *>("inspectOperationJob")->click();}
+            else if(phase==1 && value["status"]=="prepared"){phase=2;QTimer::singleShot(0,dialog->findChild<QPushButton *>("startOperationJob"),&QPushButton::click);}
+            else if(phase==2 && value["status"]=="running"){phase=3;dialog->accept();}
+        });timer.start();window.findChild<QAction *>("operationJobsAction")->trigger();QCOMPARE(phase,3);
+        QVERIFY(!window.close());QVERIFY(!window.close());QTRY_VERIFY_WITH_TIMEOUT(!window.isVisible(),5000);timer.stop();
+        QCOMPARE(server.cancellations,1);QCOMPARE(server.releases,failure=="cancel" || failure=="status"?0:1);
+        if(failure.isEmpty()){
+            QVERIFY(server.polls>=1);QVERIFY(server.requests.indexOf("/v1/workbooks/handle/operation-jobs/retained/cancel")<server.requests.indexOf("/v1/workbooks/handle/close"));
+            QCOMPARE(QDir(options.recoveryDirectory).entryList({"job-*.json"},QDir::Files).size(),0);QCOMPARE(server.job["status"].toString(),committed?QString("completed"):QString("cancelled"));
+        }else{
+            QDir recovery(options.recoveryDirectory);const auto files=recovery.entryList({"job-*.json"},QDir::Files);QCOMPARE(files.size(),1);QFile file(recovery.filePath(files.first()));QVERIFY(file.open(QIODevice::ReadOnly));const auto saved=QJsonDocument::fromJson(file.readAll()).object();QCOMPARE(saved["job_id"].toString(),QString("retained"));QCOMPARE(saved["outcome"].toString(),QString("unknown"));QVERIFY(saved["status"].toObject().contains("execution_id"));
+        }
+        // The independent service remains usable after this window closes.
+        RestClient other;other.configure(options.url,options.token);QCOMPARE(syncRequest(&other,"/v1/capabilities",{},false)["api_version"].toInt(),1);
+    }
+    void preparedJobsRequireExplicitResumeReview_data() {
+        QTest::addColumn<bool>("reopen");QTest::addColumn<bool>("accept");QTest::addColumn<bool>("race");
+        QTest::newRow("reopen")<<true<<true<<false;
+        QTest::newRow("intervening-edit")<<false<<true<<false;
+        QTest::newRow("decline")<<false<<false<<false;
+        QTest::newRow("changed-during-review")<<false<<true<<true;
+    }
+    void preparedJobsRequireExplicitResumeReview() {
+        QFETCH(bool,reopen);QFETCH(bool,accept);QFETCH(bool,race);
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);const auto path=temp.filePath("resume.dhwb");window.openBook(path,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *client=window.findChild<RestClient *>();QVERIFY(client);
+        auto base="/v1/workbooks/"+window.model()->workbook();const auto old=window.model()->state();
+        auto job=syncRequest(client,base+"/operation-jobs",{{"job_id","retained"},{"expected_state",old}});QVERIFY(!job.contains("_error"));
+        QVERIFY(!syncRequest(client,base+"/operation-jobs/retained/append",{{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","reviewed"}}}}}).contains("_error"));
+        job=syncRequest(client,base+"/operation-jobs/retained/seal",{});QCOMPARE(job["status"].toString(),QString("prepared"));
+        if(reopen){QVERIFY(!syncRequest(client,base+"/close",{}).contains("_error"));window.openBook(path);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);base="/v1/workbooks/"+window.model()->workbook();}
+        else{window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",2},{"source","intervening"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);}
+        QVERIFY(window.model()->state()!=old);int phase=0;bool explicitReview=false;bool completed=false;QTimer timer;timer.setInterval(10);
+        connect(&timer,&QTimer::timeout,&window,[&]{
+            auto *dialog=window.findChild<QDialog *>("operationJobsDialog");if(!dialog)return;
+            const auto report=dialog->findChild<QPlainTextEdit *>("operationJobReport")->toPlainText();const auto status=QJsonDocument::fromJson(report.toUtf8()).object()["status"].toString();
+            if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget());box && box->objectName()=="operationJobExecutionReview" && phase==2){
+                explicitReview=box->text().contains("Explicitly resume") && box->text().contains("Original state:");phase=3;
+                if(race){const auto info=syncRequest(client,base,{},false);syncRequest(client,base+"/operations",{{"action","edit"},{"operation_id","race"},{"expected_state",info["state"]},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",2},{"source","race"}}}}});}
+                box->button(accept?QMessageBox::Yes:QMessageBox::Cancel)->click();return;
+            }
+            if(phase==0){phase=1;dialog->findChild<QLineEdit *>("operationJobId")->setText("retained");QTimer::singleShot(0,dialog->findChild<QPushButton *>("inspectOperationJob"),&QPushButton::click);}
+            else if(phase==1 && status=="prepared"){phase=2;QTimer::singleShot(0,dialog->findChild<QPushButton *>("startOperationJob"),&QPushButton::click);}
+            else if(phase==3 && (!accept || status=="completed" || report.startsWith("Status unavailable"))){completed=status=="completed";phase=4;dialog->accept();}
+        });timer.start();window.findChild<QAction *>("operationJobsAction")->trigger();timer.stop();QCOMPARE(phase,4);QVERIFY(explicitReview);QCOMPARE(completed,accept && !race);
+        const auto result=syncRequest(client,base+"/operation-jobs/retained/status",{});
+        QCOMPARE(result["batches"].toArray().size(),accept && !race?1:0);
+        // An execution refusal remains inspectable; clear its GUI lock before teardown.
+        if(race){QTimer close;connect(&close,&QTimer::timeout,&window,[&]{if(auto *dialog=window.findChild<QDialog *>("operationJobsDialog"))if(dialog->findChild<QPlainTextEdit *>("operationJobReport")->toPlainText().contains("prepared"))dialog->accept();});close.start(10);window.findChild<QAction *>("operationJobsAction")->trigger();}
+    }
+    void exportWriterReportsFailuresWithoutSuccess() {
+        struct Sink {
+            bool opened=true,committed=true;int writes=0,commits=0;bool shortWrite=false;
+            bool open(QIODevice::OpenMode){return opened;}
+            qint64 write(const QByteArray &bytes){++writes;return bytes.size()-int(shortWrite);}
+            bool commit(){++commits;return committed;}
+            QString errorString()const{return "injected failure";}
+        };
+        QTemporaryDir temp;QString error;
+        for(int mode=0;mode<3;++mode){
+            Sink sink;sink.opened=mode!=0;sink.shortWrite=mode==1;sink.committed=mode!=2;
+            QVERIFY(!ExportWriter::write(temp.filePath("out"),temp.filePath("native"),"bytes",sink,error));
+            QVERIFY(error.contains("Spreadsheet destination failed"));
+            QCOMPARE(sink.commits,mode==2?1:0);
+        }
+        Sink sink;QVERIFY(!ExportWriter::write(temp.filePath("out"),temp.filePath("native"),{},sink,error));QCOMPARE(sink.writes,0);
+    }
+    void exportWriterRejectsNativeAliasesAndInvalidSnapshots() {
+        QTemporaryDir temp;const auto native=temp.filePath("native.dhwb"),alias=temp.filePath("alias.xlsx");
+        QFile file(native);QVERIFY(file.open(QIODevice::WriteOnly));file.write("retained native inputs");file.close();QVERIFY(QFile::link(native,alias));
+        const QJsonObject snapshot{{"file_base64",QString::fromLatin1(QByteArray("export").toBase64())}};QString error;
+        for(const auto &path:{native,alias}){QVERIFY(!ExportWriter::save(path,native,snapshot,error));QVERIFY(error.contains("native workbook"));}
+        std::error_code failure;const auto hard=temp.filePath("hard.xlsx");std::filesystem::create_hard_link(QFileInfo(native).filesystemFilePath(),QFileInfo(hard).filesystemFilePath(),failure);
+        if(!failure)QVERIFY(!ExportWriter::save(hard,native,snapshot,error));
+        const auto output=temp.filePath("out.xlsx");QVERIFY(!ExportWriter::save(output,native,{{"file_base64","invalid!"}},error));QVERIFY(!QFile::exists(output));
+        QVERIFY(ExportWriter::save(output,native,snapshot,error));QFile exported(output);QVERIFY(exported.open(QIODevice::ReadOnly));QCOMPARE(exported.readAll(),QByteArray("export"));
+        QVERIFY(file.open(QIODevice::ReadOnly));QCOMPARE(file.readAll(),QByteArray("retained native inputs"));
+    }
+    void recordExportRechecksNativeAliasAfterReview_data() {
+        QTest::addColumn<QString>("format");QTest::newRow("xlsx")<<QString("xlsx");QTest::newRow("ods")<<QString("ods");
+    }
+    void recordExportRechecksNativeAliasAfterReview() {
+        const bool nativeDialogs=QCoreApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+        QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+        const auto restoreDialogs=qScopeGuard([nativeDialogs]{QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs,nativeDialogs);});
+        QFETCH(QString,format);QTemporaryDir temp;const auto native=temp.filePath("records.dhwb"),destination=temp.filePath("export."+format);
+        StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(native,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        window.submit({{"action","list_declare"},{"id","Records"},{"spec",QJsonObject{{"r2",1},{"c2",1}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        auto *grid=window.findChild<QTableView *>("grid");grid->setCurrentIndex(window.model()->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(grid->currentIndex()),5000);
+        QFile file(native);QVERIFY(file.open(QIODevice::ReadOnly));const auto original=file.readAll();file.close();
+        bool reviewed=false,linked=false;QTimer timer;timer.setInterval(10);
+        connect(&timer,&QTimer::timeout,&window,[&]{
+            auto *modal=QApplication::activeModalWidget();
+            if(auto *dialog=window.findChild<QDialog *>("recordCommandDialog");dialog && !dialog->property("checked").toBool()){
+                dialog->setProperty("checked",true);auto *mode=dialog->findChild<QComboBox *>("recordCommandMode");mode->setCurrentIndex(mode->findData(format+"_values"));dialog->accept();
+            }
+            if(auto *picker=qobject_cast<QFileDialog *>(modal);picker && !picker->property("checked").toBool()){
+                picker->setProperty("checked",true);picker->setDirectory(temp.path());picker->findChild<QLineEdit *>("fileNameEdit")->setText(destination);QMetaObject::invokeMethod(picker,"accept",Qt::QueuedConnection);
+            }
+            if(auto *box=qobject_cast<QMessageBox *>(modal)){
+                if(box->objectName()=="recordExportReview" && !reviewed){reviewed=true;linked=QFile::link(native,destination);}
+                if(auto *yes=box->button(QMessageBox::Yes))yes->click();
+            }
+        });timer.start();window.findChild<QAction *>("recordCommandAction")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("destination resolves to the native workbook"),5000);timer.stop();
+        QVERIFY(reviewed);QVERIFY(linked);QVERIFY(file.open(QIODevice::ReadOnly));QCOMPARE(file.readAll(),original);QCOMPARE(opened.count(),3);
+    }
     void frozenTopRowModelForwardsEditsAndTracksSourceResets() {
         QStandardItemModel source(3,4); source.setData(source.index(0,0),"Header");
         FrozenTopRowModel first(&source); QAbstractItemModelTester tester(&first,QAbstractItemModelTester::FailureReportingMode::QtTest);
@@ -2095,8 +2311,9 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
         QFile fixture(QStringLiteral(DATAHORIZON_FIXTURES "/inputs.ods")); QVERIFY(fixture.open(QIODevice::ReadOnly));
         QSignalSpy changed(&window,&MainWindow::operationFinished);
-        answerNextDialog(QMessageBox::Yes); window.importSpreadsheetBytes(fixture.readAll(),"ods");
+        QString conversionReport;answerNextDialog(QMessageBox::Yes,nullptr,&conversionReport); window.importSpreadsheetBytes(fixture.readAll(),"ods");
         QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000);
+        QVERIFY(conversionReport.contains("native ISO types"));QVERIFY(!conversionReport.contains("ISO Text"));
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14.00"),5000);
         QVERIFY(window.model()->data(window.model()->index(0,1),Qt::FontRole).value<QFont>().bold());
         auto *grid=window.findChild<QTableView *>("grid"); QVERIFY(grid);
@@ -3258,6 +3475,14 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("new"),5000);
     }
 private:
+    bool m_originalDialogAttribute=false;
+    static QJsonObject syncRequest(RestClient *client,const QString &path,const QJsonObject &body,bool post=true) {
+        auto response=std::make_shared<QJsonObject>();auto done=std::make_shared<bool>(false);
+        client->request(path,body,[response,done](QJsonObject result,QString error){*response=result;if(!error.isEmpty())(*response)["_error"]=error;*done=true;},post);
+        for(int i=0;i<500 && !*done;++i)QTest::qWait(10);
+        if(!*done)(*response)["_error"]="timed out";
+        return *response;
+    }
     static void observeOwnedServiceStartup(MainWindow &owner, QJsonObject &service) {
         auto *process=owner.findChild<QProcess *>("ownedService");
         connect(process,&QProcess::readyReadStandardOutput,process,[process,&service,bytes=QByteArray{}]() mutable {
@@ -3267,11 +3492,12 @@ private:
             if(newline>=0) service=QJsonDocument::fromJson(bytes.left(newline)).object();
         });
     }
-    static void answerNextDialog(QMessageBox::StandardButton button, QString *message=nullptr) {
+    static void answerNextDialog(QMessageBox::StandardButton button, QString *message=nullptr,QString *details=nullptr) {
         auto *timer=new QTimer(qApp); timer->setInterval(10);
-        connect(timer,&QTimer::timeout,timer,[timer,button,message]{
+        connect(timer,&QTimer::timeout,timer,[timer,button,message,details]{
             if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
                 if(message) *message=box->text();
+                if(details)*details=box->detailedText()+box->informativeText();
                 if(auto *target=box->button(button)) { timer->stop(); target->click(); timer->deleteLater(); }
             }
         });

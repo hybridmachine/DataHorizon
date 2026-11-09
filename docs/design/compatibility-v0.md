@@ -195,7 +195,8 @@ ODS now has a separate [bounded tier](interchange-next-five.md#ods-inputs-formul
 
 XLSX and ODS now support `scope=workbook`: all sheet names/order, empty sheets, mapped
 inputs/styles and supported cross-sheet formulas. Import replaces an empty
-workbook atomically and rejects required handlers; success clears history.
+workbook atomically and requires activated handlers to opt into transactional
+structural events; legacy handlers reject atomically. Success clears history.
 Export uses one bounded read transaction and translates stable native IDs to names.
 Aggregate limits and omissions remain explicit in the
 [workbook contract](workbook-next-five.md). Single-selection tiers remain available.
@@ -216,7 +217,13 @@ Filtered list values can be copied in display order with typed native clipboard 
 
 Filtered CSV/XLSX/ODS export uses one ordered values snapshot compressed to A1, with review of formula conversion and hidden-section exclusions. See [the filtered export contract](editing-lists-next-ten.md#export-filtered-values).
 
-Named sort/filter definitions persist locally per workbook/sheet and are reviewed before re-applying after reopen, including read-only opens. They use source addresses and are not portable native metadata; see [saved-view limits](editing-lists-next-ten.md#saved-named-list-views).
+Named sort/filter definitions persist locally per workbook/sheet and are reviewed
+before re-applying after reopen, including read-only opens. View → Save/Load view
+in workbook explicitly transfers the supported presentation/named-list tier to
+native v3 metadata; standalone named list metadata is also available through
+managed operations. Local preferences are not automatically portable. See
+[saved-view limits](editing-lists-next-ten.md#saved-named-list-views) and
+[portable native views](m3-m5-next-ten.md).
 
 Configurable Number/Percentage display supports 0–15 decimal places, portable
 through simple XLSX zero-placeholder formats and ODS decimal-place styles.

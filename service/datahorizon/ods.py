@@ -235,7 +235,7 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
     selected=integer(request.get("sheet_index",1),1,64,"sheet_index"); selected_mode=mode(request)
     report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct/inherited cell styles replace destination inputs/styles.",
             "Other sheets, code, charts, comments, merged presentation, names, validation, conditional/default/row/column formatting, dimensions and advanced typography are omitted; code never activates.",
-            "Percentage/currency retain numeric magnitude. Number/percentage styles with 0–15 decimal places map; explicit three-letter currency suffix styles map; other display formats are omitted. Dates and durations become ISO Text. Formula syntax is translated canonically; only the published native function tier and arithmetic/comparison formulas without powers are supported."]
+            "Percentage/currency retain numeric magnitude. Number/percentage styles with 0–15 decimal places map; explicit three-letter currency suffix styles map; other display formats are omitted. Supported dates/datetimes and sub-day time durations restore native ISO types. Formula syntax is translated canonically; only the published native function tier and arithmetic/comparison formulas without powers are supported."]
     if selected_mode=="values": report.append("Formula caches become values with unverified freshness; missing/error caches block Apply.")
     with package(request) as archive:
         try: require(archive.read("mimetype")==MIME.encode(),"INVALID_SPREADSHEET","Package is not an ODS spreadsheet")
@@ -431,5 +431,5 @@ def ods_preview(request,checkpoint=lambda completed,phase:None):
         root=read_xml(archive,"content.xml")
         names=[s.get(q(T,"name"),"") for s in root.findall(f'{q(O,"body")}/{q(O,"spreadsheet")}/{q(T,"table")}')]
     result=prepare_workbook(request,checkpoint,names,_ods_preview)
-    result["report"].append("Date/duration values become ISO Text. Percentage/currency retain magnitudes; two-decimal percentage styles map. Currency codes and other unsupported display are omitted. Named sheet references replace sheet-relative movement semantics.")
+    result["report"].append("Supported dates/datetimes and sub-day time durations restore native ISO types. Percentage/currency retain magnitudes; supported 0–15 decimal places, grouping and three-letter currency suffix styles map. Other currency/display metadata is omitted. Named sheet references replace sheet-relative movement semantics.")
     return result

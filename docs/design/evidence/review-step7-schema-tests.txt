@@ -1,0 +1,9 @@
+test_cancel_resume_and_lost_acknowledgement_use_inspection (test_job_openapi.JobOpenApiTests.test_cancel_resume_and_lost_acknowledgement_use_inspection) ... ok
+test_document_and_action_schemas_are_valid_openapi_30 (test_job_openapi.JobOpenApiTests.test_document_and_action_schemas_are_valid_openapi_30) ... ok
+test_edit_csv_find_and_list_examples_execute_through_rest (test_job_openapi.JobOpenApiTests.test_edit_csv_find_and_list_examples_execute_through_rest) ... ok
+test_schema_and_service_reject_missing_and_malformed_inputs (test_job_openapi.JobOpenApiTests.test_schema_and_service_reject_missing_and_malformed_inputs) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 9.025s
+
+OK

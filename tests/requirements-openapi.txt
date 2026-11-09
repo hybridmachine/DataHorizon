@@ -1,0 +1,3 @@
+# Build-only API contract validation; never installed into the service runtime.
+openapi-schema-validator==0.9.0
+openapi-spec-validator==0.9.0

@@ -1,0 +1,21 @@
+[  0%] Built target savefile_crash_autogen_timestamp_deps
+[  0%] Built target datahorizon_desktop_autogen_timestamp_deps
+[  3%] Built target savefile_crash_autogen
+[  6%] Built target datahorizon_desktop_autogen
+[ 17%] Built target savefile_crash
+[ 37%] Built target datahorizon_desktop
+[ 37%] Built target desktop_tests_autogen_timestamp_deps
+[ 37%] Built target desktop_benchmark_autogen_timestamp_deps
+[ 37%] Built target DataHorizon_autogen_timestamp_deps
+[ 37%] Built target native_acceptance_autogen_timestamp_deps
+[ 48%] Built target desktop_benchmark_autogen
+[ 48%] Built target DataHorizon_autogen
+[ 48%] Built target native_acceptance_autogen
+[ 51%] Automatic MOC for target desktop_tests
+[ 86%] Built target desktop_benchmark
+[ 89%] Built target native_acceptance
+[ 89%] Built target DataHorizon
+[ 89%] Built target desktop_tests_autogen
+[ 93%] Building CXX object CMakeFiles/desktop_tests.dir/tests/test_desktop.cpp.o
+[ 96%] Linking CXX executable desktop_tests
+[100%] Built target desktop_tests

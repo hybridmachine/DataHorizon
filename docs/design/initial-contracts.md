@@ -122,7 +122,9 @@ transformations in [the editing contract](editing-csv-next-five.md). Rename
 retargets qualified names, copies retarget explicit self name/UUID references,
 and deletion replaces surviving targets with permanent #REF! expressions and
 reports affected formula locations. Unsupported syntax and required handlers
-reject atomically; successful structure changes clear Undo/Redo history.
+without structural opt-in reject atomically; successful structure changes clear
+Undo/Redo history. Opted-in handlers follow the transactional before/after
+[structure event contract](m3-m5-next-ten.md).
 
 Same-sheet Cut follows the [bounded move/reference contract](editing-lists-next-ten.md#formula-aware-cut).
 Whole-row/column insertion and deletion use the bounded reference transformer
@@ -155,8 +157,8 @@ Qualified ranges inherit their first endpoint's sheet. Sheet names use
 SQLite's ASCII-only NOCASE matching, including quoted apostrophe escapes. Exact
 quoted sheet UUIDs also follow the calculator's existing identity resolution.
 
-These operations require no activated required handler until structure events
-are defined; they never bypass an active handler. They clear Undo/Redo on
+Activated required handlers must explicitly implement the transactional structure
+event contract; these operations never bypass an active handler. They clear Undo/Redo on
 commit, and the desktop confirms that consequence before submission. A rejected
 operation preserves the original cells, formulas and history. They reject
 unsupported formula syntax instead of guessing at hidden references, and never
@@ -230,6 +232,10 @@ the standard parser). Responses have a five-second socket-write timeout.
 These bounds do not qualify the development server for production or remote
 binding. See [admission evidence](qualification-next-five.md#http-admission).
 
+Connection teardown half-closes the response, then discards at most 64 KiB of
+unread request bytes for at most 100 ms before closing. This bounded grace helps
+deliver error responses on Windows without parsing or admitting rejected input.
+
 Ordinary operations are atomic, at most 10,000 target cells, 4 MiB request body,
 64 KiB cell source and 5 seconds engine time. Formula preflight queries check
 that deadline inside SQLite even when no matching cells are returned, and remove
@@ -241,9 +247,13 @@ Find has a two-second search budget. Snapshot backup and
 validation also have a five-second budget, including busy retries. A timed-out
 copy preserves its destination for inspection. These deadlines are cooperative
 checks between SQLite instructions/backup steps, not hard cancellation of a
-blocked operating-system I/O call. There are no chunked commits in
-this tier. No partial-cancel claims are made: accepted writes run to their known
-outcome; long/chunked jobs remain unavailable. Desktop paste checks raw clipboard
+blocked operating-system I/O call. Ordinary operations and atomic jobs have no
+chunked commits. Explicit [batched operation jobs](m3-m5-next-ten.md) commit each
+batch separately and retain those receipts on cancellation. Before a commit,
+confirmed cancellation rolls back that transaction; missing receipts remain
+unknown. Native journal identity, reviewed resume and asynchronous close are
+described in [the remediation contract](development.md#durable-job-recovery-and-close).
+Desktop paste checks raw clipboard
 bytes and cell counts before constructing its
 matrix, and serialized REST requests over 4 MiB are rejected before transmission.
 A viewport is at most 4,096 cells. Range/clipboard reads have a two-second engine
@@ -302,11 +312,13 @@ names apply; screen-reader and narrow-window qualification remains M7 work.
 Native format v1 preserves supported inputs, formula sources, styles and sheets.
 CSV values export is UTF-8 over one explicit rectangle. Import offers the strict
 encoding/delimiter controls in [the CSV contract](editing-csv-next-five.md#csv-encoding-and-delimiters),
-with Text as the default import type. Formula-looking imported text stays literal. Excel
-and ODS are unavailable until independent import/export fixtures and conversion
-reports pass; no misleading extension-based export is allowed. Initial styles
+with Text as the default import type. Formula-looking imported text stays literal.
+XLSX/ODS selection and workbook interchange are available within the independently
+tested [compatibility tier](compatibility-v0.md); conversion reports distinguish
+preserved, normalized and omitted features. Initial styles
 are text/general/fixed two decimals, bold, italic, alignment, background and boolean text wrapping.
-Additional styles, frozen panes and view persistence require their own evidence.
+Additional style, frozen-pane and native v3 view tiers have separate bounded
+contracts and evidence in the [implementation status](implementation-status.md).
 
 ## M1 experiment specification
 

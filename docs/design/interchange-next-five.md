@@ -218,3 +218,10 @@ power-loss qualification, native Excel/LibreOffice acceptance, clean-machine
 packaging and hosted Windows/Linux/macOS qualification remain open. These five
 bounded increments do not close M1–M8 release gates. Next work should extend the
 published compatibility/recovery fixtures before increasing file or job limits.
+
+All desktop XLSX/ODS output paths, including declared-record projections, share
+a protected writer. The destination is compared with the captured native workbook
+after the final review and immediately before output opens; aliases are rejected.
+Empty/invalid payloads and open/write/commit failures report export failure.
+This guards the modal-review race; arbitrary filesystem replacement between a
+path check and an OS write is not a general atomic identity guarantee.

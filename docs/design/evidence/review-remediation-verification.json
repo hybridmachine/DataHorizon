@@ -1,0 +1,108 @@
+{
+  "format": 1,
+  "recorded_at_utc": "2026-11-08T22:54:33.934463+00:00",
+  "base_commit": "f9ed9d62258e68736e4502ea2d6746d789e14a46",
+  "implementation_commit": "574937bfdfb4092352592db71f0665cecfeed00b",
+  "branch": "codex/review-remediation",
+  "source_fingerprint": "94b3504779af9fd1508b5eff4f6038cac230c7da6d6c2b9890e271afedf0cf0d",
+  "source_matches_qualified_candidate": true,
+  "local_remediation_steps": {
+    "1": "verified locally",
+    "2": "verified locally",
+    "3": "verified locally",
+    "4": "verified locally",
+    "5": "verified locally",
+    "6": "verified locally",
+    "7": "verified locally",
+    "8": "verified locally",
+    "9": "verified locally"
+  },
+  "full_contracts": {
+    "qt_passed": 205,
+    "qt_failed": 0,
+    "python_run": 451,
+    "python_passed": 432,
+    "python_optional_skips": 19,
+    "python_failed": 0,
+    "ctest_suites_passed": 2
+  },
+  "optional_contracts": {
+    "openapi_validator_tests_passed": 4,
+    "native_capture_tests_passed": 15,
+    "all_standard_environment_skips_verified_separately": true
+  },
+  "native_regressions": {
+    "plugin": "cocoa",
+    "scale_1_passed": 23,
+    "scale_2_passed": 23,
+    "dialogs": "Qt widget dialogs; AppKit NSAlert modal-loop automation was unreliable and native OS dialogs remain a manual gate",
+    "screenshots_visually_inspected": true,
+    "native_acceptance_controls_and_tab_order": true
+  },
+  "independent_consumers": {
+    "workbook": true,
+    "temporal": true,
+    "numeric_font_border_styles": true,
+    "filtered_record_formulas_and_values": true
+  },
+  "failure_checks": [
+    "final-review native-file alias substitution",
+    "injected output open/short-write/commit failures",
+    "sidecar persistence failure and commit/acknowledgement gap without required-hook replay",
+    "legacy migration failure and conflicting native receipt recovery",
+    "missing receipts remain unknown",
+    "lost cancellation/status/close acknowledgements preserve private recovery information",
+    "fresh-state resume refusal and declined review",
+    "no-output SQL deadline/cancellation and connection reuse"
+  ],
+  "qualification_artifacts": {
+    "directory": "build/review-remediation-final",
+    "report": "docs/design/evidence/review-final-qualification.json",
+    "relocated_install_smoke": {
+      "platform": "Darwin",
+      "relocated_managed_edit_calculation": true,
+      "temporal_types_and_ten_functions": true,
+      "m3_m5_installed_sdk_service": true,
+      "developer_overrides_removed": true,
+      "missing_service_fails_explicitly": true,
+      "runtime_dependency": "Separately installed Python unless an explicitly supplied runtime is staged",
+      "clean_machine_qualified": false
+    },
+    "archive": {
+      "name": "DataHorizon-preview.tar.gz",
+      "files": 86,
+      "sha256": "66087151469ee5081e6e6c07c445c54f6ce0473249b6e07a1d4b1a1d26ec42c9",
+      "inventory_verified": true
+    },
+    "provenance_note": "The archive was generated from these exact code bytes before the local candidate commit. Its original source_head/source_dirty metadata is retained in the archive inventory."
+  },
+  "measurements": {
+    "large_workload": "review-m3-m5-measurements.json",
+    "narrow_scans": "review-scan-measurements.json",
+    "fresh_and_warm_memory": "review-cache-rss-measurements.json"
+  },
+  "release_qualified": false,
+  "remaining_gates": {
+    "platforms": {
+      "Darwin": "local automation passed; manual qualification pending",
+      "Windows": "pending",
+      "Linux": "pending"
+    },
+    "manual_gates": [
+      "physical keyboard/clipboard/native dialogs",
+      "screen-reader navigation",
+      "multiple monitors and system appearance",
+      "clean-machine installer/runtime",
+      "signing/notarization",
+      "distribution licenses/notices"
+    ],
+    "release_qualified": false
+  },
+  "limitations": [
+    "Windows/Linux and physical input/screen readers/native OS dialog interaction require independent qualification.",
+    "Clean-machine runtime distribution, signing and licensing gates remain open.",
+    "Fresh-process measurements do not evict OS caches; no true OS-cold or universal memory/latency guarantee.",
+    "The 270,000-long-text-row opening-budget boundary recorded before this batch remains unqualified; deadlines were not relaxed.",
+    "Native-path checks address the modal-review alias race, not arbitrary concurrent filesystem replacement."
+  ]
+}

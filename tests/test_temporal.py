@@ -1,4 +1,5 @@
 import unittest
+from contextlib import closing
 import tempfile
 from pathlib import Path
 import sqlite3
@@ -154,13 +155,13 @@ class TemporalStorageTests(unittest.TestCase):
         self.assertEqual(self.book.info()["format_version"],1)
         self.assertEqual(self.book.read("Sheet1",{})["cells"],[])
         self.apply(cells=[dict(row=1,col=1,source="2024-02-29",kind="date")])
-        with sqlite3.connect(self.path) as direct: direct.execute("UPDATE cells SET source='2023-02-29'")
+        with closing(sqlite3.connect(self.path)) as direct,direct: direct.execute("UPDATE cells SET source='2023-02-29'")
         with self.assertRaises(EngineError): self.book.info()
 
     def test_v1_temporal_and_unknown_versions_fail_without_migration(self):
         self.apply(cells=[dict(row=1,col=1,source="2024-02-29",kind="date")])
         for version in (1,4):
-            with sqlite3.connect(self.path) as direct:direct.execute("UPDATE dh_meta SET format_version=?",(version,))
+            with closing(sqlite3.connect(self.path)) as direct,direct:direct.execute("UPDATE dh_meta SET format_version=?",(version,))
             with self.assertRaises(EngineError) as caught:self.book.info()
             self.assertEqual(caught.exception.body["code"],"FORMAT_VERSION")
 
