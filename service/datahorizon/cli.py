@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Managed CLI. Local file mode starts a headless REST service."""
 
 import argparse

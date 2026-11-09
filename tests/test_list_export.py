@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """List packages contain the same ordered values as the reviewed snapshot."""
 import base64
 from contextlib import closing

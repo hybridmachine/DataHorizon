@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Public metadata for implemented formula functions; no workbook access."""
 from copy import deepcopy
 

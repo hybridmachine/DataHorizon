@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """CSV byte decoding, dialect review and managed import contracts."""
 import base64
 from pathlib import Path

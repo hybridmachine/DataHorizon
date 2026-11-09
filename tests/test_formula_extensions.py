@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Declared formula tiers: shared engine, bounds, error handling and interchange."""
 import base64
 from contextlib import closing

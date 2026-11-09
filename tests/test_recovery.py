@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Real process exits, bounded validation, path replacement and read-only inspection."""
 from contextlib import closing
 import hashlib

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Bounded spreadsheet packages; no extraction, external resolution or code activation."""
 import base64
 import binascii

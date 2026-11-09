@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Disposable bounded dependency graph and nonvolatile result reuse."""
 from collections import defaultdict
 from .formula import Calculator, Parser, FormulaError, CELL_ERRORS

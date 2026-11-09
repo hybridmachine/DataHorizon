@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Values-only list exports reuse one evaluated projection snapshot."""
 import csv
 import io

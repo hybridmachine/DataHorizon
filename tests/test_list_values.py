@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Filtered values are one bounded, state-checked snapshot in display order."""
 from contextlib import closing
 from pathlib import Path

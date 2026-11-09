@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Navigation uses stored inputs in one bounded snapshot, without managed writes."""
 from contextlib import closing
 from pathlib import Path

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Small, deliberately bounded spreadsheet parser. Never evaluates Python source."""
 
 from decimal import Context, Decimal, InvalidOperation, localcontext, ROUND_HALF_UP, ROUND_UP, ROUND_DOWN

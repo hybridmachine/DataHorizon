@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Portable formatting must preserve inputs, transaction/history and typed file data."""
 from contextlib import closing
 from pathlib import Path

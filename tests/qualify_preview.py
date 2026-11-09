@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Repeatable platform-local build, native automation, relocation and archive evidence."""
 import argparse
 import hashlib
@@ -32,8 +33,8 @@ def matrix(reports):
 
 def candidate(root):
     digest=hashlib.sha256()
-    paths=[root/'CMakeLists.txt']
-    for directory in ('desktop','service','tests','cmake'):
+    paths=[root/'CMakeLists.txt',root/'COPYING',root/'LICENSES.md']
+    for directory in ('desktop','service','tests','cmake','tools','packaging'):
         paths.extend(path for path in (root/directory).rglob('*') if path.is_file() and '__pycache__' not in path.parts and path.suffix!='.pyc')
     for path in sorted(paths,key=lambda path:path.relative_to(root).as_posix()):
         relative=path.relative_to(root).as_posix()

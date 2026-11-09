@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Independent fill seeds, exact native types, translation and transactional failures."""
 from contextlib import closing
 from pathlib import Path

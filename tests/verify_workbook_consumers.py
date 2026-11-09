@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Build-only independent XLSX/ODS workbook consumers, including values snapshots."""
 import argparse
 import base64

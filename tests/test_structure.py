@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Contracts for destructive whole-row/column operations and reference identity."""
 from contextlib import closing
 from pathlib import Path

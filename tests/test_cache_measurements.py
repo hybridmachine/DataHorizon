@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Measurement provenance must not turn denied cache eviction into cold evidence."""
 import subprocess
 import unittest

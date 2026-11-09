@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Reproducible local M1 measurements; not a release qualification suite."""
 
 import json

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Trace stored syntax without evaluation, preserving snapshot/access contracts."""
 from contextlib import closing
 from pathlib import Path

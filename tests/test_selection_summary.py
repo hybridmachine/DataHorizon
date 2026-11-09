@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Snapshot summaries count stored data without writes, hooks or partial aggregates."""
 from contextlib import closing
 import json

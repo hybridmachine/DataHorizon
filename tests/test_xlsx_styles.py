@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Native-style fidelity, explicit display loss and style replacement semantics."""
 import base64
 import io

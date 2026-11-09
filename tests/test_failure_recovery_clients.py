@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Real filesystem/process failures through managed clients and native checkpoints."""
 from contextlib import closing
 import json

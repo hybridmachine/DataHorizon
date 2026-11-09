@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Snapshot-reviewed record bulk editing and referent-preserving projection export."""
 from contextlib import contextmanager
 import json

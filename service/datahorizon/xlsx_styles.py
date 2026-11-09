@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """XLSX mapping for the existing native style tier; unsupported display is reported."""
 import re
 

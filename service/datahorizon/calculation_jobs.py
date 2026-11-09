@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Read-only background calculations with input-state and generation guards."""
 from contextlib import closing
 import hashlib

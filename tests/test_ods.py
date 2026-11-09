@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """ODF XML fixtures are independent of the exporter; all Apply uses REST."""
 import base64
 import io

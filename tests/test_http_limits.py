@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Real-socket admission, slow-input and operation-outcome regression checks."""
 from contextlib import contextmanager
 import json

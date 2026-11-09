@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Preparation jobs have no workbook mutation phase or durable outcome claims."""
 from pathlib import Path
 import tempfile

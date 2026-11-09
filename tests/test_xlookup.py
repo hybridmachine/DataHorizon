@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Typed exact first-match lookup, lazy return/fallback and package aliases."""
 from contextlib import closing
 from pathlib import Path

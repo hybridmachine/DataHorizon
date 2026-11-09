@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Atomic sheet catalog changes and reference preservation."""
 from pathlib import Path
 import tempfile

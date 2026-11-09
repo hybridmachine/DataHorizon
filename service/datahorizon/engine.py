@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """SQLite transaction owner. All managed clients enter through these operations."""
 
 import csv

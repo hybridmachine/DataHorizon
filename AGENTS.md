@@ -22,9 +22,9 @@ business workflows.
 Use Qt Widgets with C++ for the desktop GUI on Windows, macOS, and Linux.
 Develop wireframes and interaction designs around the selected Qt Widgets stack.
 
-The GUI will be licensed under the GNU General Public License version 3
-(GPLv3). This decision applies to the GUI; licenses for the service, SDK, and
-other components have not been selected.
+All DataHorizon components, including the GUI, service, CLI and Python SDK,
+are licensed under GNU General Public License version 3 only (GPL-3.0-only).
+Third-party dependencies retain their own licenses.
 
 ## Current work phase
 

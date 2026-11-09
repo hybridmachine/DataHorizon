@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Optional native binding contracts; base runtime needs no pip dependencies."""
 from contextlib import closing
 import time

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Executable baseline for the M3–M5 completion batch."""
 from contextlib import closing
 import json

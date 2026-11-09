@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Managed clear contracts: preserve input identities or roll back the whole range."""
 from contextlib import closing
 from pathlib import Path

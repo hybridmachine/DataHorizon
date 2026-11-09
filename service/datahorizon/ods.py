@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Bounded ODF 1.3 sheet interchange with explicit local formula/style translation."""
 import base64
 import io

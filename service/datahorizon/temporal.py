@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Civil ISO date/time values and explicit Excel serial conversion.
 
 No locale or host timezone participates. Temporal is a JSON-compatible ISO

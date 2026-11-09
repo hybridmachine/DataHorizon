@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Fresh-process/warm REST and per-process peak-RSS measurements, no OS cache purge."""
 import argparse
 from contextlib import contextmanager, closing

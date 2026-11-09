@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Trusted entry point for an owned service, invoked by absolute path with -I."""
 
 import sys

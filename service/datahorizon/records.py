@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Persistent declared-list identities; A1 coordinates remain positional."""
 import hashlib
 import json

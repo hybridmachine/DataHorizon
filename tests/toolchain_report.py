@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Record the tested development baseline; no release/installer qualification."""
 import argparse
 from datetime import datetime, timezone
@@ -46,7 +47,7 @@ def build_report(build, grid_path):
             'grid_evidence': {'qt': grid['qt'], 'platform_plugin': grid['platform_plugin'],
                               'focused_address_retention_checked': frozen['focused_address_retention_checked_all_samples']},
             'distribution': {'python_bundled': False, 'clean_machine_qualified': False,
-                             'gui_license': 'GPL-3.0-only', 'service_sdk_license': 'undecided'}}
+                             'gui_license': 'GPL-3.0-only', 'service_sdk_license': 'GPL-3.0-only'}}
 
 
 def main():

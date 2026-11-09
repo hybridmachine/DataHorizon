@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Invariant numeric display and the deliberately small portable format grammar."""
 from decimal import Context, Decimal, localcontext
 import re

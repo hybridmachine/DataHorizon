@@ -127,3 +127,14 @@ decision. It will be performed on those respective systems after more features.
 distinguish loading, pending, computed, blank and failed values. Actual VoiceOver
 interaction and bounded full-grid accessibility enumeration remain open; this
 increment does not close task 8 or the screen-reader acceptance gate.
+
+## Task 9: runtime and licensing baseline
+
+[The macOS distribution baseline](macos-distribution.md) selects macOS 15+ ARM64,
+a checksum-pinned relocatable CPython runtime and GPL-3.0-only for all original
+components. Qt/Python dependency notices and provenance are retained separately.
+The integrated tier passes 223 Qt checks, 464 Python tests (19 optional skips),
+the signature regression and relocated bundled GUI/CLI/SDK smoke with developer
+PATH removed. Initial hosted macOS verification passes all three jobs. See the
+[source record](evidence/task9-verification.json). This baseline is complete;
+external service hardening and signed release qualification remain separate gates.

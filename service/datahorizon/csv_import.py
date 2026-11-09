@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Bounded CSV decoding and review, shared by every managed client."""
 import base64
 import binascii

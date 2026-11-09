@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Bounded read-only inspection; never repairs data, evaluates formulas or runs code."""
 import json
 import sqlite3

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Versioned portable presentation and explicitly declared list definitions."""
 import json
 import math

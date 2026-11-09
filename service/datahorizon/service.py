@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Authenticated loopback-only development REST service; no third-party runtime."""
 
 import argparse

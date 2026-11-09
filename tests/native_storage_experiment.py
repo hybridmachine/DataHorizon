@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """M1 native representation validation and bounded rowid-layout comparison."""
 import argparse
 from contextlib import closing

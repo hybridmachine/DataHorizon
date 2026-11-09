@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Thin Python REST SDK. It never opens a workbook database."""
 
 import json

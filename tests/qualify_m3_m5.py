@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Dataset-specific dependency, background calculation and durable-job measurements."""
 from contextlib import closing
 from datetime import datetime,timezone

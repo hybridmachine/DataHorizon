@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Opt-in real ENOSPC checks in a private 64-MiB disk image, never the host volume."""
 import argparse
 import errno
