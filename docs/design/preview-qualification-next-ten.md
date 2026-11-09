@@ -45,3 +45,19 @@ screenshots were inspected. Local CTest passes 205 Qt checks and 451 Python test
 tested source. Task 1 is complete for the user's revised macOS automation scope;
 physical input, VoiceOver and distribution are later tasks, and Windows/Linux
 qualification is deferred. Large-file capacity remains workload-specific.
+
+## Task 2: native opening
+
+[The storage/validation change](native-opening-performance.md) keeps all opening
+checks and the five-second budget, combines cell checks into one scan and uses
+8-KiB pages for newly created workbooks. The 270,000-long-text-row comparison
+preserves every logical row while reducing the fixture from 1,263,939,584 to
+316,071,936 bytes. Five optimized opens pass, with a 1,187.10-ms worst sample;
+four of five legacy-layout opens time out. These are uncontrolled OS-cache
+measurements, not universal capacity or OS-cold evidence. Existing files are
+unchanged; explicit independent SQLite copies are documented.
+
+The isolated Python suite runs 453 tests successfully (19 existing optional
+skips), including new late coordinate/orphan/temporal damage and storage/copy
+regressions. Combined Qt/Python, updated larger-than-memory and hosted macOS
+verification are required before this task's merge.

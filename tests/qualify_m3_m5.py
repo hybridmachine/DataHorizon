@@ -30,7 +30,7 @@ def measurements():
         with closing(sqlite3.connect(path)) as direct,direct:
             direct.executemany("INSERT INTO cells(sheet_id,row,col,source,kind) VALUES(?,?,1,?,'number')",((sheet,row,str(100001-row)) for row in range(1,100001)))
             direct.executemany("INSERT INTO cells(sheet_id,row,col,source,kind) VALUES(?,?,2,?,'formula')",((sheet,row,'=A'+str(row)+'*2') for row in range(1,1001)))
-            direct.executemany("INSERT INTO cells(sheet_id,row,col,source,kind) VALUES(?,?,1,?,'text')",((disk,row,'x'*1024) for row in range(1,70001)))
+            direct.executemany("INSERT INTO cells(sheet_id,row,col,source,kind) VALUES(?,?,1,?,'text')",((disk,row,'x'*1024) for row in range(1,280001)))
         database_bytes=path.stat().st_size
         assert database_bytes>256*1024*1024
         # Inspect disposable cache accounting in an isolated engine, then release it
@@ -67,7 +67,7 @@ def measurements():
             assert book.read(r1=20000,r2=20000,c1=3,c2=3)['cells'][0]['value']=='job-20000'
             memory=client.request('/benchmark/memory')['peak_rss_bytes'];book.operation_job(job['job_id'],'release')
         assert memory<256*1024*1024
-        return dict(dataset=dict(native_bytes=database_bytes,numeric_cells=100000,formulas=1000,long_text_cells=70000,larger_than_256_mib=True),dependency_cache=dict(**before,reused_hits=reused),formula_range=distribution(times),background_calculation_ms=round(calculation_ms,3),global_sort_100000_rows_ms=round(sort_ms,3),sorted_rows_verified=count,result_pages=distribution(page_times),cancel_after_committed_cells=committed_before_resume,cancel_confirmation_ms=round(cancel_ms,3),resume_remaining_ms=round(resume_ms,3),unique_committed_batches=len(after_ids),service_peak_rss_bytes=memory)
+        return dict(dataset=dict(native_bytes=database_bytes,numeric_cells=100000,formulas=1000,long_text_cells=280000,larger_than_256_mib=True),dependency_cache=dict(**before,reused_hits=reused),formula_range=distribution(times),background_calculation_ms=round(calculation_ms,3),global_sort_100000_rows_ms=round(sort_ms,3),sorted_rows_verified=count,result_pages=distribution(page_times),cancel_after_committed_cells=committed_before_resume,cancel_confirmation_ms=round(cancel_ms,3),resume_remaining_ms=round(resume_ms,3),unique_committed_batches=len(after_ids),service_peak_rss_bytes=memory)
 
 
 if __name__=='__main__':

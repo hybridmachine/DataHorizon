@@ -1,0 +1,54 @@
+{
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "python": "3.14.6",
+  "sqlite": "3.53.4",
+  "cells": 270000,
+  "source_fingerprint": "0c7fa28c5820678cfcce23e5e5794524291beb3c2fd8674e7e3761cfb320ac2b",
+  "logical_content_preserved": true,
+  "copy_ms": 6006.739,
+  "legacy": {
+    "page_bytes": 4096,
+    "file_bytes": 1263939584,
+    "successful": {
+      "samples": 1,
+      "median_ms": 2071.543,
+      "p95_ms": 2071.543
+    },
+    "failures": [
+      {
+        "code": "TIMEOUT",
+        "milliseconds": 5006.4
+      },
+      {
+        "code": "TIMEOUT",
+        "milliseconds": 5126.056
+      },
+      {
+        "code": "TIMEOUT",
+        "milliseconds": 5002.616
+      },
+      {
+        "code": "TIMEOUT",
+        "milliseconds": 5002.67
+      }
+    ]
+  },
+  "optimized": {
+    "page_bytes": 8192,
+    "file_bytes": 316071936,
+    "successful": {
+      "samples": 5,
+      "median_ms": 202.249,
+      "p95_ms": 1187.1
+    },
+    "failures": []
+  },
+  "driver_peak_rss_bytes": 37879808,
+  "opening_budget_seconds": 5,
+  "limitations": [
+    "Fresh connections with uncontrolled OS cache state; this is not OS-cold qualification.",
+    "Source fingerprints and the maintenance copy warm OS caches before opening measurements.",
+    "The driver peak includes SQLite copying and fingerprinting; it is not isolated service RSS.",
+    "Existing native files retain their page size until explicitly copied; no automatic rewrite."
+  ]
+}

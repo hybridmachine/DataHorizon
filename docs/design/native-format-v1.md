@@ -1,5 +1,10 @@
 # Development native formats v1, v2 and v3
 
+New files use 8-KiB SQLite pages to keep common 1-KiB Text cells inline. Existing
+files retain their page size; page geometry does not change the logical schema or
+metadata version. See [opening performance](native-opening-performance.md) for
+validation, measured capacity and explicit independent SQLite copy guidance.
+
 Format v3 adds reserved `dh_objects(namespace,id,sheet_id,payload)` for portable
 presentation and named list definitions. The first managed metadata write upgrades
 transactionally; v1/v2 remain readable with their original exact schema. Older
