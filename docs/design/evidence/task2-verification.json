@@ -1,0 +1,237 @@
+{
+  "task": 2,
+  "tested_commit": "aa3ee63484f0e2b05d4883302a2056cf32124294",
+  "source_fingerprint": "22a536bd72895eaf011fb7fb1ec4f52dbc482a9920621f49923a2c1aa8a4e1c2",
+  "local_ctest": {
+    "qt_passed": 205,
+    "python_ran": 453,
+    "python_optional_skips": 19,
+    "desktop_seconds": 105.55,
+    "service_seconds": 39.31
+  },
+  "installed_smoke": "passed, relocated app and missing-service rejection",
+  "hosted_macos": {
+    "run": 42546711704,
+    "job": 128933172476,
+    "conclusion": "success",
+    "native_scales": [
+      {
+        "accessible_controls": [
+          {
+            "name": "Cell address",
+            "role": 42
+          },
+          {
+            "name": "Cell input or formula",
+            "role": 42
+          },
+          {
+            "name": "Spreadsheet",
+            "role": 24
+          }
+        ],
+        "acknowledged_enter_advances": true,
+        "active_window": true,
+        "cell_editor_accessible_address": true,
+        "cell_logical_width": 109,
+        "clipboard_paste": true,
+        "device_pixel_ratio": 1,
+        "frozen_header_shared_cache_geometry": true,
+        "job_accessible_controls": [
+          {
+            "control": "operationJobMode",
+            "name": "Stage CSV \u2014 explicit batches, Text columns",
+            "role": 46,
+            "valid": true
+          },
+          {
+            "control": "operationJobId",
+            "name": "Job ID (keep for recovery)",
+            "role": 42,
+            "valid": true
+          },
+          {
+            "control": "operationJobSource",
+            "name": "CSV path or find Text",
+            "role": 42,
+            "valid": true
+          },
+          {
+            "control": "operationJobRows",
+            "name": "Read rows from A1 (one column)",
+            "role": 52,
+            "valid": true
+          },
+          {
+            "control": "operationJobReport",
+            "name": "Job plan, progress and durable receipts",
+            "role": 42,
+            "valid": true
+          },
+          {
+            "control": "prepareOperationJob",
+            "name": "Prepare",
+            "role": 43,
+            "valid": true
+          },
+          {
+            "control": "inspectOperationJob",
+            "name": "Inspect / retry status",
+            "role": 43,
+            "valid": true
+          },
+          {
+            "control": "startOperationJob",
+            "name": "Execute / resume\u2026",
+            "role": 43,
+            "valid": true
+          },
+          {
+            "control": "cancelOperationJob",
+            "name": "Cancel job",
+            "role": 43,
+            "valid": true
+          },
+          {
+            "control": "closeOperationJob",
+            "name": "Close review",
+            "role": 43,
+            "valid": true
+          }
+        ],
+        "job_dialog_tab_order": true,
+        "keyboard_edit_calculation_escape_navigation": true,
+        "keyboard_range_tab_and_editor_cancel": true,
+        "limitations": [
+          "QTest widget events are synthetic; no physical input or compositor-latency qualification.",
+          "Accessible names/table extent do not certify screen-reader navigation across the entire sheet.",
+          "Native dialogs, multiple monitors and clean-machine installation remain separate acceptance."
+        ],
+        "narrow_window_usable_grid": true,
+        "native_hidden_gap_and_recovery_control": true,
+        "native_wrap_border_and_column_size": true,
+        "os": "macOS Sequoia (15.8)",
+        "palette_base": "#ffffff",
+        "platform_plugin": "cocoa",
+        "qt": "6.8.3",
+        "qt_modal_escape_without_mutation": true,
+        "recorded_at_utc": "2026-11-09T01:46:48Z",
+        "scale_request": "1",
+        "screenshot": "native-acceptance-1.png",
+        "window_logical_width": 560
+      },
+      {
+        "accessible_controls": [
+          {
+            "name": "Cell address",
+            "role": 42
+          },
+          {
+            "name": "Cell input or formula",
+            "role": 42
+          },
+          {
+            "name": "Spreadsheet",
+            "role": 24
+          }
+        ],
+        "acknowledged_enter_advances": true,
+        "active_window": true,
+        "cell_editor_accessible_address": true,
+        "cell_logical_width": 109,
+        "clipboard_paste": true,
+        "device_pixel_ratio": 2,
+        "frozen_header_shared_cache_geometry": true,
+        "job_accessible_controls": [
+          {
+            "control": "operationJobMode",
+            "name": "Stage CSV \u2014 explicit batches, Text columns",
+            "role": 46,
+            "valid": true
+          },
+          {
+            "control": "operationJobId",
+            "name": "Job ID (keep for recovery)",
+            "role": 42,
+            "valid": true
+          },
+          {
+            "control": "operationJobSource",
+            "name": "CSV path or find Text",
+            "role": 42,
+            "valid": true
+          },
+          {
+            "control": "operationJobRows",
+            "name": "Read rows from A1 (one column)",
+            "role": 52,
+            "valid": true
+          },
+          {
+            "control": "operationJobReport",
+            "name": "Job plan, progress and durable receipts",
+            "role": 42,
+            "valid": true
+          },
+          {
+            "control": "prepareOperationJob",
+            "name": "Prepare",
+            "role": 43,
+            "valid": true
+          },
+          {
+            "control": "inspectOperationJob",
+            "name": "Inspect / retry status",
+            "role": 43,
+            "valid": true
+          },
+          {
+            "control": "startOperationJob",
+            "name": "Execute / resume\u2026",
+            "role": 43,
+            "valid": true
+          },
+          {
+            "control": "cancelOperationJob",
+            "name": "Cancel job",
+            "role": 43,
+            "valid": true
+          },
+          {
+            "control": "closeOperationJob",
+            "name": "Close review",
+            "role": 43,
+            "valid": true
+          }
+        ],
+        "job_dialog_tab_order": true,
+        "keyboard_edit_calculation_escape_navigation": true,
+        "keyboard_range_tab_and_editor_cancel": true,
+        "limitations": [
+          "QTest widget events are synthetic; no physical input or compositor-latency qualification.",
+          "Accessible names/table extent do not certify screen-reader navigation across the entire sheet.",
+          "Native dialogs, multiple monitors and clean-machine installation remain separate acceptance."
+        ],
+        "narrow_window_usable_grid": true,
+        "native_hidden_gap_and_recovery_control": true,
+        "native_wrap_border_and_column_size": true,
+        "os": "macOS Sequoia (15.8)",
+        "palette_base": "#ffffff",
+        "platform_plugin": "cocoa",
+        "qt": "6.8.3",
+        "qt_modal_escape_without_mutation": true,
+        "recorded_at_utc": "2026-11-09T01:46:50Z",
+        "scale_request": "2",
+        "screenshot": "native-acceptance-2.png",
+        "window_logical_width": 560
+      }
+    ],
+    "screenshots_inspected": true
+  },
+  "local_native_probe": {
+    "conclusion": "failed",
+    "reason": "Job dialog activation/Tab order failed",
+    "follow_on_task": 6
+  },
+  "release_qualified": false
+}
