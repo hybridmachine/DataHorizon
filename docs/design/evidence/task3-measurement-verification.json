@@ -13,5 +13,17 @@
   ],
   "os_cold_qualified": false,
   "remaining_gate": "Administrator-enabled successful cache eviction before every OS-cold sample",
-  "release_qualified": false
+  "release_qualified": false,
+  "hosted_macos": {
+    "tested_commit": "40c4dbc4c40b5f7106e207e6bbc02e18f177eba7",
+    "run": 42547833006,
+    "build_job": 128936584167,
+    "build_minimum_python_and_capture": "passed",
+    "native_scales": [
+      1,
+      2
+    ],
+    "artifact_json_inspected": true,
+    "installed_smoke": "passed"
+  }
 }
