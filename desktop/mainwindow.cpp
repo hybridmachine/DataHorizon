@@ -603,7 +603,7 @@ void MainWindow::buildUi() {
             else QMessageBox::information(this, tr("Development preview"), tr("Qt Widgets/C++ desktop • SQLite • Python REST service\n\nAvailable: cell entry, bounded viewports, the published formula tier, copy/paste, fill, wrap/borders, cell Undo/Redo, bounded sheet and row/column edits, list views, scoped search, CSV and bounded XLSX/ODS selection/workbook interchange. Sheet sizes, hiding and frozen panes use local desktop preferences.\n\nUnavailable: unrestricted reference transforms, managed SQL, workbook code authoring and remote binding.\n\nThese limits are recorded in docs/design/implementation-status.md."));
         }, false);
     });
-    add(help, tr("About DataHorizon"), {}, [this] { QMessageBox::about(this, tr("DataHorizon"), tr("DataHorizon 0.1 development preview\nGUI: GNU GPL version 3.\nOther component licenses remain undecided.\nSee repository licensing materials.")); });
+    add(help, tr("About DataHorizon"), {}, [this] { QMessageBox::about(this, tr("DataHorizon"), tr("DataHorizon 0.1 development preview\nAll DataHorizon components: GNU GPL version 3 only.\nThird-party dependencies retain their licenses.\nSee repository licensing materials.")); });
     connect(m_grid->selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex &, const QModelIndex &previous) {
         ++m_navigationGeneration;if(!m_applyingNavigation)m_navigationExtending=false;
         if (m_source->isModified() && !resolveDraft()) {

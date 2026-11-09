@@ -56,6 +56,8 @@ class PackagingTests(unittest.TestCase):
                 subprocess.run(['git','-C',str(root),'config','core.autocrlf',conversion],check=True)
                 (root/'cmake').mkdir()
                 (root/'CMakeLists.txt').write_bytes(('project(Test)'+newline).encode())
+                (root/'COPYING').write_bytes(('License'+newline).encode())
+                (root/'LICENSES.md').write_bytes(('Scope'+newline).encode())
                 (root/'cmake'/'test.in').write_bytes(('set(X 1)'+newline).encode())
                 values.append(candidate(root))
             self.assertEqual(values[0],values[1])
