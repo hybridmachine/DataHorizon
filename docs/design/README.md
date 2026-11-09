@@ -127,3 +127,5 @@ a bounded QTableView model, and the documented experimental native format v1.
 Concurrent multiuser editing and complete Excel feature parity are not initial
 release promises. The architecture should leave room for future capabilities
 without treating them as already designed.
+
+- [Accessible cell-state increment](macos-accessible-cell-state.md)

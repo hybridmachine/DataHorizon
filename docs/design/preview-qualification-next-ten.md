@@ -107,3 +107,15 @@ cancellable native opening/post-copy validation. The new regressions and the
 private 64-MiB disk-image ENOSPC run pass locally, with native bytes/counters and
 unknown receipt IDs preserved. Combined CTest passes 220 Qt checks and 462 Python tests (19 optional skips). Hosted macOS [run 42552114385](https://github.com/hybridmachine/DataHorizon/actions/runs/42552114385) passes all three jobs, including native Cocoa scales 1/2 and installed smoke. Downloaded JSON and screenshots were inspected. The [verification record](evidence/task5-verification.json) and [real filesystem report](evidence/task5-real-filesystem.json) retain source and limits. Task 5 is complete within this failure tier; physical power loss and broader APFS durability remain outside its evidence.
 
+
+## Task 7: deferred platforms
+
+Windows and Linux native acceptance is deferred by the owner's explicit scope
+decision. It will be performed on those respective systems after more features.
+
+## Task 8: accessible cell-state increment
+
+[Bounded source-address descriptions and keyboard result inspection](macos-accessible-cell-state.md)
+distinguish loading, pending, computed, blank and failed values. Actual VoiceOver
+interaction and bounded full-grid accessibility enumeration remain open; this
+increment does not close task 8 or the screen-reader acceptance gate.

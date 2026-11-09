@@ -604,6 +604,12 @@ void MainWindow::buildUi() {
         }, false);
     });
     add(help, tr("About DataHorizon"), {}, [this] { QMessageBox::about(this, tr("DataHorizon"), tr("DataHorizon 0.1 development preview\nGUI: GNU GPL version 3.\nOther component licenses remain undecided.\nSee repository licensing materials.")); });
+    add(view,tr("Read current cell…"),QKeySequence(tr("Ctrl+Shift+I")),[this]{
+        const auto index=m_grid->currentIndex();
+        const auto text=index.isValid()?m_model->data(index,Qt::AccessibleTextRole).toString():tr("No current cell");
+        QMessageBox dialog(QMessageBox::Information,tr("Current cell"),text,QMessageBox::Ok,this);
+        dialog.setTextFormat(Qt::PlainText);dialog.setObjectName("currentCellDescription");dialog.exec();
+    })->setObjectName("readCurrentCellAction");
     connect(m_grid->selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex &, const QModelIndex &previous) {
         ++m_navigationGeneration;if(!m_applyingNavigation)m_navigationExtending=false;
         if (m_source->isModified() && !resolveDraft()) {
@@ -1354,6 +1360,7 @@ void MainWindow::syncSource() {
     ensureVisibleCurrent();
     const bool addressDraft=m_address->hasFocus() && m_address->isModified();
     auto index = m_grid->currentIndex();
+    m_grid->setAccessibleDescription(index.isValid()?m_model->data(index,Qt::AccessibleTextRole).toString():tr("No current cell"));
     if (!index.isValid()) {
         m_source->clear(); m_source->setModified(false); m_source->setEnabled(false); m_draftTarget={};
         if(!addressDraft){m_address->clear();m_address->setModified(false);}

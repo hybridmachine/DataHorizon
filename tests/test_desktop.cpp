@@ -316,6 +316,27 @@ public:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void accessibleCellDescriptionsDistinguishPendingAndProjectedResults() {
+        ViewportCalculationServer server;RestClient client;client.configure(server.url(),"test");SheetModel model(&client,nullptr,128,32);
+        model.bind("book","sheet","state",true);model.setProjection({9,19});const auto cell=model.index(0,0);
+        QCOMPARE(model.data(cell,Qt::AccessibleTextRole).toString(),QString("A10: Loading cell"));
+        QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),1,3000);
+        QCOMPARE(model.data(cell,Qt::AccessibleTextRole).toString(),QString("A10: Calculating stored formula; input retained"));
+        server.complete(0,2);QTRY_COMPARE_WITH_TIMEOUT(model.data(cell,Qt::AccessibleTextRole).toString(),QString("A10: 2"),3000);
+        QCOMPARE(model.data(cell,Qt::AccessibleDescriptionRole),model.data(cell,Qt::AccessibleTextRole));
+    }
+    void accessibleCellFailureAndReadDialogRetainInputs() {
+        ViewportCalculationServer server;RestClient client;client.configure(server.url(),"test");SheetModel model(&client,nullptr,128,32);
+        model.bind("book","sheet","state",false);model.data(model.index(0,0));QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),1,3000);server.jobs[0].status="failed";
+        QTRY_VERIFY_WITH_TIMEOUT(model.data(model.index(0,0),Qt::AccessibleTextRole).toString().contains("Unavailable"),3000);
+        QVERIFY(model.data(model.index(0,0),Qt::AccessibleTextRole).toString().contains("Input retained"));
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("accessible.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","=1+1"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("2"),5000);const auto state=window.model()->state();
+        bool seen=false;QTimer::singleShot(0,&window,[&]{auto *dialog=qobject_cast<QMessageBox *>(QApplication::activeModalWidget());if(dialog){seen=true;QCOMPARE(dialog->text(),QString("A1: 2"));QCOMPARE(dialog->textFormat(),Qt::PlainText);dialog->accept();}});
+        window.findChild<QAction *>("readCurrentCellAction")->trigger();QVERIFY(seen);QCOMPARE(window.model()->state(),state);QCOMPARE(window.model()->cell(window.model()->index(0,0))["source"].toString(),QString("=1+1"));
+    }
     void exportDestinationPermissionFailureRetainsNativeData() {
 #ifndef Q_OS_UNIX
         QTest::qSkip("This case requires POSIX directory permissions; native platform qualification is separate.",__FILE__,__LINE__);return;
