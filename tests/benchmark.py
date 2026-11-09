@@ -100,7 +100,7 @@ def storage_measurements(book, path, samples):
     for batch in range(10):
         cells = [{"row": batch*10000+i+1, "col": 1, "source": str(i)} for i in range(10000)]
         book.apply("edit", cells=cells)
-    cold = measure(lambda: book.read(r1=50000, r2=50031, c1=1, c2=16), 1)
+    first_read = measure(lambda: book.read(r1=50000, r2=50031, c1=1, c2=16), 1)
     viewport = measure(lambda: book.read(r1=1, r2=32, c1=1, c2=16),samples)
     distant = measure(lambda: book.read(r1=99969, r2=100000, c1=1, c2=16),samples)
     counter = iter(range(samples))
@@ -118,7 +118,7 @@ def storage_measurements(book, path, samples):
     book.refresh()
     disk = measure(lambda: book.read(sheet="Disk",r1=279969,r2=280000,c1=1,c2=16),samples)
     return {"dataset": {"storage_fixture_cells": 390001, "shape": "100k sparse cells, 100x100 dense cells, 280k 1-KiB text cells; formula chains are additional"},
-              "cold_viewport": cold, "warm_viewport": viewport,
+              "first_read_viewport": first_read, "os_cache_state":"uncontrolled", "warm_viewport": viewport,
               "distant_viewport": distant, "edit_acknowledgement": acknowledgement,
               "dense_viewport":dense, "large_disk_viewport":disk,
               "database_bytes": path.stat().st_size, "driver_peak_rss_bytes": peak_rss()}

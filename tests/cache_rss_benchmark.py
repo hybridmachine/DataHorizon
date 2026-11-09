@@ -74,7 +74,15 @@ def distribution(values):
             'p95_ms':round(sorted(values)[math.ceil(len(values)*.95)-1],3)}
 
 
-def measurements(samples,disk_rows,sparse_rows=100_000):
+def purge_os_cache():
+    if sys.platform!='darwin':
+        raise RuntimeError('OS cache purge is currently supported only by the macOS qualification driver')
+    result=subprocess.run(['sudo','-n','/usr/sbin/purge'],capture_output=True,text=True,timeout=15)
+    if result.returncode:
+        raise RuntimeError('macOS cache purge failed: '+(result.stderr.strip() or result.stdout.strip()))
+
+
+def measurements(samples,disk_rows,sparse_rows=100_000,*,purge=None):
     with tempfile.TemporaryDirectory() as temp:
         path=Path(temp)/'memory.dhwb'
         with measured_service() as client:
@@ -89,6 +97,9 @@ def measurements(samples,disk_rows,sparse_rows=100_000):
                                ((sheets['Disk'],r,'x'*1024) for r in range(1,disk_rows+1)))
         cold,first,peaks=[],[],[]
         for sample in range(samples):
+            # Purge only after all fixture writes/metadata probes have finished.
+            # A failed purge aborts instead of relabeling warm data as OS-cold.
+            if purge is not None:purge()
             started=time.perf_counter()
             with measured_service() as client:
                 book=client.open(path,readonly=True)
@@ -119,7 +130,9 @@ def measurements(samples,disk_rows,sparse_rows=100_000):
                 'viewport_scope':[max(1,disk_rows-31),1,disk_rows,16],
                 'warm_viewport':distribution(warm),'service_peak_rss_bytes':max(peaks),
                 'driver_peak_rss_bytes':peak_rss(),'service_memory_target_bytes':target,
-                'measured_service_within_target':max(peaks)<target}
+                'measured_service_within_target':max(peaks)<target,
+                'os_cache_purge_before_every_fresh_sample':purge is not None,
+                'cache_state':'purged OS caches before each fresh process' if purge is not None else 'uncontrolled OS caches'}
 
 
 def main():
@@ -128,6 +141,7 @@ def main():
     parser.add_argument('--samples',type=int,default=100)
     parser.add_argument('--disk-rows',type=int,default=270_000)
     parser.add_argument('--output',type=Path)
+    parser.add_argument('--purge-os-cache',action='store_true',help='Require successful noninteractive macOS cache purge before every fresh sample; fails explicitly when unavailable')
     args=parser.parse_args()
     if args.serve:
         server=MeteredService()
@@ -138,10 +152,15 @@ def main():
     if args.samples<1 or not 1<=args.disk_rows<=1_048_576:
         parser.error('Positive samples and 1..1048576 disk rows required')
     report={'recorded_at_utc':datetime.now(timezone.utc).isoformat(),'platform':platform.platform(),
-            'python':platform.python_version(),'sqlite':sqlite3.sqlite_version,**measurements(args.samples,args.disk_rows),
-            'limitations':['Fresh processes do not evict OS file caches; native validation may warm SQLite pages before the first viewport.',
+            'python':platform.python_version(),'sqlite':sqlite3.sqlite_version,
+            'limitations':['Native validation may warm SQLite pages before the first viewport; opening plus first read is the end-to-end metric.',
                            'Peak RSS/working set is per owned service process; no worker processes are active in this fixture.',
                            'Dataset-specific memory evidence is not a bound on all workbook shapes or multiple open engines.']}
+    try:report.update(measurements(args.samples,args.disk_rows,purge=purge_os_cache if args.purge_os_cache else None))
+    except RuntimeError as error:
+        report.update(qualification_passed=False,error=str(error),os_cold_qualified=False)
+        if args.output:args.output.write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
+        raise
     output=json.dumps(report,indent=2)+'\n'
     if args.output: args.output.write_text(output,encoding='utf-8')
     else: print(output,end='')

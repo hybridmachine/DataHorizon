@@ -1,0 +1,44 @@
+{
+  "recorded_at_utc": "2026-11-09T01:45:20.977196+00:00",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "python": "3.14.6",
+  "sqlite": "3.53.4",
+  "limitations": [
+    "Native validation may warm SQLite pages before the first viewport; opening plus first read is the end-to-end metric.",
+    "Peak RSS/working set is per owned service process; no worker processes are active in this fixture.",
+    "Dataset-specific memory evidence is not a bound on all workbook shapes or multiple open engines."
+  ],
+  "dataset": {
+    "sparse_cells": 100000,
+    "long_text_cells": 270000,
+    "database_bytes": 328114176,
+    "larger_than_service_memory_target": true
+  },
+  "fresh_process_start_open_first_read": {
+    "samples": 100,
+    "median_ms": 331.661,
+    "p95_ms": 396.852
+  },
+  "fresh_process_first_viewport_only": {
+    "samples": 100,
+    "median_ms": 1.958,
+    "p95_ms": 2.545
+  },
+  "viewport_scope": [
+    269969,
+    1,
+    270000,
+    16
+  ],
+  "warm_viewport": {
+    "samples": 100,
+    "median_ms": 1.359,
+    "p95_ms": 1.55
+  },
+  "service_peak_rss_bytes": 39862272,
+  "driver_peak_rss_bytes": 83050496,
+  "service_memory_target_bytes": 268435456,
+  "measured_service_within_target": true,
+  "os_cache_purge_before_every_fresh_sample": false,
+  "cache_state": "uncontrolled OS caches"
+}

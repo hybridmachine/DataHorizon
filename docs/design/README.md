@@ -57,6 +57,7 @@ applications, and AI agents through REST.
 | [Implementation status](implementation-status.md) | Current local evidence, milestone gaps and next dependencies |
 | [Preview qualification increments](preview-qualification-next-ten.md) | Authorized next ten tasks; revised macOS scope and per-task delivery evidence |
 | [Native opening performance](native-opening-performance.md) | One-pass validation, page geometry and explicit legacy-copy guidance |
+| [macOS capacity qualification](macos-capacity-qualification.md) | Cache provenance, workload/RSS/disk measurements and the administrator-dependent OS-cold gate |
 | [Project review](../project-review-2026-11-08.md) | November 8 findings, reproductions and correction priorities |
 | [Review remediation plan](review-remediation-plan.md) | Dependency-ordered R1–R8 fixes, compatibility decisions and qualification gates |
 | [Development guide](development.md) | Build/run, API, CLI, Python, Supplies and package smoke |

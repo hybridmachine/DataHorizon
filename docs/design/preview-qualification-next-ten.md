@@ -74,3 +74,20 @@ passes that same check. The [verification record](evidence/task2-verification.js
 identifies source and outcomes. Task 2 is complete within this documented native
 storage tier; existing large legacy-layout files may still hit the opening budget
 until explicitly copied, and broader cold-cache/platform gates remain open.
+
+## Task 3: capacity measurements and remaining gate
+
+[The macOS driver](macos-capacity-qualification.md) now distinguishes fresh
+processes, warm reads and required OS cache eviction. At the frozen implementation,
+100 fresh/warm samples, 100-sample sparse/dense/distant/edit/formula shapes and
+bounded grid/cache/RSS measurements pass. Full native snapshot and staged-job
+disk costs are reported separately, with release cleanup verified. The two
+measurement-provenance regressions pass. PR/push CI follows the user's macOS
+focus; manual `platforms=all` retains the deferred matrices.
+
+True OS-cold evidence remains blocked: ordinary purge is denied by macOS, and
+`sudo -n /usr/sbin/purge` reports that a password is required. The actual failed
+attempt is saved with `os_cold_qualified=false`; task 3 and M1 cannot be declared
+fully complete until an administrator-enabled run passes. All other evidence is
+workload-specific, with no universal memory/latency claim.
+
