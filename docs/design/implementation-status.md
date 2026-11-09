@@ -855,3 +855,13 @@ The no-op still receives its durable receipt and one revision increment.
 Regressions cover row/column-only input, identical source, coalesced writes and
 a transactional hook restoring the original value, then verify Redo still
 restores the prior result. Real input/style changes still invalidate Redo.
+
+## November 9 macOS distribution baseline
+
+All original components now use GPL-3.0-only. A checksum-pinned relocatable
+CPython 3.13.18 runtime, isolated installed CLI, Qt/Python dependency materials
+and explicit macOS 15+ ARM64 baseline are implemented and locally verified.
+See [distribution evidence](macos-distribution.md). Historical external-Python
+and undecided-license reports above retain their original context. Developer ID,
+notarization, full distribution review, physical/VoiceOver input and actual
+clean-Mac acceptance remain open; this is not a qualified release.
