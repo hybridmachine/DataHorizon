@@ -27,3 +27,12 @@ Pending: native automation launch on this desktop, the full Supplies walkthrough
 physical keyboard and external clipboard, native open/save/overwrite/cancel
 flows, app lifecycle, appearance and multiple-monitor/high-DPI checks. Task 6
 remains open until these results are recorded on a usable Mac session.
+
+Hosted macOS [run 42555470085](https://github.com/hybridmachine/DataHorizon/actions/runs/42555470085)
+passes all three jobs, including the signature regression, Cocoa scales 1/2 and
+installed smoke. Downloaded native/toolchain JSON and screenshots were reviewed.
+The [source record](evidence/task6-verification.json) retains the open manual gates.
+A later self-contained task 9 bundle successfully opened Supplies through the
+real native OS file dialog. Its subsequent address-navigation/AX observation timed
+out, so this is partial native evidence only; the test app was quit normally
+through Activity Monitor. No physical input or spoken-output pass is claimed.
