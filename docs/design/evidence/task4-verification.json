@@ -1,0 +1,19 @@
+{
+  "task": 4,
+  "tested_commit": "a69d3c148adec123e7cf1aebf2207ec9ddc592b0",
+  "candidate_sha256": "86ce1bb4fc615b8406c1f6526bf3aa4df5cdeff2bd98f5892c7f5b8f2cab41e0",
+  "local": {
+    "qt_passed": 219,
+    "python_ran": 457,
+    "optional_skips": 19,
+    "installed_smoke_passed": true
+  },
+  "hosted_run": "https://github.com/hybridmachine/DataHorizon/actions/runs/42551536569",
+  "all_three_macos_jobs_passed": true,
+  "native_scales": [
+    1,
+    2
+  ],
+  "artifacts_reviewed": true,
+  "scope": "Bounded automatic viewport calculation, not full M3 or physical/native accessibility acceptance"
+}
