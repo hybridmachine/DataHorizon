@@ -1,0 +1,67 @@
+{
+  "source_commit": "539172290e00a511d5f369956701fcb2bcf2a39e",
+  "platform": "macOS 15+ ARM64",
+  "audit": {
+    "macho_files": 28,
+    "all_non_system_dependencies_internal": true,
+    "strict_signature_verified": true
+  },
+  "developer_id_signed": false,
+  "notarized": false,
+  "clean_machine_qualified": false,
+  "release_qualified": false,
+  "files": [
+    {
+      "name": "DataHorizon-macOS-arm64-development.dmg",
+      "bytes": 73013503,
+      "sha256": "c40a21aa00d182ec3b53b39df2d599009bac3395f989a32f8a4570a7d861370b"
+    },
+    {
+      "name": "DataHorizon-source.tar.gz",
+      "bytes": 13595672,
+      "sha256": "4df6a03ceca4bd0972e43be2f0a8ba5741a7309d3858fe9c154b0d3460b500ef"
+    },
+    {
+      "name": "Python-3.13.18.tar.xz",
+      "bytes": 23243936,
+      "sha256": "abb0102e6d4ae027509bcb82327d9dd85515b44a3ba8ad538cfc5e9847029f68"
+    },
+    {
+      "name": "cpython-3.13.18+20261026-aarch64-apple-darwin-pgo+lto-full.tar.zst",
+      "bytes": 61179160,
+      "sha256": "5706f1fdf82f7ea10b56a9b9cbadfa5f372010568a9794f19e0af4c48d975f34"
+    },
+    {
+      "name": "qtbase-everywhere-src-6.12.0.tar.xz",
+      "bytes": 51220268,
+      "sha256": "a951bd163c7b80fc6b8c88d7668fb56abf91c152373e13c10666763238131307"
+    },
+    {
+      "name": "qtsvg-everywhere-src-6.12.0.tar.xz",
+      "bytes": 2341876,
+      "sha256": "e4ab39534ec97987b1b9b60ef7f4d3253d5912a69f8c713a01753174a4029331"
+    }
+  ],
+  "mounted_audit": {
+    "macho_files": 28,
+    "all_non_system_dependencies_internal": true,
+    "strict_signature_verified": true
+  },
+  "mounted_copy_smoke": {
+    "platform": "Darwin",
+    "relocated_managed_edit_calculation": true,
+    "temporal_types_and_ten_functions": true,
+    "m3_m5_installed_sdk_service": true,
+    "developer_overrides_removed": true,
+    "missing_service_fails_explicitly": true,
+    "python_bundled": true,
+    "developer_path_removed": true,
+    "runtime_dependency": "Bundled checksum-pinned CPython",
+    "clean_machine_qualified": false
+  },
+  "limits": [
+    "No Developer ID identity or notarization credentials available",
+    "Mounted/relocated smoke is not an actual clean-machine run",
+    "Full dependency source/build and distribution review remains a release gate"
+  ]
+}

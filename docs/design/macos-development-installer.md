@@ -35,3 +35,28 @@ Do not publish a public release from this development artifact. Qualify the
 final exact source and artifact on a clean Mac, complete matching dependency
 source materials and distribution review, then sign/notarize with the owner's
 Developer ID identity and repeat installation/launch tests before release.
+
+The source `539172290e00a511d5f369956701fcb2bcf2a39e` produces a
+73,013,503-byte DMG. Both installed and mounted audits verify all 28 Mach-O
+files, internal non-system dependencies and strict signatures. Mounted-copy
+GUI/managed CLI/SDK smoke passes with bundled Python and developer PATH removed;
+the owned read-only image detaches successfully. A negative dependency test
+replaces a copied app's QtCore reference with a missing external library and
+requires rejection; the original bundle signature remains valid. The
+[artifact manifest](evidence/task10-artifact.json) records exact source, sizes,
+hashes and remaining gates.
+
+The first image correctly failed its mounted signature check: shell-script CLI
+signatures depended on filesystem attributes that did not survive the image
+copy. A small native, relocatable CLI launcher now carries its signature in the
+Mach-O executable; all managed CLI checks pass after mounting and copying.
+The hosted minimum-Python run also exposed a remaining single-slot HTTP fixture
+race after a complete response; the fixture now waits for handler socket teardown
+before its next admission. Service limits and unknown-outcome behavior are
+unchanged, and all six focused HTTP-limit checks pass.
+
+Hosted macOS [run 42559785839](https://github.com/hybridmachine/DataHorizon/actions/runs/42559785839)
+passes all three jobs, Cocoa scales 1/2 and installed smoke. The local bundled
+service suite runs 464 tests successfully (19 optional skips). The
+[verification record](evidence/task10-verification.json) identifies the exact
+tested implementation and intentionally incomplete release gates.

@@ -125,8 +125,9 @@ decision. It will be performed on those respective systems after more features.
 
 [Bounded source-address descriptions and keyboard result inspection](macos-accessible-cell-state.md)
 distinguish loading, pending, computed, blank and failed values. Actual VoiceOver
-interaction and bounded full-grid accessibility enumeration remain open; this
-increment does not close task 8 or the screen-reader acceptance gate.
+interaction and full table-style screen-reader navigation remain open. The
+implemented keyboard surface bounds accessibility enumeration to the viewport
+and editor. This increment does not close task 8 or the screen-reader gate.
 
 ## Task 9: runtime and licensing baseline
 
@@ -146,3 +147,27 @@ exact source/material archives, audits relocated binary dependencies/signatures
 and verifies a mounted private installation. Developer ID signing, notarization,
 full dependency-source/distribution review and an actual clean Mac run remain
 pending; task 10 and M7 release qualification cannot be declared complete.
+
+## Batch outcome
+
+Each macOS increment has its own branch, commits and pushed pull request. Code
+verification and remaining product/release acceptance are recorded separately.
+
+| Task | Pull request | Outcome |
+| --- | --- | --- |
+| 1 | [#106](https://github.com/hybridmachine/DataHorizon/pull/106) | macOS automated baseline complete |
+| 2 | [#107](https://github.com/hybridmachine/DataHorizon/pull/107) | Native opening/storage tier complete |
+| 3 | [#108](https://github.com/hybridmachine/DataHorizon/pull/108) | Measurements implemented; administrator-enabled true OS-cold run remains open |
+| 4 | [#109](https://github.com/hybridmachine/DataHorizon/pull/109) | Bounded background viewport calculation complete |
+| 5 | [#110](https://github.com/hybridmachine/DataHorizon/pull/110) | Documented filesystem/process failure tier complete |
+| 6 | [#111](https://github.com/hybridmachine/DataHorizon/pull/111) | Signature/native automation increment verified; physical input/lifecycle gates remain open |
+| 7 | Deferred by owner | Windows/Linux acceptance to be done on those systems |
+| 8 | [#112](https://github.com/hybridmachine/DataHorizon/pull/112) | Bounded keyboard accessibility verified; real VoiceOver/full table navigation remain open |
+| 9 | [#113](https://github.com/hybridmachine/DataHorizon/pull/113) | GPL-3.0-only and bundled macOS runtime baseline complete; external service hardening remains open |
+| 10 | [#114](https://github.com/hybridmachine/DataHorizon/pull/114) | Development DMG and mounted-copy smoke verified; Developer ID, notarization, full dependency-source review and actual clean-Mac acceptance remain open |
+
+The combined implementation passes 223 Qt checks, 464 Python tests (19 optional
+skips), resource-signature regression and relocated bundled GUI/CLI/SDK checks.
+The development DMG has exact source and SHA-256 records in
+[its manifest](evidence/task10-artifact.json). No M1/M7/M8 or release gate is
+closed solely because an implementation PR was merged.
