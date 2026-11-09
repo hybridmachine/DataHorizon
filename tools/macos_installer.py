@@ -92,7 +92,9 @@ def build(prefix, output, dependency_dir, root):
         if sha256(archive) != item['sha256']:
             raise ValueError('Dependency source checksum differs: '+name)
         shutil.copyfile(archive, output/name)
-    with tempfile.TemporaryDirectory(prefix='datahorizon-dmg-') as temp:
+    temp = tempfile.mkdtemp(prefix='datahorizon-dmg-')
+    safe_to_remove = True
+    try:
         stage = Path(temp)/'stage';stage.mkdir()
         shutil.copytree(app,stage/app.name,symlinks=True)
         (stage/'Applications').symlink_to('/Applications',target_is_directory=True)
@@ -102,6 +104,7 @@ def build(prefix, output, dependency_dir, root):
         mount = Path(temp)/'mounted';mount.mkdir()
         attached = False
         try:
+            safe_to_remove = False
             receipt = plistlib.loads(subprocess.check_output(['hdiutil','attach','-readonly','-nobrowse','-mountpoint',str(mount),'-plist',str(image)]))
             attached = any(Path(e.get('mount-point','/')).resolve()==mount.resolve() for e in receipt['system-entities'])
             if not attached:
@@ -119,6 +122,12 @@ def build(prefix, output, dependency_dir, root):
         finally:
             if attached:
                 command('hdiutil','detach',mount)
+                safe_to_remove = True
+    finally:
+        if safe_to_remove:
+            shutil.rmtree(temp)
+        else:
+            print('Disk-image cleanup needs inspection; preserved '+temp, file=sys.stderr)
     for path in sorted(output.iterdir()):
         result['files'].append({'name':path.name,'bytes':path.stat().st_size,'sha256':sha256(path)})
     result['limits']=['No Developer ID identity or notarization credentials available',
