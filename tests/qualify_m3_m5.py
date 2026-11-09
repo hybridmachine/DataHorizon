@@ -14,6 +14,18 @@ from datahorizon.engine import Workbook
 from cache_rss_benchmark import measured_service,distribution
 
 
+def retained_job_disk(path):
+    root=path.parent/('.'+path.name+'.dhjobs')
+    result=dict(snapshot_bytes=0,journal_bytes=0,other_bytes=0)
+    if root.exists():
+        for file in root.iterdir():
+            if file.is_file():
+                kind='snapshot_bytes' if '.snapshot-' in file.name else 'journal_bytes' if file.suffix=='.sqlite' else 'other_bytes'
+                result[kind]+=file.stat().st_size
+    result['total_bytes']=sum(result.values())
+    return result
+
+
 def wait(book,job,calculation=False):
     deadline=time.monotonic()+120
     while job['status']=='running' and time.monotonic()<deadline:
@@ -52,9 +64,11 @@ def measurements():
                 started=time.perf_counter();page=book.operation_job(job['job_id'],offset=offset,limit=256);page_times.append((time.perf_counter()-started)*1000)
                 for result in page['results']:
                     assert result['row']==100000-count;count+=1
-            assert count==100000;book.operation_job(job['job_id'],'release')
+            assert count==100000;read_disk=retained_job_disk(path);book.operation_job(job['job_id'],'release');released_disk=retained_job_disk(path)
+            assert read_disk['snapshot_bytes']>=database_bytes and released_disk['total_bytes']==0
             job=book.create_job(mode='batches',batch_size=1000)
             for start in range(1,20001,1000):book.operation_job(job['job_id'],'append',cells=[dict(row=row,col=3,source='job-'+str(row),kind='text') for row in range(start,start+1000)])
+            staged_disk=retained_job_disk(path)
             job=book.operation_job(job['job_id'],'seal');job=book.operation_job(job['job_id'],'start',plan_digest=job['plan_digest'],expected_state=book.state)
             deadline=time.monotonic()+10
             while job['next']==0 and job['status']=='running' and time.monotonic()<deadline:time.sleep(.005);job=book.operation_job(job['job_id'])
@@ -67,7 +81,7 @@ def measurements():
             assert book.read(r1=20000,r2=20000,c1=3,c2=3)['cells'][0]['value']=='job-20000'
             memory=client.request('/benchmark/memory')['peak_rss_bytes'];book.operation_job(job['job_id'],'release')
         assert memory<256*1024*1024
-        return dict(dataset=dict(native_bytes=database_bytes,numeric_cells=100000,formulas=1000,long_text_cells=280000,larger_than_256_mib=True),dependency_cache=dict(**before,reused_hits=reused),formula_range=distribution(times),background_calculation_ms=round(calculation_ms,3),global_sort_100000_rows_ms=round(sort_ms,3),sorted_rows_verified=count,result_pages=distribution(page_times),cancel_after_committed_cells=committed_before_resume,cancel_confirmation_ms=round(cancel_ms,3),resume_remaining_ms=round(resume_ms,3),unique_committed_batches=len(after_ids),service_peak_rss_bytes=memory)
+        return dict(dataset=dict(native_bytes=database_bytes,numeric_cells=100000,formulas=1000,long_text_cells=280000,larger_than_256_mib=True),dependency_cache=dict(**before,reused_hits=reused),formula_range=distribution(times),background_calculation_ms=round(calculation_ms,3),global_sort_100000_rows_ms=round(sort_ms,3),sorted_rows_verified=count,result_pages=distribution(page_times),read_job_retained_disk=read_disk,read_job_disk_after_release=released_disk,edit_job_staged_disk=staged_disk,cancel_after_committed_cells=committed_before_resume,cancel_confirmation_ms=round(cancel_ms,3),resume_remaining_ms=round(resume_ms,3),unique_committed_batches=len(after_ids),service_peak_rss_bytes=memory)
 
 
 if __name__=='__main__':
