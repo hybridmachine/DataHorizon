@@ -129,3 +129,5 @@ release promises. The architecture should leave room for future capabilities
 without treating them as already designed.
 
 - [macOS distribution baseline](macos-distribution.md)
+
+- [macOS development disk image](macos-development-installer.md)

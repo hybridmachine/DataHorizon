@@ -115,3 +115,11 @@ a checksum-pinned relocatable CPython runtime and GPL-3.0-only for all original
 components. Qt/Python dependency notices and provenance are retained separately.
 Bundled-runtime and installed validation are in progress; external service
 hardening and signed release qualification remain separate gates.
+
+## Task 10: development installer and remaining release gates
+
+[The source-bound macOS DMG](macos-development-installer.md) includes the app and
+exact source/material archives, audits relocated binary dependencies/signatures
+and verifies a mounted private installation. Developer ID signing, notarization,
+full dependency-source/distribution review and an actual clean Mac run remain
+pending; task 10 and M7 release qualification cannot be declared complete.

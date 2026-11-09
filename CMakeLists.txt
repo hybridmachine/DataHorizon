@@ -32,6 +32,12 @@ if(IS_ABSOLUTE "${CMAKE_INSTALL_PREFIX}")
     set(DATAHORIZON_ABSOLUTE_INSTALL_PREFIX true)
 endif()
 configure_file(cmake/toolchain.json.in build-toolchain.json @ONLY)
+execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE DATAHORIZON_SOURCE_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT DATAHORIZON_SOURCE_COMMIT)
+    set(DATAHORIZON_SOURCE_COMMIT "unversioned")
+endif()
+configure_file(cmake/source.json.in source.json @ONLY)
 include(CTest)
 
 add_library(datahorizon_desktop STATIC
@@ -102,6 +108,7 @@ install(TARGETS DataHorizon BUNDLE DESTINATION . RUNTIME DESTINATION bin)
 if(APPLE)
     install(DIRECTORY service/datahorizon DESTINATION DataHorizon.app/Contents/Resources/service
         PATTERN __pycache__ EXCLUDE)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/source.json" DESTINATION DataHorizon.app/Contents/Resources)
     install(FILES COPYING LICENSES.md DESTINATION DataHorizon.app/Contents/Resources/licenses)
     install(DIRECTORY packaging/python/ DESTINATION DataHorizon.app/Contents/Resources/licenses/python)
     if(Qt6_VERSION VERSION_EQUAL "6.12.0")
