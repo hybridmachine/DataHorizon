@@ -97,7 +97,15 @@ QVariant SheetModel::data(const QModelIndex &index, int role) const {
         if (!sourceReady(index)) { ensureSource(index); return {}; }
         return item.value("source").toString();
     case Qt::ToolTipRole: return item["calculation"]=="pending" ? tr("Calculating stored formula in background…") : item.value("error").toString(item.value("source").toString());
-    case Qt::AccessibleTextRole: return columnName(index.column()+1) + QString::number(sourceRow(index.row())+1) + ": " + item.value("display").toString();
+    case Qt::AccessibleTextRole:
+    case Qt::AccessibleDescriptionRole: {
+        const auto address=columnName(index.column()+1)+QString::number(sourceRow(index.row())+1);
+        if(!loaded(index)) return tr("%1: Loading cell").arg(address);
+        if(item["calculation"]=="pending") return tr("%1: Calculating stored formula; input retained").arg(address);
+        if(item.contains("error")) return tr("%1: %2. %3. Input retained").arg(address,item["display"].toString().left(256),item["error"].toString().left(512));
+        const auto display=item["display"].toString();
+        return tr("%1: %2%3").arg(address,display.isEmpty()?tr("Blank"):display.left(256),display.size()>256?tr(" (value shortened)"):QString());
+    }
     case Qt::FontRole: {
         QFont font;if(style.contains("font_family"))font.setFamily(style["font_family"].toString());if(style.contains("font_size"))font.setPointSize(style["font_size"].toInt()); font.setBold(style.value("bold").toBool()); font.setItalic(style.value("italic").toBool()); return font;
     }

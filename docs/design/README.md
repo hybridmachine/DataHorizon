@@ -128,6 +128,10 @@ Concurrent multiuser editing and complete Excel feature parity are not initial
 release promises. The architecture should leave room for future capabilities
 without treating them as already designed.
 
+- [macOS native interaction qualification](macos-native-interaction.md)
+
+- [Accessible cell-state increment](macos-accessible-cell-state.md)
+
 - [macOS distribution baseline](macos-distribution.md)
 
 - [macOS development disk image](macos-development-installer.md)
