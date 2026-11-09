@@ -61,6 +61,16 @@ if(APPLE)
         MACOSX_PACKAGE_LOCATION Resources)
     set_target_properties(DataHorizon PROPERTIES
         MACOSX_BUNDLE_ICON_FILE datahorizon.icns)
+    add_custom_command(TARGET DataHorizon POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" "-DAPP_BUNDLE=$<TARGET_BUNDLE_DIR:DataHorizon>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SignDevelopmentBundle.cmake"
+        VERBATIM)
+    # Resource-only updates can avoid relinking. Verify the complete envelope
+    # on ordinary builds too, rather than only launching the bare executable.
+    add_custom_target(development_bundle_signature ALL
+        COMMAND "${CMAKE_COMMAND}" "-DAPP_BUNDLE=$<TARGET_BUNDLE_DIR:DataHorizon>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SignDevelopmentBundle.cmake"
+        DEPENDS DataHorizon VERBATIM)
 elseif(WIN32)
     enable_language(RC)
     target_sources(DataHorizon PRIVATE desktop/icons/datahorizon.rc)
@@ -68,6 +78,13 @@ elseif(WIN32)
 endif()
 
 if(BUILD_TESTING)
+    if(APPLE)
+        add_test(NAME development_bundle_signature COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/verify_development_bundle.py"
+            --bundle "$<TARGET_BUNDLE_DIR:DataHorizon>"
+            --script "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SignDevelopmentBundle.cmake")
+        set_tests_properties(development_bundle_signature PROPERTIES TIMEOUT 30)
+    endif()
     add_executable(desktop_benchmark tests/benchmark_desktop.cpp)
     target_link_libraries(desktop_benchmark PRIVATE datahorizon_desktop Qt6::Test)
     if(WIN32)

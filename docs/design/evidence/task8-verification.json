@@ -1,0 +1,23 @@
+{
+  "task": 8,
+  "tested_commit": "a11b5f616778db7375009196011e916aac76a817",
+  "candidate_sha256": "d34f9306d246068f12219936f0d153fbb79c6ff78c3d8738aada7e6d1c1703e4",
+  "local": {
+    "qt_passed": 223,
+    "python_ran": 462,
+    "optional_skips": 19,
+    "native_cocoa_probe_passed": true
+  },
+  "hosted_run": "https://github.com/hybridmachine/DataHorizon/actions/runs/42556497940",
+  "all_three_macos_jobs_passed": true,
+  "native_scales": [
+    1,
+    2
+  ],
+  "artifacts_reviewed": true,
+  "task_complete": false,
+  "remaining": [
+    "Real VoiceOver spoken output and editing workflow",
+    "Full table-style screen-reader row/column navigation (bounded keyboard surface is provided instead)"
+  ]
+}

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "mainwindow.h"
+#include "keyboardgrid.h"
 #include "servicepaths.h"
 #include "frozenpanes.h"
 #include "listcriteriadialog.h"
@@ -460,7 +461,7 @@ void MainWindow::buildUi() {
     m_listSummary=new QLabel(central);m_listSummary->setObjectName("listCriteriaSummary");m_listSummary->setAccessibleName(tr("Active sort and filter criteria"));
     m_listSummary->setMinimumWidth(0);m_listSummary->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);m_listSummary->hide();layout->addWidget(m_listSummary);
     connect(m_model,&QAbstractItemModel::modelReset,this,&MainWindow::updateListSummary);
-    m_grid = new QTableView; m_grid->setObjectName("grid"); m_grid->setAccessibleName(tr("Spreadsheet")); m_grid->setModel(m_model);
+    m_grid = new KeyboardGridView; m_grid->setObjectName("grid"); m_grid->setAccessibleName(tr("Spreadsheet")); m_grid->setModel(m_model);
     auto *delegate=new CellDelegate(m_grid); delegate->functionCatalog=[this]{return m_functionCatalog;};delegate->syntaxChanged=[this]{updateFormulaReferences();};delegate->referenceColors=[this](int row,int col){return formulaReferenceColors(row,col);};delegate->canEdit=[this]{return !m_source->isModified();};
     delegate->enterPressed=[this](const QModelIndex &index,int direction){m_enterRequest=enterDestination(index,direction);};
     delegate->tabPressed=[this](const QModelIndex &index,int direction){
@@ -604,6 +605,13 @@ void MainWindow::buildUi() {
         }, false);
     });
     add(help, tr("About DataHorizon"), {}, [this] { QMessageBox::about(this, tr("DataHorizon"), tr("DataHorizon 0.1 development preview\nAll DataHorizon components: GNU GPL version 3 only.\nThird-party dependencies retain their licenses.\nSee repository licensing materials.")); });
+
+    add(view,tr("Read current cell…"),QKeySequence(tr("Ctrl+Shift+I")),[this]{
+        const auto index=m_grid->currentIndex();
+        const auto text=index.isValid()?m_model->data(index,Qt::AccessibleTextRole).toString():tr("No current cell");
+        QMessageBox dialog(QMessageBox::Information,tr("Current cell"),text,QMessageBox::Ok,this);
+        dialog.setTextFormat(Qt::PlainText);dialog.setObjectName("currentCellDescription");dialog.exec();
+    })->setObjectName("readCurrentCellAction");
     connect(m_grid->selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex &, const QModelIndex &previous) {
         ++m_navigationGeneration;if(!m_applyingNavigation)m_navigationExtending=false;
         if (m_source->isModified() && !resolveDraft()) {
@@ -1354,6 +1362,7 @@ void MainWindow::syncSource() {
     ensureVisibleCurrent();
     const bool addressDraft=m_address->hasFocus() && m_address->isModified();
     auto index = m_grid->currentIndex();
+    m_grid->setAccessibleDescription(index.isValid()?m_model->data(index,Qt::AccessibleTextRole).toString():tr("No current cell"));
     if (!index.isValid()) {
         m_source->clear(); m_source->setModified(false); m_source->setEnabled(false); m_draftTarget={};
         if(!addressDraft){m_address->clear();m_address->setModified(false);}
