@@ -1,0 +1,30 @@
+{
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "passed": true,
+  "cleanup_detached": true,
+  "scope": "Private 64-MiB HFS+ image only",
+  "volume_bytes": 67067904,
+  "free_before": 65433600,
+  "free_after_fill": 28672,
+  "filler_bytes": 65404928,
+  "export": {
+    "error": "Spreadsheet destination failed: No space left on device",
+    "export_succeeded": false,
+    "native_hash_preserved": true
+  },
+  "edit": {
+    "type": "unknown",
+    "operation_id": "full-volume-edit",
+    "body": {
+      "code": "OUTCOME_UNKNOWN",
+      "message": "Transaction outcome requires receipt lookup",
+      "outcome": "unknown",
+      "operation_id": "full-volume-edit"
+    }
+  },
+  "native_inputs_and_hook_count": [
+    7.0,
+    1.0
+  ],
+  "missing_receipt_remains_unknown": true
+}

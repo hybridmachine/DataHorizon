@@ -97,7 +97,7 @@ workload-specific, with no universal memory/latency claim.
 before pending formula values, calculates visible/frozen tiles through REST,
 cancels obsolete admitted work and publishes only matching state/generation
 results. Per-stream generations isolate automatic and explicit calculations.
-Initial focused checks pass; combined/native/installed verification is pending.
+Local combined verification passes 219 Qt checks and 457 Python tests (19 optional skips). Hosted macOS [run 42551536569](https://github.com/hybridmachine/DataHorizon/actions/runs/42551536569) passes all three jobs, including native Cocoa scales 1/2 and relocated installed smoke. Downloaded native JSON and screenshots were inspected. The [source record](evidence/task4-verification.json) identifies the tested implementation. Task 4 is complete for this bounded tier; broader formula and native/manual gates remain open.
 
 ## Task 5: failure recovery
 
@@ -105,7 +105,7 @@ Initial focused checks pass; combined/native/installed verification is pending.
 permission and abrupt-process-exit checks, real protected-export failures and
 cancellable native opening/post-copy validation. The new regressions and the
 private 64-MiB disk-image ENOSPC run pass locally, with native bytes/counters and
-unknown receipt IDs preserved. Final combined/hosted evidence remains pending.
+unknown receipt IDs preserved. Combined CTest passes 220 Qt checks and 462 Python tests (19 optional skips). Hosted macOS [run 42552114385](https://github.com/hybridmachine/DataHorizon/actions/runs/42552114385) passes all three jobs, including native Cocoa scales 1/2 and installed smoke. Downloaded JSON and screenshots were inspected. The [verification record](evidence/task5-verification.json) and [real filesystem report](evidence/task5-real-filesystem.json) retain source and limits. Task 5 is complete within this failure tier; physical power loss and broader APFS durability remain outside its evidence.
 
 
 ## Task 6: native macOS interaction gate
