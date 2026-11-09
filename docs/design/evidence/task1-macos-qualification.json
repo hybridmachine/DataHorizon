@@ -1,0 +1,332 @@
+{
+  "task": 1,
+  "scope": "macOS automation; Windows/Linux explicitly deferred by user",
+  "tested_commit": "691cec522043d7e377aeac5c8e554aeb8103590e",
+  "source_fingerprint": "a0ba5fadad43d9797798bdb340f318a051be4e17cf6e81a07064a46100e029c3",
+  "run_url": "https://github.com/hybridmachine/DataHorizon/actions/runs/42545542412",
+  "macos_job_id": 128929617711,
+  "macos_job_conclusion": "success",
+  "local_ctest": {
+    "qt_passed": 205,
+    "python_ran": 451,
+    "python_optional_skips": 19,
+    "desktop_seconds": 115.79,
+    "service_seconds": 40.32
+  },
+  "artifacts_inspected": [
+    "cache-rss-benchmark.json",
+    "desktop-benchmark-frozen-row.png",
+    "desktop-benchmark.json",
+    "formula-benchmark.json",
+    "native-acceptance-1.json",
+    "native-acceptance-1.png",
+    "native-acceptance-2.json",
+    "native-acceptance-2.png",
+    "native-storage-benchmark.json",
+    "service-execution-benchmark.json",
+    "sqlite-capture-benchmark.json",
+    "toolchain-benchmark.json"
+  ],
+  "native_scales": [
+    {
+      "accessible_controls": [
+        {
+          "name": "Cell address",
+          "role": 42
+        },
+        {
+          "name": "Cell input or formula",
+          "role": 42
+        },
+        {
+          "name": "Spreadsheet",
+          "role": 24
+        }
+      ],
+      "acknowledged_enter_advances": true,
+      "active_window": true,
+      "cell_editor_accessible_address": true,
+      "cell_logical_width": 109,
+      "clipboard_paste": true,
+      "device_pixel_ratio": 1,
+      "frozen_header_shared_cache_geometry": true,
+      "job_accessible_controls": [
+        {
+          "control": "operationJobMode",
+          "name": "Stage CSV \u2014 explicit batches, Text columns",
+          "role": 46,
+          "valid": true
+        },
+        {
+          "control": "operationJobId",
+          "name": "Job ID (keep for recovery)",
+          "role": 42,
+          "valid": true
+        },
+        {
+          "control": "operationJobSource",
+          "name": "CSV path or find Text",
+          "role": 42,
+          "valid": true
+        },
+        {
+          "control": "operationJobRows",
+          "name": "Read rows from A1 (one column)",
+          "role": 52,
+          "valid": true
+        },
+        {
+          "control": "operationJobReport",
+          "name": "Job plan, progress and durable receipts",
+          "role": 42,
+          "valid": true
+        },
+        {
+          "control": "prepareOperationJob",
+          "name": "Prepare",
+          "role": 43,
+          "valid": true
+        },
+        {
+          "control": "inspectOperationJob",
+          "name": "Inspect / retry status",
+          "role": 43,
+          "valid": true
+        },
+        {
+          "control": "startOperationJob",
+          "name": "Execute / resume\u2026",
+          "role": 43,
+          "valid": true
+        },
+        {
+          "control": "cancelOperationJob",
+          "name": "Cancel job",
+          "role": 43,
+          "valid": true
+        },
+        {
+          "control": "closeOperationJob",
+          "name": "Close review",
+          "role": 43,
+          "valid": true
+        }
+      ],
+      "job_dialog_tab_order": true,
+      "keyboard_edit_calculation_escape_navigation": true,
+      "keyboard_range_tab_and_editor_cancel": true,
+      "limitations": [
+        "QTest widget events are synthetic; no physical input or compositor-latency qualification.",
+        "Accessible names/table extent do not certify screen-reader navigation across the entire sheet.",
+        "Native dialogs, multiple monitors and clean-machine installation remain separate acceptance."
+      ],
+      "narrow_window_usable_grid": true,
+      "native_hidden_gap_and_recovery_control": true,
+      "native_wrap_border_and_column_size": true,
+      "os": "macOS Sequoia (15.8)",
+      "palette_base": "#ffffff",
+      "platform_plugin": "cocoa",
+      "qt": "6.8.3",
+      "qt_modal_escape_without_mutation": true,
+      "recorded_at_utc": "2026-11-09T01:32:25Z",
+      "scale_request": "1",
+      "screenshot": "native-acceptance-1.png",
+      "window_logical_width": 560
+    },
+    {
+      "accessible_controls": [
+        {
+          "name": "Cell address",
+          "role": 42
+        },
+        {
+          "name": "Cell input or formula",
+          "role": 42
+        },
+        {
+          "name": "Spreadsheet",
+          "role": 24
+        }
+      ],
+      "acknowledged_enter_advances": true,
+      "active_window": true,
+      "cell_editor_accessible_address": true,
+      "cell_logical_width": 109,
+      "clipboard_paste": true,
+      "device_pixel_ratio": 2,
+      "frozen_header_shared_cache_geometry": true,
+      "job_accessible_controls": [
+        {
+          "control": "operationJobMode",
+          "name": "Stage CSV \u2014 explicit batches, Text columns",
+          "role": 46,
+          "valid": true
+        },
+        {
+          "control": "operationJobId",
+          "name": "Job ID (keep for recovery)",
+          "role": 42,
+          "valid": true
+        },
+        {
+          "control": "operationJobSource",
+          "name": "CSV path or find Text",
+          "role": 42,
+          "valid": true
+        },
+        {
+          "control": "operationJobRows",
+          "name": "Read rows from A1 (one column)",
+          "role": 52,
+          "valid": true
+        },
+        {
+          "control": "operationJobReport",
+          "name": "Job plan, progress and durable receipts",
+          "role": 42,
+          "valid": true
+        },
+        {
+          "control": "prepareOperationJob",
+          "name": "Prepare",
+          "role": 43,
+          "valid": true
+        },
+        {
+          "control": "inspectOperationJob",
+          "name": "Inspect / retry status",
+          "role": 43,
+          "valid": true
+        },
+        {
+          "control": "startOperationJob",
+          "name": "Execute / resume\u2026",
+          "role": 43,
+          "valid": true
+        },
+        {
+          "control": "cancelOperationJob",
+          "name": "Cancel job",
+          "role": 43,
+          "valid": true
+        },
+        {
+          "control": "closeOperationJob",
+          "name": "Close review",
+          "role": 43,
+          "valid": true
+        }
+      ],
+      "job_dialog_tab_order": true,
+      "keyboard_edit_calculation_escape_navigation": true,
+      "keyboard_range_tab_and_editor_cancel": true,
+      "limitations": [
+        "QTest widget events are synthetic; no physical input or compositor-latency qualification.",
+        "Accessible names/table extent do not certify screen-reader navigation across the entire sheet.",
+        "Native dialogs, multiple monitors and clean-machine installation remain separate acceptance."
+      ],
+      "narrow_window_usable_grid": true,
+      "native_hidden_gap_and_recovery_control": true,
+      "native_wrap_border_and_column_size": true,
+      "os": "macOS Sequoia (15.8)",
+      "palette_base": "#ffffff",
+      "platform_plugin": "cocoa",
+      "qt": "6.8.3",
+      "qt_modal_escape_without_mutation": true,
+      "recorded_at_utc": "2026-11-09T01:32:27Z",
+      "scale_request": "2",
+      "screenshot": "native-acceptance-2.png",
+      "window_logical_width": 560
+    }
+  ],
+  "toolchain": {
+    "recorded_at_utc": "2026-11-09T01:32:23.886405+00:00",
+    "build": {
+      "project_version": "0.1.0",
+      "cmake": "4.4.5",
+      "generator": "Unix Makefiles",
+      "compiler": "AppleClang",
+      "compiler_version": "17.0.0.17000013",
+      "cxx_standard": 17,
+      "system": "Darwin",
+      "processor": "arm64",
+      "qt": "6.8.3",
+      "python": "3.13.17",
+      "build_type": "Release",
+      "absolute_install_prefix": true
+    },
+    "runtime": {
+      "python": "3.13.17",
+      "implementation": "CPython",
+      "sqlite": "3.50.4",
+      "system": "Darwin",
+      "architecture": "arm64"
+    },
+    "ctest_suite_seconds": {
+      "desktop": 600,
+      "service": 180
+    },
+    "grid_evidence": {
+      "qt": "6.8.3",
+      "platform_plugin": "offscreen",
+      "focused_address_retention_checked": true
+    },
+    "distribution": {
+      "python_bundled": false,
+      "clean_machine_qualified": false,
+      "gui_license": "GPL-3.0-only",
+      "service_sdk_license": "undecided"
+    }
+  },
+  "memory_measurements": {
+    "recorded_at_utc": "2026-11-09T01:31:59.452631+00:00",
+    "platform": "macOS-15.8.2-arm64-arm-64bit-Mach-O",
+    "python": "3.13.17",
+    "sqlite": "3.50.4",
+    "dataset": {
+      "sparse_cells": 100000,
+      "long_text_cells": 270000,
+      "database_bytes": 1270779904,
+      "larger_than_service_memory_target": true
+    },
+    "fresh_process_start_open_first_read": {
+      "samples": 10,
+      "median_ms": 883.679,
+      "p95_ms": 3202.053
+    },
+    "fresh_process_first_viewport_only": {
+      "samples": 10,
+      "median_ms": 2.454,
+      "p95_ms": 3.199
+    },
+    "viewport_scope": [
+      269969,
+      1,
+      270000,
+      16
+    ],
+    "warm_viewport": {
+      "samples": 10,
+      "median_ms": 1.849,
+      "p95_ms": 2.187
+    },
+    "service_peak_rss_bytes": 34832384,
+    "driver_peak_rss_bytes": 45056000,
+    "service_memory_target_bytes": 268435456,
+    "measured_service_within_target": true,
+    "limitations": [
+      "Fresh processes do not evict OS file caches; native validation may warm SQLite pages before the first viewport.",
+      "Peak RSS/working set is per owned service process; no worker processes are active in this fixture.",
+      "Dataset-specific memory evidence is not a bound on all workbook shapes or multiple open engines."
+    ]
+  },
+  "screenshots_visually_inspected": true,
+  "release_qualified": false,
+  "open_gates": [
+    "physical input and native OS dialogs",
+    "VoiceOver",
+    "clean-machine bundled runtime and installers",
+    "signing/notarization",
+    "Windows/Linux deferred"
+  ]
+}
