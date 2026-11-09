@@ -45,3 +45,32 @@ screenshots were inspected. Local CTest passes 205 Qt checks and 451 Python test
 tested source. Task 1 is complete for the user's revised macOS automation scope;
 physical input, VoiceOver and distribution are later tasks, and Windows/Linux
 qualification is deferred. Large-file capacity remains workload-specific.
+
+## Task 2: native opening
+
+[The storage/validation change](native-opening-performance.md) keeps all opening
+checks and the five-second budget, combines cell checks into one scan and uses
+8-KiB pages for newly created workbooks. The 270,000-long-text-row comparison
+preserves every logical row while reducing the fixture from 1,263,939,584 to
+316,071,936 bytes. Five optimized opens pass, with a 1,187.10-ms worst sample;
+four of five legacy-layout opens time out. These are uncontrolled OS-cache
+measurements, not universal capacity or OS-cold evidence. Existing files are
+unchanged; explicit independent SQLite copies are documented.
+
+The isolated Python suite runs 453 tests successfully (19 existing optional
+skips), including new late coordinate/orphan/temporal damage and storage/copy
+regressions. Combined CTest passes 205 Qt checks and 453 Python tests (19 optional
+skips). Relocated installed-app smoke passes. The updated 100,000-row sort/job
+workload verifies every row, bounded dependency reuse/invalidation, cancellation
+and resume on a database larger than 256 MiB, with 51,412,992-byte service peak
+RSS and 9.485-ms cancellation confirmation.
+
+Hosted macOS [run 42546711704](https://github.com/hybridmachine/DataHorizon/actions/runs/42546711704)
+passes all contracts, experiments, native Cocoa scales 1/2 and installed smoke.
+The downloaded native JSON and screenshots were inspected. A local native
+activation/Tab-order probe failed on this desktop session; it remains an explicit
+task 6 acceptance concern, not a passing local result. The hosted native probe
+passes that same check. The [verification record](evidence/task2-verification.json)
+identifies source and outcomes. Task 2 is complete within this documented native
+storage tier; existing large legacy-layout files may still hit the opening budget
+until explicitly copied, and broader cold-cache/platform gates remain open.

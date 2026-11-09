@@ -295,6 +295,11 @@ class Workbook:
             self.db = sqlite3.connect(self.path.as_uri() + ("?mode=ro" if readonly else "?mode=rw"),
                                       uri=True, isolation_level=None, check_same_thread=False, timeout=1)
             _verify_destination(self.path,created_identity)
+            if create:
+                # Keep common 1-KiB Text records inline in WITHOUT ROWID leaves.
+                # At SQLite's 4-KiB default these spill to an overflow page per
+                # cell, multiplying file size and native validation reads.
+                self.db.execute("PRAGMA page_size=8192")
             self.db.execute("PRAGMA foreign_keys=ON")
             self.db.execute("PRAGMA synchronous=FULL")
             if create:
@@ -364,10 +369,6 @@ class Workbook:
             meta = db.execute("SELECT format_version,revision,workbook_id FROM dh_meta WHERE singleton=1").fetchall()
             require(len(meta) == 1 and meta[0][0] in (1,2,3) and type(meta[0][1]) is int and meta[0][1] >= 0,
                     "FORMAT_VERSION", "Unsupported or invalid native format", 409)
-            for source,kind in db.execute("SELECT source,kind FROM cells WHERE kind IN ('date','time','datetime')"):
-                require(time.monotonic() <= deadline,"TIMEOUT","Temporal validation exceeded its time budget")
-                require(meta[0][0] >= 2,"FORMAT_VERSION","Temporal inputs require native format 2",409)
-                typed({"source":source,"kind":kind,"style":{}})
             require(signature == (EXPECTED_SCHEMA3 if meta[0][0]==3 else EXPECTED_SCHEMA),"FORMAT_VERSION","Native schema/version mismatch",409)
             if meta[0][0]==3:
                 from .metadata import validate
@@ -396,11 +397,28 @@ class Workbook:
                     raise EngineError("INVALID_FORMAT","Invalid native sheet name",409) from error
                 positions.add(position)
             require(bool(positions),"INVALID_FORMAT","Workbook must contain a sheet",409)
-            require(db.execute("PRAGMA foreign_key_check").fetchone() is None,
-                    "INVALID_FORMAT","Native workbook contains orphaned cell references",409)
-            require(db.execute("SELECT 1 FROM cells WHERE typeof(row)<>'integer' OR typeof(col)<>'integer' OR row NOT BETWEEN 1 AND ? OR col NOT BETWEEN 1 AND ? LIMIT 1",
-                               (MAX_ROWS,MAX_COLS)).fetchone() is None,
-                    "INVALID_FORMAT","Native cells require integer coordinates within the supported grid",409)
+            # Inspect stored cells once. Three independent scans of the native
+            # WITHOUT ROWID table repeatedly fetched long-text overflow pages
+            # even when no temporal inputs or invalid rows were present.
+            rows=db.execute("""SELECT CASE WHEN kind IN ('date','time','datetime') THEN source END,kind,
+                typeof(row)='integer' AND typeof(col)='integer'
+                    AND row BETWEEN 1 AND ? AND col BETWEEN 1 AND ? AS coordinates_valid,
+                sheet_id IN (SELECT id FROM sheets) AS sheet_valid
+                FROM cells
+                WHERE kind IN ('date','time','datetime')
+                    OR typeof(row)<>'integer' OR typeof(col)<>'integer'
+                    OR row NOT BETWEEN 1 AND ? OR col NOT BETWEEN 1 AND ?
+                    OR sheet_id NOT IN (SELECT id FROM sheets)""",
+                (MAX_ROWS,MAX_COLS,MAX_ROWS,MAX_COLS))
+            for source,kind,coordinates_valid,sheet_valid in rows:
+                require(time.monotonic()<=deadline,"TIMEOUT","Workbook validation exceeded its time budget")
+                require(coordinates_valid,"INVALID_FORMAT","Native cells require integer coordinates within the supported grid",409)
+                require(sheet_valid,"INVALID_FORMAT","Native workbook contains orphaned cell references",409)
+                require(meta[0][0]>=2,"FORMAT_VERSION","Temporal inputs require native format 2",409)
+                typed({"source":source,"kind":kind,"style":{}})
+            if meta[0][0]==3:
+                require(db.execute("PRAGMA foreign_key_check(dh_objects)").fetchone() is None,
+                        "INVALID_FORMAT","Native metadata contains orphaned sheet references",409)
 
     def data_version(self):
         return self.db.execute("PRAGMA data_version").fetchone()[0]
