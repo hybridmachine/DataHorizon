@@ -1,5 +1,0 @@
-#!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-only
-# Resolve the relocated bundle without relying on Homebrew or a shell profile.
-dh_bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec "$dh_bin_dir/../Resources/runtime/bin/python3" -I -B "$dh_bin_dir/../Resources/service/datahorizon/launch_cli.py" "$@"

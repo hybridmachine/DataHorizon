@@ -156,8 +156,10 @@ qt_generate_deploy_app_script(TARGET DataHorizon OUTPUT_SCRIPT deploy_script
     NO_UNSUPPORTED_PLATFORM_ERROR)
 install(SCRIPT "${deploy_script}")
 if(APPLE AND DATAHORIZON_RUNTIME_ROOT)
-    # Case-insensitive macOS filesystems make 'datahorizon' collide with the
-    # GUI's 'DataHorizon'. Add the distinct script after macdeployqt scans Mach-O.
-    install(PROGRAMS packaging/datahorizon.in DESTINATION DataHorizon.app/Contents/MacOS RENAME datahorizon-cli)
+    # Use a distinct name on case-insensitive filesystems. A native launcher's
+    # embedded signature survives filesystem copies unlike script xattrs.
+    add_executable(datahorizon_cli_launcher desktop/cli_main.cpp)
+    set_target_properties(datahorizon_cli_launcher PROPERTIES OUTPUT_NAME datahorizon-cli)
+    install(TARGETS datahorizon_cli_launcher RUNTIME DESTINATION DataHorizon.app/Contents/MacOS)
     install(CODE "execute_process(COMMAND \"${CMAKE_COMMAND}\" \"-DAPP_BUNDLE=\${CMAKE_INSTALL_PREFIX}/DataHorizon.app\" -P \"${CMAKE_CURRENT_SOURCE_DIR}/cmake/SignDevelopmentBundle.cmake\" COMMAND_ERROR_IS_FATAL ANY)")
 endif()

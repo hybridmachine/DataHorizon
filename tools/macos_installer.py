@@ -14,7 +14,10 @@ import tempfile
 
 
 def command(*args):
-    return subprocess.check_output([str(a) for a in args], text=True, stderr=subprocess.STDOUT)
+    try:
+        return subprocess.check_output([str(a) for a in args], text=True, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError('Command failed: '+str(args[0])+'\n'+error.output) from error
 
 
 def sha256(path):
