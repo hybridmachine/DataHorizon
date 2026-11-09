@@ -40,6 +40,13 @@ milestone/release gates below remain open.
 
 ## Current result
 
+The [preview qualification batch](preview-qualification-next-ten.md) is now
+authorized with a separate branch/PR per task. The user limited qualification
+to macOS, deferred Windows/Linux work and selected GPLv3 for every component.
+Task 1's hosted macOS suites, experiments, native scales 1/2 and installed smoke
+pass at the tested source recorded in [its evidence](evidence/task1-macos-qualification.json).
+Physical input, VoiceOver, runtime bundling and installer acceptance remain open.
+
 The Qt Widgets/C++ desktop runs against an authenticated localhost Python REST
 service. The shared engine owns SQLite transactions, source typing, formulas,
 history, operation receipts and explicitly activated Python handlers. The CLI
