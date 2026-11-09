@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Optional hash-bound temporal companion metadata for otherwise untyped CSV."""
 import hashlib
 

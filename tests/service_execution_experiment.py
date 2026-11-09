@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Bounded M1 service/Python comparison, isolated from the installed API."""
 import argparse
 from contextlib import contextmanager, nullcontext

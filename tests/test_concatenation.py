@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Concatenation precedence, scalar/range values, bounds and package spelling."""
 import base64
 from contextlib import closing

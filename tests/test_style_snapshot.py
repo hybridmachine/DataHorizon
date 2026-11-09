@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Style-only snapshots support painter patterns without touching formula/input data."""
 from contextlib import closing
 from pathlib import Path

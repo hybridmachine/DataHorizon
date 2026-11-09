@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Optional manual verification with independent file producers/consumers.
 
 Run with PYTHONPATH=service build/interchange-venv/bin/python

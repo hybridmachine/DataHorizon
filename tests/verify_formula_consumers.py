@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Optional independent readers verify formula spelling and typed values exports."""
 import base64
 from contextlib import closing

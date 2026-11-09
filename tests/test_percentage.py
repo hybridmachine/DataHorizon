@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Percentage formatting preserves numeric fractions, types, history and file values."""
 from contextlib import closing
 import io

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Package integrity and truthful qualification gates; no Qt installation needed."""
 import json
 import stat

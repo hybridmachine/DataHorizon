@@ -58,7 +58,7 @@ Users define business workflows in their own code or external applications.
 
 ## License direction
 
-The desktop GUI is licensed under GPLv3; see [license scope](LICENSES.md).
-Licenses for the service, SDK,
-and other components remain undecided; this is not a repository-wide license
-grant. See the design documents for the current decisions and open questions.
+All DataHorizon components are licensed under GPLv3 only; see [COPYING](COPYING)
+and [license scope and dependencies](LICENSES.md). Third-party dependencies retain
+their own licenses. macOS runtime staging is documented in
+[the distribution baseline](docs/design/macos-distribution.md).

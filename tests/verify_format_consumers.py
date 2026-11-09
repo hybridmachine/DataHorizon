@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Optional independent package readers check the portable formatting tier."""
 import base64
 from io import BytesIO

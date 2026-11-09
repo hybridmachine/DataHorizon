@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Validate and execute durable-job API examples in an isolated test environment."""
 from pathlib import Path
 import copy

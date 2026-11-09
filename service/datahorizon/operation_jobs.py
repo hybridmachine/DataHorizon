@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Disk-staged, explicitly reviewed jobs with durable per-batch receipts."""
 from contextlib import closing,contextmanager
 import csv

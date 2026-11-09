@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Worker failure cleanup and broker framing without bypassing required hooks."""
 from contextlib import closing, contextmanager
 import multiprocessing

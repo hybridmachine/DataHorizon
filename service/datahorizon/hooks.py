@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Explicitly activated trusted hooks, isolated for timeout/crash containment."""
 
 import multiprocessing

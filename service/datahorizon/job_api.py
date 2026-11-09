@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """OpenAPI contracts for the bounded durable-job resources."""
 
 def install(schemas):

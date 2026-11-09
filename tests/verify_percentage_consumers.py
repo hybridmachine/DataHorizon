@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Build-only independent producers/consumers for the percent2 interchange tier."""
 import base64
 import io

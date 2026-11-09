@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Independent date fixtures plus managed whole-workbook temporal round trips."""
 import base64
 from contextlib import closing

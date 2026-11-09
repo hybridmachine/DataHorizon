@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Opening retains data checks while using bounded, efficient native storage."""
 from contextlib import closing
 import hashlib

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """The catalog advertises executable examples of the implemented tier."""
 from contextlib import closing
 from pathlib import Path

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Create a local development archive with integrity inventory; no release qualification."""
 import argparse
 import hashlib

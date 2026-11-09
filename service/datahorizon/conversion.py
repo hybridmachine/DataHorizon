@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Explicit deterministic import/entry profiles; never use the host locale."""
 from datetime import date
 import re

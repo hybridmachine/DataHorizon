@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Optional APSW preupdate comparison; never imported by the installed service.
 
 Requires the pinned wheel in requirements-capture.txt. No SQLite pointer/ABI

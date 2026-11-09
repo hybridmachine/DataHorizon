@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Portable border edges; colors remain the native palette / export black."""
 import re
 SIDES=("left","right","top","bottom")

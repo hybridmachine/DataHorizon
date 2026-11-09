@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Bounded shared formulas, inherited styles and independent producer fixtures."""
 import base64
 import hashlib

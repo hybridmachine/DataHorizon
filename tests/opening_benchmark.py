@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Compare native opening and storage geometry; each open retains its five-second budget."""
 import argparse
 from contextlib import closing

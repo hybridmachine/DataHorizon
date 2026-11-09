@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Isolated M1 SQLite capture experiment; never installed or used by the service.
 
 Run directly to write a repeatable correctness/measurement report. The small

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Bounded syntactic reference tracing; no evaluation, hooks or retained graph."""
 import json
 import time

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Whole-workbook contracts across real REST, SQLite snapshots and package consumers."""
 import base64
 from contextlib import closing

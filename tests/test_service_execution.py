@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Compare service adapters through real sockets and the shared engine."""
 from pathlib import Path
 import tempfile

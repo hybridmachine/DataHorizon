@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """M1 capture evidence, independent of the production managed SQL surface."""
 
 from contextlib import closing

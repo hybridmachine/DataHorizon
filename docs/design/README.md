@@ -44,8 +44,8 @@ applications, and AI agents through REST.
    and publish interactive API documentation.
 10. **Qt Widgets/C++ desktop GUI.** Use Qt Widgets with C++ on Windows, macOS,
     and Linux.
-11. **GUI license.** License the GUI under GPLv3. Licensing for the service,
-    SDK, and other components remains undecided.
+11. **License.** All DataHorizon components use GPL-3.0-only, including the GUI,
+    service, CLI and SDK. Dependencies retain their own licenses.
 12. **Wireframes before implementation.** Everyday spreadsheet stories and
     wireframes preceded the explicit instruction to start implementation.
     Follow the plan and record evidence before claiming milestone completion.
@@ -127,3 +127,5 @@ a bounded QTableView model, and the documented experimental native format v1.
 Concurrent multiuser editing and complete Excel feature parity are not initial
 release promises. The architecture should leave room for future capabilities
 without treating them as already designed.
+
+- [macOS distribution baseline](macos-distribution.md)

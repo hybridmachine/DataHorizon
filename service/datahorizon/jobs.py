@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Bounded, ephemeral preparation jobs. These never mutate a workbook."""
 import hashlib
 import re

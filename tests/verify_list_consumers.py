@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Optional independent consumer verification for filtered values packages."""
 import base64
 from contextlib import closing

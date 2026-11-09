@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Independent native lifecycle and physical-layout experiment checks."""
 import unittest
 from native_storage_experiment import native_contracts, layout_measurements

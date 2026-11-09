@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Typed follow-on formula stages, bounded failures and package recalculation."""
 from contextlib import closing
 from pathlib import Path

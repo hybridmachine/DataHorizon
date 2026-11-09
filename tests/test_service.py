@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 import json
 import io
 from contextlib import closing, redirect_stderr, redirect_stdout

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """State-checked Find pages never skip or duplicate source coordinates."""
 from contextlib import closing
 from pathlib import Path

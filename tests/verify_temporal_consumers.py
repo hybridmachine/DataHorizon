@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Optional independent openpyxl/odfpy producers and consumers; no target recalc claim."""
 import base64
 from contextlib import closing

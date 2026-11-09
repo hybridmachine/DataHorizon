@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Run against only the relocated installed SDK/service, from a neutral directory."""
 from pathlib import Path
 import sys
