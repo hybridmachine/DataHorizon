@@ -232,6 +232,10 @@ the standard parser). Responses have a five-second socket-write timeout.
 These bounds do not qualify the development server for production or remote
 binding. See [admission evidence](qualification-next-five.md#http-admission).
 
+Connection teardown half-closes the response, then discards at most 64 KiB of
+unread request bytes for at most 100 ms before closing. This bounded grace helps
+deliver error responses on Windows without parsing or admitting rejected input.
+
 Ordinary operations are atomic, at most 10,000 target cells, 4 MiB request body,
 64 KiB cell source and 5 seconds engine time. Formula preflight queries check
 that deadline inside SQLite even when no matching cells are returned, and remove

@@ -10,6 +10,7 @@ import json
 import math
 from pathlib import Path
 import secrets
+import socket
 from socketserver import TCPServer
 import sqlite3
 import sys
@@ -366,6 +367,26 @@ class Service(ThreadingHTTPServer):
             super().process_request_thread(request,client_address)
         finally:
             self._request_slots.release()
+
+    def shutdown_request(self, request):
+        # Closing with unread input can discard the response on Windows. Send
+        # EOF first, then discard at most 64 KiB/100 ms without parsing or
+        # admitting that input. Slow peers must not hold a handler or accept loop.
+        try:
+            request.shutdown(socket.SHUT_WR)
+            deadline=time.monotonic()+.1
+            remaining=65536
+            while remaining:
+                seconds=deadline-time.monotonic()
+                if seconds<=0: break
+                request.settimeout(seconds)
+                chunk=request.recv(min(8192,remaining))
+                if not chunk: break
+                remaining-=len(chunk)
+        except OSError:
+            pass
+        finally:
+            self.close_request(request)
 
     def server_bind(self):
         # HTTPServer resolves a hostname here; a numeric loopback service has

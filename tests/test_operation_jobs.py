@@ -1,4 +1,5 @@
 from pathlib import Path
+from contextlib import closing
 import json
 import os
 import subprocess
@@ -94,7 +95,7 @@ class OperationJobTests(unittest.TestCase):
         # Restore directly to model an old journal. Fail the transactional migration
         # after recovery, before a batch can be admitted.
         import sqlite3
-        with sqlite3.connect(self.jobs.path(identifier)) as db:
+        with closing(sqlite3.connect(self.jobs.path(identifier))) as db,db:
             meta=json.loads(db.execute('SELECT payload FROM meta').fetchone()[0]);meta.update(version=1);meta.pop('execution_id');db.execute('UPDATE meta SET payload=?',(encoded(meta),))
         save=self.jobs.save
         def failing(db,meta):
