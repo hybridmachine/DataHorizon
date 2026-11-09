@@ -38,3 +38,16 @@ This is a development distribution baseline. Signing identities available on
 this desktop report zero valid identities. Developer ID signing/notarization
 and actual clean-system acceptance remain pending. The artifact must include
 exact corresponding source and matching dependency materials before release.
+
+The combined implementation passes 223 Qt checks, 464 Python tests (19 optional
+skips), the resource-signature regression and installed GUI/managed CLI/SDK smoke
+with bundled CPython 3.13.18 / SQLite 3.53.1 and developer PATH removed. The
+initial runtime source passed all three hosted macOS jobs in [run 42555956850](https://github.com/hybridmachine/DataHorizon/actions/runs/42555956850);
+downloaded JSON and screenshots were reviewed. The [source record](evidence/task9-verification.json)
+distinguishes initial hosted and integrated local evidence. Task 9's documented
+runtime/licensing baseline is complete; it does not close production or release
+gates.
+
+The integrated source also passes all three hosted macOS jobs in
+[run 42559302708](https://github.com/hybridmachine/DataHorizon/actions/runs/42559302708),
+including the bounded accessibility tier and bundle-signature regression.

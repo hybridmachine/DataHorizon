@@ -1,0 +1,29 @@
+{
+  "task": 9,
+  "initial_tested_commit": "25e60cd25e7438146044e7e8670092194756eaeb",
+  "initial_candidate_sha256": "6a0ee613f8cdaf26e9a3a1055b535067e9710a7795c721413a43f86f0b2a3c3b",
+  "initial_hosted_run": "https://github.com/hybridmachine/DataHorizon/actions/runs/42555956850",
+  "all_initial_hosted_macos_jobs_passed": true,
+  "integrated_commit": "8d37b2822ea952d893889da8869abf16dbfca0d3",
+  "integrated_candidate_sha256": "c13c0499a4520cd8a5155c14219021569ec7baf461a84526c50de190ee4c8656",
+  "local_integrated": {
+    "qt_passed": 223,
+    "python_ran": 464,
+    "optional_skips": 19,
+    "bundle_signature_regression_passed": true,
+    "bundled_python": "3.13.18",
+    "sqlite": "3.53.1",
+    "relocated_gui_cli_sdk_smoke_passed": true,
+    "developer_path_removed": true
+  },
+  "license": "GPL-3.0-only for all original components",
+  "baseline_complete": true,
+  "release_qualified": false,
+  "limits": [
+    "Localhost development service only; production/external hardening remains open",
+    "No Developer ID identity or notarization",
+    "Actual clean-Mac run remains pending"
+  ],
+  "integrated_hosted_run": "https://github.com/hybridmachine/DataHorizon/actions/runs/42559302708",
+  "all_integrated_hosted_macos_jobs_passed": true
+}

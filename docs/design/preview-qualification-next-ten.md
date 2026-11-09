@@ -133,8 +133,11 @@ increment does not close task 8 or the screen-reader acceptance gate.
 [The macOS distribution baseline](macos-distribution.md) selects macOS 15+ ARM64,
 a checksum-pinned relocatable CPython runtime and GPL-3.0-only for all original
 components. Qt/Python dependency notices and provenance are retained separately.
-Bundled-runtime and installed validation are in progress; external service
-hardening and signed release qualification remain separate gates.
+The integrated tier passes 223 Qt checks, 464 Python tests (19 optional skips),
+the signature regression and relocated bundled GUI/CLI/SDK smoke with developer
+PATH removed. Initial hosted macOS verification passes all three jobs. See the
+[source record](evidence/task9-verification.json). This baseline is complete;
+external service hardening and signed release qualification remain separate gates.
 
 ## Task 10: development installer and remaining release gates
 
