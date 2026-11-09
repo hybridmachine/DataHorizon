@@ -91,3 +91,11 @@ attempt is saved with `os_cold_qualified=false`; task 3 and M1 cannot be declare
 fully complete until an administrator-enabled run passes. All other evidence is
 workload-specific, with no universal memory/latency claim.
 
+## Task 4: automatic viewport calculation
+
+[The bounded viewport scheduler](viewport-calculation.md) delivers cached inputs
+before pending formula values, calculates visible/frozen tiles through REST,
+cancels obsolete admitted work and publishes only matching state/generation
+results. Per-stream generations isolate automatic and explicit calculations.
+Initial focused checks pass; combined/native/installed verification is pending.
+

@@ -514,13 +514,11 @@ class Workbook:
                         result = {"row": row, "col": col, "source": source, "input_kind": kind, "kind": item["kind"], "style": item["style"]}
                         try:
                             if item['kind']=='formula' and args.get('calculation')=='cached' and (sheet,row,col) not in self.dependencies.values:
-                                result.update(value=None,display='…',calculation='pending');cells.append(result)
-                                response_bytes+=len(encoded(result).encode())+1
-                                require(response_bytes<=4*1024*1024,'READ_LIMIT','Cached read exceeds 4 MiB')
-                                continue
-                            value = calc.cell(sheet, row, col) if item["kind"] == "formula" else item["value"]
-                            result.update(value=value, display=display(value, item["style"]), calculation="current")
-                            if isinstance(value,Temporal): result["value_kind"] = value.kind
+                                result.update(value=None,display='…',calculation='pending')
+                            else:
+                                value = calc.cell(sheet, row, col) if item["kind"] == "formula" else item["value"]
+                                result.update(value=value, display=display(value, item["style"]), calculation="current")
+                                if isinstance(value,Temporal): result["value_kind"] = value.kind
                         except FormulaError as error:
                             result.update(value=None, display=error.code, error=str(error), calculation="error")
                         if preview:

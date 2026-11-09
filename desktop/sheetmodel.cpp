@@ -9,6 +9,9 @@
 
 SheetModel::SheetModel(RestClient *client, QObject *parent, int rows, int cols) : QAbstractTableModel(parent), m_client(client), m_rows(rows), m_cols(cols) {
     setObjectName("sheetModel");
+    m_background=new ViewportCalculations(client,this,[this](const ViewportCalculations::Work &work){
+        return work.generation==m_generation && work.workbook==m_workbook && work.request["expected_state"].toString()==m_state && needsCalculation(work.key);
+    },[this](const ViewportCalculations::Work &work,QJsonObject snapshot,QString error){calculated(work,snapshot,error);});
 }
 int SheetModel::rowCount(const QModelIndex &parent) const { return parent.isValid() ? 0 : m_projected ? int(m_projection.size()) : m_rows; }
 int SheetModel::columnCount(const QModelIndex &parent) const { return parent.isValid() ? 0 : m_cols; }
@@ -93,7 +96,7 @@ QVariant SheetModel::data(const QModelIndex &index, int role) const {
     case Qt::EditRole:
         if (!sourceReady(index)) { ensureSource(index); return {}; }
         return item.value("source").toString();
-    case Qt::ToolTipRole: return item.value("error").toString(item.value("source").toString());
+    case Qt::ToolTipRole: return item["calculation"]=="pending" ? tr("Calculating stored formula in background…") : item.value("error").toString(item.value("source").toString());
     case Qt::AccessibleTextRole: return columnName(index.column()+1) + QString::number(sourceRow(index.row())+1) + ": " + item.value("display").toString();
     case Qt::FontRole: {
         QFont font;if(style.contains("font_family"))font.setFamily(style["font_family"].toString());if(style.contains("font_size"))font.setPointSize(style["font_size"].toInt()); font.setBold(style.value("bold").toBool()); font.setItalic(style.value("italic").toBool()); return font;
@@ -126,6 +129,8 @@ bool SheetModel::setData(const QModelIndex &index, const QVariant &value, int ro
 }
 
 void SheetModel::bind(const QString &workbook, const QString &sheet, const QString &state, bool readonly) {
+    m_background->invalidate();
+    m_background->setEnabled(true);
     beginResetModel();
     ++m_generation; m_cache.clear(); m_loading.clear();
     m_sources.clear(); m_sourceLoading.clear();
@@ -137,6 +142,7 @@ void SheetModel::bind(const QString &workbook, const QString &sheet, const QStri
 void SheetModel::setBusy(bool value) { m_busy = value; }
 
 void SheetModel::setProjection(const QList<int> &rows) {
+    m_background->invalidate();
     beginResetModel(); ++m_generation; m_cache.clear(); m_loading.clear(); m_sources.clear(); m_sourceLoading.clear(); m_projected = true; m_projection = rows; endResetModel();
 }
 
@@ -149,7 +155,7 @@ void SheetModel::fetch(int tileRow, int tileCol) const {
     QTimer::singleShot(0, self, [self, key, tileRow, tileCol, generation] {
         if (!self || generation != self->m_generation) return;
         QJsonObject body{{"sheet", self->m_sheet}, {"r1", tileRow*32+1}, {"c1", tileCol*16+1},
-                         {"r2", qMin(tileRow*32+32, 1048576)}, {"c2", qMin(tileCol*16+16, 16384)}, {"preview",true}};
+                         {"r2", qMin(tileRow*32+32, 1048576)}, {"c2", qMin(tileCol*16+16, 16384)}, {"preview",true},{"calculation","cached"}};
         if (self->m_projected) {
             QJsonArray rows;
             for (int row=tileRow*32; row<qMin(tileRow*32+32, int(self->m_projection.size())); ++row) rows.append(self->m_projection[row]+1);
@@ -175,6 +181,7 @@ void SheetModel::fetch(int tileRow, int tileCol) const {
             // evict another visible tile and prevent a viewport from settling.
             const auto cost = qMax(14*1024*1024/16, int(QJsonDocument(result).toJson(QJsonDocument::Compact).size()*3));
             self->m_cache.insert(key, tile, cost);
+            self->queueCalculation(key);
             if (self->m_projected) {
                 if (self->rowCount()) emit self->dataChanged(self->index(0, tileCol*16), self->index(self->rowCount()-1, qMin(tileCol*16+15, self->m_cols-1)));
             } else {
@@ -183,4 +190,73 @@ void SheetModel::fetch(int tileRow, int tileCol) const {
             emit self->tileLoaded();
         });
     });
+}
+
+bool SheetModel::needsCalculation(quint64 key) const {
+    const auto *tile=m_cache.object(key);if(!tile)return false;
+    for(const auto &cell:tile->cells)if(cell["calculation"]=="pending")return true;
+    return false;
+}
+
+void SheetModel::queueCalculation(quint64 key) const {
+    if(!needsCalculation(key))return;
+    const int row=int(key>>32),col=int(quint32(key));
+    QJsonObject request{{"sheet",m_sheet},{"expected_state",m_state},{"r1",row*32+1},{"r2",qMin(row*32+32,m_rows)},
+                        {"c1",col*16+1},{"c2",qMin(col*16+16,m_cols)}};
+    if(m_projected) {
+        QJsonArray rows;
+        for(int i=row*32;i<qMin(row*32+32,rowCount());++i)rows.append(sourceRow(i)+1);
+        if(rows.isEmpty())return;request["rows"]=rows;
+    }
+    m_background->enqueue({key,m_generation,m_workbook,request});
+}
+
+void SheetModel::setVisibleRanges(const QList<QRect> &ranges) {
+    QSet<quint64> keys;
+    for(const auto &range:ranges) {
+        for(int row=qMax(0,range.top())/32;row<=qMin(rowCount()-1,range.bottom())/32 && keys.size()<64;++row)
+            for(int col=qMax(0,range.left())/16;col<=qMin(columnCount()-1,range.right())/16 && keys.size()<64;++col)keys.insert(tileKey(row,col));
+    }
+    m_background->retain(keys);
+    for(auto key:keys)queueCalculation(key);
+}
+
+void SheetModel::setBackgroundEnabled(bool enabled) {
+    m_background->setEnabled(enabled);
+    if(enabled)for(auto key:m_cache.keys())queueCalculation(key);
+}
+
+void SheetModel::calculated(const ViewportCalculations::Work &work,const QJsonObject &snapshot,const QString &failure) {
+    if(work.generation!=m_generation || work.workbook!=m_workbook || !needsCalculation(work.key))return;
+    if(snapshot["state_changed"].toBool()){emit externalChange();return;}
+    const auto *old=m_cache.object(work.key);auto *updated=new Tile(*old);
+    auto error=failure;QHash<int,QJsonObject> results;
+    if(error.isEmpty()) {
+        for(const auto &value:snapshot["cells"].toArray()) {
+            const auto cell=value.toObject();const int row=viewRow(cell["row"].toInt()-1),col=cell["col"].toInt()-1;
+            if(row<0 || row/32!=int(work.key>>32) || col<0 || col/16!=int(quint32(work.key))){error="Background calculation returned cells outside its viewport tile.";break;}
+            results.insert((row%32)*16+col%16,cell);
+        }
+        for(auto i=updated->cells.cbegin();error.isEmpty() && i!=updated->cells.cend();++i)if(i.value()["calculation"]=="pending") {
+            const auto result=results.value(i.key());
+            if(result.isEmpty() || result["source"]!=i.value()["source"] || !QStringList{"current","error"}.contains(result["calculation"].toString()))
+                error="Incomplete background calculation result; refresh to retry.";
+        }
+    }
+    for(auto i=updated->cells.begin();i!=updated->cells.end();++i)if(i.value()["calculation"]=="pending") {
+        if(!error.isEmpty()){i.value()["calculation"]="failed";i.value()["display"]=tr("Unavailable");i.value()["error"]=error;}
+        else {
+            const auto result=results.value(i.key());
+            for(const auto &field:QStringList{"value","display","calculation","error","value_kind","value_omitted"}) {
+                if(result.contains(field))i.value()[field]=result[field];else i.value().remove(field);
+            }
+        }
+    }
+    QJsonArray cells;for(const auto &cell:updated->cells)cells.append(cell);
+    const int cost=qMax(14*1024*1024/16,int(QJsonDocument(cells).toJson(QJsonDocument::Compact).size()*3));
+    m_cache.insert(work.key,updated,cost);
+    const int row=int(work.key>>32)*32,col=int(quint32(work.key))*16;
+    emit dataChanged(index(row,col),index(qMin(row+31,rowCount()-1),qMin(col+15,columnCount()-1)));
+    if(!error.isEmpty())emit issue(error);
+    emit tileLoaded();
 }
