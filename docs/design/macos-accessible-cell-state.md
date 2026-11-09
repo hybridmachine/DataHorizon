@@ -36,3 +36,9 @@ walkthrough was recorded. Task 8 and the screen-reader portion of M7 remain open
 address navigation, source and result reading, blank/pending/error distinctions,
 editing/cancellation, frozen/projected rows and dialog recovery in a usable Mac
 session before closing that gate.
+
+Local verification passes 223 Qt checks, 462 Python tests (19 optional skips) and
+the Cocoa native probe. Hosted macOS [run 42556497940](https://github.com/hybridmachine/DataHorizon/actions/runs/42556497940)
+passes all three jobs, Cocoa scales 1/2 and installed smoke. Downloaded JSON and
+screenshots were inspected. The [source record](evidence/task8-verification.json)
+keeps spoken output and full table navigation open.

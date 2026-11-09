@@ -1,0 +1,26 @@
+{
+  "task": 6,
+  "tested_commit": "0bb9708d19ef472d6a43b45e98e73ea621f3793d",
+  "candidate_sha256": "29b55bba921c648f4ea7d2f29d3279404618e1493d5a3a3795905817134f4247",
+  "local": {
+    "qt_passed": 220,
+    "python_ran": 462,
+    "optional_skips": 19,
+    "damaged_resource_signature_regression_passed": true,
+    "native_cocoa_probe_passed": true
+  },
+  "hosted_run": "https://github.com/hybridmachine/DataHorizon/actions/runs/42555470085",
+  "all_three_macos_jobs_passed": true,
+  "native_scales": [
+    1,
+    2
+  ],
+  "artifacts_reviewed": true,
+  "task_complete": false,
+  "remaining": [
+    "Physical input and complete Supplies interaction",
+    "VoiceOver",
+    "Appearance and multiple-monitor/lifecycle checks"
+  ],
+  "later_installed_ui_attempt": "Task 9 bundle opened Supplies through native OS dialog; navigation/AX read subsequently timed out; test process quit normally using Activity Monitor"
+}

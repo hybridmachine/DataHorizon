@@ -134,6 +134,7 @@ int main(int argc,char **argv) {
         require(edits.isEmpty() && opened.count()==2,"Navigation or cancelled editor/dialog submitted an edit");
         require(model->data(model->index(0,0)).toString()=="20.5","Cancelled native interaction changed a value");
         QJsonArray jobControls;bool jobsSeen=false,jobTabPassed=false;
+        bool jobActivated=false;QString jobFocus;
         QTimer inspectJobs;inspectJobs.setInterval(10);
         QObject::connect(&inspectJobs,&QTimer::timeout,[&]{
             if(auto *dialog=window.findChild<QDialog *>("operationJobsDialog")){
@@ -143,12 +144,16 @@ int main(int argc,char **argv) {
                     auto *widget=dialog->findChild<QWidget *>(name);auto *interface=widget?QAccessible::queryAccessibleInterface(widget):nullptr;
                     jobControls.append(QJsonObject{{"control",name},{"valid",interface && interface->isValid()},{"name",interface?interface->text(QAccessible::Name):QString()},{"role",interface?int(interface->role()):0}});
                 }
-                auto *id=dialog->findChild<QLineEdit *>("operationJobId");id->setFocus(Qt::TabFocusReason);QTest::keyClick(id,Qt::Key_Tab);jobTabPassed=activated && dialog->focusWidget()==dialog->findChild<QLineEdit *>("operationJobSource");dialog->reject();
+                auto *id=dialog->findChild<QLineEdit *>("operationJobId");id->setFocus(Qt::TabFocusReason);QTest::keyClick(id,Qt::Key_Tab);
+                jobActivated=activated;jobFocus=dialog->focusWidget()?dialog->focusWidget()->objectName():QStringLiteral("<none>");
+                jobTabPassed=dialog->focusWidget()==dialog->findChild<QLineEdit *>("operationJobSource");dialog->reject();
             }
         });
         inspectJobs.start();watchdog.start(5000);window.findChild<QAction *>("operationJobsAction")->trigger();inspectJobs.stop();watchdog.stop();
         require(jobsSeen && jobControls.size()==10,"Job accessibility inspection missing");
-        require(jobTabPassed,"Job dialog activation/Tab order failed");
+        if(!jobActivated || !jobTabPassed) qWarning().noquote()<<"Job dialog native activation:"<<jobActivated<<"Tab focus:"<<jobFocus;
+        require(jobActivated,"Job dialog did not acquire native window activation");
+        require(jobTabPassed,"Job dialog Tab did not focus operationJobSource");
         for(const auto &entry:jobControls){const auto control=entry.toObject();require(control["valid"].toBool() && !control["name"].toString().isEmpty(),"Job control accessible name/role missing");}
         window.resize(560,440); QTest::qWait(100);
         grid->scrollTo(model->index(0,0));
