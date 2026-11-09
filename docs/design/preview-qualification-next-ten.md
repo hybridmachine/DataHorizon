@@ -107,3 +107,11 @@ cancellable native opening/post-copy validation. The new regressions and the
 private 64-MiB disk-image ENOSPC run pass locally, with native bytes/counters and
 unknown receipt IDs preserved. Final combined/hosted evidence remains pending.
 
+
+## Task 6: native macOS interaction gate
+
+[Development bundle signing](macos-native-interaction.md) now repairs and verifies
+resource signatures, with a real damaged-resource regression. Native activation
+and Tab diagnostics remain strict. Native UI automation timed out even with the
+repaired signature; physical interaction and native OS dialog/lifecycle evidence
+remain pending. This increment does not close task 6 or M7.
