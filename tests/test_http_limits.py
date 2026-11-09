@@ -48,7 +48,8 @@ class HttpLimitsTests(unittest.TestCase):
     def test_overload_keeps_pending_id_and_preserves_admitted_commit(self):
         with tempfile.TemporaryDirectory() as temp,running(max_requests=1) as (server,client):
             path=Path(temp)/'capacity.dhwb'
-            admitted=client.open(path,create=True); excess=client.open(path)
+            admitted=client.open(path,create=True); wait_for_capacity(server)
+            excess=client.open(path); wait_for_capacity(server)
             entered,released=threading.Event(),threading.Event()
             dispatch=server.dispatch; results=[]
             def gated(method,path,body):
@@ -97,11 +98,13 @@ class HttpLimitsTests(unittest.TestCase):
                     except OSError: break
                 self.assertEqual(response(peer),b'')
                 self.assertLess(time.monotonic()-started,1.5)
+            wait_for_capacity(server)
             self.assertEqual(client.request('/v1/capabilities')['api_version'],1)
 
     def test_body_trickle_never_dispatches_and_can_recover(self):
         with tempfile.TemporaryDirectory() as temp,running(max_requests=1,read_seconds=.3) as (server,client):
             book=client.open(Path(temp)/'body.dhwb',create=True)
+            wait_for_capacity(server)
             body=json.dumps({'operation_id':'incomplete','expected_state':book.state,'action':'edit',
                              'cells':[{'row':1,'col':1,'source':'wrong'}]}).encode()
             with socket.create_connection(server.server_address) as peer:
@@ -120,7 +123,9 @@ class HttpLimitsTests(unittest.TestCase):
                 self.assertLess(time.monotonic()-started,1.5)
                 self.assertIn(b'408',raw.split(b'\r\n')[0])
                 self.assertEqual(json.loads(raw.split(b'\r\n\r\n')[1])['code'],'REQUEST_TIMEOUT')
+            wait_for_capacity(server)
             self.assertEqual(book.read(r2=1,c2=1)['cells'],[])
+            wait_for_capacity(server)
             self.assertEqual(book.set(1,1,'8')['outcome'],'committed')
 
     def test_aggregate_headers_are_bounded_and_prefetched_body_is_preserved(self):
