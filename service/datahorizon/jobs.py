@@ -51,6 +51,7 @@ class PreparationJobs:
             require(time.monotonic() <= deadline, "TIMEOUT", "Preparation exceeded its time budget")
             with self.lock:
                 entry.update(completed=completed, phase=phase)
+        checkpoint.cancel_event=entry['cancel']
         try:
             result = prepare(payload, checkpoint)
             require(len(encoded(result).encode()) <= 4*1024*1024, "READ_LIMIT", "Preparation result exceeds 4 MiB")

@@ -1,0 +1,22 @@
+{
+  "task": 5,
+  "tested_commit": "ac9a0f42274497cce7fc6eeab1aac7f6bcba6f1c",
+  "candidate_sha256": "0dcf8856ca7f5c05a98be75dc2aac333570c4b42480276d01de38a7420f78bda",
+  "local": {
+    "qt_passed": 220,
+    "python_ran": 462,
+    "optional_skips": 19,
+    "real_hfs_enospc_passed": true
+  },
+  "hosted_run": "https://github.com/hybridmachine/DataHorizon/actions/runs/42552114385",
+  "all_three_macos_jobs_passed": true,
+  "native_scales": [
+    1,
+    2
+  ],
+  "artifacts_reviewed": true,
+  "limits": [
+    "No physical power-loss qualification",
+    "HFS+ image is not comprehensive APFS/SSD durability evidence"
+  ]
+}

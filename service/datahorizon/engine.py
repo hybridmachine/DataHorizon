@@ -96,10 +96,14 @@ def sql_deadline(db, deadline, *, cancel_event=None):
         raise
     finally:
         stack.pop()
-        if stack:db.set_progress_handler(stack[-1][2],1000)
-        else:
+        if not stack:connections.pop(db,None)
+        try:
             # Rollback and durable receipt recording remain possible on timeout.
-            db.set_progress_handler(None,0);connections.pop(db,None)
+            db.set_progress_handler(stack[-1][2] if stack else None,1000 if stack else 0)
+        except sqlite3.ProgrammingError:
+            # The connection owner may already have closed a rejected/replaced
+            # file. Guard cleanup must not mask the original failure or leak it.
+            pass
 
 
 def check_integrity(db,deadline):
@@ -269,7 +273,7 @@ EXPECTED_SCHEMA3 = expected_schema(SCHEMA+METADATA_SCHEMA)
 
 
 class Workbook:
-    def __init__(self, path, create=False, readonly=False, handler=None):
+    def __init__(self, path, create=False, readonly=False, handler=None, *, cancel_event=None):
         create, readonly = boolean(create, "create"), boolean(readonly, "readonly")
         self.path = Path(path).expanduser().resolve()
         self.readonly, self.handler = readonly, handler
@@ -280,6 +284,7 @@ class Workbook:
         self._calculation_jobs=None
         self._operation_jobs=None
         self.cancel_event=None
+        self._read_cancel_event=cancel_event
         self.epoch = str(uuid.uuid4())
         created_identity = None
         if create:
@@ -313,10 +318,11 @@ class Workbook:
             try:
                 self.version = self.data_version()
                 self.verify_file()
-                self.validate()
-                check_integrity(self.db,self._opening_deadline)
-                self.id = self.db.execute("SELECT workbook_id FROM dh_meta").fetchone()[0]
-                self.verify_file()
+                with sql_deadline(self.db,self._opening_deadline,cancel_event=cancel_event):
+                    self.validate()
+                    check_integrity(self.db,self._opening_deadline)
+                    self.id = self.db.execute("SELECT workbook_id FROM dh_meta").fetchone()[0]
+                    self.verify_file()
             finally:
                 try: self.db.execute("ROLLBACK")
                 except sqlite3.Error: pass
@@ -362,7 +368,7 @@ class Workbook:
     def validate(self, db=None, *, deadline=None):
         db = self.db if db is None else db
         deadline = getattr(self,"_opening_deadline",time.monotonic()+5) if deadline is None else deadline
-        with sql_deadline(db,deadline):
+        with sql_deadline(db,deadline,cancel_event=self._read_cancel_event):
             signature=schema_signature(db)
             require(signature in (EXPECTED_SCHEMA,EXPECTED_SCHEMA3),
                     "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
@@ -503,7 +509,7 @@ class Workbook:
             try:
                 # Refresh again after establishing the read snapshot.
                 self.refresh(deadline=deadline)
-                with sql_deadline(self.db,deadline):
+                with sql_deadline(self.db,deadline,cancel_event=self._read_cancel_event):
                     sheet, calc = self.sheet(sheet), self.calculator()
                     cells = []
                     response = {"cells":cells, "state":self.state(), "sheet":sheet, "range":[r1,c1,r2,c2]}
@@ -1530,8 +1536,9 @@ class Workbook:
                     require(time.monotonic()<=deadline,"TIMEOUT","Snapshot exceeded its time budget; the destination is preserved for inspection")
                 self.db.backup(target,pages=256,progress=progress,sleep=0.01)
                 _verify_destination(destination,identity)
-                self.validate(target,deadline=deadline)
-                check_integrity(target,deadline)
+                with sql_deadline(target,deadline,cancel_event=cancel_event):
+                    self.validate(target,deadline=deadline)
+                    check_integrity(target,deadline)
                 self.verify_file()
                 _verify_destination(destination,identity)
             finally:

@@ -27,7 +27,7 @@ class CalculationJobs:
             self.generations={key:value for key,value in self.generations.items() if key in retained or key==stream}
             previous=self.generations.get(stream,0);generation=previous+1;self.generations[stream]=generation;clock=utc_clock()
             def calculate(payload,checkpoint):
-                with closing(Workbook(self.book.path,readonly=True)) as snapshot:
+                with closing(Workbook(self.book.path,readonly=True,cancel_event=checkpoint.cancel_event)) as snapshot:
                     base=snapshot.calculator
                     def calculator(seconds=.25,**kwargs):
                         calc=base(seconds=2,clock=clock,transactional=True)
