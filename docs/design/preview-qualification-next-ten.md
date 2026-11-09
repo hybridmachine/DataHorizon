@@ -59,8 +59,21 @@ unchanged; explicit independent SQLite copies are documented.
 
 The isolated Python suite runs 453 tests successfully (19 existing optional
 skips), including new late coordinate/orphan/temporal damage and storage/copy
-regressions. Combined Qt/Python, updated larger-than-memory and hosted macOS
-verification are required before this task's merge.
+regressions. Combined CTest passes 205 Qt checks and 453 Python tests (19 optional
+skips). Relocated installed-app smoke passes. The updated 100,000-row sort/job
+workload verifies every row, bounded dependency reuse/invalidation, cancellation
+and resume on a database larger than 256 MiB, with 51,412,992-byte service peak
+RSS and 9.485-ms cancellation confirmation.
+
+Hosted macOS [run 42546711704](https://github.com/hybridmachine/DataHorizon/actions/runs/42546711704)
+passes all contracts, experiments, native Cocoa scales 1/2 and installed smoke.
+The downloaded native JSON and screenshots were inspected. A local native
+activation/Tab-order probe failed on this desktop session; it remains an explicit
+task 6 acceptance concern, not a passing local result. The hosted native probe
+passes that same check. The [verification record](evidence/task2-verification.json)
+identifies source and outcomes. Task 2 is complete within this documented native
+storage tier; existing large legacy-layout files may still hit the opening budget
+until explicitly copied, and broader cold-cache/platform gates remain open.
 
 ## Task 3: capacity measurements and remaining gate
 
@@ -77,3 +90,4 @@ True OS-cold evidence remains blocked: ordinary purge is denied by macOS, and
 attempt is saved with `os_cold_qualified=false`; task 3 and M1 cannot be declared
 fully complete until an administrator-enabled run passes. All other evidence is
 workload-specific, with no universal memory/latency claim.
+
