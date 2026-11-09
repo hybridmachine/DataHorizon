@@ -61,3 +61,19 @@ The isolated Python suite runs 453 tests successfully (19 existing optional
 skips), including new late coordinate/orphan/temporal damage and storage/copy
 regressions. Combined Qt/Python, updated larger-than-memory and hosted macOS
 verification are required before this task's merge.
+
+## Task 3: capacity measurements and remaining gate
+
+[The macOS driver](macos-capacity-qualification.md) now distinguishes fresh
+processes, warm reads and required OS cache eviction. At the frozen implementation,
+100 fresh/warm samples, 100-sample sparse/dense/distant/edit/formula shapes and
+bounded grid/cache/RSS measurements pass. Full native snapshot and staged-job
+disk costs are reported separately, with release cleanup verified. The two
+measurement-provenance regressions pass. PR/push CI follows the user's macOS
+focus; manual `platforms=all` retains the deferred matrices.
+
+True OS-cold evidence remains blocked: ordinary purge is denied by macOS, and
+`sudo -n /usr/sbin/purge` reports that a password is required. The actual failed
+attempt is saved with `os_cold_qualified=false`; task 3 and M1 cannot be declared
+fully complete until an administrator-enabled run passes. All other evidence is
+workload-specific, with no universal memory/latency claim.

@@ -24,8 +24,8 @@ open; this is an external resource gate, not a passing result.
 
 The 100-sample fresh/warm fixture contains 100,000 numeric cells and 270,000 1-KiB
 Text cells in a 328,114,176-byte database, larger than the 256-MiB service target.
-Fresh-process start/open/first-read p95 is 408.323 ms; the warm late viewport p95
-is 1.417 ms. Peak isolated service RSS is 39,911,424 bytes. Separate 100-sample
+Fresh-process start/open/first-read p95 is 396.852 ms; the warm late viewport p95
+is 1.550 ms. Peak isolated service RSS is 39,862,272 bytes. Separate 100-sample
 sparse, dense, distant, edit, formula-chain and long-text measurements retain
 their dataset descriptions and typed correctness checks. These measurements are
 host/workload-specific and do not establish universal workbook capacity.

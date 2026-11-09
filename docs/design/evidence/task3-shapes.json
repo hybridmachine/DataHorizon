@@ -1,0 +1,86 @@
+{
+  "recorded_at_utc": "2026-11-09T01:45:24.796606+00:00",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "architecture": "arm64",
+  "python": "3.14.6",
+  "sqlite": "3.53.4",
+  "cpu_count": 8,
+  "transport": "authenticated loopback REST",
+  "formula_chains": {
+    "16": {
+      "samples": 100,
+      "median_ms": 0.491,
+      "p95_ms": 0.565,
+      "expected": 16,
+      "p95_target_ms": 150
+    },
+    "64": {
+      "samples": 100,
+      "median_ms": 0.538,
+      "p95_ms": 0.738,
+      "expected": 64,
+      "p95_target_ms": 150
+    },
+    "128": {
+      "samples": 100,
+      "median_ms": 0.519,
+      "p95_ms": 0.674,
+      "expected": 128,
+      "p95_target_ms": 150
+    },
+    "129": {
+      "samples": 100,
+      "median_ms": 3.503,
+      "p95_ms": 5.72,
+      "expected": "#LIMIT!",
+      "p95_target_ms": 150
+    },
+    "edit_and_fresh_read": {
+      "samples": 100,
+      "median_ms": 2.56,
+      "p95_ms": 3.019
+    }
+  },
+  "limitations": [
+    "No cold OS-cache, native GUI, frozen-pane or cross-platform qualification from a single run.",
+    "Peak RSS is unavailable on Windows in this stdlib driver; timings remain available."
+  ],
+  "dataset": {
+    "storage_fixture_cells": 390001,
+    "shape": "100k sparse cells, 100x100 dense cells, 280k 1-KiB text cells; formula chains are additional"
+  },
+  "first_read_viewport": {
+    "samples": 1,
+    "median_ms": 1.594,
+    "p95_ms": 1.594
+  },
+  "os_cache_state": "uncontrolled",
+  "warm_viewport": {
+    "samples": 100,
+    "median_ms": 1.225,
+    "p95_ms": 1.614
+  },
+  "distant_viewport": {
+    "samples": 100,
+    "median_ms": 1.185,
+    "p95_ms": 2.052
+  },
+  "edit_acknowledgement": {
+    "samples": 100,
+    "median_ms": 1.19,
+    "p95_ms": 3.069
+  },
+  "dense_viewport": {
+    "samples": 100,
+    "median_ms": 7.062,
+    "p95_ms": 9.431
+  },
+  "large_disk_viewport": {
+    "samples": 100,
+    "median_ms": 1.806,
+    "p95_ms": 2.291
+  },
+  "database_bytes": 340475904,
+  "driver_peak_rss_bytes": 40566784,
+  "service_peak_rss_bytes": 101040128
+}

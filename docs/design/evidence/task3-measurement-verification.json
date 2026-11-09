@@ -1,0 +1,17 @@
+{
+  "task": 3,
+  "tested_commit": "0a32845",
+  "source_fingerprint": "d4b9e4c29a0c917f78310206090cf47d50fd7fe6286960bf10d626358565fdcf",
+  "scope": "macOS",
+  "provenance_tests_passed": 2,
+  "reports": [
+    "task3-cache-rss.json",
+    "task3-shapes.json",
+    "task3-grid.json",
+    "task3-jobs-memory-disk.json",
+    "task3-os-cold-attempt.json"
+  ],
+  "os_cold_qualified": false,
+  "remaining_gate": "Administrator-enabled successful cache eviction before every OS-cold sample",
+  "release_qualified": false
+}
