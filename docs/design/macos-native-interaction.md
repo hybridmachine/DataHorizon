@@ -17,7 +17,13 @@ verification; the repaired bundle passes. That fix did not establish UI launch
 or manual acceptance. No successful physical interaction is claimed. A Supplies
 fixture was prepared for the walkthrough but never edited through native input.
 
-Pending: launch/activation on this desktop, the full Supplies walkthrough with
+The local Qt 6.12 Cocoa probe now passes editing, clipboard paste, cancelled
+modal navigation, native job activation/Tab order, frozen panes and screenshot
+checks. Local suites pass 220 Qt checks and 462 Python tests (19 optional skips);
+the repaired signing regression passes separately. These synthetic results do
+not establish the native automation launch that timed out or physical input.
+
+Pending: native automation launch on this desktop, the full Supplies walkthrough with
 physical keyboard and external clipboard, native open/save/overwrite/cancel
 flows, app lifecycle, appearance and multiple-monitor/high-DPI checks. Task 6
 remains open until these results are recorded on a usable Mac session.

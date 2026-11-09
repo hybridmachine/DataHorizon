@@ -33,6 +33,8 @@ def build_report(build, grid_path):
                for test in tests}
     expected = {'desktop': 600,
                 'service': 600 if current['system']=='Windows' else 180}
+    if current['system']=='Darwin':
+        expected['development_bundle_signature']=30
     if budgets != expected:
         raise RuntimeError(f'Test budgets differ from the documented baseline: {budgets}')
     frozen = grid['frozen_row']
