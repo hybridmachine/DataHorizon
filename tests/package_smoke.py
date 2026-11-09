@@ -31,7 +31,7 @@ def smoke(prefix):
         api=subprocess.run([python,'-I','-B',str(Path(__file__).with_name('installed_m3_m5.py')),str((relocated/service).parent.parent)],cwd=temp,env=environment,capture_output=True,text=True,timeout=30)
         if api.returncode:raise RuntimeError('Relocated M3–M5 SDK/service checks failed: '+api.stdout+' '+api.stderr)
         if bundled:
-            cli=subprocess.run([str(relocated/'DataHorizon.app/Contents/MacOS/datahorizon'),'--help'],cwd=temp,env=environment,capture_output=True,text=True,timeout=10)
+            cli=subprocess.run([str(relocated/'DataHorizon.app/Contents/MacOS/datahorizon-cli'),'--help'],cwd=temp,env=environment,capture_output=True,text=True,timeout=10)
             if cli.returncode or 'DataHorizon' not in cli.stdout:raise RuntimeError('Bundled CLI launcher failed: '+cli.stdout+' '+cli.stderr)
         launcher=relocated/service; disabled=launcher.with_name("launch.disabled")
         launcher.rename(disabled)

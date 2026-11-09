@@ -29,7 +29,7 @@ python3 tests/package_smoke.py /new/package
 
 The app resolves its sibling `Resources/runtime/bin/python3` before external
 Python. Its service starts with isolated mode and an explicit trusted launcher;
-spawned hooks/calculations use that interpreter. `Contents/MacOS/datahorizon`
+spawned hooks/calculations use that interpreter. `Contents/MacOS/datahorizon-cli`
 provides the installed CLI with the same isolated runtime and relocated service
 root. External SDK programs may still use their own supported Python to call
 REST. Ordinary direct SQLite remains a separate explicitly bypassing path.

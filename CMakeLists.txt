@@ -110,9 +110,8 @@ if(APPLE)
         message(FATAL_ERROR "This distribution tier requires Qt 6.12.0 and its matching dependency materials")
     endif()
     if(DATAHORIZON_RUNTIME_ROOT)
-        install(DIRECTORY "${DATAHORIZON_RUNTIME_ROOT}/" DESTINATION DataHorizon.app/Contents/Resources/runtime
+        install(DIRECTORY "${DATAHORIZON_RUNTIME_ROOT}/" DESTINATION DataHorizon.app/Contents/Resources/runtime USE_SOURCE_PERMISSIONS
             PATTERN __pycache__ EXCLUDE)
-        install(PROGRAMS packaging/datahorizon.in DESTINATION DataHorizon.app/Contents/MacOS RENAME datahorizon)
     endif()
 else()
     install(DIRECTORY service/datahorizon DESTINATION share/datahorizon/service
@@ -132,3 +131,9 @@ endif()
 qt_generate_deploy_app_script(TARGET DataHorizon OUTPUT_SCRIPT deploy_script
     NO_UNSUPPORTED_PLATFORM_ERROR)
 install(SCRIPT "${deploy_script}")
+if(APPLE AND DATAHORIZON_RUNTIME_ROOT)
+    # Case-insensitive macOS filesystems make 'datahorizon' collide with the
+    # GUI's 'DataHorizon'. Add the distinct script after macdeployqt scans Mach-O.
+    install(PROGRAMS packaging/datahorizon.in DESTINATION DataHorizon.app/Contents/MacOS RENAME datahorizon-cli)
+    install(CODE "execute_process(COMMAND \"${CMAKE_COMMAND}\" \"-DAPP_BUNDLE=\${CMAKE_INSTALL_PREFIX}/DataHorizon.app\" -P \"${CMAKE_CURRENT_SOURCE_DIR}/cmake/SignDevelopmentBundle.cmake\" COMMAND_ERROR_IS_FATAL ANY)")
+endif()
