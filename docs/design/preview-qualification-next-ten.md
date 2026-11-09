@@ -91,3 +91,11 @@ attempt is saved with `os_cold_qualified=false`; task 3 and M1 cannot be declare
 fully complete until an administrator-enabled run passes. All other evidence is
 workload-specific, with no universal memory/latency claim.
 
+## Task 4: automatic viewport calculation
+
+[The bounded viewport scheduler](viewport-calculation.md) delivers cached inputs
+before pending formula values, calculates visible/frozen tiles through REST,
+cancels obsolete admitted work and publishes only matching state/generation
+results. Per-stream generations isolate automatic and explicit calculations.
+Local combined verification passes 219 Qt checks and 457 Python tests (19 optional skips). Hosted macOS [run 42551536569](https://github.com/hybridmachine/DataHorizon/actions/runs/42551536569) passes all three jobs, including native Cocoa scales 1/2 and relocated installed smoke. Downloaded native JSON and screenshots were inspected. The [source record](evidence/task4-verification.json) identifies the tested implementation. Task 4 is complete for this bounded tier; broader formula and native/manual gates remain open.
+

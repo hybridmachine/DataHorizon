@@ -62,6 +62,65 @@
 #include <QTest>
 #include <memory>
 
+class ViewportCalculationServer : public QTcpServer {
+public:
+    struct Job {QJsonObject request;QString status="running";double value=2;bool wrongState=false;};
+    QList<Job> jobs;QList<QPointer<QTcpSocket>> admissions;QJsonArray ranges;int cancellations=0,releases=0;bool completeOnCancel=false,holdAdmissions=false,loseAdmissionReply=false;
+    ViewportCalculationServer() {
+        listen(QHostAddress::LocalHost);
+        connect(this,&QTcpServer::newConnection,this,[this]{
+            auto *socket=nextPendingConnection();connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
+            connect(socket,&QTcpSocket::readyRead,socket,[this,socket]{
+                const auto bytes=socket->property("request").toByteArray()+socket->readAll();socket->setProperty("request",bytes);
+                const int end=bytes.indexOf("\r\n\r\n");if(end<0 || socket->property("handled").toBool())return;
+                const int length=QRegularExpression("Content-Length: (\\d+)",QRegularExpression::CaseInsensitiveOption).match(QString::fromLatin1(bytes.left(end))).captured(1).toInt();
+                if(bytes.size()<end+4+length)return;socket->setProperty("handled",true);
+                const auto path=QString::fromLatin1(bytes.left(bytes.indexOf("\r\n")).split(' ')[1]);
+                const auto body=QJsonDocument::fromJson(bytes.mid(end+4)).object();
+                if(path.endsWith("/range")) {
+                    ranges.append(body);auto cell=input(body);cell["calculation"]="pending";cell["display"]="…";cell["value"]=QJsonValue::Null;
+                    send(socket,{{"state",body.value("expected_state").toString("state")},{"sheet",body["sheet"]},{"cells",QJsonArray{cell}}});return;
+                }
+                if(path.endsWith("/calculation/jobs")){
+                    // Qt 6.8 may retransmit a buffered POST after the peer closes
+                    // before a reply. The real service deduplicates this job ID.
+                    for(int i=0;i<jobs.size();++i)if(jobs[i].request["job_id"]==body["job_id"]){send(socket,reply(i));return;}
+                    jobs.append({body});admissions.append(socket);if(loseAdmissionReply)socket->disconnectFromHost();else if(!holdAdmissions)send(socket,reply(jobs.size()-1));return;
+                }
+                for(int i=0;i<jobs.size();++i) {
+                    const auto resource="/v1/workbooks/book/calculation/jobs/"+jobs[i].request["job_id"].toString();
+                    if(path==resource+"/cancel"){++cancellations;jobs[i].status=completeOnCancel?"completed":"cancelled";jobs[i].value=99;send(socket,reply(i));return;}
+                    if(path==resource+"/release"){++releases;send(socket,{{"released",true}});return;}
+                    if(path==resource){send(socket,reply(i));return;}
+                }
+                send(socket,{{"message","Unknown fake resource"}});
+            });
+        });
+    }
+    QString url() const {return "http://127.0.0.1:"+QString::number(serverPort());}
+    void complete(int i,double value) {jobs[i].status="completed";jobs[i].value=value;}
+    void acknowledge(int i) {if(admissions[i])send(admissions[i],reply(i));}
+private:
+    static QJsonObject input(const QJsonObject &request) {
+        const auto rows=request["rows"].toArray();const int row=rows.isEmpty()?request["r1"].toInt(1):rows.first().toInt();
+        return {{"row",row},{"col",request["c1"].toInt(1)},{"source","=1+1"},{"kind","formula"},{"input_kind","formula"},{"style",QJsonObject{}}};
+    }
+    QJsonObject reply(int i) const {
+        const auto &job=jobs[i];const auto &body=job.request;
+        QJsonObject result{{"job_id",body["job_id"]},{"status",job.status},{"state",body["expected_state"]},{"generation",i+1},{"stream_id",body["stream_id"]}};
+        if(job.status=="completed") {
+            auto cell=input(body);cell["value"]=job.value;cell["display"]=QString::number(job.value);cell["calculation"]="current";
+            result["result"]=QJsonObject{{"state",job.wrongState?QJsonValue("other"):body["expected_state"]},{"sheet",body["sheet"]},{"generation",i+1},{"cells",QJsonArray{cell}}};
+        }
+        if(job.status=="failed")result["error"]=QJsonObject{{"message","Required background snapshot failed"}};
+        return result;
+    }
+    static void send(QTcpSocket *socket,const QJsonObject &result) {
+        const auto body=QJsonDocument(result).toJson(QJsonDocument::Compact);
+        socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(body.size())+"\r\n\r\n"+body);socket->disconnectFromHost();
+    }
+};
+
 class DelayedSummaryServer : public QTcpServer {
 public:
     struct Pending {QPointer<QTcpSocket> socket;QJsonObject range;};
@@ -257,6 +316,95 @@ public:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void backgroundDisplayChangesPreserveInCellDraftAndCaret_data() {
+        QTest::addColumn<int>("pane");QTest::newRow("main")<<0;QTest::newRow("frozen-row")<<1;QTest::newRow("frozen-column")<<2;QTest::newRow("corner")<<3;
+    }
+    void backgroundDisplayChangesPreserveInCellDraftAndCaret() {
+        QFETCH(int,pane);QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("draft.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","=1+1"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model();auto *grid=window.findChild<QTableView *>("grid");QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("2"),5000);
+        QTableView *view=grid;
+        if(pane==1){window.findChild<QAction *>("freezeTopRowAction")->trigger();view=window.findChild<QTableView *>("frozenTopRow");}
+        if(pane==2){window.findChild<QAction *>("freezeFirstColumnAction")->trigger();view=window.findChild<QTableView *>("frozenFirstColumn");}
+        if(pane==3){grid->setCurrentIndex(model->index(1,1));window.findChild<QAction *>("freezePanesAction")->trigger();view=window.findChild<QTableView *>("frozenCorner");}
+        QVERIFY(view && view->isVisible());view->setCurrentIndex(view->model()->index(0,0));view->edit(view->currentIndex());
+        QPointer<QLineEdit> editor=view->findChild<QLineEdit *>();QVERIFY(editor);QCOMPARE(editor->text(),QString("=1+1"));
+        editor->setText("=SUM(7,8)");editor->setModified(true);editor->setSelection(2,3);const auto state=model->state();QSignalSpy writes(&window,&MainWindow::operationFinished);
+        // This is the same notification emitted by a derived tile publication.
+        // Qt 6.8 updates active editors even when the supplied roles omit EditRole.
+        emit model->dataChanged(model->index(0,0),model->index(31,15),{Qt::DisplayRole});QTest::qWait(20);
+        QVERIFY(editor);QCOMPARE(editor->text(),QString("=SUM(7,8)"));QCOMPARE(editor->selectionStart(),2);QCOMPARE(editor->selectedText(),QString("UM("));
+        QCOMPARE(model->state(),state);QCOMPARE(model->cell(model->index(0,0))["source"].toString(),QString("=1+1"));QVERIFY(writes.isEmpty());
+        QTest::keyClick(editor,Qt::Key_Escape);
+    }
+    void viewportCalculationsPublishCurrentResultsWithoutChangingSources() {
+        ViewportCalculationServer server;RestClient client;client.configure(server.url(),"test");SheetModel model(&client,nullptr,128,32);
+        model.bind("book","sheet","state",false);const auto cell=model.index(0,0);model.data(cell);
+        QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),1,3000);QCOMPARE(model.data(cell).toString(),QString("…"));
+        QVERIFY(model.flags(cell).testFlag(Qt::ItemIsEditable));QCOMPARE(server.ranges.first().toObject()["calculation"].toString(),QString("cached"));
+        server.complete(0,2);QTRY_COMPARE_WITH_TIMEOUT(model.data(cell).toString(),QString("2"),3000);
+        QCOMPARE(model.cell(cell)["source"].toString(),QString("=1+1"));QTRY_COMPARE_WITH_TIMEOUT(server.releases,1,3000);
+    }
+    void viewportCalculationsDiscardCompletionAfterRebind() {
+        ViewportCalculationServer server;server.completeOnCancel=true;RestClient client;client.configure(server.url(),"test");SheetModel model(&client,nullptr,128,32);
+        model.bind("book","sheet","state",false);model.data(model.index(0,0));QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),1,3000);
+        model.bind("book","sheet","state",false);model.data(model.index(0,0));QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),2,3000);
+        QCOMPARE(server.cancellations,1);QCOMPARE(model.data(model.index(0,0)).toString(),QString("…"));
+        server.complete(1,8);QTRY_COMPARE_WITH_TIMEOUT(model.data(model.index(0,0)).toString(),QString("8"),3000);
+    }
+    void viewportCancellationWaitsForTheCapturedAdmission() {
+        ViewportCalculationServer server;server.holdAdmissions=true;RestClient client;client.configure(server.url(),"test");SheetModel model(&client,nullptr,128,32);
+        model.bind("book","sheet","state",false);model.data(model.index(0,0));QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),1,3000);
+        model.bind("book","sheet","state",false);model.data(model.index(0,0));QTest::qWait(50);QCOMPARE(server.cancellations,0);
+        server.acknowledge(0);QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),2,3000);QCOMPARE(server.cancellations,1);
+        server.complete(1,8);server.acknowledge(1);QTRY_COMPARE_WITH_TIMEOUT(model.data(model.index(0,0)).toString(),QString("8"),3000);
+    }
+    void staleViewportSnapshotRequestsAnExternalRefresh() {
+        ViewportCalculationServer server;RestClient client;client.configure(server.url(),"test");SheetModel model(&client,nullptr,128,32);QSignalSpy refresh(&model,&SheetModel::externalChange);
+        model.bind("book","sheet","state",false);model.data(model.index(0,0));QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),1,3000);server.jobs[0].status="stale";
+        QTRY_COMPARE_WITH_TIMEOUT(refresh.count(),1,3000);QVERIFY(model.data(model.index(0,0)).toString()!=QString("99"));
+    }
+    void viewportCalculationReconcilesLostStartReplyWithoutCreatingAgain() {
+        ViewportCalculationServer server;server.loseAdmissionReply=true;RestClient client;client.configure(server.url(),"test");SheetModel model(&client,nullptr,128,32);
+        model.bind("book","sheet","state",false);model.data(model.index(0,0));QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),1,3000);server.complete(0,2);
+        QTRY_COMPARE_WITH_TIMEOUT(model.data(model.index(0,0)).toString(),QString("2"),3000);QCOMPARE(server.jobs.size(),1);QTRY_COMPARE_WITH_TIMEOUT(server.releases,1,3000);
+    }
+    void viewportCalculationsCancelTilesThatLeaveVisiblePanes() {
+        ViewportCalculationServer server;server.completeOnCancel=true;RestClient client;client.configure(server.url(),"test");SheetModel model(&client,nullptr,128,32);
+        model.bind("book","sheet","state",false);model.setVisibleRanges({QRect(0,0,1,1)});model.data(model.index(0,0));QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),1,3000);
+        model.setVisibleRanges({QRect(0,64,1,1)});model.data(model.index(64,0));QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),2,3000);
+        QCOMPARE(server.cancellations,1);QVERIFY(model.data(model.index(0,0)).toString()!=QString("99"));
+        server.complete(1,8);QTRY_COMPARE_WITH_TIMEOUT(model.data(model.index(64,0)).toString(),QString("8"),3000);
+    }
+    void viewportCalculationsKeepProjectedSourceCoordinates() {
+        ViewportCalculationServer server;RestClient client;client.configure(server.url(),"test");SheetModel model(&client,nullptr,128,32);
+        model.bind("book","sheet","state",true);model.setProjection({9,19});model.data(model.index(0,0));QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),1,3000);
+        QCOMPARE(server.jobs[0].request["rows"].toArray(),QJsonArray({10,20}));server.complete(0,2);
+        QTRY_COMPARE_WITH_TIMEOUT(model.data(model.index(0,0)).toString(),QString("2"),3000);QCOMPARE(model.sourceRow(0),9);
+    }
+    void viewportCalculationFailureIsVisibleWithoutFreshReadFallback() {
+        ViewportCalculationServer server;RestClient client;client.configure(server.url(),"test");SheetModel model(&client,nullptr,128,32);QSignalSpy issues(&model,&SheetModel::issue);
+        model.bind("book","sheet","state",false);model.data(model.index(0,0));QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),1,3000);server.jobs[0].status="failed";
+        QTRY_COMPARE_WITH_TIMEOUT(model.data(model.index(0,0)).toString(),QString("Unavailable"),3000);QCOMPARE(issues.count(),1);QCOMPARE(server.ranges.size(),1);
+        QCOMPARE(model.cell(model.index(0,0))["source"].toString(),QString("=1+1"));
+    }
+    void viewportCalculationRejectsWrongStateAndServiceReplies() {
+        ViewportCalculationServer oldServer,newServer;RestClient client;client.configure(oldServer.url(),"test");SheetModel model(&client,nullptr,128,32);
+        model.bind("book","sheet","state",false);model.data(model.index(0,0));QTRY_COMPARE_WITH_TIMEOUT(oldServer.jobs.size(),1,3000);
+        client.configure(newServer.url(),"new");model.bind("book","sheet","state",false);model.data(model.index(0,0));QTRY_COMPARE_WITH_TIMEOUT(newServer.jobs.size(),1,3000);
+        oldServer.complete(0,99);newServer.jobs[0].wrongState=true;newServer.complete(0,2);
+        QTRY_COMPARE_WITH_TIMEOUT(model.data(model.index(0,0)).toString(),QString("Unavailable"),3000);QTRY_COMPARE_WITH_TIMEOUT(newServer.releases,1,3000);
+    }
+    void viewportCalculationQueueIsBoundedAndPrunedBeforeAdmission() {
+        ViewportCalculationServer server;RestClient client;client.configure(server.url(),"test");int publications=0;
+        ViewportCalculations jobs(&client,nullptr,[](const ViewportCalculations::Work &){return true;},[&](const ViewportCalculations::Work &work,QJsonObject,QString){QCOMPARE(work.key,quint64(63));++publications;});
+        auto work=[](int key){return ViewportCalculations::Work{quint64(key),1,"book",{{"sheet","sheet"},{"expected_state","state"},{"r1",key*32+1},{"r2",key*32+32},{"c1",1},{"c2",16}}};};
+        jobs.enqueue(work(0));QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),1,3000);for(int key=1;key<64;++key)jobs.enqueue(work(key));
+        QCOMPARE(jobs.queued(),16);jobs.retain({63});QTRY_COMPARE_WITH_TIMEOUT(server.jobs.size(),2,3000);QCOMPARE(server.cancellations,1);
+        server.complete(1,2);QTRY_COMPARE_WITH_TIMEOUT(publications,1,3000);QCOMPARE(server.jobs.size(),2);
+    }
     void initTestCase(){
         m_originalDialogAttribute=QCoreApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
         // QTest timers cannot reliably drive AppKit's separate NSAlert modal loop.
@@ -606,7 +754,7 @@ private slots:
         answerNextDialog(QMessageBox::Yes); window.findChild<QAction *>("insertRowsAction")->trigger();
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
         QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(4,1),Qt::EditRole).toString(),QString("=$A$3"),5000);
-        QCOMPARE(model->data(model->index(4,1)).toString(),QString("7"));
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(4,1)).toString(),QString("7"),5000);
         grid->selectColumn(0); answerNextDialog(QMessageBox::Yes);
         window.findChild<QAction *>("insertColumnsAction")->trigger();
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
@@ -1284,7 +1432,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
         QCOMPARE(window.model()->sheet(),id);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->cell(window.model()->index(0,0))["source"].toString(),QString("='O''Brien'!A2"),5000);
-        QCOMPARE(window.model()->data(window.model()->index(0,0)).toString(),QString("7"));
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("7"),5000);
     }
     void sheetDuplicateDialogCopiesSelfReferencesWithoutChangingSource() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
@@ -1308,7 +1456,7 @@ private slots:
         auto *tabs=window.findChild<QTabBar *>(); QCOMPARE(tabs->count(),2); tabs->setCurrentIndex(1);
         QVERIFY(window.model()->sheet()!=original);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->cell(window.model()->index(0,0))["source"].toString(),QString("='Copy'!A2"),5000);
-        QCOMPARE(window.model()->data(window.model()->index(0,0)).toString(),QString("9"));
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("9"),5000);
     }
     void sheetDeleteDialogWarnsAndReportsBrokenReferences() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
@@ -1482,7 +1630,7 @@ private slots:
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("catalog-editor.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);QJsonObject catalog;QString error;bool loaded=false;window.findChild<RestClient *>()->request("/v1/functions",{},[&](QJsonObject result,QString issue){catalog=result;error=issue;loaded=true;},false);QTRY_VERIFY_WITH_TIMEOUT(loaded,5000);QVERIFY(error.isEmpty());QVERIFY(validFunctionCatalog(catalog));
         auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();auto *source=dynamic_cast<FormulaLineEdit *>(window.findChild<QLineEdit *>("source"));int changes=1;
         for(const auto &item:catalog["functions"].toArray())for(const auto &value:item.toObject()["examples"].toArray()){
-            const auto example=value.toObject();QJsonArray cells;for(int row=1;row<=4;++row)for(int col=1;col<=4;++col){QJsonObject cell{{"row",row},{"col",col},{"source",""}};for(const auto &input:example["inputs"].toArray())if(input.toObject()["row"].toInt()==row && input.toObject()["col"].toInt()==col)cell=input.toObject();cells.append(cell);}window.submit({{"action","edit"},{"cells",cells}});++changes;QTRY_COMPARE_WITH_TIMEOUT(opened.count(),changes,10000);grid->setCurrentIndex(model->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);source->setFocus();source->selectAll();QTest::keyClicks(source,example["formula"].toString());QTest::keyClick(source,Qt::Key_Return);++changes;QTRY_COMPARE_WITH_TIMEOUT(opened.count(),changes,10000);QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,0)),5000);if(example["result"].isString())QCOMPARE(model->data(model->index(0,0)).toString(),example["result"].toString());else QCOMPARE(model->cell(model->index(0,0))["value"],example["result"]);
+            const auto example=value.toObject();QJsonArray cells;for(int row=1;row<=4;++row)for(int col=1;col<=4;++col){QJsonObject cell{{"row",row},{"col",col},{"source",""}};for(const auto &input:example["inputs"].toArray())if(input.toObject()["row"].toInt()==row && input.toObject()["col"].toInt()==col)cell=input.toObject();cells.append(cell);}window.submit({{"action","edit"},{"cells",cells}});++changes;QTRY_COMPARE_WITH_TIMEOUT(opened.count(),changes,10000);grid->setCurrentIndex(model->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);source->setFocus();source->selectAll();QTest::keyClicks(source,example["formula"].toString());QTest::keyClick(source,Qt::Key_Return);++changes;QTRY_COMPARE_WITH_TIMEOUT(opened.count(),changes,10000);QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,0)),5000);QTRY_VERIFY_WITH_TIMEOUT(QStringList({"current","error"}).contains(model->cell(model->index(0,0))["calculation"].toString()),5000);if(example["result"].isString())QCOMPARE(model->data(model->index(0,0)).toString(),example["result"].toString());else QCOMPARE(model->cell(model->index(0,0))["value"],example["result"]);
         }
     }
     void formulaTracingReadsStoredReferencesWithoutMutation() {

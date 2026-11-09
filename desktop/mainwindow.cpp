@@ -144,6 +144,16 @@ public:
     std::function<bool(const QModelIndex &,int)> tabPressed;
     bool hasEditor()const{return m_editor && m_index.isValid();}
     FormulaLineEdit *activeEditor()const{return hasEditor()?dynamic_cast<FormulaLineEdit *>(m_editor.data()):nullptr;}
+    void setEditorData(QWidget *editor,const QModelIndex &index) const override {
+        if(editor==m_editor && index==m_index) {
+            // QAbstractItemView refreshes editor data even for display-only
+            // dataChanged signals. An active editor owns its draft/caret until
+            // commit, cancellation or the existing binding-reset lifecycle.
+            if(m_editorInitialized)return;
+            m_editorInitialized=true;
+        }
+        QStyledItemDelegate::setEditorData(editor,index);
+    }
     void paint(QPainter *painter,const QStyleOptionViewItem &option,const QModelIndex &index) const override {
         QStyledItemDelegate::paint(painter,option,index);
         if(referenceColors){int inset=3;for(const auto &color:referenceColors(index.row(),index.column())){painter->save();painter->setClipRect(option.rect);painter->setBrush(Qt::NoBrush);painter->setPen(QPen(color,1.5));painter->drawRect(option.rect.adjusted(inset,inset,-inset,-inset));painter->restore();inset+=3;}}
@@ -154,7 +164,7 @@ public:
         if (canEdit && !canEdit()) return nullptr;
         Q_UNUSED(option);auto *editor=new FormulaLineEdit(parent);editor->setFrame(false);editor->syntaxChanged=syntaxChanged;if(functionCatalog)editor->setCatalog(functionCatalog());
         if (auto *line = qobject_cast<QLineEdit *>(editor)) {
-            line->setMaxLength(65536); m_editor=line; m_index=index;
+            line->setMaxLength(65536); m_editor=line; m_index=index;m_editorInitialized=false;
             m_original=index.data(Qt::EditRole).toString();
             const auto item=index.data(SheetModel::CellRole).toJsonObject();
             m_inputKind=item["input_kind"].toString("auto");
@@ -200,6 +210,7 @@ protected:
     }
 private:
     mutable QPointer<QLineEdit> m_editor;
+    mutable bool m_editorInitialized=false;
     mutable QPersistentModelIndex m_index;
     mutable QString m_original, m_inputKind;
 };
@@ -635,6 +646,7 @@ void MainWindow::buildUi() {
 }
 
 void MainWindow::fitVisibleWrappedRows() {
+    updateVisibleCalculations();
     QScopedValueRollback<bool> applying(m_applyingView,true);
     // Only inspect loaded visible cells; never resize a million-row model to
     // contents or fetch full sources to measure presentation.
@@ -669,6 +681,20 @@ void MainWindow::fitVisibleWrappedRows() {
             if(height>26) m_wrappedRows.insert(row); else m_wrappedRows.remove(row);
         }
     }
+}
+
+void MainWindow::updateVisibleCalculations() {
+    if(!m_frozenTop)return;
+    auto views=m_frozenTop->views();views.append(m_grid);QList<QRect> ranges;
+    for(auto *view:views) {
+        if(!view->isVisible() || m_model->rowCount()==0)continue;
+        const int firstRow=qMax(0,view->rowAt(0)),firstCol=qMax(0,view->columnAt(0));
+        int lastRow=view->rowAt(view->viewport()->height()-1),lastCol=view->columnAt(view->viewport()->width()-1);
+        if(lastRow<0)lastRow=qMin(m_model->rowCount()-1,firstRow+512);
+        if(lastCol<0)lastCol=qMin(m_model->columnCount()-1,firstCol+256);
+        ranges.append(QRect(firstCol,firstRow,lastCol-firstCol+1,lastRow-firstRow+1));
+    }
+    m_model->setVisibleRanges(ranges);
 }
 
 QString MainWindow::viewSettingsPath() const {
@@ -1161,7 +1187,7 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     m_grid->setCurrentIndex(m_model->index(previousRow,previousColumn));
     m_undo->setText(info["undo"].isString() ? "Undo " + info["undo"].toString() : "Undo");
     m_redo->setText(info["redo"].isString() ? "Redo " + info["redo"].toString() : "Redo");
-    setBusy(false, info["readonly"].toBool() ? "Read-only • Calculations evaluated on read" : "Stored automatically • Calculations evaluated on read");
+    setBusy(false, info["readonly"].toBool() ? "Read-only • Visible formulas calculate in background" : "Stored automatically • Visible formulas calculate in background");
     m_undo->setEnabled(info["undo"].isString() && !info["readonly"].toBool());
     m_redo->setEnabled(info["redo"].isString() && !info["readonly"].toBool());
     setWindowTitle(QFileInfo(info["path"].toString()).fileName() + " — DataHorizon development preview");
@@ -1730,6 +1756,7 @@ void MainWindow::operationJobs() {
 void MainWindow::calculateSelection() {
     if(m_busy || m_unknown || m_info.isEmpty())return;
     auto range=selectedRange();if(range.isEmpty())return;const auto target=targetContext(range);const auto service=m_client->url();const auto generation=++m_calculationGeneration;
+    m_model->setBackgroundEnabled(false);
     auto request=range;request["sheet"]=m_model->sheet();request["expected_state"]=m_info["state"];request["job_id"]=QUuid::createUuid().toString(QUuid::WithoutBraces);
     const auto resource=base()+"/calculation/jobs/"+request["job_id"].toString();
     auto *progress=new QProgressDialog(tr("Calculating stored selection…"),tr("Cancel"),0,0,this);progress->setObjectName("backgroundCalculationProgress");progress->setWindowModality(Qt::NonModal);progress->setMinimumDuration(0);progress->show();
@@ -1738,6 +1765,7 @@ void MainWindow::calculateSelection() {
     auto finish=[this,target,service,generation,resource,progress,timer](QJsonObject result,QString error){
         if(error.isEmpty() && result["status"]=="running"){progress->setLabelText(result["phase"].toString());timer->start();return;}
         timer->stop();progress->hide();progress->deleteLater();m_client->request(resource+"/release",{},[](QJsonObject,QString){});
+        if(service==m_client->url() && generation==m_calculationGeneration)m_model->setBackgroundEnabled(true);
         if(service!=m_client->url() || generation!=m_calculationGeneration || !matchesTarget(target))return;
         if(!error.isEmpty()){issue(error);return;}const auto status=result["status"].toString();
         if(status=="completed"){const auto snapshot=result["result"].toObject();int errors=0;for(const auto &cell:snapshot["cells"].toArray())errors+=cell.toObject()["calculation"]=="error";m_status->setText(tr("Background snapshot: %1 cells, %2 formula errors • UTC %3").arg(snapshot["cells"].toArray().size()).arg(errors).arg(result["clock"].toString()));}
@@ -2538,6 +2566,10 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
+    if(event->type()==QEvent::Resize || event->type()==QEvent::Show || event->type()==QEvent::Hide) {
+        if(object==m_grid || (m_frozenTop && m_frozenTop->views().contains(qobject_cast<QTableView *>(object))))
+            QTimer::singleShot(0,this,[this]{updateVisibleCalculations();});
+    }
     if(m_painterPending || !m_painterRows.isEmpty()) {
         if(event->type()==QEvent::KeyPress){const auto key=static_cast<QKeyEvent *>(event)->key();cancelFormatPainter();if(key==Qt::Key_Escape)return true;}
         else if(!m_painterRows.isEmpty() && formatPainterMouseEvent(object,event))return true;

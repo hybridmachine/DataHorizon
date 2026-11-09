@@ -88,6 +88,7 @@ private:
     void enterTemporal();
     void enterLocalized();
     void calculateSelection();
+    void updateVisibleCalculations();
     void portableView(bool save);
     void declareRecords();
     void recordCommand();

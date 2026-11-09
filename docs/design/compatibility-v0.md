@@ -71,8 +71,10 @@ is #LIMIT!, including runtime recursion exhaustion. Numeric overflow remains
 #NUM!. Errors retain editable source and never become an invented value.
 An export with any selected formula error is blocked. Evaluation budgets include
 AST work as well as referenced cells, so not every 10,000-cell dependency shape
-fits the initial limit. Recalculation is synchronous and bounded; there are no
-background results that can overwrite a newer input state.
+fits the initial limit. Managed reads/transactional hook reads retain bounded
+evaluation. The GUI uses cached preview inputs plus automatic bounded read-only
+[viewport calculations](viewport-calculation.md); state, sheet, model and stream
+generation checks prevent older results from overwriting a newer input state.
 
 ## Import and export
 

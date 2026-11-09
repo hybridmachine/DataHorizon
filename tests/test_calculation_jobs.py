@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 import uuid
 
-from datahorizon.engine import Workbook
+from datahorizon.engine import Workbook,EngineError,encoded
 from datahorizon.client import LocalService
 from datahorizon.service import openapi
 
@@ -26,6 +26,8 @@ class CalculationJobTests(unittest.TestCase):
     def test_snapshot_generation_cached_pending_and_read_only_outcomes(self):
         state=self.book.state();cells=self.book.read('Sheet1',dict(r2=2,calculation='cached'))['cells'];self.assertEqual(cells[1]['calculation'],'pending')
         first=self.terminal(self.start());self.assertEqual(first['calculation'],'current');self.assertEqual(first['result']['cells'][1]['value'],4)
+        duplicate=self.jobs.start(dict(job_id=first['job_id'],expected_state=state,r2=2))
+        self.assertEqual(duplicate['generation'],first['generation']);self.assertEqual(len(self.jobs.jobs.entries),1)
         second=self.terminal(self.start());self.assertGreater(second['generation'],first['generation']);self.assertEqual(self.jobs.access(first['job_id'])['status'],'stale')
         self.assertEqual(self.book.state(),state)
         self.assertTrue(self.jobs.access(first['job_id'],'release')['released'])
@@ -57,3 +59,26 @@ class CalculationJobTests(unittest.TestCase):
             while job['status']=='running' and time.monotonic()<deadline:time.sleep(.01);job=book.calculation(job['job_id'])
             self.assertEqual(job['result']['cells'][0]['value_kind'],'date');self.assertTrue(book.calculation(job['job_id'],'release')['released'])
         self.assertIn('/v1/workbooks/{workbook}/calculation/jobs',openapi()['paths'])
+
+    def test_independent_viewport_stream_does_not_supersede_explicit_calculation(self):
+        manual=self.terminal(self.start())
+        viewport=self.terminal(self.jobs.start(dict(job_id='viewport',stream_id='viewport-one',expected_state=self.book.state(),r2=2,preview=True)))
+        self.assertEqual(viewport['stream_id'],'viewport-one')
+        self.assertEqual(self.jobs.access(manual['job_id'])['status'],'completed')
+        later=self.terminal(self.jobs.start(dict(job_id='viewport-next',stream_id='viewport-one',expected_state=self.book.state(),r2=2,preview=True)))
+        self.assertGreater(later['generation'],viewport['generation'])
+        self.assertEqual(self.jobs.access(viewport['job_id'])['status'],'stale')
+        self.assertEqual(self.jobs.access(manual['job_id'])['status'],'completed')
+        for value in ('',None,True,'x'*65,'spaces are invalid'):
+            with self.assertRaises(EngineError):self.jobs.start(dict(job_id='invalid-stream',stream_id=value,expected_state=self.book.state()))
+
+    def test_pending_formula_previews_bound_sources_before_response_accounting(self):
+        sheet=self.book.sheet('Sheet1');source='="'+'x'*65000+'"'
+        self.book.db.executemany("INSERT INTO cells(sheet_id,row,col,source,kind) VALUES(?,?,2,?,'formula')",((sheet,row,source) for row in range(1,101)))
+        before=self.book.state()
+        result=self.book.read('Sheet1',dict(r2=100,c1=2,c2=2,calculation='cached',preview=True))
+        self.assertEqual(len(result['cells']),100)
+        self.assertTrue(all(cell['calculation']=='pending' and cell['source_omitted'] and len(cell['source'])==128 for cell in result['cells']))
+        self.assertLess(len(encoded(result).encode()),100000)
+        with self.assertRaises(EngineError) as error:self.book.read('Sheet1',dict(r2=100,c1=2,c2=2,calculation='cached'))
+        self.assertEqual(error.exception.body['code'],'READ_LIMIT');self.assertEqual(self.book.state(),before)

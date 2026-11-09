@@ -5,6 +5,8 @@
 #include <QAbstractTableModel>
 #include <QCache>
 #include <QSet>
+#include <QRect>
+#include "viewportcalculations.h"
 
 class SheetModel : public QAbstractTableModel {
     Q_OBJECT
@@ -33,10 +35,13 @@ public:
     QJsonObject cacheMetrics() const {
         return {{"tiles",int(m_cache.size())},{"tile_charge_bytes",int(m_cache.totalCost())},
                 {"tile_budget_bytes",int(m_cache.maxCost())},{"source_charge_bytes",int(m_sources.totalCost())},
-                {"source_budget_bytes",int(m_sources.maxCost())},{"pending_tiles",int(m_loading.size())}};
+                {"source_budget_bytes",int(m_sources.maxCost())},{"pending_tiles",int(m_loading.size())},
+                {"queued_calculation_tiles",m_background->queued()},{"active_viewport_calculation",m_background->active()}};
     }
     static QString columnName(int oneBased);
     void setHiddenSections(const QSet<int> &rows,const QSet<int> &columns);
+    void setVisibleRanges(const QList<QRect> &ranges);
+    void setBackgroundEnabled(bool enabled);
 signals:
     void editRequested(int row, int col, QString source, QString kind);
     void issue(QString message);
@@ -46,6 +51,10 @@ private:
     struct Tile { QHash<int, QJsonObject> cells; };
     void fetch(int tileRow, int tileCol) const;
     static quint64 tileKey(int tileRow, int tileCol);
+    bool needsCalculation(quint64 key) const;
+    void queueCalculation(quint64 key) const;
+    void calculated(const ViewportCalculations::Work &work,const QJsonObject &snapshot,const QString &error);
+    ViewportCalculations *m_background;
     RestClient *m_client;
     QString m_workbook, m_sheet, m_state;
     bool m_readonly = true, m_busy = false;
