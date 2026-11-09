@@ -335,6 +335,29 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14"),5000);
 #endif
     }
+    void backgroundDisplayChangesPreserveInCellDraftAndCaret_data() {
+        QTest::addColumn<int>("pane");QTest::newRow("main")<<0;QTest::newRow("frozen-row")<<1;QTest::newRow("frozen-column")<<2;QTest::newRow("corner")<<3;
+    }
+    void backgroundDisplayChangesPreserveInCellDraftAndCaret() {
+        QFETCH(int,pane);QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("draft.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","=1+1"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *model=window.model();auto *grid=window.findChild<QTableView *>("grid");QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("2"),5000);
+        QTableView *view=grid;
+        if(pane==1){window.findChild<QAction *>("freezeTopRowAction")->trigger();view=window.findChild<QTableView *>("frozenTopRow");}
+        if(pane==2){window.findChild<QAction *>("freezeFirstColumnAction")->trigger();view=window.findChild<QTableView *>("frozenFirstColumn");}
+        if(pane==3){grid->setCurrentIndex(model->index(1,1));window.findChild<QAction *>("freezePanesAction")->trigger();view=window.findChild<QTableView *>("frozenCorner");}
+        QVERIFY(view && view->isVisible());view->setCurrentIndex(view->model()->index(0,0));view->edit(view->currentIndex());
+        QPointer<QLineEdit> editor=view->findChild<QLineEdit *>();QVERIFY(editor);QCOMPARE(editor->text(),QString("=1+1"));
+        editor->setText("=SUM(7,8)");editor->setModified(true);editor->setSelection(2,3);const auto state=model->state();QSignalSpy writes(&window,&MainWindow::operationFinished);
+        // This is the same notification emitted by a derived tile publication.
+        // Qt 6.8 updates active editors even when the supplied roles omit EditRole.
+        emit model->dataChanged(model->index(0,0),model->index(31,15),{Qt::DisplayRole});QTest::qWait(20);
+        QVERIFY(editor);QCOMPARE(editor->text(),QString("=SUM(7,8)"));QCOMPARE(editor->selectionStart(),2);QCOMPARE(editor->selectedText(),QString("UM("));
+        QCOMPARE(model->state(),state);QCOMPARE(model->cell(model->index(0,0))["source"].toString(),QString("=1+1"));QVERIFY(writes.isEmpty());
+        QTest::keyClick(editor,Qt::Key_Escape);
+    }
     void viewportCalculationsPublishCurrentResultsWithoutChangingSources() {
         ViewportCalculationServer server;RestClient client;client.configure(server.url(),"test");SheetModel model(&client,nullptr,128,32);
         model.bind("book","sheet","state",false);const auto cell=model.index(0,0);model.data(cell);
