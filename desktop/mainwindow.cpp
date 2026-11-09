@@ -144,6 +144,16 @@ public:
     std::function<bool(const QModelIndex &,int)> tabPressed;
     bool hasEditor()const{return m_editor && m_index.isValid();}
     FormulaLineEdit *activeEditor()const{return hasEditor()?dynamic_cast<FormulaLineEdit *>(m_editor.data()):nullptr;}
+    void setEditorData(QWidget *editor,const QModelIndex &index) const override {
+        if(editor==m_editor && index==m_index) {
+            // QAbstractItemView refreshes editor data even for display-only
+            // dataChanged signals. An active editor owns its draft/caret until
+            // commit, cancellation or the existing binding-reset lifecycle.
+            if(m_editorInitialized)return;
+            m_editorInitialized=true;
+        }
+        QStyledItemDelegate::setEditorData(editor,index);
+    }
     void paint(QPainter *painter,const QStyleOptionViewItem &option,const QModelIndex &index) const override {
         QStyledItemDelegate::paint(painter,option,index);
         if(referenceColors){int inset=3;for(const auto &color:referenceColors(index.row(),index.column())){painter->save();painter->setClipRect(option.rect);painter->setBrush(Qt::NoBrush);painter->setPen(QPen(color,1.5));painter->drawRect(option.rect.adjusted(inset,inset,-inset,-inset));painter->restore();inset+=3;}}
@@ -154,7 +164,7 @@ public:
         if (canEdit && !canEdit()) return nullptr;
         Q_UNUSED(option);auto *editor=new FormulaLineEdit(parent);editor->setFrame(false);editor->syntaxChanged=syntaxChanged;if(functionCatalog)editor->setCatalog(functionCatalog());
         if (auto *line = qobject_cast<QLineEdit *>(editor)) {
-            line->setMaxLength(65536); m_editor=line; m_index=index;
+            line->setMaxLength(65536); m_editor=line; m_index=index;m_editorInitialized=false;
             m_original=index.data(Qt::EditRole).toString();
             const auto item=index.data(SheetModel::CellRole).toJsonObject();
             m_inputKind=item["input_kind"].toString("auto");
@@ -200,6 +210,7 @@ protected:
     }
 private:
     mutable QPointer<QLineEdit> m_editor;
+    mutable bool m_editorInitialized=false;
     mutable QPersistentModelIndex m_index;
     mutable QString m_original, m_inputKind;
 };

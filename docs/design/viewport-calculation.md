@@ -26,6 +26,11 @@ stale result requests ordinary refresh, without replaying skipped handlers.
 Incomplete, invalid or failed calculation results display Unavailable with a
 visible issue and retain inputs. Refresh permits an explicit retry. The GUI does
 not silently switch to synchronous evaluation after a required snapshot fails.
+An active in-cell editor owns its draft/caret until commit, cancellation or a
+binding reset. The delegate ignores repeat editor-data reloads after initial
+entry, because [Qt's item-view implementation](https://github.com/qt/qtbase/blob/6.8/src/widgets/itemviews/qabstractitemview.cpp)
+refreshes editors on dataChanged even when only display roles were supplied.
+Regressions verify retained drafts and selections in the main and frozen panes.
 
 `CalculationRequest.stream_id` is optional, 1–64 ASCII letters/digits/_/-. Jobs
 within one stream supersede older generations of that stream; the omitted default
