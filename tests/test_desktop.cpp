@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "mainwindow.h"
+#include "keyboardgrid.h"
+#include <limits>
 #include "tracenavigation.h"
 #include "formatcellsdialog.h"
 #include "cellborders.h"
@@ -316,6 +318,13 @@ public:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void keyboardGridAccessibilityNeverEnumeratesConceptualCells() {
+        RestClient client;SheetModel model(&client);KeyboardGridView view;view.setModel(&model);view.setAccessibleName("Spreadsheet");
+        auto *surface=QAccessible::queryAccessibleInterface(&view);QVERIFY(surface);QCOMPARE(surface->role(),QAccessible::Pane);
+        QCOMPARE(surface->childCount(),1);QVERIFY(!surface->tableInterface());QVERIFY(!surface->child(1));
+        QVERIFY(qint64(model.rowCount())*model.columnCount()>std::numeric_limits<int>::max());
+        QCOMPARE(surface->child(0)->object(),view.viewport());QCOMPARE(surface->indexOfChild(surface->child(0)),0);
+    }
     void accessibleCellDescriptionsDistinguishPendingAndProjectedResults() {
         ViewportCalculationServer server;RestClient client;client.configure(server.url(),"test");SheetModel model(&client,nullptr,128,32);
         model.bind("book","sheet","state",true);model.setProjection({9,19});const auto cell=model.index(0,0);

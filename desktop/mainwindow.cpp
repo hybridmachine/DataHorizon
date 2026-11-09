@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "mainwindow.h"
+#include "keyboardgrid.h"
 #include "servicepaths.h"
 #include "frozenpanes.h"
 #include "listcriteriadialog.h"
@@ -460,7 +461,7 @@ void MainWindow::buildUi() {
     m_listSummary=new QLabel(central);m_listSummary->setObjectName("listCriteriaSummary");m_listSummary->setAccessibleName(tr("Active sort and filter criteria"));
     m_listSummary->setMinimumWidth(0);m_listSummary->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);m_listSummary->hide();layout->addWidget(m_listSummary);
     connect(m_model,&QAbstractItemModel::modelReset,this,&MainWindow::updateListSummary);
-    m_grid = new QTableView; m_grid->setObjectName("grid"); m_grid->setAccessibleName(tr("Spreadsheet")); m_grid->setModel(m_model);
+    m_grid = new KeyboardGridView; m_grid->setObjectName("grid"); m_grid->setAccessibleName(tr("Spreadsheet")); m_grid->setModel(m_model);
     auto *delegate=new CellDelegate(m_grid); delegate->functionCatalog=[this]{return m_functionCatalog;};delegate->syntaxChanged=[this]{updateFormulaReferences();};delegate->referenceColors=[this](int row,int col){return formulaReferenceColors(row,col);};delegate->canEdit=[this]{return !m_source->isModified();};
     delegate->enterPressed=[this](const QModelIndex &index,int direction){m_enterRequest=enterDestination(index,direction);};
     delegate->tabPressed=[this](const QModelIndex &index,int direction){
