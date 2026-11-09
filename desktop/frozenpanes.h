@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "paneselection.h"
+#include "keyboardgrid.h"
 #include <QAbstractTableModel>
 #include <QAbstractButton>
 #include <QHeaderView>
@@ -55,7 +56,7 @@ public:
     explicit FrozenPanes(QTableView *body,QWidget *parent=nullptr):QWidget(parent),m_body(body),
         m_topModel(body->model(),1,-1,this),m_leftModel(body->model(),-1,1,this),m_cornerModel(body->model(),1,1,this),m_selection(body,this) {
         auto make=[this,body](QAbstractItemModel *model,QWidget *parent,const QString &name,const QString &label){
-            auto *view=new QTableView(parent);view->setObjectName(name);view->setAccessibleName(label);view->setModel(model);
+            auto *view=new KeyboardGridView(parent);view->setObjectName(name);view->setAccessibleName(label);view->setModel(model);
             view->setSelectionMode(QAbstractItemView::ContiguousSelection);
             view->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);view->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
             view->setHorizontalScrollMode(body->horizontalScrollMode());view->setVerticalScrollMode(body->verticalScrollMode());

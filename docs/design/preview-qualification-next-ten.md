@@ -115,3 +115,15 @@ resource signatures, with a real damaged-resource regression. Native activation
 and Tab diagnostics remain strict. Native UI automation timed out even with the
 repaired signature; physical interaction and native OS dialog/lifecycle evidence
 remain pending. This increment does not close task 6 or M7.
+
+## Task 7: deferred platforms
+
+Windows and Linux native acceptance is deferred by the owner's explicit scope
+decision. It will be performed on those respective systems after more features.
+
+## Task 8: accessible cell-state increment
+
+[Bounded source-address descriptions and keyboard result inspection](macos-accessible-cell-state.md)
+distinguish loading, pending, computed, blank and failed values. Actual VoiceOver
+interaction and bounded full-grid accessibility enumeration remain open; this
+increment does not close task 8 or the screen-reader acceptance gate.

@@ -166,8 +166,8 @@ int main(int argc,char **argv) {
             require(!accessible->text(QAccessible::Name).isEmpty(),"Native accessible name missing");
             controls.append(QJsonObject{{"name",accessible->text(QAccessible::Name)},{"role",int(accessible->role())}});
         }
-        auto *table=QAccessible::queryAccessibleInterface(grid)->tableInterface();
-        require(table && table->rowCount()==model->rowCount() && table->columnCount()==model->columnCount(),"Accessible table extent mismatch");
+        auto *surface=QAccessible::queryAccessibleInterface(grid);
+        require(surface && surface->role()==QAccessible::Pane && surface->childCount()==1 && !surface->tableInterface(),"Accessible keyboard surface must remain bounded");
         const QRect cell=grid->visualRect(grid->currentIndex());
         require(cell.width()>0 && cell.height()>0 && grid->viewport()->rect().intersects(cell),"Native cell geometry invalid");
         require(window.devicePixelRatioF()>=qEnvironmentVariable("QT_SCALE_FACTOR","1").toDouble(),"Requested scale factor was not applied");
@@ -186,7 +186,7 @@ int main(int argc,char **argv) {
         require(top->isColumnHidden(1) && grid->isColumnHidden(1),"Native frozen column hiding mismatch");
         require(window.findChild<QPushButton *>("showHiddenButton")->isVisible(),"Native hidden-section recovery control missing");
         auto *frozenAccessible=QAccessible::queryAccessibleInterface(top);
-        require(frozenAccessible && frozenAccessible->tableInterface() && frozenAccessible->tableInterface()->rowCount()==1,"Native frozen accessible table missing");
+        require(frozenAccessible && frozenAccessible->role()==QAccessible::Pane && frozenAccessible->childCount()==1,"Native frozen keyboard accessibility missing");
         grid->setCurrentIndex(model->index(0,0));
         require(top->viewport()->mapToGlobal(QPoint(0,top->rowHeight(0))).y()<=grid->viewport()->mapToGlobal(QPoint()).y(),"Native frozen row covers body cells");
         grid->scrollTo(model->index(10000,0),QAbstractItemView::PositionAtTop);
@@ -212,7 +212,7 @@ int main(int argc,char **argv) {
             {"palette_base",grid->palette().color(QPalette::Base).name()},
             {"screenshot",QFileInfo(screenshot).fileName()},
             {"limitations",QJsonArray{"QTest widget events are synthetic; no physical input or compositor-latency qualification.",
-                "Accessible names/table extent do not certify screen-reader navigation across the entire sheet.",
+                "Bounded keyboard accessibility is not full screen-reader table navigation or spoken-output acceptance.",
                 "Native dialogs, multiple monitors and clean-machine installation remain separate acceptance."}}};
         QFile output(reportFile.filePath()); require(output.open(QIODevice::WriteOnly),"Cannot save native report");
         const auto bytes=QJsonDocument(report).toJson(); require(output.write(bytes)==bytes.size(),"Native report truncated");
