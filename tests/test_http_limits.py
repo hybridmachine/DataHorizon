@@ -34,6 +34,15 @@ def response(peer):
     return b''.join(chunks)
 
 
+def wait_for_capacity(server):
+    # Reading a complete HTTP response can precede the handler's bounded socket
+    # teardown. Synchronize the fixture before expecting another admission;
+    # SERVICE_BUSY remains valid while its single request slot is occupied.
+    if not server._request_slots.acquire(timeout=2):
+        raise AssertionError('Request capacity was not released after response')
+    server._request_slots.release()
+
+
 class HttpLimitsTests(unittest.TestCase):
     def test_overload_keeps_pending_id_and_preserves_admitted_commit(self):
         with tempfile.TemporaryDirectory() as temp,running(max_requests=1) as (server,client):
@@ -65,9 +74,13 @@ class HttpLimitsTests(unittest.TestCase):
             self.assertEqual(len(results),1)
             self.assertIsInstance(results[0],dict,results)
             self.assertEqual(results[0]['outcome'],'committed')
+            wait_for_capacity(server)
             self.assertEqual(admitted.outcome(results[0]['operation_id']),results[0])
+            wait_for_capacity(server)
             self.assertEqual(admitted.read(r2=2,c2=1)['cells'][0]['value'],7)
+            wait_for_capacity(server)
             self.assertEqual(len(admitted.read(r2=2,c2=1)['cells']),1)
+            wait_for_capacity(server)
             with self.assertRaises(UnknownOutcome): excess.outcome(pending.exception.operation_id)
             with self.assertRaises(UnknownOutcome): excess.set(2,1,'no automatic retry')
 

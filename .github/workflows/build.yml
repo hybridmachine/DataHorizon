@@ -137,6 +137,7 @@ jobs:
           name: failure-diagnostics-${{ runner.os }}
           path: |
             build/Testing/Temporary/*.log
+            build/desktop-tests.txt
             build/build-toolchain.json
           if-no-files-found: ignore
 

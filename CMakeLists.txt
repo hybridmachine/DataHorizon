@@ -71,7 +71,9 @@ if(BUILD_TESTING)
     add_dependencies(desktop_tests savefile_crash)
     target_link_libraries(desktop_tests PRIVATE datahorizon_desktop Qt6::Test)
     target_compile_definitions(desktop_tests PRIVATE DATAHORIZON_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
-    add_test(NAME desktop COMMAND desktop_tests)
+    # Windows GUI-subsystem runners can lose stdout. Keep a Qt text log even
+    # when CTest cannot capture the process's console output.
+    add_test(NAME desktop COMMAND desktop_tests -o desktop-tests.txt,txt)
     # These cover the complete process suites, including spawned services and
     # modal-dialog automation. Individual operation deadlines remain unchanged.
     set_tests_properties(desktop PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;DATAHORIZON_VIEW_STATE=${CMAKE_CURRENT_BINARY_DIR}/test-views.ini" TIMEOUT 600)

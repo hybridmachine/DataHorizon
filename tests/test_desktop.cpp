@@ -2553,8 +2553,13 @@ private slots:
             }
             if(auto *picker=qobject_cast<QFileDialog *>(modal)) {
                 if(!pickerInitialized) {
-                    pickerInitialized=true; picker->setDirectory(temp.path()); picker->selectFile(QFileInfo(path).fileName());
+                    pickerInitialized=true; picker->setDirectory(temp.path());
                 }
+                // QFileSystemModel loads asynchronously. Reapply the absolute
+                // filename until the chooser accepts it, rather than clicking
+                // Open on a directory while the first selection is still loading.
+                picker->selectFile(path);
+                if(picker->selectedFiles()!=QStringList{path}) return;
                 if(auto *buttons=picker->findChild<QDialogButtonBox *>())
                     if(auto *open=buttons->button(QDialogButtonBox::Open);open && open->isEnabled()) open->click();
             } else if(auto *dialog=qobject_cast<QDialog *>(modal);dialog && dialog->objectName()=="csvOptionsDialog") {
