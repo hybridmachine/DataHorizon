@@ -81,7 +81,12 @@ public:
                     ranges.append(body);auto cell=input(body);cell["calculation"]="pending";cell["display"]="…";cell["value"]=QJsonValue::Null;
                     send(socket,{{"state",body.value("expected_state").toString("state")},{"sheet",body["sheet"]},{"cells",QJsonArray{cell}}});return;
                 }
-                if(path.endsWith("/calculation/jobs")){jobs.append({body});admissions.append(socket);if(loseAdmissionReply)socket->disconnectFromHost();else if(!holdAdmissions)send(socket,reply(jobs.size()-1));return;}
+                if(path.endsWith("/calculation/jobs")){
+                    // Qt 6.8 may retransmit a buffered POST after the peer closes
+                    // before a reply. The real service deduplicates this job ID.
+                    for(int i=0;i<jobs.size();++i)if(jobs[i].request["job_id"]==body["job_id"]){send(socket,reply(i));return;}
+                    jobs.append({body});admissions.append(socket);if(loseAdmissionReply)socket->disconnectFromHost();else if(!holdAdmissions)send(socket,reply(jobs.size()-1));return;
+                }
                 for(int i=0;i<jobs.size();++i) {
                     const auto resource="/v1/workbooks/book/calculation/jobs/"+jobs[i].request["job_id"].toString();
                     if(path==resource+"/cancel"){++cancellations;jobs[i].status=completeOnCancel?"completed":"cancelled";jobs[i].value=99;send(socket,reply(i));return;}
@@ -367,7 +372,7 @@ private slots:
         model.bind("book","sheet","state",false);model.data(model.index(0,0));QTRY_COMPARE_WITH_TIMEOUT(oldServer.jobs.size(),1,3000);
         client.configure(newServer.url(),"new");model.bind("book","sheet","state",false);model.data(model.index(0,0));QTRY_COMPARE_WITH_TIMEOUT(newServer.jobs.size(),1,3000);
         oldServer.complete(0,99);newServer.jobs[0].wrongState=true;newServer.complete(0,2);
-        QTRY_COMPARE_WITH_TIMEOUT(model.data(model.index(0,0)).toString(),QString("Unavailable"),3000);QCOMPARE(newServer.releases,1);
+        QTRY_COMPARE_WITH_TIMEOUT(model.data(model.index(0,0)).toString(),QString("Unavailable"),3000);QTRY_COMPARE_WITH_TIMEOUT(newServer.releases,1,3000);
     }
     void viewportCalculationQueueIsBoundedAndPrunedBeforeAdmission() {
         ViewportCalculationServer server;RestClient client;client.configure(server.url(),"test");int publications=0;

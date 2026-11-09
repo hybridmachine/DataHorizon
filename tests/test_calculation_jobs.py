@@ -26,6 +26,8 @@ class CalculationJobTests(unittest.TestCase):
     def test_snapshot_generation_cached_pending_and_read_only_outcomes(self):
         state=self.book.state();cells=self.book.read('Sheet1',dict(r2=2,calculation='cached'))['cells'];self.assertEqual(cells[1]['calculation'],'pending')
         first=self.terminal(self.start());self.assertEqual(first['calculation'],'current');self.assertEqual(first['result']['cells'][1]['value'],4)
+        duplicate=self.jobs.start(dict(job_id=first['job_id'],expected_state=state,r2=2))
+        self.assertEqual(duplicate['generation'],first['generation']);self.assertEqual(len(self.jobs.jobs.entries),1)
         second=self.terminal(self.start());self.assertGreater(second['generation'],first['generation']);self.assertEqual(self.jobs.access(first['job_id'])['status'],'stale')
         self.assertEqual(self.book.state(),state)
         self.assertTrue(self.jobs.access(first['job_id'],'release')['released'])
