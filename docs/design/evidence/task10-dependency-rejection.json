@@ -1,0 +1,5 @@
+{
+  "external_dependency_rejected": true,
+  "error": "Unresolved/external dependency in Contents/MacOS/DataHorizon: /tmp/datahorizon-missing.dylib",
+  "original_signature_preserved": true
+}

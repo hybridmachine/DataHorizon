@@ -133,3 +133,5 @@ without treating them as already designed.
 - [Accessible cell-state increment](macos-accessible-cell-state.md)
 
 - [macOS distribution baseline](macos-distribution.md)
+
+- [macOS development disk image](macos-development-installer.md)

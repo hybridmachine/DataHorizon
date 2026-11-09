@@ -1,0 +1,31 @@
+{
+  "task": 10,
+  "tested_commit": "539172290e00a511d5f369956701fcb2bcf2a39e",
+  "candidate_sha256": "da758a3a6a72b2220eb54f511cb041ade87555c80d7e700e1f6c2005f6a6c6dc",
+  "hosted_run": "https://github.com/hybridmachine/DataHorizon/actions/runs/42559785839",
+  "all_three_macos_jobs_passed": true,
+  "native_scales": [
+    1,
+    2
+  ],
+  "local": {
+    "combined_qt_checks": 223,
+    "python_ran": 464,
+    "optional_skips": 19,
+    "bundled_python": "3.13.18",
+    "mounted_gui_cli_sdk_smoke_passed": true,
+    "strict_signatures_before_and_after_mount_passed": true,
+    "macho_files_audited": 28,
+    "negative_external_dependency_test_passed": true,
+    "all_six_artifact_sha256_values_rechecked": true,
+    "owned_image_detached": true
+  },
+  "development_artifact_verified": true,
+  "task_complete": false,
+  "remaining": [
+    "Developer ID signing and notarization",
+    "Actual clean Mac/VM installation and first launch",
+    "Full dependency-source/distribution review",
+    "Physical input and real VoiceOver acceptance"
+  ]
+}
