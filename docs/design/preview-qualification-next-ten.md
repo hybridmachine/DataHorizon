@@ -99,3 +99,11 @@ cancels obsolete admitted work and publishes only matching state/generation
 results. Per-stream generations isolate automatic and explicit calculations.
 Initial focused checks pass; combined/native/installed verification is pending.
 
+## Task 5: failure recovery
+
+[The additional failure tier](macos-failure-recovery.md) adds real managed-client
+permission and abrupt-process-exit checks, real protected-export failures and
+cancellable native opening/post-copy validation. The new regressions and the
+private 64-MiB disk-image ENOSPC run pass locally, with native bytes/counters and
+unknown receipt IDs preserved. Final combined/hosted evidence remains pending.
+

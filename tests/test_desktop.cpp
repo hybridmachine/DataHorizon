@@ -316,6 +316,25 @@ public:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void exportDestinationPermissionFailureRetainsNativeData() {
+#ifndef Q_OS_UNIX
+        QTest::qSkip("This case requires POSIX directory permissions; native platform qualification is separate.",__FILE__,__LINE__);return;
+#else
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.handler=QString(DATAHORIZON_FIXTURES)+"/execution_hook.py";
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        const auto native=temp.filePath("native.dhwb");QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(native,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        const auto state=window.model()->state();QFile source(native);QVERIFY(source.open(QIODevice::ReadOnly));const auto original=source.readAll();source.close();
+        const auto denied=temp.filePath("denied");QVERIFY(QDir().mkdir(denied));const auto permissions=QFileInfo(denied).permissions();
+        const auto restore=qScopeGuard([&]{QFile::setPermissions(denied,permissions);});QVERIFY(QFile::setPermissions(denied,QFile::ReadOwner|QFile::ExeOwner));
+        QFile permissionCheck(denied+"/probe");if(permissionCheck.open(QIODevice::WriteOnly)){permissionCheck.close();QFile::remove(permissionCheck.fileName());QTest::qSkip("Host does not enforce unprivileged directory permission denial.",__FILE__,__LINE__);return;}
+        QString error;const QJsonObject snapshot{{"file_base64",QString::fromLatin1(QByteArray("bounded export fixture").toBase64())}};
+        QVERIFY(!ExportWriter::save(denied+"/export.xlsx",native,snapshot,error));QVERIFY(!error.isEmpty());QVERIFY(!QFile::exists(denied+"/export.xlsx"));
+        QVERIFY(source.open(QIODevice::ReadOnly));QCOMPARE(source.readAll(),original);QCOMPARE(window.model()->state(),state);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("7"),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14"),5000);
+#endif
+    }
     void viewportCalculationsPublishCurrentResultsWithoutChangingSources() {
         ViewportCalculationServer server;RestClient client;client.configure(server.url(),"test");SheetModel model(&client,nullptr,128,32);
         model.bind("book","sheet","state",false);const auto cell=model.index(0,0);model.data(cell);

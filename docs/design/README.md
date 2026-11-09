@@ -59,6 +59,7 @@ applications, and AI agents through REST.
 | [Native opening performance](native-opening-performance.md) | One-pass validation, page geometry and explicit legacy-copy guidance |
 | [macOS capacity qualification](macos-capacity-qualification.md) | Cache provenance, workload/RSS/disk measurements and the administrator-dependent OS-cold gate |
 | [Automatic viewport calculation](viewport-calculation.md) | Bounded background jobs, projected targets, stream isolation and stale/failure behavior |
+| [macOS failure recovery](macos-failure-recovery.md) | Actual permissions, private-volume ENOSPC, process exits and native cancellation |
 | [Project review](../project-review-2026-11-08.md) | November 8 findings, reproductions and correction priorities |
 | [Review remediation plan](review-remediation-plan.md) | Dependency-ordered R1–R8 fixes, compatibility decisions and qualification gates |
 | [Development guide](development.md) | Build/run, API, CLI, Python, Supplies and package smoke |
