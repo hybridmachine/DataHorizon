@@ -227,6 +227,7 @@ test_declared_coercion_error_and_temporal_matrix (test_m3_m5_contracts.Completio
 test_reference_copy_and_structure_contract (test_m3_m5_contracts.CompletionContracts.test_reference_copy_and_structure_contract) ... ok
 test_crash_during_import_is_visible_without_any_data_write (test_macro_lifecycle.MacroLifecycleTests.test_crash_during_import_is_visible_without_any_data_write) ... ok
 test_invalid_and_oversized_results_cannot_commit (test_macro_lifecycle.MacroLifecycleTests.test_invalid_and_oversized_results_cannot_commit) ... ok
+test_large_print_capture_does_not_duplicate_the_whole_write (test_macro_lifecycle.MacroLifecycleTests.test_large_print_capture_does_not_duplicate_the_whole_write) ... ok
 test_noisy_loop_uses_bounded_streaming_and_remains_cancellable (test_macro_lifecycle.MacroLifecycleTests.test_noisy_loop_uses_bounded_streaming_and_remains_cancellable) ... ok
 test_process_start_failure_has_a_confirmed_rollback (test_macro_lifecycle.MacroLifecycleTests.test_process_start_failure_has_a_confirmed_rollback) ... ok
 test_success_and_exception_logs_are_bounded_utf8_and_durable (test_macro_lifecycle.MacroLifecycleTests.test_success_and_exception_logs_are_bounded_utf8_and_durable) ... ok
@@ -606,6 +607,6 @@ test_rgb_alpha_case_is_ignored_for_cell_fills_and_tint_is_reported (test_xlsx_st
 test_unsupported_format_theme_fill_and_partial_border_are_reported_and_invalid_indices_block (test_xlsx_styles.XlsxStyleTests.test_unsupported_format_theme_fill_and_partial_border_are_reported_and_invalid_indices_block) ... ok
 
 ----------------------------------------------------------------------
-Ran 606 tests in 62.305s
+Ran 607 tests in 60.375s
 
 OK (skipped=20)

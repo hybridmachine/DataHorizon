@@ -3,9 +3,9 @@
   "status": "passed",
   "pull_request": "https://github.com/hybridmachine/DataHorizon/pull/130",
   "source": {
-    "application_source_commit": "434230abceab150d74f8c0ba1b5fd299b0460932",
-    "harness_source_commit": "5f291a8d1d5c84388156fa3a6a329872896f2e87",
-    "candidate_sha256": "355fd008ab9931944cd310a24da7df8810e5908ffaa710f3ddbca3afebc796c6",
+    "application_source_commit": "a58cf9b92a1acdfc6fcb91844b1ab90f043493c7",
+    "harness_source_commit": "a58cf9b92a1acdfc6fcb91844b1ab90f043493c7",
+    "candidate_sha256": "958642b7362a4cacc9819ce0119a7f075a82e7c68d05337452a9551c55a1f082",
     "scope": "Git-normalized paths/blobs under desktop/service/tests/cmake/tools/packaging/examples plus CMakeLists COPYING LICENSES; excludes docs/build/cache"
   },
   "verification": {
@@ -13,23 +13,23 @@
       "passed": 232,
       "failed": 0,
       "skipped": 0,
-      "seconds": 147.31,
+      "seconds": 139.92,
       "command": "ctest --test-dir build -R '^desktop$' --output-on-failure"
     },
     "python": {
-      "tests_run": 606,
+      "tests_run": 607,
       "optional_skips": 20,
       "failures": 0,
       "errors": 0,
-      "seconds": 62.305,
+      "seconds": 60.375,
       "command": "PYTHONPATH=service python3 -m unittest discover -s tests -v"
     },
     "bundled_python": {
-      "tests_run": 606,
+      "tests_run": 607,
       "optional_skips": 20,
       "failures": 0,
       "errors": 0,
-      "seconds": 121.849,
+      "seconds": 121.06,
       "python": "3.13.18",
       "sqlite": "3.53.1",
       "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=<installed service> <installed runtime>/bin/python3 -B -m unittest discover -s tests -v",
@@ -42,7 +42,7 @@
     },
     "signature": {
       "strict_verified_after_installed_smoke": true,
-      "command": "codesign --verify --deep --strict build/python-automation-qualified/Installed/DataHorizon.app"
+      "command": "codesign --verify --deep --strict build/python-automation-final/Installed/DataHorizon.app"
     }
   },
   "installed": {
@@ -74,24 +74,24 @@
       "relocated_inventory_matches_archive": true,
       "installed_service_matches_source": true,
       "installed_service_files": 50,
-      "archive_manifest_source_head": "5f291a8d1d5c84388156fa3a6a329872896f2e87",
-      "archive_manifest_source_dirty": true,
+      "archive_manifest_source_head": "a58cf9b92a1acdfc6fcb91844b1ab90f043493c7",
+      "archive_manifest_source_dirty": false,
       "artifacts": {
-        "build/python-automation-qualified/Installed/DataHorizon.app/Contents/MacOS/DataHorizon": {
+        "build/python-automation-final/Installed/DataHorizon.app/Contents/MacOS/DataHorizon": {
           "bytes": 4883856,
-          "sha256": "e60994f1cfb1b3b84b5d90d73dfb692cc80a77686204e0394425af94add1a247"
+          "sha256": "d5da1580e5646c171de9ca9b9af809f8d1fc2e01ad1b6689d9e677a101e447b4"
         },
-        "build/python-automation-qualified/Installed/DataHorizon.app/Contents/Resources/source.json": {
+        "build/python-automation-final/Installed/DataHorizon.app/Contents/Resources/source.json": {
           "bytes": 79,
-          "sha256": "dc2664c333e9497d07c07c1ed936d28c15df66fafe76710458eca7d0c5edf18a"
+          "sha256": "b3e1f12a550660ab2452cd8171643b083a0bc1806c6c1439dfd8cda2530f3b32"
         },
-        "build/python-automation-qualified/DataHorizon-python-434230a-macos-arm64.tar.gz": {
-          "bytes": 51993752,
-          "sha256": "0462a477d4bbf787e85ed1033de899c9379db006649c675e1272dca027b0f44a"
+        "build/python-automation-final/DataHorizon-python-a58cf9b-macos-arm64.tar.gz": {
+          "bytes": 51993720,
+          "sha256": "d79369608849cb65c923bd9a4c9e199629c9f4015a8b7a07f68e3b7a72460b3a"
         },
-        "build/python-automation-qualified/Automation.dhwb": {
+        "build/python-automation-final/Automation.dhwb": {
           "bytes": 98304,
-          "sha256": "2af6008f99d71c9de3a28ad402d28cdb812f7cbae4ff138e26cd812d705a78b9"
+          "sha256": "e2f781bcbef69b5d798b170d55616365f7eb666989a6d6827adc2a6165c1c0f6"
         },
         "examples/automation_module.py": {
           "bytes": 635,
@@ -106,6 +106,11 @@
           "sha256": "e7b7dfc909afcde7911927945c943dc4ba55eb0d9f7b2276ee902c29068836d2"
         }
       }
+    },
+    "large_print_capture": {
+      "input_bytes": 2000000,
+      "captured_bytes": 8192,
+      "temporary_peak_bytes": 16458
     }
   },
   "review": {
@@ -151,11 +156,16 @@
         "problem": "Oversized results/spawn failures lacked useful macro error categories",
         "fix": "Preserve structured result/worker/context/traceback diagnostics",
         "verification": "Real worker lifecycle tests"
+      },
+      {
+        "problem": "Diagnostic capture encoded an entire large print before clipping its tail",
+        "fix": "Slice characters before UTF-8 encoding, then retain the bounded byte tail",
+        "verification": "Actual macro tracemalloc regression; a 2,000,000-byte print captures 8,192 bytes with under 200,000 bytes temporary allocation. Standalone measured peak: 16,458 bytes."
       }
     ]
   },
   "hosted_ci": {
-    "status_at_publication": "PRs 125-128 passed all three macOS checks. PR 129 rerunning after the preserved/diagnosed Qt readiness failure; PR 130 checks run on the final documentation/evidence head.",
+    "status_at_publication": "PRs 125-129 passed all three macOS checks. PR 130 runs the final 607-test source/evidence head; see live checks for its current status.",
     "live_pull_requests": [
       "https://github.com/hybridmachine/DataHorizon/pull/125",
       "https://github.com/hybridmachine/DataHorizon/pull/126",
@@ -187,10 +197,10 @@
     "database_effects": "Only context-mediated edits share rollback. No durable external-effect queue or exactly-once external side effects. Trusted workers are not a sandbox."
   },
   "handoff": {
-    "directory": "build/python-automation-qualified",
-    "application": "build/python-automation-qualified/Installed/DataHorizon.app",
-    "pristine_fixture": "build/python-automation-qualified/Automation.dhwb",
-    "manual_fixture": "build/python-automation-qualified/Automation-manual.dhwb",
+    "directory": "build/python-automation-final",
+    "application": "build/python-automation-final/Installed/DataHorizon.app",
+    "pristine_fixture": "build/python-automation-final/Automation.dhwb",
+    "manual_fixture": "build/python-automation-final/Automation-manual.dhwb",
     "guide": "docs/design/python-automation-guide.md",
     "example": "examples/python_automation.py"
   },
