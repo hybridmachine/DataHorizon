@@ -7,7 +7,7 @@ import queue
 import threading
 import time
 import traceback
-from .hooks import BrokerContext,_receive,_send
+from .hooks import BrokerContext,HookFailure,_receive,_send
 
 
 def tail(text,maximum=8192):
@@ -37,7 +37,7 @@ def _worker(pipe,source,module_name,name,arguments,operation):
                 _send(pipe,dict(method='failed',code='MACRO_FAILED',error=tail(traceback.format_exc(limit=8))))
             else:
                 try:_send(pipe,dict(method='done',result=result))
-                except (ValueError,TypeError,OverflowError):
+                except (ValueError,TypeError,OverflowError,HookFailure):
                     _send(pipe,dict(method='failed',code='MACRO_RESULT',error='Macro result is not bounded finite JSON'))
     finally:
         watchdog.cancel();pipe.close()
@@ -85,14 +85,17 @@ def invoke(module,name,arguments,operation,dispatch,deadline,check,diagnostics):
                 check();return message['result']
             if method=='failed':
                 if set(message)!={'code','error'} or message['code'] not in ('MACRO_FAILED','MACRO_RESULT') or not isinstance(message['error'],str):raise MacroFailure('MACRO_PROTOCOL','Invalid macro failure',diagnostics['logs'])
+                diagnostics['traceback']=tail(message['error'])
                 raise MacroFailure(message['code'],message['error'],diagnostics['logs'])
             if method not in ('get','value','set','table_schema','table_get','table_set','table_insert','table_delete'):
                 raise MacroFailure('MACRO_PROTOCOL','Unknown macro context method',diagnostics['logs'])
             try:result=dispatch(method,message)
-            except Exception as error:raise MacroFailure('MACRO_CONTEXT',str(error),diagnostics['logs']) from error
+            except Exception as error:
+                diagnostics['context_code']=getattr(error,'body',{}).get('code',getattr(error,'sqlite_errorname',type(error).__name__))
+                raise MacroFailure('MACRO_CONTEXT',str(error),diagnostics['logs']) from error
             replies.put(dict(result=result))
     except MacroFailure:raise
-    except (OSError,ValueError,EOFError) as error:raise MacroFailure('MACRO_WORKER_FAILED','Macro worker could not communicate: '+str(error),diagnostics['logs']) from error
+    except (OSError,ValueError,EOFError,RuntimeError) as error:raise MacroFailure('MACRO_WORKER_FAILED','Macro worker could not communicate: '+str(error),diagnostics['logs']) from error
     finally:
         stop.set()
         if child is not None:child.close()
