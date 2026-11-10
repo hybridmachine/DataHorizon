@@ -12,6 +12,7 @@
 #include <QPushButton>
 #include <QSplitter>
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -30,7 +31,14 @@ RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWi
     m_schema=new QTableWidget(0,4);m_schema->setObjectName("tableSchema");m_schema->setAccessibleName(tr("Table columns"));
     m_schema->setHorizontalHeaderLabels({tr("Column"),tr("Type"),tr("Required"),tr("Unique")});
     m_schema->setEditTriggers(QAbstractItemView::NoEditTriggers);m_schema->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    splitter->addWidget(m_schema);splitter->setStretchFactor(1,1);
+    auto *tabs=new QTabWidget;tabs->setObjectName("tableViews");
+    m_records=new QTableWidget; m_records->setObjectName("tableRecords");m_records->setAccessibleName(tr("Table records"));
+    m_records->setEditTriggers(QAbstractItemView::NoEditTriggers);m_records->setSelectionBehavior(QAbstractItemView::SelectRows);
+    tabs->addTab(m_records,tr("Records"));tabs->addTab(m_schema,tr("Columns"));splitter->addWidget(tabs);splitter->setStretchFactor(1,1);
+    auto *paging=new QHBoxLayout;m_previous=new QPushButton(tr("Previous page"));m_previous->setObjectName("previousTablePage");
+    m_next=new QPushButton(tr("Next page"));m_next->setObjectName("nextTablePage");paging->addWidget(m_previous);paging->addWidget(m_next);paging->addStretch();layout->addLayout(paging);
+    connect(m_next,&QPushButton::clicked,this,[this]{if(!m_nextAfter.isEmpty()){m_previousPages.append(m_after);loadRecords(m_nextAfter);}});
+    connect(m_previous,&QPushButton::clicked,this,[this]{if(!m_previousPages.isEmpty())loadRecords(m_previousPages.takeLast());});
     m_status=new QLabel(tr("Choose a table or create an empty table."));m_status->setObjectName("tableStatus");m_status->setWordWrap(true);
     m_status->setAccessibleName(tr("Table operation status"));layout->addWidget(m_status);
     connect(sheets,&QPushButton::clicked,this,&RelationalWorkbench::sheetsRequested);
@@ -46,13 +54,14 @@ QString RelationalWorkbench::base()const{return "/v1/workbooks/"+m_info["id"].to
 
 void RelationalWorkbench::bind(const QJsonObject &info) {
     if(m_info["id"]!=info["id"]) {m_table.clear();m_catalog={};m_draftDefinition={};}
-    ++m_generation;m_info=info;setLocked(info.isEmpty() || info["readonly"].toBool());
+    ++m_generation;++m_readGeneration;m_info=info;setLocked(info.isEmpty());
     if(isVisible() && !info.isEmpty())refreshCatalog();
 }
 
 void RelationalWorkbench::setLocked(bool locked) {
-    m_locked=locked || m_info.isEmpty() || m_info["readonly"].toBool();
+    m_blocked=locked || m_info.isEmpty();m_locked=m_blocked || m_info.value("readonly").toBool();
     m_create->setEnabled(!m_locked);m_drop->setEnabled(!m_locked && !m_table.isEmpty());
+    m_previous->setEnabled(!m_blocked && !m_previousPages.isEmpty());m_next->setEnabled(!m_blocked && !m_nextAfter.isEmpty());
 }
 
 void RelationalWorkbench::refreshCatalog() {
@@ -76,7 +85,8 @@ void RelationalWorkbench::refreshCatalog() {
 }
 
 void RelationalWorkbench::showTable(const QString &id) {
-    m_table=id;m_schema->setRowCount(0);
+    m_table=id;m_schema->setRowCount(0);m_previousPages.clear();m_after.clear();m_nextAfter.clear();++m_readGeneration;
+    m_records->setRowCount(0);m_records->setColumnCount(0);
     for(const auto &entry:m_catalog["tables"].toArray()) {
         const auto table=entry.toObject();if(table["id"].toString()!=id)continue;
         for(const auto &entry:table["columns"].toArray()) {
@@ -85,10 +95,28 @@ void RelationalWorkbench::showTable(const QString &id) {
             for(int c=0;c<values.size();++c)m_schema->setItem(row,c,new QTableWidgetItem(values[c]));
         }
     }
-    setLocked(m_locked);
+    setLocked(m_blocked);
+    if(!id.isEmpty())loadRecords();
 }
 
-bool RelationalWorkbench::editDefinition(QWidget *parent,QJsonObject &definition,const QString &title) {
+void RelationalWorkbench::loadRecords(const QString &after) {
+    if(m_table.isEmpty() || m_info.isEmpty())return;
+    const auto generation=++m_readGeneration;const auto table=m_table;const auto state=m_info["state"];
+    QJsonObject request{{"table",table},{"expected_state",state}};if(!after.isEmpty())request["after"]=after;
+    m_status->setText(tr("Loading records…"));m_client->request(base()+"/tables/read",request,[this,generation,table,state,after](QJsonObject result,QString error){
+        if(generation!=m_readGeneration || m_table!=table || state!=m_info["state"])return;
+        if(!error.isEmpty()){m_status->setText(error);emit issue(error);return;}
+        if(result["state"]!=state || result["table"]!=table){m_status->setText(tr("Table page changed; refresh the workbook."));return;}
+        m_page=result;m_after=after;m_nextAfter=result["next_after"].toString();
+        const auto cols=result["columns"].toArray(),rows=result["records"].toArray();m_records->clear();m_records->setRowCount(rows.size());m_records->setColumnCount(cols.size());QStringList labels;
+        for(const auto &col:cols)labels.append(col.toObject()["name"].toString());m_records->setHorizontalHeaderLabels(labels);
+        for(int r=0;r<rows.size();++r){const auto record=rows[r].toObject();for(int c=0;c<cols.size();++c){const auto value=record["values"].toObject()[cols[c].toObject()["id"].toString()];
+            auto *item=new QTableWidgetItem(value.isNull()?tr("NULL"):value.isBool()?(value.toBool()?tr("TRUE"):tr("FALSE")):value.toVariant().toString());item->setData(Qt::UserRole,record["row_id"]);m_records->setItem(r,c,item);}}
+        m_status->setText(rows.isEmpty()?tr("No records."):tr("%1 records on this page. Record identity is separate from row position.").arg(rows.size()));setLocked(m_blocked);
+    });
+}
+
+bool RelationalWorkbench::editDefinition(QWidget *parent,QJsonObject &definition,const QString &title,bool fixedWidth) {
     QDialog dialog(parent);dialog.setObjectName("tableDefinitionDialog");dialog.setWindowTitle(title);dialog.resize(640,400);
     auto *layout=new QVBoxLayout(&dialog);auto *form=new QFormLayout;auto *name=new QLineEdit(definition["name"].toString());
     name->setObjectName("tableName");name->setAccessibleName(tr("Table name"));name->setMaxLength(64);form->addRow(tr("Table name"),name);layout->addLayout(form);
@@ -102,6 +130,7 @@ bool RelationalWorkbench::editDefinition(QWidget *parent,QJsonObject &definition
     auto initial=definition["columns"].toArray();if(initial.isEmpty())initial.append(QJsonObject{{"name","Value"}});
     for(const auto &column:initial)append(column.toObject());
     auto *add=new QPushButton(tr("Add column"));add->setObjectName("addTableColumn");connect(add,&QPushButton::clicked,&dialog,[append,columns]{if(columns->rowCount()<256)append({});});layout->addWidget(add);
+    auto *remove=new QPushButton(tr("Remove selected column"));remove->setObjectName("removeTableColumn");connect(remove,&QPushButton::clicked,&dialog,[columns]{if(columns->rowCount()>1 && columns->currentRow()>=0)columns->removeRow(columns->currentRow());});layout->addWidget(remove);add->setVisible(!fixedWidth);remove->setVisible(!fixedWidth);
     auto *notice=new QLabel(tr("Names use letters, digits and underscores, beginning with a letter. Tables use native format v4. Save a native copy before upgrading if an older reader is needed."));notice->setWordWrap(true);layout->addWidget(notice);
     auto *buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);layout->addWidget(buttons);
     connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);

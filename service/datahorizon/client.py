@@ -188,6 +188,20 @@ class WorkbookClient:
     def drop_table(self,table):
         return self.apply('table_drop',table=table)
 
+    def preview_table(self,name,sheet='Sheet1',**scope):
+        self._ensure_open()
+        return self.client.request(self.base+'/tables/preview',dict(name=name,sheet=sheet,expected_state=self.state,**scope))
+
+    def promote_table(self,preview):
+        if preview.get('can_create') is not True:raise ValueError('Correct table conversion issues before Apply')
+        source=dict(preview['source_request']);sheet=source.pop('sheet')
+        return self.apply('table_promote',sheet,**source,columns=preview['columns'],preview_clock=preview['preview_clock'],
+                          review_digest=preview['review_digest'],expected_state=preview['state'])
+
+    def read_table(self,table,**scope):
+        self._ensure_open()
+        return self.client.request(self.base+'/tables/read',dict(table=table,expected_state=self.state,**scope))
+
     def records(self,identifier,sheet='Sheet1',**criteria):
         self._ensure_open()
         return self.client.request(self.base+'/records/read',dict(id=identifier,sheet=sheet,expected_state=self.state,**criteria))

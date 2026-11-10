@@ -11,12 +11,16 @@ identities use decimal strings. Native copy/reopen validates the supported table
 DDL against its catalog and streams type validation within the opening budget.
 Unknown tables/triggers/schema changes remain rejected.
 
-The implemented first tier creates/inspects/drops empty tables through shared
+The first tier creates/inspects/drops empty tables through shared
 managed operations, REST, CLI/SDK and Data → Tables and queries. Required handlers
 must explicitly define `on_table_structure(context,event)`; hook failure rolls
 back table DDL, metadata upgrades and generated cell edits together. Whole-workbook
 imports reject relational destinations; sheet XLSX/ODS exports name omitted
-relational objects. Data/schema editing, relationships and query work follow in
+relational objects. Selection promotion also populates a new table with reviewed
+typed values and independent row identities. Record reads use bounded pages;
+transactional table hooks can read/write records and participate in shared
+cell/record history. Direct table formulas or sheet/table synchronization are
+not introduced. User-facing data/schema editing, relationships and query work follow in
 the [relational plan](relational-workbench-plan.md).
 
 The sections below describe the earlier formats and their retained behavior.

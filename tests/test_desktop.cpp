@@ -321,6 +321,27 @@ public:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void tableSelectionReviewCreatesIndependentValuesThroughRest() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();
+        QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("promote.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","ID"}},QJsonObject{{"row",1},{"col",2},{"source","Amount"}},
+            QJsonObject{{"row",2},{"col",1},{"source","00123"},{"kind","text"}},QJsonObject{{"row",2},{"col",2},{"source","=1+2"},{"kind","formula"}},
+            QJsonObject{{"row",3},{"col",1},{"source","=literal"},{"kind","text"}},QJsonObject{{"row",3},{"col",2},{"source","2.5"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *address=window.findChild<QLineEdit *>("address");address->setText("A1:B3");address->returnPressed();
+        int phase=0;QTimer timer;timer.setInterval(10);connect(&timer,&QTimer::timeout,&window,[&]{
+            auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());if(!dialog)return;
+            if(phase==0 && dialog->objectName()=="tableSelectionOptions"){phase=1;dialog->findChild<QLineEdit *>("selectionTableName")->setText("Items");dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();}
+            else if(phase==1 && dialog->objectName()=="tableDefinitionDialog"){phase=2;dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();}
+            else if(phase==2 && dialog->objectName()=="tablePromotionReview"){phase=3;dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply)->click();}
+        });timer.start();window.findChild<QAction *>("tableFromSelectionAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);timer.stop();QCOMPARE(phase,3);
+        auto *records=window.findChild<QTableWidget *>("tableRecords");QTRY_COMPARE_WITH_TIMEOUT(records->rowCount(),2,5000);
+        QCOMPARE(records->item(0,0)->text(),QString("00123"));QCOMPARE(records->item(0,1)->text(),QString("3"));QCOMPARE(records->item(1,0)->text(),QString("=literal"));
+        QTest::mouseClick(window.findChild<QPushButton *>("returnToSheets"),Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(1,1)),5000);QCOMPARE(window.model()->cell(window.model()->index(1,1))["source"].toString(),QString("=1+2"));
+    }
     void relationalTablesUseRestAndKeepSheetActionsSeparate() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();
         QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);

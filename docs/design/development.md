@@ -132,6 +132,27 @@ on stdin) and `table-drop NAME` use the same REST engine. SDK callers use
 `book.tables()`, `create_table(name, columns)` and `drop_table(name)`. Populated
 table editing and SQL querying remain later tasks in the current implementation.
 
+Data → Create table from selection now reviews the explicit source rectangle,
+header choice, column types and conversion policy. A second preview freezes one
+calculation clock and the reviewed values; errors withhold Apply. Creation copies
+values, retains the source cells/formulas and clears structural history. The
+new table opens with bounded record pages. Required trusted code opts in through
+`on_table_change(context, changes)` as well as `on_table_structure`.
+
+Table change events carry table/row/column identities, old/new typed values,
+operation ID/action, managed origin and round. Cell events run first in each
+round, table events second; generated edits run in later rounds. Context methods
+`table_schema`, `table_get`, `table_set`, `table_insert` and `table_delete` use
+the parent transaction. Worker/broker limits and required-handler failure apply
+equally to generated table and cell edits. Supported data history includes both.
+
+SDK `preview_table(name, **scope)` returns a reviewed digest, clock and source
+request; `promote_table(preview)` applies it, and `read_table(name_or_id, **scope)`
+pages records. CLI `table-from-range NAME` reads scope/options JSON on stdin and
+returns a preview; `--apply` creates its reviewed snapshot in the same session.
+File-mode preview handles expire at command exit; use an attached service or
+`--apply` for creation. An example scope is `{"r1":1,"c1":1,"r2":4,"c2":4}`.
+
 New creates a recoverable untitled native workbook. Submitted edits store
 automatically. Save a copy creates a consistent snapshot at a new path. First
 Save on an untitled file switches to the permanent copy; the recovery source

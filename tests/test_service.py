@@ -438,7 +438,7 @@ class ServiceTests(unittest.TestCase):
                     self.assertIn(schema["$ref"].rsplit("/",1)[-1],schemas,path)
             with client.open(Path(temp)/"examples.dhwb",create=True) as book:
                 sequence=("workbook_import","edit","paste","fill","move","replace_all","undo","redo", "sheet_add","sheet_rename","sheet_duplicate","sheet_reorder","sheet_delete",
-                          "rows_insert","rows_delete","columns_insert","columns_delete","metadata_set","metadata_delete","list_declare","list_reconcile","list_edit","list_forget","table_create","table_drop")
+                          "rows_insert","rows_delete","columns_insert","columns_delete","metadata_set","metadata_delete","list_declare","list_reconcile","list_edit","list_forget","table_create","table_drop","table_promote")
                 self.assertEqual(set(sequence),set(mapping))
                 for action in sequence:
                     with self.subTest(action=action):
@@ -450,6 +450,9 @@ class ServiceTests(unittest.TestCase):
                         self.assertTrue(set(request).issubset(schema["properties"]))
                         if action=="list_edit":request["record_ids"]=[item["id"] for item in book.records("Records")["records"]]
                         if action=="move": request["cut_state"]=book.state
+                        if action=='table_promote':
+                            preview=client.request(book.base+'/tables/preview',{k:v for k,v in request.items() if k not in ('action','operation_id','review_digest','preview_clock')})
+                            request.update(columns=preview['columns'],preview_clock=preview['preview_clock'],review_digest=preview['review_digest'])
                         if action=="sheet_reorder": request["order"]=[sheet["id"] for sheet in reversed(book.info["sheets"])]
                         result=client.request(book.base+"/operations",request)
                         self.assertEqual(result["outcome"],"committed")

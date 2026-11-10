@@ -14,7 +14,7 @@ from .hooks import invoke, supports_event
 SCHEMA = '''CREATE TABLE dh_relational (kind TEXT NOT NULL, id TEXT NOT NULL,
  payload TEXT NOT NULL, PRIMARY KEY(kind,id)) WITHOUT ROWID;'''
 TYPES = ('text','integer','number','boolean','date','time','datetime')
-STRUCTURAL = {'table_create','table_drop'}
+STRUCTURAL = {'table_create','table_drop','table_promote'}
 ACTIONS = set(STRUCTURAL)
 MAX_INTEGER = 2**53-1
 
@@ -175,19 +175,31 @@ def catalog(book,args):
 def structure_hook(book,request,phase,before):
     if not book.handler:return
     require(supports_event(book.handler,'on_table_structure'),'UNSUPPORTED_HOOK_SCOPE','Required handler must explicitly define on_table_structure(context,event)')
-    event=dict(phase=phase,action=request['action'],arguments={key:request[key] for key in ('table','name','columns') if key in request},before=before,after=tables(book.db) if phase=='after' else None)
+    event=dict(phase=phase,action=request['action'],origin='managed',operation_id=request['operation_id'],
+               arguments={key:request[key] for key in ('table','name','columns','sheet','r1','c1','r2','c2','header','conversion_policy') if key in request},
+               before=before,after=tables(book.db) if phase=='after' else None)
     invoke(book.handler,event,request['operation_id'],book.hook_dispatch,book.deadline,event='on_table_structure')
 
 
 def mutate(book,request):
     action=request['action'];before=tables(book.db)
+    prepared=None
+    if action=='table_promote':
+        from .table_promotion import prepare
+        prepared=prepare(book,request,deadline=book.deadline)
+        require(prepared['can_create'],'TABLE_CONVERSION_FAILED','Correct conversion issues before creating a table')
+        require(request.get('review_digest')==prepared.get('review_digest'),'STALE_REVIEW','Review the exact selection, column types and values again',409)
     structure_hook(book,request,'before',before)
-    if action=='table_create':
+    if action in ('table_create','table_promote'):
         require(len(before)<64,'LIMIT','At most 64 structured tables')
         item=dict(id=str(uuid.uuid4()),name=name(request.get('name')),columns=columns(request.get('columns')))
         require(not any(t['name'].lower()==item['name'].lower() for t in before),'TABLE_EXISTS','A table with that SQL name already exists',409)
         ensure(book);book.db.execute(table_sql(item));store(book,'table',item)
         result=dict(table=item)
+        if prepared is not None:
+            from .relational_rows import insert
+            for values in prepared['records']:insert(book,item,values)
+            result['created_records']=len(prepared['records'])
     elif action=='table_drop':
         item=table(book.db,request.get('table'))
         require(book.db.execute('SELECT 1 FROM '+quote(item['name'])+' LIMIT 1').fetchone() is None,'TABLE_NOT_EMPTY','Only an empty table can be dropped in this tier')

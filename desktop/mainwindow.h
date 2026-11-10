@@ -60,6 +60,9 @@ private:
     QList<QMenu *> m_sheetMenus;
     QList<QAction *> m_sheetFileActions;
     bool m_relationalActive=false;
+    QString m_relationalAfterWrite;
+    QJsonObject m_tablePromotionDraft;
+    void createTableFromSelection();
     quint64 m_calculationGeneration=0;
     QString m_activeOperationJob;
     bool m_jobClosing=false,m_allowJobClose=false;
