@@ -103,5 +103,9 @@ class MacroTests(unittest.TestCase):
         self.assertEqual(child.returncode,74,child.stderr);self.assertEqual(self.book.operation(operation)['macro_result'],42)
         self.book.refresh();self.assertEqual(self.cell()['source'],'committed')
 
+    def test_module_globals_support_standard_library_with_postponed_annotations(self):
+        self.install("from __future__ import annotations\nfrom dataclasses import dataclass\n@dataclass\nclass Reading:\n    value: int\ndef run(ctx):\n    return Reading(17).value\n")
+        self.assertEqual(self.run_macro()['macro_result'],17)
+
 
 if __name__=='__main__':unittest.main()
