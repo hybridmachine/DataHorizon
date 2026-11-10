@@ -81,5 +81,10 @@ class MacroLifecycleTests(unittest.TestCase):
             result,_=self.execute('return 1')
         self.assertEqual(result['code'],'MACRO_WORKER_FAILED');self.assertEqual(result['outcome'],'rolled_back')
 
+    def test_large_print_capture_does_not_duplicate_the_whole_write(self):
+        result,_=self.execute("import tracemalloc\npayload='x'*2000000\ntracemalloc.start()\nprint(payload)\npeak=tracemalloc.get_traced_memory()[1]\ntracemalloc.stop()\nreturn peak<200000",result_type='boolean')
+        self.assertIs(result['macro_result'],True,result)
+        self.assertLessEqual(len(result['macro']['logs'].encode()),8192)
+
 
 if __name__=='__main__':unittest.main()

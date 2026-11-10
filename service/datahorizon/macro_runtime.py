@@ -14,7 +14,7 @@ from .hooks import BrokerContext,HookFailure,_receive,_send
 
 
 def tail(text,maximum=8192):
-    return text.encode('utf-8',errors='replace')[-maximum:].decode('utf-8',errors='ignore')
+    return text[-maximum:].encode('utf-8',errors='replace')[-maximum:].decode('utf-8',errors='ignore')
 
 
 class MacroFailure(Exception):
