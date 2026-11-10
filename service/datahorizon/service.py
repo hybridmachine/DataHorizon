@@ -48,6 +48,7 @@ CAPABILITIES = {
 
 CAPABILITIES['operations'].extend(['table_create','table_drop','table_promote','table_schema','table_insert','table_update','table_delete','index_create','index_drop'])
 CAPABILITIES['operations'].extend(['relationship_create','relationship_drop','table_repair'])
+CAPABILITIES['operations'].extend(['query_save','query_rename','query_delete'])
 
 ROUTES = {
     "/v1/workbooks/{workbook}/tables":("post","Read the state-checked structured table catalog"),
@@ -60,6 +61,10 @@ ROUTES = {
     "/v1/workbooks/{workbook}/queries/jobs/{job}/page":("post","Read a bounded projected page of a completed frozen query"),
     "/v1/workbooks/{workbook}/queries/jobs/{job}/cancel":("post","Cancel execution or discard its completed result"),
     "/v1/workbooks/{workbook}/queries/jobs/{job}/release":("post","Release terminal query snapshot/result storage"),
+    "/v1/workbooks/{workbook}/queries/preview":("post","Review authorization, dependencies and shape without evaluating data rows"),
+    "/v1/workbooks/{workbook}/queries/read":("post","Read a saved definition without executing it"),
+    **{f"/v1/workbooks/{{workbook}}/tables/export/{format}":('post','Export a complete bounded table/filter values snapshot') for format in ('csv','xlsx','ods')},
+    **{f"/v1/workbooks/{{workbook}}/queries/jobs/{{job}}/export/{format}":('post','Export the complete completed query result within interchange limits') for format in ('csv','xlsx','ods')},
     "/v1/workbooks/{workbook}/tables/schema-preview":("post","Review atomic schema conversion, constraints and explicit column loss"),
     "/v1/workbooks/{workbook}/tables/edit-preview":("post","Convert reviewed record inputs without writing or running change hooks"),
     "/v1/workbooks/{workbook}/operation-jobs":("post","Stage a reviewed edit/CSV or frozen find/list job; never starts writes"),
@@ -299,6 +304,10 @@ def openapi():
             name = ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "inspect":"TableCatalogRequest","repair-preview":"RelationshipRepairRequest","cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
+            if '/queries/' in path and path.endswith('/preview'):schema={'$ref':'#/components/schemas/QueryDefinitionRequest'}
+            if '/queries/' in path and path.endswith('/read'):schema={'$ref':'#/components/schemas/QueryReadRequest'}
+            if '/tables/export/' in path or '/queries/jobs/' in path and '/export/' in path:schema={'$ref':'#/components/schemas/RelationalExportRequest'}
+            if '/queries/jobs/' in path and '/export/' in path:schema={'$ref':'#/components/schemas/QueryExportRequest'}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
         for status in ("400","401","403","404","409","413","500","503"):
             operation["responses"][status]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}
@@ -572,6 +581,18 @@ class Service(ThreadingHTTPServer):
             from .relationships import preview_repair
             return preview_repair(book,body)
         if method=='POST' and suffix==['queries','jobs']:return book.query_jobs().start(body)
+        if method=='POST' and suffix==['queries','preview']:
+            from .query_views import preview
+            return preview(book,body)
+        if method=='POST' and suffix==['queries','read']:
+            from .query_views import read
+            return read(book,body)
+        if method=='POST' and len(suffix)==3 and suffix[:2]==['tables','export']:
+            from .relational_export import export_table
+            return export_table(book,suffix[2],body)
+        if method=='POST' and len(suffix)==5 and suffix[:2]==['queries','jobs'] and suffix[3]=='export':
+            from .relational_export import export_query
+            return export_query(book.query_jobs(),suffix[2],suffix[4],body)
         if len(suffix) in (3,4) and suffix[:2]==['queries','jobs']:
             action=suffix[3] if len(suffix)==4 else None
             require(method=='GET' and action is None or method=='POST' and action in ('page','cancel','release'),'NOT_FOUND','Unknown query job resource',404)

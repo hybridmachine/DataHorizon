@@ -14,7 +14,7 @@ from .hooks import invoke, supports_event
 SCHEMA = '''CREATE TABLE dh_relational (kind TEXT NOT NULL, id TEXT NOT NULL,
  payload TEXT NOT NULL, PRIMARY KEY(kind,id)) WITHOUT ROWID;'''
 TYPES = ('text','integer','number','boolean','date','time','datetime')
-STRUCTURAL = {'table_create','table_drop','table_promote','table_schema','index_create','index_drop','relationship_create','relationship_drop','table_repair'}
+STRUCTURAL = {'table_create','table_drop','table_promote','table_schema','index_create','index_drop','relationship_create','relationship_drop','table_repair','query_save','query_rename','query_delete'}
 ACTIONS = set(STRUCTURAL)
 DATA_ACTIONS={'table_insert','table_update','table_delete'}
 ACTIONS.update(DATA_ACTIONS)
@@ -138,7 +138,7 @@ def validate_schema(db,signature,base_schema):
     require(expected_schema(SCHEMA)[0] in signature,'FORMAT_VERSION','Native format v4 requires its matching relational catalog',409)
     catalog=objects(db);registered=[];names=set()
     for kind,item in catalog:
-        require(kind in ('table','index','relationship'),'INVALID_FORMAT','Unsupported relational object kind',409)
+        require(kind in ('table','index','relationship','query'),'INVALID_FORMAT','Unsupported relational object kind',409)
         if kind!='table':continue
         require(set(item)=={'id','name','columns'},'INVALID_FORMAT','Invalid table catalog fields',409)
         name(item['name']);columns(item['columns'],stored=True)
@@ -154,6 +154,8 @@ def validate_schema(db,signature,base_schema):
     for rel in registered_relationships:require(sum(index['owner']==rel['id'] for index in registered_indexes)==1,'INVALID_FORMAT','Relationship supporting index is missing')
     expected=expected_schema(base_schema+SCHEMA+';'.join([*(table_sql(item,registered_relationships,registered) for item in registered),*(sql(item,validate(item,registered,registered_relationships)) for item in registered_indexes)])+';')
     require(signature==expected,'SCHEMA_CHANGED','Relational schema does not match its supported catalog; preserve the file for recovery',409)
+    from .query_views import validate as validate_queries
+    validate_queries(db,registered,time.monotonic()+2)
     return registered
 
 
@@ -183,7 +185,8 @@ def catalog(book,args):
                 require(args.get('expected_state')==book.state(),'STALE_STATE','Refresh the workbook catalog',409)
                 from .table_indexes import indexes
                 from .relationships import relationships
-                result=dict(state=book.state(),tables=tables(book.db),indexes=indexes(book.db),relationships=relationships(book.db),queries=[])
+                from .query_views import summaries
+                result=dict(state=book.state(),tables=tables(book.db),indexes=indexes(book.db),relationships=relationships(book.db),queries=summaries(book.db))
                 require(len(encoded(result).encode())<=4*1024*1024,'READ_LIMIT','Relational catalog exceeds 4 MiB')
                 return result
         finally:book.db.execute('ROLLBACK')
@@ -192,13 +195,21 @@ def catalog(book,args):
 def structure_hook(book,request,phase,before):
     if not book.handler:return
     require(supports_event(book.handler,'on_table_structure'),'UNSUPPORTED_HOOK_SCOPE','Required handler must explicitly define on_table_structure(context,event)')
+    kind='query' if request['action'].startswith('query_') else 'relationship' if request['action'].startswith('relationship_') else 'index' if request['action'].startswith('index_') else 'table'
+    identifier=request.get(kind,request.get('name'))
+    current=next((item for key,item in objects(book.db,kind) if identifier in (item['id'],item.get('name'))),None)
+    if phase=='before':book.relational_event_before=current
     event=dict(phase=phase,action=request['action'],origin='managed',operation_id=request['operation_id'],
-               arguments={key:request[key] for key in ('table','name','columns','sheet','r1','c1','r2','c2','header','conversion_policy','drop_columns','allow_data_loss') if key in request},
+               arguments={key:request[key] for key in ('table','name','columns','sheet','r1','c1','r2','c2','header','conversion_policy','drop_columns','allow_data_loss','query','sql','parameters','defaults','parent_table','parent_column','child_table','child_column','on_delete','on_update','relationship','index','unique','definition_digest') if key in request},
+               object_before=getattr(book,'relational_event_before',None),object_after=current if phase=='after' else None,
                before=before,after=tables(book.db) if phase=='after' else None)
     invoke(book.handler,event,request['operation_id'],book.hook_dispatch,book.deadline,event='on_table_structure')
 
 
 def mutate(book,request):
+    if request['action'].startswith('query_'):
+        from .query_views import mutate as query_mutate
+        return query_mutate(book,request)
     if request['action'].startswith('relationship_') or request['action']=='table_repair':
         from .relationships import mutate as relationship_mutate
         return relationship_mutate(book,request)
@@ -233,6 +244,8 @@ def mutate(book,request):
             result['created_records']=len(prepared['records'])
     elif action=='table_drop':
         item=table(book.db,request.get('table'))
+        from .query_views import schema_dependencies
+        schema_dependencies(book.db,item)
         from .relationships import relationships
         require(not any(item['id'] in (rel['parent_table'],rel['child_table']) for rel in relationships(book.db)),'DEPENDENCY_BLOCKED','Remove dependent relationships before dropping the table',409)
         from .table_indexes import indexes

@@ -64,6 +64,8 @@ private:
     bool m_relationalActive=false;
     bool m_refreshFailed=false;
     bool m_queryClosing=false;
+    bool m_skipQueryCleanup=false;
+    bool discardQueryDraft();
     QString m_relationalAfterWrite;
     QJsonObject m_tablePromotionDraft;
     void createTableFromSelection();

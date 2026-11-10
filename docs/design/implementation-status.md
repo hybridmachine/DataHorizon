@@ -187,7 +187,15 @@ bounded ordinal pages, exact large-integer tags, state/generation invalidation,
 cancel/release and conservative terminated-service cleanup. Qt exposes the SQL
 editor, schema browser, parameter review and read-only result grid; hidden table
 and sheet pages release their caches. Query jobs are ephemeral after restart.
-Saved definitions and whole-result export are the following task.
+Saved definitions now retain stable identities, explicit defaults, dependencies
+and result shape without executing on open. Proposed-schema preparation protects
+SELECT-star results and name binding. Qt has a Sheets/Tables/Queries browser and
+reviewed save/save-as/delete controls. Complete table/filter and frozen query
+exports use protected publication and actual omission reports; the initial
+interchange cap is 10,000 values including headers, with no page truncation.
+Full Python verification passes 570 tests (19 optional skips); targeted Qt
+saved-view/export, SQL and close workflows pass. Integrated native/installed and
+larger combined measurements are the final task.
 Automated evidence and the owner's later manual GUI
 walkthrough are tracked separately. Managed SQL mutations and
 the existing M1/M7/manual/platform/release gates retain their own requirements.

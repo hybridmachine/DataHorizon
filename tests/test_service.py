@@ -438,7 +438,7 @@ class ServiceTests(unittest.TestCase):
                     self.assertIn(schema["$ref"].rsplit("/",1)[-1],schemas,path)
             with client.open(Path(temp)/"examples.dhwb",create=True) as book:
                 sequence=("workbook_import","edit","paste","fill","move","replace_all","undo","redo", "sheet_add","sheet_rename","sheet_duplicate","sheet_reorder","sheet_delete",
-                          "rows_insert","rows_delete","columns_insert","columns_delete","metadata_set","metadata_delete","list_declare","list_reconcile","list_edit","list_forget","table_create","table_drop","table_promote","table_schema","table_insert","table_update","table_delete","index_create","index_drop","relationship_create","relationship_drop","table_repair")
+                          "rows_insert","rows_delete","columns_insert","columns_delete","metadata_set","metadata_delete","list_declare","list_reconcile","list_edit","list_forget","table_create","table_drop","table_promote","table_schema","table_insert","table_update","table_delete","index_create","index_drop","relationship_create","relationship_drop","table_repair","query_save","query_rename","query_delete")
                 self.assertEqual(set(sequence),set(mapping))
                 for action in sequence:
                     with self.subTest(action=action):
@@ -459,6 +459,8 @@ class ServiceTests(unittest.TestCase):
                             continue
                         if action=='relationship_create':
                             book.create_table('RelationParents',[dict(name='Key',required=True,unique=True)]);book.create_table('RelationChildren',[dict(name='Key')]);request['expected_state']=book.state
+                        if action=='query_save':
+                            review=book.preview_query(request['name'],request['sql']);request.update(review['source_request'],review_digest=review['review_digest'])
                         if action=="list_edit":request["record_ids"]=[item["id"] for item in book.records("Records")["records"]]
                         if action=="move": request["cut_state"]=book.state
                         if action=='table_promote':

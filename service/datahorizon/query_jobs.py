@@ -37,11 +37,21 @@ class QueryJobs:
 
     def start(self,request):
         job_id=request.get('job_id');require(isinstance(job_id,str) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}',job_id),'INVALID_JOB','Query job_id needs 1–64 ASCII letters/digits/_/-')
-        declarations,values=bindings(request.get('sql'),request.get('parameters',[]),request.get('values',{}))
         fingerprint=hashlib.sha256(encoded(request).encode()).hexdigest()
         with self.book.lock:
             self.book.refresh();require(request.get('expected_state')==self.book.state(),'STALE_STATE','Refresh before running SQL',409)
             require(not self.book.repair,'REPAIR_SCOPE','Reopen normally before running queries',409)
+            saved=None
+            if 'query' in request:
+                require('sql' not in request and 'parameters' not in request,'INVALID_ARGUMENT','Saved query runs use the stored SQL and declarations')
+                from .query_views import query,prepare,definition_digest
+                saved=query(self.book.db,request['query'])
+                require('definition_digest' not in request or request['definition_digest']==definition_digest(saved),'STALE_DEFINITION','Reload the changed saved definition before running it',409)
+                declarations,deps,shape=prepare(self.book.db,saved['sql'],saved['parameters'],tables(self.book.db),time.monotonic()+2)
+                require(shape==saved['shape'] and deps==saved['dependencies'],'QUERY_DEPENDENCY_CHANGED','Review the saved query dependencies and result shape',409)
+                require(isinstance(request.get('values',{}),dict),'INVALID_PARAMETERS','Parameter values must be an object')
+                request={**request,'sql':saved['sql'],'parameters':declarations,'values':{**saved['defaults'],**request.get('values',{})}}
+            declarations,values=bindings(request.get('sql'),request.get('parameters',[]),request.get('values',{}))
             with self.lock:
                 self._expire();require(not self.stopping,'SERVICE_STOPPING','Query manager is stopping',503)
                 if job_id in self.entries:
@@ -50,7 +60,7 @@ class QueryJobs:
                 require(not any(e['status']=='running' for e in self.entries.values()),'JOB_BUSY','One query may execute at a time per workbook',409)
                 directory=create();self.generation+=1
                 entry=dict(status='running',phase='Snapshot queued',rows_processed=0,state=self.book.state(),generation=self.generation,fingerprint=fingerprint,
-                    cancel=threading.Event(),finished=None,directory=directory,sql=request['sql'],parameters=declarations,values=values)
+                    cancel=threading.Event(),finished=None,directory=directory,sql=request['sql'],parameters=declarations,values=values,saved=saved)
                 try:
                     worker=threading.Thread(target=self._run,args=(job_id,entry),daemon=True);entry['worker']=worker;self.entries[job_id]=entry;worker.start()
                 except BaseException:self.entries.pop(job_id,None);self.generation-=1;self._cleanup(entry);raise
@@ -92,6 +102,9 @@ class QueryJobs:
                         columns=[dict(id=str(index),name=col[0]) for index,col in enumerate(cursor.description)]
                         require(1<=len(columns)<=256,'QUERY_LIMIT','At most 256 result columns')
                         require(all(len(col['name'].encode())<=1024 for col in columns) and sum(len(col['name'].encode()) for col in columns)<=65536,'QUERY_LIMIT','Result labels exceed 1 KiB each or 64 KiB total; use shorter explicit aliases')
+                        if entry['saved'] is not None:
+                            actual=[dict(table=key,columns=sorted(value)) for key,value in sorted(dependencies.items())]
+                            require(columns==entry['saved']['shape'] and actual==entry['saved']['dependencies'],'QUERY_DEPENDENCY_CHANGED','Saved query shape/dependencies changed; no result published',409)
                         for row in cursor:
                             self._checkpoint(entry,deadline);count+=1;require(count<=self.max_rows and count*len(columns)<=self.max_values,'QUERY_LIMIT','Query exceeds 100,000 rows or 1,000,000 values',409)
                             payload=encoded([scalar(value) for value in row]);size+=len(payload.encode());require(size<=self.max_bytes,'QUERY_LIMIT','Query result spool exceeds 64 MiB',409)

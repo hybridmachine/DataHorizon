@@ -21,9 +21,19 @@ public:
     QJsonObject definition()const;
     void setDefinition(const QJsonObject &definition);
     QString completedJob()const{return m_result.isEmpty()?QString{}:m_job;}
+    void loadSavedQuery(const QString &id);
+    void operationAdmitted(const QString &id);
+    void operationReceipt(const QJsonObject &receipt);
+    void admissionRejected();
+    QJsonObject recoveryDraft()const;
+    bool hasUnsavedDefinition()const;
+    void discardDefinition();
+    void exportTo(const QString &path,const QString &format);
 signals:
     void issue(QString message);
     void submitRequested(QJsonObject operation);
+    void busyRequested(bool busy);
+    void refreshRequested();
 private:
     QString base()const;
     void addParameter(const QJsonObject &parameter={});
@@ -38,6 +48,8 @@ private:
     void releaseForClose();
     void buttons();
     void draftChanged();
+    void saveDefinition(bool copy=false);
+    void deleteDefinition();
     RestClient *m_client;QJsonObject m_info,m_catalog,m_result,m_page,m_values;
     QJsonArray m_projection;QString m_job;quint64 m_generation=0,m_pageGeneration=0;
     quint64 m_editorRevision=0,m_runRevision=0;
@@ -47,4 +59,9 @@ private:
     QPlainTextEdit *m_sql;QTableWidget *m_parameters,*m_grid;QTreeWidget *m_schema;
     QPushButton *m_run,*m_cancel,*m_previous,*m_next,*m_columns,*m_copy;
     QLabel *m_status,*m_source;QList<int> m_previousPages;
+    QJsonObject m_saved,m_saveDraft;
+    QString m_savedDigest,m_definitionOperation;
+    bool m_awaitingDefinition=false;
+    QLabel *m_savedName;
+    QPushButton *m_save,*m_saveAs,*m_delete,*m_export;
 };

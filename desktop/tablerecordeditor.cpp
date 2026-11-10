@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "relationalworkbench.h"
 #include "recordinputdialog.h"
+#include "queryworkbench.h"
 #include "clipboarddata.h"
 #include <QApplication>
 #include <QClipboard>
@@ -13,14 +14,17 @@
 bool RelationalWorkbench::hasActiveEditor()const{return !m_recordDialog.isNull();}
 void RelationalWorkbench::restoreDraft(const QJsonObject &draft){m_recordDraft=draft;setLocked(m_blocked);}
 void RelationalWorkbench::operationAdmitted(const QString &operation){
+    m_query->operationAdmitted(operation);
     if(!m_awaitingDataAdmission)return;
     m_awaitingDataAdmission=false;m_dataOperation=operation;m_recordDraft["operation_id"]=operation;
 }
 void RelationalWorkbench::admissionRejected(){
+    m_query->admissionRejected();
     if(!m_awaitingDataAdmission)return;
     m_awaitingDataAdmission=false;if(m_recordDialog)m_recordDialog->error(tr("The operation was not submitted. Review its target and try again."));
 }
 void RelationalWorkbench::operationReceipt(const QJsonObject &receipt){
+    m_query->operationReceipt(receipt);
     if(m_dataOperation.isEmpty() || receipt["operation_id"]!=m_dataOperation)return;
     const auto outcome=receipt["outcome"].toString();
     if(outcome=="committed"){
@@ -34,12 +38,12 @@ void RelationalWorkbench::operationReceipt(const QJsonObject &receipt){
 
 void RelationalWorkbench::dataPreview(const QJsonObject &request,const QJsonObject &reviewed,QPointer<RecordInputDialog> dialog){
     if(!dialog)return;
-    if(reviewed["id"]!=m_info["id"] || reviewed["state"]!=m_info["state"]){dialog->stale(tr("Stored data changed. Review current values before retrying."));return;}
+    if(reviewed["id"]!=m_info.value("id") || reviewed["state"]!=m_info.value("state")){dialog->stale(tr("Stored data changed. Review current values before retrying."));return;}
     m_recordDraft["request"]=request;dialog->pending(true);emit busyRequested(true);
     auto body=request;body["expected_state"]=reviewed["state"];
     m_client->request(base()+(request["action"]=="table_repair"?"/relationships/repair-preview":"/tables/edit-preview"),body,[this,reviewed,dialog](QJsonObject result,QString error){
         emit busyRequested(false);if(!dialog)return;
-        if(reviewed["id"]!=m_info["id"] || reviewed["state"]!=m_info["state"]){dialog->stale(tr("Stored data changed. Review current values before retrying."));return;}
+        if(reviewed["id"]!=m_info.value("id") || reviewed["state"]!=m_info.value("state")){dialog->stale(tr("Stored data changed. Review current values before retrying."));return;}
         if(!error.isEmpty()){dialog->error(error);return;}
         if(!result["can_apply"].toBool()){
             QStringList errors;for(const auto &value:result["issues"].toArray()){const auto issue=value.toObject();errors.append(tr("Record %1, %2: %3").arg(issue["record"].toInt()).arg(issue["column"].toString(),issue["message"].toString()));}dialog->error(errors.join('\n'));return;
@@ -71,24 +75,24 @@ void RelationalWorkbench::recordDialog(const QJsonObject &table,const QJsonArray
 
 void RelationalWorkbench::addRecord(){
     if(m_locked || !m_recordDraft.isEmpty())return;
-    for(const auto &entry:m_catalog["tables"].toArray()){const auto table=entry.toObject();if(table["id"].toString()==m_table){recordDialog(table,table["columns"].toArray(),{},{});return;}}
+    for(const auto &entry:m_catalog.value("tables").toArray()){const auto table=entry.toObject();if(table["id"].toString()==m_table){recordDialog(table,table["columns"].toArray(),{},{});return;}}
 }
 void RelationalWorkbench::editCell(int row,int column){
     if(m_locked || !m_recordDraft.isEmpty() || row<0 || column<0)return;
-    const auto rows=m_page["records"].toArray(),columns=m_page["columns"].toArray();if(row>=rows.size() || column>=columns.size())return;
+    const auto rows=m_page.value("records").toArray(),columns=m_page.value("columns").toArray();if(row>=rows.size() || column>=columns.size())return;
     const auto col=columns[column].toObject();const auto rowId=rows[row].toObject()["row_id"].toString();const auto reviewed=m_info;const auto target=m_table;
     emit busyRequested(true);
     m_client->request(base()+"/tables/read",{{"table",target},{"columns",QJsonArray{col["id"]}},{"record_ids",QJsonArray{rowId}},{"expected_state",reviewed["state"]}},[this,reviewed,target,col,rowId](QJsonObject result,QString error){
-        emit busyRequested(false);if(!error.isEmpty()){emit issue(error);return;}if(reviewed["id"]!=m_info["id"] || reviewed["state"]!=m_info["state"] || target!=m_table)return;
-        QJsonObject table;for(const auto &entry:m_catalog["tables"].toArray())if(entry.toObject()["id"].toString()==target)table=entry.toObject();
+        emit busyRequested(false);if(!error.isEmpty()){emit issue(error);return;}if(reviewed["id"]!=m_info.value("id") || reviewed["state"]!=m_info.value("state") || target!=m_table)return;
+        QJsonObject table;for(const auto &entry:m_catalog.value("tables").toArray())if(entry.toObject()["id"].toString()==target)table=entry.toObject();
         recordDialog(table,QJsonArray{col},result["records"].toArray().first().toObject()["values"].toObject(),rowId);
     });
 }
 void RelationalWorkbench::reviewRecordDraft(){
     if(m_locked || hasActiveEditor() || m_recordDraft.isEmpty() || !m_dataOperation.isEmpty())return;
     const auto draft=m_recordDraft;
-    if(draft["path"]!=m_info["path"] || draft["workbook_id"]!=m_info["workbook_id"]){emit issue(tr("This draft belongs to another workbook. Copy or discard it before continuing."));return;}
-    QJsonObject table;for(const auto &entry:m_catalog["tables"].toArray())if(entry.toObject()["id"]==draft["table"])table=entry.toObject();
+    if(draft["path"]!=m_info.value("path") || draft["workbook_id"]!=m_info.value("workbook_id")){emit issue(tr("This draft belongs to another workbook. Copy or discard it before continuing."));return;}
+    QJsonObject table;for(const auto &entry:m_catalog.value("tables").toArray())if(entry.toObject()["id"]==draft["table"])table=entry.toObject();
     if(table.isEmpty()){emit issue(tr("The original table no longer exists. The draft is retained for copying or discarding."));return;}
     if(draft.contains("bulk")){
         RecordInputDialog dialog({}, {},this);m_recordDialog=&dialog;dialog.setWindowTitle(tr("Review retained record operation"));dialog.explain(QString::fromUtf8(QJsonDocument(draft["request"].toObject()).toJson()).left(12000));
@@ -99,7 +103,7 @@ void RelationalWorkbench::reviewRecordDraft(){
     const auto rowId=draft["row_id"].toString();if(rowId.isEmpty()){recordDialog(table,columns,{},rowId,draft["values"].toObject());return;}
     const auto reviewed=m_info;emit busyRequested(true);
     m_client->request(base()+"/tables/read",{{"table",table["id"]},{"columns",ids},{"record_ids",QJsonArray{rowId}},{"expected_state",reviewed["state"]}},[this,reviewed,table,columns,rowId,draft](QJsonObject result,QString error){
-        emit busyRequested(false);if(!error.isEmpty()){emit issue(error);return;}if(reviewed["state"]!=m_info["state"] || reviewed["id"]!=m_info["id"])return;
+        emit busyRequested(false);if(!error.isEmpty()){emit issue(error);return;}if(reviewed["state"]!=m_info.value("state") || reviewed["id"]!=m_info.value("id"))return;
         recordDialog(table,columns,result["records"].toArray().first().toObject()["values"].toObject(),rowId,draft["values"].toObject());
     });
 }
@@ -108,22 +112,22 @@ static QList<QTableWidgetSelectionRange> ranges(QTableWidget *grid){return grid-
 void RelationalWorkbench::deleteRecords(){
     if(m_locked || !m_recordDraft.isEmpty())return;QSet<int> selected;for(const auto &range:ranges(m_records))for(int r=range.topRow();r<=range.bottomRow();++r)selected.insert(r);
     if(selected.isEmpty())return;auto ordered=selected.values();std::sort(ordered.begin(),ordered.end());QJsonArray ids;
-    for(int row:ordered)ids.append(m_page["records"].toArray()[row].toObject()["row_id"]);
-    m_recordDraft={{"bulk",true},{"path",m_info["path"]},{"workbook_id",m_info["workbook_id"]},{"table",m_table},{"request",QJsonObject{{"action","table_delete"},{"table",m_table},{"record_ids",ids}}}};reviewRecordDraft();
+    for(int row:ordered)ids.append(m_page.value("records").toArray()[row].toObject()["row_id"]);
+    m_recordDraft={{"bulk",true},{"path",m_info.value("path")},{"workbook_id",m_info.value("workbook_id")},{"table",m_table},{"request",QJsonObject{{"action","table_delete"},{"table",m_table},{"record_ids",ids}}}};reviewRecordDraft();
 }
 void RelationalWorkbench::clearRecordCells(){
     if(m_locked || !m_recordDraft.isEmpty())return;QMap<int,QJsonObject> values;
-    for(const auto &range:ranges(m_records))for(int r=range.topRow();r<=range.bottomRow();++r)for(int c=range.leftColumn();c<=range.rightColumn();++c)values[r][m_page["columns"].toArray()[c].toObject()["id"].toString()]=QJsonValue::Null;
-    QJsonArray edits;for(auto it=values.begin();it!=values.end();++it)edits.append(QJsonObject{{"row_id",m_page["records"].toArray()[it.key()].toObject()["row_id"]},{"values",it.value()}});if(edits.isEmpty())return;
-    m_recordDraft={{"bulk",true},{"path",m_info["path"]},{"workbook_id",m_info["workbook_id"]},{"table",m_table},{"request",QJsonObject{{"action","table_update"},{"table",m_table},{"edits",edits}}}};reviewRecordDraft();
+    for(const auto &range:ranges(m_records))for(int r=range.topRow();r<=range.bottomRow();++r)for(int c=range.leftColumn();c<=range.rightColumn();++c)values[r][m_page.value("columns").toArray()[c].toObject()["id"].toString()]=QJsonValue::Null;
+    QJsonArray edits;for(auto it=values.begin();it!=values.end();++it)edits.append(QJsonObject{{"row_id",m_page.value("records").toArray()[it.key()].toObject()["row_id"]},{"values",it.value()}});if(edits.isEmpty())return;
+    m_recordDraft={{"bulk",true},{"path",m_info.value("path")},{"workbook_id",m_info.value("workbook_id")},{"table",m_table},{"request",QJsonObject{{"action","table_update"},{"table",m_table},{"edits",edits}}}};reviewRecordDraft();
 }
 void RelationalWorkbench::copyRecordCells(){
     const auto selection=ranges(m_records);if(m_blocked || selection.size()!=1){emit issue(tr("Choose one rectangular selection to copy."));return;}
-    const auto range=selection.first();QJsonArray ids,cols;for(int r=range.topRow();r<=range.bottomRow();++r)ids.append(m_page["records"].toArray()[r].toObject()["row_id"]);for(int c=range.leftColumn();c<=range.rightColumn();++c)cols.append(m_page["columns"].toArray()[c].toObject()["id"]);
+    const auto range=selection.first();QJsonArray ids,cols;for(int r=range.topRow();r<=range.bottomRow();++r)ids.append(m_page.value("records").toArray()[r].toObject()["row_id"]);for(int c=range.leftColumn();c<=range.rightColumn();++c)cols.append(m_page.value("columns").toArray()[c].toObject()["id"]);
     const auto reviewed=m_info;emit busyRequested(true);
     m_client->request(base()+"/tables/read",{{"table",m_table},{"columns",cols},{"record_ids",ids},{"expected_state",reviewed["state"]}},[this,reviewed,cols](QJsonObject result,QString error){
-        emit busyRequested(false);if(!error.isEmpty()){emit issue(error);return;}if(reviewed["state"]!=m_info["state"] || reviewed["id"]!=m_info["id"])return;
-        QJsonArray rows;QStringList lines;for(const auto &entry:result["records"].toArray()){QJsonArray values;QStringList line;for(const auto &col:cols){const auto value=entry.toObject()["values"].toObject()[col.toString()];values.append(value);line.append(value.isNull()?QString{}:tableValueText(value));}rows.append(values);lines.append(line.join('\t'));}
+        emit busyRequested(false);if(!error.isEmpty()){emit issue(error);return;}if(reviewed["state"]!=m_info.value("state") || reviewed["id"]!=m_info.value("id"))return;
+        QJsonArray rows;QStringList lines;for(const auto &entry:result["records"].toArray()){QJsonArray values;QStringList line;for(const auto &col:cols){const QJsonValue value=entry.toObject()["values"].toObject()[col.toString()];values.append(value);line.append(value.isNull()?QString{}:tableValueText(value));}rows.append(values);lines.append(line.join('\t'));}
         auto *mime=new QMimeData;mime->setData("application/x-datahorizon-table-values",QJsonDocument(QJsonObject{{"version",1},{"rows",rows}}).toJson(QJsonDocument::Compact));mime->setText(lines.join('\n'));QApplication::clipboard()->setMimeData(mime);
     });
 }

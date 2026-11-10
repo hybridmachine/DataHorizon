@@ -469,8 +469,9 @@ class Workbook:
         with self.lock:
             self.refresh()
             from .relational import tables
+            from .query_views import summaries
             return {"id": self.id, "path": str(self.path), "state": self.state(), "readonly": self.readonly,
-                    "tables":[dict(id=item['id'],name=item['name']) for item in tables(self.db)],"queries":[],
+                    "tables":[dict(id=item['id'],name=item['name']) for item in tables(self.db)],"queries":summaries(self.db),
                     "repair":self.repair,"relational_issues":self.relational_issues,
                     "sheets": [{"id": s, "name": n} for s, n in self.db.execute("SELECT id,name FROM sheets ORDER BY position,id")],
                     "undo": self.undo[-1][0] if self.undo else None, "redo": self.redo[-1][0] if self.redo else None,

@@ -323,6 +323,20 @@ public:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void savedSqlViewsReopenWithoutExecutionAndExportCompleteResults() {
+        QTemporaryDir temp;const auto path=temp.filePath("views.dhwb");StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","table_create"},{"name","Data"},{"columns",QJsonArray{QJsonObject{{"name","Value"},{"type","integer"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);QJsonArray rows;for(int i=0;i<300;++i)rows.append(QJsonObject{{"Value",i}});window.submit({{"action","table_insert"},{"table","Data"},{"rows",rows}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        auto *pages=window.findChild<QTabWidget *>("relationalPages");pages->setCurrentIndex(1);window.findChild<QPlainTextEdit *>("querySql")->setPlainText("SELECT Value FROM Data ORDER BY Value");int phase=0;QTimer timer;timer.setInterval(10);connect(&timer,&QTimer::timeout,&window,[&]{auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());if(!dialog)return;
+            if(phase==0 && dialog->objectName()=="saveQueryOptions"){phase=1;dialog->findChild<QLineEdit *>("savedQueryNameInput")->setText("Values view");dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();}
+            else if(phase==1 && dialog->objectName()=="queryDefinitionReview"){phase=2;dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply)->click();}
+            else if((phase==2 || phase==5) && dialog->objectName()=="relationalExportReview"){QVERIFY(qobject_cast<QMessageBox *>(dialog)->text().contains("300"));++phase;qobject_cast<QMessageBox *>(dialog)->button(QMessageBox::Yes)->click();}
+            else if(phase==3 && dialog->objectName()=="discardSqlOnOpen"){phase=4;qobject_cast<QMessageBox *>(dialog)->button(QMessageBox::Yes)->click();}
+        });timer.start();window.findChild<QPushButton *>("saveQueryDefinition")->click();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);QVERIFY(!window.findChild<QueryWorkbench *>()->hasActiveJob());QCOMPARE(window.findChild<QTableWidget *>("queryResults")->rowCount(),0);
+        window.findChild<QPushButton *>("runQuery")->click();auto *grid=window.findChild<QTableWidget *>("queryResults");QTRY_COMPARE_WITH_TIMEOUT(grid->rowCount(),128,10000);const auto output=temp.filePath("query.csv");window.findChild<QueryWorkbench *>()->exportTo(output,"csv");QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(output),5000);QFile result(output);QVERIFY(result.open(QIODevice::ReadOnly));const auto bytes=result.readAll();QCOMPARE(bytes.split('\n').size(),302);QVERIFY(bytes.endsWith("299\r\n"));
+        window.openBook(path);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);window.findChild<QAction *>("relationalWorkbenchAction")->trigger();auto *objects=window.findChild<QTreeWidget *>("relationalObjects");QTRY_VERIFY_WITH_TIMEOUT(objects->topLevelItemCount()==3 && objects->topLevelItem(2)->childCount()==1,5000);objects->setCurrentItem(objects->topLevelItem(2)->child(0));QTRY_COMPARE_WITH_TIMEOUT(window.findChild<QLabel *>("savedQueryName")->text(),QString("Values view"),5000);QVERIFY(!window.findChild<QueryWorkbench *>()->hasActiveJob());QCOMPARE(grid->rowCount(),0);
+        phase=5;pages->setCurrentIndex(0);objects->setCurrentItem(objects->topLevelItem(0)->child(0));const auto tableOutput=temp.filePath("table.csv");auto *workbench=window.findChild<RelationalWorkbench *>();workbench->exportTableTo(tableOutput,"csv");QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(tableOutput),5000);timer.stop();QCOMPARE(phase,6);
+        const auto alias=temp.filePath("native-alias.csv");QVERIFY(QFile::link(path,alias));QFile native(path);QVERIFY(native.open(QIODevice::ReadOnly));const auto before=QCryptographicHash::hash(native.readAll(),QCryptographicHash::Sha256);native.close();workbench->exportTableTo(alias,"csv");QVERIFY(native.open(QIODevice::ReadOnly));QCOMPARE(QCryptographicHash::hash(native.readAll(),QCryptographicHash::Sha256),before);
+    }
     void readonlySqlWorkbenchBindsParametersPagesResultsAndMarksChangesStale() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("query.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
         window.submit({{"action","table_create"},{"name","Data"},{"columns",QJsonArray{QJsonObject{{"name","Value"},{"type","integer"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);QJsonArray rows;for(int i=0;i<300;++i)rows.append(QJsonObject{{"Value",i}});window.submit({{"action","table_insert"},{"table","Data"},{"rows",rows}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
@@ -338,7 +352,7 @@ private slots:
     }
     void closingSqlWorkbenchCancelsPendingSnapshotAndReleasesItsJob() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("cancel-query.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
-        window.findChild<QAction *>("relationalWorkbenchAction")->trigger();window.findChild<QTabWidget *>("relationalPages")->setCurrentIndex(1);window.findChild<QPlainTextEdit *>("querySql")->setPlainText("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT sum(x) FROM n");window.findChild<QPushButton *>("runQuery")->click();QVERIFY(window.findChild<QueryWorkbench *>()->hasActiveJob());window.close();QTRY_VERIFY_WITH_TIMEOUT(!window.isVisible(),10000);QVERIFY(!window.findChild<QueryWorkbench *>()->hasActiveJob());
+        window.findChild<QAction *>("relationalWorkbenchAction")->trigger();window.findChild<QTabWidget *>("relationalPages")->setCurrentIndex(1);window.findChild<QPlainTextEdit *>("querySql")->setPlainText("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT sum(x) FROM n");window.findChild<QPushButton *>("runQuery")->click();QVERIFY(window.findChild<QueryWorkbench *>()->hasActiveJob());QTimer discard;discard.setInterval(10);connect(&discard,&QTimer::timeout,&window,[]{auto *review=qobject_cast<QMessageBox *>(QApplication::activeModalWidget());if(review && review->objectName()=="discardQueryDraft")review->button(QMessageBox::Yes)->click();});discard.start();window.close();QTRY_VERIFY_WITH_TIMEOUT(!window.isVisible(),10000);QVERIFY(!window.findChild<QueryWorkbench *>()->hasActiveJob());
     }
     void relationshipsAndOrphanRepairUseReviewedRestOperations() {
         QTemporaryDir temp;const auto path=temp.filePath("relations.dhwb");StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
@@ -346,7 +360,7 @@ private slots:
         window.submit({{"action","table_create"},{"name","Customers"},{"columns",QJsonArray{QJsonObject{{"name","ID"},{"required",true},{"unique",true}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
         window.submit({{"action","table_create"},{"name","Orders"},{"columns",QJsonArray{QJsonObject{{"name","Customer"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
         window.submit({{"action","table_insert"},{"table","Customers"},{"rows",QJsonArray{QJsonObject{{"ID","C001"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
-        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QTreeWidget *>("relationalObjects")->topLevelItemCount()==1 && window.findChild<QTreeWidget *>("relationalObjects")->topLevelItem(0)->childCount()==2,5000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QTreeWidget *>("relationalObjects")->topLevelItemCount()>=1 && window.findChild<QTreeWidget *>("relationalObjects")->topLevelItem(0)->childCount()==2,5000);
         int phase=0;QTimer timer;timer.setInterval(10);connect(&timer,&QTimer::timeout,&window,[&]{auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());if(!dialog)return;
             if(phase==0 && dialog->objectName()=="relationshipsDialog"){phase=1;auto *button=dialog->findChild<QPushButton *>("createRelationship");QTimer::singleShot(0,button,&QPushButton::click);}
             else if(phase==1 && dialog->objectName()=="createRelationshipDialog"){phase=2;dialog->findChild<QLineEdit *>("relationshipName")->setText("CustomerOrders");auto *child=dialog->findChild<QComboBox *>("relationshipChild");child->setCurrentIndex(child->findText("Orders.Customer (text)"));dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply)->click();}
@@ -355,7 +369,7 @@ private slots:
         });timer.start();window.findChild<QPushButton *>("tableRelationships")->click();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);timer.stop();QCOMPARE(phase,2);
         QProcess direct;direct.start(qEnvironmentVariable("DATAHORIZON_PYTHON","python3"),{"-c","import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); db.execute(\"INSERT INTO Orders(Customer) VALUES('missing')\"); db.commit(); db.close()",path});QVERIFY(direct.waitForFinished(10000));QCOMPARE(direct.exitCode(),0);
         window.openBook(path,false,false,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);QTRY_VERIFY_WITH_TIMEOUT(!window.findChild<QPushButton *>("addTableRecord")->isEnabled(),5000);
-        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QTreeWidget *>("relationalObjects")->topLevelItemCount()==1 && window.findChild<QTreeWidget *>("relationalObjects")->topLevelItem(0)->childCount()==2,5000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QTreeWidget *>("relationalObjects")->topLevelItemCount()>=1 && window.findChild<QTreeWidget *>("relationalObjects")->topLevelItem(0)->childCount()==2,5000);
         phase=3;timer.start();window.findChild<QPushButton *>("relationshipViolations")->click();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),7,10000);timer.stop();QCOMPARE(phase,5);
         window.openBook(path);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),8,10000);
     }
@@ -438,7 +452,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
         auto *action=window.findChild<QAction *>("relationalWorkbenchAction");QVERIFY(action);action->trigger();
         auto *objects=window.findChild<QTreeWidget *>("relationalObjects");QVERIFY(objects);
-        QTRY_VERIFY_WITH_TIMEOUT(objects->topLevelItemCount()==1 && objects->topLevelItem(0)->childCount()==1,5000);
+        QTRY_VERIFY_WITH_TIMEOUT(objects->topLevelItemCount()>=1 && objects->topLevelItem(0)->childCount()==1,5000);
         objects->setCurrentItem(objects->topLevelItem(0)->child(0));
         auto *schema=window.findChild<QTableWidget *>("tableSchema");QVERIFY(schema);QCOMPARE(schema->rowCount(),2);
         QCOMPARE(schema->item(0,0)->text(),QString("CustomerID"));

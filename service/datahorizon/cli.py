@@ -95,7 +95,9 @@ def main():
     commands.add_parser("create")
     commands.add_parser("info")
     query=commands.add_parser('query',help='Read-only SQL jobs; run reads JSON stdin and returns the complete frozen result. Later actions require a workbook kept open on --url.')
-    query.add_argument('query_action',choices=['run','status','page','cancel','release']);query.add_argument('--job-id');query.add_argument('--offset',type=int,default=0);query.add_argument('--limit',type=int,default=64)
+    query.add_argument('query_action',choices=['run','status','page','cancel','release']);query.add_argument('--job-id');query.add_argument('--offset',type=int,default=0);query.add_argument('--limit',type=int,default=64);query.add_argument('--saved');query.add_argument('--export',choices=['csv','xlsx','ods']);query.add_argument('--output');query.add_argument('--overwrite',action='store_true')
+    view=commands.add_parser('view',help='Native saved definitions; opening does not execute SQL');view.add_argument('view_action',choices=['list','read','preview','save','rename','delete']);view.add_argument('name',nargs='?');view.add_argument('--new-name')
+    table_export=commands.add_parser('table-export',help='Complete bounded table/filter values export');table_export.add_argument('table');table_export.add_argument('format',choices=['csv','xlsx','ods']);table_export.add_argument('--scope-json',default='{}');table_export.add_argument('--output');table_export.add_argument('--overwrite',action='store_true')
     commands.add_parser('tables',help='Inspect native structured table definitions')
     table_create=commands.add_parser('table-create',help='Create a table; read a column-definition array from JSON stdin')
     table_create.add_argument('name')
@@ -137,6 +139,7 @@ def main():
     releasing = False
     result = None
     try:
+        if args.command=='query' and ((args.output and not args.export) or (args.export and args.query_action!='run')):raise ValueError('Query file output requires query run --export FORMAT')
         if args.command in ("read", "set"):
             row, col = coordinates(args.address)
         if args.command == "direct-sql":
@@ -163,9 +166,12 @@ def main():
                     elif args.command=='query':
                         import time
                         if args.query_action=='run':
-                            result=book.run_query(**json.load(sys.stdin),**({'job_id':args.job_id} if args.job_id else {}))
+                            options=json.load(sys.stdin)
+                            result=book.run_saved_query(args.saved,values=options,job_id=args.job_id) if args.saved else book.run_query(**options,**({'job_id':args.job_id} if args.job_id else {}))
                             while result['status']=='running':time.sleep(.05);result=book.query(result['job_id'])
-                            if result['status']=='completed':
+                            if result['status']=='completed' and args.export:
+                                exported=book.export_query(result['job_id'],args.export);result['export']=book.publish_export(exported,args.output,overwrite=args.overwrite) if args.output else exported
+                            elif result['status']=='completed':
                                 rows=[];columns=[col['id'] for col in result['result']['columns']];offset=0
                                 while True:
                                     page=book.query(result['job_id'],'page',offset=offset,columns=columns);rows.extend(page['rows'])
@@ -176,6 +182,15 @@ def main():
                         else:
                             if not args.job_id:raise ValueError('--job-id is required')
                             result=book.query(args.job_id,None if args.query_action=='status' else args.query_action,**(dict(offset=args.offset,limit=args.limit) if args.query_action=='page' else {}))
+                    elif args.command=='view':
+                        if args.view_action=='list':result=book.tables()['queries']
+                        elif args.view_action=='read':result=book.query_definition(args.name)
+                        elif args.view_action=='rename':result=book.rename_query(args.name,args.new_name)
+                        elif args.view_action=='delete':result=book.delete_query(args.name)
+                        else:
+                            review=book.preview_query(args.name,**json.load(sys.stdin));result=book.save_query(review) if args.view_action=='save' else review
+                    elif args.command=='table-export':
+                        exported=book.export_table(args.table,args.format,**json.loads(args.scope_json));result=book.publish_export(exported,args.output,overwrite=args.overwrite) if args.output else exported
                     elif args.command=='table-create':result=book.create_table(args.name,json.load(sys.stdin))
                     elif args.command=='table-drop':result=book.drop_table(args.table,allow_data_loss=args.allow_data_loss)
                     elif args.command=='table-schema':

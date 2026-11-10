@@ -33,6 +33,10 @@ public:
     QJsonObject cacheMetrics()const;
     bool hasQueryJob()const;
     void closeQuery(std::function<void(QString)> completion);
+    QJsonObject queryDraft()const;
+    bool hasUnsavedQuery()const;
+    void discardQueryDraft();
+    void exportTableTo(const QString &path,const QString &format);
 signals:
     void submitRequested(QJsonObject operation);
     void issue(QString message);
@@ -40,6 +44,8 @@ signals:
     void busyRequested(bool busy);
     void reconcileRequested();
     void cancelOperationRequested();
+    void refreshRequested();
+    void sheetSelected(QString id);
 private:
     void createTable();
     void dropTable();

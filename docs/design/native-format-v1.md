@@ -260,3 +260,37 @@ an ownership marker matches and its service process is proven dead. Unknown or
 still-live owners are retained. The CLI `query run` reads all frozen ordinal pages
 before returning, rather than presenting the visible page as a complete result.
 Managed SQL mutations remain a later capture/behavior contract.
+
+## Saved definitions and relational export
+
+The v4 catalog's `query` kind stores ID/name, original SQL, typed parameter
+declarations, explicit defaults, stable table/column dependencies and ordinal
+result labels. Names may contain spaces. The catalog retains its 256-KiB object /
+8-MiB aggregate bounds and a 64-query cap; catalog/info responses contain query
+summaries, with definitions read separately. A saved view is a named read-only
+result definition, not native SQLite VIEW DDL or a materialized table.
+
+Definition review/open validation prepares authorized SQL with zero output rows;
+outer LIMIT replacement preserves duplicate labels. No data rows or Python code
+execute. Schema changes prepare affected SQL against an empty proposed schema to
+catch SELECT-star expansion and new ambiguity, without rewriting stored SQL.
+Referenced rename/drop/type changes block until the definition is revised or
+removed. Run rechecks stored dependencies/shape and binds saved defaults only
+when an invocation value is absent. GUI definition digests reject unreviewed
+external definition changes. Invocation values remain session drafts unless
+explicitly saved as ordinary workbook defaults. Definition mutations require
+structural hook opt-in and clear history on commit; failures roll back generated
+edits and catalog changes together. Structural events include the affected
+object's before/after metadata as well as the retained table catalog contract.
+
+Relational exports consume the entire table/filter or complete frozen spool,
+not the loaded page. Initial CSV/XLSX/ODS export is capped at 10,000 values
+including headers and the ordinary 4-MiB response. Oversize/incomplete/stale
+output rejects without a partial file. Exact integers beyond 15 decimal digits
+or tagged SQLite integers become explicitly reported Text. Table temporal and
+Boolean values retain their kinds in XLSX/ODS; query aliases do not infer them.
+CSV is UTF-8, untyped and collapses NULL/empty Text, with ISO temporal text and
+no relational temporal companion. Reports list actual native-only object names.
+Qt reuses QSaveFile publication and checks native aliases after final review;
+the SDK/CLI use atomic protected client publication with a final state/alias
+check and explicit overwrite. Native inputs and definitions remain intact.
