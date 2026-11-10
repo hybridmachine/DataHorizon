@@ -59,7 +59,9 @@ class QueryJobTests(unittest.TestCase):
         self.assertEqual([first['rows'][0]['values'][0],second['rows'][0]['values'][0],third['rows'][-1]['values'][0]],[1,257,603]);self.assertEqual(first['rows'][0]['omitted_columns'],['1']);self.assertEqual(len(self.page(result,limit=1)['rows'][0]['values'][1]),400)
         with self.assertRaises(EngineError):self.page(result,columns=['missing'])
     def test_invalid_values_spool_limits_and_sql_errors_publish_no_partial_result(self):
-        for sql in ("SELECT x'0102' AS blob",'SELECT 1e999 AS inf','SELECT missing FROM Customers',"SELECT printf('%1000000000s','x')"):
+        # Exercise our 64-KiB scalar bound without relying on SQLite's
+        # version-dependent NULL/error behavior for an excessive printf width.
+        for sql in ("SELECT x'0102' AS blob",'SELECT 1e999 AS inf','SELECT missing FROM Customers',"SELECT printf('%070000d',1)"):
             result=self.run_query(sql);self.assertEqual(result['status'],'failed',result);self.assertNotIn('result',result);self.release(result)
         self.jobs.max_rows=2;result=self.run_query('SELECT * FROM Orders');self.assertEqual(result['error']['code'],'QUERY_LIMIT');self.assertNotIn('result',result)
         with self.assertRaises(EngineError):self.page(result)
