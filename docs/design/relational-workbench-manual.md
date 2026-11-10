@@ -19,6 +19,12 @@ launch the application executable with:
 DataHorizon.app/Contents/MacOS/DataHorizon --handler /absolute/path/to/tests/fixtures/relational_rules.py /absolute/path/to/CustomersOrders-copy.dhwb
 ```
 
+For this local handoff, double-click **Launch with fixture rules.command** in
+`build/relational-handoff/`. It opens `CustomersOrders-manual.dhwb` with the
+relocated app at `Installed/DataHorizon.app` and the adjacent rule file. The
+pristine fixture remains available for new copies. The archive and executable
+hashes are recorded in [task 10 evidence](evidence/relational-task10.json).
+
 Choose **Data → Tables and queries**. The browser has Tables, Sheets and
 Queries / views. Tables and **Read-only SQL** use separate central grids. Opening
 a saved definition never runs it automatically. **Refresh tables** / **Refresh
@@ -133,3 +139,11 @@ PYTHONPATH=service python3 tests/relational_fixture.py verify /new/path/Customer
 Record the app/source hash, OS/scale, steps passed, failures, screenshots and any
 workarounds. Pending physical/VoiceOver/clean-machine checks remain pending even
 when the corresponding Qt automation passes.
+
+The local automated pass used an Apple M1/8-GiB macOS host, Qt 6.12 and the
+bundled CPython 3.13.18 runtime. A separate 343-MiB native fixture measured bounded
+pages and query spools; these measurements do not raise the 10,000-value export
+tier. Synthetic Cocoa checks used scale requests 1/2 (actual Retina pixel ratios
+2/4). Screenshot capture at the larger ratio exceeded the ordinary 256-MiB GUI
+target; the separate run without captures stayed below it. Physical input,
+VoiceOver and clean-machine installation still need owner acceptance.

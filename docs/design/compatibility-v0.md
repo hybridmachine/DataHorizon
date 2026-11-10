@@ -43,6 +43,14 @@ companion in this relational tier. XLSX/ODS retain supported explicit values and
 literal Text. Reports name actual omitted native objects. Native Save/copy keeps
 definitions, keys, relationships, indexes and data.
 
+The [integrated verification](evidence/relational-task10.json) covers the complete
+Customers/Orders example through managed REST, GUI, CLI and SDK, including a
+required fixture handler and explicit independent-edit/orphan repair. Independent
+CSV, openpyxl and odfpy consumers verify the complete baseline export. This is a
+qualified local automated tier; physical GUI/VoiceOver, Windows/Linux and
+clean-machine release acceptance remain pending. See the
+[manual guide](relational-workbench-manual.md) for reproducible steps.
+
 ## Formula surface
 
 `+ - * / ^`, scalar Text concatenation `&`, unary signs, parentheses and comparisons `= <> < > <= >=` are

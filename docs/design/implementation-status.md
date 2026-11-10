@@ -148,57 +148,51 @@ the managed/direct boundary. [Consolidated evidence](evidence/m3-m5-batch-verifi
 records local qualification and measured limits; the milestone ledger below remains
 a development-tier assessment, not cross-platform release acceptance.
 
-## Planned relational feature batch
+## Relational feature batch
 
-The [structured tables and query workbench plan](relational-workbench-plan.md),
-requested November 9, defines ten dependency-ordered tasks for the first M8
-relational tier. It covers native table storage/migration, selection conversion,
-types/constraints, managed record edits/history, bounded browsing/indexes,
-restrictive relationships, read-only SQL, saved query views and snapshot export.
-Tasks 1–4 now provide contract probes/Qt wireframes and native v4 empty-table
-creation/catalog inspection/drop through the shared engine, REST, SDK/CLI and
-Qt workbench. Migration/hook rollback, direct SQLite insertion, native copy and
-exact schema protection have targeted tests. Selection promotion now reviews
-headers/types/conversion, copies formula values using one clock shared with
-transactional hooks, retains the source sheet and opens bounded record pages.
-Generated table/cell writes share rollback, limits and supported data history.
-The full local run passes 225 Qt checks and 494 Python tests (19 optional skips).
-Atomic column-schema reviews now support types, required/unique constraints,
-renaming and explicit removal, with identity/high-water-mark preservation and
-transactional hook rollback. The full Python suite passes 505 tests (19 optional
-skips), with targeted Qt review workflows. Public record insert/update/delete,
-invariant typed previews, explicit-target bulk operations and Qt typed editors
-now share required hooks, atomic rollback and record/cell Undo/Redo. Invalid input
-stays in its editor; unknown outcomes retain the operation identity and draft.
-Full Python verification passes 527 tests (19 optional skips). Full-table typed
-sort/filter, state-bound authenticated keyset pages and registered native indexes
-now run through REST/SDK/CLI and Qt. The desktop retains at most 128 records and
-2,048 preview values per page and releases hidden sheet caches. Native index
-interruption produces a confirmed rollback receipt after reacquiring ownership.
-Native RESTRICT relationships and owned indexes now preserve ordinary SQLite
-access. Explicit orphan repair handles admit only reviewed child-key repairs or
-orphan deletions, with required hooks and complete final relationship validation.
-Self/cyclic graphs and rebuilding referenced parent tables retain explicit
-dependency restrictions. Full Python verification passes 537 tests (19 optional
-skips). Read-only SQL now supports SELECT/CTEs, joins, aggregates and typed named
-bindings over private snapshots. An authorizer, function allowlist and SQLite
-limits protect the managed/direct boundary. Complete disk-spooled results have
-bounded ordinal pages, exact large-integer tags, state/generation invalidation,
-cancel/release and conservative terminated-service cleanup. Qt exposes the SQL
-editor, schema browser, parameter review and read-only result grid; hidden table
-and sheet pages release their caches. Query jobs are ephemeral after restart.
-Saved definitions now retain stable identities, explicit defaults, dependencies
-and result shape without executing on open. Proposed-schema preparation protects
-SELECT-star results and name binding. Qt has a Sheets/Tables/Queries browser and
-reviewed save/save-as/delete controls. Complete table/filter and frozen query
-exports use protected publication and actual omission reports; the initial
-interchange cap is 10,000 values including headers, with no page truncation.
-Full Python verification passes 570 tests (19 optional skips); targeted Qt
-saved-view/export, SQL and close workflows pass. Integrated native/installed and
-larger combined measurements are the final task.
-Automated evidence and the owner's later manual GUI
-walkthrough are tracked separately. Managed SQL mutations and
-the existing M1/M7/manual/platform/release gates retain their own requirements.
+The ten tasks in the [structured tables and query workbench plan](relational-workbench-plan.md)
+are implemented for the bounded local tier. Native v4 tables support reviewed
+selection conversion, typed schema/constraints, stable record identities, atomic
+managed edits and shared record/cell history. Full-table sort/filter uses indexed,
+authenticated keyset pages; native RESTRICT relationships have explicit orphan
+inspection/repair. Required transactional hooks run through REST, GUI, CLI and
+SDK. Direct SQLite edits refresh without replaying historical handlers.
+
+The Qt workbench includes a Sheets/Tables/Queries browser, typed record editors,
+relationships/index review and a read-only SQL pane. SELECT/CTEs, joins,
+aggregates and typed named bindings run on private snapshots with complete
+bounded disk spools, cancellation and stale-result protection. Native saved
+definitions retain explicit defaults/dependencies/shape without executing on
+open. Complete table/filter and frozen query exports use protected publication;
+the initial CSV/XLSX/ODS tier caps output at 10,000 values including headers and
+rejects oversized output without truncation. SQL writes remain deferred.
+
+[Final integration evidence](evidence/relational-task10.json) records 232 Qt
+checks and 571 Python tests (19 optional skips, covered by isolated validator and
+capture runs). All 571 Python tests also pass using installed service code and
+the pinned bundled CPython 3.13.18 runtime. Relocated installed GUI/CLI/SDK/service
+checks cover Customers/Orders, required-rule rollback, generated edits/Undo,
+independent edits, orphan repair and complete exports. CSV/openpyxl/odfpy verify
+the two baseline records and total 56. Cocoa relational checks pass at scale
+requests 1/2, with physical input and spoken accessibility still separate.
+
+On an Apple M1/8-GiB host, the 343.17-MiB native fixture has 300,000 records,
+exceeding the 256-MiB service target. All 37,504 filtered IDs match independent
+SQLite over 147 pages; indexed REST pages take 3.85–5.17 ms. Native warm page
+changes stay below 75 ms, input/heartbeat samples below 50 ms, and cancellation
+below 180 ms. Managed edit samples take 1–3 ms with/without an executing query.
+Service peak RSS is 48.41 MiB; GUI peaks without screenshots are 170.97/251.34 MiB
+at actual Retina ratios 2/4. Capture-inclusive peak at ratio 4 is 332.39 MiB and
+is not a pass for the ordinary GUI memory target. Full private snapshot disk
+cost is 343.17 MiB per retained job in this workload, in addition to spool/temp
+storage; the actual 64-MiB spool-limit probe rejects with no successful partial
+result. These are fresh-process/warm-cache observations, not true OS-cold,
+eight-workbook, worst-case temporary-disk or universal capacity qualification.
+
+The [manual guide](relational-workbench-manual.md) and local handoff identify the
+exact installed app, fixture, rule and artifact hashes. Owner GUI/VoiceOver,
+Windows/Linux, clean-machine distribution and existing M1/M7/release gates remain
+open; this batch does not close full M8.
 
 ## Milestone ledger
 

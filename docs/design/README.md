@@ -55,8 +55,9 @@ applications, and AI agents through REST.
 | Document | Contents |
 | --- | --- |
 | [Implementation status](implementation-status.md) | Current local evidence, milestone gaps and next dependencies |
-| [Structured tables and query workbench plan](relational-workbench-plan.md) | Planned first M8 batch: native tables, managed record edits, relationships, read-only SQL, saved views and later GUI acceptance |
+| [Structured tables and query workbench plan](relational-workbench-plan.md) | Implemented bounded first M8 batch: native tables, managed record edits, relationships, read-only SQL, saved views and verification evidence |
 | [Table and query wireframes](relational-workbench-wireframes.md) | Qt object browser, table/schema review, record editing, relationships and query/result interactions |
+| [Relational manual acceptance](relational-workbench-manual.md) | Installed Customers/Orders fixture, required Python rule, independent edits, repair and pending physical GUI/VoiceOver steps |
 | [Preview qualification increments](preview-qualification-next-ten.md) | Authorized next ten tasks; revised macOS scope and per-task delivery evidence |
 | [Native opening performance](native-opening-performance.md) | One-pass validation, page geometry and explicit legacy-copy guidance |
 | [macOS capacity qualification](macos-capacity-qualification.md) | Cache provenance, workload/RSS/disk measurements and the administrator-dependent OS-cold gate |

@@ -1,0 +1,44 @@
+{
+    "baseline_totals": [
+        35,
+        21
+    ],
+    "bounded_accessibility": true,
+    "changed_totals": [
+        60,
+        21
+    ],
+    "combined_cache": {
+        "budget_bytes": 16777216,
+        "estimated_bytes": 14612,
+        "loaded_records": 0,
+        "loaded_values": 8
+    },
+    "device_pixel_ratio": 2,
+    "exports": [
+        "csv",
+        "xlsx",
+        "ods"
+    ],
+    "fixture": "CustomersOrders-final-scale1.dhwb",
+    "gui_peak_rss_bytes_including_screenshot_capture": 221265920,
+    "narrow_height": 801,
+    "narrow_width": 820,
+    "physical_input_and_voiceover": "pending owner acceptance",
+    "platform": "cocoa",
+    "required_rule_rejected": true,
+    "saved_open_without_execution": true,
+    "screenshots": [
+        "final-scale1-customer-totals.png",
+        "final-scale1-orders-table.png",
+        "final-scale1-typed-record.png",
+        "final-scale1-quantity-rule-input.png",
+        "final-scale1-required-rule-rollback.png",
+        "final-scale1-complete-export-review.png",
+        "final-scale1-complete-export-review.png",
+        "final-scale1-complete-export-review.png",
+        "final-scale1-narrow-query.png"
+    ],
+    "tab_navigation": true,
+    "undo_restored": true
+}
