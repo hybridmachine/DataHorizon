@@ -629,6 +629,9 @@ class Service(ThreadingHTTPServer):
             return {"closed":True}
         if method == "GET" and not suffix:
             return {**book.info(), "id": handle, "workbook_id": book.id}
+        if method == "POST" and suffix == ["code"]:
+            from .workbook_code import read
+            return read(book,body)
         if method == "POST" and suffix == ["styles"]:
             return book.read_styles(body.get("sheet","Sheet1"),body)
         if method == "POST" and suffix == ["range"]:

@@ -388,9 +388,9 @@ class Workbook:
             require(signature in (EXPECTED_SCHEMA,EXPECTED_SCHEMA3) or reserved==EXPECTED_SCHEMA3,
                     "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
             meta = db.execute("SELECT format_version,revision,workbook_id FROM dh_meta WHERE singleton=1").fetchall()
-            require(len(meta) == 1 and meta[0][0] in (1,2,3,4) and type(meta[0][1]) is int and meta[0][1] >= 0,
+            require(len(meta) == 1 and meta[0][0] in (1,2,3,4,5) and type(meta[0][1]) is int and meta[0][1] >= 0,
                     "FORMAT_VERSION", "Unsupported or invalid native format", 409)
-            if meta[0][0]==4:
+            if meta[0][0]>=4:
                 from . import relational
                 registered=relational.validate_schema(db,signature,SCHEMA+METADATA_SCHEMA)
                 self.relational_issues=relational.validate_data(db,registered,deadline,repair=self.repair)
@@ -926,14 +926,17 @@ class Workbook:
                 require(not self.relational_issues or kind=='table_repair' and self.repair,'DATA_REPAIR_REQUIRED','Use the explicit restricted repair interface before ordinary mutations',409)
                 from . import relational
                 sheet_structural = isinstance(kind, str) and (kind.startswith("sheet_") or kind == "workbook_import" or kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"))
-                structural=sheet_structural or kind in relational.STRUCTURAL
+                structural=sheet_structural or kind in relational.STRUCTURAL or kind in ("module_save","module_delete")
                 from . import records
                 record_context=records.capture(self)
                 self.relational_before={item['id']:item for item in relational.tables(self.db)}
                 before_catalog=self.structure_hook(operation,request,'before',None) if sheet_structural else None
                 reference_report = {}
                 sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
-                if kind in relational.ACTIONS:
+                if kind in ("module_save","module_delete"):
+                    from .workbook_code import mutate as mutate_code
+                    reference_report=mutate_code(self,request)
+                elif kind in relational.ACTIONS:
                     reference_report=relational.mutate(self,request)
                 elif kind=='list_edit':
                     from .record_operations import edit
