@@ -148,6 +148,17 @@ the managed/direct boundary. [Consolidated evidence](evidence/m3-m5-batch-verifi
 records local qualification and measured limits; the milestone ledger below remains
 a development-tier assessment, not cross-platform release acceptance.
 
+## Planned relational feature batch
+
+The [structured tables and query workbench plan](relational-workbench-plan.md),
+requested November 9, defines ten dependency-ordered tasks for the first M8
+relational tier. It covers native table storage/migration, selection conversion,
+types/constraints, managed record edits/history, bounded browsing/indexes,
+restrictive relationships, read-only SQL, saved query views and snapshot export.
+Automated implementation evidence and the owner's later manual GUI walkthrough
+are tracked separately. These features are planned; managed SQL mutations and
+the existing M1/M7/manual/platform/release gates retain their own requirements.
+
 ## Milestone ledger
 
 | Increment | Evidence and scope | Remaining before full milestone closure |
