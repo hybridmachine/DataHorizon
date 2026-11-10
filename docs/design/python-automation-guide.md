@@ -40,10 +40,10 @@ declarations require a fresh review; stale state or fingerprint rejects.
 The CLI equivalents are:
 
 ```sh
-python3 -m datahorizon.cli /tmp/Automation.dhwb code read
-python3 -m datahorizon.cli /tmp/Automation.dhwb code read MeasurementsCode
-python3 -m datahorizon.cli /tmp/Automation.dhwb code save < reviewed-module.json
-python3 -m datahorizon.cli /tmp/Automation.dhwb code delete MeasurementsCode --fingerprint '<SHA256>'
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/Automation.dhwb code read
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/Automation.dhwb code read MeasurementsCode
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/Automation.dhwb code save < reviewed-module.json
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/Automation.dhwb code delete MeasurementsCode --fingerprint '<SHA256>'
 ```
 
 `reviewed-module.json` contains `name`, `source`, `macros`, `fingerprint` and an
