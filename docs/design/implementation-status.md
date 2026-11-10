@@ -166,8 +166,12 @@ The full local run passes 225 Qt checks and 494 Python tests (19 optional skips)
 Atomic column-schema reviews now support types, required/unique constraints,
 renaming and explicit removal, with identity/high-water-mark preservation and
 transactional hook rollback. The full Python suite passes 505 tests (19 optional
-skips), with targeted Qt review workflows. Public record editing and querying
-are the following tasks.
+skips), with targeted Qt review workflows. Public record insert/update/delete,
+invariant typed previews, explicit-target bulk operations and Qt typed editors
+now share required hooks, atomic rollback and record/cell Undo/Redo. Invalid input
+stays in its editor; unknown outcomes retain the operation identity and draft.
+Full Python verification passes 517 tests (19 optional skips). Bounded full-table
+browsing and querying are the following tasks.
 Automated evidence and the owner's later manual GUI
 walkthrough are tracked separately. Managed SQL mutations and
 the existing M1/M7/manual/platform/release gates retain their own requirements.

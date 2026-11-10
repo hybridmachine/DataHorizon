@@ -81,7 +81,7 @@ def _worker(pipe, path, changes, operation, event='on_change'):
 
         def table_schema(self,table,phase='current'):return self.request('table_schema',table=table,phase=phase)
 
-        def table_get(self,table,row_id):return self.request('table_get',table=table,row_id=row_id)
+        def table_get(self,table,row_id,columns=None):return self.request('table_get',table=table,row_id=row_id,**({'columns':columns} if columns is not None else {}))
 
         def table_set(self,table,row_id,values):return self.request('table_set',table=table,row_id=row_id,values=values)
 

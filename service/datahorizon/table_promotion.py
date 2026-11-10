@@ -16,7 +16,8 @@ def convert(column,stored,policy):
         if kind=='text' and not isinstance(stored,str):stored='TRUE' if stored is True else 'FALSE' if stored is False else str(stored)
         elif kind in ('integer','number') and isinstance(stored,str):
             from .conversion import convert as convert_value
-            stored=typed(convert_value(dict(source=stored,kind='number',locale='invariant'))['cell'])['value']
+            cell=convert_value(dict(source=stored,kind='number',locale='invariant'))['cell']
+            stored=typed({**cell,'style':{}})['value']
         elif kind=='boolean' and type(stored) is str and stored in ('TRUE','FALSE'):stored=stored=='TRUE'
     if kind=='integer' and type(stored) is float and math.isfinite(stored) and stored.is_integer():stored=int(stored)
     if kind in ('date','time','datetime') and stored is not None:

@@ -638,7 +638,10 @@ void MainWindow::buildUi() {
     layout->addWidget(m_tabs);
     m_objectStack=new QStackedWidget(this);m_objectStack->addWidget(central);
     m_relational=new RelationalWorkbench(m_client,this);m_objectStack->addWidget(m_relational);setCentralWidget(m_objectStack);
-    connect(m_relational,&RelationalWorkbench::submitRequested,this,&MainWindow::submit);
+    connect(m_relational,&RelationalWorkbench::submitRequested,this,[this](QJsonObject request){submit(request);if(m_pendingId.isEmpty())m_relational->admissionRejected();});
+    connect(this,&MainWindow::operationAdmitted,m_relational,&RelationalWorkbench::operationAdmitted);
+    connect(this,&MainWindow::operationReceipt,m_relational,&RelationalWorkbench::operationReceipt);
+    connect(m_relational,&RelationalWorkbench::reconcileRequested,this,&MainWindow::reconcile);
     connect(m_relational,&RelationalWorkbench::issue,this,&MainWindow::issue);
     connect(m_relational,&RelationalWorkbench::busyRequested,this,[this](bool busy){setBusy(busy);});
     connect(m_relational,&RelationalWorkbench::sheetsRequested,this,[this]{showRelational(false);});
@@ -1222,6 +1225,11 @@ void MainWindow::newBook() {
 
 void MainWindow::openBook(const QString &path, bool create, bool readonly) {
     if (m_busy || m_unknown) return;
+    if(m_relational->hasActiveEditor())return;
+    if(!m_relational->retainedDraft().isEmpty()){
+        if(QMessageBox::question(this,tr("Discard table draft?"),tr("Discard the retained table draft before opening another workbook?"))!=QMessageBox::Yes)return;
+        m_relational->restoreDraft({});
+    }
     captureGridDraft(false);
     if (m_source->isModified() || !m_recoveredDraft.isEmpty()) {
         if (QMessageBox::question(this,tr("Discard editor draft?"),tr("Discard the unsubmitted formula-bar draft before opening another workbook? Stored edits remain in the current workbook."))!=QMessageBox::Yes) return;
@@ -1305,6 +1313,7 @@ void MainWindow::submit(QJsonObject operation) {
     }
     operation.remove("workbook");
     m_pendingId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    emit operationAdmitted(m_pendingId);
     operation["operation_id"] = m_pendingId; operation["expected_state"] = m_info["state"];
     operation["sheet"] = m_model->sheet();
     setBusy(true, "Submitting • " + m_pendingId);
@@ -1334,6 +1343,7 @@ void MainWindow::submit(QJsonObject operation) {
                 preserveUnknownOperation();
                 issue("Operation " + m_pendingId + ": " + error); reconcile();
             }
+            emit operationReceipt(m_unknown?QJsonObject{{"operation_id",operationId},{"outcome","unknown"},{"message",error}}:result);
             emit operationFinished(false); return;
         }
         if (m_enterNavigation["operation_id"].toString()==operationId) m_enterNavigation["ready"]=true;
@@ -1344,7 +1354,7 @@ void MainWindow::submit(QJsonObject operation) {
             if(action=="table_promote")m_tablePromotionDraft={};
         }
         reportReferenceWarnings(result);
-        refresh(); emit operationFinished(true);
+        refresh(); emit operationReceipt(result);emit operationFinished(true);
     });
 }
 
@@ -1362,6 +1372,7 @@ void MainWindow::reconcile() {
         clearRecoveryRecord(); m_pendingId.clear(); m_unknown = false;
         issue(result["outcome"]=="committed" ? "Reconciled committed operation without repeating Python handlers." : "Reconciled rollback without repeating Python handlers: "+result["message"].toString());
         reportReferenceWarnings(result);
+        emit operationReceipt(result);
         refresh();
     }, false);
 }
@@ -1376,7 +1387,7 @@ bool MainWindow::preserveUnknownOperation() {
     if (!QDir().mkpath(dir)) { issue("Cannot create operation recovery directory: "+dir); return false; }
     if (m_recoveryRecord.isEmpty()) m_recoveryRecord=dir+"/operation-"+QUuid::createUuid().toString(QUuid::WithoutBraces)+".json";
     QSaveFile file(m_recoveryRecord);
-    const auto data=QJsonDocument(QJsonObject{{"workbook_path",m_info["path"]},{"operation_id",m_pendingId},{"outcome","unknown"},{"editor_draft",m_recoveredDraft},
+    const auto data=QJsonDocument(QJsonObject{{"workbook_path",m_info["path"]},{"operation_id",m_pendingId},{"outcome","unknown"},{"editor_draft",m_recoveredDraft},{"table_draft",m_relational->retainedDraft()},
         {"instructions","Reopen the workbook and look up this operation ID before retrying any mutation."}}).toJson();
     if (!file.open(QIODevice::WriteOnly)) { issue(file.errorString()); return false; }
     file.setPermissions(QFileDevice::ReadOwner|QFileDevice::WriteOwner);
@@ -2635,6 +2646,10 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         issue("Wait for a known operation outcome before closing. Committed work remains in the native workbook."); event->ignore(); return;
     }
     captureGridDraft(false);
+    if(!m_relational->retainedDraft().isEmpty()){
+        if(QMessageBox::question(this,tr("Discard table draft?"),tr("Discard the retained table input before closing? Stored records remain in the workbook."))!=QMessageBox::Yes){event->ignore();return;}
+        m_relational->restoreDraft({});
+    }
     if (m_source->isModified() || !m_recoveredDraft.isEmpty()) {
         if (QMessageBox::question(this, tr("Discard editor draft?"), tr("Discard the unsubmitted formula-bar draft? Already stored edits remain in the workbook.")) != QMessageBox::Yes) { event->ignore(); return; }
         m_source->setModified(false); clearRecoveredDraft();
