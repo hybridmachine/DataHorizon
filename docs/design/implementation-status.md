@@ -180,7 +180,14 @@ access. Explicit orphan repair handles admit only reviewed child-key repairs or
 orphan deletions, with required hooks and complete final relationship validation.
 Self/cyclic graphs and rebuilding referenced parent tables retain explicit
 dependency restrictions. Full Python verification passes 537 tests (19 optional
-skips). Read-only querying is the following task.
+skips). Read-only SQL now supports SELECT/CTEs, joins, aggregates and typed named
+bindings over private snapshots. An authorizer, function allowlist and SQLite
+limits protect the managed/direct boundary. Complete disk-spooled results have
+bounded ordinal pages, exact large-integer tags, state/generation invalidation,
+cancel/release and conservative terminated-service cleanup. Qt exposes the SQL
+editor, schema browser, parameter review and read-only result grid; hidden table
+and sheet pages release their caches. Query jobs are ephemeral after restart.
+Saved definitions and whole-result export are the following task.
 Automated evidence and the owner's later manual GUI
 walkthrough are tracked separately. Managed SQL mutations and
 the existing M1/M7/manual/platform/release gates retain their own requirements.

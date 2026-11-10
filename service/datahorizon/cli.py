@@ -94,6 +94,8 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("create")
     commands.add_parser("info")
+    query=commands.add_parser('query',help='Read-only SQL jobs; run reads JSON stdin and returns the complete frozen result. Later actions require a workbook kept open on --url.')
+    query.add_argument('query_action',choices=['run','status','page','cancel','release']);query.add_argument('--job-id');query.add_argument('--offset',type=int,default=0);query.add_argument('--limit',type=int,default=64)
     commands.add_parser('tables',help='Inspect native structured table definitions')
     table_create=commands.add_parser('table-create',help='Create a table; read a column-definition array from JSON stdin')
     table_create.add_argument('name')
@@ -158,6 +160,22 @@ def main():
                     if args.command in ("create", "info"):
                         result = book.info
                     elif args.command=='tables':result=book.tables()
+                    elif args.command=='query':
+                        import time
+                        if args.query_action=='run':
+                            result=book.run_query(**json.load(sys.stdin),**({'job_id':args.job_id} if args.job_id else {}))
+                            while result['status']=='running':time.sleep(.05);result=book.query(result['job_id'])
+                            if result['status']=='completed':
+                                rows=[];columns=[col['id'] for col in result['result']['columns']];offset=0
+                                while True:
+                                    page=book.query(result['job_id'],'page',offset=offset,columns=columns);rows.extend(page['rows'])
+                                    if page['next_offset'] is None:break
+                                    offset=page['next_offset']
+                                result['rows']=rows
+                            book.query(result['job_id'],'release')
+                        else:
+                            if not args.job_id:raise ValueError('--job-id is required')
+                            result=book.query(args.job_id,None if args.query_action=='status' else args.query_action,**(dict(offset=args.offset,limit=args.limit) if args.query_action=='page' else {}))
                     elif args.command=='table-create':result=book.create_table(args.name,json.load(sys.stdin))
                     elif args.command=='table-drop':result=book.drop_table(args.table,allow_data_loss=args.allow_data_loss)
                     elif args.command=='table-schema':

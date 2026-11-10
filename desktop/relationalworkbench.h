@@ -4,12 +4,15 @@
 #include <QWidget>
 #include <QJsonArray>
 #include <QPointer>
+#include <functional>
 
 class QTreeWidget;
 class QTableWidget;
 class QLabel;
 class QPushButton;
 class RecordInputDialog;
+class QueryWorkbench;
+class QTabWidget;
 
 class RelationalWorkbench : public QWidget {
     Q_OBJECT
@@ -28,6 +31,8 @@ public:
     void restoreDraft(const QJsonObject &draft);
     void suspend();
     QJsonObject cacheMetrics()const;
+    bool hasQueryJob()const;
+    void closeQuery(std::function<void(QString)> completion);
 signals:
     void submitRequested(QJsonObject operation);
     void issue(QString message);
@@ -57,6 +62,8 @@ private:
     void loadRecords(const QString &after = {});
     QString base()const;
     RestClient *m_client;
+    QueryWorkbench *m_query;
+    QTabWidget *m_workbenchTabs;
     QJsonObject m_info,m_catalog,m_draftDefinition;
     QJsonObject m_schemaDraft;
     QJsonObject m_recordDraft;

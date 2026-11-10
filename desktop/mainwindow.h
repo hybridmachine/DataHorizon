@@ -63,6 +63,7 @@ private:
     QList<QAction *> m_sheetFileActions;
     bool m_relationalActive=false;
     bool m_refreshFailed=false;
+    bool m_queryClosing=false;
     QString m_relationalAfterWrite;
     QJsonObject m_tablePromotionDraft;
     void createTableFromSelection();
