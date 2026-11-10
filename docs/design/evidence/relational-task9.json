@@ -1,0 +1,30 @@
+{
+  "task": 9,
+  "source_commit": "10c3728917a114980b7079841db3d6bb1fcd7e13",
+  "automated_status": "passed",
+  "full_python": {
+    "tests_run": 570,
+    "optional_skips": 19,
+    "elapsed_seconds": 57.16
+  },
+  "targeted": {
+    "saved_view_export_tests": 17,
+    "qt_feature_workflows": 6,
+    "qt_saved_export_and_sql_checks_including_setup_cleanup": 5
+  },
+  "contracts": [
+    "LIMIT-zero saved definition preparation without row evaluation, stable IDs/defaults/dependencies/shape",
+    "Proposed empty-schema preparation blocks SELECT-star shape changes and new ambiguity",
+    "Invocation values do not persist; definition digests guard external changes",
+    "Complete table/filter and frozen query CSV/XLSX/ODS exports with explicit 10k-value tier",
+    "Independent XML/CSV consumers, integer Text fallback, native alias/stale/atomic publication checks",
+    "Qt saved-view review/reopen without autoexecution and 300-record export from a 128-row page"
+  ],
+  "verification_fixes": [
+    "Use nonmutating Qt JSON reads for empty drafts; capture stable JSON values before request mutation",
+    "Capture before/after affected metadata in structural hooks",
+    "Reopen workbook through its object browser before opening a stored view"
+  ],
+  "manual_gui_acceptance": "pending",
+  "release_qualified": false
+}
