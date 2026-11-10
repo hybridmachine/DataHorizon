@@ -23,7 +23,14 @@ cell/record history. Direct table formulas or sheet/table synchronization are
 not introduced. Reviewed column-schema rebuilds now preserve identities and the
 AUTOINCREMENT high-water mark, with atomic constraints/conversion and explicit
 column loss. Populated drops require explicit loss review and run transactional
-data hooks. User-facing record editing, relationships and query work follow in
+data hooks. Typed record insert/update/delete and shared history are now public.
+Registered native indexes preserve column identity through rebuilds and block
+dependent column/table removal. Unique column constraints retain their native
+autoindex ownership. Full-table typed predicates and authenticated keyset cursors
+run bounded reads; counts can explicitly be unavailable. Index builds observe
+the operation deadline and cooperative cancellation. SQLite write interruption
+may release the writer transaction; the engine reacquires it and checks receipt
+ownership before recording the confirmed rollback. Relationships and query work follow in
 the [relational plan](relational-workbench-plan.md).
 
 The sections below describe the earlier formats and their retained behavior.

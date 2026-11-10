@@ -26,6 +26,9 @@ def install(schemas,actions):
         {'name':'Snapshot','sheet':'Sheet1','r1':1,'r2':1,'c1':1,'c2':1,'header':True,'columns':[{'name':'Value'}],
          'review_digest':'replace-with-reviewed-digest','preview_clock':'2026-11-09T12:00:00'})
     schemas['TableReadRequest']={'type':'object','required':['table','expected_state'],'properties':{
+        'cursor':{'type':'string','maxLength':16384},'preview':{'type':'boolean','default':False},'count':{'type':'boolean','default':False},
+        'sort':{'type':'array','maxItems':8,'items':{'type':'object','required':['column','direction'],'properties':{'column':{'type':'string','format':'uuid'},'direction':{'type':'string','enum':['asc','desc']}}}},
+        'filters':{'type':'array','maxItems':8,'items':{'type':'object','required':['column','op'],'properties':{'column':{'type':'string','format':'uuid'},'op':{'type':'string','enum':['eq','ne','lt','le','gt','ge','contains','is_null','not_null']},'value':{'oneOf':[{'type':'string','nullable':True},{'type':'number'},{'type':'boolean'}]}}}},
         'table':{'type':'string'},'expected_state':{'type':'string'},'after':{'type':'string','pattern':'^[1-9][0-9]{0,18}$'},
         'columns':{'type':'array','maxItems':256,'uniqueItems':True,'items':{'type':'string','format':'uuid'}},
         'record_ids':{'type':'array','minItems':1,'maxItems':256,'uniqueItems':True,'items':{'type':'string','pattern':'^[1-9][0-9]{0,18}$'}},
@@ -39,6 +42,10 @@ def install(schemas,actions):
     actions['table_schema']=(['table','columns','review_digest'],{**schema,'review_digest':{'type':'string','pattern':'^[0-9a-f]{64}$'}},
         {'table':'Snapshot','columns':[{'id':'replace-with-current-column-id','name':'Value','type':'number'}],'review_digest':'replace-with-reviewed-digest'})
     scalar={'oneOf':[{'type':'string','nullable':True},{'type':'number'},{'type':'boolean'}]}
+    actions['index_create']=(['table','name','columns'],{'table':{'type':'string'},'name':column['properties']['name'],
+        'columns':{'type':'array','minItems':1,'maxItems':16,'items':{'type':'object','required':['column','direction'],'properties':{'column':{'type':'string','format':'uuid'},'direction':{'type':'string','enum':['asc','desc']}}}},'unique':{'type':'boolean','default':False}},
+        {'table':'Snapshot','name':'SnapshotValueIndex','columns':[{'column':'replace-with-current-column-id','direction':'asc'}]})
+    actions['index_drop']=(['index'],{'index':{'type':'string'}},{'index':'SnapshotValueIndex'})
     values={'type':'object','additionalProperties':scalar,'description':'Column IDs or exact catalog names as keys; numbers are finite and all values follow declared types'}
     row_id={'type':'string','pattern':'^[1-9][0-9]{0,18}$'}
     data={'table':{'type':'string','minLength':1},'review_digest':{'type':'string','pattern':'^[0-9a-f]{64}$'},

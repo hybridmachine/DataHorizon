@@ -276,6 +276,8 @@ void MainWindow::showRelational(bool visible) {
     if(visible && (m_busy || m_unknown || m_info.isEmpty()))return;
     if(visible){captureGridDraft(false);if(!resolveDraft())return;}
     m_relationalActive=visible;m_objectStack->setCurrentIndex(visible?1:0);
+    m_model->setSuspended(visible);
+    if(!visible)m_relational->suspend();
     for(auto *menu:m_sheetMenus)menu->setEnabled(!visible);
     for(auto *action:m_sheetFileActions)action->setEnabled(!visible);
     if(visible)m_relational->bind(m_info);
@@ -642,6 +644,10 @@ void MainWindow::buildUi() {
     connect(this,&MainWindow::operationAdmitted,m_relational,&RelationalWorkbench::operationAdmitted);
     connect(this,&MainWindow::operationReceipt,m_relational,&RelationalWorkbench::operationReceipt);
     connect(m_relational,&RelationalWorkbench::reconcileRequested,this,&MainWindow::reconcile);
+    connect(m_relational,&RelationalWorkbench::cancelOperationRequested,this,[this]{
+        if(m_pendingId.isEmpty())return;const auto operation=m_pendingId;
+        m_client->request(base()+"/operations/"+QString::fromLatin1(QUrl::toPercentEncoding(operation))+"/cancel",{},[this,operation](QJsonObject,QString error){issue(error.isEmpty()?tr("Cancellation requested for %1. Wait for its final receipt.").arg(operation):error);});
+    });
     connect(m_relational,&RelationalWorkbench::issue,this,&MainWindow::issue);
     connect(m_relational,&RelationalWorkbench::busyRequested,this,[this](bool busy){setBusy(busy);});
     connect(m_relational,&RelationalWorkbench::sheetsRequested,this,[this]{showRelational(false);});
@@ -1300,7 +1306,7 @@ void MainWindow::refresh(const QString &selectSheet) {
 void MainWindow::submit(QJsonObject operation) {
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
     const auto action=operation["action"].toString();
-    if(m_relationalActive && !(action.startsWith("table_") || action.startsWith("relationship_") || action.startsWith("query_") || action=="undo" || action=="redo")) {
+    if(m_relationalActive && !(action.startsWith("table_") || action.startsWith("index_") || action.startsWith("relationship_") || action.startsWith("query_") || action=="undo" || action=="redo")) {
         issue(tr("Return to sheets before applying a sheet operation."));return;
     }
     const auto defaults=targetContext();

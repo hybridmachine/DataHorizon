@@ -7,6 +7,8 @@
 #include <QJsonDocument>
 #include <QTimer>
 #include <QGridLayout>
+#include "listcriteriadialog.h"
+#include <QListWidget>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
@@ -34,6 +36,10 @@ RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWi
     m_editSchema=new QPushButton(tr("Edit table columns…"));m_editSchema->setObjectName("editTableSchema");
     auto *refresh=new QPushButton(tr("Refresh tables"));refresh->setObjectName("refreshTables");
     int b=0;for(auto *button:{sheets,m_create,m_editSchema,m_drop,refresh}){buttons->addWidget(button,b/3,b%3);++b;}
+    auto *browse=new QPushButton(tr("Sort and filter…"));browse->setObjectName("tableBrowseOptions");buttons->addWidget(browse,1,2);connect(browse,&QPushButton::clicked,this,&RelationalWorkbench::browseOptions);
+    auto *columns=new QPushButton(tr("Choose displayed columns…"));columns->setObjectName("tableChooseColumns");buttons->addWidget(columns,2,0);connect(columns,&QPushButton::clicked,this,&RelationalWorkbench::chooseColumns);
+    auto *indexes=new QPushButton(tr("Indexes…"));indexes->setObjectName("tableIndexes");buttons->addWidget(indexes,2,1);connect(indexes,&QPushButton::clicked,this,&RelationalWorkbench::manageIndexes);
+    auto *cancel=new QPushButton(tr("Cancel current operation"));cancel->setObjectName("cancelTableOperation");buttons->addWidget(cancel,2,2);connect(cancel,&QPushButton::clicked,this,&RelationalWorkbench::cancelOperationRequested);
     layout->addLayout(buttons);
     auto *records=new QGridLayout;b=0;
     const QList<QPair<QPushButton **,QStringList>> actions{
@@ -46,6 +52,7 @@ RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWi
     m_reviewDraft=new QPushButton(tr("Review retained draft"));m_discardDraft=new QPushButton(tr("Discard draft"));m_inspectRecord=new QPushButton(tr("Inspect operation"));
     m_reviewDraft->setObjectName("reviewRetainedTableDraft");m_discardDraft->setObjectName("discardTableDraft");
     for(auto *button:{m_reviewDraft,m_discardDraft,m_inspectRecord})drafts->addWidget(button);layout->addLayout(drafts);
+    auto *copyDraft=new QPushButton(tr("Copy retained draft"));copyDraft->setObjectName("copyTableDraft");drafts->addWidget(copyDraft);connect(copyDraft,&QPushButton::clicked,this,[this]{if(!m_recordDraft.isEmpty())QApplication::clipboard()->setText(QString::fromUtf8(QJsonDocument(m_recordDraft).toJson()));});
     auto *splitter=new QSplitter;layout->addWidget(splitter,1);
     m_objects=new QTreeWidget; m_objects->setObjectName("relationalObjects");m_objects->setHeaderLabel(tr("Workbook objects"));
     m_objects->setAccessibleName(tr("Workbook tables and queries"));splitter->addWidget(m_objects);
@@ -87,7 +94,7 @@ RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWi
 QString RelationalWorkbench::base()const{return "/v1/workbooks/"+m_info["id"].toString();}
 
 void RelationalWorkbench::bind(const QJsonObject &info) {
-    if(m_info["id"]!=info["id"]) {m_table.clear();m_catalog={};m_draftDefinition={};}
+    if(m_info["id"]!=info["id"]) {m_table.clear();m_catalog={};m_draftDefinition={};m_browse={};m_projection={};}
     ++m_generation;++m_readGeneration;m_info=info;setLocked(info.isEmpty());
     if(isVisible() && !info.isEmpty())refreshCatalog();
 }
@@ -126,6 +133,7 @@ void RelationalWorkbench::refreshCatalog() {
 }
 
 void RelationalWorkbench::showTable(const QString &id) {
+    if(m_table!=id){m_browse={};m_projection={};}
     m_table=id;m_schema->setRowCount(0);m_previousPages.clear();m_after.clear();m_nextAfter.clear();++m_readGeneration;
     m_records->setRowCount(0);m_records->setColumnCount(0);
     for(const auto &entry:m_catalog["tables"].toArray()) {
@@ -143,18 +151,63 @@ void RelationalWorkbench::showTable(const QString &id) {
 void RelationalWorkbench::loadRecords(const QString &after) {
     if(m_table.isEmpty() || m_info.isEmpty())return;
     const auto generation=++m_readGeneration;const auto table=m_table;const auto state=m_info["state"];
-    QJsonObject request{{"table",table},{"expected_state",state}};if(!after.isEmpty())request["after"]=after;
+    auto request=m_browse;request["table"]=table;request["expected_state"]=state;request["preview"]=true;request["count"]=true;
+    if(!m_projection.isEmpty())request["columns"]=m_projection;
+    request["limit"]=qMin(128,2048/qMax(1,m_projection.isEmpty()?16:int(m_projection.size())));if(!after.isEmpty())request["cursor"]=after;
     m_status->setText(tr("Loading records…"));m_client->request(base()+"/tables/read",request,[this,generation,table,state,after](QJsonObject result,QString error){
         if(generation!=m_readGeneration || m_table!=table || state!=m_info["state"])return;
         if(!error.isEmpty()){m_status->setText(error);emit issue(error);return;}
         if(result["state"]!=state || result["table"]!=table){m_status->setText(tr("Table page changed; refresh the workbook."));return;}
-        m_page=result;m_after=after;m_nextAfter=result["next_after"].toString();
+        const auto charge=3*(QJsonDocument(m_catalog).toJson(QJsonDocument::Compact).size()+QJsonDocument(result).toJson(QJsonDocument::Compact).size())+512*result["columns"].toArray().size()*result["records"].toArray().size()+256*m_schema->rowCount();
+        if(charge>16*1024*1024){m_page={};m_records->setRowCount(0);m_status->setText(tr("This page exceeds the desktop cache budget. Choose fewer displayed columns."));return;}
+        m_page=result;m_after=after;m_nextAfter=result["next_cursor"].toString();
         const auto cols=result["columns"].toArray(),rows=result["records"].toArray();m_records->clear();m_records->setRowCount(rows.size());m_records->setColumnCount(cols.size());QStringList labels;
         for(const auto &col:cols)labels.append(col.toObject()["name"].toString());m_records->setHorizontalHeaderLabels(labels);
         for(int r=0;r<rows.size();++r){const auto record=rows[r].toObject();for(int c=0;c<cols.size();++c){const auto value=record["values"].toObject()[cols[c].toObject()["id"].toString()];
-            auto *item=new QTableWidgetItem(value.isNull()?tr("NULL"):value.isBool()?(value.toBool()?tr("TRUE"):tr("FALSE")):value.toVariant().toString());item->setData(Qt::UserRole,record["row_id"]);m_records->setItem(r,c,item);}}
-        m_status->setText(rows.isEmpty()?tr("No records."):tr("%1 records on this page. Record identity is separate from row position.").arg(rows.size()));setLocked(m_blocked);
+            const bool omitted=record["omitted_columns"].toArray().contains(cols[c].toObject()["id"]);
+            auto *item=new QTableWidgetItem(tableValueText(value)+(omitted?QStringLiteral("…"):QString{}));item->setData(Qt::UserRole,record["row_id"]);item->setToolTip(omitted?tr("Text preview; Edit and Copy retrieve the full stored value."):tr("Record %1").arg(record["row_id"].toString()));m_records->setItem(r,c,item);}}
+        m_status->setText(tr("%1 records on this page. Matching count: %2. NULL sorts first ascending and last descending; record identity breaks ties.").arg(rows.size()).arg(result["count_status"]=="exact"?QString::number(result["count"].toInteger()):tr("unavailable")));setLocked(m_blocked);
     });
+}
+
+void RelationalWorkbench::suspend(){++m_generation;++m_readGeneration;m_catalog={};m_page={};m_objects->clear();m_schema->setRowCount(0);m_records->setRowCount(0);m_records->setColumnCount(0);m_previousPages.clear();}
+QJsonObject RelationalWorkbench::cacheMetrics()const{
+    const auto bytes=QJsonDocument(m_catalog).toJson(QJsonDocument::Compact).size()+QJsonDocument(m_page).toJson(QJsonDocument::Compact).size();
+    return {{"estimated_bytes",3*bytes+512*m_records->rowCount()*m_records->columnCount()+256*m_schema->rowCount()},{"budget_bytes",16*1024*1024},{"loaded_records",m_records->rowCount()},{"loaded_values",m_records->rowCount()*m_records->columnCount()}};
+}
+
+void RelationalWorkbench::chooseColumns(){
+    if(m_blocked || m_table.isEmpty())return;QJsonArray columns;for(const auto &entry:m_catalog["tables"].toArray())if(entry.toObject()["id"].toString()==m_table)columns=entry.toObject()["columns"].toArray();
+    const auto state=m_info["state"];QDialog dialog(this);dialog.setWindowTitle(tr("Displayed table columns"));QVBoxLayout layout(&dialog);QListWidget list;list.setObjectName("tableColumnPicker");
+    for(int i=0;i<columns.size();++i){const auto col=columns[i].toObject();auto *item=new QListWidgetItem(col["name"].toString(),&list);item->setData(Qt::UserRole,col["id"]);item->setFlags(item->flags()|Qt::ItemIsUserCheckable);item->setCheckState((m_projection.isEmpty()?i<16:m_projection.contains(col["id"]))?Qt::Checked:Qt::Unchecked);}layout.addWidget(&list);
+    QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);layout.addWidget(&buttons);connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);if(dialog.exec()!=QDialog::Accepted || state!=m_info["state"])return;
+    QJsonArray selected;for(int i=0;i<list.count();++i)if(list.item(i)->checkState()==Qt::Checked)selected.append(list.item(i)->data(Qt::UserRole).toJsonValue());if(selected.isEmpty()){emit issue(tr("Choose at least one column."));return;}m_projection=selected;m_previousPages.clear();loadRecords();
+}
+
+void RelationalWorkbench::browseOptions(){
+    if(m_blocked || m_table.isEmpty())return;QJsonArray columns;for(const auto &entry:m_catalog["tables"].toArray())if(entry.toObject()["id"].toString()==m_table)columns=entry.toObject()["columns"].toArray();if(columns.isEmpty())return;
+    auto ordinal=[columns](const QJsonValue &id){for(int i=0;i<columns.size();++i)if(columns[i].toObject()["id"]==id)return i+1;return 0;};
+    QJsonArray sort,filters;for(const auto &entry:m_browse["sort"].toArray()){const auto e=entry.toObject();sort.append(QJsonObject{{"col",ordinal(e["column"])},{"descending",e["direction"]=="desc"}});}
+    const QMap<QString,QString> ops{{"eq","="},{"ne","<>"},{"lt","<"},{"le","<="},{"gt",">"},{"ge",">="},{"contains","contains"}};
+    for(const auto &entry:m_browse["filters"].toArray()){const auto e=entry.toObject();filters.append(QJsonObject{{"col",ordinal(e["column"])},{"op",ops.value(e["op"].toString(),"=")},{"value",e["value"]}});}
+    const auto state=m_info["state"];ListCriteriaDialog dialog({{"r1",1},{"r2",1},{"c1",1},{"c2",columns.size()},{"sort",sort},{"filters",filters},{"table_columns",columns}},this);
+    if(dialog.exec()!=QDialog::Accepted || state!=m_info["state"])return;sort={};filters={};const auto scope=dialog.scope();
+    for(const auto &entry:scope["sort"].toArray()){const auto e=entry.toObject();sort.append(QJsonObject{{"column",columns[e["col"].toInt()-1].toObject()["id"]},{"direction",e["descending"].toBool()?"desc":"asc"}});}
+    for(const auto &entry:scope["filters"].toArray()){const auto e=entry.toObject();filters.append(QJsonObject{{"column",columns[e["col"].toInt()-1].toObject()["id"]},{"op",ops.key(e["op"].toString())},{"value",e["value"]}});}
+    m_browse={{"sort",sort},{"filters",filters}};m_previousPages.clear();loadRecords();
+}
+
+void RelationalWorkbench::manageIndexes(){
+    if(m_blocked || m_table.isEmpty())return;QJsonObject table;for(const auto &entry:m_catalog["tables"].toArray())if(entry.toObject()["id"].toString()==m_table)table=entry.toObject();if(table.isEmpty())return;
+    const auto reviewed=m_info;QDialog dialog(this);dialog.setWindowTitle(tr("Native table indexes"));QVBoxLayout layout(&dialog);QListWidget list;list.setObjectName("tableIndexList");layout.addWidget(&list);
+    for(const auto &col:table["columns"].toArray())if(col.toObject()["unique"].toBool())new QListWidgetItem(tr("UNIQUE %1 — owned by column constraint").arg(col.toObject()["name"].toString()),&list);
+    for(const auto &entry:m_catalog["indexes"].toArray()){const auto index=entry.toObject();if(index["table"]!=table["id"])continue;QStringList keys;for(const auto &key:index["columns"].toArray())for(const auto &col:table["columns"].toArray())if(col.toObject()["id"]==key.toObject()["column"])keys.append(col.toObject()["name"].toString()+" "+key.toObject()["direction"].toString());auto *item=new QListWidgetItem(index["name"].toString()+" ("+keys.join(", ")+") "+(index["unique"].toBool()?tr("UNIQUE "):QString{})+tr("owner: ")+index["owner"].toString(),&list);if(index["owner"]=="user")item->setData(Qt::UserRole,index["id"]);}
+    QPushButton add(tr("Create index…")),drop(tr("Drop selected user index…"));add.setObjectName("createTableIndex");drop.setObjectName("dropTableIndex");add.setEnabled(!m_locked);drop.setEnabled(!m_locked);layout.addWidget(&add);layout.addWidget(&drop);QDialogButtonBox close(QDialogButtonBox::Close);layout.addWidget(&close);connect(&close,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    connect(&drop,&QPushButton::clicked,&dialog,[this,&dialog,&list,reviewed]{if(!list.currentItem() || !list.currentItem()->data(Qt::UserRole).isValid())return;const auto id=list.currentItem()->data(Qt::UserRole).toJsonValue();dialog.accept();emit submitRequested({{"action","index_drop"},{"index",id},{"workbook",reviewed["id"]},{"expected_state",reviewed["state"]}});});
+    connect(&add,&QPushButton::clicked,&dialog,[this,&dialog,table,reviewed]{
+        bool ok=false;const auto name=QInputDialog::getText(&dialog,tr("Index SQL name"),tr("Name"),QLineEdit::Normal,{},&ok);if(!ok)return;const auto columns=table["columns"].toArray();ListCriteriaDialog keys({{"r1",1},{"r2",1},{"c1",1},{"c2",columns.size()},{"table_columns",columns}},&dialog);keys.setWindowTitle(tr("Choose index keys in priority order"));keys.findChild<QTableWidget *>("filterCriteria")->setEnabled(false);if(keys.exec()!=QDialog::Accepted || keys.scope()["sort"].toArray().isEmpty())return;
+        const auto answer=QMessageBox::question(&dialog,tr("Unique index?"),tr("Require unique non-NULL key tuples? Creation clears session history and may fail on duplicate data. Choose No for a nonunique index."),QMessageBox::Yes|QMessageBox::No|QMessageBox::Cancel,QMessageBox::No);if(answer==QMessageBox::Cancel)return;QJsonArray entries;for(const auto &entry:keys.scope()["sort"].toArray()){const auto key=entry.toObject();entries.append(QJsonObject{{"column",columns[key["col"].toInt()-1].toObject()["id"]},{"direction",key["descending"].toBool()?"desc":"asc"}});}dialog.accept();emit submitRequested({{"action","index_create"},{"table",table["id"]},{"name",name},{"columns",entries},{"unique",answer==QMessageBox::Yes},{"workbook",reviewed["id"]},{"expected_state",reviewed["state"]}});
+    });dialog.exec();
 }
 
 bool RelationalWorkbench::editDefinition(QWidget *parent,QJsonObject &definition,const QString &title,bool fixedWidth) {

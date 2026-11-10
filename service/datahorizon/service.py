@@ -45,7 +45,7 @@ CAPABILITIES = {
     "max_concurrent_requests":16, "max_header_bytes":65536, "request_read_timeout_seconds":10,
 }
 
-CAPABILITIES['operations'].extend(['table_create','table_drop','table_promote','table_schema','table_insert','table_update','table_delete'])
+CAPABILITIES['operations'].extend(['table_create','table_drop','table_promote','table_schema','table_insert','table_update','table_delete','index_create','index_drop'])
 
 ROUTES = {
     "/v1/workbooks/{workbook}/tables":("post","Read the state-checked structured table catalog"),
@@ -101,6 +101,7 @@ ROUTES = {
     "/v1/workbooks/{workbook}/find": ("post", "Find in a declared source or display scope"),
     "/v1/workbooks/{workbook}/operations": ("post", "Atomic managed operation"),
     "/v1/workbooks/{workbook}/operations/{operation}": ("get", "Durable outcome lookup"),
+    "/v1/workbooks/{workbook}/operations/{operation}/cancel": ("post", "Request cooperative cancellation; inspect the final receipt"),
     "/v1/workbooks/{workbook}/snapshot": ("post", "Exclusive consistent native copy"),
     "/v1/workbooks/{workbook}/close": ("post", "Release this client handle; other client handles remain valid"),
     "/v1/workbooks/{workbook}/export/csv": ("post", "Consistent values-only CSV export"),
@@ -287,7 +288,7 @@ def openapi():
                      "security": [{"localToken": []}]}
         if method == "post":
             name = "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
-                "edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
+                "cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
         for status in ("400","401","403","404","409","413","500","503"):
@@ -348,6 +349,7 @@ class Service(ThreadingHTTPServer):
         self.read_seconds,self.max_header_bytes=read_seconds,max_header_bytes
         self.token, self.handler = token or secrets.token_urlsafe(32), handler
         self.workbooks, self.registry_lock = {}, threading.RLock()
+        self.active_operations={}
         self._path_locks, self._opening = {}, set()
         self._reserved_handles = 0
         self._stopping = False
@@ -602,7 +604,18 @@ class Service(ThreadingHTTPServer):
         if method == "POST" and suffix == ["find"]:
             return book.find(body.get("sheet", "Sheet1"), body)
         if method == "POST" and suffix == ["operations"]:
-            return book.mutate(body)
+            operation=body.get('operation_id');require(isinstance(operation,str) and 1<=len(operation)<=100,'OPERATION_ID','An operation ID is required')
+            key=(book,operation)
+            with self.registry_lock:
+                require(key not in self.active_operations,'OPERATION_RUNNING','Operation is active; inspect its receipt before retrying',409)
+                event=threading.Event();self.active_operations[key]=event
+            try:return book.mutate(body,cancel_event=event)
+            finally:
+                with self.registry_lock:self.active_operations.pop(key,None)
+        if method=='POST' and len(suffix)==3 and suffix[0]=='operations' and suffix[2]=='cancel':
+            with self.registry_lock:event=self.active_operations.get((book,unquote(suffix[1])))
+            if event is not None:event.set()
+            return dict(operation_id=unquote(suffix[1]),cancel_requested=event is not None,instructions='Inspect the durable receipt; a committed operation cannot be undone by cancellation.')
         if method == "GET" and len(suffix) == 2 and suffix[0] == "operations":
             return book.operation(unquote(suffix[1]))
         if method == "POST" and suffix == ["snapshot"]:

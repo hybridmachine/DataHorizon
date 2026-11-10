@@ -104,44 +104,5 @@ def dispatch(book,method,args):
 
 
 def read(book,args):
-    with book.lock:
-        deadline=time.monotonic()+2;book.refresh(deadline=deadline);book.db.execute('BEGIN')
-        try:
-            with sql_deadline(book.db,deadline):
-                book.refresh(deadline=deadline)
-                require(args.get('expected_state')==book.state(),'STALE_STATE','Refresh the table before paging',409)
-                item=table(book.db,args.get('table'));columns=item['columns']
-                requested=args.get('columns',[col['id'] for col in columns[:16]])
-                require(isinstance(requested,list) and bool(requested) and len(requested)<=256 and all(isinstance(col,str) for col in requested) and len(requested)==len(set(requested)),
-                        'INVALID_ARGUMENT','Choose unique projected column IDs')
-                by_id={col['id']:col for col in columns}
-                require(all(col in by_id for col in requested),'COLUMN_NOT_FOUND','Projected column does not exist')
-                selected=[by_id[col] for col in requested]
-                limit=integer(args.get('limit',min(256,4096//len(selected))),1,min(256,4096//len(selected)),'limit')
-                after=args.get('after');where='' if after is None else ' WHERE "_dh_row_id">?'
-                parameters=[] if after is None else [identity(after)]
-                targets=args.get('record_ids')
-                if targets is not None:
-                    require(after is None and isinstance(targets,list) and 1<=len(targets)<=limit and all(isinstance(r,str) for r in targets) and len(targets)==len(set(targets)),
-                            'INVALID_ARGUMENT','Choose bounded unique record IDs without an after cursor')
-                    parameters=[identity(row_id) for row_id in targets];where=' WHERE "_dh_row_id" IN ('+','.join('?' for _ in parameters)+')'
-                rows=[];size=0
-                cursor=book.db.execute('SELECT "_dh_row_id",'+','.join(quote(col['name']) for col in selected)+' FROM '+quote(item['name'])+where+' ORDER BY "_dh_row_id" LIMIT ?',[*parameters,limit+1])
-                for row in cursor:
-                    values={};record_size=0
-                    for col,stored in zip(selected,row[1:]):
-                        stored=from_sql(col,stored);record_size+=len(encoded(stored).encode())+len(col['id'])+8
-                        require(record_size<=3*1024*1024,'READ_LIMIT','A table record exceeds the page budget; request fewer columns')
-                        values[col['id']]=stored
-                    record=dict(row_id=str(row[0]),values=values)
-                    size+=len(encoded(record).encode());require(size<=3*1024*1024,'READ_LIMIT','Table page exceeds its payload budget')
-                    rows.append(record)
-                more=len(rows)>limit;rows=rows[:limit]
-                if targets is not None:
-                    by_id={row['row_id']:row for row in rows};require(set(by_id)==set(targets),'RECORD_NOT_FOUND','A requested record does not exist',404)
-                    rows=[by_id[row_id] for row_id in targets];more=False
-                result=dict(table=item['id'],state=book.state(),columns=selected,records=rows,
-                            next_after=rows[-1]['row_id'] if rows and more else None,count_status='not_requested')
-                require(len(encoded(result).encode())<=4*1024*1024,'READ_LIMIT','Table response exceeds 4 MiB')
-                return result
-        finally:book.db.execute('ROLLBACK')
+    from .table_browse import read as browse
+    return browse(book,args)

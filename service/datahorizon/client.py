@@ -210,6 +210,15 @@ class WorkbookClient:
         self._ensure_open()
         return self.client.request(self.base+'/tables/read',dict(table=table,expected_state=self.state,**scope))
 
+    def create_index(self,table,name,columns,*,unique=False):
+        return self.apply('index_create',table=table,name=name,columns=columns,unique=unique)
+
+    def drop_index(self,index):return self.apply('index_drop',index=index)
+
+    def cancel_operation(self,operation):
+        self._ensure_open()
+        return self.client.request(self.base+'/operations/'+quote(operation,safe='')+'/cancel',{})
+
     def insert_records(self,table,rows):
         return self.apply('table_insert',table=table,rows=rows,label='Insert records')
 

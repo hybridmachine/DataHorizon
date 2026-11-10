@@ -104,6 +104,8 @@ def main():
     record=commands.add_parser('table-records',help='Read or atomically insert/update/delete table records; mutations read JSON stdin')
     record.add_argument('table');record.add_argument('record_action',choices=['read','insert','update','delete']);record.add_argument('--limit',type=int,default=256);record.add_argument('--after')
     record.add_argument('--preview',action='store_true');record.add_argument('--convert-inputs',action='store_true')
+    browse=commands.add_parser('table-browse',help='Read a full-table sorted/filtered/projected page from JSON stdin');browse.add_argument('table')
+    index=commands.add_parser('table-index',help='Create an index from JSON stdin, or drop by name/ID');index.add_argument('index_action',choices=['create','drop']);index.add_argument('name')
     table_from=commands.add_parser('table-from-range',help='Preview a source selection from JSON stdin; --apply creates the reviewed value snapshot in this session')
     table_from.add_argument('name');table_from.add_argument('--apply',action='store_true')
     commands.add_parser("inspect",help="Inspect a native file read-only without code activation or repair")
@@ -166,6 +168,8 @@ def main():
                                 review=book.preview_record_edits(args.table,'table_'+args.record_action,**{key:payload})
                                 result=review if args.preview else book.apply_record_preview(review)
                             else:result=getattr(book,{'insert':'insert_records','update':'update_records','delete':'delete_records'}[args.record_action])(args.table,payload)
+                    elif args.command=='table-browse':result=book.read_table(args.table,**json.load(sys.stdin))
+                    elif args.command=='table-index':result=book.drop_index(args.name) if args.index_action=='drop' else book.create_index(name=args.name,**json.load(sys.stdin))
                     elif args.command=='table-from-range':
                         options=json.load(sys.stdin);review=book.preview_table(args.name,**options)
                         result=book.promote_table(review) if args.apply else review

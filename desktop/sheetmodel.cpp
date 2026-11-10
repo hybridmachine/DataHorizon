@@ -61,6 +61,7 @@ bool SheetModel::sourceReady(const QModelIndex &index) const {
 }
 
 void SheetModel::ensureSource(const QModelIndex &index) const {
+    if(m_suspended)return;
     if (!loaded(index) || sourceReady(index)) return;
     const int row=sourceRow(index.row())+1, col=index.column()+1, generation=m_generation;
     const auto key=tileKey(row,col);
@@ -138,7 +139,7 @@ bool SheetModel::setData(const QModelIndex &index, const QVariant &value, int ro
 
 void SheetModel::bind(const QString &workbook, const QString &sheet, const QString &state, bool readonly) {
     m_background->invalidate();
-    m_background->setEnabled(true);
+    m_background->setEnabled(!m_suspended);
     beginResetModel();
     ++m_generation; m_cache.clear(); m_loading.clear();
     m_sources.clear(); m_sourceLoading.clear();
@@ -149,6 +150,11 @@ void SheetModel::bind(const QString &workbook, const QString &sheet, const QStri
 
 void SheetModel::setBusy(bool value) { m_busy = value; }
 
+void SheetModel::setSuspended(bool suspended){
+    if(m_suspended==suspended)return;m_suspended=suspended;m_background->invalidate();m_background->setEnabled(!suspended);
+    beginResetModel();++m_generation;m_cache.clear();m_loading.clear();m_sources.clear();m_sourceLoading.clear();endResetModel();
+}
+
 void SheetModel::setProjection(const QList<int> &rows) {
     m_background->invalidate();
     beginResetModel(); ++m_generation; m_cache.clear(); m_loading.clear(); m_sources.clear(); m_sourceLoading.clear(); m_projected = true; m_projection = rows; endResetModel();
@@ -156,7 +162,7 @@ void SheetModel::setProjection(const QList<int> &rows) {
 
 void SheetModel::fetch(int tileRow, int tileCol) const {
     auto key = tileKey(tileRow, tileCol);
-    if (m_workbook.isEmpty() || m_loading.contains(key) || m_loading.size() >= 4) return;
+    if (m_suspended || m_workbook.isEmpty() || m_loading.contains(key) || m_loading.size() >= 4) return;
     m_loading.insert(key);
     QPointer<SheetModel> self = const_cast<SheetModel *>(this);
     const int generation = m_generation;
@@ -230,6 +236,7 @@ void SheetModel::setVisibleRanges(const QList<QRect> &ranges) {
 }
 
 void SheetModel::setBackgroundEnabled(bool enabled) {
+    enabled=enabled && !m_suspended;
     m_background->setEnabled(enabled);
     if(enabled)for(auto key:m_cache.keys())queueCalculation(key);
 }
