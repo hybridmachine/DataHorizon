@@ -189,6 +189,8 @@ def mutate(book,request):
         prepared=prepare(book,request,deadline=book.deadline)
         require(prepared['can_create'],'TABLE_CONVERSION_FAILED','Correct conversion issues before creating a table')
         require(request.get('review_digest')==prepared.get('review_digest'),'STALE_REVIEW','Review the exact selection, column types and values again',409)
+        from datetime import datetime
+        book.operation_clock=datetime.fromisoformat(prepared['preview_clock'])
     structure_hook(book,request,'before',before)
     if action in ('table_create','table_promote'):
         require(len(before)<64,'LIMIT','At most 64 structured tables')

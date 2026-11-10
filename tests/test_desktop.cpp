@@ -1544,7 +1544,7 @@ private slots:
         });
         answer.start(); window.findChild<QAction *>("duplicateSheetAction")->trigger(); answer.stop();
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
-        auto *tabs=window.findChild<QTabBar *>(); QCOMPARE(tabs->count(),2); tabs->setCurrentIndex(1);
+        auto *tabs=window.findChild<QTabBar *>("sheets"); QCOMPARE(tabs->count(),2); tabs->setCurrentIndex(1);
         QVERIFY(window.model()->sheet()!=original);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->cell(window.model()->index(0,0))["source"].toString(),QString("='Copy'!A2"),5000);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("9"),5000);
@@ -1557,7 +1557,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
         window.submit({{"action","sheet_add"},{"name","Other"}});
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
-        auto *tabs=window.findChild<QTabBar *>(); tabs->setCurrentIndex(1);
+        auto *tabs=window.findChild<QTabBar *>("sheets"); tabs->setCurrentIndex(1);
         window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","=Sheet1!A2"}}}}});
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
         tabs->setCurrentIndex(0);
@@ -1605,7 +1605,7 @@ private slots:
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("portable.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);auto *grid=window.findChild<QTableView *>("grid");grid->setCurrentIndex(window.model()->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);grid->setColumnWidth(0,180);window.findChild<QAction *>("savePortableViewAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);grid->setColumnWidth(0,90);const auto state=window.model()->state();window.findChild<QAction *>("loadPortableViewAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(grid->columnWidth(0),180,5000);QCOMPARE(window.model()->state(),state);
     }
     void backgroundCalculationReportsSnapshotWithoutEdits() {
-        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("calculation.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","=DATE(2024,2,29)"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);auto *grid=window.findChild<QTableView *>("grid");grid->setCurrentIndex(window.model()->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);const auto state=window.model()->state();QSignalSpy edits(&window,&MainWindow::operationFinished);window.findChild<QAction *>("calculateSelectionAction")->trigger();QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QLabel *>("storageStatus")->text().contains("Background snapshot"),5000);QCOMPARE(window.model()->state(),state);QCOMPARE(edits.count(),0);
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("calculation.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","=DATE(2024,2,29)"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);auto *grid=window.findChild<QTableView *>("grid");grid->setCurrentIndex(window.model()->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);const auto state=window.model()->state();QSignalSpy edits(&window,&MainWindow::operationFinished);window.findChild<QAction *>("calculateSelectionAction")->trigger();QTRY_VERIFY2_WITH_TIMEOUT(window.findChild<QLabel *>("storageStatus")->text().contains("Background snapshot"),qPrintable(window.findChild<QLabel *>("storageStatus")->text()+" | "+window.findChild<QPlainTextEdit *>()->toPlainText()),5000);QCOMPARE(window.model()->state(),state);QCOMPARE(edits.count(),0);
     }
     void temporalCsvCompanionPreviewRestoresMixedTypes() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("csv-temporal.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);auto *grid=window.findChild<QTableView *>("grid");grid->setCurrentIndex(window.model()->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);

@@ -70,7 +70,10 @@ class TablePromotionTests(unittest.TestCase):
 
     def test_volatile_value_uses_one_reviewed_clock(self):
         self.apply('edit',cells=[dict(row=2,col=2,source='=NOW()',kind='formula'),dict(row=3,col=2,source='2024-02-29T00:00:00',kind='datetime')])
-        review=self.preview();self.assertTrue(review['can_create']);self.promote(review)
+        review=self.preview();self.assertTrue(review['can_create'])
+        handler=Path(self.temp.name)/'clock.py'
+        handler.write_text("def on_table_structure(ctx,event): pass\ndef on_table_change(ctx,changes):\n for change in changes:\n  column=next(c['id'] for c in ctx.table_schema(change['table'])['columns'] if c['name']=='Amount')\n  assert ctx.value('Sheet1',int(change['row_id'])+1,2)==change['after'][column]\n")
+        self.book.handler=str(handler);self.promote(review)
         records=self.records();column=next(col for col in records['columns'] if col['name']=='Amount')
         self.assertEqual(column['type'],'datetime')
         self.assertEqual(records['records'][0]['values'][column['id']],review['records_preview'][0][column['id']])
