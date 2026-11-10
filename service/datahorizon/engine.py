@@ -274,8 +274,10 @@ EXPECTED_SCHEMA3 = expected_schema(SCHEMA+METADATA_SCHEMA)
 
 
 class Workbook:
-    def __init__(self, path, create=False, readonly=False, handler=None, *, cancel_event=None, repair=False):
+    def __init__(self, path, create=False, readonly=False, handler=None, *, cancel_event=None, repair=False, approved_code=()):
         create, readonly = boolean(create, "create"), boolean(readonly, "readonly")
+        from .workbook_code import approval_keys
+        self.approved_code=approval_keys(approved_code)
         self.path = Path(path).expanduser().resolve()
         self.readonly, self.handler = readonly, handler
         self.repair=boolean(repair,'repair')

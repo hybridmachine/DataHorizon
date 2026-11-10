@@ -73,6 +73,24 @@ def fingerprint(db):
     return hashlib.sha256(encoded(modules(db)).encode()).hexdigest()
 
 
+def approval_keys(values):
+    from .code_approval import validate_approvals
+    try:return validate_approvals(values)
+    except ValueError as error:raise EngineError('INVALID_CODE_APPROVAL',str(error)) from error
+
+
+def activation(book):
+    digest=fingerprint(book.db);key=book.id+':'+digest
+    return dict(fingerprint=digest,activation_key=key,approved=key in book.approved_code)
+
+
+def authorize(book,request):
+    current=activation(book)
+    require(request.get('fingerprint')==current['fingerprint'],'CODE_CHANGED','Review the current workbook code before invoking it',409)
+    require(current['approved'],'CODE_NOT_APPROVED','The service operator must approve this exact workbook/code activation key',403)
+    return current
+
+
 def find(db,identity):
     require(isinstance(identity,str),'INVALID_CODE','Module identity is required')
     result=next((item for item in modules(db) if identity in (item['id'],item['name'])),None)
@@ -88,7 +106,7 @@ def read(book,args):
             book.refresh();require(args.get('expected_state')==book.state(),'STALE_STATE','Refresh code before inspection',409)
             items=modules(book.db)
             if 'module' in args:items=[find(book.db,args['module'])]
-            return dict(state=book.state(),fingerprint=fingerprint(book.db),modules=items)
+            return dict(state=book.state(),modules=items,**activation(book))
         finally:book.db.execute('ROLLBACK')
 
 

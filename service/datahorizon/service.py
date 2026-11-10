@@ -358,11 +358,13 @@ out.textContent=r.status+'\\n'+JSON.stringify(await r.json(),null,2)}catch(e){ou
 class Service(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port=0, token=None, handler=None, *, max_requests=16, read_seconds=10, max_header_bytes=65536):
+    def __init__(self, port=0, token=None, handler=None, *, max_requests=16, read_seconds=10, max_header_bytes=65536, approved_code=()):
         if type(max_requests) is not int or max_requests<1 or type(max_header_bytes) is not int or max_header_bytes<1:
             raise ValueError("Positive request and header limits required")
         if type(read_seconds) not in (int,float) or not math.isfinite(read_seconds) or read_seconds<=0:
             raise ValueError("Positive finite read deadline required")
+        from .workbook_code import approval_keys
+        self.approved_code=approval_keys(approved_code)
         self._request_slots=threading.BoundedSemaphore(max_requests)
         self.read_seconds,self.max_header_bytes=read_seconds,max_header_bytes
         self.token, self.handler = token or secrets.token_urlsafe(32), handler
@@ -477,7 +479,7 @@ class Service(ThreadingHTTPServer):
                 reserved = True
             try:
                 if fresh:
-                    book = Workbook(path, create=create, readonly=readonly, handler=self.handler,repair=repair)
+                    book = Workbook(path, create=create, readonly=readonly, handler=self.handler,repair=repair,approved_code=self.approved_code)
                 info = book.info()
                 handle = str(uuid.uuid4())
                 try:
@@ -800,8 +802,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--handler", type=Path, help="Explicitly activate a trusted service-side on_change Python file")
+    parser.add_argument("--approve-code",action="append",default=[],help="Operator-approved workbook UUID:code SHA256 (repeatable; process-local)")
     args = parser.parse_args()
-    server = Service(args.port, handler=args.handler.resolve() if args.handler else None)
+    server = Service(args.port, handler=args.handler.resolve() if args.handler else None,approved_code=args.approve_code)
     # Only the launching parent receives this credential through its private pipe.
     print(encoded({"url": f"http://127.0.0.1:{server.server_port}", "token": server.token, "api_version": 1}), flush=True)
     try:

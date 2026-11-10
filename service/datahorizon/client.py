@@ -468,8 +468,10 @@ class WorkbookClient:
 class LocalService:
     """Owns only the child service it started; external services are never stopped."""
 
-    def __init__(self, handler=None):
+    def __init__(self, handler=None, *, approved_code=()):
         command = [sys.executable, "-I", "-B", "-X", "utf8", str(Path(__file__).resolve().with_name("launch.py"))]
+        from .code_approval import validate_approvals
+        for key in sorted(validate_approvals(approved_code)):command += ["--approve-code",key]
         if handler:
             command += ["--handler", str(handler)]
         self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
