@@ -11,6 +11,8 @@
 #include <QGridLayout>
 #include "listcriteriadialog.h"
 #include <QListWidget>
+#include <QShortcut>
+#include <QKeyEvent>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
@@ -94,6 +96,7 @@ RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWi
     connect(m_reviewDraft,&QPushButton::clicked,this,&RelationalWorkbench::reviewRecordDraft);
     connect(m_discardDraft,&QPushButton::clicked,this,[this]{m_recordDraft={};setLocked(m_blocked);});
     connect(m_inspectRecord,&QPushButton::clicked,this,&RelationalWorkbench::reconcileRequested);
+    m_records->installEventFilter(this);m_records->viewport()->installEventFilter(this);
     connect(m_objects,&QTreeWidget::currentItemChanged,this,[this](QTreeWidgetItem *item){if(!item)return;const auto kind=item->data(0,Qt::UserRole+1).toString(),id=item->data(0,Qt::UserRole).toString();if(kind=="sheet"){if(!m_info.value("repair").toBool())emit sheetSelected(id);return;}if(kind=="query"){m_workbenchTabs->setCurrentIndex(1);m_query->loadSavedQuery(id);return;}showTable(id);});
     connect(m_client,&RestClient::configured,this,[this]{++m_generation;m_info={};m_catalog={};m_objects->clear();m_schema->setRowCount(0);setLocked(true);});
     connect(m_workbenchTabs,&QTabWidget::currentChanged,this,[this](int index){if(index==1){++m_readGeneration;m_page={};m_records->setRowCount(0);m_records->setColumnCount(0);m_query->resumeView();}else{m_query->suspendView();if(!m_table.isEmpty())loadRecords();}});
@@ -101,6 +104,16 @@ RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWi
 }
 
 QString RelationalWorkbench::base()const{return "/v1/workbooks/"+m_info.value("id").toString();}
+
+bool RelationalWorkbench::eventFilter(QObject *object,QEvent *event){
+    if((object==m_records || object==m_records->viewport()) && (event->type()==QEvent::ShortcutOverride || event->type()==QEvent::KeyPress)){
+        auto *key=static_cast<QKeyEvent *>(event);QPushButton *button=nullptr;
+        if((key->key()==Qt::Key_F2 || key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter) && (key->modifiers()&~Qt::KeypadModifier)==Qt::NoModifier)button=m_editCell;
+        else if(key->matches(QKeySequence::Copy))button=m_copyRecords;else if(key->matches(QKeySequence::Paste))button=m_pasteRecords;else if(key->matches(QKeySequence::Delete))button=m_clearRecords;else if(key->matches(QKeySequence::Undo))button=m_undoRecords;else if(key->matches(QKeySequence::Redo))button=m_redoRecords;
+        if(button){event->accept();if(event->type()==QEvent::KeyPress)button->click();return true;}
+    }
+    return QWidget::eventFilter(object,event);
+}
 
 void RelationalWorkbench::bind(const QJsonObject &info) {
     if(m_info.value("id")!=info["id"]) {m_table.clear();m_catalog={};m_draftDefinition={};m_browse={};m_projection={};}
@@ -175,9 +188,10 @@ void RelationalWorkbench::loadRecords(const QString &after) {
         m_page=result;m_after=after;m_nextAfter=result["next_cursor"].toString();
         const auto cols=result["columns"].toArray(),rows=result["records"].toArray();m_records->clear();m_records->setRowCount(rows.size());m_records->setColumnCount(cols.size());QStringList labels;
         for(const auto &col:cols)labels.append(col.toObject()["name"].toString());m_records->setHorizontalHeaderLabels(labels);
+        QStringList identities;for(const auto &row:rows)identities.append(row.toObject()["row_id"].toString());m_records->setVerticalHeaderLabels(identities);m_records->verticalHeader()->setToolTip(tr("Stable record identity; independent of display order"));
         for(int r=0;r<rows.size();++r){const auto record=rows[r].toObject();for(int c=0;c<cols.size();++c){const QJsonValue value=record["values"].toObject()[cols[c].toObject()["id"].toString()];
             const bool omitted=record["omitted_columns"].toArray().contains(cols[c].toObject()["id"]);
-            auto *item=new QTableWidgetItem(tableValueText(value)+(omitted?QStringLiteral("…"):QString{}));item->setData(Qt::UserRole,record["row_id"]);item->setToolTip(omitted?tr("Text preview; Edit and Copy retrieve the full stored value."):tr("Record %1").arg(record["row_id"].toString()));m_records->setItem(r,c,item);}}
+            auto *item=new QTableWidgetItem(tableValueText(value)+(omitted?QStringLiteral("…"):QString{}));item->setData(Qt::UserRole,record["row_id"]);item->setData(Qt::AccessibleDescriptionRole,value.isNull()?tr("NULL; no stored value"):value.isString() && value.toString().isEmpty()?tr("Empty Text; distinct from NULL"):tr("Stored value for record %1").arg(record["row_id"].toString()));if(value.isNull()){auto font=item->font();font.setItalic(true);item->setFont(font);}item->setToolTip(omitted?tr("Text preview; Edit and Copy retrieve the full stored value."):tr("Record %1").arg(record["row_id"].toString()));m_records->setItem(r,c,item);}}
         m_status->setText(tr("%1 records on this page. Matching count: %2. NULL sorts first ascending and last descending; record identity breaks ties.").arg(rows.size()).arg(result["count_status"]=="exact"?QString::number(result["count"].toInteger()):tr("unavailable")));setLocked(m_blocked);
     });
 }

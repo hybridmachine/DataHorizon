@@ -100,7 +100,7 @@ int main(int argc, char **argv) {
             require(address->text()=="A12345","Address input was lost during scrolling");
             input.append(keys.nsecsElapsed()/1e6);
             try { waitFor(visibleReady,"Scroll viewport timed out"); }
-            catch (...) { qCritical()<<"Row"<<row<<"issues:"<<window.findChild<QPlainTextEdit *>()->toPlainText(); throw; }
+            catch (...) { qCritical()<<"Row"<<row<<"issues:"<<window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText(); throw; }
             grid->viewport()->repaint();
             samples.append(elapsed.nsecsElapsed()/1e6);
         };

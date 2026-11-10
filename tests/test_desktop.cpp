@@ -400,7 +400,7 @@ private slots:
             else if(phase==3 && dialog->findChild<QLabel *>("recordEditStatus")->text().contains("Record 1")){phase=4;QCOMPARE(dialog->findChild<QLineEdit *>("recordInput_0")->text(),QString("bad"));dialog->findChild<QLineEdit *>("recordInput_0")->setText("7");dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();}
         });timer.start();window.findChild<QPushButton *>("addTableRecord")->click();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QTRY_COMPARE_WITH_TIMEOUT(grid->rowCount(),1,5000);
         QCOMPARE(grid->item(0,0)->text(),QString("=literal"));QCOMPARE(grid->item(0,1)->text(),QString("3"));const auto identity=grid->item(0,1)->data(Qt::UserRole);
-        phase=2;grid->setCurrentCell(0,1);window.findChild<QPushButton *>("editTableCell")->click();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);timer.stop();QCOMPARE(phase,4);
+        phase=2;grid->setCurrentCell(0,1);grid->setFocus();QTest::keyClick(grid,Qt::Key_F2);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);timer.stop();QCOMPARE(phase,4);
         QTRY_VERIFY_WITH_TIMEOUT(grid->item(0,1) && grid->item(0,1)->text()=="7",5000);QCOMPARE(grid->item(0,1)->data(Qt::UserRole),identity);
         window.findChild<QPushButton *>("undoTableRecords")->click();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);QTRY_VERIFY_WITH_TIMEOUT(grid->item(0,1) && grid->item(0,1)->text()=="3",5000);
     }
@@ -781,7 +781,7 @@ private slots:
                 if(auto *yes=box->button(QMessageBox::Yes))yes->click();
             }
         });timer.start();window.findChild<QAction *>("recordCommandAction")->trigger();
-        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("destination resolves to the native workbook"),5000);timer.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("destination resolves to the native workbook"),5000);timer.stop();
         QVERIFY(reviewed);QVERIFY(linked);QVERIFY(file.open(QIODevice::ReadOnly));QCOMPARE(file.readAll(),original);QCOMPARE(opened.count(),3);
     }
     void frozenTopRowModelForwardsEditsAndTracksSourceResets() {
@@ -956,14 +956,14 @@ private slots:
         window.findChild<QAction *>("deleteRowsAction")->trigger();
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
         QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(3,2)).toString(),QString("#REF!"),5000);
-        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("1 reference expressions became #REF!"));
+        QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("1 reference expressions became #REF!"));
         grid->selectColumn(1); answerNextDialog(QMessageBox::Yes);
         window.findChild<QAction *>("deleteColumnsAction")->trigger();
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);
         QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(3,1),Qt::EditRole).toString(),QString("=#REF!"),5000);
         model->setProjection({0,2});
         window.findChild<QAction *>("insertRowsAction")->trigger();
-        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Clear the list view before changing rows or columns"));
+        QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("Clear the list view before changing rows or columns"));
         QCOMPARE(opened.count(),6);
     }
     void rowDeletionConfirmationRetainsReviewedStateAfterExternalRefresh() {
@@ -994,7 +994,7 @@ private slots:
         });
         window.findChild<QAction *>("deleteRowsAction")->trigger();
         QVERIFY(confirmed); QCOMPARE(changed.count(),0);
-        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Reviewed inputs changed"));
+        QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("Reviewed inputs changed"));
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(1,0)).toString(),QString("9"),5000);
     }
     void listSaveRetainsItsSourceCellAfterResorting() {
@@ -1122,7 +1122,7 @@ private slots:
         QVERIFY(source->isModified());
         QCOMPARE(model->data(model->index(0,0)).toString(),QString("8"));
         QCOMPARE(model->data(model->index(0,1)).toString(),QString("16"));
-        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("nonnegative"));
+        QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("nonnegative"));
     }
     void closingWindowRequiresExplicitDiscardOfAnActiveCellDraft() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
@@ -1387,7 +1387,7 @@ private slots:
         qputenv("DATAHORIZON_PYTHON","/nonexistent/datahorizon-python");
         StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show();
-        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("startup failed"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("startup failed"),5000);
         QVERIFY(window.close());
         if(original.isNull()) qunsetenv("DATAHORIZON_PYTHON"); else qputenv("DATAHORIZON_PYTHON",original);
     }
@@ -1418,14 +1418,14 @@ private slots:
             window.findChild<QAction *>("pasteAction")->trigger(); QApplication::clipboard()->setMimeData(saved);
             QVERIFY(mutations.isEmpty());
             window.exportCsvTo(temp.filePath("blocked.csv"),{{"r1",2},{"c1",1}});
-            QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("export rectangle"));
+            QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("export rectangle"));
             QVERIFY(!QFile::exists(temp.filePath("blocked.csv")));
             QTimer cancelUnexpectedDialog; cancelUnexpectedDialog.setInterval(10);
             connect(&cancelUnexpectedDialog,&QTimer::timeout,[]{
                 if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) if(auto *cancel=box->button(QMessageBox::Cancel)) cancel->click();
             });
             cancelUnexpectedDialog.start(); window.findChild<QAction *>("deleteRowsAction")->trigger(); cancelUnexpectedDialog.stop();
-            QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("structural edits"));
+            QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("structural edits"));
             auto *address=window.findChild<QLineEdit *>("address"); address->setText("B2"); QTest::keyClick(address,Qt::Key_Return);
             QCOMPARE(grid->currentIndex(),window.model()->index(0,0));
             window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"header",false},
@@ -1674,12 +1674,12 @@ private slots:
         QVERIFY(warned); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
         QCOMPARE(tabs->count(),1);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("#REF!"),5000);
-        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Other!A1"));
+        QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("Other!A1"));
     }
     void formatCellsReadOnlyGuardDoesNotOpenAnEditor() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;const auto path=temp.filePath("readonly-format.dhwb");
         {MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);}
-        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,false,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);QSignalSpy edits(&window,&MainWindow::operationFinished);window.findChild<QAction *>("formatPainterAction")->trigger();QVERIFY(!window.findChild<QAction *>("formatPainterAction")->isChecked());window.findChild<QAction *>("formatCellsAction")->trigger();QVERIFY(!window.findChild<QDialog *>("formatCellsDialog"));QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("read-only"));QVERIFY(edits.isEmpty());
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,false,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);QSignalSpy edits(&window,&MainWindow::operationFinished);window.findChild<QAction *>("formatPainterAction")->trigger();QVERIFY(!window.findChild<QAction *>("formatPainterAction")->isChecked());window.findChild<QAction *>("formatCellsAction")->trigger();QVERIFY(!window.findChild<QDialog *>("formatCellsDialog"));QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("read-only"));QVERIFY(edits.isEmpty());
     }
     void formatCellsDialogPatchesOnlyChosenPropertiesAndValidatesColors() {
         FormatCellsDialog dialog("A1:B2");QVERIFY(dialog.patch().isEmpty());QVERIFY(!dialog.replaceStyle());auto *fill=dialog.findChild<QLineEdit *>("cellBackground");fill->setText("red");QVERIFY(!dialog.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->isEnabled());fill->setText("#AbCdEf");QVERIFY(dialog.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->isEnabled());dialog.findChild<QCheckBox *>("fontBold")->setChecked(true);dialog.findChild<QCheckBox *>("fontItalic")->setChecked(false);auto *number=dialog.findChild<QComboBox *>("numberFormat");number->setCurrentIndex(number->findData("number"));QCOMPARE(dialog.patch(),(QJsonObject{{"background","#abcdef"},{"bold",true},{"italic",false},{"format","number"}}));dialog.findChild<QCheckBox *>("resetAllFormats")->setChecked(true);QVERIFY(dialog.replaceStyle());
@@ -1707,7 +1707,7 @@ private slots:
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("portable.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);auto *grid=window.findChild<QTableView *>("grid");grid->setCurrentIndex(window.model()->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);grid->setColumnWidth(0,180);window.findChild<QAction *>("savePortableViewAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);grid->setColumnWidth(0,90);const auto state=window.model()->state();window.findChild<QAction *>("loadPortableViewAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(grid->columnWidth(0),180,5000);QCOMPARE(window.model()->state(),state);
     }
     void backgroundCalculationReportsSnapshotWithoutEdits() {
-        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("calculation.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","=DATE(2024,2,29)"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);auto *grid=window.findChild<QTableView *>("grid");grid->setCurrentIndex(window.model()->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);const auto state=window.model()->state();QSignalSpy edits(&window,&MainWindow::operationFinished);window.findChild<QAction *>("calculateSelectionAction")->trigger();QTRY_VERIFY2_WITH_TIMEOUT(window.findChild<QLabel *>("storageStatus")->text().contains("Background snapshot"),qPrintable(window.findChild<QLabel *>("storageStatus")->text()+" | "+window.findChild<QPlainTextEdit *>()->toPlainText()),5000);QCOMPARE(window.model()->state(),state);QCOMPARE(edits.count(),0);
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("calculation.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","=DATE(2024,2,29)"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);auto *grid=window.findChild<QTableView *>("grid");grid->setCurrentIndex(window.model()->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);const auto state=window.model()->state();QSignalSpy edits(&window,&MainWindow::operationFinished);window.findChild<QAction *>("calculateSelectionAction")->trigger();QTRY_VERIFY2_WITH_TIMEOUT(window.findChild<QLabel *>("storageStatus")->text().contains("Background snapshot"),qPrintable(window.findChild<QLabel *>("storageStatus")->text()+" | "+window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText()),5000);QCOMPARE(window.model()->state(),state);QCOMPARE(edits.count(),0);
     }
     void temporalCsvCompanionPreviewRestoresMixedTypes() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("csv-temporal.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);auto *grid=window.findChild<QTableView *>("grid");grid->setCurrentIndex(window.model()->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);
@@ -1731,14 +1731,14 @@ private slots:
         auto *action=window.findChild<QAction *>("enterTemporalAction");QVERIFY(action);action->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);QTRY_COMPARE_WITH_TIMEOUT(model->cell(model->index(0,0))["input_kind"].toString(),QString("date"),5000);
         model->setData(model->index(0,0),"2024-03-01",Qt::EditRole);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("2024-03-01"),5000);QCOMPARE(model->cell(model->index(0,0))["input_kind"].toString(),QString("date"));
         const auto exported=temp.filePath("dates.csv");window.exportCsvTo(exported);QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(exported+".dh-types.json"),5000);QFile companion(exported+".dh-types.json");QVERIFY(companion.open(QIODevice::ReadOnly));QCOMPARE(QJsonDocument::fromJson(companion.readAll()).object()["cells"].toArray()[0].toObject()["kind"].toString(),QString("date"));
-        const auto state=model->state();change=true;action->trigger();QCOMPARE(model->state(),state);QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Date/time target changed"));
+        const auto state=model->state();change=true;action->trigger();QCOMPARE(model->state(),state);QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("Date/time target changed"));
     }
     void formatCellsAppliesOneManagedEditKeepsInputsAndRejectsChangedScopes() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("format-dialog.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","00123"},{"kind","text"},{"style",QJsonObject{{"italic",true},{"background","#ccddaa"}}}},QJsonObject{{"row",1},{"col",2},{"source","1.234"},{"style",QJsonObject{{"bold",false}}}},QJsonObject{{"row",2},{"col",1},{"source","=B1*2"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();grid->setCurrentIndex(model->index(0,0));grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(1,1)),QItemSelectionModel::ClearAndSelect);QSignalSpy edits(&window,&MainWindow::operationFinished);int mode=0,dialogs=0;
         QTimer timer;connect(&timer,&QTimer::timeout,&window,[&]{auto *dialog=window.findChild<QDialog *>("formatCellsDialog");if(!dialog || dialog->property("checked").toBool())return;dialog->setProperty("checked",true);++dialogs;if(mode==0){dialog->findChild<QCheckBox *>("fontBold")->setChecked(true);auto *number=dialog->findChild<QComboBox *>("numberFormat");number->setCurrentIndex(number->findData("number"));auto *tabs=dialog->findChild<QTabWidget *>("formatTabs");tabs->setCurrentIndex(3);dialog->findChild<QLineEdit *>("cellBackground")->setText("#ddeeff");dialog->grab().save("build/format-cells-"+QGuiApplication::platformName()+".png");}if(mode==1)dialog->reject();else {if(mode==2)dialog->findChild<QCheckBox *>("resetAllFormats")->setChecked(true);if(mode==3){grid->setCurrentIndex(model->index(2,2));grid->selectionModel()->select(model->index(2,2),QItemSelectionModel::ClearAndSelect);dialog->findChild<QCheckBox *>("fontBold")->setChecked(true);}dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();}});timer.start(10);
         window.findChild<QAction *>("formatCellsAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,1)).toString(),QString("1.23"),5000);QCOMPARE(model->data(model->index(0,0)).toString(),QString("00123"));QVERIFY(model->cell(model->index(0,0))["style"].toObject()["italic"].toBool());QCOMPARE(model->cell(model->index(0,1))["source"].toString(),QString("1.234"));QCOMPARE(edits.count(),1);
         window.submit({{"action","undo"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);QTRY_COMPARE_WITH_TIMEOUT(model->cell(model->index(0,0))["style"].toObject()["background"].toString(),QString("#ccddaa"),5000);window.submit({{"action","redo"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);const auto state=model->state();mode=1;window.findChild<QAction *>("formatCellsAction")->trigger();QCOMPARE(model->state(),state);QCOMPARE(dialogs,2);
-        grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(1,1)),QItemSelectionModel::ClearAndSelect);mode=2;window.findChild<QAction *>("formatCellsAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,1)),5000);QTRY_VERIFY_WITH_TIMEOUT(model->cell(model->index(0,1))["style"].toObject().isEmpty(),5000);QCOMPARE(model->cell(model->index(0,0))["source"].toString(),QString("00123"));QCOMPARE(model->cell(model->index(1,0))["source"].toString(),QString("=B1*2"));const int before=edits.count();mode=3;window.findChild<QAction *>("formatCellsAction")->trigger();QTest::qWait(50);QCOMPARE(edits.count(),before);QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Formatting target changed"));
+        grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(1,1)),QItemSelectionModel::ClearAndSelect);mode=2;window.findChild<QAction *>("formatCellsAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(0,1)),5000);QTRY_VERIFY_WITH_TIMEOUT(model->cell(model->index(0,1))["style"].toObject().isEmpty(),5000);QCOMPARE(model->cell(model->index(0,0))["source"].toString(),QString("00123"));QCOMPARE(model->cell(model->index(1,0))["source"].toString(),QString("=B1*2"));const int before=edits.count();mode=3;window.findChild<QAction *>("formatCellsAction")->trigger();QTest::qWait(50);QCOMPARE(edits.count(),before);QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("Formatting target changed"));
     }
     void formatPainterPatternValidatesBoundsAndRepeatsExactStyles() {
         const QJsonArray rows{QJsonArray{QJsonObject{{"font_size",16}},QJsonObject{}},QJsonArray{QJsonObject{{"format","text"}},QJsonObject{{"border_bottom","dashed"}}}};QVERIFY(validStylePattern(rows,2,2));QVERIFY(!validStylePattern(QJsonArray{QJsonArray{true}},1,1));QVERIFY(!validStylePattern(rows,1,2));const auto edits=formatPainterEdits(rows,3,3,6,6);QCOMPARE(edits.size(),16);QCOMPARE(edits[2].toObject()["style"],edits[0].toObject()["style"]);for(const auto &v:edits){const auto e=v.toObject();QVERIFY(e["replace_style"].toBool());QVERIFY(!e.contains("source"));QVERIFY(!e.contains("kind"));}QVERIFY(formatPainterEdits(rows,3,3,5,5).isEmpty());QVERIFY(formatPainterEdits(rows,1048576,16384,1048577,16385).isEmpty());QVERIFY(formatPainterEdits(rows,1,1,102,100).isEmpty());QJsonArray single;single.append(QJsonArray{QJsonValue(QJsonObject{})});QCOMPARE(formatPainterEdits(single,1048576,16384,1048576,16384).size(),1);
@@ -1746,9 +1746,9 @@ private slots:
     void formatPainterCopiesPatternsKeepsInputsClearsStylesAndUndoes() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("painter.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);const QJsonObject a{{"format","text"},{"font_size",16},{"text_color","#123abc"}},b{{"border_bottom","dashed"},{"background","#ddeeff"}},c{{"bold",true}};window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","00123"},{"kind","text"},{"style",a}},QJsonObject{{"row",1},{"col",2},{"source","3"},{"style",b}},QJsonObject{{"row",2},{"col",1},{"source","=1/0"},{"style",c}},QJsonObject{{"row",4},{"col",4},{"source","=2+3"},{"kind","formula"},{"style",QJsonObject{{"italic",true}}}},QJsonObject{{"row",4},{"col",5},{"source","00123"},{"kind","text"},{"style",QJsonObject{{"bold",true}}}},QJsonObject{{"row",5},{"col",4},{"source","7"}},QJsonObject{{"row",5},{"col",5},{"source","last"},{"kind","text"},{"style",QJsonObject{{"border","box"}}}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();auto *painter=window.findChild<QAction *>("formatPainterAction");auto select=[&]{grid->setCurrentIndex(model->index(0,0));grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(1,1)),QItemSelectionModel::ClearAndSelect);};auto point=[](QTableView *v,int row,int col){return v->visualRect(v->model()->index(row,col)).center();};select();QSignalSpy edits(&window,&MainWindow::operationFinished);QApplication::clipboard()->setText("keep clipboard");painter->trigger();QTRY_VERIFY_WITH_TIMEOUT(painter->property("ready").toBool(),5000);window.grab().save("build/format-painter-"+QGuiApplication::platformName()+".png");QTest::mouseClick(grid->viewport(),Qt::LeftButton,Qt::NoModifier,point(grid,3,3));QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(4,4)),5000);QCOMPARE(model->cell(model->index(3,3))["style"].toObject(),a);QCOMPARE(model->cell(model->index(3,4))["style"].toObject(),b);QCOMPARE(model->cell(model->index(4,3))["style"].toObject(),c);QVERIFY(model->cell(model->index(4,4))["style"].toObject().isEmpty());QCOMPARE(model->cell(model->index(3,3))["source"].toString(),QString("=2+3"));QCOMPARE(model->cell(model->index(3,3))["input_kind"].toString(),QString("formula"));QCOMPARE(model->data(model->index(3,4)).toString(),QString("00123"));QCOMPARE(edits.count(),1);QCOMPARE(QApplication::clipboard()->text(),QString("keep clipboard"));QVERIFY(!painter->isChecked());window.submit({{"action","undo"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(4,4)),5000);QCOMPARE(model->cell(model->index(3,3))["style"].toObject(),(QJsonObject{{"italic",true}}));QCOMPARE(model->cell(model->index(4,4))["style"].toObject(),(QJsonObject{{"border","box"}}));
         select();painter->trigger();QTRY_VERIFY_WITH_TIMEOUT(painter->property("ready").toBool(),5000);QTest::mousePress(grid->viewport(),Qt::LeftButton,Qt::NoModifier,point(grid,3,3));QTest::mouseRelease(grid->viewport(),Qt::LeftButton,Qt::NoModifier,point(grid,6,6));QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(6,6)),5000);QCOMPARE(model->cell(model->index(5,5))["style"].toObject(),a);QCOMPARE(model->cell(model->index(6,6))["style"].toObject(),QJsonObject{});
-        select();painter->trigger();QTRY_VERIFY_WITH_TIMEOUT(painter->property("ready").toBool(),5000);const int before=edits.count();QTest::mousePress(grid->viewport(),Qt::LeftButton,Qt::NoModifier,point(grid,3,3));QTest::mouseRelease(grid->viewport(),Qt::LeftButton,Qt::NoModifier,point(grid,5,5));QTest::qWait(50);QCOMPARE(edits.count(),before);QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("exact multiples"));
+        select();painter->trigger();QTRY_VERIFY_WITH_TIMEOUT(painter->property("ready").toBool(),5000);const int before=edits.count();QTest::mousePress(grid->viewport(),Qt::LeftButton,Qt::NoModifier,point(grid,3,3));QTest::mouseRelease(grid->viewport(),Qt::LeftButton,Qt::NoModifier,point(grid,5,5));QTest::qWait(50);QCOMPARE(edits.count(),before);QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("exact multiples"));
         select();painter->trigger();QTRY_VERIFY_WITH_TIMEOUT(painter->property("ready").toBool(),5000);QTest::keyClick(grid,Qt::Key_Escape);QVERIFY(!painter->isChecked());QCOMPARE(edits.count(),before);
-        if(auto *dock=qobject_cast<QDockWidget *>(window.findChild<QPlainTextEdit *>()->parentWidget()))dock->hide();grid->setCurrentIndex(model->index(1,1));QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(grid->currentIndex()),5000);QTest::qWait(30);window.findChild<QAction *>("freezePanesAction")->trigger();auto *left=window.findChild<QTableView *>("frozenFirstColumn");QTRY_VERIFY_WITH_TIMEOUT(left->isVisible(),2000);select();painter->trigger();QTRY_VERIFY_WITH_TIMEOUT(painter->property("ready").toBool(),5000);QTest::mouseClick(left->viewport(),Qt::LeftButton,Qt::NoModifier,point(left,3,0));QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(3,0)),5000);QCOMPARE(model->cell(model->index(3,0))["style"].toObject(),a);
+        if(auto *dock=qobject_cast<QDockWidget *>(window.findChild<QPlainTextEdit *>("operationIssues")->parentWidget()))dock->hide();grid->setCurrentIndex(model->index(1,1));QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(grid->currentIndex()),5000);QTest::qWait(30);window.findChild<QAction *>("freezePanesAction")->trigger();auto *left=window.findChild<QTableView *>("frozenFirstColumn");QTRY_VERIFY_WITH_TIMEOUT(left->isVisible(),2000);select();painter->trigger();QTRY_VERIFY_WITH_TIMEOUT(painter->property("ready").toBool(),5000);QTest::mouseClick(left->viewport(),Qt::LeftButton,Qt::NoModifier,point(left,3,0));QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(3,0)),5000);QCOMPARE(model->cell(model->index(3,0))["style"].toObject(),a);
         window.submit({{"action","sheet_add"},{"name","Target"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),7,10000);select();painter->trigger();QTRY_VERIFY_WITH_TIMEOUT(painter->property("ready").toBool(),5000);window.findChild<QTabBar *>("sheets")->setCurrentIndex(1);QVERIFY(painter->property("ready").toBool());QTest::mouseClick(grid->viewport(),Qt::LeftButton,Qt::NoModifier,point(grid,3,3));QTRY_COMPARE_WITH_TIMEOUT(opened.count(),8,10000);QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(4,4)),5000);QCOMPARE(model->cell(model->index(3,3))["style"].toObject(),a);QCOMPARE(model->cell(model->index(3,4))["style"].toObject(),b);
         window.findChild<QTabBar *>("sheets")->setCurrentIndex(0);grid->setCurrentIndex(model->index(6,3));grid->selectionModel()->select(model->index(6,3),QItemSelectionModel::ClearAndSelect);window.findChild<QAction *>("hideRowsAction")->trigger();QVERIFY(grid->isRowHidden(6));select();painter->trigger();QTRY_VERIFY_WITH_TIMEOUT(painter->property("ready").toBool(),5000);const int hiddenBefore=edits.count();QTest::mouseClick(grid->viewport(),Qt::LeftButton,Qt::NoModifier,point(grid,5,3));QTest::qWait(50);QCOMPARE(edits.count(),hiddenBefore);QVERIFY(!painter->isChecked());window.findChild<QAction *>("showRowsAction")->trigger();
 
@@ -1866,7 +1866,7 @@ private slots:
         grid->setCurrentIndex(model->index(3,3));QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);source->setFocus();QTest::keyClicks(source,"=SUM(");pick->trigger();QVERIFY(pick->isChecked());drag(grid,0,0,grid,1,1);QCOMPARE(grid->currentIndex(),model->index(3,3));QCOMPARE(source->text(),QString("=SUM(A1:B2"));QVERIFY(edits.isEmpty());source->undo();QCOMPARE(source->text(),QString("=SUM("));source->redo();QTest::keyClicks(source,")");QTest::keyClick(source,Qt::Key_Return);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(3,3)).toString(),QString("10"),5000);
         grid->setCurrentIndex(model->index(2,2));window.findChild<QAction *>("freezePanesAction")->trigger();auto *corner=window.findChild<QTableView *>("frozenCorner");QVERIFY(corner->isVisible());grid->setCurrentIndex(model->index(3,3));QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);source->setFocus();source->selectAll();QTest::keyClicks(source,"=SUM(");pick->trigger();drag(corner,0,0,grid,2,2);QCOMPARE(source->text(),QString("=SUM(A1:C3"));QCOMPARE(grid->currentIndex(),model->index(3,3));QCOMPARE(edits.count(),1);QTest::keyClick(source,Qt::Key_Escape);
         source->setFocus();QTest::keyClicks(source,"+(");const auto draft=source->text();pick->trigger();QVERIFY(pick->isChecked());QTest::keyClick(source,Qt::Key_Escape);QVERIFY(!pick->isChecked());QCOMPARE(source->text(),draft);QTest::keyClick(source,Qt::Key_Escape);window.findChild<QAction *>("unfreezePanesAction")->trigger();
-        grid->setCurrentIndex(model->index(2,0));window.findChild<QAction *>("hideRowsAction")->trigger();QVERIFY(grid->isRowHidden(2));grid->setCurrentIndex(model->index(3,3));QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);source->setFocus();source->selectAll();QTest::keyClicks(source,"=SUM(");pick->trigger();drag(grid,1,0,grid,3,1);QCOMPARE(source->text(),QString("=SUM("));QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Show hidden cells before picking"));QTest::keyClick(source,Qt::Key_Escape);QCOMPARE(edits.count(),1);
+        grid->setCurrentIndex(model->index(2,0));window.findChild<QAction *>("hideRowsAction")->trigger();QVERIFY(grid->isRowHidden(2));grid->setCurrentIndex(model->index(3,3));QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);source->setFocus();source->selectAll();QTest::keyClicks(source,"=SUM(");pick->trigger();drag(grid,1,0,grid,3,1);QCOMPARE(source->text(),QString("=SUM("));QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("Show hidden cells before picking"));QTest::keyClick(source,Qt::Key_Escape);QCOMPARE(edits.count(),1);
     }
     void referencePickingTransfersCellDraftWithoutCommitAndRespectsTextAndReadOnly() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);const auto path=temp.filePath("pick-cell.dhwb");window.openBook(path,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);auto *model=window.model();auto *grid=window.findChild<QTableView *>("grid");auto *source=window.findChild<QLineEdit *>("source");auto *pick=window.findChild<QAction *>("pickReferenceAction");QSignalSpy edits(&window,&MainWindow::operationFinished);
@@ -1902,7 +1902,7 @@ private slots:
     void namedListViewsRejectOversizeWithoutReplacingSavedPreferences() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("bytes.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
         window.showList({{"r1",1},{"r2",1},{"c1",1},{"c2",1}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);window.saveNamedListView("Small");QJsonArray filters;for(int i=0;i<3;++i)filters.append(QJsonObject{{"col",1},{"op","="},{"value",QString(50000,'x')}});
-        window.showList({{"r1",1},{"r2",1},{"c1",1},{"c2",1},{"filters",filters}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);window.saveNamedListView("Too large");QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("128 KiB"));QSettings settings(options.viewStatePath,QSettings::IniFormat);const auto saved=QJsonDocument::fromJson(settings.value(settings.allKeys().first()).toByteArray()).object()["named_views"].toObject();QCOMPARE(saved.size(),1);QVERIFY(saved.contains("Small"));
+        window.showList({{"r1",1},{"r2",1},{"c1",1},{"c2",1},{"filters",filters}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);window.saveNamedListView("Too large");QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("128 KiB"));QSettings settings(options.viewStatePath,QSettings::IniFormat);const auto saved=QJsonDocument::fromJson(settings.value(settings.allKeys().first()).toByteArray()).object()["named_views"].toObject();QCOMPARE(saved.size(),1);QVERIFY(saved.contains("Small"));
     }
     void namedListViewsPersistReopenReviewAndReevaluateCurrentInputsReadOnly() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");const auto path=temp.filePath("named.dhwb");QString key;
@@ -1910,7 +1910,7 @@ private slots:
             MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
             window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","ID"}},QJsonObject{{"row",1},{"col",2},{"source","Qty"}},QJsonObject{{"row",2},{"col",1},{"source","00123"},{"kind","text"}},QJsonObject{{"row",2},{"col",2},{"source","2"}},QJsonObject{{"row",3},{"col",1},{"source","Z"}},QJsonObject{{"row",3},{"col",2},{"source","3"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
             window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",2},{"header",true},{"sort",QJsonArray{QJsonObject{{"col",2},{"descending",true}}}},{"filters",QJsonArray{QJsonObject{{"col",2},{"op",">"},{"value",1}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QSignalSpy changes(&window,&MainWindow::operationFinished);
-            window.saveNamedListView("High qty");for(int i=0;i<15;++i)window.saveNamedListView("View "+QString::number(i));window.saveNamedListView("Overflow");QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("16 names"));window.saveNamedListView("High qty");QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("already exists"));window.removeNamedListView("View 0");window.saveNamedListView("Replacement");QVERIFY(changes.isEmpty());
+            window.saveNamedListView("High qty");for(int i=0;i<15;++i)window.saveNamedListView("View "+QString::number(i));window.saveNamedListView("Overflow");QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("16 names"));window.saveNamedListView("High qty");QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("already exists"));window.removeNamedListView("View 0");window.saveNamedListView("Replacement");QVERIFY(changes.isEmpty());
             QSettings settings(options.viewStatePath,QSettings::IniFormat);key=settings.allKeys().first();const auto saved=QJsonDocument::fromJson(settings.value(key).toByteArray()).object()["named_views"].toObject();QCOMPARE(saved.size(),16);QVERIFY(!saved.contains("Overflow"));QVERIFY(saved.contains("Replacement"));const auto criteria=saved["High qty"].toObject();QVERIFY(!criteria.contains("expected_state"));QVERIFY(!criteria.contains("workbook"));QCOMPARE(criteria["r2"].toInt(),3);
             window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",2},{"source","0"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);window.findChild<QAction *>("clearListAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);window.findChild<QAction *>("freezeFirstColumnAction")->trigger();
         }
@@ -1921,7 +1921,7 @@ private slots:
             window.removeNamedListView("High qty");QVERIFY(window.model()->projected());QSettings settings(options.viewStatePath,QSettings::IniFormat);QVERIFY(!QJsonDocument::fromJson(settings.value(key).toByteArray()).object()["named_views"].toObject().contains("High qty"));
         }
         {QSettings settings(options.viewStatePath,QSettings::IniFormat);auto state=QJsonDocument::fromJson(settings.value(key).toByteArray()).object();auto views=state["named_views"].toObject();views["Broken"]=QJsonObject{{"r1",1},{"r2",1000000},{"c1",1},{"c2",10}};state["named_views"]=views;settings.setValue(key,QJsonDocument(state).toJson(QJsonDocument::Compact));settings.sync();}
-        {MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,false,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Invalid saved list view"));window.applyNamedListView("Broken");QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("unavailable or invalid"));}
+        {MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,false,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("Invalid saved list view"));window.applyNamedListView("Broken");QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("unavailable or invalid"));}
     }
     void filteredExportWritesOnlyReviewedVisibleSnapshotAndRetainsDestinationOnCancelError() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);
@@ -1932,8 +1932,8 @@ private slots:
         for(const auto &format:{QString("csv"),QString("xlsx"),QString("ods")}){const auto path=temp.filePath("result."+format);window.exportListTo(path,format);QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(path),5000);QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));const auto bytes=file.readAll();if(format=="csv")QCOMPARE(bytes,QByteArray("ID,Value\r\nZ,TRUE\r\n00123,0.25\r\n"));else QVERIFY(bytes.startsWith("PK"));}
         QCOMPARE(reviews,3);QVERIFY(edits.isEmpty());const auto keep=temp.filePath("keep.csv");{QFile file(keep);QVERIFY(file.open(QIODevice::WriteOnly));file.write("keep");}
         accept=false;window.exportListTo(keep);QTRY_COMPARE_WITH_TIMEOUT(reviews,4,5000);QTest::qWait(20);{QFile file(keep);QVERIFY(file.open(QIODevice::ReadOnly));QCOMPARE(file.readAll(),QByteArray("keep"));}
-        window.exportListTo(native);QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("destination is the native workbook"));
-        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",2},{"source","=1/0"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);window.exportListTo(keep);QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("List values blocked"),5000);QCOMPARE(reviews,4);QFile file(keep);QVERIFY(file.open(QIODevice::ReadOnly));QCOMPARE(file.readAll(),QByteArray("keep"));
+        window.exportListTo(native);QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("destination is the native workbook"));
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",2},{"source","=1/0"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);window.exportListTo(keep);QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("List values blocked"),5000);QCOMPARE(reviews,4);QFile file(keep);QVERIFY(file.open(QIODevice::ReadOnly));QCOMPARE(file.readAll(),QByteArray("keep"));
     }
     void filteredCopyUsesDisplayedValuesAndStylesAndPreservesClipboardOnEmpty() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
@@ -1948,8 +1948,8 @@ private slots:
         grid->selectionModel()->select(QItemSelection(model->index(1,0),model->index(2,1)),QItemSelectionModel::ClearAndSelect);grid->setFocus();QAction *copy=nullptr;for(auto *action:window.findChildren<QAction *>())if(action->shortcut().matches(QKeySequence::Copy)==QKeySequence::ExactMatch)copy=action;QVERIFY(copy);copy->trigger();QTRY_COMPARE_WITH_TIMEOUT(QApplication::clipboard()->text(),QString("Z\tTRUE\n00123\t25.00%"),5000);
         window.findChild<QAction *>("clearListAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);grid->setCurrentIndex(model->index(9,0));grid->setFocus();window.findChild<QAction *>("pasteAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
         QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(10,1)),5000);QCOMPARE(model->cell(model->index(10,0))["input_kind"].toString(),QString("text"));QCOMPARE(model->cell(model->index(10,0))["source"].toString(),QString("00123"));QCOMPARE(model->cell(model->index(10,1))["source"].toString(),QString("0.25"));QCOMPARE(model->cell(model->index(10,1))["style"].toObject()["format"].toString(),QString("percent2"));
-        grid->setCurrentIndex(model->index(1,0));grid->selectionModel()->select(QItemSelection(model->index(1,0),model->index(1,1)),QItemSelectionModel::ClearAndSelect);QVERIFY(!grid->selectionModel()->selection().isEmpty());window.findChild<QAction *>("hideRowsAction")->trigger();QVERIFY2(grid->isRowHidden(1),qPrintable(window.findChild<QPlainTextEdit *>()->toPlainText()));window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",2},{"header",true}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);window.copyListValues();QTRY_COMPARE_WITH_TIMEOUT(QApplication::clipboard()->text(),QString("ID\tValue\nZ\tTRUE"),5000);
-        window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",2},{"filters",QJsonArray{QJsonObject{{"col",1},{"op","="},{"value","missing"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),7,10000);const auto prior=QApplication::clipboard()->text();window.copyListValues();QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("No visible list values"),5000);QCOMPARE(QApplication::clipboard()->text(),prior);
+        grid->setCurrentIndex(model->index(1,0));grid->selectionModel()->select(QItemSelection(model->index(1,0),model->index(1,1)),QItemSelectionModel::ClearAndSelect);QVERIFY(!grid->selectionModel()->selection().isEmpty());window.findChild<QAction *>("hideRowsAction")->trigger();QVERIFY2(grid->isRowHidden(1),qPrintable(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText()));window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",2},{"header",true}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);window.copyListValues();QTRY_COMPARE_WITH_TIMEOUT(QApplication::clipboard()->text(),QString("ID\tValue\nZ\tTRUE"),5000);
+        window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",2},{"filters",QJsonArray{QJsonObject{{"col",1},{"op","="},{"value","missing"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),7,10000);const auto prior=QApplication::clipboard()->text();window.copyListValues();QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("No visible list values"),5000);QCOMPARE(QApplication::clipboard()->text(),prior);
     }
     void filteredCopyIgnoresSupersededClipboardAndServiceReplies() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
@@ -2003,7 +2003,7 @@ private slots:
         QTimer edit;edit.setInterval(10);connect(&edit,&QTimer::timeout,&window,[&]{if(auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());dialog && dialog->objectName()=="listCriteriaDialog"){
             auto *filters=dialog->findChild<QTableWidget *>("filterCriteria");qobject_cast<QLineEdit *>(filters->cellWidget(1,3))->setText("2");dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
         }});edit.start();window.findChild<QAction *>("listCriteriaAction")->trigger();edit.stop();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);QCOMPARE(model->rowCount(),2);QCOMPARE(model->sourceRow(1),2);QVERIFY(changed.isEmpty());
-        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",3},{"col",3},{"source","=1/0"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);QVERIFY(!model->projected());QVERIFY(!summary->isVisible());QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("List evaluation blocked"));
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",3},{"col",3},{"source","=1/0"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);QVERIFY(!model->projected());QVERIFY(!summary->isVisible());QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("List evaluation blocked"));
         window.submit({{"action","undo"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(2,2)).toString(),QString("3"),5000);
     }
     void dataBoundaryNavigationExtendsFromSequenceAnchorAndProtectsDrafts() {
@@ -2025,7 +2025,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(9,2)),5000);source->setText("retained draft");source->setModified(true);
         answerNextDialog(QMessageBox::Cancel);action("dataJumpDownAction")->trigger();QCOMPARE(grid->currentIndex(),model->index(9,2));QCOMPARE(source->text(),QString("retained draft"));
         QTest::keyClick(source,Qt::Key_Escape);grid->selectRow(2);window.findChild<QAction *>("hideRowsAction")->trigger();grid->setCurrentIndex(model->index(0,0));
-        action("dataJumpDownAction")->trigger();QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("data boundary is hidden"),5000);QCOMPARE(grid->currentIndex(),model->index(0,0));
+        action("dataJumpDownAction")->trigger();QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("data boundary is hidden"),5000);QCOMPARE(grid->currentIndex(),model->index(0,0));
         window.findChild<QPushButton *>("showHiddenButton")->click();
         QCOMPARE(action("dataJumpDownAction")->shortcutContext(),Qt::WidgetShortcut);
         QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(0,0)),5000);source->setFocus();source->setText("draft words");source->setModified(true);
@@ -2093,7 +2093,7 @@ private slots:
             address->setText("B2");QTest::keyClick(address,Qt::Key_Return);QCOMPARE(window.focusWidget(),corner);
             QTest::keyClick(corner,Qt::Key_Down,Qt::ShiftModifier);QCOMPARE(grid->currentIndex(),model->index(2,1));QCOMPARE(window.focusWidget(),left);
             QTest::keyClick(left,Qt::Key_Right,Qt::ShiftModifier);QCOMPARE(grid->currentIndex(),model->index(2,2));QCOMPARE(window.focusWidget(),grid);
-            grid->setCurrentIndex(model->index(17,9));freeze->trigger();QCOMPARE(top->model()->rowCount(),2);QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("16 rows and 8 columns"));
+            grid->setCurrentIndex(model->index(17,9));freeze->trigger();QCOMPARE(top->model()->rowCount(),2);QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("16 rows and 8 columns"));
             grid->selectRow(1);window.findChild<QAction *>("hideRowsAction")->trigger();QVERIFY(!top->isVisible());QVERIFY(left->isVisible());
             window.findChild<QPushButton *>("showHiddenButton")->click();QVERIFY(top->isVisible());
             grid->setCurrentIndex(model->index(2,2));QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(model->index(2,2)),5000);
@@ -2102,7 +2102,7 @@ private slots:
             QTest::keyClick(source,Qt::Key_Escape);QVERIFY(changed.isEmpty());
             window.findChild<QAction *>("unfreezePanesAction")->trigger();QVERIFY(!corner->isVisible());
             grid->setColumnWidth(0,2000);grid->setCurrentIndex(model->index(0,1));freeze->trigger();QVERIFY(!left->isVisible());
-            QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("too little scrolling space"));
+            QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("too little scrolling space"));
             grid->setColumnWidth(0,110);grid->setCurrentIndex(model->index(2,2));freeze->trigger();QVERIFY(corner->isVisible());QVERIFY(changed.isEmpty());
             if(qEnvironmentVariableIsSet("DATAHORIZON_PANES_SCREENSHOT"))window.grab().save(qEnvironmentVariable("DATAHORIZON_PANES_SCREENSHOT"));
         }
@@ -2305,10 +2305,10 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(replacement.requests.size(),1,3000);replacement.respond(0,10);
         QTRY_COMPARE_WITH_TIMEOUT(label->text(),QString("Count 1 • Sum 10 • Average 10"),3000);
         server.respond(2,200);QTest::qWait(50);QCOMPARE(label->text(),QString("Count 1 • Sum 10 • Average 10"));
-        const auto issues=window.findChild<QPlainTextEdit *>()->toPlainText();
+        const auto issues=window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText();
         grid->setCurrentIndex(model->index(0,10));QTRY_COMPARE_WITH_TIMEOUT(replacement.requests.size(),2,3000);
         replacement.respondInvalid(1);QTRY_COMPARE_WITH_TIMEOUT(label->text(),QString("Summary unavailable"),3000);
-        QVERIFY(label->toolTip().contains("Invalid selection summary response"));QCOMPARE(window.findChild<QPlainTextEdit *>()->toPlainText(),issues);
+        QVERIFY(label->toolTip().contains("Invalid selection summary response"));QCOMPARE(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText(),issues);
     }
     void scopedFindNavigatesWrapsAndInvalidatesAfterEdits() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
@@ -2344,12 +2344,12 @@ private slots:
         window.findChild<QAction *>("hideRowsAction")->trigger();
         previous->trigger();QCOMPARE(grid->currentIndex(),model->index(0,0));
         next->trigger();QCOMPARE(grid->currentIndex(),model->index(0,0));
-        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("next match is hidden"));
+        QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("next match is hidden"));
         window.findChild<QPushButton *>("showHiddenButton")->click();next->trigger();QCOMPARE(grid->currentIndex(),model->index(2,1));
         QVERIFY(changed.isEmpty());
         window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",3},{"col",2},{"source","changed"}}}}});
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QVERIFY(!next->isEnabled());QVERIFY(!previous->isEnabled());
-        search("absent");QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("0 matching cells"),5000);
+        search("absent");QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("0 matching cells"),5000);
         QVERIFY(!next->isEnabled());
     }
     void findPagesDiscardMovedSelectionsDraftsInvalidCountsAndSupersededSearches() {
@@ -2359,7 +2359,7 @@ private slots:
         search();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),1,3000);server.respond(0);QTRY_VERIFY_WITH_TIMEOUT(next->isEnabled(),3000);QCOMPARE(grid->currentIndex(),model->index(0,0));
         previous->trigger();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),2,3000);QCOMPARE(server.requests[1].input["offset"].toInt(),1000);QCOMPARE(server.requests[1].input["expected_state"].toString(),model->state());grid->setCurrentIndex(model->index(8,0));server.respond(1);QTRY_VERIFY_WITH_TIMEOUT(next->isEnabled(),3000);QCOMPARE(grid->currentIndex(),model->index(8,0));
         previous->trigger();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),3,3000);QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),3000);source->setFocus();source->setText("new draft");source->setModified(true);server.respond(2);QTRY_VERIFY_WITH_TIMEOUT(next->isEnabled(),3000);QCOMPARE(source->text(),QString("new draft"));QCOMPARE(grid->currentIndex(),model->index(8,0));QTest::keyClick(source,Qt::Key_Escape);
-        previous->trigger();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),4,3000);server.respond(3,1199);QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("page is invalid"),3000);QVERIFY(!next->isEnabled());
+        previous->trigger();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),4,3000);server.respond(3,1199);QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("page is invalid"),3000);QVERIFY(!next->isEnabled());
         search();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),5,3000);server.respond(4);QTRY_VERIFY_WITH_TIMEOUT(next->isEnabled(),3000);previous->trigger();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),6,3000);
         search();QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(),7,3000);const auto before=grid->currentIndex();const int completed=replies.count();server.respond(5);QTRY_VERIFY_WITH_TIMEOUT(replies.count()>completed,3000);QCOMPARE(grid->currentIndex(),before);QVERIFY(!next->isEnabled());server.respond(6,1,4);QTRY_VERIFY_WITH_TIMEOUT(next->isEnabled(),3000);QCOMPARE(grid->currentIndex(),model->index(3,0));
         client->configure("http://127.0.0.1:1","other");QVERIFY(!next->isEnabled());QVERIFY(!previous->isEnabled());
@@ -2619,7 +2619,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
         QFile source(native); QVERIFY(source.open(QIODevice::ReadOnly)); const auto original=source.readAll(); source.close();
         const auto alias=temp.filePath("native-alias.xlsx"); QVERIFY(QFile::link(native,alias));
-        auto *issues=window.findChild<QPlainTextEdit *>(); QVERIFY(issues);
+        auto *issues=window.findChild<QPlainTextEdit *>("operationIssues"); QVERIFY(issues);
         for(const auto &format:{QString("xlsx"),QString("ods")}) {
             window.exportSpreadsheetTo(alias,format); QVERIFY(issues->toPlainText().contains("native workbook"));
             const auto existing=temp.filePath("retained."+format); QFile file(existing); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("retained"); file.close();
@@ -2721,7 +2721,7 @@ private slots:
         window.importCsvText("must not be written");
         auto *progress=window.findChild<QProgressDialog *>("csvPreparationProgress"); QVERIFY(progress);
         auto *cancel=progress->findChild<QPushButton *>(); QVERIFY(cancel); cancel->click();
-        auto *issues=window.findChild<QPlainTextEdit *>(); QVERIFY(issues);
+        auto *issues=window.findChild<QPlainTextEdit *>("operationIssues"); QVERIFY(issues);
         QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("preparation cancelled"),5000);
         QCOMPARE(changed.count(),0); QVERIFY(!qobject_cast<QMessageBox *>(QApplication::activeModalWidget()));
         QCOMPARE(window.model()->data(window.model()->index(0,0)).toString(),QString());
@@ -2923,7 +2923,7 @@ private slots:
         QCOMPARE(window.model()->data(window.model()->index(0,2)).toString(),QString("=1+1"));
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
         window.importCsvBytes(QByteArray::fromHex("ff"));
-        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("invalid for utf-8"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("invalid for utf-8"),5000);
         QCOMPARE(changed.count(),1);
     }
     void csvColumnTypesReviewConvertsHeadersNumbersBooleansAndDatesAtomically() {
@@ -3009,7 +3009,7 @@ private slots:
             }
         });
         answer.start(); window.importCsvText("7");
-        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("CSV import target changed"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("CSV import target changed"),5000);
         answer.stop(); QVERIFY(invalidated); QCOMPARE(changed.count(),0);
     }
     void csvPreviewCapturesItsTargetAndRejectsInvalidatedProjection() {
@@ -3028,7 +3028,7 @@ private slots:
         QCOMPARE(model->data(model->index(0,0)).toString(),QString("ID")); QCOMPARE(model->data(model->index(4,1)).toString(),QString());
         QVERIFY(!QFile::exists(temp.filePath("wrong.dhwb")));
         window.importCsvText("wrong target"); model->setProjection({0,1});
-        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("CSV import target changed"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("CSV import target changed"),5000);
         QCOMPARE(changed.count(),1);
         window.openBook(path); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
         QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(0,0)).toString(),QString("ID"),5000);
@@ -3102,7 +3102,7 @@ private slots:
         for(auto *action:window.findChildren<QAction *>()) if(action->objectName()=="importAction") import=action;
         QVERIFY(import); import->trigger();
         QVERIFY(pickerOpened); QVERIFY(refreshed); QVERIFY(fileChosen);
-        auto *issues=window.findChild<QPlainTextEdit *>();
+        auto *issues=window.findChild<QPlainTextEdit *>("operationIssues");
         QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("Import target changed") || changed.count()>0,10000);
         QCOMPARE(changed.count(),0);
         QVERIFY(issues->toPlainText().contains("Import target changed"));
@@ -3124,7 +3124,7 @@ private slots:
             {"source_sheet",model->sheet()},{"r1",1},{"c1",1},{"r2",1},{"c2",1},{"cut_state",model->state()}}).toJson());
         QApplication::clipboard()->setMimeData(mime); grid->setCurrentIndex(model->index(0,1)); grid->setFocus();
         for(auto *action:window.findChildren<QAction *>()) if(action->text()=="Paste formats only") action->trigger();
-        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Cut supports full paste only"));
+        QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("Cut supports full paste only"));
         QCOMPARE(model->data(model->index(0,0)).toString(),QString("source")); QCOMPARE(model->data(model->index(0,1)).toString(),QString("destination"));
     }
     void newerCopySupersedesAnEarlierDelayedCut_data() {
@@ -3215,7 +3215,7 @@ private slots:
         QCOMPARE(QApplication::clipboard()->text(),QString("new clipboard content"));
         QVERIFY(!QApplication::clipboard()->mimeData()->hasFormat("application/x-datahorizon-cells"));
         const auto status=window.findChild<QLabel *>("storageStatus")->text();
-        auto *issues=window.findChild<QPlainTextEdit *>(); const auto previousIssues=issues->toPlainText();
+        auto *issues=window.findChild<QPlainTextEdit *>("operationIssues"); const auto previousIssues=issues->toPlainText();
         server.respond(0,"superseded cut",rejected); QTRY_COMPARE_WITH_TIMEOUT(completed,1,3000);
         QCOMPARE(QApplication::clipboard()->text(),QString("new clipboard content"));
         QVERIFY(!QApplication::clipboard()->mimeData()->hasFormat("application/x-datahorizon-cells"));
@@ -3235,7 +3235,7 @@ private slots:
         QAction *paste=nullptr;
         for(auto *action:window.findChildren<QAction *>()) if(action->shortcut().matches(QKeySequence::Paste)==QKeySequence::ExactMatch) paste=action;
         QVERIFY(paste);
-        auto *issues=window.findChild<QPlainTextEdit *>(); QSignalSpy changed(&window,&MainWindow::operationFinished);
+        auto *issues=window.findChild<QPlainTextEdit *>("operationIssues"); QSignalSpy changed(&window,&MainWindow::operationFinished);
         auto reject=[&](QMimeData *mime,const QString &message) {
             issues->clear(); QApplication::clipboard()->setMimeData(mime); paste->trigger();
             return issues->toPlainText().contains(message) && changed.count()==0;
@@ -3514,7 +3514,7 @@ private slots:
         source->setFocus(); source->setCursorPosition(source->text().size()); QTest::keyClicks(source,"y"); QTest::keyClick(source,Qt::Key_Return);
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
         QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(31,0),Qt::EditRole).toString(),text+"y",5000);
-        QVERIFY(!window.findChild<QPlainTextEdit *>()->toPlainText().contains("READ_LIMIT"));
+        QVERIFY(!window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("READ_LIMIT"));
     }
     void fullSourceReplyMustMatchViewportState() {
         QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost,0));
@@ -3553,7 +3553,7 @@ private slots:
 #ifdef Q_OS_UNIX
         const auto alias=temp.filePath("alias.csv"); QVERIFY(QFile::link(path,alias)); window.exportCsvTo(alias);
 #endif
-        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("destination is the open native workbook"));
+        QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("destination is the open native workbook"));
         QFile retained(path); QVERIFY(retained.open(QIODevice::ReadOnly)); QCOMPARE(retained.read(16),QByteArray("SQLite format 3\0",16)); retained.close();
         const auto csv=temp.filePath("values.csv"); window.exportCsvTo(csv);
         QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(csv),5000);
@@ -3743,7 +3743,7 @@ private slots:
         window.submit({{"action","edit"},{"sheet","different-sheet"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","wrong"}}}}});
         window.submit({{"action","edit"},{"workbook","different-workbook"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","wrong"}}}}});
         QCOMPARE(changed.count(),0);
-        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Reviewed inputs changed"));
+        QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("Reviewed inputs changed"));
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("new"),5000);
     }
     void sheetDeletionConfirmationCannotSwitchToAnotherSheetAfterRefresh() {
@@ -3778,7 +3778,7 @@ private slots:
         for(auto *action:window.findChildren<QAction *>()) if(action->text()=="Delete sheet…") remove=action;
         QVERIFY(remove); remove->trigger();
         QVERIFY(refreshed); QVERIFY(confirmed);
-        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>()->toPlainText().contains("Reviewed inputs changed"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("Reviewed inputs changed"),5000);
         QCOMPARE(changed.count(),0);
         auto *tabs=window.findChild<QTabBar *>("sheets"); QCOMPARE(tabs->count(),2);
         QCOMPARE(tabs->tabText(0),QString("Other")); QCOMPARE(tabs->tabText(1),QString("Third"));
@@ -3811,7 +3811,7 @@ private slots:
         QCOMPARE(source->text(),QString("retained draft")); QVERIFY(source->isModified());
         QSignalSpy changed(&window,&MainWindow::operationFinished);
         source->returnPressed(); QCOMPARE(changed.count(),0);
-        QVERIFY(window.findChild<QPlainTextEdit *>()->toPlainText().contains("The draft target changed"));
+        QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("The draft target changed"));
         answerNextDialog(QMessageBox::Cancel);
         window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","new"}}}}});
         QCOMPARE(changed.count(),0); QCOMPARE(source->text(),QString("retained draft"));

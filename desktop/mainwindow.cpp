@@ -276,6 +276,7 @@ void MainWindow::showRelational(bool visible) {
     if(visible && (m_busy || m_unknown || m_info.isEmpty()))return;
     if(visible){captureGridDraft(false);if(!resolveDraft())return;}
     m_relationalActive=visible;m_objectStack->setCurrentIndex(visible?1:0);
+    m_toolbar->setVisible(!visible);
     m_model->setSuspended(visible);
     if(!visible)m_relational->suspend();
     for(auto *menu:m_sheetMenus)menu->setEnabled(!visible);
@@ -670,7 +671,7 @@ void MainWindow::buildUi() {
     m_hiddenButton->hide(); statusBar()->addPermanentWidget(m_hiddenButton);
     connect(m_hiddenButton,&QPushButton::clicked,this,[this]{showHidden(true,true);});
     auto *issuesDock = new QDockWidget(tr("Issues"), this); issuesDock->setObjectName("issuesDock");
-    m_issues = new QPlainTextEdit; m_issues->setReadOnly(true); m_issues->setAccessibleName(tr("Operation and calculation issues")); issuesDock->setWidget(m_issues);
+    m_issues = new QPlainTextEdit; m_issues->setObjectName("operationIssues");m_issues->setReadOnly(true); m_issues->setAccessibleName(tr("Operation and calculation issues")); issuesDock->setWidget(m_issues);
     addDockWidget(Qt::BottomDockWidgetArea, issuesDock); issuesDock->hide(); view->addAction(issuesDock->toggleViewAction());
     view->addAction(m_toolbar->toggleViewAction());
     add(help, tr("Preview capabilities"), {}, [this] {

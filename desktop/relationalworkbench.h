@@ -23,6 +23,7 @@ public:
     void refreshCatalog();
     void selectTable(const QString &id){if(id!=m_table){m_browse={};m_projection={};}m_table=id;}
     static bool editDefinition(QWidget *parent,QJsonObject &definition,const QString &title,bool fixedWidth=false);
+    bool eventFilter(QObject *object,QEvent *event)override;
     void operationAdmitted(const QString &operation);
     void operationReceipt(const QJsonObject &receipt);
     void admissionRejected();
