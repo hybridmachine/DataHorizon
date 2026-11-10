@@ -573,7 +573,7 @@ separate contracts.
 | Task | Implementation | Automated evidence | Owner GUI acceptance |
 | --- | --- | --- | --- |
 | 1 | Contracts, [Qt wireframes](relational-workbench-wireframes.md) and SQLite probes implemented; [PR 115](https://github.com/hybridmachine/DataHorizon/pull/115) | [Five isolated SQLite contract probes pass](evidence/relational-task1.json) | Wireframes supplied before feature code; physical acceptance later |
-| 2 | Native v4 empty-table storage, managed hooks, catalog, SDK/CLI and Qt shell implemented | 17 targeted Python checks and the new Qt integration check pass; full-suite result recorded separately | Pending |
+| 2 | Native v4 empty-table storage, managed hooks, catalog, SDK/CLI and Qt shell implemented; [PR 116](https://github.com/hybridmachine/DataHorizon/pull/116) | [224 Qt checks, 481 Python tests (19 optional skips), bundle-signature and installed smoke pass](evidence/relational-task2.json) | Pending |
 | 3 | Planned | Pending | Pending |
 | 4 | Planned | Pending | Pending |
 | 5 | Planned | Pending | Pending |

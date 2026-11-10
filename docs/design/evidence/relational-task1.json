@@ -1,6 +1,6 @@
 {
   "task": 1,
-  "source_commit": "7061519",
+  "source_commit": "7061519adfef2499310013f50b186af8465fc2f5",
   "pull_request": "https://github.com/hybridmachine/DataHorizon/pull/115",
   "automated_status": "passed",
   "command": "PYTHONPATH=service python3 -m unittest discover -s tests -p test_relational_probes.py -v",

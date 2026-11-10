@@ -1,0 +1,32 @@
+{
+  "task": 2,
+  "source_commit": "102b8786992ff49af75cd00140d9b431e000315e",
+  "pull_request": "https://github.com/hybridmachine/DataHorizon/pull/116",
+  "automated_status": "passed",
+  "python": "3.14.6",
+  "sqlite": "3.53.4",
+  "ctest": {
+    "command": "ctest --test-dir build --output-on-failure",
+    "suites_passed": 3,
+    "qt_checks_passed": 224,
+    "python_tests_run": 481,
+    "python_optional_skips": 19,
+    "elapsed_seconds": 175.28
+  },
+  "installed": {
+    "native_v4_create_catalog_copy_reopen": true,
+    "readonly_rejection": true,
+    "relocated_app_and_sdk_service": true,
+    "developer_overrides_removed": true,
+    "python_bundled": false,
+    "executable_sha256": "90105ae47c1e5664ff4b7f0af10c8b715db83b9362f4e0c163633d384178301e"
+  },
+  "regression_fixes": [
+    "Read optional window metadata without inserting fields into an unopened workbook",
+    "Reject a v4 header without its matching relational catalog before reading catalog rows"
+  ],
+  "manual_gui_acceptance": "pending",
+  "native_cocoa_qualification": "pending final batch",
+  "clean_machine_qualified": false,
+  "release_qualified": false
+}
