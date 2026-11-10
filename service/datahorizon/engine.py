@@ -884,6 +884,7 @@ class Workbook:
                 self.changes, self.pending = {}, {}
                 self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
                 self.table_schema_keys=set();self.relational_before={}
+                self.macro_diagnostics=None
                 self.operation_clock=utc_clock()
                 unverified_before=set(self.unverified_records)
                 self.change_bytes = 0
@@ -935,7 +936,10 @@ class Workbook:
                 before_catalog=self.structure_hook(operation,request,'before',None) if sheet_structural else None
                 reference_report = {}
                 sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
-                if kind in ("module_save","module_delete"):
+                if kind=="macro_run":
+                    from .macros import run as run_macro
+                    reference_report=run_macro(self,request)
+                elif kind in ("module_save","module_delete"):
                     from .workbook_code import mutate as mutate_code
                     reference_report=mutate_code(self,request)
                 elif kind in relational.ACTIONS:
@@ -1216,6 +1220,7 @@ class Workbook:
                     logging.getLogger(__name__).exception("Managed operation failed before commit")
                     failure=EngineError("INTERNAL_ERROR","Operation rolled back; inspect service diagnostics",
                                         500,"rolled_back",operation_id=operation)
+                if getattr(self,"macro_diagnostics",None) is not None:failure.body["macro"]=self.macro_diagnostics
                 failure.body["http_status"]=failure.status
                 try:
                     self.db.execute("INSERT INTO operations VALUES(?,?,?)",(operation,fingerprint,encoded(failure.body)))

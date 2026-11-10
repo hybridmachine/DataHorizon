@@ -48,6 +48,37 @@ def supports_event(path,event):
     except (OSError,SyntaxError,ValueError):return False
 
 
+class BrokerContext:
+    def __init__(self,pipe,operation):
+        self.pipe,self.operation_id=pipe,operation
+
+    def request(self, method, **arguments):
+        _send(self.pipe,{"method": method, **arguments})
+        response = _receive(self.pipe)
+        if "error" in response:
+            raise RuntimeError(response["error"])
+        return response.get("result")
+
+    def get(self, sheet, row, col):
+        return self.request("get", sheet=sheet, row=row, col=col)
+
+    def value(self, sheet, row, col):
+        return self.request("value", sheet=sheet, row=row, col=col)
+
+    def set(self, sheet, row, col, source, kind="auto"):
+        return self.request("set", sheet=sheet, row=row, col=col, source=source, kind=kind)
+
+    def table_schema(self,table,phase='current'):return self.request('table_schema',table=table,phase=phase)
+
+    def table_get(self,table,row_id,columns=None):return self.request('table_get',table=table,row_id=row_id,**({'columns':columns} if columns is not None else {}))
+
+    def table_set(self,table,row_id,values):return self.request('table_set',table=table,row_id=row_id,values=values)
+
+    def table_insert(self,table,values):return self.request('table_insert',table=table,values=values)
+
+    def table_delete(self,table,row_id):return self.request('table_delete',table=table,row_id=row_id)
+
+
 def _worker(pipe, path, changes, operation, event='on_change'):
     class LogTail:
         def __init__(self):
@@ -60,35 +91,6 @@ def _worker(pipe, path, changes, operation, event='on_change'):
         def flush(self):
             pass
 
-    class Context:
-        operation_id = operation
-
-        def request(self, method, **arguments):
-            _send(pipe,{"method": method, **arguments})
-            response = _receive(pipe)
-            if "error" in response:
-                raise RuntimeError(response["error"])
-            return response.get("result")
-
-        def get(self, sheet, row, col):
-            return self.request("get", sheet=sheet, row=row, col=col)
-
-        def value(self, sheet, row, col):
-            return self.request("value", sheet=sheet, row=row, col=col)
-
-        def set(self, sheet, row, col, source, kind="auto"):
-            return self.request("set", sheet=sheet, row=row, col=col, source=source, kind=kind)
-
-        def table_schema(self,table,phase='current'):return self.request('table_schema',table=table,phase=phase)
-
-        def table_get(self,table,row_id,columns=None):return self.request('table_get',table=table,row_id=row_id,**({'columns':columns} if columns is not None else {}))
-
-        def table_set(self,table,row_id,values):return self.request('table_set',table=table,row_id=row_id,values=values)
-
-        def table_insert(self,table,values):return self.request('table_insert',table=table,values=values)
-
-        def table_delete(self,table,row_id):return self.request('table_delete',table=table,row_id=row_id)
-
     logs=LogTail()
     # Also bound ordinary Python execution if the service is terminated before
     # its parent-side timeout can reap this worker. This is not a sandbox.
@@ -100,7 +102,7 @@ def _worker(pipe, path, changes, operation, event='on_change'):
     with redirect_stdout(logs), redirect_stderr(logs):
         try:
             module = runpy.run_path(path)
-            module[event](Context(), changes)
+            module[event](BrokerContext(pipe,operation), changes)
             _send(pipe,{"method": "done"})
         except BaseException:
             try:
