@@ -393,6 +393,8 @@ private slots:
         QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("records.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
         window.submit({{"action","table_create"},{"name","Data"},{"columns",QJsonArray{QJsonObject{{"name","ID"},{"required",true}},QJsonObject{{"name","Qty"},{"type","integer"},{"required",true}}}}});
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);auto *grid=window.findChild<QTableWidget *>("tableRecords");
+        QTRY_COMPARE_WITH_TIMEOUT(window.findChild<QTableWidget *>("tableSchema")->rowCount(),2,5000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPushButton *>("addTableRecord")->isEnabled(),5000);
         int phase=0;QTimer timer;timer.setInterval(10);connect(&timer,&QTimer::timeout,&window,[&]{
             auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());if(!dialog || dialog->objectName()!="recordInputDialog")return;
             if(phase==0){phase=1;dialog->findChild<QLineEdit *>("recordInput_0")->setText("=literal");dialog->findChild<QLineEdit *>("recordInput_1")->setText("3");dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();}
