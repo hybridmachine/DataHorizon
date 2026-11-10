@@ -321,6 +321,25 @@ public:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void relationshipsAndOrphanRepairUseReviewedRestOperations() {
+        QTemporaryDir temp;const auto path=temp.filePath("relations.dhwb");StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","table_create"},{"name","Customers"},{"columns",QJsonArray{QJsonObject{{"name","ID"},{"required",true},{"unique",true}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        window.submit({{"action","table_create"},{"name","Orders"},{"columns",QJsonArray{QJsonObject{{"name","Customer"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        window.submit({{"action","table_insert"},{"table","Customers"},{"rows",QJsonArray{QJsonObject{{"ID","C001"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QTreeWidget *>("relationalObjects")->topLevelItemCount()==1 && window.findChild<QTreeWidget *>("relationalObjects")->topLevelItem(0)->childCount()==2,5000);
+        int phase=0;QTimer timer;timer.setInterval(10);connect(&timer,&QTimer::timeout,&window,[&]{auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());if(!dialog)return;
+            if(phase==0 && dialog->objectName()=="relationshipsDialog"){phase=1;auto *button=dialog->findChild<QPushButton *>("createRelationship");QTimer::singleShot(0,button,&QPushButton::click);}
+            else if(phase==1 && dialog->objectName()=="createRelationshipDialog"){phase=2;dialog->findChild<QLineEdit *>("relationshipName")->setText("CustomerOrders");auto *child=dialog->findChild<QComboBox *>("relationshipChild");child->setCurrentIndex(child->findText("Orders.Customer (text)"));dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply)->click();}
+            else if(phase==3 && dialog->objectName()=="relationshipViolationInspector"){phase=4;auto *orphans=dialog->findChild<QTableWidget *>("relationshipOrphans");QCOMPARE(orphans->rowCount(),1);orphans->setCurrentCell(0,0);auto *button=dialog->findChild<QPushButton *>("repairRelationshipKeys");QTimer::singleShot(0,button,&QPushButton::click);}
+            else if(phase==4 && dialog->objectName()=="recordInputDialog"){phase=5;dialog->findChild<QCheckBox *>("recordNull_0")->setChecked(false);dialog->findChild<QLineEdit *>("recordInput_0")->setText("C001");dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();}
+        });timer.start();window.findChild<QPushButton *>("tableRelationships")->click();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);timer.stop();QCOMPARE(phase,2);
+        QProcess direct;direct.start(qEnvironmentVariable("DATAHORIZON_PYTHON","python3"),{"-c","import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); db.execute(\"INSERT INTO Orders(Customer) VALUES('missing')\"); db.commit(); db.close()",path});QVERIFY(direct.waitForFinished(10000));QCOMPARE(direct.exitCode(),0);
+        window.openBook(path,false,false,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),6,10000);QTRY_VERIFY_WITH_TIMEOUT(!window.findChild<QPushButton *>("addTableRecord")->isEnabled(),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QTreeWidget *>("relationalObjects")->topLevelItemCount()==1 && window.findChild<QTreeWidget *>("relationalObjects")->topLevelItem(0)->childCount()==2,5000);
+        phase=3;timer.start();window.findChild<QPushButton *>("relationshipViolations")->click();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),7,10000);timer.stop();QCOMPARE(phase,5);
+        window.openBook(path);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),8,10000);
+    }
     void tableFullScopeBrowseUsesKeysetPagesAndReleasesHiddenSheetCache() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
         QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("browse.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);

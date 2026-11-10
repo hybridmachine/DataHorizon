@@ -42,6 +42,8 @@ private:
     void browseOptions();
     void chooseColumns();
     void manageIndexes();
+    void manageRelationships();
+    void inspectViolations();
     void editCell(int row,int column);
     void addRecord();
     void recordDialog(const QJsonObject &table,const QJsonArray &columns,const QJsonObject &stored,const QString &rowId,const QJsonObject &retained={});

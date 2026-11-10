@@ -30,7 +30,7 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(const StartupOptions &options = {}, QWidget *parent = nullptr);
     ~MainWindow() override;
-    void openBook(const QString &path, bool create = false, bool readonly = false);
+    void openBook(const QString &path, bool create = false, bool readonly = false,bool repair=false);
     void submit(QJsonObject operation);
     void importCsvText(const QString &text, QJsonObject target = {});
     void importCsvBytes(const QByteArray &bytes, const QString &encoding = "utf-8-sig", const QString &delimiter = ",", QJsonObject target = {}, QJsonObject temporalSchema = {});
@@ -62,6 +62,7 @@ private:
     QList<QMenu *> m_sheetMenus;
     QList<QAction *> m_sheetFileActions;
     bool m_relationalActive=false;
+    bool m_refreshFailed=false;
     QString m_relationalAfterWrite;
     QJsonObject m_tablePromotionDraft;
     void createTableFromSelection();

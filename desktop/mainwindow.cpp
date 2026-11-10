@@ -382,6 +382,7 @@ void MainWindow::buildUi() {
         const auto path=QFileDialog::getOpenFileName(this,tr("Inspect native file without modifying it"),recoveryDirectory(),tr("DataHorizon (*.dhwb)"));
         if(!path.isEmpty()) inspectNativeFile(path);
     });
+    add(file,tr("Open for relationship repair…"),{},[this]{if((m_busy && !m_refreshFailed) || m_unknown)return;const auto path=QFileDialog::getOpenFileName(this,tr("Open native workbook for restricted relationship repair"),{},tr("DataHorizon (*.dhwb)"));if(!path.isEmpty())openBook(path,false,false,true);});
     file->addSeparator();
     add(file, tr("&Close"), QKeySequence::Close, [this] { close(); });
     add(file, tr("Restart local service"), {}, [this] { restartService(); })->setObjectName("restartServiceAction");
@@ -1229,7 +1230,8 @@ void MainWindow::newBook() {
     openBook(dir + "/untitled-" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".dhwb", true);
 }
 
-void MainWindow::openBook(const QString &path, bool create, bool readonly) {
+void MainWindow::openBook(const QString &path, bool create, bool readonly,bool repair) {
+    if(repair && m_refreshFailed && !m_unknown && m_pendingId.isEmpty())setBusy(false);
     if (m_busy || m_unknown) return;
     if(m_relational->hasActiveEditor())return;
     if(!m_relational->retainedDraft().isEmpty()){
@@ -1242,8 +1244,11 @@ void MainWindow::openBook(const QString &path, bool create, bool readonly) {
         m_source->setModified(false); clearRecoveredDraft();
     }
     m_enterRequest={}; m_enterNavigation={};
+    if(!m_info.isEmpty() && QFileInfo(path).canonicalFilePath()==QFileInfo(m_info["path"].toString()).canonicalFilePath() && (m_info["repair"].toBool()!=repair || m_info["readonly"].toBool()!=readonly)){
+        setBusy(true,tr("Releasing the previous workbook mode…"));m_client->request(base()+"/close",{},[this,path,create,readonly,repair](QJsonObject,QString error){if(!error.isEmpty()){setBusy(false);issue(error);return;}m_info={};m_model->bind({},{},{},true);m_relational->bind({});setBusy(false);openBook(path,create,readonly,repair);});return;
+    }
     setBusy(true, "Opening workbook…");
-    m_client->request("/v1/open", {{"path", path}, {"create", create}, {"readonly", readonly}}, [this](QJsonObject info, QString error) {
+    m_client->request("/v1/open", {{"path", path}, {"create", create}, {"readonly", readonly},{"repair",repair}}, [this](QJsonObject info, QString error) {
         if (!error.isEmpty()) { setBusy(false, "Open failed"); issue(error); return; }
         if (!m_info.isEmpty()) m_client->request(base()+"/close",{},[](QJsonObject,QString){});
         m_listSpec = {}; acceptInfo(info);
@@ -1251,6 +1256,7 @@ void MainWindow::openBook(const QString &path, bool create, bool readonly) {
 }
 
 void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet) {
+    m_refreshFailed=false;
     QScopedValueRollback<bool> applying(m_applyingView,true);
     const auto oldSheet = m_restoreDraft ? m_recoveredDraft["sheet"].toString() : selectSheet.isEmpty() ? m_model->sheet() : selectSheet;
     if (m_restoreDraft) m_listSpec={};
@@ -1280,6 +1286,7 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     m_redo->setEnabled(info["redo"].isString() && !info["readonly"].toBool());
     setWindowTitle(QFileInfo(info["path"].toString()).fileName() + " — DataHorizon development preview");
     syncSource();
+    if(info["repair"].toBool() && !m_relationalActive)showRelational(true);
     if (m_restoreDraft) restoreRecoveredDraft();
     if(!m_relationalAfterWrite.isEmpty()) {
         const bool open=m_relationalAfterWrite==info["id"].toString();m_relationalAfterWrite.clear();
@@ -1298,7 +1305,7 @@ void MainWindow::refresh(const QString &selectSheet) {
     m_client->request(base(), {}, [this, selectSheet, workbook](QJsonObject info, QString error) {
         if (m_info["id"].toString()!=workbook) return;
         m_refreshing = false;
-        if (!error.isEmpty()) { setBusy(true, "Refresh failed • Editing stopped"); issue(error); return; }
+        if (!error.isEmpty()) { m_refreshFailed=true;setBusy(true, "Refresh failed • Editing stopped"); issue(error); return; }
         acceptInfo(info, selectSheet);
     }, false);
 }

@@ -89,15 +89,30 @@ def apply(book,args):
     old=prepared['original'];target=prepared['table'];before_catalog=tables(book.db)
     from .table_indexes import dependencies,recreate
     dependencies(book,old,target)
+    from .relationships import schema_dependencies
+    schema_dependencies(book,old,target)
     structure_hook(book,args,'before',before_catalog)
     # Preparatory edits must never be silently replaced by frozen conversion rows.
     rechecked=prepare(book,args,deadline=book.deadline)
     require(rechecked['review_digest']==prepared['review_digest'],'HOOK_CHANGED_SCHEMA_SOURCE','A required hook changed schema source rows; operation rolled back',409)
+    rebuild(book,old,target,prepared['rows'])
+    old_columns={col['id']:col for col in old['columns']};new_columns={col['id']:col for col in target['columns']}
+    semantic_changes={key for key in set(old_columns)|set(new_columns) if key not in old_columns or key not in new_columns or old_columns[key]['type']!=new_columns[key]['type']}
+    for identity,before,after in prepared['rows']:
+        if encoded(before)!=encoded(after) or semantic_changes:
+            capture(book,target,identity,before,after,schema_changed=bool(semantic_changes),changed_columns=semantic_changes|{key for key in before.keys()&after.keys() if encoded(before[key])!=encoded(after[key])})
+    structure_hook(book,args,'after',before_catalog)
+    return dict(table=target,converted_records=len(prepared['rows']))
+
+
+def rebuild(book,old,target,rows):
     sequence=book.db.execute('SELECT seq FROM sqlite_sequence WHERE name=?',(old['name'],)).fetchone()
     temporary='_dh_rebuild_'+uuid.uuid4().hex
-    book.db.execute(table_sql({**target,'name':temporary}))
+    from .relationships import relationships
+    registered=[target if item['id']==target['id'] else item for item in tables(book.db)]
+    book.db.execute(table_sql({**target,'name':temporary},relationships(book.db),registered))
     sql='INSERT INTO '+quote(temporary)+' ("_dh_row_id",'+','.join(quote(col['name']) for col in target['columns'])+') VALUES ('+','.join('?' for _ in range(len(target['columns'])+1))+')'
-    for identity,_,after in prepared['rows']:
+    for identity,_,after in rows:
         book.check_operation();book.db.execute(sql,[int(identity),*[after[col['id']] for col in target['columns']]])
     book.db.execute('DROP TABLE '+quote(old['name']))
     book.db.execute('ALTER TABLE '+quote(temporary)+' RENAME TO '+quote(target['name']))
@@ -106,11 +121,5 @@ def apply(book,args):
         if current:book.db.execute('UPDATE sqlite_sequence SET seq=max(seq,?) WHERE name=?',(sequence[0],target['name']))
         else:book.db.execute('INSERT INTO sqlite_sequence(name,seq) VALUES(?,?)',(target['name'],sequence[0]))
     store(book,'table',target)
+    from .table_indexes import recreate
     recreate(book,target)
-    old_columns={col['id']:col for col in old['columns']};new_columns={col['id']:col for col in target['columns']}
-    semantic_changes={key for key in set(old_columns)|set(new_columns) if key not in old_columns or key not in new_columns or old_columns[key]['type']!=new_columns[key]['type']}
-    for identity,before,after in prepared['rows']:
-        if encoded(before)!=encoded(after) or semantic_changes:
-            capture(book,target,identity,before,after,schema_changed=bool(semantic_changes),changed_columns=semantic_changes|{key for key in before.keys()&after.keys() if encoded(before[key])!=encoded(after[key])})
-    structure_hook(book,args,'after',before_catalog)
-    return dict(table=target,converted_records=len(prepared['rows']))

@@ -30,7 +30,21 @@ autoindex ownership. Full-table typed predicates and authenticated keyset cursor
 run bounded reads; counts can explicitly be unavailable. Index builds observe
 the operation deadline and cooperative cancellation. SQLite write interruption
 may release the writer transaction; the engine reacquires it and checks receipt
-ownership before recording the confirmed rollback. Relationships and query work follow in
+ownership before recording the confirmed rollback.
+
+Registered relationships now generate native same-type foreign keys to required
+UNIQUE parent columns, with RESTRICT updates/deletes and catalog-owned child
+indexes. No connection requires Python callbacks. This tier rejects self/cyclic
+graphs and requires removing incoming relationships before rebuilding a parent.
+Child rebuilds preserve outgoing constraints, indexes and identities atomically.
+
+Ordinary open/refresh rejects external orphans. Explicit `repair:true` opens a
+restricted handle: inspection reports up to 100 orphan locations; only reviewed
+orphan child-key updates/deletions are admitted. Required hooks still participate,
+and all relationship orphans must be resolved before commit. Repair clears
+history; reopen normally afterward. Invalid scalar/schema corruption remains
+separate from orphan repair. Read-only repair inspection is supported.
+Query work follows in
 the [relational plan](relational-workbench-plan.md).
 
 The sections below describe the earlier formats and their retained behavior.

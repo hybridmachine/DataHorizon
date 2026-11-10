@@ -577,8 +577,8 @@ separate contracts.
 | 3 | Reviewed selection promotion, typed value snapshots, table-change broker/hooks, bounded record pages and shared cell/record history implemented; [PR 117](https://github.com/hybridmachine/DataHorizon/pull/117) | [225 Qt checks, 494 Python tests (19 optional skips) and bundle-signature verification pass](evidence/relational-task3.json) | Pending |
 | 4 | Atomic schema/type/constraint review, stable-identity rebuilds and explicit column/table loss implemented; [PR 118](https://github.com/hybridmachine/DataHorizon/pull/118) | [505 Python tests (19 optional skips), 25 targeted Python checks and three Qt workflows pass](evidence/relational-task4.json) | Pending |
 | 5 | Typed single-cell/record editing, explicit-target bulk paste/clear/delete, managed client operations and shared history implemented; [PR 119](https://github.com/hybridmachine/DataHorizon/pull/119) | [517 Python tests and four Qt workflows pass](evidence/relational-task5.json) | Pending |
-| 6 | Full-table typed sort/filter, authenticated keyset paging, native indexes and bounded GUI pages implemented | [Verification record](evidence/relational-task6.json); larger combined measurements in task 10 | Pending |
-| 7 | Planned | Pending | Pending |
+| 6 | Full-table typed sort/filter, authenticated keyset paging, native indexes and bounded GUI pages implemented; [PR 120](https://github.com/hybridmachine/DataHorizon/pull/120) | [527 Python tests and three Qt workflows pass](evidence/relational-task6.json); larger combined measurements in task 10 | Pending |
+| 7 | Native RESTRICT relationships, owned indexes, dependency blockers and restricted reviewed orphan repair implemented | [Verification record](evidence/relational-task7.json) | Pending |
 | 8 | Planned | Pending | Pending |
 | 9 | Planned | Pending | Pending |
 | 10 | Planned | Pending | Walkthrough and fixture acceptance pending |

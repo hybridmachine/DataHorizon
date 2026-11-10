@@ -61,3 +61,11 @@ def install(schemas,actions):
         'expected_state':preview['expected_state'],'action':{'type':'string','enum':['table_insert','table_update','table_delete']},'blank_as_null':{'type':'boolean','default':False}},
         'description':'Read-only invariant type conversion. Apply the returned canonical operation and digest at the reviewed state. Native constraints and Python rules execute on Apply.',
         'example':{'table':'Snapshot','action':'table_insert','rows':[{'Value':'2.5'}],'expected_state':'copy-from-workbook-info'}}
+    relation={key:{'type':'string','minLength':1} for key in ('name','parent_table','parent_column','child_table','child_column')}
+    relation.update(on_delete={'type':'string','enum':['restrict'],'default':'restrict'},on_update={'type':'string','enum':['restrict'],'default':'restrict'})
+    actions['relationship_create']=(['name','parent_table','parent_column','child_table','child_column'],relation,
+        dict(name='ParentChild',parent_table='RelationParents',parent_column='Key',child_table='RelationChildren',child_column='Key'))
+    actions['relationship_drop']=(['relationship'],{'relationship':{'type':'string'}},{'relationship':'ParentChild'})
+    repair={'relationship':{'type':'string'},'mode':{'type':'string','enum':['update','delete']},'edits':data['edits'],'record_ids':data['record_ids'],'review_digest':data['review_digest']}
+    actions['table_repair']=(['relationship','mode','review_digest'],repair,{'relationship':'ParentChild','mode':'update','edits':[{'row_id':'1','values':{'Key':'A'}}],'review_digest':'replace-with-reviewed-digest'})
+    schemas['RelationshipRepairRequest']={'type':'object','required':['relationship','mode','expected_state'],'properties':{**repair,'expected_state':preview['expected_state']},'example':{'relationship':'ParentChild','mode':'update','edits':[{'row_id':'1','values':{'Key':'A'}}],'expected_state':'copy-from-workbook-info'}}
