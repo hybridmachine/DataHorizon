@@ -16,7 +16,7 @@ class PackagingTests(unittest.TestCase):
     def test_archive_preserves_inventory_modes_and_local_only_manifest(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)/'installed'
-            for name,value in [('bin/DataHorizon',b'executable'),('share/datahorizon/service/datahorizon/launch.py',b'# launcher'),('share/datahorizon/licenses/GUI-GPLv3.txt',b'license')]:
+            for name,value in [('bin/DataHorizon',b'executable'),('share/datahorizon/service/datahorizon/launch.py',b'# launcher'),('share/datahorizon/licenses/COPYING',b'license'),('share/datahorizon/licenses/LICENSES.md',b'component scope')]:
                 path=root/name; path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(value)
             (root/'bin/DataHorizon').chmod(0o755)
             toolchain=Path(temp)/'toolchain.json';toolchain.write_text('{"qt":"fixture"}')
