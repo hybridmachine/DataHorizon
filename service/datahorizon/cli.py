@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import sqlite3
 import sys
+from urllib.parse import quote
 
 from .client import APIError, Client, LocalService
 from .formula import FormulaError, coordinates
@@ -136,6 +137,7 @@ def main():
     outcome.add_argument("operation_id")
     cancel=commands.add_parser('cancel-operation',help='Request cancellation; inspect outcome before deciding whether data committed')
     cancel.add_argument('operation_id')
+    cancel.add_argument('--handle',help='An existing handle in --url service; cancellation must not wait for a new open')
     calculate=commands.add_parser('calculate',help='Calculate one bounded range as a background job and wait for its snapshot')
     calculate.add_argument('--sheet',default='Sheet1');calculate.add_argument('--r1',type=int,default=1);calculate.add_argument('--c1',type=int,default=1);calculate.add_argument('--r2',type=int,default=32);calculate.add_argument('--c2',type=int,default=16)
     job=commands.add_parser('job',help='Durable reviewed operation jobs; create/append/start/resume read JSON stdin; execution waits for a terminal outcome')
@@ -147,6 +149,7 @@ def main():
     result = None
     try:
         if args.approve_code and (args.url or args.command=="direct-sql"):raise ValueError("--approve-code configures an owned managed service; configure remote service approval at its operator startup")
+        if args.command=='cancel-operation' and (not args.url or not args.handle):raise ValueError('cancel-operation requires --url and --handle for the existing service execution')
         if args.command=='query' and ((args.output and not args.export) or (args.export and args.query_action!='run')):raise ValueError('Query file output requires query run --export FORMAT')
         if args.command in ("read", "set"):
             row, col = coordinates(args.address)
@@ -162,7 +165,10 @@ def main():
             return
         context = nullcontext(Client(args.url, os.environ["DATAHORIZON_TOKEN"])) if args.url else LocalService(args.handler,approved_code=args.approve_code)
         with context as client:
-            if args.command == "inspect":
+            if args.command=='cancel-operation':
+                result=client.request('/v1/workbooks/'+quote(args.handle,safe='')+'/operations/'+quote(args.operation_id,safe='')+'/cancel',{})
+                output=json.dumps(result,allow_nan=False);releasing=True
+            elif args.command == "inspect":
                 result=client.inspect_native(args.file)
                 output=json.dumps(result,allow_nan=False)
                 releasing=True
@@ -180,7 +186,6 @@ def main():
                             if not args.module or not args.fingerprint:raise ValueError('code delete requires module and --fingerprint')
                             result=book.delete_module(args.module,fingerprint=args.fingerprint)
                     elif args.command=='macro':result=book.run_macro(args.module,args.name,fingerprint=args.fingerprint,arguments=json.load(sys.stdin),operation_id=args.operation_id)
-                    elif args.command=='cancel-operation':result=book.cancel_operation(args.operation_id)
                     elif args.command=='tables':result=book.tables()
                     elif args.command=='query':
                         import time

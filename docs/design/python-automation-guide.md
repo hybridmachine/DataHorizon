@@ -101,10 +101,12 @@ new macro while its outcome is unknown. Exact engine retries replay receipts;
 the SDK should reconcile rather than create a newly reviewed request under an
 old ID. Receipts persist after service restart; execution approval does not.
 
-`book.cancel_operation(id)` or `cancel-operation <id>` requests cancellation;
+`book.cancel_operation(id)` or `cancel-operation <id> --handle <existing handle>`
+with `--url` requests cancellation;
 inspect the final receipt afterward. For a long-running call, use another
 connection to the same live service/handle. A new CLI-owned service cannot
-cancel an operation in another process. The example's `spin` macro is a bounded
+cancel an operation in another process. The CLI uses an existing handle so its
+cancellation cannot queue behind a new workbook-open request. The example's `spin` macro is a bounded
 busy loop for testing this route. Cancellation reaches the active writer without
 waiting behind its workbook path lock.
 
