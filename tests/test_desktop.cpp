@@ -9,6 +9,9 @@
 #include "servicepaths.h"
 #include "exportwriter.h"
 #include "clipboarddata.h"
+#include "relationalworkbench.h"
+#include <QTableWidget>
+#include <QTreeWidget>
 #include "frozen_row_probe.h"
 #include "frozentoprow.h"
 #include <QAbstractItemModelTester>
@@ -318,6 +321,24 @@ public:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void relationalTablesUseRestAndKeepSheetActionsSeparate() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();
+        QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("tables.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","table_create"},{"name","Customers"},{"columns",QJsonArray{QJsonObject{{"name","CustomerID"},{"required",true},{"unique",true}},QJsonObject{{"name","Name"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *action=window.findChild<QAction *>("relationalWorkbenchAction");QVERIFY(action);action->trigger();
+        auto *objects=window.findChild<QTreeWidget *>("relationalObjects");QVERIFY(objects);
+        QTRY_VERIFY_WITH_TIMEOUT(objects->topLevelItemCount()==1 && objects->topLevelItem(0)->childCount()==1,5000);
+        objects->setCurrentItem(objects->topLevelItem(0)->child(0));
+        auto *schema=window.findChild<QTableWidget *>("tableSchema");QVERIFY(schema);QCOMPARE(schema->rowCount(),2);
+        QCOMPARE(schema->item(0,0)->text(),QString("CustomerID"));
+        QVERIFY(!window.findChild<QAction *>("importAction")->isEnabled());
+        const auto state=window.model()->state();window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","hidden write"}}}}});
+        QCOMPARE(window.model()->state(),state);
+        QTest::mouseClick(window.findChild<QPushButton *>("returnToSheets"),Qt::LeftButton);
+        QVERIFY(window.findChild<QAction *>("importAction")->isEnabled());
+    }
     void keyboardGridAccessibilityNeverEnumeratesConceptualCells() {
         RestClient client;SheetModel model(&client);KeyboardGridView view;view.setModel(&model);view.setAccessibleName("Spreadsheet");
         auto *surface=QAccessible::queryAccessibleInterface(&view);QVERIFY(surface);QCOMPARE(surface->role(),QAccessible::Pane);

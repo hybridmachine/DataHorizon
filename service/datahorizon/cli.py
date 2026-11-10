@@ -93,6 +93,11 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("create")
     commands.add_parser("info")
+    commands.add_parser('tables',help='Inspect native structured table definitions')
+    table_create=commands.add_parser('table-create',help='Create a table; read a column-definition array from JSON stdin')
+    table_create.add_argument('name')
+    table_drop=commands.add_parser('table-drop',help='Drop an empty table through managed execution')
+    table_drop.add_argument('table')
     commands.add_parser("inspect",help="Inspect a native file read-only without code activation or repair")
     read = commands.add_parser("read")
     read.add_argument("address")
@@ -139,6 +144,9 @@ def main():
                 with client.open(args.file, create=args.command == "create", readonly=args.readonly) as book:
                     if args.command in ("create", "info"):
                         result = book.info
+                    elif args.command=='tables':result=book.tables()
+                    elif args.command=='table-create':result=book.create_table(args.name,json.load(sys.stdin))
+                    elif args.command=='table-drop':result=book.drop_table(args.table)
                     elif args.command == "read":
                         result = book.read(args.sheet, row, col, row, col)
                     elif args.command == "set":

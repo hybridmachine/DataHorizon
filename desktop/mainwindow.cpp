@@ -66,6 +66,8 @@
 #include "exportwriter.h"
 #include "jobcloser.h"
 #include "clipboarddata.h"
+#include "relationalworkbench.h"
+#include <QStackedWidget>
 #include <algorithm>
 
 namespace {
@@ -269,6 +271,16 @@ MainWindow::~MainWindow() {
 
 QString MainWindow::base() const { return "/v1/workbooks/" + m_info.value("id").toString(); }
 
+void MainWindow::showRelational(bool visible) {
+    if(visible && (m_busy || m_unknown || m_info.isEmpty()))return;
+    if(visible){captureGridDraft(false);if(!resolveDraft())return;}
+    m_relationalActive=visible;m_objectStack->setCurrentIndex(visible?1:0);
+    for(auto *menu:m_sheetMenus)menu->setEnabled(!visible);
+    for(auto *action:m_sheetFileActions)action->setEnabled(!visible);
+    if(visible)m_relational->bind(m_info);
+    setBusy(m_busy);
+}
+
 void MainWindow::buildUi() {
     auto *file = menuBar()->addMenu(tr("&File"));
     auto *edit = menuBar()->addMenu(tr("&Edit"));
@@ -284,6 +296,9 @@ void MainWindow::buildUi() {
     auto *savePortable=view->addAction(tr("Save view in workbook"));savePortable->setObjectName("savePortableViewAction");connect(savePortable,&QAction::triggered,this,[this]{portableView(true);});
     auto *loadPortable=view->addAction(tr("Load view from workbook"));loadPortable->setObjectName("loadPortableViewAction");connect(loadPortable,&QAction::triggered,this,[this]{portableView(false);});
     auto *help = menuBar()->addMenu(tr("&Help"));
+    m_sheetMenus={edit,formatMenu,sheetMenu,dataMenu,view};
+    auto *tables=dataMenu->addAction(tr("Tables and queries…"));tables->setObjectName("relationalWorkbenchAction");
+    connect(tables,&QAction::triggered,this,[this]{showRelational(true);});
     auto *functionHelp=help->addAction(tr("Formula functions…"));functionHelp->setObjectName("functionHelpAction");connect(functionHelp,&QAction::triggered,this,&MainWindow::showFunctionHelp);
     connect(m_client,&RestClient::configured,this,[this]{m_functionCatalog={};for(auto *line:findChildren<QLineEdit *>())if(auto *formula=dynamic_cast<FormulaLineEdit *>(line))formula->setCatalog({});});
     m_toolbar = addToolBar(tr("Workbook"));
@@ -309,8 +324,8 @@ void MainWindow::buildUi() {
     add(file, tr("&Save"), QKeySequence::Save, [this] { save(false); }, true)->setObjectName("saveAction");
     add(file, tr("Save a &copy…"), QKeySequence::SaveAs, [this] { save(true); });
     file->addSeparator();
-    add(file, tr("Import…"), {}, [this] { importFile(); })->setObjectName("importAction");
-    add(file, tr("Export…"), {}, [this] { exportFile(); })->setObjectName("exportAction");
+    auto *importAction=add(file, tr("Import…"), {}, [this] { importFile(); });importAction->setObjectName("importAction");m_sheetFileActions.append(importAction);
+    auto *exportAction=add(file, tr("Export…"), {}, [this] { exportFile(); });exportAction->setObjectName("exportAction");m_sheetFileActions.append(exportAction);
     add(file, tr("Recovery workbooks…"), {}, [this] {
         if (m_busy) return;
         auto path = QFileDialog::getOpenFileName(this, tr("Open recovery workbook"), QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)+"/recovery", tr("DataHorizon (*.dhwb)"));
@@ -577,7 +592,11 @@ void MainWindow::buildUi() {
     connect(m_client,&RestClient::configured,this,[this]{++m_navigationFlight;++m_navigationGeneration;m_navigationPending=false;m_navigationExtending=false;});
     m_tabs = new QTabBar; m_tabs->setObjectName("sheets"); m_tabs->setAccessibleName(tr("Worksheets")); m_tabs->setExpanding(false);
     layout->addWidget(m_tabs);
-    setCentralWidget(central);
+    m_objectStack=new QStackedWidget(this);m_objectStack->addWidget(central);
+    m_relational=new RelationalWorkbench(m_client,this);m_objectStack->addWidget(m_relational);setCentralWidget(m_objectStack);
+    connect(m_relational,&RelationalWorkbench::submitRequested,this,&MainWindow::submit);
+    connect(m_relational,&RelationalWorkbench::issue,this,&MainWindow::issue);
+    connect(m_relational,&RelationalWorkbench::sheetsRequested,this,[this]{showRelational(false);});
     m_status = new QLabel(tr("Starting local service…")); m_status->setAccessibleName(tr("Storage and calculation status"));
     m_status->setObjectName("storageStatus");
     statusBar()->addWidget(m_status, 1);
@@ -1180,7 +1199,9 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     const int previousRow=previous.isValid()?m_model->sourceRow(previous.row()):0;
     const int previousColumn=previous.isValid()?previous.column():0;
     if (info["id"]!=m_info["id"]) m_released=false;
+    if(m_info["id"]!=info["id"] && m_relationalActive)showRelational(false);
     m_info = info;
+    m_relational->bind(info);
     m_tabs->blockSignals(true);
     while (m_tabs->count()) m_tabs->removeTab(0);
     int current = 0;
@@ -1221,6 +1242,10 @@ void MainWindow::refresh(const QString &selectSheet) {
 
 void MainWindow::submit(QJsonObject operation) {
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
+    const auto action=operation["action"].toString();
+    if(m_relationalActive && !(action.startsWith("table_") || action.startsWith("relationship_") || action.startsWith("query_") || action=="undo" || action=="redo")) {
+        issue(tr("Return to sheets before applying a sheet operation."));return;
+    }
     const auto defaults=targetContext();
     for (auto field=defaults.begin(); field!=defaults.end(); ++field)
         if (!operation.contains(field.key())) operation[field.key()]=field.value();
@@ -1343,7 +1368,8 @@ void MainWindow::setBusy(bool busy, const QString &message) {
     m_busy = busy || m_releasing;
     if(m_busy){clearFindResults();++m_navigationGeneration;m_navigationExtending=false;}
     for(auto *action:m_navigationActions)action->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
-    m_model->setBusy(m_busy); m_toolbar->setEnabled(!m_busy); m_tabs->setEnabled(!m_busy);
+    m_model->setBusy(m_busy); m_toolbar->setEnabled(!m_busy && !m_relationalActive); m_tabs->setEnabled(!m_busy);
+    if(m_relational)m_relational->setLocked(m_busy || m_unknown || m_info["readonly"].toBool());
     if(m_freezePanesAction)m_freezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
     if(m_unfreezePanesAction)m_unfreezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && (m_frozenRows>0 || m_frozenColumns>0));
     if(m_freezeColumnAction)m_freezeColumnAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenColumns.contains(0));
