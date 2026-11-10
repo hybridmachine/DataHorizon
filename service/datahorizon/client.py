@@ -178,6 +178,19 @@ class WorkbookClient:
     def declare_list(self,identifier,sheet='Sheet1',**spec):
         return self.apply('list_declare',sheet,id=identifier,spec=spec)
 
+    def code(self,module=None):
+        self._ensure_open()
+        return self.client.request(self.base+'/code',dict(expected_state=self.state,**(dict(module=module) if module is not None else {})))
+
+    def save_module(self,name,source,macros,*,fingerprint,module=None,operation_id=None):
+        return self.apply('module_save',name=name,source=source,macros=macros,fingerprint=fingerprint,operation_id=operation_id,**(dict(module=module) if module is not None else {}))
+
+    def delete_module(self,module,*,fingerprint,operation_id=None):
+        return self.apply('module_delete',module=module,fingerprint=fingerprint,operation_id=operation_id)
+
+    def run_macro(self,module,macro,*,fingerprint,arguments=None,operation_id=None):
+        return self.apply('macro_run',module=module,macro=macro,fingerprint=fingerprint,arguments={} if arguments is None else arguments,operation_id=operation_id,label='Macro '+module+'.'+macro)
+
     def tables(self):
         self._ensure_open()
         return self.client.request(self.base+'/tables',dict(expected_state=self.state))

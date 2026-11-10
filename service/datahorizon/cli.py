@@ -87,6 +87,7 @@ def emit_result(output, result, command, cleanup=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", help="Attach to an existing localhost REST service")
+    parser.add_argument("--approve-code",action="append",default=[],help="Exact operator-approved workbook UUID:code SHA256 for an owned service (repeatable)")
     parser.add_argument("--handler", help="Explicit trusted hook activation for an owned local service")
     parser.add_argument("--readonly", action="store_true")
     parser.add_argument("--repair",action="store_true",help="Restricted managed relationship repair handle")
@@ -94,6 +95,10 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("create")
     commands.add_parser("info")
+    code=commands.add_parser('code',help='Inspect inert modules; save reads JSON name/source/macros/fingerprint from stdin')
+    code.add_argument('code_action',choices=['read','save','delete']);code.add_argument('module',nargs='?');code.add_argument('--fingerprint')
+    macro=commands.add_parser('macro',help='Invoke one approved atomic macro; JSON scalar arguments on stdin')
+    macro.add_argument('module');macro.add_argument('name');macro.add_argument('--fingerprint',required=True);macro.add_argument('--operation-id')
     query=commands.add_parser('query',help='Read-only SQL jobs; run reads JSON stdin and returns the complete frozen result. Later actions require a workbook kept open on --url.')
     query.add_argument('query_action',choices=['run','status','page','cancel','release']);query.add_argument('--job-id');query.add_argument('--offset',type=int,default=0);query.add_argument('--limit',type=int,default=64);query.add_argument('--saved');query.add_argument('--export',choices=['csv','xlsx','ods']);query.add_argument('--output');query.add_argument('--overwrite',action='store_true')
     view=commands.add_parser('view',help='Native saved definitions; opening does not execute SQL');view.add_argument('view_action',choices=['list','read','preview','save','rename','delete']);view.add_argument('name',nargs='?');view.add_argument('--new-name')
@@ -129,6 +134,8 @@ def main():
     apply.add_argument("--sheet", default="Sheet1")
     outcome = commands.add_parser("outcome")
     outcome.add_argument("operation_id")
+    cancel=commands.add_parser('cancel-operation',help='Request cancellation; inspect outcome before deciding whether data committed')
+    cancel.add_argument('operation_id')
     calculate=commands.add_parser('calculate',help='Calculate one bounded range as a background job and wait for its snapshot')
     calculate.add_argument('--sheet',default='Sheet1');calculate.add_argument('--r1',type=int,default=1);calculate.add_argument('--c1',type=int,default=1);calculate.add_argument('--r2',type=int,default=32);calculate.add_argument('--c2',type=int,default=16)
     job=commands.add_parser('job',help='Durable reviewed operation jobs; create/append/start/resume read JSON stdin; execution waits for a terminal outcome')
@@ -139,6 +146,7 @@ def main():
     releasing = False
     result = None
     try:
+        if args.approve_code and (args.url or args.command=="direct-sql"):raise ValueError("--approve-code configures an owned managed service; configure remote service approval at its operator startup")
         if args.command=='query' and ((args.output and not args.export) or (args.export and args.query_action!='run')):raise ValueError('Query file output requires query run --export FORMAT')
         if args.command in ("read", "set"):
             row, col = coordinates(args.address)
@@ -152,7 +160,7 @@ def main():
             releasing=False
             emit_result(output,result,args.command)
             return
-        context = nullcontext(Client(args.url, os.environ["DATAHORIZON_TOKEN"])) if args.url else LocalService(args.handler)
+        context = nullcontext(Client(args.url, os.environ["DATAHORIZON_TOKEN"])) if args.url else LocalService(args.handler,approved_code=args.approve_code)
         with context as client:
             if args.command == "inspect":
                 result=client.inspect_native(args.file)
@@ -162,6 +170,17 @@ def main():
                 with client.open(args.file, create=args.command == "create", readonly=args.readonly,repair=args.repair) as book:
                     if args.command in ("create", "info"):
                         result = book.info
+                    elif args.command=='code':
+                        if args.code_action=='read':result=book.code(args.module)
+                        elif args.code_action=='save':
+                            options=json.load(sys.stdin)
+                            if args.module:options['module']=args.module
+                            result=book.save_module(**options)
+                        else:
+                            if not args.module or not args.fingerprint:raise ValueError('code delete requires module and --fingerprint')
+                            result=book.delete_module(args.module,fingerprint=args.fingerprint)
+                    elif args.command=='macro':result=book.run_macro(args.module,args.name,fingerprint=args.fingerprint,arguments=json.load(sys.stdin),operation_id=args.operation_id)
+                    elif args.command=='cancel-operation':result=book.cancel_operation(args.operation_id)
                     elif args.command=='tables':result=book.tables()
                     elif args.command=='query':
                         import time
