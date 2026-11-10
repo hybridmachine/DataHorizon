@@ -277,5 +277,7 @@
     "distribution signing/notarization",
     "dependency redistribution review",
     "remaining M1/M7 and full M8 contracts"
-  ]
+  ],
+  "pull_request": "https://github.com/hybridmachine/DataHorizon/pull/124",
+  "hosted_ci": "Not yet reported when the PR was opened; local qualification is recorded separately."
 }
