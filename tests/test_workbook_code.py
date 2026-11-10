@@ -79,5 +79,11 @@ class WorkbookCodeTests(unittest.TestCase):
                 self.assertIn('Examples',book.read_workbook()['native_omissions'])
             finally:book.close()
 
+    def test_v4_cannot_claim_support_for_module_metadata(self):
+        self.save()
+        with closing(sqlite3.connect(self.path,isolation_level=None)) as db:db.execute('UPDATE dh_meta SET format_version=4')
+        with self.assertRaises(EngineError) as error:self.book.refresh()
+        self.assertEqual(error.exception.body['code'],'INVALID_FORMAT')
+
 
 if __name__=='__main__':unittest.main()

@@ -20,8 +20,14 @@ class MacroLifecycleTests(unittest.TestCase):
                 source=preamble+"\ndef run(ctx):\n    ctx.set('Sheet1',1,1,'staged')\n"+''.join('    '+line+'\n' for line in body.splitlines())
                 book.mutate(operation('module_save',name='Example',source=source,macros=[dict(name='run',result=dict(type=result_type))],fingerprint=fingerprint(book.db)))
                 book.approved_code=frozenset([activation(book)['activation_key']]);request=operation('macro_run',module='Example',macro='run',fingerprint=fingerprint(book.db))
-                event=threading.Event();timer=None
-                if cancel:timer=threading.Timer(.3,event.set);timer.start()
+                event=threading.Event();timer=None;dispatch=book.hook_dispatch
+                def after_staging(method,args):
+                    nonlocal timer
+                    result=dispatch(method,args)
+                    if cancel and method=='set' and timer is None:
+                        timer=threading.Timer(.05,event.set);timer.start()
+                    return result
+                book.hook_dispatch=after_staging
                 start=time.monotonic()
                 try:
                     try:result=book.mutate(request,cancel_event=event)
