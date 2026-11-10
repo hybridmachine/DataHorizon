@@ -1,0 +1,27 @@
+{
+  "task": 4,
+  "source_commit": "a277b30d3ea271a7f68b1794c03450c2652921ce",
+  "automated_status": "passed",
+  "full_python": {
+    "command": "ctest --test-dir build -R '^service$' --output-on-failure",
+    "tests_run": 505,
+    "optional_skips": 19,
+    "elapsed_seconds": 43.95
+  },
+  "targeted": {
+    "python_checks": 25,
+    "qt_checks_including_setup_cleanup": 5,
+    "qt_feature_workflows": 3
+  },
+  "contracts": [
+    "Atomic conversion/rebuild with stable table, column and row IDs",
+    "AUTOINCREMENT high-water mark preserved",
+    "Required/unique/type failures report record locations and preserve source/history",
+    "Explicit removed-column IDs and populated-drop data-loss review",
+    "Before-schema access and transactional structural/data hook rollback",
+    "Preparatory source-row edits reject instead of being overwritten"
+  ],
+  "manual_gui_acceptance": "pending",
+  "full_qt_rerun": "planned final batch",
+  "release_qualified": false
+}
