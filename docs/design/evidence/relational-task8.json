@@ -1,0 +1,26 @@
+{
+  "task": 8,
+  "source_commit": "4e1d4b9eb0b6c0a49369926dbd66e963985900db",
+  "automated_status": "passed",
+  "full_python": {
+    "tests_run": 553,
+    "optional_skips": 19,
+    "elapsed_seconds": 48.52
+  },
+  "targeted": {
+    "query_and_storage_tests": 16,
+    "qt_workflows": 4,
+    "qt_checks_including_setup_cleanup": 6
+  },
+  "contracts": [
+    "SQLite authorizer, query-only private connections, safe function allowlist and named typed bindings",
+    "Private pinned source snapshots release the live book before SQL execution",
+    "One active/four retained jobs, 60-second execution and 64-MiB/100k-row/1M-value spools",
+    "Only complete current-generation results; ordinal paging, duplicate labels and lossless integer tags",
+    "Cancellation, disk-full/limits, close/release, restart ownership cleanup and bounded GUI schema/page caches",
+    "Qt SQL/parameter drafts, full-value copy and state/editor-revision invalidation"
+  ],
+  "manual_gui_acceptance": "pending",
+  "larger_combined_performance": "task 10",
+  "release_qualified": false
+}
