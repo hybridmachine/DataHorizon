@@ -1369,7 +1369,7 @@ void MainWindow::setBusy(bool busy, const QString &message) {
     if(m_busy){clearFindResults();++m_navigationGeneration;m_navigationExtending=false;}
     for(auto *action:m_navigationActions)action->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
     m_model->setBusy(m_busy); m_toolbar->setEnabled(!m_busy && !m_relationalActive); m_tabs->setEnabled(!m_busy);
-    if(m_relational)m_relational->setLocked(m_busy || m_unknown || m_info["readonly"].toBool());
+    if(m_relational)m_relational->setLocked(m_busy || m_unknown || m_info.value("readonly").toBool());
     if(m_freezePanesAction)m_freezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
     if(m_unfreezePanesAction)m_unfreezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && (m_frozenRows>0 || m_frozenColumns>0));
     if(m_freezeColumnAction)m_freezeColumnAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenColumns.contains(0));

@@ -1,0 +1,18 @@
+{
+  "task": 1,
+  "source_commit": "7061519",
+  "pull_request": "https://github.com/hybridmachine/DataHorizon/pull/115",
+  "automated_status": "passed",
+  "command": "PYTHONPATH=service python3 -m unittest discover -s tests -p test_relational_probes.py -v",
+  "tests_run": 5,
+  "tests_failed": 0,
+  "contracts": [
+    "DDL, rebuild and format update roll back under the parent savepoint",
+    "SQLite allocates identities without callbacks; restoration preserves prior identity",
+    "Required, unique and restrictive foreign-key behavior",
+    "Read-only authorization, CTE dependencies and indirect-access rejection",
+    "Backup remains at a pinned read snapshot after an independent WAL writer commits"
+  ],
+  "wireframes": "docs/design/relational-workbench-wireframes.md",
+  "manual_gui_acceptance": "pending"
+}

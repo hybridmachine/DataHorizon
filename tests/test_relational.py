@@ -70,6 +70,11 @@ class NativeTableTests(unittest.TestCase):
         with self.assertRaises(EngineError) as failure:self.book.refresh()
         self.assertEqual(failure.exception.body['code'],'SCHEMA_CHANGED')
 
+    def test_v4_header_without_its_catalog_is_a_structured_format_error(self):
+        self.book.db.execute('UPDATE dh_meta SET format_version=4')
+        with self.assertRaises(EngineError) as failure:self.book.validate()
+        self.assertEqual(failure.exception.body['code'],'FORMAT_VERSION')
+
     def test_existing_schema_versions_upgrade_without_losing_cells(self):
         self.apply('edit',cells=[dict(row=1,col=1,source='2024-02-29',kind='date')])
         self.assertEqual(self.book.info()['format_version'],2)

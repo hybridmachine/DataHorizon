@@ -128,6 +128,8 @@ def store(book,kind,item):
 
 
 def validate_schema(db,signature,base_schema):
+    from .engine import expected_schema
+    require(expected_schema(SCHEMA)[0] in signature,'FORMAT_VERSION','Native format v4 requires its matching relational catalog',409)
     catalog=objects(db);registered=[];names=set()
     for kind,item in catalog:
         require(kind=='table','INVALID_FORMAT','Unsupported relational object kind',409)
@@ -136,7 +138,6 @@ def validate_schema(db,signature,base_schema):
         require(item['name'].lower() not in names,'INVALID_FORMAT','Duplicate table names',409)
         names.add(item['name'].lower());registered.append(item)
     require(len(registered)<=64,'LIMIT','At most 64 structured tables')
-    from .engine import expected_schema
     expected=expected_schema(base_schema+SCHEMA+';'.join(table_sql(item) for item in registered)+';')
     require(signature==expected,'SCHEMA_CHANGED','Relational schema does not match its supported catalog; preserve the file for recovery',409)
     return registered
@@ -174,7 +175,7 @@ def catalog(book,args):
 def structure_hook(book,request,phase,before):
     if not book.handler:return
     require(supports_event(book.handler,'on_table_structure'),'UNSUPPORTED_HOOK_SCOPE','Required handler must explicitly define on_table_structure(context,event)')
-    event=dict(phase=phase,action=request['action'],before=before,after=tables(book.db) if phase=='after' else None)
+    event=dict(phase=phase,action=request['action'],arguments={key:request[key] for key in ('table','name','columns') if key in request},before=before,after=tables(book.db) if phase=='after' else None)
     invoke(book.handler,event,request['operation_id'],book.hook_dispatch,book.deadline,event='on_table_structure')
 
 
