@@ -281,6 +281,7 @@ class Workbook:
         self.repair=boolean(repair,'repair')
         self.relational_issues=[]
         self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
+        self.table_schema_keys=set();self.relational_before={}
         self.lock = threading.RLock()
         self.undo, self.redo = [], []
         self.dependencies=DependencyIndex()
@@ -813,7 +814,7 @@ class Workbook:
             if not self.pending and not self.pending_tables:
                 return
             batch = [self.pending[key] for key in sorted(self.pending)]
-            table_batch=[{**self.pending_tables[key],"operation_id":operation,"origin":"managed","action":self.operation_action,"round":round_index+1} for key in sorted(self.pending_tables)]
+            table_batch=[{**self.pending_tables[key],"operation_id":operation,"origin":"managed","action":self.operation_action,"round":round_index+1} for key in sorted(self.pending_tables,key=lambda key:(key[1],int(key[2])))]
             self.pending = {}
             self.pending_tables={}
 
@@ -870,6 +871,7 @@ class Workbook:
                 self.refresh(deadline=self.deadline)
                 self.changes, self.pending = {}, {}
                 self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
+                self.table_schema_keys=set();self.relational_before={}
                 self.operation_clock=utc_clock()
                 unverified_before=set(self.unverified_records)
                 self.change_bytes = 0
@@ -916,6 +918,7 @@ class Workbook:
                 structural=sheet_structural or kind in relational.STRUCTURAL
                 from . import records
                 record_context=records.capture(self)
+                self.relational_before={item['id']:item for item in relational.tables(self.db)}
                 before_catalog=self.structure_hook(operation,request,'before',None) if sheet_structural else None
                 reference_report = {}
                 sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
@@ -1103,7 +1106,7 @@ class Workbook:
                 self.run_hooks(operation)
                 records.finish(self,request,record_context)
                 self.check_operation()
-                self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1]}
+                self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1] or key in self.table_schema_keys}
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
                 result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": sum(key[0]!='table' for key in self.changes),
                           "changed_records":sum(key[0]=='table' for key in self.changes)}

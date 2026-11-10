@@ -8,6 +8,8 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QInputDialog>
+#include <QSet>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSplitter>
@@ -21,9 +23,10 @@ RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWi
     auto *layout=new QVBoxLayout(this);auto *buttons=new QHBoxLayout;
     auto *sheets=new QPushButton(tr("Return to sheets"));sheets->setObjectName("returnToSheets");
     m_create=new QPushButton(tr("Create empty table…"));m_create->setObjectName("createTable");
-    m_drop=new QPushButton(tr("Drop empty table…"));m_drop->setObjectName("dropTable");
+    m_drop=new QPushButton(tr("Drop table…"));m_drop->setObjectName("dropTable");
+    m_editSchema=new QPushButton(tr("Edit table columns…"));m_editSchema->setObjectName("editTableSchema");
     auto *refresh=new QPushButton(tr("Refresh tables"));refresh->setObjectName("refreshTables");
-    for(auto *button:{sheets,m_create,m_drop,refresh})buttons->addWidget(button);
+    for(auto *button:{sheets,m_create,m_editSchema,m_drop,refresh})buttons->addWidget(button);
     buttons->addStretch();layout->addLayout(buttons);
     auto *splitter=new QSplitter;layout->addWidget(splitter,1);
     m_objects=new QTreeWidget; m_objects->setObjectName("relationalObjects");m_objects->setHeaderLabel(tr("Workbook objects"));
@@ -45,6 +48,7 @@ RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWi
     connect(refresh,&QPushButton::clicked,this,&RelationalWorkbench::refreshCatalog);
     connect(m_create,&QPushButton::clicked,this,&RelationalWorkbench::createTable);
     connect(m_drop,&QPushButton::clicked,this,&RelationalWorkbench::dropTable);
+    connect(m_editSchema,&QPushButton::clicked,this,&RelationalWorkbench::editSchema);
     connect(m_objects,&QTreeWidget::currentItemChanged,this,[this](QTreeWidgetItem *item){if(item)showTable(item->data(0,Qt::UserRole).toString());});
     connect(m_client,&RestClient::configured,this,[this]{++m_generation;m_info={};m_catalog={};m_objects->clear();m_schema->setRowCount(0);setLocked(true);});
     setLocked(true);
@@ -61,6 +65,7 @@ void RelationalWorkbench::bind(const QJsonObject &info) {
 void RelationalWorkbench::setLocked(bool locked) {
     m_blocked=locked || m_info.isEmpty();m_locked=m_blocked || m_info.value("readonly").toBool();
     m_create->setEnabled(!m_locked);m_drop->setEnabled(!m_locked && !m_table.isEmpty());
+    m_editSchema->setEnabled(!m_locked && !m_table.isEmpty());
     m_previous->setEnabled(!m_blocked && !m_previousPages.isEmpty());m_next->setEnabled(!m_blocked && !m_nextAfter.isEmpty());
 }
 
@@ -155,6 +160,41 @@ void RelationalWorkbench::createTable() {
 
 void RelationalWorkbench::dropTable() {
     if(m_locked || m_table.isEmpty())return;const auto reviewed=m_info;const auto table=m_table;
-    if(QMessageBox::question(this,tr("Drop empty table"),tr("Drop the selected empty table and clear session Undo/Redo?"),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
-    emit submitRequested({{"action","table_drop"},{"table",table},{"workbook",reviewed["id"]},{"expected_state",reviewed["state"]}});
+    if(QMessageBox::question(this,tr("Drop table"),tr("Permanently drop the selected table and all its records, and clear session Undo/Redo? The operation rejects if it exceeds the ordinary size limit."),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
+    emit submitRequested({{"action","table_drop"},{"table",table},{"allow_data_loss",true},{"workbook",reviewed["id"]},{"expected_state",reviewed["state"]}});
+}
+
+void RelationalWorkbench::editSchema() {
+    if(m_locked || m_table.isEmpty())return;
+    QJsonObject original;for(const auto &entry:m_catalog["tables"].toArray())if(entry.toObject()["id"].toString()==m_table)original=entry.toObject();
+    if(original.isEmpty())return;
+    const auto reviewed=m_info;const auto table=m_table;
+    QJsonObject definition=m_schemaDraftTable==table && m_schemaDraftState==m_info["state"].toString()?m_schemaDraft:QJsonObject{{"name",original["name"]},{"columns",original["columns"]}};
+    if(!editDefinition(this,definition,tr("Review table schema")))return;
+    m_schemaDraft=definition;m_schemaDraftTable=table;m_schemaDraftState=reviewed["state"].toString();
+    bool accepted=false;const QStringList policies{tr("Keep strict types"),tr("Convert using dot decimals and ISO dates")};
+    const auto policy=QInputDialog::getItem(this,tr("Schema value conversion"),tr("Convert existing values"),policies,0,false,&accepted);
+    if(!accepted || reviewed["id"]!=m_info["id"] || reviewed["state"]!=m_info["state"] || table!=m_table)return;
+    QSet<QString> retained;for(const auto &entry:definition["columns"].toArray())if(entry.toObject()["id"].isString())retained.insert(entry.toObject()["id"].toString());
+    QJsonArray removed;for(const auto &entry:original["columns"].toArray())if(!retained.contains(entry.toObject()["id"].toString()))removed.append(entry.toObject()["id"]);
+    const QJsonObject request{{"table",table},{"name",definition["name"]},{"columns",definition["columns"]},{"drop_columns",removed},
+        {"conversion_policy",policies.indexOf(policy)==0?"strict":"invariant"},{"expected_state",reviewed["state"]}};
+    emit busyRequested(true);
+    m_client->request(base()+"/tables/schema-preview",request,[this,reviewed,table](QJsonObject result,QString error){
+        if(reviewed["id"]!=m_info["id"])return;
+        if(!error.isEmpty() || reviewed["state"]!=m_info["state"] || table!=m_table){emit busyRequested(false);emit issue(error.isEmpty()?tr("Schema review changed. Review the table again."):error);return;}
+        m_schemaDraft={{"name",result["table"].toObject()["name"]},{"columns",result["table"].toObject()["columns"]}};
+        QDialog dialog(this);dialog.setObjectName("tableSchemaReview");dialog.setWindowTitle(tr("Review atomic schema conversion"));dialog.resize(700,420);QVBoxLayout layout(&dialog);
+        QLabel summary(tr("Convert %1 records and apply the reviewed schema? Retained row/column identities persist. Session Undo/Redo clears.").arg(result["record_count"].toInt()));summary.setWordWrap(true);layout.addWidget(&summary);
+        const auto columns=result["table"].toObject()["columns"].toArray(),rows=result["records_preview"].toArray();QTableWidget values(rows.size(),columns.size());values.setObjectName("schemaValuePreview");values.setAccessibleName(tr("Converted record values preview"));values.setEditTriggers(QAbstractItemView::NoEditTriggers);
+        QStringList labels,identities;for(const auto &col:columns)labels.append(col.toObject()["name"].toString());values.setHorizontalHeaderLabels(labels);
+        for(int r=0;r<rows.size();++r){const auto row=rows[r].toObject();identities.append(row["row_id"].toString());for(int c=0;c<columns.size();++c){const auto value=row["after"].toObject()[columns[c].toObject()["id"].toString()];values.setItem(r,c,new QTableWidgetItem(value.isNull()?tr("NULL"):value.toVariant().toString().left(256)));}}
+        values.setVerticalHeaderLabels(identities);layout.addWidget(&values,1);
+        QStringList report;for(const auto &line:result["report"].toArray())report.append(line.toString());for(const auto &entry:result["issues"].toArray()){const auto issue=entry.toObject();report.append(tr("Record %1, %2: %3").arg(issue["row_id"].toString(),issue["column"].toString(),issue["message"].toString()));}
+        QLabel details(report.join('\n'));details.setWordWrap(true);layout.addWidget(&details);QDialogButtonBox buttons(QDialogButtonBox::Apply|QDialogButtonBox::Cancel);buttons.button(QDialogButtonBox::Apply)->setEnabled(result["can_apply"].toBool());layout.addWidget(&buttons);
+        connect(buttons.button(QDialogButtonBox::Apply),&QPushButton::clicked,&dialog,&QDialog::accept);connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+        const auto answer=dialog.exec();emit busyRequested(false);
+        if(answer!=QDialog::Accepted || !result["can_apply"].toBool() || reviewed["state"]!=m_info["state"] || reviewed["id"]!=m_info["id"] || table!=m_table)return;
+        auto operation=result["source_request"].toObject();operation["action"]="table_schema";operation["review_digest"]=result["review_digest"];operation["workbook"]=reviewed["id"];operation["expected_state"]=reviewed["state"];emit submitRequested(operation);
+    });
 }

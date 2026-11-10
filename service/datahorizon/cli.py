@@ -96,8 +96,11 @@ def main():
     commands.add_parser('tables',help='Inspect native structured table definitions')
     table_create=commands.add_parser('table-create',help='Create a table; read a column-definition array from JSON stdin')
     table_create.add_argument('name')
-    table_drop=commands.add_parser('table-drop',help='Drop an empty table through managed execution')
+    table_drop=commands.add_parser('table-drop',help='Drop a table through managed execution; populated tables require --allow-data-loss')
     table_drop.add_argument('table')
+    table_drop.add_argument('--allow-data-loss',action='store_true')
+    table_schema=commands.add_parser('table-schema',help='Preview column changes from JSON stdin; --apply performs the reviewed atomic rebuild')
+    table_schema.add_argument('table');table_schema.add_argument('--apply',action='store_true')
     table_from=commands.add_parser('table-from-range',help='Preview a source selection from JSON stdin; --apply creates the reviewed value snapshot in this session')
     table_from.add_argument('name');table_from.add_argument('--apply',action='store_true')
     commands.add_parser("inspect",help="Inspect a native file read-only without code activation or repair")
@@ -148,7 +151,10 @@ def main():
                         result = book.info
                     elif args.command=='tables':result=book.tables()
                     elif args.command=='table-create':result=book.create_table(args.name,json.load(sys.stdin))
-                    elif args.command=='table-drop':result=book.drop_table(args.table)
+                    elif args.command=='table-drop':result=book.drop_table(args.table,allow_data_loss=args.allow_data_loss)
+                    elif args.command=='table-schema':
+                        options=json.load(sys.stdin);review=book.preview_table_schema(args.table,**options)
+                        result=book.alter_table(review) if args.apply else review
                     elif args.command=='table-from-range':
                         options=json.load(sys.stdin);review=book.preview_table(args.name,**options)
                         result=book.promote_table(review) if args.apply else review

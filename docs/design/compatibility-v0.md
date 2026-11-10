@@ -4,6 +4,24 @@ This is a narrow development surface, not Excel compatibility certification.
 Native inputs and styles survive reopen; results are calculated within the
 current read transaction. Work remains before a complete everyday preview.
 
+## Structured table tier
+
+Native v4 tables preserve typed values and stable table/column/record identities.
+Reviewed selection creation freezes formula values and retains source sheets;
+table values do not introduce worksheet formulas or structured references.
+Atomic schema reviews support renaming, nullable-column addition, explicit column
+deletion, deterministic type conversion and required/unique constraints. Required
+means non-NULL; empty Text remains distinct. Text equality is case-sensitive.
+Lossy/invalid conversion and duplicates block Apply with record locations.
+
+Rebuilds preserve row identities and the AUTOINCREMENT high-water mark, and clear
+session history only on commit. Data-affecting conversions dispatch transactional
+table-change events alongside structural events; hooks can inspect the prior
+schema with `context.table_schema(table, phase='before')`. Populated table drop
+requires explicit data-loss review. Rebuild/drop operations retain the ordinary
+10,000-field / 8-MiB before/after / five-second tier. Indexes, relationships,
+public record editing and SQL views follow in the relational implementation plan.
+
 ## Formula surface
 
 `+ - * / ^`, scalar Text concatenation `&`, unary signs, parentheses and comparisons `= <> < > <= >=` are

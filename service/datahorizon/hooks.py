@@ -79,7 +79,7 @@ def _worker(pipe, path, changes, operation, event='on_change'):
         def set(self, sheet, row, col, source, kind="auto"):
             return self.request("set", sheet=sheet, row=row, col=col, source=source, kind=kind)
 
-        def table_schema(self,table):return self.request('table_schema',table=table)
+        def table_schema(self,table,phase='current'):return self.request('table_schema',table=table,phase=phase)
 
         def table_get(self,table,row_id):return self.request('table_get',table=table,row_id=row_id)
 

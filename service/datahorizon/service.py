@@ -45,12 +45,13 @@ CAPABILITIES = {
     "max_concurrent_requests":16, "max_header_bytes":65536, "request_read_timeout_seconds":10,
 }
 
-CAPABILITIES['operations'].extend(['table_create','table_drop','table_promote'])
+CAPABILITIES['operations'].extend(['table_create','table_drop','table_promote','table_schema'])
 
 ROUTES = {
     "/v1/workbooks/{workbook}/tables":("post","Read the state-checked structured table catalog"),
     "/v1/workbooks/{workbook}/tables/preview":("post","Review selection values and types before independent table creation"),
     "/v1/workbooks/{workbook}/tables/read":("post","Read a bounded state-checked record page"),
+    "/v1/workbooks/{workbook}/tables/schema-preview":("post","Review atomic schema conversion, constraints and explicit column loss"),
     "/v1/workbooks/{workbook}/operation-jobs":("post","Stage a reviewed edit/CSV or frozen find/list job; never starts writes"),
     "/v1/workbooks/{workbook}/operation-jobs/{job}":("get","Inspect durable job status and batch receipts"),
     "/v1/workbooks/{workbook}/operation-jobs/{job}/append":("post","Append up to 1,000 explicitly typed edits"),
@@ -285,7 +286,7 @@ def openapi():
                      "security": [{"localToken": []}]}
         if method == "post":
             name = "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
-                "read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
+                "schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
         for status in ("400","401","403","404","409","413","500","503"):
@@ -542,6 +543,9 @@ class Service(ThreadingHTTPServer):
         if method=='POST' and suffix==['tables','read']:
             from .relational_rows import read
             return read(book,body)
+        if method=='POST' and suffix==['tables','schema-preview']:
+            from .table_schema import preview
+            return preview(book,body)
         if method=='POST' and suffix==['records','copy']:
             from .record_operations import copy
             return copy(book,body)
