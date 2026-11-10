@@ -1,0 +1,111 @@
+{
+  "installed_example_create": {
+    "sdk_module": "/Users/btabone/source/DataHorizon/build/python-automation-qualified/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/__init__.py",
+    "format_version": 5,
+    "activation_key": "4fcca7f0-d7aa-4a41-b146-0374e21b94d5:ff05bd8926f6dc3ce725efca79bf2d64de0abd1587725ec3ee116a79565cfe30",
+    "fingerprint": "ff05bd8926f6dc3ce725efca79bf2d64de0abd1587725ec3ee116a79565cfe30",
+    "approved": false,
+    "modules": [
+      {
+        "id": "93b96ec2-3297-4690-9e6a-6ef04924c20f",
+        "macros": [
+          {
+            "name": "adjust",
+            "parameters": [
+              {
+                "default": "1",
+                "name": "row_id",
+                "nullable": false,
+                "type": "text"
+              },
+              {
+                "default": 3,
+                "name": "delta",
+                "nullable": false,
+                "type": "integer"
+              }
+            ],
+            "result": {
+              "nullable": false,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "spin",
+            "parameters": [],
+            "result": {
+              "nullable": false,
+              "type": "integer"
+            }
+          }
+        ],
+        "name": "MeasurementsCode",
+        "source": "# SPDX-License-Identifier: GPL-3.0-only\n\"\"\"Example workbook source. Storage never executes this module.\"\"\"\n\n\ndef adjust(ctx,row_id,delta):\n    schema=ctx.table_schema('Measurements')\n    column=next(item['id'] for item in schema['columns'] if item['name']=='Value')\n    old=ctx.table_get('Measurements',row_id)['values'][column]\n    new=old+delta\n    ctx.table_set('Measurements',row_id,{'Value':new})\n    ctx.set('Sheet1',1,1,'Updated to '+str(new),'text')\n    print('Adjusted record',row_id,'from',old,'to',new)\n    return new\n\n\ndef spin(ctx):\n    print('Slow example: cancel this operation by its operation ID')\n    while True:pass\n"
+      }
+    ],
+    "final_state": "ab99b4ce-73c0-43c8-8b03-2849f209a828:4"
+  },
+  "installed_example_exercise": {
+    "sdk_module": "/Users/btabone/source/DataHorizon/build/python-automation-qualified/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/__init__.py",
+    "format_version": 5,
+    "activation_key": "4fcca7f0-d7aa-4a41-b146-0374e21b94d5:ff05bd8926f6dc3ce725efca79bf2d64de0abd1587725ec3ee116a79565cfe30",
+    "fingerprint": "ff05bd8926f6dc3ce725efca79bf2d64de0abd1587725ec3ee116a79565cfe30",
+    "approved": true,
+    "macro_result": 13,
+    "generated_hook_edit": true,
+    "undo_redo_restored": true,
+    "durable_result_lookup": true,
+    "required_rule_rollback": true,
+    "success_receipt": {
+      "changed_cells": 2,
+      "changed_records": 1,
+      "macro": {
+        "elapsed_ms": 196.377,
+        "execution": "completed",
+        "fingerprint": "ff05bd8926f6dc3ce725efca79bf2d64de0abd1587725ec3ee116a79565cfe30",
+        "logs": "Adjusted record 1 from 10 to 13\n",
+        "module": "93b96ec2-3297-4690-9e6a-6ef04924c20f",
+        "name": "adjust"
+      },
+      "macro_result": 13,
+      "operation_id": "16220383-1a81-4e20-9a6c-32d0dcf85c32",
+      "outcome": "committed",
+      "state": "178a228f-ec05-4c52-9fc7-c46fbf26ca99:5"
+    },
+    "failure_receipt": {
+      "code": "HOOK_FAILED",
+      "http_status": 409,
+      "macro": {
+        "elapsed_ms": 156.315,
+        "execution": "completed",
+        "fingerprint": "ff05bd8926f6dc3ce725efca79bf2d64de0abd1587725ec3ee116a79565cfe30",
+        "logs": "Adjusted record 1 from 10 to -90\n",
+        "module": "93b96ec2-3297-4690-9e6a-6ef04924c20f",
+        "name": "adjust"
+      },
+      "message": "Traceback (most recent call last):\n  File \"/Users/btabone/source/DataHorizon/build/python-automation-qualified/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/hooks.py\", line 105, in _worker\n    module[event](BrokerContext(pipe,operation), changes)\n    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/btabone/source/DataHorizon/build/python-automation-qualified/automation_rules.py\", line 15, in on_table_change\n    if change['after'][column]<0:raise ValueError('Example rule: Value must be nonnegative')\n                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Example rule: Value must be nonnegative\n",
+      "operation_id": "aa8f9a47-ee6d-4bd8-a417-5d356b2c1ce8",
+      "outcome": "rolled_back"
+    },
+    "final_state": "178a228f-ec05-4c52-9fc7-c46fbf26ca99:8"
+  },
+  "installed_cli": {
+    "changed_cells": 2,
+    "changed_records": 1,
+    "macro": {
+      "elapsed_ms": 176.819,
+      "execution": "completed",
+      "fingerprint": "ff05bd8926f6dc3ce725efca79bf2d64de0abd1587725ec3ee116a79565cfe30",
+      "logs": "Adjusted record 1 from 10 to 13\n",
+      "module": "93b96ec2-3297-4690-9e6a-6ef04924c20f",
+      "name": "adjust"
+    },
+    "macro_result": 13,
+    "operation_id": "5ca60d6f-f95f-473a-b510-0a5ee1216877",
+    "outcome": "committed",
+    "state": "5a3d87a6-83d8-4634-b7fb-67ef9fcf39d4:5"
+  },
+  "runtime": "3.13.18 3.53.1",
+  "developer_overrides_removed": true,
+  "cwd": "/private/tmp"
+}

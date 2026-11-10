@@ -14,9 +14,11 @@
     ],
     "fixes": [
       "Extract standard-library-only activation-key validator so the SDK does not import the storage engine"
-    ]
+    ],
+    "type": "Implementation self-review"
   },
   "task": 2,
   "source_commit": "b096ab274275d9364124e4598c631c538c767a8a",
-  "release_qualified": false
+  "release_qualified": false,
+  "pull_request": "https://github.com/hybridmachine/DataHorizon/pull/126"
 }

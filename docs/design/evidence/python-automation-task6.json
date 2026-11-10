@@ -1,0 +1,209 @@
+{
+  "task": 6,
+  "status": "passed",
+  "pull_request": "https://github.com/hybridmachine/DataHorizon/pull/130",
+  "source": {
+    "application_source_commit": "434230abceab150d74f8c0ba1b5fd299b0460932",
+    "harness_source_commit": "5f291a8d1d5c84388156fa3a6a329872896f2e87",
+    "candidate_sha256": "355fd008ab9931944cd310a24da7df8810e5908ffaa710f3ddbca3afebc796c6",
+    "scope": "Git-normalized paths/blobs under desktop/service/tests/cmake/tools/packaging/examples plus CMakeLists COPYING LICENSES; excludes docs/build/cache"
+  },
+  "verification": {
+    "qt": {
+      "passed": 232,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 147.31,
+      "command": "ctest --test-dir build -R '^desktop$' --output-on-failure"
+    },
+    "python": {
+      "tests_run": 606,
+      "optional_skips": 20,
+      "failures": 0,
+      "errors": 0,
+      "seconds": 62.305,
+      "command": "PYTHONPATH=service python3 -m unittest discover -s tests -v"
+    },
+    "bundled_python": {
+      "tests_run": 606,
+      "optional_skips": 20,
+      "failures": 0,
+      "errors": 0,
+      "seconds": 121.849,
+      "python": "3.13.18",
+      "sqlite": "3.53.1",
+      "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=<installed service> <installed runtime>/bin/python3 -B -m unittest discover -s tests -v",
+      "scope": "Installed service path; several existing test subprocesses explicitly select the source path. The separate neutral-directory example/CLI removes developer overrides entirely."
+    },
+    "optional": {
+      "openapi_passed": 5,
+      "capture_passed": 15,
+      "skipped": 0
+    },
+    "signature": {
+      "strict_verified_after_installed_smoke": true,
+      "command": "codesign --verify --deep --strict build/python-automation-qualified/Installed/DataHorizon.app"
+    }
+  },
+  "installed": {
+    "example_passed": true,
+    "cli_passed": true,
+    "developer_overrides_removed": true,
+    "neutral_cwd": "/private/tmp",
+    "sdk_imports": "Relocated installed resources",
+    "macro_result": 13,
+    "required_rule_rollback": true,
+    "hook_generated_edit": true,
+    "undo_redo_restoration": true,
+    "durable_result_lookup": true,
+    "package_smoke": {
+      "platform": "Darwin",
+      "relocated_managed_edit_calculation": true,
+      "temporal_types_and_ten_functions": true,
+      "m3_m5_installed_sdk_service": true,
+      "developer_overrides_removed": true,
+      "missing_service_fails_explicitly": true,
+      "python_bundled": true,
+      "developer_path_removed": true,
+      "runtime_dependency": "Bundled checksum-pinned CPython",
+      "clean_machine_qualified": false
+    },
+    "artifacts": {
+      "inventory_entries": 1947,
+      "inventory_verified": true,
+      "relocated_inventory_matches_archive": true,
+      "installed_service_matches_source": true,
+      "installed_service_files": 50,
+      "archive_manifest_source_head": "5f291a8d1d5c84388156fa3a6a329872896f2e87",
+      "archive_manifest_source_dirty": true,
+      "artifacts": {
+        "build/python-automation-qualified/Installed/DataHorizon.app/Contents/MacOS/DataHorizon": {
+          "bytes": 4883856,
+          "sha256": "e60994f1cfb1b3b84b5d90d73dfb692cc80a77686204e0394425af94add1a247"
+        },
+        "build/python-automation-qualified/Installed/DataHorizon.app/Contents/Resources/source.json": {
+          "bytes": 79,
+          "sha256": "dc2664c333e9497d07c07c1ed936d28c15df66fafe76710458eca7d0c5edf18a"
+        },
+        "build/python-automation-qualified/DataHorizon-python-434230a-macos-arm64.tar.gz": {
+          "bytes": 51993752,
+          "sha256": "0462a477d4bbf787e85ed1033de899c9379db006649c675e1272dca027b0f44a"
+        },
+        "build/python-automation-qualified/Automation.dhwb": {
+          "bytes": 98304,
+          "sha256": "2af6008f99d71c9de3a28ad402d28cdb812f7cbae4ff138e26cd812d705a78b9"
+        },
+        "examples/automation_module.py": {
+          "bytes": 635,
+          "sha256": "95a8d972f3b9a3a0b83778e8450d1b638eaefe8189a3187a86ab52d3cc01e479"
+        },
+        "examples/automation_rules.py": {
+          "bytes": 745,
+          "sha256": "26356b699538e50e8b983417f36194128b460603f27c9684c1c3b6ef1acf1a67"
+        },
+        "examples/python_automation.py": {
+          "bytes": 3386,
+          "sha256": "e7b7dfc909afcde7911927945c943dc4ba55eb0d9f7b2276ee902c29068836d2"
+        }
+      }
+    }
+  },
+  "review": {
+    "type": "Implementation self-review; no independent human approval is claimed",
+    "performed": true,
+    "scope": [
+      "Native v1-v4 migration to v5, exact schema/catalog protection and inert source inspection",
+      "Service-local activation, actual stored source hashes and independent-edit refusal",
+      "Scalar argument/default/result typing, staged reads and mixed table/sheet atomicity",
+      "Required code/data hooks, recursion, native constraints and one Undo/Redo entry",
+      "Receipt deduplication, unknown acknowledgement and post-commit process exit",
+      "Worker crash/startup/timeout/cancellation, bounded noisy logs/tracebacks and no partial result",
+      "REST/OpenAPI/capability parity, thin SDK and real CLI behavior",
+      "Installed runtime/service identity, signature and exact archive inventory"
+    ],
+    "findings_fixed": [
+      {
+        "problem": "Synchronous REST path lock blocked cancellation behind its own writer",
+        "fix": "Set exact operation cancellation events outside the path lock after checking the handle lease",
+        "verification": "Real HTTP cancellation test"
+      },
+      {
+        "problem": "CLI cancellation attempted a new open behind the active writer",
+        "fix": "Require an existing --url/--handle and cancel without reopening",
+        "verification": "Real CLI subprocess cancellation test"
+      },
+      {
+        "problem": "Plain exec dictionary lacked module identity used by dataclasses and annotations",
+        "fix": "Create/register a normal module in the spawned worker and retain bounded traceback source",
+        "verification": "Postponed-annotation dataclass regression on development and bundled runtimes"
+      },
+      {
+        "problem": "Qt test clicked Add record before asynchronous table catalog readiness",
+        "fix": "Wait for two schema columns and the enabled Add button; backport to PR 129 commit 76abc346a46cece8371f17e33918b310eb02b0d2",
+        "verification": "Final full 232-check Qt pass; hosted PR rerun tracked separately"
+      },
+      {
+        "problem": "SDK activation syntax check imported the storage engine",
+        "fix": "Use a standard-library-only approval-key validator",
+        "verification": "Activation and real client suites"
+      },
+      {
+        "problem": "Oversized results/spawn failures lacked useful macro error categories",
+        "fix": "Preserve structured result/worker/context/traceback diagnostics",
+        "verification": "Real worker lifecycle tests"
+      }
+    ]
+  },
+  "hosted_ci": {
+    "status_at_publication": "PRs 125-128 passed all three macOS checks. PR 129 rerunning after the preserved/diagnosed Qt readiness failure; PR 130 checks run on the final documentation/evidence head.",
+    "live_pull_requests": [
+      "https://github.com/hybridmachine/DataHorizon/pull/125",
+      "https://github.com/hybridmachine/DataHorizon/pull/126",
+      "https://github.com/hybridmachine/DataHorizon/pull/127",
+      "https://github.com/hybridmachine/DataHorizon/pull/128",
+      "https://github.com/hybridmachine/DataHorizon/pull/129",
+      "https://github.com/hybridmachine/DataHorizon/pull/130"
+    ],
+    "reviews": "No hosted review comments/approvals were present when inspected. Source self-review and fixes are recorded here."
+  },
+  "contracts": {
+    "native_version": 5,
+    "max_modules": 16,
+    "max_source_bytes": 131072,
+    "max_module_payload_bytes": 262144,
+    "max_workbook_code_bytes": 2097152,
+    "max_macros_per_module": 32,
+    "max_arguments": 32,
+    "max_argument_bytes": 131072,
+    "max_text_result_bytes": 65536,
+    "max_broker_bytes": 1048576,
+    "max_log_bytes": 8192,
+    "max_traceback_bytes": 8192,
+    "worker_seconds_including_spawn_and_broker": 2,
+    "parent_operation_seconds": 5,
+    "ordinary_field_budget": 10000,
+    "before_after_history_bytes": 8388608,
+    "activation": "Exact workbook UUID:canonical code SHA256 from immutable service startup policy; grants never carried in native metadata",
+    "database_effects": "Only context-mediated edits share rollback. No durable external-effect queue or exactly-once external side effects. Trusted workers are not a sandbox."
+  },
+  "handoff": {
+    "directory": "build/python-automation-qualified",
+    "application": "build/python-automation-qualified/Installed/DataHorizon.app",
+    "pristine_fixture": "build/python-automation-qualified/Automation.dhwb",
+    "manual_fixture": "build/python-automation-qualified/Automation-manual.dhwb",
+    "guide": "docs/design/python-automation-guide.md",
+    "example": "examples/python_automation.py"
+  },
+  "release_qualified": false,
+  "manual_gui_acceptance": "Owner GUI/VoiceOver pass remains separate; the code editor is a later batch",
+  "remaining_scope": [
+    "Qt code editor",
+    "Automatic workbook event bindings",
+    "Custom worksheet functions",
+    "Package environments",
+    "Durable external-effect jobs",
+    "Production remote access",
+    "Windows/Linux and clean-machine distribution",
+    "Existing foundation/platform/release gates"
+  ]
+}

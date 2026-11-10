@@ -1,0 +1,30 @@
+build (macos-15)	Contract and desktop tests	﻿2026-11-10T06:02:19.7175100Z ##[group]Run ctest --test-dir build -C Release --output-on-failure
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:19.7176100Z ^[[36;1mctest --test-dir build -C Release --output-on-failure^[[0m
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:19.7442290Z shell: /bin/bash -e {0}
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:19.7442570Z env:
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:19.7442970Z   pythonLocation: /Users/runner/hostedtoolcache/Python/3.13.17/arm64
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:19.7443610Z   PKG_CONFIG_PATH: /Users/runner/hostedtoolcache/Python/3.13.17/arm64/lib/pkgconfig:/Users/runner/work/DataHorizon/Qt/6.8.3/macos/lib/pkgconfig
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:19.7444360Z   Python_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.13.17/arm64
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:19.7444890Z   Python2_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.13.17/arm64
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:19.7445380Z   Python3_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.13.17/arm64
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:19.7445880Z   QT_ROOT_DIR: /Users/runner/work/DataHorizon/Qt/6.8.3/macos
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:19.7446450Z   QT_PLUGIN_PATH: /Users/runner/work/DataHorizon/Qt/6.8.3/macos/plugins
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:19.7447210Z   QML2_IMPORT_PATH: /Users/runner/work/DataHorizon/Qt/6.8.3/macos/qml
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:19.7447790Z ##[endgroup]
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:20.0694910Z Test project /Users/runner/work/DataHorizon/DataHorizon/build
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:20.0739430Z     Start 1: development_bundle_signature
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:20.7164810Z 1/3 Test #1: development_bundle_signature .....   Passed    0.64 sec
+build (macos-15)	Contract and desktop tests	2026-11-10T06:02:20.7167620Z     Start 2: desktop
+build (macos-15)	Contract and desktop tests	2026-11-10T06:08:21.4116900Z 2/3 Test #2: desktop ..........................***Failed  360.67 sec
+build (macos-15)	Contract and desktop tests	2026-11-10T06:08:21.4125510Z 
+build (macos-15)	Contract and desktop tests	2026-11-10T06:08:21.4135790Z     Start 3: service
+build (macos-15)	Contract and desktop tests	2026-11-10T06:09:31.8904280Z 3/3 Test #3: service ..........................   Passed   70.47 sec
+build (macos-15)	Contract and desktop tests	2026-11-10T06:09:31.8934000Z 
+build (macos-15)	Contract and desktop tests	2026-11-10T06:09:31.8935550Z 67% tests passed, 1 tests failed out of 3
+build (macos-15)	Contract and desktop tests	2026-11-10T06:09:31.8936220Z 
+build (macos-15)	Contract and desktop tests	2026-11-10T06:09:31.8936770Z Total Test time (real) = 431.81 sec
+build (macos-15)	Contract and desktop tests	2026-11-10T06:09:31.8938220Z 
+build (macos-15)	Contract and desktop tests	2026-11-10T06:09:31.8938900Z The following tests FAILED:
+build (macos-15)	Contract and desktop tests	2026-11-10T06:09:31.8939930Z 	  2 - desktop (Failed)
+build (macos-15)	Contract and desktop tests	2026-11-10T06:09:31.8957110Z Errors while running CTest
+build (macos-15)	Contract and desktop tests	2026-11-10T06:09:31.9094080Z ##[error]Process completed with exit code 8.

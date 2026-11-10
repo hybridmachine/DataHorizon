@@ -1,4 +1,27 @@
-# Development native formats v1 through v4
+# Development native formats v1 through v5
+
+## Workbook code format v5
+
+The first managed module save transactionally upgrades v1–v4 to v5 and reuses
+v4's physical `dh_relational(kind,id,payload)` schema. The additional `module`
+kind has a stable UUID, unique case-sensitive Python identifier name, source
+and explicit scalar macro declarations. It belongs to the workbook rather than
+a sheet. Static syntax/declaration validation never imports or executes source;
+v4 readers reject module metadata. Empty code catalogs retain version 5.
+
+Source is capped at 128 KiB, each serialized object at 256 KiB, and workbook code
+at 16 modules/2 MiB within the existing 512-object/8-MiB catalog bounds. Managed
+save/delete requires current state and reviewed code fingerprint, runs required
+code-structure hooks and clears supported history on commit. DDL upgrades,
+metadata and generated edits share rollback. Native copies preserve source and
+declarations. Spreadsheet exports report executable source among native-only
+omissions; whole-workbook import refuses a destination containing modules.
+
+Execution permission is never stored in the native file. An executing service's
+operator must grant the exact workbook UUID and SHA-256 of its canonical code
+collection. Refresh after independent code edits recomputes the fingerprint;
+changed source cannot reuse a previous grant. Normal data edits do not revoke
+identical code. See the [automation guide](python-automation-guide.md).
 
 ## Structured table format v4
 

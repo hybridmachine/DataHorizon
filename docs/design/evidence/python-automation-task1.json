@@ -15,10 +15,12 @@
     "fixes": [
       "Admit the SDK's generic sheet field without tying workbook code to a sheet",
       "Use canonical UUID validation and close independent SQLite test connections"
-    ]
+    ],
+    "type": "Implementation self-review"
   },
   "manual_acceptance": "GUI editor is a later batch",
   "task": 1,
   "source_commit": "71436133d43b8c95e7534bcd2e828cece4184ce1",
-  "release_qualified": false
+  "release_qualified": false,
+  "pull_request": "https://github.com/hybridmachine/DataHorizon/pull/125"
 }

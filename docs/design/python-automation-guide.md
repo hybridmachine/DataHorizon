@@ -84,6 +84,21 @@ when starting the service. A remote CLI cannot use `--approve-code` to change
 another service's policy. REST has code inspection and managed operations, with
 OpenAPI examples and the interactive explorer, but no code-grant endpoint.
 
+To test shared GUI/CLI history, start one service explicitly and retain its
+printed URL/token locally:
+
+```sh
+PYTHONPATH=service python3 -m datahorizon.service --handler examples/automation_rules.py --approve-code '<activation key>'
+```
+
+Launch the installed GUI with `DATAHORIZON_TOKEN` set to that token,
+`--connect <printed URL>` and the example workbook path. Invoke the macro using
+an attached CLI (`--url <printed URL>` and the same token, without an approval
+flag), then refresh the GUI and test Undo/Redo there. The GUI's open handle keeps
+the shared history alive between CLI commands. Closing the last service handle
+ends session history; durable operation receipts remain in the native file.
+Opening the workbook in a separate GUI-owned service starts a separate session.
+
 The broker context exposes `get/value/set`, `table_schema/table_get/table_set`,
 `table_insert/table_delete` and `operation_id`. Reads see staged writes. Table
 values use stable column IDs; schema inspection maps names to those IDs. Table
@@ -115,7 +130,8 @@ operation's five-second limit. Stdout/stderr and tracebacks retain at most 8 KiB
 each; argument JSON is capped at 128 KiB, frames at 1 MiB, scalar Text/results at
 64 KiB. Failed/cancelled operations expose no successful result or partial
 database commit. Diagnostics distinguish Python errors, result/context failure,
-startup/crash/protocol failure, timeout and cancellation.
+startup/crash/protocol failure, timeout and cancellation. `macro.execution`
+describes the worker phase; the outer `outcome` determines whether data committed.
 
 Approved Python runs with the service user's normal capabilities. A worker is
 not a secure sandbox. SQLite rollback covers context-mediated database edits;

@@ -18,9 +18,11 @@
       "Map oversized broker result frames to MACRO_RESULT",
       "Retain structured traceback, context error and execution status",
       "Classify process startup failures as MACRO_WORKER_FAILED"
-    ]
+    ],
+    "type": "Implementation self-review"
   },
   "task": 4,
   "source_commit": "dab1181279f2d8972f15bfc54364557e7e2e6332",
-  "release_qualified": false
+  "release_qualified": false,
+  "pull_request": "https://github.com/hybridmachine/DataHorizon/pull/128"
 }

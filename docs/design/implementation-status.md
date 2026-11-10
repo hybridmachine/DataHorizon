@@ -194,6 +194,35 @@ exact installed app, fixture, rule and artifact hashes. Owner GUI/VoiceOver,
 Windows/Linux, clean-machine distribution and existing M1/M7/release gates remain
 open; this batch does not close full M8.
 
+## Workbook Python automation batch
+
+The [six-increment automation plan](python-automation-plan.md) implements native
+v5 source modules and explicit scalar macro declarations, service-local approval
+of an exact workbook/code fingerprint, atomic macro execution, bounded diagnostics
+and REST/OpenAPI/CLI/SDK support. Opening/inspection/copy never executes modules.
+Required externally activated code/data handlers retain their transactional
+contracts. Macro-generated sheet/table edits and hook-generated edits share
+rollback and one supported Undo/Redo entry. Durable receipts preserve scalar
+results and diagnostics without rerunning Python after an unknown response.
+
+The worker uses ordinary Python module globals and a shared transaction broker;
+its two-second spawn/import/execution/broker budget sits inside the five-second
+operation budget. Cancellation reaches active writers without queuing behind
+path locks. Attached CLI cancellation uses an existing lease rather than opening
+a new handle. UTF-8 log tails/tracebacks, frames, typed arguments/results and
+module catalogs have explicit bounds. Workers contain crashes/timeouts but are
+not a secure sandbox; file/network effects cannot be undone by SQLite rollback.
+
+The [guide](python-automation-guide.md) supplies a reviewed example, exact
+operator activation, CLI/SDK usage and a shared-service GUI walkthrough. The
+example exercises a required author-defined rule, generated edits, result
+lookup, Undo/Redo and rejection with complete rollback. Final results and artifact
+identity are in [the integration evidence](evidence/python-automation-task6.json).
+Qt code editing, automatic workbook event bindings, custom formula functions,
+package installation, durable external-effect jobs and production remote access
+retain separate contracts. Physical GUI/VoiceOver and existing platform/release
+gates remain open.
+
 ## Milestone ledger
 
 | Increment | Evidence and scope | Remaining before full milestone closure |
@@ -206,7 +235,7 @@ open; this batch does not close full M8.
 | M5 | Portable named bounded list definitions and persistent declared-record UUIDs; explicit external-edit reconciliation; reviewed record bulk edits and formula-preserving filtered copy/XLSX/ODS export; explicit locale/temporal conversion; durable staged atomic/batched jobs, frozen global sort/find paging and cooperative cancellation | Wider locale/timezone/duration policies, larger scopes and performance qualification (including large-file opening budget), full SQL/query/relational models at M8, production job scheduling and platform/manual acceptance |
 | M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures | Broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
 | M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
-| M8 | Shared engine and REST boundaries retained; unsupported APIs reject explicitly | Relational schema/tooling, proven managed SQL capture, workbook code/macros/functions/packages, remote TLS/mTLS/password access and additional wireframes |
+| M8 | Bounded native tables/relationships/indexes, read-only SQL and saved views; native v5 modules, exact service-local activation, atomic macros, required hooks/history and managed clients | Proven managed SQL writes, Qt code editor, workbook event bindings, custom functions/packages, durable external effects, remote TLS/mTLS/password access and remaining foundation/platform qualification |
 
 Later-stage facilities in this preview are bounded development slices. They do
 not waive the dependencies or completion criteria in the implementation plan.
