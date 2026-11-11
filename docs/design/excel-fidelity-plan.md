@@ -234,7 +234,9 @@ constant. **Call**: interchange gets its own path and limits.
   change events. An activated required handler that has not opted into that
   event rejects the import before any change, as now. A destination with
   modules or bindings can accept additional sheets under the same rule.
-  Selection-scope import keeps running ordinary change hooks. **Call**
+  Selection-scope import keeps running ordinary change hooks. As of
+  increment 1 the bounded inline `sheets` form of whole-workbook import also
+  raises no per-cell change events for the cells it imports. **Call**
 - **What large workbooks can do afterwards.** Ordinary structural edits and
   formula evaluation are bounded today in ways a large import would hit.
   Increments 9 and 10 (section 12) lift those. **Owner**

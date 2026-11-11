@@ -135,11 +135,13 @@ class PreparationJobs:
 
     def consume(self, job_id):
         """The completed result was applied: forget the job without running on_discard, because the caller now
-        releases what that callback owned. An unknown or expired job is already gone."""
+        releases what that callback owned. Return whether a completed job was consumed; a running, failed or
+        cancelled job, or an unknown or expired one, is left as it is."""
         with self.lock:
             entry = self.entries.get(job_id)
-            if entry is not None and entry["status"] != "running":
-                self.entries.pop(job_id).pop("on_discard", None)
+            if entry is None or entry["status"] != "completed": return False
+            self.entries.pop(job_id).pop("on_discard", None)
+            return True
 
     def close(self):
         with self.lock:

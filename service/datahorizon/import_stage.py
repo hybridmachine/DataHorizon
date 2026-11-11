@@ -13,7 +13,7 @@ import sqlite3
 from urllib.parse import quote
 
 from .conversion_report import ConversionReport
-from .engine import EngineError, TEMPORAL_KINDS, encoded, require, typed
+from .engine import EngineError, TEMPORAL_KINDS, encoded, require, stored_edit
 from .xlsx_stream import LARGE_CELLS, LARGE_SHEETS, scope_lines
 
 VERSION = 1
@@ -207,22 +207,25 @@ class ImportStage(StageReader):
         self._sheet_count += 1
 
     def cells(self, batch):
+        """Store each cell exactly as the per-cell edit path would store it in an empty cell (see engine.stored_edit),
+        so applying the stage is identical to applying the same cells as edits; a cell that would store nothing is skipped."""
         self._writable()
         require(self._sheet_count > 0, "INVALID_SPREADSHEET", "Cells arrived before any sheet")
-        require(self._count+len(batch) <= LARGE_CELLS, "LIMIT", f"Whole-workbook import exceeds {LARGE_CELLS:,} stored cells")
         sheet, rows = self._sheet_count-1, []
         for cell in batch:
             row, col = cell["row"], cell["col"]
             require(type(row) is int and type(col) is int and 1 <= row <= MAX_ROW and 1 <= col <= MAX_COL,
                     "INVALID_SPREADSHEET", "Cell coordinates are outside the sheet")
-            typed(cell)
-            style = encoded(cell["style"])
+            item = stored_edit(cell)
+            if item is None: continue
+            require(self._count+len(rows) < LARGE_CELLS, "LIMIT", f"Whole-workbook import exceeds {LARGE_CELLS:,} stored cells")
+            style = encoded(item["style"])
             style_id = self._styles.get(style)
             if style_id is None:
                 require(len(self._styles) < MAX_STYLES, "LIMIT", f"Whole-workbook import exceeds {MAX_STYLES:,} distinct styles")
                 style_id = self._styles[style] = len(self._styles)
                 self.db.execute("INSERT INTO styles(id, payload) VALUES (?, ?)", (style_id, style))
-            rows.append((sheet, row, col, cell["source"], cell["kind"], style_id))
+            rows.append((sheet, row, col, item["source"], item["kind"], style_id))
         self._execute_many("INSERT INTO cells(sheet, row, col, source, kind, style_id) VALUES (?, ?, ?, ?, ?, ?)", rows)
         self._count += len(rows)
 

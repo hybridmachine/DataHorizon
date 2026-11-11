@@ -284,10 +284,12 @@ def openapi():
         description="Imports a whole workbook as one operation that clears Undo/Redo, raises the structural before/after event "
             "(arguments: target and each imported sheet's name and cell count) and no cell change events; an activated required handler "
             "without on_structure rejects before any change. Supply reviewed sheets (at most 10,000 cells) or a prepared stage (up to "
-            "1,000,000 cells and 255 sheets, a 300-second budget with cooperative cancellation). A stage is loaded in one transaction; "
+            "1,000,000 cells and 255 sheets, a 300-second budget with cooperative cancellation). A stage is loaded in one transaction "
+            "that holds the workbook's writer lock for the whole load (up to 300 seconds); other writers wait for it or time out; "
             "cancellation or any failure rolls back sheets and cells and records a rolled-back receipt. Temporal inputs raise the native "
             "format to 2. A successful apply deletes the stage and its preparation job; a refused or failed apply keeps the stage. "
-            "The receipt adds imported: {sheets, cells}.")
+            "Staged cells are stored exactly as the same cells applied as edits would be. A retry with the same operation_id returns the "
+            "stored receipt and releases nothing. The receipt adds imported: {sheets, cells}.")
     schemas["OperationRequest"] = {"oneOf":[{"$ref":ref} for ref in mapping.values()],
         "discriminator":{"propertyName":"action","mapping":mapping},
         "description":"Atomic operations: at most 10,000 affected cells and a 4 MiB request. Range endpoints are inclusive and must be ordered. Copy fill uses the top-left input; series requires a numeric seed. Same-sheet Move retargets supported scalar/fully-contained range references into the cut rectangle; partially intersecting referenced ranges and unsupported syntax reject atomically. Sheet rename updates qualified name references while preserving stable UUID references, scanning at most 10,000 formulas/8 MiB. Sheet duplication preserves other-sheet references and retargets copied self-references, including UUIDs; it copies at most 10,000 stored cells/8 MiB. Sheet deletion replaces surviving name/UUID references and inherited ranges with permanent #REF! errors and reports affected locations; deleted and rewritten cells share the 10,000-cell limit. Unsupported syntax and required hooks reject reference-changing structure operations. Row/column changes retarget absolute and relative A1 references across sheets, expand/contract ranges and report newly broken references; required handlers, unsupported formula syntax and grid overflow reject atomically. Structure changes clear history. No managed SQL or chunked commits.",
@@ -793,22 +795,35 @@ class Service(ThreadingHTTPServer):
                 require(self.workbooks.get(parts[2]) is book,"NOT_FOUND","Workbook handle was released",404)
             return self._dispatch_book(method,parts[2],book,suffix,body)
 
+    @staticmethod
+    def _file_identity(path):
+        info=os.stat(path)
+        return (info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns)
+
     def _stage_file(self, stage_id):
-        """The stage's path for the engine, or None when it is gone: then only a stored receipt can answer."""
+        """The stage's path for the engine and the identity of the file found there, or (None, None) when it is gone:
+        then only a stored receipt can answer."""
         require(isinstance(stage_id,str),"INVALID_ARGUMENT","stage_id must be text")
         try:
-            return str(self.staging.path("stage",stage_id))
-        except EngineError as error:
-            if error.body["code"] != "JOB_NOT_FOUND": raise
-            return None
+            path=self.staging.path("stage",stage_id)
+            return str(path),self._file_identity(path)
+        except (EngineError,FileNotFoundError) as error:
+            if isinstance(error,EngineError) and error.body["code"] != "JOB_NOT_FOUND": raise
+            return None,None
 
-    def _consume_stage(self, stage_id):
-        """An applied stage is spent: its job is forgotten without its discard callback, and the file is deleted.
+    def _consume_stage(self, stage_id, path, identity):
+        """Called only after this request committed the import: the stage it read is spent, so its job is forgotten
+        without its discard callback and the file is deleted. Stage ids are client-chosen job ids, so nothing is
+        released unless the file is still the one that was read and no preparation job is running under that id.
         The import has committed, so a failure to delete is logged and left to the staging retention sweep."""
         try:
             with self.jobs.lock:
-                self.jobs.consume(stage_id)
-                self.staging.release("stage",stage_id)
+                # Stat without staging.path, which would touch the file and change its identity.
+                try: current=self._file_identity(path)
+                except FileNotFoundError: return
+                if current!=identity: return
+                if self.jobs.consume(stage_id) or stage_id not in self.jobs.entries:
+                    self.staging.release("stage",stage_id)
         except OSError:
             print("Applied import stage could not be released:", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
@@ -933,15 +948,19 @@ class Service(ThreadingHTTPServer):
             require(STAGE_PATH not in body,"INVALID_ARGUMENT",f"{STAGE_PATH} is set by the service; name a stage with stage_id")
             operation=body.get('operation_id');require(isinstance(operation,str) and 1<=len(operation)<=100,'OPERATION_ID','An operation ID is required')
             staged=body.get("action")=="workbook_import" and "stage_id" in body
-            if staged:body={**body,STAGE_PATH:self._stage_file(body["stage_id"])}
+            if staged:
+                path,identity=self._stage_file(body["stage_id"])
+                body={**body,STAGE_PATH:path}
             key=(book,operation)
             with self.registry_lock:
                 require(key not in self.active_operations,'OPERATION_RUNNING','Operation is active; inspect its receipt before retrying',409)
                 event=threading.Event();self.active_operations[key]=event
-            try:receipt=book.mutate(body,cancel_event=event)
+            fresh=[]
+            try:receipt=book.mutate(body,cancel_event=event,on_commit=lambda:fresh.append(True))
             finally:
                 with self.registry_lock:self.active_operations.pop(key,None)
-            if staged and body[STAGE_PATH] is not None:self._consume_stage(body["stage_id"])
+            # A replayed receipt never releases: the id may now name another preparation's stage.
+            if staged and fresh:self._consume_stage(body["stage_id"],path,identity)
             return receipt
         if method=='POST' and len(suffix)==3 and suffix[0]=='operations' and suffix[2]=='cancel':
             return self._cancel_operation(book,unquote(suffix[1]))

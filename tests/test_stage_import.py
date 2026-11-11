@@ -20,10 +20,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from xlsx_builder import workbook_bytes
 
 from datahorizon import engine as engine_module
+from datahorizon import service as service_module
 from datahorizon.client import APIError
 from datahorizon.conversion_report import ConversionReport
 from datahorizon.engine import STAGE_PATH, EngineError, Workbook
-from datahorizon.import_stage import ImportStage, StageReader
+from datahorizon.import_stage import ImportStage, StageReader, open_readonly
 from datahorizon.service import Service, openapi
 from datahorizon.workbook_code import fingerprint
 
@@ -48,6 +49,23 @@ def build_stage(path, sheets, source=None):
         return stage.finish(ConversionReport(), {"source": source or {"kind": "upload", "upload_id": "test"}})
     finally:
         stage.close()
+
+
+# Cells whose stored form differs from what the reader produced: the per-cell edit path drops an empty unstyled
+# auto cell, resolves auto formulas, and stores text-formatted entries as text.
+NORMALISED = [{"row": 1, "col": 1, "source": "", "kind": "auto", "style": {}},
+              {"row": 1, "col": 2, "source": "=1+1", "kind": "auto", "style": {}},
+              {"row": 1, "col": 3, "source": "12", "kind": "auto", "style": {"format": "text"}},
+              {"row": 2, "col": 1, "source": "", "kind": "null", "style": {}},
+              {"row": 2, "col": 2, "source": "", "kind": "auto", "style": {"bold": True}},
+              {"row": 2, "col": 3, "source": "2024-02-29", "kind": "date", "style": {"format": "date_iso"}},
+              {"row": 3, "col": 1, "source": "7", "kind": "auto", "style": {"decimals": 3}}]
+
+
+def stored_rows(engine):
+    with engine.lock:
+        return engine.db.execute("SELECT sheets.name, row, col, source, kind, style FROM cells JOIN sheets ON sheets.id = cells.sheet_id "
+                                 "ORDER BY sheets.name, row, col").fetchall()
 
 
 def number_cells(count, start=1):
@@ -228,6 +246,24 @@ class ServiceStageImportTests(unittest.TestCase):
             exported.append(snapshot)
         self.assertEqual(exported[0], exported[1])
         self.assertEqual(sum(len(sheet['cells']) for sheet in exported[0]['sheets']), summary['stored_cells'])
+        self.assertEqual(stored_rows(self.service.workbooks[self.book]), stored_rows(self.service.workbooks[small]))
+
+    def test_staged_cells_are_stored_exactly_as_edits_would_store_them(self):
+        stage = self.service.staging.new('stage', 'normalised')
+        summary = build_stage(stage, [('Inputs', copy.deepcopy(NORMALISED))])
+        self.assertEqual(summary['stored_cells'], len(NORMALISED)-1)
+        staged_receipt = self.apply(summary)
+        small = self.open(self.temp/'small.dhwb', create=True)
+        small_receipt = self.operate({'action': 'workbook_import', 'sheets': [{'name': 'Inputs', 'cells': copy.deepcopy(NORMALISED)}]}, small)
+        self.assertEqual(staged_receipt['imported'], {'sheets': 1, 'cells': len(NORMALISED)-1})
+        self.assertEqual(small_receipt['imported'], staged_receipt['imported'])
+        self.assertEqual(small_receipt['changed_cells'], staged_receipt['changed_cells'])
+        staged_rows = stored_rows(self.service.workbooks[self.book])
+        self.assertEqual(staged_rows, stored_rows(self.service.workbooks[small]))
+        self.assertEqual([(row, col, kind) for _, row, col, _, kind, _ in staged_rows],
+                         [(1, 2, 'formula'), (1, 3, 'text'), (2, 1, 'null'), (2, 2, 'auto'), (2, 3, 'date'), (3, 1, 'auto')])
+        self.assertEqual(json.loads(staged_rows[-1][5]), {'decimals': 3, 'format': 'number'})
+        self.assertEqual(self.cells('Inputs', r1=1, c1=3)[0]['value'], '12')
 
     def test_sixty_thousand_cells_apply_read_back_and_reopen(self):
         summary = self.prepare(large_workbook(6000))
@@ -267,6 +303,46 @@ class ServiceStageImportTests(unittest.TestCase):
         with self.assertRaises(APIError) as raised:
             self.call(f'/v1/workbooks/{self.book}/operations', {**request, 'target': 'add_sheets'})
         self.assertEqual(raised.exception.body['code'], 'OPERATION_ID_REUSED')
+
+    def replay_after_reusing_the_stage_id(self, hold_preparation):
+        """Apply X from stage S, prepare a new workbook under job id S, then retry X after a lost response."""
+        summary = self.prepare(FIDELITY, job_id='reused')
+        request = {'action': 'workbook_import', 'stage_id': 'reused', 'stage_digest': summary['stage_digest'],
+                   'operation_id': 'apply-x', 'expected_state': self.state()}
+        first = self.call(f'/v1/workbooks/{self.book}/operations', request)
+        self.assertFalse(self.stage_exists('reused'))
+        release = threading.Event()
+        original = service_module.read_workbook
+        def held(*args):
+            release.wait(30)
+            return original(*args)
+        with patch.object(service_module, 'read_workbook', held if hold_preparation else original):
+            self.assertEqual(self.request('PUT', '/v1/uploads/reused', large_workbook(3), 'application/octet-stream')[0], 200)
+            self.call('/v1/import/xlsx/jobs', {'job_id': 'reused', 'scope': 'workbook', 'upload_id': 'reused'})
+            if hold_preparation:
+                self.assertEqual(self.call('/v1/jobs/reused', method='GET')['status'], 'running')
+            else:
+                second = self.wait('reused')
+            stage_file = self.service.staging.root/'stage-reused.stage'
+            self.assertTrue(stage_file.exists())
+            self.assertEqual(self.call(f'/v1/workbooks/{self.book}/operations', request), first)
+            self.assertTrue(stage_file.exists(), 'a replayed receipt never releases a stage')
+            self.assertEqual(self.sheet_names(), ['Inputs', 'Summary', 'Empty'])
+            if hold_preparation:
+                self.assertEqual(self.call('/v1/jobs/reused', method='GET')['status'], 'running')
+                release.set()
+                second = self.wait('reused')
+        self.assertEqual(self.call('/v1/jobs/reused', method='GET')['result'], second)
+        self.assertEqual(second['sheets'], [{'name': 'Big', 'stored_cells': 30}])
+        other = self.open(self.temp/'other.dhwb', create=True)
+        self.assertEqual(self.apply(second, book=other)['imported'], {'sheets': 1, 'cells': 30})
+        self.assertFalse(self.stage_exists('reused'))
+
+    def test_replayed_receipt_leaves_a_new_completed_stage_with_the_same_id(self):
+        self.replay_after_reusing_the_stage_id(hold_preparation=False)
+
+    def test_replayed_receipt_leaves_a_new_running_preparation_with_the_same_id(self):
+        self.replay_after_reusing_the_stage_id(hold_preparation=True)
 
     def test_sheets_with_stage_and_client_supplied_stage_path_are_refused(self):
         summary = self.prepare(FIDELITY)
@@ -347,6 +423,17 @@ class EngineStageImportTests(unittest.TestCase):
         self.assertEqual(self.book.db.execute('SELECT count(*) FROM cells').fetchone()[0], 0)
         self.assertEqual(self.book.operation('import')['code'], 'INJECTED')
         self.assertEqual(self.book.operation('import')['outcome'], 'rolled_back')
+
+    def test_rewritten_stage_matching_the_request_but_not_its_seal_is_refused(self):
+        path, summary = self.stage([('One', number_cells(5))])
+        with closing(sqlite3.connect(path)) as db, db:
+            db.execute("UPDATE cells SET source='999' WHERE row=1")
+        with closing(open_readonly(path)) as stage: rewritten = stage.digest()
+        self.assertNotEqual(rewritten, summary['stage_digest'])
+        with self.assertRaises(EngineError) as failure:
+            self.book.mutate({**self.request(path, summary), 'stage_digest': rewritten})
+        self.assertEqual(failure.exception.body['code'], 'STALE_PLAN')
+        self.assertEqual([name for _, name in self.catalog()], ['Sheet1'])
 
     def test_cancel_during_load_leaves_the_workbook_as_before(self):
         path, summary = self.stage([('One', number_cells(50)), ('Two', number_cells(50))])

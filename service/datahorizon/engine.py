@@ -242,6 +242,49 @@ def typed(item):
     return {**item, "kind": kind, "value": value}
 
 
+BLANK_INPUT = {"source": "", "kind": "auto", "style": {}}
+
+
+def edited(item, edit, *, preserve_inputs=False, copied=False):
+    """The input a cell edit leaves in a cell currently holding item (None when empty), or None to clear it."""
+    for flag in ("clear", "clear_input", "replace_style"):
+        boolean(edit.get(flag, False), flag)
+    if edit.get("clear"):
+        return None
+    item = dict(item or BLANK_INPUT)
+    if edit.get("clear_input"):
+        item.update(source="", kind="auto")
+    if "source" in edit:
+        require(copied or edit.get("kind") != "unmaintained", "INVALID_INPUT",
+                "Only structural edits mark a formula unmaintained; re-enter the formula with another kind")
+        item.update(source=edit["source"], kind=edit.get("kind", "auto"))
+    if "style" in edit:
+        style=validate_style(edit["style"])
+        if ("decimals" in style or "grouping" in style) and "format" not in style and not edit.get("replace_style"):
+            if "decimals" not in style:
+                current=numeric_spec(item["style"]);style={**style,"decimals":current[1] if current else 2}
+            style={**style,"format":"percent" if item["style"].get("format") in ("percent","percent2") else "currency" if item["style"].get("format")=="currency" else "number"}
+        previous=item["style"]
+        if "border" in style: previous={key:value for key,value in previous.items() if key not in {"border_"+side for side in SIDES}}
+        item["style"] = style if edit.get("replace_style") else validate_style({**previous, **style})
+    # Text format affects subsequent entry, never retypes an existing
+    # number/formula merely because its presentation changed.
+    if not preserve_inputs and "source" in edit and item["source"] != "" and item["kind"] == "auto" and item["style"].get("format") == "text":
+        item["kind"] = "text"
+    elif not preserve_inputs and "source" in edit and item["kind"] == "auto" and isinstance(item["source"], str) and item["source"].startswith("="):
+        item["kind"] = "formula"
+    return item
+
+
+def stored_edit(edit):
+    """What the per-cell path stores when this edit is applied to an empty cell: the validated input, or None when
+    nothing is stored. A bulk loader that stores these rows matches a cell-by-cell import exactly."""
+    item = edited(None, edit)
+    if item is not None:
+        typed(item)
+    return None if item is None or item == BLANK_INPUT else item
+
+
 def display(value, style):
     if value is None:
         return ""
@@ -786,7 +829,8 @@ class Workbook:
             stage.db.execute("BEGIN")
             with sql_deadline(stage.db,self.deadline,cancel_event=self.cancel_event):
                 summary=stage.summary()
-                require(stage.digest()==digest,"STALE_PLAN","The import stage is not the reviewed one; prepare the workbook again",409)
+                # The recomputed digest must match both the review and the digest the stage was sealed with.
+                require(stage.digest()==digest==summary.get("stage_digest"),"STALE_PLAN","The import stage is not the reviewed one; prepare the workbook again",409)
                 source=summary.get("source")
                 if isinstance(source,dict) and source.get("kind")=="path":
                     try: info=os.stat(source["path"])
@@ -873,7 +917,7 @@ class Workbook:
             elif item["kind"] == "unmaintained" and self.db.execute("SELECT format_version FROM dh_meta").fetchone()[0] < 7:
                 from .relational import ensure_version
                 ensure_version(self,7)
-            if item == {"source": "", "kind": "auto", "style": {}}:
+            if item == BLANK_INPUT:
                 item = None
         key = (sheet, row, col)
         before = self.raw(*key)
@@ -911,37 +955,10 @@ class Workbook:
         require(isinstance(edits, list) and 0 < len(edits) <= MAX_CELLS, "LIMIT", "Provide 1 to 10,000 edits")
         for edit in edits:
             require(isinstance(edit, dict), "INVALID_ARGUMENT", "Each cell edit must be an object")
-            for flag in ("clear", "clear_input", "replace_style"):
-                boolean(edit.get(flag, False), flag)
             row, col = edit.get("row"), edit.get("col")
             integer(row, 1, MAX_ROWS, "row")
             integer(col, 1, MAX_COLS, "col")
-            item = self.raw(sheet, row, col) or {"source": "", "kind": "auto", "style": {}}
-            if edit.get("clear"):
-                item = None
-            else:
-                if edit.get("clear_input"):
-                    item.update(source="", kind="auto")
-                if "source" in edit:
-                    require(copied or edit.get("kind") != "unmaintained", "INVALID_INPUT",
-                            "Only structural edits mark a formula unmaintained; re-enter the formula with another kind")
-                    item.update(source=edit["source"], kind=edit.get("kind", "auto"))
-                if "style" in edit:
-                    style=validate_style(edit["style"])
-                    if ("decimals" in style or "grouping" in style) and "format" not in style and not edit.get("replace_style"):
-                        if "decimals" not in style:
-                            current=numeric_spec(item["style"]);style={**style,"decimals":current[1] if current else 2}
-                        style={**style,"format":"percent" if item["style"].get("format") in ("percent","percent2") else "currency" if item["style"].get("format")=="currency" else "number"}
-                    previous=item["style"]
-                    if "border" in style: previous={key:value for key,value in previous.items() if key not in {"border_"+side for side in SIDES}}
-                    item["style"] = style if edit.get("replace_style") else validate_style({**previous, **style})
-                # Text format affects subsequent entry, never retypes an existing
-                # number/formula merely because its presentation changed.
-                if not preserve_inputs and "source" in edit and item["source"] != "" and item["kind"] == "auto" and item["style"].get("format") == "text":
-                    item["kind"] = "text"
-                elif not preserve_inputs and "source" in edit and item["kind"] == "auto" and isinstance(item["source"], str) and item["source"].startswith("="):
-                    item["kind"] = "formula"
-            self.put(sheet, row, col, item)
+            self.put(sheet, row, col, edited(self.raw(sheet, row, col), edit, preserve_inputs=preserve_inputs, copied=copied))
 
     def hook_dispatch(self,method,args):
         if method.startswith('table_'):
@@ -1028,7 +1045,9 @@ class Workbook:
             raise error
         return receipt
 
-    def mutate(self, request, *, cancel_event=None):
+    def mutate(self, request, *, cancel_event=None, on_commit=None):
+        """on_commit, if given, is called with no arguments once this call itself has committed the operation;
+        it is not called when a stored receipt is returned for a retried operation ID."""
         require(isinstance(request, dict), "INVALID_ARGUMENT", "Operation must be an object")
         operation = request.get("operation_id")
         require(isinstance(operation, str) and len(operation) <= 100 and bool(operation), "OPERATION_ID", "An operation_id is required")
@@ -1348,6 +1367,7 @@ class Workbook:
                     self.undo = self.undo[-100:]
                 while sum(entry[2] for entry in self.undo + self.redo) > MAX_HISTORY_BYTES:
                     (self.undo if self.undo else self.redo).pop(0)
+                if on_commit is not None:on_commit()
                 return result
             except Exception as error:
                 if not in_transaction:
