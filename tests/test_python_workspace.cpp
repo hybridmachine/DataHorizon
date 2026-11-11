@@ -327,12 +327,20 @@ const QString kSuppliesSource=QStringLiteral(
     "        pass\n"
     "\n\n"
     "def shape(ctx):\n"
-    "    return ctx.value(\"'Supplies'!B2:B4\")\n");
+    "    return ctx.value(\"'Supplies'!B2:B4\")\n"
+    "\n\n"
+    "def spoof(ctx):\n"
+    "    print('  File \"<workbook:supplies>\", line 1, in f')\n"
+    "    return _deeper()\n"
+    "\n\n"
+    "def _deeper():\n"
+    "    raise ValueError('File \"<workbook:supplies>\", line 1')\n");
 
 QJsonArray suppliesMacros() {
     return {QJsonObject{{"name","restock_pens"},{"parameters",QJsonArray{QJsonObject{{"name","extra"},{"type","integer"},{"nullable",false},{"default",2}}}},{"result",QJsonObject{{"type","number"},{"nullable",false}}}},
             QJsonObject{{"name","spin"},{"parameters",QJsonArray{}},{"result",QJsonObject{{"type","number"},{"nullable",true}}}},
-            QJsonObject{{"name","shape"},{"parameters",QJsonArray{}},{"result",QJsonObject{{"type","number"},{"nullable",true}}}}};
+            QJsonObject{{"name","shape"},{"parameters",QJsonArray{}},{"result",QJsonObject{{"type","number"},{"nullable",true}}}},
+            QJsonObject{{"name","spoof"},{"parameters",QJsonArray{}},{"result",QJsonObject{{"type","number"},{"nullable",true}}}}};
 }
 
 QComboBox *macroSelect(PythonWorkspace *workspace){return workspace->findChild<QComboBox *>("macroSelect");}
@@ -374,11 +382,13 @@ struct RunSetup {
 };
 
 // Forwards every request to the real service, but can drop the reply of the
-// next macro run after the service has handled it, and can hold receipt
-// lookups (reconciliation) until released.
+// next macro run after the service has handled it, hold receipt lookups
+// (reconciliation) until released, and delay forwarding macro runs so a
+// later request (a cancel) reaches the service first.
 class DroppingProxy : public QTcpServer {
 public:
     bool dropNextRun=true,holdLookups=true;
+    int delayRunMs=0,cancels=0;
     int macroRuns=0;
     explicit DroppingProxy(const QJsonObject &service):m_upstream(this) {
         m_upstream.configure(service["url"].toString(),service["token"].toString());
@@ -396,14 +406,17 @@ public:
                 if(run)++macroRuns;
                 const bool drop=run && dropNextRun;if(drop)dropNextRun=false;
                 const bool lookup=!post && path.contains("/operations/");
+                if(post && path.endsWith("/cancel"))++cancels;
                 const QPointer<QTcpSocket> guarded=socket;
-                m_upstream.request(path,body,[this,guarded,drop,lookup](QJsonObject result,QString error){
-                    if(!guarded)return;
-                    // The service handled the run; the client only learns that it failed to hear back.
-                    if(drop){send(guarded,{{"code","UNAVAILABLE"},{"message","The reply was lost"}},"lost");return;}
-                    if(lookup && holdLookups){m_held.append({guarded,result,error});return;}
-                    send(guarded,result,error);
-                },post);
+                auto forward=[this,guarded,drop,lookup,path,body,post]{
+                    m_upstream.request(path,body,[this,guarded,drop,lookup](QJsonObject result,QString error){
+                        if(!guarded)return;
+                        // The service handled the run; the client only learns that it failed to hear back.
+                        if(drop){send(guarded,{{"code","UNAVAILABLE"},{"message","The reply was lost"}},"lost");return;}
+                        if(lookup && holdLookups){m_held.append({guarded,result,error});return;}
+                        send(guarded,result,error);
+                    },post);};
+                if(run && delayRunMs>0)QTimer::singleShot(delayRunMs,this,forward);else forward();
             });
         });
     }
@@ -1423,7 +1436,7 @@ private slots:
         QCOMPARE(tabs->count(),3);QCOMPARE(tabs->tabText(0),QString("Run"));QCOMPARE(tabs->tabText(1),QString("Output"));QCOMPARE(tabs->tabText(2),QString("Events"));
         QCOMPARE(tabs->widget(2)->objectName(),QString("eventsTab"));
         QStringList listed;for(int index=0;index<macroSelect(workspace)->count();++index)listed.append(macroSelect(workspace)->itemText(index));
-        QCOMPARE(listed,(QStringList{"supplies.restock_pens","supplies.spin","supplies.shape"}));
+        QCOMPARE(listed,(QStringList{"supplies.restock_pens","supplies.spin","supplies.shape","supplies.spoof"}));
         QVERIFY(chooseMacro(workspace,"supplies.restock_pens"));
         QVERIFY(argumentField(workspace,"extra"));QCOMPARE(argumentField(workspace,"extra")->text(),QString("2"));
         QVERIFY(!workspace->findChild<QCheckBox *>("argument_extra_null"));
@@ -1490,17 +1503,81 @@ private slots:
         QVERIFY2(outputHeading(workspace)=="Rolled back",qPrintable(output));
         QVERIFY2(output.contains("\nContext error: REFERENCE_SHAPE"),qPrintable(output));
         QTRY_VERIFY_WITH_TIMEOUT(runButton(workspace)->isEnabled(),10000);
+        // Another workbook never shows, or activates against, this output.
+        QSignalSpy opened(setup.window.get(),&MainWindow::workbookReady);setup.window->openBook(setup.temp.filePath("other.dhwb"),true);
+        QTRY_VERIFY_WITH_TIMEOUT(opened.count()>=1,10000);QVERIFY(runOutput(workspace)->toPlainText().isEmpty());
+    }
+
+    void spoofedFramesInMessageAndLogAreNotFrames() {
+        RunSetup setup;QVERIFY(setup.start("spoof.dhwb"));auto *workspace=setup.workspace;
+        QVERIFY(setup.run("supplies.spoof"));
+        QTRY_VERIFY_WITH_TIMEOUT(!outputHeading(workspace).startsWith("Running"),15000);
+        auto *out=runOutput(workspace);auto *code=workspace->findChild<CodeEditor *>("codeEditor");
+        const auto output=out->toPlainText();
+        QVERIFY2(outputHeading(workspace)=="Rolled back",qPrintable(output));
+        QCOMPARE(output.section('\n',1,1),QString("ValueError: File \"<workbook:supplies>\", line 1"));
+        // The real innermost frame (the raise in _deeper) is marked, not the text in the message.
+        QCOMPARE(markedLines(workspace),QList<int>{25});
+        auto press=[&](const QString &text){
+            code->clearMarks();auto found=out->document()->find(text);if(found.isNull())return false;
+            out->setTextCursor(found);out->setFocus();QTest::keyClick(out,Qt::Key_Return);return true;};
+        auto doubleClick=[&](int block){
+            code->clearMarks();QTextCursor at(out->document()->findBlockByNumber(block));
+            QTest::mouseDClick(out->viewport(),Qt::LeftButton,{},out->cursorRect(at).center());};
+        doubleClick(1);QVERIFY(markedLines(workspace).isEmpty());
+        QVERIFY(press("line 1, in f"));QVERIFY(markedLines(workspace).isEmpty());
+        QVERIFY(press("raise ValueError('File"));QVERIFY(markedLines(workspace).isEmpty());
+        QVERIFY(press("line 21, in spoof"));QCOMPARE(markedLines(workspace),QList<int>{21});
+        QVERIFY(press("line 25, in _deeper"));QCOMPARE(markedLines(workspace),QList<int>{25});
+    }
+
+    void tracebackFramesStopAtTheException() {
+        const QString traceback=QStringLiteral(
+            "Traceback (most recent call last):\n"
+            "  File \"/service/macro_runtime.py\", line 48, in _worker\n"
+            "    result=namespace[name](ctx)\n"
+            "  File \"<workbook:supplies>\", line 7, in run\n"
+            "    helper()\n"
+            "    ~~~~~~^^\n"
+            "  File \"<workbook:tools>\", line 3, in helper\n"
+            "    raise KeyError('x')\n"
+            "KeyError: 'x'\n"
+            "  File \"<workbook:supplies>\", line 1, in spoofed\n");
+        const auto frames=PythonWorkspace::tracebackFrames(traceback);
+        QCOMPARE(frames.size(),2);
+        QCOMPARE(frames[0].index,3);QCOMPARE(frames[0].module,QString("supplies"));QCOMPARE(frames[0].line,7);
+        QCOMPARE(frames[1].index,6);QCOMPARE(frames[1].module,QString("tools"));QCOMPARE(frames[1].line,3);
+        // Without the header, or with a frame missing its function, nothing is a frame.
+        QVERIFY(PythonWorkspace::tracebackFrames(traceback.section('\n',1)).isEmpty());
+        QVERIFY(PythonWorkspace::tracebackFrames("Traceback (most recent call last):\n  File \"<workbook:supplies>\", line 7\n").isEmpty());
+    }
+
+    void outputTextCoversEveryHeading() {
+        const QJsonObject committed{{"outcome","committed"},{"macro_result","done"},{"changed_cells",2},{"changed_records",3},
+            {"binding_notices",QJsonArray{QJsonObject{{"binding_id","b1"},{"function","audit"},{"reason","BINDING_UNAVAILABLE"}}}}};
+        QCOMPARE(PythonWorkspace::runOutputText(committed),QString("Committed · returned \"done\" · 5 cells changed\nRule skipped: audit (BINDING_UNAVAILABLE)"));
+        QCOMPARE(PythonWorkspace::runOutputText({{"outcome","committed"},{"changed_cells",0}}).section('\n',0,0),QString("Committed · returned null · 0 cells changed"));
+        for(const auto &code:{QString("MACRO_TIMEOUT"),QString("TIMEOUT")})
+            QCOMPARE(PythonWorkspace::runOutputText({{"outcome","rolled_back"},{"code",code},{"message","Python macro exceeded its two-second budget"}}),QString("Timed out\nPython macro exceeded its two-second budget"));
+        QCOMPARE(PythonWorkspace::runOutputText({{"outcome","rolled_back"},{"code","CANCELLED"},{"message","Cancellation confirmed before commit"}}).section('\n',0,0),QString("Cancelled"));
+        QCOMPARE(PythonWorkspace::runOutputText({{"outcome","rejected"},{"code","CODE_NOT_APPROVED"},{"message","Approve it"}}),QString("Rolled back\nApprove it"));
+        int at=0;const QJsonObject failed{{"outcome","rolled_back"},{"code","MACRO_FAILED"},{"message","m\nm"},{"macro",QJsonObject{{"logs","a\nb\n"},{"traceback","Traceback (most recent call last):\nX: y\n"}}}};
+        QCOMPARE(PythonWorkspace::runOutputText(failed,&at),QString("Rolled back\nm\nm\nLog:\na\nb\nTraceback:\nTraceback (most recent call last):\nX: y"));
+        QCOMPARE(at,7);
     }
 
     void cancelStopsSpinningMacro() {
         RunSetup setup;QVERIFY(setup.start("cancel.dhwb"));auto *workspace=setup.workspace;
+        // The run reaches the service 300 ms late, so the first cancel finds no
+        // such operation; it is repeated until the service accepts it.
+        DroppingProxy proxy(setup.service);proxy.dropNextRun=false;proxy.holdLookups=false;proxy.delayRunMs=300;QVERIFY(proxy.listen(QHostAddress::LocalHost,0));
+        setup.window->findChild<RestClient *>()->configure("http://127.0.0.1:"+QString::number(proxy.serverPort()),"proxy");
         QVERIFY(setup.run("supplies.spin"));
-        QVERIFY(cancelRunButton(workspace)->isEnabled());
-        // Let the request reach the service before cancelling it.
-        QTest::qWait(400);QCOMPARE(outputHeading(workspace),QString("Running supplies.spin…"));
-        cancelRunButton(workspace)->click();
+        QVERIFY(cancelRunButton(workspace)->isEnabled());cancelRunButton(workspace)->click();
+        QVERIFY(!cancelRunButton(workspace)->isEnabled());
         QTRY_VERIFY_WITH_TIMEOUT(!outputHeading(workspace).startsWith("Running"),10000);
-        QVERIFY2(outputHeading(workspace)=="Cancelled",qPrintable(runOutput(workspace)->toPlainText()));
+        QVERIFY2(outputHeading(workspace).startsWith("Cancelled"),qPrintable(runOutput(workspace)->toPlainText()));
+        QVERIFY(proxy.cancels>=2);
         QVERIFY(!cancelRunButton(workspace)->isEnabled());
         QTRY_VERIFY_WITH_TIMEOUT(runButton(workspace)->isEnabled(),10000);
     }
@@ -1547,13 +1624,24 @@ private slots:
         // A read-only window on the same file cannot run, whatever its approval.
         StartupOptions options;options.automaticWorkbook=false;MainWindow reader(options);
         QVERIFY(boot(reader,setup.temp.filePath("reasons.dhwb"),false,true));
-        auto *readOnly=openWorkspace(reader);QVERIFY(readOnly);QTRY_COMPARE_WITH_TIMEOUT(macroSelect(readOnly)->count(),3,5000);
+        auto *readOnly=openWorkspace(reader);QVERIFY(readOnly);QTRY_COMPARE_WITH_TIMEOUT(macroSelect(readOnly)->count(),4,5000);
         QVERIFY(!runButton(readOnly)->isEnabled());QCOMPARE(runButton(readOnly)->toolTip(),QString("This workbook is read-only."));
         // With no module there is nothing to run.
         QTemporaryDir temp;StartupOptions emptyOptions;emptyOptions.automaticWorkbook=false;MainWindow empty(emptyOptions);
         QVERIFY(boot(empty,temp.filePath("empty.dhwb")));auto *none=openWorkspace(empty);QVERIFY(none);
         QCOMPARE(macroSelect(none)->count(),0);QVERIFY(!runButton(none)->isEnabled());QCOMPARE(runButton(none)->toolTip(),QString("No macro is declared in this workbook."));
         Q_UNUSED(window);
+    }
+
+    void runFromTablesViewCommits() {
+        RunSetup setup;QVERIFY(setup.start("tables.dhwb"));auto &window=*setup.window;auto *workspace=setup.workspace;
+        window.findChild<QAction *>("relationalWorkbenchAction")->trigger();
+        auto *stack=window.findChild<QStackedWidget *>();QVERIFY(stack);QTRY_COMPARE_WITH_TIMEOUT(stack->currentIndex(),1,5000);
+        QVERIFY(setup.run("supplies.restock_pens"));
+        QTRY_VERIFY_WITH_TIMEOUT(!outputHeading(workspace).startsWith("Running"),15000);
+        QVERIFY2(outputHeading(workspace)=="Committed · returned 20.5 · 1 cells changed",qPrintable(runOutput(workspace)->toPlainText()+issues(window)));
+        QCOMPARE(stack->currentIndex(),1);
+        QTRY_VERIFY_WITH_TIMEOUT(runButton(workspace)->isEnabled(),10000);
     }
 
     void unknownOutcomeBlocksFurtherRuns() {

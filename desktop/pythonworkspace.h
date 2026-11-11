@@ -78,6 +78,13 @@ public:
     // Checks one macro argument against its declared scalar type the way the
     // service does. Returns the problem, or an empty string with *value set.
     static QString argumentValue(const QJsonObject &parameter,const QString &text,QJsonValue *value);
+    // A workbook-module frame of a traceback: index is its 0-based line in
+    // the traceback text.
+    struct Frame{int index=0;QString module;int line=0;};
+    static QList<Frame> tracebackFrames(const QString &traceback);
+    // The Output tab's text for a final run receipt; *tracebackLine is the
+    // output line where the traceback starts, or -1 when there is none.
+    static QString runOutputText(const QJsonObject &receipt,int *tracebackLine=nullptr);
 signals:
     void submitRequested(QJsonObject operation);
     // A read found the workbook state stale; the owning window refreshes.
@@ -85,7 +92,7 @@ signals:
     void pickFromSheetRequested(bool on);
     void issue(QString message);
     // Asks the owning window to cancel the run this workspace has in flight.
-    void cancelRunRequested();
+    void cancelRunRequested(QString operation);
 protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *object,QEvent *event) override;
@@ -147,7 +154,7 @@ private:
     QJsonObject selectedMacro() const;
     void runMacro();
     void showRunReceipt(const QJsonObject &receipt);
-    bool activateFrame(const QString &line);
+    bool activateFrame(int outputLine);
 
     RestClient *m_client;
     QJsonObject m_info,m_catalog;
@@ -173,6 +180,7 @@ private:
     bool m_runUnknown=false,m_cancelRequested=false;
     QJsonObject m_argumentsFor;     // the macro whose fields are shown
     QList<Argument> m_arguments;
+    QHash<int,Frame> m_frames;      // runOutput line -> workbook frame of the shown traceback
     QString m_staleReviewFingerprint;  // a pre-approval read was stale; compared after the refresh
     inline static bool s_skipHistoryPrompt=false;
 

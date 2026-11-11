@@ -45,11 +45,6 @@ namespace {
 const char *kNewPrefix="new:";
 QString draftStatus(){return QObject::tr("Draft · not saved to the workbook");}
 QString changedDuringReview(){return QObject::tr("The stored code changed while it was being reviewed. Review it again.");}
-// A traceback frame in a stored module, as the macro runtime names its file.
-const QRegularExpression &workbookFrame() {
-    static const QRegularExpression frame(QStringLiteral("File \"<workbook:([A-Za-z][A-Za-z0-9_]{0,63})>\", line (\\d+)"));
-    return frame;
-}
 // A scalar as the service's JSON text: 20.5, true, "text" or null.
 QString scalarText(const QJsonValue &value) {
     if(value.isNull() || value.isUndefined())return QStringLiteral("null");
@@ -194,7 +189,7 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     connect(m_cancelRun,&QPushButton::clicked,this,[this]{
         if(m_pending!=Pending::Run || m_pendingOperation.isEmpty() || m_runUnknown || m_cancelRequested)return;
         m_cancelRequested=true;m_output->appendPlainText(tr("Cancellation requested. Waiting for the final outcome…"));
-        emit cancelRunRequested();updateState();});
+        emit cancelRunRequested(m_pendingOperation);updateState();});
     updateState();
 }
 
@@ -233,6 +228,8 @@ void PythonWorkspace::bind(const QJsonObject &info) {
     // window before this point; nothing here may stay waiting for it.
     if(info["id"]!=m_info["id"]) {
         m_catalogReady=false;resetPending();m_staleReviewFingerprint.clear();
+        // Output and its frames belong to the previous handle's modules.
+        m_output->clear();m_frames.clear();
         if(m_approvalInFlight){++m_approvalGeneration;approvalFailed(tr("Approval was not confirmed by the service. Review the code and try again."));}
     }
     m_info=info;
@@ -845,8 +842,10 @@ void PythonWorkspace::loadArguments() {
 
 QString PythonWorkspace::argumentValue(const QJsonObject &parameter,const QString &text,QJsonValue *value) {
     const auto name=parameter["name"].toString(),type=parameter["type"].toString();
-    static const QRegularExpression integer(QStringLiteral("^[+-]?[0-9]+$")),
-        date(QStringLiteral("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")),time(QStringLiteral("^[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$"));
+    // Whole-string matches: "$" alone would also accept a trailing newline.
+    static const QRegularExpression integer(QRegularExpression::anchoredPattern(QStringLiteral("[+-]?[0-9]+"))),
+        date(QRegularExpression::anchoredPattern(QStringLiteral("[0-9]{4}-[0-9]{2}-[0-9]{2}"))),
+        time(QRegularExpression::anchoredPattern(QStringLiteral("[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?")));
     auto validDate=[](const QString &part){return date.match(part).hasMatch() && QDate::fromString(part,Qt::ISODate).isValid();};
     auto validTime=[](const QString &part){
         if(!time.match(part).hasMatch())return false;
@@ -923,16 +922,71 @@ void PythonWorkspace::runMacro() {
     }
     if(first){showMessage(problem);first->setFocus();return;}
     const auto label=selected["module_name"].toString()+QLatin1Char('.')+macro;
-    m_editor->clearMarks();m_cancelRequested=false;
+    m_editor->clearMarks();m_cancelRequested=false;m_frames.clear();
     m_output->setPlainText(tr("Running %1…").arg(label));m_tabs->setCurrentWidget(m_outputTab);
     startOperation({{"action","macro_run"},{"module",id},{"macro",macro},{"fingerprint",fingerprint()},{"arguments",arguments},{"label","Run "+label}},Pending::Run,id,label,fingerprint());
     if(m_pending!=Pending::Run){m_output->setPlainText(tr("The run did not start. Wait for the current operation to finish, then try again."));return;}
     showMessage(tr("Running %1…").arg(label));
 }
 
+// The workbook frames of a Python traceback, read the way Python prints one:
+// the header line, then frame lines ("  File ..., line N, in f"), each
+// followed by its indented source echo. Scanning stops at the first other
+// line, so the exception message and anything after it is never a frame,
+// whatever text the code put there.
+QList<PythonWorkspace::Frame> PythonWorkspace::tracebackFrames(const QString &traceback) {
+    static const QRegularExpression anyFrame(QRegularExpression::anchoredPattern(QStringLiteral("  File \"[^\"\\n]*\", line [0-9]+, in \\S+"))),
+        workbook(QRegularExpression::anchoredPattern(QStringLiteral("  File \"<workbook:([A-Za-z][A-Za-z0-9_]{0,63})>\", line ([0-9]{1,9}), in \\S+")));
+    const auto lines=traceback.split(QLatin1Char('\n'));
+    QList<Frame> frames;
+    if(lines.isEmpty() || lines[0]!=QLatin1String("Traceback (most recent call last):"))return frames;
+    bool inFrame=false;
+    for(int index=1;index<lines.size();++index) {
+        const auto &text=lines[index];
+        if(anyFrame.match(text).hasMatch()) {
+            inFrame=true;
+            if(const auto match=workbook.match(text);match.hasMatch())frames.append({index,match.captured(1),match.captured(2).toInt()});
+            continue;
+        }
+        if(inFrame && text.startsWith(QLatin1String("    ")))continue;
+        break;
+    }
+    return frames;
+}
+
 // Outcome first, then the failure, log tail, traceback and skipped rules.
+// *tracebackLine is the output line where the traceback starts, or -1.
+QString PythonWorkspace::runOutputText(const QJsonObject &receipt,int *tracebackLine) {
+    const auto outcome=receipt["outcome"].toString();
+    const auto macro=receipt["macro"].toObject();const auto code=receipt["code"].toString();
+    QStringList lines;const auto traceback=macro["traceback"].toString();
+    if(tracebackLine)*tracebackLine=-1;
+    if(outcome=="committed") {
+        const auto changed=receipt["changed_cells"].toInteger()+receipt["changed_records"].toInteger();
+        lines<<tr("Committed · returned %1 · %2 cells changed").arg(scalarText(receipt["macro_result"]),QString::number(changed));
+    } else {
+        lines<<(code=="CANCELLED"?tr("Cancelled"):code=="TIMEOUT" || code=="MACRO_TIMEOUT"?tr("Timed out"):tr("Rolled back"));
+        auto message=receipt["message"].toString();
+        // A Python failure's message is its traceback; show only its last line here.
+        if(!traceback.isEmpty() && message.trimmed()==traceback.trimmed())message=traceback.trimmed().section(QLatin1Char('\n'),-1);
+        if(!message.isEmpty())lines<<message;
+        if(macro["context_code"].isString())lines<<tr("Context error: %1").arg(macro["context_code"].toString());
+    }
+    const auto logs=macro["logs"].toString();
+    if(!logs.isEmpty())lines<<tr("Log:")<<(logs.endsWith(QLatin1Char('\n'))?logs.chopped(1):logs);
+    if(!traceback.isEmpty()) {
+        lines<<tr("Traceback:");
+        if(tracebackLine)*tracebackLine=int(lines.join(QLatin1Char('\n')).count(QLatin1Char('\n')))+1;
+        lines<<(traceback.endsWith(QLatin1Char('\n'))?traceback.chopped(1):traceback);
+    }
+    for(const auto &value:receipt["binding_notices"].toArray())
+        lines<<tr("Rule skipped: %1 (%2)").arg(value.toObject()["function"].toString(),value.toObject()["reason"].toString());
+    return lines.join(QLatin1Char('\n'));
+}
+
 void PythonWorkspace::showRunReceipt(const QJsonObject &receipt) {
     const auto outcome=receipt["outcome"].toString();const auto label=m_pendingName;
+    m_frames.clear();
     if(outcome=="unknown") {
         // Never re-sent: the owning window reconciles this operation ID and the
         // final receipt arrives here.
@@ -941,32 +995,18 @@ void PythonWorkspace::showRunReceipt(const QJsonObject &receipt) {
         showMessage(tr("The outcome of %1 is unknown. It is being checked.").arg(label));updateState();return;
     }
     m_pending=Pending::None;m_pendingOperation.clear();m_pendingKey.clear();m_runUnknown=false;m_cancelRequested=false;
-    const auto macro=receipt["macro"].toObject();const auto code=receipt["code"].toString();
-    QStringList lines;QString traceback=macro["traceback"].toString();
-    if(outcome=="committed") {
-        const auto changed=receipt["changed_cells"].toInteger()+receipt["changed_records"].toInteger();
-        lines<<tr("Committed · returned %1 · %2 cells changed").arg(scalarText(receipt["macro_result"]),QString::number(changed));
-        showMessage(tr("Ran %1.").arg(label));
-    } else {
-        lines<<(code=="CANCELLED"?tr("Cancelled"):code=="TIMEOUT" || code=="MACRO_TIMEOUT"?tr("Timed out"):tr("Rolled back"));
-        auto message=receipt["message"].toString();
-        // A Python failure's message is its traceback; show only its last line here.
-        if(!traceback.isEmpty() && message.trimmed()==traceback.trimmed())message=traceback.trimmed().section(QLatin1Char('\n'),-1);
-        if(!message.isEmpty())lines<<message;
-        if(macro["context_code"].isString())lines<<tr("Context error: %1").arg(macro["context_code"].toString());
+    const auto code=receipt["code"].toString();
+    int tracebackLine=-1;m_output->setPlainText(runOutputText(receipt,&tracebackLine));
+    const auto frames=tracebackLine<0?QList<Frame>{}:tracebackFrames(receipt["macro"].toObject()["traceback"].toString());
+    for(const auto &frame:frames)m_frames.insert(tracebackLine+frame.index,frame);
+    if(outcome=="committed")showMessage(tr("Ran %1.").arg(label));
+    else {
         showMessage(tr("%1 did not change the workbook (%2).").arg(label,code));
-    }
-    const auto logs=macro["logs"].toString();
-    if(!logs.isEmpty())lines<<tr("Log:")<<(logs.endsWith(QLatin1Char('\n'))?logs.chopped(1):logs);
-    if(!traceback.isEmpty())lines<<tr("Traceback:")<<(traceback.endsWith(QLatin1Char('\n'))?traceback.chopped(1):traceback);
-    for(const auto &value:receipt["binding_notices"].toArray())
-        lines<<tr("Rule skipped: %1 (%2)").arg(value.toObject()["function"].toString(),value.toObject()["reason"].toString());
-    m_output->setPlainText(lines.join(QLatin1Char('\n')));
-    if(outcome!="committed" && !traceback.isEmpty()) {
         // Mark the innermost workbook frame when its module is the one shown.
-        QString module;int line=0;
-        for(auto it=workbookFrame().globalMatch(traceback);it.hasNext();){const auto match=it.next();module=match.captured(1);line=match.captured(2).toInt();}
-        if(line>0 && !foreign(m_current) && effective(m_current).name==module && !storedModule(m_current).isEmpty())m_editor->markLine(line,true);
+        if(!frames.isEmpty()) {
+            const auto &innermost=frames.last();
+            if(!foreign(m_current) && effective(m_current).name==innermost.module && !storedModule(m_current).isEmpty())m_editor->markLine(innermost.line,true);
+        }
     }
     // The catalog this run was checked against is out of date: read it again so
     // the approval and Run state reflect the service.
@@ -974,11 +1014,11 @@ void PythonWorkspace::showRunReceipt(const QJsonObject &receipt) {
     updateState();
 }
 
-// Shows a traceback frame's line in its stored module; false when the line is
-// not a workbook frame.
-bool PythonWorkspace::activateFrame(const QString &text) {
-    const auto match=workbookFrame().match(text);if(!match.hasMatch())return false;
-    const auto name=match.captured(1);const int line=match.captured(2).toInt();
+// Shows the traceback frame on an output line in its stored module; false
+// when that line is not a workbook frame of the shown traceback.
+bool PythonWorkspace::activateFrame(int outputLine) {
+    if(!m_frames.contains(outputLine))return false;
+    const auto frame=m_frames[outputLine];const auto name=frame.module;const int line=frame.line;
     QString key;for(const auto &value:catalogModules())if(value.toObject()["name"].toString()==name)key=value.toObject()["id"].toString();
     if(key.isEmpty()){showMessage(tr("%1 is no longer stored in this workbook.").arg(name));return true;}
     if(key!=m_current)for(int row=0;row<m_modules->count();++row)if(m_modules->item(row)->data(Qt::UserRole).toString()==key)m_modules->setCurrentRow(row);
@@ -992,11 +1032,11 @@ bool PythonWorkspace::activateFrame(const QString &text) {
 bool PythonWorkspace::eventFilter(QObject *object,QEvent *event) {
     if(object==m_output->viewport() && event->type()==QEvent::MouseButtonDblClick) {
         const auto position=static_cast<QMouseEvent *>(event)->position().toPoint();
-        if(activateFrame(m_output->cursorForPosition(position).block().text()))return true;
+        if(activateFrame(m_output->cursorForPosition(position).blockNumber()))return true;
     }
     if(object==m_output && event->type()==QEvent::KeyPress) {
         const int key=static_cast<QKeyEvent *>(event)->key();
-        if((key==Qt::Key_Return || key==Qt::Key_Enter) && activateFrame(m_output->textCursor().block().text()))return true;
+        if((key==Qt::Key_Return || key==Qt::Key_Enter) && activateFrame(m_output->textCursor().blockNumber()))return true;
     }
     return QMainWindow::eventFilter(object,event);
 }
