@@ -688,7 +688,9 @@ class Workbook:
                     rows=self.db.execute("SELECT sheet_id,row,col,source,kind,style FROM cells ORDER BY sheet_id,row,col LIMIT ?",(MAX_CELLS+1,))
                     result={"state":self.state(),"sheets":[{"name":name,"cells":[]} for _,name in catalog]}
                     from .relational import objects
-                    result['native_omissions']=[item['name'] for _,item in objects(self.db)]
+                    found=list(objects(self.db))
+                    result['native_omissions']=[item['name'] for kind,item in found if kind!='name']
+                    result['native_names']=[item['name'] for kind,item in found if kind=='name']
                     targets={key:result["sheets"][index]["cells"] for index,(key,_) in enumerate(catalog)}
                     calc=self.calculator(seconds=2); size=0
                     for count,(sheet,row,col,source,kind,style) in enumerate(rows,1):

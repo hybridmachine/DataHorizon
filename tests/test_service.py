@@ -441,7 +441,8 @@ class ServiceTests(unittest.TestCase):
                           "rows_insert","rows_delete","columns_insert","columns_delete","metadata_set","metadata_delete","list_declare","list_reconcile","list_edit","list_forget","table_create","table_drop","table_promote","table_schema","table_insert","table_update","table_delete","index_create","index_drop","relationship_create","relationship_drop","table_repair","query_save","query_rename","query_delete")
                 # Approved code examples execute in test_automation_clients;
                 # this service deliberately has no operator code activation.
-                self.assertEqual(set(sequence)|{'module_save','module_delete','macro_run'},set(mapping))
+                # Name examples execute in test_names_clients (delete needs a live name id).
+                self.assertEqual(set(sequence)|{'module_save','module_delete','macro_run','name_save','name_delete'},set(mapping))
                 for action in sequence:
                     with self.subTest(action=action):
                         schema=schemas[mapping[action].rsplit("/",1)[-1]]

@@ -188,6 +188,16 @@ class WorkbookClient:
     def delete_module(self,module,*,fingerprint,operation_id=None):
         return self.apply('module_delete',module=module,fingerprint=fingerprint,operation_id=operation_id)
 
+    def names(self,name=None):
+        self._ensure_open()
+        return self.client.request(self.base+'/names',dict(expected_state=self.state,**(dict(name=name) if name is not None else {})))
+
+    def save_name(self,name,reference,*,name_id=None,operation_id=None):
+        return self.apply('name_save',name=name,reference=reference,operation_id=operation_id,**(dict(name_id=name_id) if name_id is not None else {}))
+
+    def delete_name(self,name_id,*,operation_id=None):
+        return self.apply('name_delete',name_id=name_id,operation_id=operation_id)
+
     def run_macro(self,module,macro,*,fingerprint,arguments=None,operation_id=None):
         return self.apply('macro_run',module=module,macro=macro,fingerprint=fingerprint,arguments={} if arguments is None else arguments,operation_id=operation_id,label='Macro '+module+'.'+macro)
 

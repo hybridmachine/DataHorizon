@@ -98,6 +98,8 @@ def main():
     commands.add_parser("info")
     code=commands.add_parser('code',help='Inspect inert modules; save reads JSON name/source/macros/fingerprint from stdin')
     code.add_argument('code_action',choices=['read','save','delete']);code.add_argument('module',nargs='?');code.add_argument('--fingerprint')
+    names=commands.add_parser('names',help='Inspect workbook names; save reads JSON name/reference/name_id? from stdin; delete takes the name id')
+    names.add_argument('names_action',choices=['read','save','delete']);names.add_argument('name_id',nargs='?')
     macro=commands.add_parser('macro',help='Invoke one approved atomic macro; JSON scalar arguments on stdin')
     macro.add_argument('module');macro.add_argument('name');macro.add_argument('--fingerprint',required=True);macro.add_argument('--operation-id')
     query=commands.add_parser('query',help='Read-only SQL jobs; run reads JSON stdin and returns the complete frozen result. Later actions require a workbook kept open on --url.')
@@ -185,6 +187,12 @@ def main():
                         else:
                             if not args.module or not args.fingerprint:raise ValueError('code delete requires module and --fingerprint')
                             result=book.delete_module(args.module,fingerprint=args.fingerprint)
+                    elif args.command=='names':
+                        if args.names_action=='read':result=book.names()
+                        elif args.names_action=='save':result=book.save_name(**json.load(sys.stdin))
+                        else:
+                            if not args.name_id:raise ValueError('names delete requires the name id')
+                            result=book.delete_name(args.name_id)
                     elif args.command=='macro':result=book.run_macro(args.module,args.name,fingerprint=args.fingerprint,arguments=json.load(sys.stdin),operation_id=args.operation_id)
                     elif args.command=='tables':result=book.tables()
                     elif args.command=='query':

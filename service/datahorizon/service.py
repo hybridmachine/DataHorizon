@@ -51,9 +51,12 @@ CAPABILITIES['operations'].extend(['table_create','table_drop','table_promote','
 CAPABILITIES['operations'].extend(['relationship_create','relationship_drop','table_repair'])
 CAPABILITIES['operations'].extend(['query_save','query_rename','query_delete'])
 CAPABILITIES['operations'].extend(['module_save','module_delete','macro_run'])
+CAPABILITIES['operations'].extend(['name_save','name_delete'])
+CAPABILITIES.update(names=True,max_names=256)
 
 ROUTES = {
     "/v1/workbooks/{workbook}/code": ("post", "Inspect inert workbook modules and the exact service-local activation key"),
+    "/v1/workbooks/{workbook}/names": ("post", "Read the state-checked workbook name catalog"),
     "/v1/workbooks/{workbook}/tables":("post","Read the state-checked structured table catalog"),
     "/v1/workbooks/{workbook}/tables/preview":("post","Review selection values and types before independent table creation"),
     "/v1/workbooks/{workbook}/tables/read":("post","Read a bounded state-checked record page"),
@@ -240,13 +243,15 @@ def openapi():
     install_relational_schemas(schemas,actions)
     from .code_api import install as install_code_schemas
     install_code_schemas(schemas,actions)
+    from .names_api import install as install_names_schemas
+    install_names_schemas(schemas,actions)
     for action, (required, properties, example) in actions.items():
         schema_name = "".join(word.title() for word in action.split("_"))+"Operation"
         mapping[action] = "#/components/schemas/"+schema_name
         schemas[schema_name] = {"type":"object","required":["operation_id","expected_state","action",*required],
             "properties":{**common,"action":{"type":"string","enum":[action]},**properties},
             "example":{"operation_id":"generate-a-uuid","expected_state":"copy-from-workbook-info","action":action,**example}}
-        if action in ("module_save","module_delete","macro_run"):schemas[schema_name]["additionalProperties"]=False
+        if action in ("module_save","module_delete","macro_run","name_save","name_delete"):schemas[schema_name]["additionalProperties"]=False
     schemas["OperationRequest"] = {"oneOf":[{"$ref":ref} for ref in mapping.values()],
         "discriminator":{"propertyName":"action","mapping":mapping},
         "description":"Atomic operations: at most 10,000 affected cells and a 4 MiB request. Range endpoints are inclusive and must be ordered. Copy fill uses the top-left input; series requires a numeric seed. Same-sheet Move retargets supported scalar/fully-contained range references into the cut rectangle; partially intersecting referenced ranges and unsupported syntax reject atomically. Sheet rename updates qualified name references while preserving stable UUID references, scanning at most 10,000 formulas/8 MiB. Sheet duplication preserves other-sheet references and retargets copied self-references, including UUIDs; it copies at most 10,000 stored cells/8 MiB. Sheet deletion replaces surviving name/UUID references and inherited ranges with permanent #REF! errors and reports affected locations; deleted and rewritten cells share the 10,000-cell limit. Unsupported syntax and required hooks reject reference-changing structure operations. Row/column changes retarget absolute and relative A1 references across sheets, expand/contract ranges and report newly broken references; required handlers, unsupported formula syntax and grid overflow reject atomically. Structure changes clear history. No managed SQL or chunked commits.",
@@ -308,7 +313,7 @@ def openapi():
                      "security": [{"localToken": []}]}
         if method == "post":
             name = ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
-                "code":"CodeReadRequest","inspect":"TableCatalogRequest","repair-preview":"RelationshipRepairRequest","cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
+                "code":"CodeReadRequest","names":"NamesReadRequest","inspect":"TableCatalogRequest","repair-preview":"RelationshipRepairRequest","cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             if '/queries/' in path and path.endswith('/preview'):schema={'$ref':'#/components/schemas/QueryDefinitionRequest'}
             if '/queries/' in path and path.endswith('/read'):schema={'$ref':'#/components/schemas/QueryReadRequest'}
@@ -319,6 +324,8 @@ def openapi():
             operation["responses"][status]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}
         if path.endswith("/code"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/CodeCatalog"}}}
+        elif path.endswith("/names"):
+            operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/NameCatalog"}}}
         elif path=="/v1/functions":
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/FunctionCatalog"}}}
         elif path.endswith("/styles"):
@@ -650,6 +657,9 @@ class Service(ThreadingHTTPServer):
             return {"closed":True}
         if method == "GET" and not suffix:
             return {**book.info(), "id": handle, "workbook_id": book.id}
+        if method == "POST" and suffix == ["names"]:
+            from .names import read as read_names
+            return read_names(book,body)
         if method == "POST" and suffix == ["code"]:
             from .workbook_code import read
             return read(book,body)

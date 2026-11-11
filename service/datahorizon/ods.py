@@ -323,6 +323,7 @@ def ods_export(snapshot,request):
     names=validate_sheet_names([s["name"] for s in snapshots])
     if whole: report=workbook_report()+["OpenFormula uses canonical named sheet references and current snapshot caches; sheet-relative movement semantics are not retained. NULL becomes empty."]
     if snapshot.get('native_omissions'):report.append('Native relational objects omitted from this sheet export: '+', '.join(snapshot['native_omissions']))
+    if snapshot.get('native_names'):report.append('Workbook names are native-only and omitted from this export: '+', '.join(snapshot['native_names']))
     report.append("Native dates/datetimes use ISO office:date-value; times use nonnegative sub-day office:time-value durations. Date/time formats map to invariant calendar styles; default temporal displays become ISO styles. Unsupported durations/offsets reject import. Target volatile clocks and serial-date arithmetic/type coercions can differ; choose values to freeze native results.")
     if selected_mode=="formulas" and any(map_formula_functions(c["source"],{"CONCAT":"COM.MICROSOFT.CONCAT","XLOOKUP":"COM.MICROSOFT.XLOOKUP","TEXTJOIN":"COM.MICROSOFT.TEXTJOIN"})!=c["source"] for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"):report.append("Known modern functions use COM.MICROSOFT extension identifiers; target support is required. Choose values for other targets.")
     root=ET.Element(q(O,"document-content"),{q(O,"version"):"1.3","xmlns:of":OF})
