@@ -446,7 +446,7 @@ void MainWindow::createName(QWidget *parent) {
     QString problem,reference;
     if(!nameWritable(&problem) || !selectionReference(&reference,&problem)){nameMessage(problem);return;}
     const auto target=targetContext();
-    QInputDialog input(parent);input.setObjectName("newNameInput");input.setWindowTitle(tr("New name"));input.setLabelText(tr("Name for %1").arg(reference));
+    QInputDialog input(parent);input.setObjectName("newNameInput");input.setWindowTitle(tr("New name"));input.setLabelText(tr("Name for %1").arg(reference));plainLabels(input);
     if(input.exec()!=QDialog::Accepted)return;
     const auto name=input.textValue().trimmed();if(name.isEmpty())return;
     submitName(parent,target,{{"action","name_save"},{"name",name},{"reference",reference},{"label","Create name"}},
@@ -458,7 +458,7 @@ void MainWindow::renameName(QWidget *parent,const QString &id) {
     if(current.isEmpty())return;
     if(!nameWritable(&problem)){nameMessage(problem);return;}
     const auto target=targetContext();const auto old=current["name"].toString();
-    QInputDialog input(parent);input.setObjectName("renameNameInput");input.setWindowTitle(tr("Rename name"));input.setLabelText(tr("New name for %1").arg(old));input.setTextValue(old);
+    QInputDialog input(parent);input.setObjectName("renameNameInput");input.setWindowTitle(tr("Rename name"));input.setLabelText(tr("New name for %1").arg(old));plainLabels(input);input.setTextValue(old);
     if(input.exec()!=QDialog::Accepted)return;
     const auto name=input.textValue().trimmed();if(name.isEmpty() || name==old)return;
     submitName(parent,target,{{"action","name_save"},{"name_id",id},{"name",name},{"label","Rename name"}},
@@ -480,7 +480,7 @@ void MainWindow::deleteName(QWidget *parent,const QString &id) {
     if(!nameWritable(&problem)){nameMessage(problem);return;}
     const auto target=targetContext();const auto name=current["name"].toString();
     QMessageBox box(QMessageBox::Warning,tr("Delete name?"),tr("Delete name %1? Python code that uses it stops resolving it.").arg(name),QMessageBox::Yes|QMessageBox::Cancel,parent);
-    box.setObjectName("deleteNameConfirm");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setDefaultButton(QMessageBox::Cancel);
+    box.setObjectName("deleteNameConfirm");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setTextFormat(Qt::PlainText);box.setDefaultButton(QMessageBox::Cancel);
     if(box.exec()!=QMessageBox::Yes)return;
     submitName(parent,target,{{"action","name_delete"},{"name_id",id},{"label","Delete name"}},tr("Deleted %1.").arg(name),tr("%1 was not deleted").arg(name));
 }
@@ -1561,7 +1561,7 @@ void MainWindow::startService() {
 }
 
 bool MainWindow::grantCodeApproval(const QString &key) {
-    static const QRegularExpression valid(QStringLiteral("^[0-9a-f-]{36}:[0-9a-f]{64}$"));
+    static const QRegularExpression valid(QRegularExpression::anchoredPattern(QStringLiteral("[0-9a-f-]{36}:[0-9a-f]{64}")));
     if (!ownsService() || m_service.state() != QProcess::Running) return false;
     if (!valid.match(key).hasMatch() || m_info.isEmpty() || key.section(':', 0, 0) != m_info["workbook_id"].toString()) return false;
     const auto line = QJsonDocument(QJsonObject{{"approve", key}}).toJson(QJsonDocument::Compact) + '\n';

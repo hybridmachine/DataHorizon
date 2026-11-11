@@ -118,7 +118,7 @@ private:
     QString approvalBlockedReason() const;
     void reviewApprove();
     void confirmAndGrant(const QJsonObject &shown);
-    void pollApproval(const QJsonObject &shown,quint64 generation,QDeadlineTimer deadline);
+    void pollApproval(const QJsonObject &shown,quint64 generation,QDeadlineTimer deadline,QString refreshedFor);
     void approvalFailed(const QString &text);
     QJsonArray catalogModules() const{return m_catalog["modules"].toArray();}
 

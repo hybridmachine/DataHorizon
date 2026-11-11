@@ -81,6 +81,22 @@ public:
         }
         // Approval is never the default action.
         cancel->setDefault(true);cancel->setFocus();
+        // Module, sheet and binding text comes from the workbook under review:
+        // it is never interpreted as markup.
+        for(auto *label:findChildren<QLabel *>())label->setTextFormat(Qt::PlainText);
+    }
+
+    // A binding as the code fingerprint covers it: identity, event, module,
+    // function, required and scope identity; not the display-only reference,
+    // broken flag, module name or range coordinates.
+    static QJsonObject approvedBinding(const QJsonObject &binding) {
+        auto value=binding;for(const auto *key:{"reference","broken","module"})value.remove(QLatin1String(key));
+        auto scope=value["scope"].toObject();for(const auto *key:{"row1","col1","row2","col2"})scope.remove(QLatin1String(key));
+        value["scope"]=scope;return value;
+    }
+    static QJsonArray approvedBindings(const QJsonObject &catalog) {
+        QJsonArray result;for(const auto &value:catalog["bindings"].toArray())result.append(approvedBinding(value.toObject()));
+        return result;
     }
 
     // Module names new, changed or removed since the last snapshot approved in
@@ -97,10 +113,10 @@ public:
             else if(module(before[it.key()])!=module(it.value()))lines.append(tr("%1 (changed)").arg(name));
         }
         for(auto it=before.cbegin();it!=before.cend();++it)if(!now.contains(it.key()))lines.append(tr("%1 (removed)").arg(it.value()["name"].toString()));
-        if(lastApproved && (*lastApproved)["bindings"].toArray()!=catalog["bindings"].toArray())lines.append(tr("Event bindings changed"));
+        if(lastApproved && approvedBindings(*lastApproved)!=approvedBindings(catalog))lines.append(tr("Event bindings changed"));
         else if(!lastApproved && !catalog["bindings"].toArray().isEmpty())lines.append(tr("Event bindings (new)"));
         if(!lastApproved)lines.append(tr("Nothing has been approved in this session."));
-        else if(lines.isEmpty())lines.append(tr("No changes since the last approval."));
+        else if(lines.isEmpty())lines.append((*lastApproved)["fingerprint"]!=catalog["fingerprint"]?tr("The code fingerprint changed since the last approval."):tr("No changes since the last approval."));
         return lines.join('\n');
     }
 };

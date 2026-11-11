@@ -3,6 +3,7 @@
 #include "pythonworkspace.h"
 #include "macrodeclarationpanel.h"
 #include "codeeditor.h"
+#include "codeapprovaldialog.h"
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
@@ -31,6 +32,7 @@
 #include <QTabBar>
 #include <QTableView>
 #include <QTemporaryDir>
+#include <QTextDocument>
 #include <QTest>
 #include <QTimer>
 #include <QUuid>
@@ -226,6 +228,7 @@ QString workspaceMessage(PythonWorkspace *workspace){return workspace->findChild
 struct Review {
     QString title,changes,fingerprint,bindings,notice,key,warning,copied;
     bool shown=false,hasApprove=false,approveEnabled=false,hasBindings=false,hasKey=false,hasCopy=false;
+    bool allPlain=false;  // every label shows its text literally
 };
 
 // Opens Review & approve and records the dialog. With approve it presses the
@@ -236,6 +239,7 @@ Review review(PythonWorkspace *workspace,bool approve,const std::function<void()
     ModalDriver driver([&](QWidget *modal){
         auto *dialog=qobject_cast<QDialog *>(modal);if(!dialog || dialog->objectName()!="codeApprovalDialog")return false;
         seen.shown=true;seen.title=dialog->windowTitle();
+        seen.allPlain=true;for(auto *label:dialog->findChildren<QLabel *>())if(label->textFormat()!=Qt::PlainText)seen.allPlain=false;
         auto text=[dialog](const char *name){auto *label=dialog->findChild<QLabel *>(name);return label?label->text():QString();};
         seen.changes=text("approvalChanges");seen.fingerprint=text("approvalFingerprint");seen.notice=text("approvalNotice");seen.warning=text("approvalWarning");
         seen.hasBindings=dialog->findChild<QLabel *>("approvalBindings")!=nullptr;seen.bindings=text("approvalBindings");
@@ -743,13 +747,15 @@ private slots:
         QVERIFY(!window.grantCodeApproval("not-a-key"));
         QVERIFY(!window.grantCodeApproval(QUuid::createUuid().toString(QUuid::WithoutBraces)+":"+code["fingerprint"].toString()));
         QVERIFY(!window.grantCodeApproval(code["activation_key"].toString().toUpper()));
+        QVERIFY(!window.grantCodeApproval(code["activation_key"].toString()+"\n"));
+        QCOMPARE(window.findChild<QProcess *>("ownedService")->bytesToWrite(),qint64(0));
         QVERIFY(!readCode(window)["approved"].toBool());
         const auto seen=review(workspace,true);
         QVERIFY(seen.shown);QCOMPARE(seen.title,QString("Approve Python code for approve.dhwb?"));
         QCOMPARE(seen.fingerprint,code["fingerprint"].toString());QCOMPARE(seen.warning,kApprovalWarning);
         QVERIFY2(seen.changes.contains("supplies") && seen.changes.contains("Nothing has been approved in this session."),qPrintable(seen.changes));
         QVERIFY(seen.hasBindings);QVERIFY2(seen.bindings.contains("check") && seen.bindings.contains("'Sheet1'!A1:B2"),qPrintable(seen.bindings));
-        QVERIFY(seen.hasApprove);QVERIFY(!seen.hasKey);
+        QVERIFY(seen.hasApprove);QVERIFY(!seen.hasKey);QVERIFY(seen.allPlain);
         QTRY_COMPARE_WITH_TIMEOUT(approval(workspace),QString("Approved for this session"),10000);
         QVERIFY(readCode(window)["approved"].toBool());
         QVERIFY2(!issues(window).contains(code["activation_key"].toString()),"the key is never logged");
@@ -814,6 +820,51 @@ private slots:
         QVERIFY(seen.hasCopy);QCOMPARE(seen.copied,key);QCOMPARE(seen.fingerprint,code["fingerprint"].toString());
         QTest::qWait(300);
         QVERIFY(!readCode(window)["approved"].toBool());QCOMPARE(approval(workspace),QString("Not approved to run"));
+    }
+
+    void workbookTextIsShownLiterally() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("markup.dhwb")));
+        // Sheet names cannot contain "/", so a lone opening tag stands in for markup.
+        QVERIFY(apply(window,{{"action","sheet_add"},{"name","<b>x"}}));
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("def check(ctx, event):\n    pass\n");
+        save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace->fingerprint(),readCode(window)["fingerprint"].toString(),5000);
+        QVERIFY2(apply(window,{{"action","binding_save"},{"event","cell_change"},{"scope",QJsonObject{{"kind","range"},{"reference","'<b>x'!A1"}}},{"module","supplies"},{"function","check"},{"required",false},{"fingerprint",readCode(window)["fingerprint"]}}),qPrintable(issues(window)));
+        QTRY_COMPARE_WITH_TIMEOUT(workspace->fingerprint(),readCode(window)["fingerprint"].toString(),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(reviewAction(workspace)->isEnabled(),5000);
+        const auto seen=review(workspace,false);
+        QVERIFY(seen.shown);QVERIFY(seen.hasBindings);QVERIFY(seen.allPlain);QVERIFY2(seen.bindings.contains("'<b>x'!A1"),qPrintable(seen.bindings));
+        // Workspace messages echo text literally.
+        auto *message=workspace->findChild<QLabel *>("workspaceMessage");QCOMPARE(message->textFormat(),Qt::PlainText);
+        workspace->findChild<QAction *>("findAction")->trigger();auto *field=workspace->findChild<QLineEdit *>("findField");
+        field->setText("<b>x</b>");QTest::keyClick(field,Qt::Key_Return);
+        QCOMPARE(workspaceMessage(workspace),QString("No match for <b>x</b>."));
+        for(const auto *name:{"workspaceStatus","workspaceApproval","workspaceConflict","moduleEmptyHint"})QCOMPARE(workspace->findChild<QLabel *>(name)->textFormat(),Qt::PlainText);
+        // The Name Manager shows a reference on that sheet literally.
+        QVERIFY(saveName(window,"Odd","'<b>x'!A1"));
+        auto *manager=openNameManager(window);QVERIFY(manager);chooseName(manager,"Odd");
+        const auto reference=manager->findChild<QLineEdit *>("nameManagerReference")->text();QVERIFY2(reference.contains("<b>x"),qPrintable(reference));
+        QCOMPARE(manager->findChild<QLabel *>("namesMessage")->textFormat(),Qt::PlainText);
+        QTextDocument tip;tip.setHtml(nameItem(manager,"Odd")->toolTip());QCOMPARE(tip.toPlainText(),reference);
+    }
+
+    void changesSinceApprovalFollowTheFingerprint() {
+        const QJsonObject module{{"id","m1"},{"name","supplies"},{"source","pens = 1\n"},{"macros",QJsonArray{}}};
+        const QJsonObject binding{{"id","b1"},{"event","cell_change"},{"module","supplies"},{"module_id","m1"},{"function","check"},{"required",false},
+            {"scope",QJsonObject{{"kind","range"},{"range_id","r1"},{"sheet_id","s1"},{"row1",1},{"col1",1},{"row2",1},{"col2",1}}},{"reference","Sheet1!A1"},{"broken",false}};
+        const QJsonObject approved{{"fingerprint",QString(64,'a')},{"modules",QJsonArray{module}},{"bindings",QJsonArray{binding}}};
+        // Display-only binding fields and coordinates moved, fingerprint unchanged.
+        auto moved=binding;moved["reference"]="Sheet1!B2";moved["broken"]=true;
+        auto scope=moved["scope"].toObject();scope["row1"]=2;scope["col1"]=2;scope["row2"]=2;scope["col2"]=2;moved["scope"]=scope;
+        auto same=approved;same["bindings"]=QJsonArray{moved};
+        QCOMPARE(CodeApprovalDialog::describeChanges(same,approved),QString("No changes since the last approval."));
+        // Nothing listed differs, but the fingerprint does.
+        auto other=same;other["fingerprint"]=QString(64,'b');
+        QCOMPARE(CodeApprovalDialog::describeChanges(other,approved),QString("The code fingerprint changed since the last approval."));
+        // A covered binding field changed.
+        auto required=binding;required["required"]=true;auto changed=approved;changed["bindings"]=QJsonArray{required};changed["fingerprint"]=QString(64,'c');
+        QCOMPARE(CodeApprovalDialog::describeChanges(changed,approved),QString("Event bindings changed"));
     }
 
     void approveDisabledWithDrafts() {

@@ -13,6 +13,12 @@
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 
+// Workbook-supplied text (names, sheet names, service messages) is never
+// interpreted as markup.
+inline void plainLabels(QWidget &widget){for(auto *label:widget.findChildren<QLabel *>())label->setTextFormat(Qt::PlainText);}
+// A tooltip whose text shows literally even when it looks like markup.
+inline QString plainToolTip(const QString &text){return text.isEmpty()?text:QStringLiteral("<qt>%1</qt>").arg(text.toHtmlEscaped());}
+
 // Lists workbook names in the service's shape ({id, name, reference, broken, ...})
 // and asks for changes through signals. It never changes names itself: the
 // owning window validates the selection and submits managed operations.
@@ -33,6 +39,7 @@ public:
         m_delete=new QPushButton(tr("Delete…"));m_delete->setObjectName("deleteNameButton");row->addWidget(m_delete);
         m_message=new QLabel;m_message->setObjectName("namesMessage");m_message->setAccessibleName(tr("Name messages"));m_message->setWordWrap(true);
         m_message->setTextInteractionFlags(Qt::TextSelectableByMouse);layout->addWidget(m_message);
+        plainLabels(*this);
         connect(m_list,&QListWidget::itemDoubleClicked,this,[this](QListWidgetItem *item){emit insertRequested(item->data(NameRole).toString());});
         connect(m_list,&QListWidget::currentItemChanged,this,[this]{updateState();emit currentChanged();});
         connect(m_new,&QPushButton::clicked,this,&NamesPanel::createRequested);
@@ -49,7 +56,7 @@ public:
                 const auto name=value.toObject();const bool broken=name["broken"].toBool();
                 auto *item=new QListWidgetItem(tr("%1 — %2").arg(name["name"].toString(),broken?tr("Broken"):name["reference"].toString()),m_list);
                 item->setData(Qt::UserRole,name["id"].toString());item->setData(NameRole,name["name"].toString());
-                item->setToolTip(broken?tr("This name no longer refers to any cells. Retarget it to a selection or delete it."):name["reference"].toString());
+                item->setToolTip(broken?tr("This name no longer refers to any cells. Retarget it to a selection or delete it."):plainToolTip(name["reference"].toString()));
                 if(broken){auto font=item->font();font.setItalic(true);item->setFont(font);}
                 if(name["id"].toString()==keep)m_list->setCurrentItem(item);
             }
@@ -103,6 +110,7 @@ public:
         auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);buttons->button(QDialogButtonBox::Close)->setObjectName("closeNameManagerButton");layout->addWidget(buttons);
         connect(buttons,&QDialogButtonBox::rejected,this,&QDialog::reject);
         connect(m_panel,&NamesPanel::currentChanged,this,&NameManagerDialog::showCurrent);
+        plainLabels(*this);
     }
     NamesPanel *panel() const{return m_panel;}
     void setNames(const QJsonArray &names){m_names=names;m_panel->setNames(names);}

@@ -102,6 +102,7 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     m_approval=new QLabel;m_approval->setObjectName("workspaceApproval");m_approval->setAccessibleName(tr("Approval state"));
     m_message=new QLabel;m_message->setObjectName("workspaceMessage");m_message->setAccessibleName(tr("Workspace messages"));m_message->setWordWrap(true);
     m_message->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    for(auto *label:{m_emptyHint,m_conflict,m_status,m_approval,m_message})label->setTextFormat(Qt::PlainText);
     statusBar()->addWidget(m_status);statusBar()->addWidget(m_message,1);statusBar()->addPermanentWidget(m_approval);
 
     auto showSide=[this]{
@@ -179,7 +180,7 @@ void PythonWorkspace::bind(const QJsonObject &info) {
     // operation still in flight on the old handle is reconciled by the owning
     // window before this point; nothing here may stay waiting for it.
     if(info["id"]!=m_info["id"]) {
-        m_catalogReady=false;resetPending();
+        m_catalogReady=false;resetPending();m_staleReviewFingerprint.clear();
         if(m_approvalInFlight){++m_approvalGeneration;approvalFailed(tr("Approval was not confirmed by the service. Review the code and try again."));}
     }
     m_info=info;
@@ -413,20 +414,24 @@ void PythonWorkspace::confirmAndGrant(const QJsonObject &shown) {
         }
         if(!m_grant || !m_grant(shown["activation_key"].toString())){approvalFailed(tr("Approval could not be sent to the local service. Nothing was approved."));return;}
         showMessage(tr("Waiting for the service to confirm approval…"));
-        pollApproval(shown,generation,QDeadlineTimer(3000));
+        pollApproval(shown,generation,QDeadlineTimer(3000),{});
     });
 }
 
-void PythonWorkspace::pollApproval(const QJsonObject &shown,quint64 generation,QDeadlineTimer deadline) {
-    m_client->request("/v1/workbooks/"+m_info["id"].toString()+"/code",{{"expected_state",m_info["state"]}},[this,shown,generation,deadline](QJsonObject result,QString error){
+void PythonWorkspace::pollApproval(const QJsonObject &shown,quint64 generation,QDeadlineTimer deadline,QString refreshedFor) {
+    const auto state=m_info["state"].toString();
+    m_client->request("/v1/workbooks/"+m_info["id"].toString()+"/code",{{"expected_state",state}},[this,shown,generation,deadline,state,refreshedFor](QJsonObject result,QString error) mutable {
         if(generation!=m_approvalGeneration)return;
         if(error.isEmpty() && result["fingerprint"]==shown["fingerprint"] && result["approved"].toBool()) {
             m_approvalInFlight=false;m_approvedCatalogs[m_workbookId]=shown;
             ++m_readGeneration;applyCatalog(result);showMessage(tr("Approved this code for this session."));return;
         }
         if(error.isEmpty() && result["fingerprint"]!=shown["fingerprint"]){m_approvalInFlight=false;showMessage(changedDuringReview());++m_readGeneration;applyCatalog(result);return;}
+        // An unrelated change moved the workbook on: refresh once for that
+        // state and keep polling with the refreshed state in the same budget.
+        if(result["code"]=="STALE_STATE" && refreshedFor!=state){refreshedFor=state;emit refreshRequested();}
         if(deadline.hasExpired()){approvalFailed(tr("Approval was not confirmed by the service. Review the code and try again."));return;}
-        QTimer::singleShot(150,this,[this,shown,generation,deadline]{if(generation==m_approvalGeneration)pollApproval(shown,generation,deadline);});
+        QTimer::singleShot(150,this,[this,shown,generation,deadline,refreshedFor]{if(generation==m_approvalGeneration)pollApproval(shown,generation,deadline,refreshedFor);});
     });
 }
 
@@ -499,7 +504,7 @@ void PythonWorkspace::newModule() {
 void PythonWorkspace::renameModule() {
     const auto key=m_current;const auto stored=storedModule(key);
     if(!editable() || stored.isEmpty() || m_drafts.contains(key))return;
-    QInputDialog input(this);input.setObjectName("renameModuleName");input.setWindowTitle(tr("Rename module"));input.setLabelText(tr("New name for %1").arg(stored["name"].toString()));
+    QInputDialog input(this);input.setObjectName("renameModuleName");input.setWindowTitle(tr("Rename module"));input.setLabelText(tr("New name for %1").arg(stored["name"].toString()));plainLabels(input);
     input.setTextValue(stored["name"].toString());
     if(input.exec()!=QDialog::Accepted || !editable() || m_current!=key || m_drafts.contains(key))return;
     const auto name=input.textValue().trimmed();QString problem;
@@ -516,7 +521,7 @@ void PythonWorkspace::deleteModule() {
     if(!editable() || stored.isEmpty())return;
     const auto name=stored["name"].toString();
     QMessageBox box(QMessageBox::Warning,tr("Delete module?"),tr("Delete module %1? This cannot be undone with Undo.").arg(name),QMessageBox::Yes|QMessageBox::Cancel,this);
-    box.setObjectName("deleteModuleConfirm");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setDefaultButton(QMessageBox::Cancel);
+    box.setObjectName("deleteModuleConfirm");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setTextFormat(Qt::PlainText);box.setDefaultButton(QMessageBox::Cancel);
     if(m_drafts.contains(key))box.setInformativeText(tr("Your unsaved draft of this module is discarded once the delete is stored."));
     if(box.exec()!=QMessageBox::Yes || !editable() || m_current!=key)return;
     if(!confirmHistory())return;
@@ -526,7 +531,7 @@ void PythonWorkspace::deleteModule() {
 void PythonWorkspace::discardDraft() {
     if(!m_drafts.contains(m_current))return;
     QMessageBox box(QMessageBox::Question,tr("Discard draft?"),tr("Discard your unsaved changes to %1? The stored workbook code is not changed.").arg(m_drafts[m_current].name),QMessageBox::Discard|QMessageBox::Cancel,this);
-    box.setObjectName("discardModuleDraft");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setDefaultButton(QMessageBox::Cancel);
+    box.setObjectName("discardModuleDraft");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setTextFormat(Qt::PlainText);box.setDefaultButton(QMessageBox::Cancel);
     if(box.exec()!=QMessageBox::Discard)return;
     m_drafts.remove(m_current);refreshList();
 }
@@ -566,7 +571,7 @@ void PythonWorkspace::removeMacro() {
 bool PythonWorkspace::confirmHistoryClear(QWidget *parent,const QJsonObject &info,const QString &text,const QString &name) {
     if(s_skipHistoryPrompt || !(info["undo"].isString() || info["redo"].isString()))return true;
     QMessageBox box(QMessageBox::Question,tr("Clear Undo history?"),text,QMessageBox::Yes|QMessageBox::Cancel,parent);
-    box.setObjectName(name+"Prompt");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setDefaultButton(QMessageBox::Cancel);
+    box.setObjectName(name+"Prompt");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setTextFormat(Qt::PlainText);box.setDefaultButton(QMessageBox::Cancel);
     auto *again=new QCheckBox(tr("Don't ask again this session"));again->setObjectName(name+"DontAsk");box.setCheckBox(again);
     if(box.exec()!=QMessageBox::Yes)return false;
     if(again->isChecked())s_skipHistoryPrompt=true;
@@ -604,6 +609,7 @@ bool PythonWorkspace::resolveConflict() {
     auto *keep=buttons->addButton(tr("Keep mine and replace"),QDialogButtonBox::AcceptRole);keep->setObjectName("conflictKeepMine");
     auto *take=buttons->addButton(tr("Discard mine and take the stored version"),QDialogButtonBox::DestructiveRole);take->setObjectName("conflictTakeStored");
     auto *cancel=buttons->addButton(QDialogButtonBox::Cancel);cancel->setObjectName("conflictCancel");cancel->setDefault(true);
+    plainLabels(dialog);
     int choice=0;
     connect(keep,&QPushButton::clicked,&dialog,[&]{choice=1;dialog.accept();});
     connect(take,&QPushButton::clicked,&dialog,[&]{choice=2;dialog.accept();});
@@ -694,7 +700,7 @@ bool PythonWorkspace::resolveDrafts() {
     QMessageBox box(QMessageBox::Question,tr("Unsaved Python drafts"),
         tr("These Python modules have changes that are not saved to the workbook: %1").arg(names.join(", ")),
         (canSave?QMessageBox::Save:QMessageBox::NoButton)|QMessageBox::Discard|QMessageBox::Cancel,isVisible()?static_cast<QWidget *>(this):parentWidget());
-    box.setObjectName("pythonDraftsPrompt");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setDefaultButton(QMessageBox::Cancel);
+    box.setObjectName("pythonDraftsPrompt");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setTextFormat(Qt::PlainText);box.setDefaultButton(QMessageBox::Cancel);
     box.setInformativeText(canSave?tr("Save stores one draft and keeps this window open. Discard drops every draft."):tr("Discard drops every draft."));
     const auto answer=box.exec();
     if(answer==QMessageBox::Discard){m_discardConfirmed=true;return true;}
