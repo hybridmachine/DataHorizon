@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import secrets
 import socket
+import stat
 from socketserver import TCPServer
 import sqlite3
 import sys
@@ -27,13 +28,14 @@ from .engine import EngineError, MAX_CELLS, Workbook, boolean, encoded, require
 from .formula import MAX_COLS, MAX_ROWS, SUPPORTED_FUNCTIONS
 from .csv_import import COLUMN_TYPES, ENCODINGS, preview_csv
 from .jobs import PreparationJobs
-from .interchange import xlsx_preview, xlsx_export, preparation_scope
+from .interchange import mode as import_mode, xlsx_preview, xlsx_export, preparation_scope
+from .import_stage import ImportStage
 from .ods import ods_preview, ods_export
 from .recovery import inspect_native
 from .list_export import export_list
 from .functions import function_catalog
 from .staging import IDENTIFIER, Staging
-from .xlsx_stream import LARGE_CELLS, LARGE_PACKAGE
+from .xlsx_stream import LARGE_CELLS, LARGE_PACKAGE, read_workbook
 
 CAPABILITIES = {
     "api_version": 1, "format_version": 7, "supported_format_versions": [1,2,3,4,5,6,7], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
@@ -61,6 +63,9 @@ CAPABILITIES['operations'].extend(['binding_save','binding_delete'])
 CAPABILITIES.update(event_bindings=True,max_bindings=16,binding_events=['cell_change','table_change'])
 MAX_UPLOADS, UPLOAD_SECONDS, UPLOAD_CHUNK = 2, 300, 64*1024
 CAPABILITIES.update(uploads=True,max_upload_bytes=LARGE_PACKAGE,max_import_cells=LARGE_CELLS,max_concurrent_uploads=MAX_UPLOADS)
+LARGE_PREPARATION_SECONDS = 300
+PACKAGE_INPUTS = ("file_base64","upload_id","source_path")
+CAPABILITIES.update(import_source_path=True,large_preparation_job_seconds=LARGE_PREPARATION_SECONDS)
 
 ROUTES = {
     "/v1/workbooks/{workbook}/code": ("post", "Inspect inert workbook modules and the exact service-local activation key"),
@@ -109,7 +114,7 @@ ROUTES = {
     "/v1/import/csv/jobs": ("post", "Start a cancellable CSV preparation; never writes workbook data"),
     "/v1/import/ods/jobs": ("post", "Prepare bounded ODS selected-sheet or whole-workbook inputs with conversion review"),
     "/v1/workbooks/{workbook}/export/ods": ("post", "Bounded ODS selection or whole-workbook snapshot and conversion report"),
-    "/v1/import/xlsx/jobs": ("post", "Prepare bounded selected-sheet or whole-workbook XLSX with conversion review"),
+    "/v1/import/xlsx/jobs": ("post", "Prepare bounded selected-sheet or whole-workbook XLSX with conversion review, or a whole workbook from an upload or local file into an import stage"),
     "/v1/workbooks/{workbook}/export/xlsx": ("post", "Bounded XLSX selection or whole-workbook snapshot and conversion report"),
     "/v1/jobs/{job}": ("get", "Ephemeral preparation status, progress and reviewed result"),
     "/v1/jobs/{job}/cancel": ("post", "Cancel preparation or discard its completed result"),
@@ -323,6 +328,30 @@ def openapi():
         "upload_id":upload_id,"bytes":{"type":"integer","minimum":1,"maximum":LARGE_PACKAGE},"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"SHA-256 of the received bytes, computed while copying"}},
         "description":"The complete body is staged in a private 0600 file, retained for 15 minutes after last use. The bytes are not parsed, executed or echoed; later import requests name the upload_id. At most four stored and two in-progress uploads.",
         "example":{"upload_id":"example-upload","bytes":len(upload_example),"sha256":hashlib.sha256(upload_example).hexdigest()}}
+    large={"job_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$","description":"Also names the import stage, so at most 64 characters"},
+        "scope":{"type":"string","enum":["workbook"],"description":"Required: a whole workbook is prepared into a stage"},
+        "mode":schemas["SpreadsheetPreparation"]["properties"]["mode"],"timezone_policy":schemas["SpreadsheetPreparation"]["properties"]["timezone_policy"]}
+    staged=("Reads the package with the streaming reader into a private import stage (at most 1,000,000 stored cells, 255 sheets, 64 MiB packed, 256 MiB expanded) "
+            "within 300 seconds. The completed job result is the review summary (scope, stage_id equal to job_id, stage_digest, sheets, stored_cells, report, report_entries, totals, "
+            "sample of the first 100 cells per sheet, can_import, format, mode, source), always under 1 MiB, never the cells. No workbook changes. "
+            "Cancelling or releasing the job, or its five-minute expiry, deletes the stage; at most four stages exist at once (JOB_LIMIT).")
+    schemas["SpreadsheetPreparation"].update(title="Inline package",example={"job_id":"example-xlsx-inline","file_base64":"UEsDBA==","scope":"workbook"},
+        **{"not":{"anyOf":[{"required":["upload_id"]},{"required":["source_path"]}]}})
+    schemas["XlsxUploadPreparation"]={"type":"object","title":"Staged upload","required":["job_id","upload_id","scope"],"additionalProperties":False,
+        "properties":{**large,"upload_id":{**upload_id,"description":"A completed upload from PUT /v1/uploads/{upload}; preparation never releases it"}},
+        "description":staged+" The source records the upload's SHA-256.",
+        "example":{"job_id":"example-xlsx-upload","upload_id":"example-upload","scope":"workbook","mode":"mixed"}}
+    schemas["XlsxPathPreparation"]={"type":"object","title":"Local file","required":["job_id","source_path","scope"],"additionalProperties":False,
+        "properties":{**large,"source_path":{"type":"string","minLength":1,"description":
+            "Absolute path to a regular file the service process can read, opened only for reading. Intended for a service on the same machine as the caller: "
+            "any holder of the bearer token can ask the service to read a file its user can read. The file is only parsed as a spreadsheet package; none of its bytes "
+            "are returned except parsed cells in the sample. Symlinks are resolved once; the resolved path, size and modification time are recorded and checked again at Apply."}},
+        "description":staged,"example":{"job_id":"example-xlsx-path","source_path":"/tmp/example.xlsx","scope":"workbook"}}
+    schemas["XlsxPreparationRequest"]={"oneOf":[{"$ref":"#/components/schemas/"+name} for name in ("SpreadsheetPreparation","XlsxUploadPreparation","XlsxPathPreparation")],
+        "description":"Exactly one of file_base64 (the bounded inline preview, unchanged), upload_id or source_path; otherwise INVALID_ARGUMENT. "
+            "With upload_id or source_path, scope must be workbook and row, col and sheet_index are refused; a missing upload is JOB_NOT_FOUND, "
+            "a source_path that is not an absolute path to an existing regular file is INVALID_PATH, an oversized file is LIMIT. "
+            "A malformed package ends the job failed with INVALID_SPREADSHEET, a limit with LIMIT, a cancel with CANCELLED; the stage is then deleted."}
     schemas["UploadReleased"]={"type":"object","required":["released","upload_id"],"additionalProperties":False,"properties":{"released":{"type":"boolean","enum":[True]},"upload_id":upload_id},
         "example":{"released":True,"upload_id":"example-upload"}}
     paths = {}
@@ -336,7 +365,7 @@ def openapi():
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = "JobAction" if path.startswith("/v1/uploads/") else ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = "JobAction" if path.startswith("/v1/uploads/") else ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "XlsxPreparationRequest" if path=="/v1/import/xlsx/jobs" else "SpreadsheetPreparation" if path=="/v1/import/ods/jobs" else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "code":"CodeReadRequest","names":"NamesReadRequest","inspect":"TableCatalogRequest","repair-preview":"RelationshipRepairRequest","cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             if '/queries/' in path and path.endswith('/preview'):schema={'$ref':'#/components/schemas/QueryDefinitionRequest'}
@@ -587,6 +616,94 @@ class Service(ThreadingHTTPServer):
             self.staging.release("upload",identifier)
         return {"released":True,"upload_id":identifier}
 
+    def _prepare_xlsx(self, body):
+        """Inline packages keep the bounded tree preview; an upload or local file is read into a stage."""
+        inputs = [key for key in PACKAGE_INPUTS if key in body]
+        require(len(inputs)==1,"INVALID_ARGUMENT","Supply exactly one of file_base64, upload_id or source_path")
+        if inputs == ["file_base64"]:
+            return self.jobs.start(body,xlsx_preview,"xlsx")
+        job_id = body.get("job_id")
+        # The stage is named after the job, and staging identifiers are shorter than job IDs.
+        require(isinstance(job_id,str) and IDENTIFIER.fullmatch(job_id),"INVALID_JOB",
+                "With upload_id or source_path, job_id must be 1-64 ASCII letters, digits, underscores or hyphens")
+        require(body.get("scope")=="workbook","INVALID_ARGUMENT","upload_id and source_path prepare whole workbooks; set scope to workbook")
+        require(not {"row","col","sheet_index"} & set(body),"INVALID_ARGUMENT","row, col and sheet_index do not apply to a whole-workbook import")
+        import_mode(body)
+        require(body.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
+        # One lock orders the retry check, stage reservation and job creation against expiry and release.
+        with self.jobs.lock:
+            try:
+                self.jobs.access(job_id)
+            except EngineError as error:
+                if error.body["code"] != "JOB_NOT_FOUND": raise
+            else:
+                # A retry: the existing job (or JOB_CONFLICT); its stage already exists, so none is reserved.
+                return self.jobs.start(body,self._stage_preparation(job_id,None),"xlsx",seconds=LARGE_PREPARATION_SECONDS)
+            source = self._package_source(body)
+            self.staging.new("stage",job_id)
+            try:
+                return self.jobs.start(body,self._stage_preparation(job_id,source),"xlsx",seconds=LARGE_PREPARATION_SECONDS,
+                                       on_discard=lambda:self.staging.release("stage",job_id))
+            except BaseException:
+                self.staging.release("stage",job_id)
+                raise
+
+    def _package_source(self, body):
+        """Validate the named package now so that request errors are immediate; return how to read it."""
+        if "upload_id" in body:
+            upload = body["upload_id"]
+            require(isinstance(upload,str),"INVALID_ARGUMENT","upload_id must be text")
+            with self._upload_lock:
+                require(upload not in self._uploads,"JOB_CONFLICT","The upload is still in progress",409)
+                path = self.staging.path("upload",upload)
+            return {"kind":"upload","upload_id":upload,"file":path}
+        raw = body["source_path"]
+        require(isinstance(raw,str) and os.path.isabs(raw),"INVALID_PATH","source_path must be an absolute path")
+        try:
+            # Symlinks are resolved once; the job reads the resolved file.
+            resolved = Path(raw).resolve(strict=True)
+            info = resolved.stat()
+        except (OSError,RuntimeError,ValueError) as error:
+            raise EngineError("INVALID_PATH","source_path does not name an existing file") from error
+        require(stat.S_ISREG(info.st_mode),"INVALID_PATH","source_path must name a regular file")
+        require(os.access(resolved,os.R_OK),"INVALID_PATH","source_path is not readable by the service")
+        require(info.st_size<=LARGE_PACKAGE,"LIMIT",f"Spreadsheet package exceeds {LARGE_PACKAGE//(1024*1024)} MiB")
+        return {"kind":"path","path":str(resolved),"size":info.st_size,"mtime_ns":info.st_mtime_ns,"file":resolved}
+
+    def _stage_preparation(self, job_id, source):
+        """The job body: read the package into the reserved stage and return its review summary."""
+        def prepare(request, checkpoint):
+            require(source is not None,"JOB_NOT_FOUND","Preparation job expired while it was retried; start it again",404)
+            touched = [time.monotonic()]
+            def progress(completed, phase):
+                checkpoint(completed, phase)
+                # Keep the stage, and the upload being read, from expiring during a long preparation.
+                if time.monotonic()-touched[0] >= 10:
+                    touched[0] = time.monotonic()
+                    self.staging.touch("stage",job_id)
+                    if source["kind"] == "upload":
+                        try: self.staging.touch("upload",source["upload_id"])
+                        except EngineError: pass  # The client may release an upload that is open for reading.
+            recorded = {key:value for key,value in source.items() if key != "file"}
+            if source["kind"] == "upload":
+                digest = hashlib.sha256()
+                with open(source["file"],"rb") as package:
+                    while chunk := package.read(1024*1024):
+                        digest.update(chunk)
+                        progress(0,"Checking upload")
+                recorded["sha256"] = digest.hexdigest()
+            stage = ImportStage(self.staging.path("stage",job_id))
+            try:
+                report = read_workbook(source["file"],request,stage,progress)
+                if source["kind"] == "path":
+                    info = source["file"].stat()
+                    require((info.st_size,info.st_mtime_ns) == (source["size"],source["mtime_ns"]),"STALE_PLAN",
+                            "The source file changed while it was prepared; prepare it again",409)
+                return stage.finish(report,{"format":"xlsx","mode":import_mode(request),"source":recorded})
+            finally:
+                stage.close()
+        return prepare
+
     def dispatch(self, method, path, body):
         if method=="POST" and path.startswith("/v1/uploads/") and path.endswith("/release") and path.count("/")==4:
             return self._release_upload(unquote(path.split("/")[3]))
@@ -611,7 +728,7 @@ class Service(ThreadingHTTPServer):
         if method == "POST" and path == "/v1/import/ods/jobs":
             return self.jobs.start(body,ods_preview,"ods")
         if method == "POST" and path == "/v1/import/xlsx/jobs":
-            return self.jobs.start(body,xlsx_preview,"xlsx")
+            return self._prepare_xlsx(body)
         parts = path.strip("/").split("/")
         if len(parts) in (3,4) and parts[:2] == ["v1","jobs"]:
             if method == "GET" and len(parts) == 3:
