@@ -67,7 +67,7 @@ def describe(db,item):
     return result
 
 
-def parse_reference(book,reference):
+def parse_reference(book,reference,*,missing_sheet=('REFERENCE_INVALID',400)):
     require(isinstance(reference,str) and '!' in reference,'REFERENCE_INVALID','Reference requires a sheet-qualified cell or range such as Sheet1!A1:B2')
     sheet_text,_,span=reference.rpartition('!')
     require(sheet_text!='' and span!='','REFERENCE_INVALID','Reference requires a sheet and an address')
@@ -82,7 +82,7 @@ def parse_reference(book,reference):
     row=sorted(corner[1] for corner in corners*(2 if len(corners)==1 else 1));col=sorted(corner[2] for corner in corners*(2 if len(corners)==1 else 1))
     row1,row2,col1,col2=row[0],row[-1],col[0],col[-1]
     found=book.db.execute('SELECT id FROM sheets WHERE id=? OR name=? COLLATE NOCASE',(sheet_text,sheet_text)).fetchone()
-    require(found is not None,'REFERENCE_INVALID','Reference names a sheet that does not exist')
+    require(found is not None,missing_sheet[0],'Reference names a sheet that does not exist',missing_sheet[1])
     return dict(sheet_id=found[0],row1=row1,col1=col1,row2=row2,col2=col2)
 
 

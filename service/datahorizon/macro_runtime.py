@@ -95,7 +95,7 @@ def invoke(module,name,arguments,operation,dispatch,deadline,check,diagnostics):
                 if set(message)!={'code','error'} or message['code'] not in ('MACRO_FAILED','MACRO_RESULT') or not isinstance(message['error'],str):raise MacroFailure('MACRO_PROTOCOL','Invalid macro failure',diagnostics['logs'])
                 diagnostics['traceback']=tail(message['error'])
                 raise MacroFailure(message['code'],message['error'],diagnostics['logs'])
-            if method not in ('get','value','set','table_schema','table_get','table_set','table_insert','table_delete'):
+            if method not in ('get','value','values','set','table_schema','table_get','table_set','table_insert','table_delete'):
                 raise MacroFailure('MACRO_PROTOCOL','Unknown macro context method',diagnostics['logs'])
             try:result=dispatch(method,message)
             except Exception as error:

@@ -806,11 +806,24 @@ class Workbook:
         if method.startswith('table_'):
             from .relational_rows import dispatch
             return dispatch(self,method,args)
-        sheet=self.sheet(args['sheet']);row,col=args['row'],args['col'];integer(row,1,MAX_ROWS,'row');integer(col,1,MAX_COLS,'col')
+        from .references import resolve
+        if method=='values':
+            sheet,r1,c1,r2,c2=resolve(self,args['ref'],single=False);sheet=self.sheet(sheet)
+            calculator=self.calculator(clock=self.operation_clock,transactional=True)
+            return [[calculator.cell(sheet,row,col) for col in range(c1,c2+1)] for row in range(r1,r2+1)]
+        if 'ref' in args:
+            sheet,row,col,_,_=resolve(self,args['ref'],single=True);sheet=self.sheet(sheet)
+        else:
+            sheet=self.sheet(args['sheet']);row,col=args['row'],args['col'];integer(row,1,MAX_ROWS,'row');integer(col,1,MAX_COLS,'col')
         if method=='get':return self.raw(sheet,row,col)
         if method=='value':return self.calculator(clock=self.operation_clock,transactional=True).cell(sheet,row,col)
         require(method=='set','INVALID_HOOK','Unknown handler context method')
-        self.apply_edit(sheet,[{**args,'row':row,'col':col}])
+        source=args['source']
+        require(type(source) in (str,int,float,bool) and (type(source) is not float or math.isfinite(source)),'CONTEXT_TYPE','set accepts text, a finite number or a boolean')
+        if type(source) is bool:source='TRUE' if source else 'FALSE'
+        elif type(source) is int:source=str(source)
+        elif type(source) is float:source=interchange_text(source)
+        self.apply_edit(sheet,[dict(row=row,col=col,source=source,kind=args.get('kind','auto'))])
 
     def structure_hook(self,operation,request,phase,before):
         if not self.handler:return
