@@ -42,11 +42,12 @@ def rows(*lines, attributes=None):
     return "".join(f'<row r="{i}"{attributes.get(i, "")}>{"".join(cells)}</row>' for i, cells in enumerate(lines, 1))
 
 
-def content_types(overrides, strict=False):
+def content_types(overrides, defaults=()):
     entries = {"/xl/workbook.xml": CT["workbook"], **overrides}
     return ('<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
             '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
             '<Default Extension="xml" ContentType="application/xml"/>'
+            + "".join(f'<Default Extension="{e}" ContentType="{c}"/>' for e, c in defaults)
             + "".join(f'<Override PartName="{p}" ContentType="{t}"/>' for p, t in entries.items()) + "</Types>")
 
 
@@ -59,12 +60,12 @@ def sheet_rels(*items):
     return f'<Relationships xmlns="{PKG}">{"".join(items)}</Relationships>'
 
 
-def book(sheets, *, overrides=None, parts=None, **options):
+def book(sheets, *, overrides=None, parts=None, defaults=(), **options):
     """A package with [Content_Types].xml and the package relationships Excel writes."""
     types = {f"/xl/worksheets/sheet{i}.xml": CT["sheet"] for i in range(1, len(sheets) + 1)}
     if options.get("styles_xml") is not None: types["/xl/styles.xml"] = CT["styles"]
     types.update(overrides or {})
-    extra = {"[Content_Types].xml": content_types(types), "_rels/.rels": root_rels(), **(parts or {})}
+    extra = {"[Content_Types].xml": content_types(types, defaults), "_rels/.rels": root_rels(), **(parts or {})}
     return xlsx_builder.workbook_bytes(sheets, extra_parts=extra, timestamp=STAMP, **options)
 
 
@@ -150,6 +151,7 @@ def hyperlink_and_comment():
            '<x:ClientData ObjectType="Note"><x:Row>0</x:Row><x:Column>1</x:Column></x:ClientData></v:shape></xml>')
     parts = {"xl/worksheets/_rels/sheet1.xml.rels": rels, "xl/comments1.xml": comments, "xl/drawings/vmlDrawing1.vml": vml}
     return book({"Links": cells}, sheet_after={"Links": after}, parts=parts,
+                defaults=[("vml", "application/vnd.openxmlformats-officedocument.vmlDrawing")],
                 overrides={"/xl/comments1.xml": "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"})
 
 

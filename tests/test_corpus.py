@@ -10,7 +10,7 @@ TESTS = Path(__file__).resolve().parent
 ROOT = TESTS.parent
 CORPUS = TESTS / "fixtures" / "corpus"
 GENERATED = CORPUS / "generate_feature_workbooks.py"
-FIELDS = {"file", "sha256", "producer", "producer_version", "saved_on", "exercises", "source", "format", "hand_built"}
+FIELDS = {"file", "sha256", "producer", "producer_version", "saved_on", "exercises", "source", "format", "hand_built", "unsupported_features"}
 sys.path.insert(0, str(CORPUS))
 import corpus_scorecard  # noqa: E402
 import generate_feature_workbooks  # noqa: E402
@@ -62,6 +62,23 @@ class CorpusTests(unittest.TestCase):
         producers = {entry["producer"] for entry in self.provenance}
         expected = [gap for producer, gap in corpus_scorecard.REQUIRED_PRODUCERS if producer not in producers]
         self.assertEqual(self.scorecard["summary"]["gaps"], expected)
+
+    def test_known_unreported_matches_scorecard(self):
+        # Not asserted empty: a later task empties it by adding report entries and tightens this test.
+        fresh = corpus_scorecard.known_unreported(self.scorecard["files"], self.provenance)
+        self.assertEqual(self.scorecard["summary"]["known_unreported"], fresh)
+        checked_in = json.loads(corpus_scorecard.DEFAULT_OUT.read_text(encoding="utf-8"))["summary"]
+        self.assertEqual(checked_in["known_unreported"], fresh)
+        self.assertEqual(checked_in["status_meaning"], corpus_scorecard.STATUS_MEANING)
+        for mode, items in fresh.items():
+            for item in items: self.assertTrue(item["features"], (mode, item))
+
+    def test_readme_states_gaps_and_status_meaning(self):
+        readme = (CORPUS / "README.md").read_text(encoding="utf-8")
+        for gap in self.scorecard["summary"]["gaps"]:
+            self.assertIn(gap.replace("no ", "No ", 1), readme.replace("**", ""), gap)
+        for text in ("How to read the scorecard", "not a fidelity claim", "known_unreported", "`degraded`", "`rejected`", "`clean`"):
+            self.assertIn(text, readme)
 
     def test_the_feature_workbooks_are_what_the_generator_produces(self):
         for name, build in generate_feature_workbooks.FILES.items():

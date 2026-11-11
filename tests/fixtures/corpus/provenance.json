@@ -12,7 +12,8 @@
     "producer_version": "3.1.5",
     "saved_on": "2026-11-06",
     "sha256": "76279b138de23ba5e73588cb4ea286bc06aa31d424da44ac1815ed168d81e1d3",
-    "source": "tests/fixtures/generate_fidelity.py (openpyxl 3.1.5, see tests/fixtures/fidelity-provenance.json)"
+    "source": "tests/fixtures/generate_fidelity.py (openpyxl 3.1.5, see tests/fixtures/fidelity-provenance.json)",
+    "unsupported_features": []
   },
   {
     "exercises": [
@@ -26,7 +27,8 @@
     "producer_version": "1.4.1",
     "saved_on": "2026-11-06",
     "sha256": "c2230c83ef5bcb8e61bc9ba0add75d2d381b44c27f7dd370f477b661b0261e47",
-    "source": "tests/fixtures/generate_fidelity.py (odfpy 1.4.1, see tests/fixtures/fidelity-provenance.json)"
+    "source": "tests/fixtures/generate_fidelity.py (odfpy 1.4.1, see tests/fixtures/fidelity-provenance.json)",
+    "unsupported_features": []
   },
   {
     "exercises": [
@@ -42,7 +44,8 @@
     "producer_version": "3.1.5",
     "saved_on": "2026-11-06",
     "sha256": "9894abcfd4a4e8379e53373227c87e6d132cf8c1de45fbd1bd0e71a1f0e074d9",
-    "source": "tests/fixtures/generate_xlsx.py (openpyxl 3.1.5)"
+    "source": "tests/fixtures/generate_xlsx.py (openpyxl 3.1.5)",
+    "unsupported_features": []
   },
   {
     "exercises": [
@@ -58,7 +61,8 @@
     "producer_version": "1.4.1",
     "saved_on": "2026-11-06",
     "sha256": "581352eacf13ae05bd34a79ff49b46b5b537b19786bbc1dff5d6e2292bbc6a02",
-    "source": "tests/fixtures/generate_ods.py (odfpy 1.4.1)"
+    "source": "tests/fixtures/generate_ods.py (odfpy 1.4.1)",
+    "unsupported_features": []
   },
   {
     "exercises": [
@@ -71,7 +75,8 @@
     "producer_version": "3.1.5",
     "saved_on": "2026-11-11",
     "sha256": "d0fcaa1850dc67e1e48fba0a55e62c2f32bf9c3608a86985a9570340f56b0a79",
-    "source": "tests/fixtures/generate_unsupported.py (openpyxl 3.1.5)"
+    "source": "tests/fixtures/generate_unsupported.py (openpyxl 3.1.5)",
+    "unsupported_features": []
   },
   {
     "exercises": [
@@ -84,7 +89,8 @@
     "producer_version": "3.1.5",
     "saved_on": "2026-11-11",
     "sha256": "a0ee3af2889e35f45c9c43cce039731698dd2dd5c603845251461c63f3e80538",
-    "source": "tests/fixtures/generate_unsupported.py (openpyxl 3.1.5)"
+    "source": "tests/fixtures/generate_unsupported.py (openpyxl 3.1.5)",
+    "unsupported_features": []
   },
   {
     "exercises": [
@@ -97,7 +103,10 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "c4288167c3622985be88fb05b95a4f479e4d469b587f7607b02471227ab65ee5",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "merged_cells"
+    ]
   },
   {
     "exercises": [
@@ -114,7 +123,13 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "094e0861400f28820536a1bd7ea3bdbc1b5286e2a78c51a1b05f78082c5033aa",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "column_widths",
+      "frozen_panes",
+      "hidden_rows_columns",
+      "row_heights"
+    ]
   },
   {
     "exercises": [
@@ -130,7 +145,10 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "e390a38b27f37480e509632663f0910fec20cc61b6346a879fa207ed39cdf676",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "custom_number_formats"
+    ]
   },
   {
     "exercises": [
@@ -144,7 +162,10 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "3512b7f4bf3d261ec699725a20adc40142b94f9714e3c1d2a2aa2cd3a81fd73c",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "conditional_formatting"
+    ]
   },
   {
     "exercises": [
@@ -157,7 +178,10 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "942810926bcbd5ba2bfb7b55148c889bb40196380f8b2686d494e83ca461241e",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "data_validation"
+    ]
   },
   {
     "exercises": [
@@ -170,8 +194,12 @@
     "producer": "DataHorizon test generator (standard library)",
     "producer_version": null,
     "saved_on": "2026-11-11",
-    "sha256": "bf4580510803d656dec3c5a7a2e2dc22ca070338219fe1468fb6f820deb9a319",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)"
+    "sha256": "a23a6941f246b99b6756b159c842cb3aa012e664f688f0a2259e883229da23da",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "comments",
+      "hyperlinks"
+    ]
   },
   {
     "exercises": [
@@ -185,7 +213,10 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "e6308dda8ddf628f0e74b63909e0dafc6c7915846513e8782c7aac3fff53aa5d",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "defined_names"
+    ]
   },
   {
     "exercises": [
@@ -199,7 +230,11 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "8524f77eca131e414b4a89aab661bc577cd15d7a438b830497130a23a1ff6e45",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "array_formulas",
+      "data_tables"
+    ]
   },
   {
     "exercises": [
@@ -213,7 +248,10 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "d28e2f9a11783960a7407f92c179c29892a4cad331aabb7e1cfee2d509da7bf7",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "excel_tables"
+    ]
   },
   {
     "exercises": [
@@ -229,7 +267,11 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "588c3e0a565d408a3b0106e688fef290e399cb571cc46f1c7972c5606ed541c7",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "named_styles",
+      "theme_colours"
+    ]
   },
   {
     "exercises": [
@@ -242,7 +284,8 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "070293ffb6b42215349657facc067ff90e25723ac3a4d052141656b1ad6265fb",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": []
   },
   {
     "exercises": [
@@ -255,7 +298,8 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "b265c4e712166a3178b7fc1db3eee016b3180fcf31f773b6f64b826e62cc6724",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": []
   },
   {
     "exercises": [
@@ -268,7 +312,10 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "8a5a394e7d59f457a9f18a63f5ab1d103166272bb8f4d845c195f3ad07ea7cd3",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "error_values"
+    ]
   },
   {
     "exercises": [
@@ -282,7 +329,11 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "7cb3e4746f6f39ed64c08314d050d67cc039a6f4af9e240a9b455f9b13a2e340",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "3d_references",
+      "external_references"
+    ]
   },
   {
     "exercises": [
@@ -295,7 +346,10 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "ea33d18d45a9c005c6a0627ca6662470b9ccabb9c9c2aec56c48d72aee120c34",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of LibreOffice output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of LibreOffice output)",
+    "unsupported_features": [
+      "merged_cells"
+    ]
   },
   {
     "exercises": [
@@ -308,7 +362,10 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "156f5be838f50da0aa738c918109d065905e0e60f7c7586b5642965553e73dff",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of LibreOffice output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of LibreOffice output)",
+    "unsupported_features": [
+      "custom_number_formats"
+    ]
   },
   {
     "exercises": [
@@ -321,6 +378,9 @@
     "producer_version": null,
     "saved_on": "2026-11-11",
     "sha256": "a26d5e285fa92efbf1de73f2596c97b7e715d282c09083dd4cc3d05b21b8f296",
-    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of LibreOffice output)"
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of LibreOffice output)",
+    "unsupported_features": [
+      "data_validation"
+    ]
   }
 ]

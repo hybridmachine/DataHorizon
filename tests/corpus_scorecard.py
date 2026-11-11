@@ -45,12 +45,25 @@ def score_file(client, path, mode):
         client.discard_job(job)
 
 
+STATUS_MEANING = ("clean means the importer produced no report entry for the file in that mode; it does not mean the file's "
+                  "features were preserved. degraded means at least one report entry; rejected means the import failed.")
+
+
+def known_unreported(files, provenance):
+    """Per mode, the files that import `clean` although their provenance lists features DataHorizon does not yet
+    import: those features are dropped without any report entry (the measure of silent loss)."""
+    listed = {entry["file"]: sorted(entry.get("unsupported_features", [])) for entry in provenance}
+    return {mode: [{"file": name, "features": listed[name]} for name in sorted(files)
+                   if files[name][mode]["status"] == "clean" and listed[name]] for mode in MODES}
+
+
 def summarize(files, provenance):
     by_status = {mode: dict(sorted(Counter(r[mode]["status"] for r in files.values()).items())) for mode in MODES}
     categories = {mode: dict(sorted(Counter(e["category"] for r in files.values() for e in r[mode].get("entries", [])).items())) for mode in MODES}
     producers = sorted({entry["producer"] for entry in provenance})
     gaps = [gap for producer, gap in REQUIRED_PRODUCERS if producer not in producers]
-    return {"files": len(files), "status_by_mode": by_status, "entries_by_category": categories, "producers": producers, "gaps": gaps}
+    return {"files": len(files), "status_by_mode": by_status, "entries_by_category": categories, "producers": producers, "gaps": gaps,
+            "status_meaning": STATUS_MEANING, "known_unreported": known_unreported(files, provenance)}
 
 
 def build():

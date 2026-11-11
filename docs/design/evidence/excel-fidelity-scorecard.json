@@ -1292,6 +1292,178 @@
       "no Excel-saved files",
       "no LibreOffice-saved files"
     ],
+    "known_unreported": {
+      "formulas": [
+        {
+          "features": [
+            "conditional_formatting"
+          ],
+          "file": "tests/fixtures/corpus/conditional-formatting.xlsx"
+        },
+        {
+          "features": [
+            "data_validation"
+          ],
+          "file": "tests/fixtures/corpus/data-validation.ods"
+        },
+        {
+          "features": [
+            "data_validation"
+          ],
+          "file": "tests/fixtures/corpus/data-validation.xlsx"
+        },
+        {
+          "features": [
+            "comments",
+            "hyperlinks"
+          ],
+          "file": "tests/fixtures/corpus/hyperlink-comment.xlsx"
+        },
+        {
+          "features": [
+            "column_widths",
+            "frozen_panes",
+            "hidden_rows_columns",
+            "row_heights"
+          ],
+          "file": "tests/fixtures/corpus/layout-hidden-frozen.xlsx"
+        },
+        {
+          "features": [
+            "merged_cells"
+          ],
+          "file": "tests/fixtures/corpus/merged-cells.ods"
+        },
+        {
+          "features": [
+            "merged_cells"
+          ],
+          "file": "tests/fixtures/corpus/merged-cells.xlsx"
+        }
+      ],
+      "mixed": [
+        {
+          "features": [
+            "conditional_formatting"
+          ],
+          "file": "tests/fixtures/corpus/conditional-formatting.xlsx"
+        },
+        {
+          "features": [
+            "data_validation"
+          ],
+          "file": "tests/fixtures/corpus/data-validation.ods"
+        },
+        {
+          "features": [
+            "data_validation"
+          ],
+          "file": "tests/fixtures/corpus/data-validation.xlsx"
+        },
+        {
+          "features": [
+            "comments",
+            "hyperlinks"
+          ],
+          "file": "tests/fixtures/corpus/hyperlink-comment.xlsx"
+        },
+        {
+          "features": [
+            "column_widths",
+            "frozen_panes",
+            "hidden_rows_columns",
+            "row_heights"
+          ],
+          "file": "tests/fixtures/corpus/layout-hidden-frozen.xlsx"
+        },
+        {
+          "features": [
+            "merged_cells"
+          ],
+          "file": "tests/fixtures/corpus/merged-cells.ods"
+        },
+        {
+          "features": [
+            "merged_cells"
+          ],
+          "file": "tests/fixtures/corpus/merged-cells.xlsx"
+        }
+      ],
+      "values": [
+        {
+          "features": [
+            "array_formulas",
+            "data_tables"
+          ],
+          "file": "tests/fixtures/corpus/array-data-table.xlsx"
+        },
+        {
+          "features": [
+            "conditional_formatting"
+          ],
+          "file": "tests/fixtures/corpus/conditional-formatting.xlsx"
+        },
+        {
+          "features": [
+            "data_validation"
+          ],
+          "file": "tests/fixtures/corpus/data-validation.ods"
+        },
+        {
+          "features": [
+            "data_validation"
+          ],
+          "file": "tests/fixtures/corpus/data-validation.xlsx"
+        },
+        {
+          "features": [
+            "defined_names"
+          ],
+          "file": "tests/fixtures/corpus/defined-names.xlsx"
+        },
+        {
+          "features": [
+            "excel_tables"
+          ],
+          "file": "tests/fixtures/corpus/excel-table.xlsx"
+        },
+        {
+          "features": [
+            "3d_references",
+            "external_references"
+          ],
+          "file": "tests/fixtures/corpus/external-3d-references.xlsx"
+        },
+        {
+          "features": [
+            "comments",
+            "hyperlinks"
+          ],
+          "file": "tests/fixtures/corpus/hyperlink-comment.xlsx"
+        },
+        {
+          "features": [
+            "column_widths",
+            "frozen_panes",
+            "hidden_rows_columns",
+            "row_heights"
+          ],
+          "file": "tests/fixtures/corpus/layout-hidden-frozen.xlsx"
+        },
+        {
+          "features": [
+            "merged_cells"
+          ],
+          "file": "tests/fixtures/corpus/merged-cells.ods"
+        },
+        {
+          "features": [
+            "merged_cells"
+          ],
+          "file": "tests/fixtures/corpus/merged-cells.xlsx"
+        }
+      ]
+    },
     "producers": [
       "DataHorizon test generator (standard library)",
       "odfpy",
@@ -1310,6 +1482,7 @@
         "clean": 13,
         "degraded": 10
       }
-    }
+    },
+    "status_meaning": "clean means the importer produced no report entry for the file in that mode; it does not mean the file's features were preserved. degraded means at least one report entry; rejected means the import failed."
   }
 }

@@ -21,6 +21,22 @@ approximations** of what Excel or LibreOffice would write, kept minimal where th
 replacement by application-saved files and are labelled `hand_built: true`. Their producer is the generator,
 never an application.
 
+## How to read the scorecard
+
+Each file is imported in `formulas`, `mixed` and `values` mode and gets one status per mode:
+
+- `clean`: the importer produced no report entry. **This is not a fidelity claim.** A feature the importer does
+  not yet read (merged cells, widths and heights, hidden rows and columns, frozen panes, conditional formatting,
+  validation, hyperlinks, comments) is dropped without an entry, so the file still shows `clean`.
+- `degraded`: at least one report entry says something was changed, converted or not imported.
+- `rejected`: the import failed; the error code and message are recorded. A rejection in `mixed` or `formulas`
+  mode fails the test.
+
+Each provenance entry lists `unsupported_features`: the features in that file DataHorizon does not yet import
+(short stable ids such as `merged_cells`). `summary.known_unreported` lists, per mode, the files that are `clean`
+although they have such features: that is the measure of silent loss. It is not empty today and should shrink to
+empty as report entries are added; `summary.status_meaning` repeats the `clean` caveat in the data itself.
+
 ## Open gaps
 
 These are recorded in the scorecard `summary.gaps` and clear automatically once a file with the matching
