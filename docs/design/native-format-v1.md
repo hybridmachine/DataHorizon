@@ -20,7 +20,10 @@ relational objects. Selection promotion also populates a new table with reviewed
 typed values and independent row identities. Record reads use bounded pages;
 transactional table hooks can read/write records and participate in shared
 cell/record history. Direct table formulas or sheet/table synchronization are
-not introduced. User-facing data/schema editing, relationships and query work follow in
+not introduced. Reviewed column-schema rebuilds now preserve identities and the
+AUTOINCREMENT high-water mark, with atomic constraints/conversion and explicit
+column loss. Populated drops require explicit loss review and run transactional
+data hooks. User-facing record editing, relationships and query work follow in
 the [relational plan](relational-workbench-plan.md).
 
 The sections below describe the earlier formats and their retained behavior.

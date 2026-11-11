@@ -321,6 +321,25 @@ public:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void tableSchemaReviewPreservesObjectIdentityAndAppliesConstraints() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();
+        QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("schema.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","table_create"},{"name","Data"},{"columns",QJsonArray{QJsonObject{{"name","ID"}},QJsonObject{{"name","Value"},{"type","number"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);auto *schema=window.findChild<QTableWidget *>("tableSchema");QTRY_COMPARE_WITH_TIMEOUT(schema->rowCount(),2,5000);
+        auto *objects=window.findChild<QTreeWidget *>("relationalObjects");const auto id=objects->currentItem()->data(0,Qt::UserRole);
+        int phase=0;QTimer timer;timer.setInterval(10);connect(&timer,&QTimer::timeout,&window,[&]{
+            auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());if(!dialog)return;
+            if(phase==0 && dialog->objectName()=="tableDefinitionDialog") {
+                phase=1;dialog->findChild<QLineEdit *>("tableName")->setText("Renamed");auto *columns=dialog->findChild<QTableWidget *>("columnDefinitions");
+                columns->item(0,0)->setText("Code");qobject_cast<QCheckBox *>(columns->cellWidget(0,2))->setChecked(true);qobject_cast<QCheckBox *>(columns->cellWidget(0,3))->setChecked(true);
+                qobject_cast<QComboBox *>(columns->cellWidget(1,1))->setCurrentText("integer");dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+            } else if(phase==1 && qobject_cast<QInputDialog *>(dialog)){phase=2;dialog->accept();}
+            else if(phase==2 && dialog->objectName()=="tableSchemaReview"){phase=3;dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Apply)->click();}
+        });timer.start();window.findChild<QPushButton *>("editTableSchema")->click();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);timer.stop();QCOMPARE(phase,3);
+        QTRY_COMPARE_WITH_TIMEOUT(schema->item(0,0)->text(),QString("Code"),5000);QCOMPARE(schema->item(0,2)->text(),QString("Yes"));QCOMPARE(schema->item(1,1)->text(),QString("integer"));
+        QCOMPARE(objects->currentItem()->data(0,Qt::UserRole),id);QCOMPARE(objects->currentItem()->text(0),QString("Renamed"));
+    }
     void tableSelectionReviewCreatesIndependentValuesThroughRest() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();
         QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);

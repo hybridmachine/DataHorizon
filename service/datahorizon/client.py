@@ -185,8 +185,16 @@ class WorkbookClient:
     def create_table(self,name,columns):
         return self.apply('table_create',name=name,columns=columns)
 
-    def drop_table(self,table):
-        return self.apply('table_drop',table=table)
+    def drop_table(self,table,*,allow_data_loss=False):
+        return self.apply('table_drop',table=table,allow_data_loss=allow_data_loss)
+
+    def preview_table_schema(self,table,columns,**options):
+        self._ensure_open()
+        return self.client.request(self.base+'/tables/schema-preview',dict(table=table,columns=columns,expected_state=self.state,**options))
+
+    def alter_table(self,preview):
+        if preview.get('can_apply') is not True:raise ValueError('Correct schema conversion issues before Apply')
+        return self.apply('table_schema',**preview['source_request'],review_digest=preview['review_digest'],expected_state=preview['state'])
 
     def preview_table(self,name,sheet='Sheet1',**scope):
         self._ensure_open()

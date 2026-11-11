@@ -22,14 +22,18 @@ signals:
     void submitRequested(QJsonObject operation);
     void issue(QString message);
     void sheetsRequested();
+    void busyRequested(bool busy);
 private:
     void createTable();
     void dropTable();
+    void editSchema();
     void showTable(const QString &id);
     void loadRecords(const QString &after = {});
     QString base()const;
     RestClient *m_client;
     QJsonObject m_info,m_catalog,m_draftDefinition;
+    QJsonObject m_schemaDraft;
+    QString m_schemaDraftTable,m_schemaDraftState;
     QString m_table;
     quint64 m_generation=0;
     bool m_locked=true,m_blocked=true;
@@ -42,5 +46,5 @@ private:
     QTableWidget *m_records;
     QPushButton *m_previous,*m_next;
     QLabel *m_status;
-    QPushButton *m_create,*m_drop;
+    QPushButton *m_create,*m_drop,*m_editSchema;
 };

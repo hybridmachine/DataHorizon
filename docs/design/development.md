@@ -121,7 +121,7 @@ types, Cut restrictions and omitted/error-value guards remain in force.
 ## Everyday use
 
 Data → Tables and queries opens the initial structured-table workbench. Create
-an empty table with named typed columns, inspect its schema, drop an empty table,
+an empty table with named typed columns, inspect its schema, review a table drop,
 or return to sheets. The first table write upgrades native storage to v4;
 File → Save a copy can preserve a version for older readers before upgrading.
 Table creation/drop run required `on_table_structure` hooks. A sheet-only handler
@@ -129,8 +129,9 @@ must explicitly opt in before these operations are allowed.
 
 Managed CLI commands `tables`, `table-create NAME` (a column-definition JSON array
 on stdin) and `table-drop NAME` use the same REST engine. SDK callers use
-`book.tables()`, `create_table(name, columns)` and `drop_table(name)`. Populated
-table editing and SQL querying remain later tasks in the current implementation.
+`book.tables()`, `create_table(name, columns)` and `drop_table(name)`. A populated
+drop requires `allow_data_loss=True` (CLI `--allow-data-loss`). Record editing and
+SQL querying remain later tasks in the current implementation.
 
 Data → Create table from selection now reviews the explicit source rectangle,
 header choice, column types and conversion policy. A second preview freezes one
@@ -152,6 +153,20 @@ pages records. CLI `table-from-range NAME` reads scope/options JSON on stdin and
 returns a preview; `--apply` creates its reviewed snapshot in the same session.
 File-mode preview handles expire at command exit; use an attached service or
 `--apply` for creation. An example scope is `{"r1":1,"c1":1,"r2":4,"c2":4}`.
+
+Edit table columns reviews renaming, types, required/unique constraints and
+explicit column removal. New columns start nullable; a later review can require
+values after they have been populated. Apply uses a state-bound digest and one
+transactional rebuild, preserving row/column IDs and identity high-water marks.
+A preparatory hook that changes conversion source rows rejects the operation
+rather than having its edits overwritten. Type/add/drop effects run table-change
+hooks, whose `schema_changed` flag and `table_schema(..., phase='before')` expose
+the original semantics. Constraint-only changes use structural hooks.
+
+SDK `preview_table_schema(table, columns, **options)` and `alter_table(preview)`
+share CLI `table-schema TABLE` / `--apply` and the GUI. Retained columns require
+their catalog IDs; omitted column IDs must match explicit `drop_columns` review.
+Conversion policy is strict or invariant. Oversized rebuilds reject atomically.
 
 New creates a recoverable untitled native workbook. Submitted edits store
 automatically. Save a copy creates a consistent snapshot at a new path. First

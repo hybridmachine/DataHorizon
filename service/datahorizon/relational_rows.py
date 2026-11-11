@@ -63,8 +63,9 @@ def put(book,item,row_id,values):
     require(len(book.table_record_keys)<=10000,'LIMIT','An operation affects at most 10,000 records')
     original=book.changes.get(key,[before,after])[0];book.changes[key]=[original,after]
     pending_original=book.pending_tables.get(key,{}).get('before',before)
-    if pending_original==after:book.pending_tables.pop(key,None)
-    else:book.pending_tables[key]=dict(table=item['id'],row_id=row_id,before=pending_original,after=after)
+    schema_changed=book.pending_tables.get(key,{}).get('schema_changed',False)
+    if pending_original==after and not schema_changed:book.pending_tables.pop(key,None)
+    else:book.pending_tables[key]=dict(table=item['id'],row_id=row_id,before=pending_original,after=after,schema_changed=schema_changed)
     return row_id
 
 
@@ -74,6 +75,11 @@ def insert(book,item,values):
 
 
 def dispatch(book,method,args):
+    if method=='table_schema' and args.get('phase','current')=='before':
+        identifier=args.get('table');require(isinstance(identifier,str),'INVALID_ARGUMENT','A table name or ID is required')
+        item=next((item for item in book.relational_before.values() if item['id']==identifier or item['name'].lower()==identifier.lower()),None)
+        require(item is not None,'TABLE_NOT_FOUND','Table did not exist before this operation',404);return item
+    if method=='table_schema':require(args.get('phase','current')=='current','INVALID_ARGUMENT','Schema phase is current or before')
     item=table(book.db,args.get('table'))
     if method=='table_schema':return item
     if method=='table_get':return dict(row_id=args.get('row_id'),values=raw(book,item,args.get('row_id')))

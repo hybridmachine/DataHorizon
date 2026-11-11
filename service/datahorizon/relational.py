@@ -14,7 +14,7 @@ from .hooks import invoke, supports_event
 SCHEMA = '''CREATE TABLE dh_relational (kind TEXT NOT NULL, id TEXT NOT NULL,
  payload TEXT NOT NULL, PRIMARY KEY(kind,id)) WITHOUT ROWID;'''
 TYPES = ('text','integer','number','boolean','date','time','datetime')
-STRUCTURAL = {'table_create','table_drop','table_promote'}
+STRUCTURAL = {'table_create','table_drop','table_promote','table_schema'}
 ACTIONS = set(STRUCTURAL)
 MAX_INTEGER = 2**53-1
 
@@ -176,12 +176,15 @@ def structure_hook(book,request,phase,before):
     if not book.handler:return
     require(supports_event(book.handler,'on_table_structure'),'UNSUPPORTED_HOOK_SCOPE','Required handler must explicitly define on_table_structure(context,event)')
     event=dict(phase=phase,action=request['action'],origin='managed',operation_id=request['operation_id'],
-               arguments={key:request[key] for key in ('table','name','columns','sheet','r1','c1','r2','c2','header','conversion_policy') if key in request},
+               arguments={key:request[key] for key in ('table','name','columns','sheet','r1','c1','r2','c2','header','conversion_policy','drop_columns','allow_data_loss') if key in request},
                before=before,after=tables(book.db) if phase=='after' else None)
     invoke(book.handler,event,request['operation_id'],book.hook_dispatch,book.deadline,event='on_table_structure')
 
 
 def mutate(book,request):
+    if request['action']=='table_schema':
+        from .table_schema import apply
+        return apply(book,request)
     action=request['action'];before=tables(book.db)
     prepared=None
     if action=='table_promote':
@@ -204,7 +207,16 @@ def mutate(book,request):
             result['created_records']=len(prepared['records'])
     elif action=='table_drop':
         item=table(book.db,request.get('table'))
-        require(book.db.execute('SELECT 1 FROM '+quote(item['name'])+' LIMIT 1').fetchone() is None,'TABLE_NOT_EMPTY','Only an empty table can be dropped in this tier')
+        from .relational_rows import raw
+        from .table_schema import capture
+        from .engine import boolean
+        permitted=boolean(request.get('allow_data_loss',False),'allow_data_loss');rows=[]
+        limit=10000//len(item['columns'])
+        for (identity,) in book.db.execute('SELECT "_dh_row_id" FROM '+quote(item['name'])+' LIMIT ?',(limit+1,)):
+            book.check_operation();require(permitted,'TABLE_NOT_EMPTY','Explicitly review data loss before dropping a populated table')
+            require(len(rows)<limit,'LIMIT','Table deletion exceeds 10,000 affected scalar fields')
+            rows.append((str(identity),raw(book,item,str(identity))))
+        for identity,before in rows:capture(book,item,identity,before,None)
         book.db.execute('DROP TABLE '+quote(item['name']));book.db.execute("DELETE FROM dh_relational WHERE kind='table' AND id=?",(item['id'],));result={}
     else:raise EngineError('UNSUPPORTED_OPERATION','Unsupported table operation')
     structure_hook(book,request,'after',before)

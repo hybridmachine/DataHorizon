@@ -640,6 +640,7 @@ void MainWindow::buildUi() {
     m_relational=new RelationalWorkbench(m_client,this);m_objectStack->addWidget(m_relational);setCentralWidget(m_objectStack);
     connect(m_relational,&RelationalWorkbench::submitRequested,this,&MainWindow::submit);
     connect(m_relational,&RelationalWorkbench::issue,this,&MainWindow::issue);
+    connect(m_relational,&RelationalWorkbench::busyRequested,this,[this](bool busy){setBusy(busy);});
     connect(m_relational,&RelationalWorkbench::sheetsRequested,this,[this]{showRelational(false);});
     m_status = new QLabel(tr("Starting local service…")); m_status->setAccessibleName(tr("Storage and calculation status"));
     m_status->setObjectName("storageStatus");
