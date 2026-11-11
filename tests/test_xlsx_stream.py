@@ -371,6 +371,118 @@ class StreamingReaderTests(unittest.TestCase):
             self.stream(workbook_bytes({"A": rows}), sink=sink, checkpoint=checkpoint)
         self.assertLessEqual(sum(len(c) for _, c in sink.sheets), 2000)
 
+    def test_a_deferred_member_on_a_checkpoint_boundary_still_checkpoints(self):
+        rows = "".join(f'<row r="{r}"><c r="A{r}"><f t="shared" si="0"/><v>0</v></c></row>' if r % 1000 == 0
+                       else f'<row r="{r}"><c r="A{r}"><v>{r}</v></c></row>' for r in range(1, 3001))
+        rows += '<row r="3001"><c r="A3001"><f t="shared" ref="A1:A3001" si="0">1+1</f><v>2</v></c></row>'
+        calls = []
+        sink, _ = self.stream(workbook_bytes({"S": rows}), checkpoint=lambda done, phase: calls.append((done, phase)))
+        self.assertEqual(len(sink.sheets[0][1]), 3001)
+        for done in (1000, 2000, 3000): self.assertIn((done, "Reading cells"), calls)
+
+    def test_resolving_deferred_members_checkpoints_and_can_be_cancelled(self):
+        class Cancelled(Exception): pass
+        rows = "".join(f'<row r="{r}"><c r="A{r}"><f t="shared" si="0"/></c></row>' for r in range(1, 2501))
+        rows += '<row r="2501"><c r="A2501"><f t="shared" ref="A1:A2501" si="0">1+1</f></c></row>'
+        data = workbook_bytes({"S": rows})
+        calls = []
+        sink, _ = self.stream(data, checkpoint=lambda done, phase: calls.append((done, phase)))
+        self.assertEqual(len(sink.sheets[0][1]), 2501)
+        self.assertEqual([c for c in calls if c[1] == "Resolving shared formulas"],
+                         [(2501, "Resolving shared formulas")]*3)
+        sink = ListSink()
+
+        def checkpoint(done, phase):
+            if phase == "Resolving shared formulas": raise Cancelled()
+        with self.assertRaises(Cancelled): self.stream(data, sink=sink, checkpoint=checkpoint)
+        self.assertLess(sum(len(c) for _, c in sink.sheets), 2501)
+
+    def test_deferred_members_keep_only_what_conversion_needs(self):
+        sheet = ('<row r="1"><c r="A1" t="inlineStr" s="0"><f t="shared" si="0"/><is><r><t>cached</t></r></is>'
+                 '<extLst><ext uri="x"><big>'+"y"*5000+'</big></ext></extLst></c></row>'
+                 '<row r="2"><c r="A2"><f t="shared" ref="A1:A2" si="0">WEBSERVICE("u")</f><v>1</v></c></row>')
+        data = workbook_bytes({"S": sheet})
+        tree = xlsx_preview({"file_base64": b64(data), "scope": "workbook", "mode": "mixed"})
+        sink, report = self.stream(data)
+        self.assertEqual(sorted(sink.sheets[0][1], key=lambda c: c["row"]), tree["workbook_sheets"][0]["cells"])
+        self.assertEqual(report.entries(), tree["report_entries"])
+        many = "".join(f'<row r="{r}"><c r="A{r}" t="str"><f t="shared" si="0"/><v>{"z"*1000}</v></c></row>' for r in range(1, 21))
+        many += '<row r="21"><c r="A21"><f t="shared" ref="A1:A21" si="0">1</f></c></row>'
+        with mock.patch.object(xlsx_stream, "DEFERRED_BYTES", 20*1000+2000): self.stream(workbook_bytes({"S": many}))
+        with mock.patch.object(xlsx_stream, "DEFERRED_BYTES", 15*1000): self.rejects("LIMIT", self.stream, workbook_bytes({"S": many}))
+
+    def test_report_entries_from_deferred_members_agree_up_to_sample_order(self):
+        sheet = ''.join(f'<row r="{r}"><c r="A{r}"><f t="shared" si="0"/><v>{r}</v></c><c r="B{r}"><f>WEBSERVICE("b")</f><v>{r}</v></c>'
+                        f'<c r="C{r}" t="b"><v>7</v></c></row>' for r in range(1, 4))
+        sheet += '<row r="4"><c r="A4"><f t="shared" ref="A1:A4" si="0">WEBSERVICE(B4)</f><v>4</v></c><c r="C4" t="b"><v>9</v></c></row>'
+        data = workbook_bytes({"S": sheet})
+        tree = xlsx_preview({"file_base64": b64(data), "scope": "workbook", "mode": "mixed"})
+        sink, report = self.stream(data)
+
+        def normal(entries):
+            return [{**e, "samples": sorted(e["samples"], key=lambda x: (x["sheet"], x["cell"]))} for e in entries]
+        self.assertNotEqual(report.entries(), tree["report_entries"])  # the samples arrive in another order
+        self.assertEqual(normal(report.entries()), normal(tree["report_entries"]))
+        self.assertEqual(sorted(sink.sheets[0][1], key=lambda c: (c["row"], c["col"])),
+                         sorted(tree["workbook_sheets"][0]["cells"], key=lambda c: (c["row"], c["col"])))
+
+    # Per-record byte bound.
+    def assert_bounded_rejection(self, data):
+        path = self.write(data)
+        tracemalloc.start()
+        try:
+            with self.assertRaises(EngineError) as raised:
+                read_workbook(path, {"mode": "mixed"}, CountingSink(), lambda *_: None)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(raised.exception.body["code"], "LIMIT", raised.exception.body)
+        self.assertLess(peak, 16*1024*1024)
+        return raised.exception
+
+    def test_one_huge_cell_or_shared_string_rejects_in_bounded_memory(self):
+        big = "x"*(2*1024*1024)
+        for data in (workbook_bytes({"S": f'<row r="1"><c r="A1"><v>{big}</v></c></row>'}),
+                     workbook_bytes({"S": f'<row r="1"><c r="A1" t="inlineStr"><is><t>{big}</t></is></c></row>'}),
+                     workbook_bytes({"S": ""}, shared_strings=["a", big])):
+            error = self.assert_bounded_rejection(data)
+            self.assertEqual(str(error), "A single cell or shared string exceeds 1 MiB of XML")
+        self.assert_bounded_rejection(workbook_bytes({"S": f'<row r="1">{big}<c r="A1"><v>1</v></c></row>'}))
+
+    def test_long_cells_within_the_bound_import_as_before(self):
+        sheet = f'<row r="1"><c r="A1" t="inlineStr"><is><t>{"a"*60000}</t></is></c><c r="B1" t="str"><v>{"b"*70000}</v></c></row>'
+        sink, report = self.assert_agree(workbook_bytes({"S": sheet}))
+        self.assertEqual([len(c["source"]) for c in sink.sheets[0][1]], [60000])
+        self.assertEqual([e["category"] for e in report.entries()], ["cell.text_too_long"])
+
+    def test_a_row_of_16384_cells_is_not_a_single_record(self):
+        from datahorizon.formula import address
+        row = '<row r="1">'+"".join(f'<c r="{address(1, c)}"><v>{c}{"0"*60}</v></c>' for c in range(1, 16385))+'</row>'
+        sink, _ = self.stream(workbook_bytes({"S": row}))
+        self.assertEqual(len(sink.sheets[0][1]), 16384)
+
+    def test_held_element_limit_names_its_cause(self):
+        sheet = '<row r="1"><c r="A1"><v>1</v></c></row>'
+        data = replace_part(workbook_bytes({"S": sheet}), "xl/worksheets/sheet1.xml",
+                            SHEET_OPEN+sheet+'</sheetData><extLst><ext uri="u"><x>'+"<y/>"*50+"</x></ext></extLst></worksheet>")
+        with mock.patch.object(xlsx_stream, "MAX_HELD", 40):
+            error = self.rejects("LIMIT", self.stream, data)
+        self.assertIn("extension block holds too many elements", str(error))
+
+    def test_whole_read_parts_must_be_utf8(self):
+        base = rich_package()
+        for part in ("xl/workbook.xml", "xl/_rels/workbook.xml.rels", "xl/styles.xml"):
+            with zipfile.ZipFile(io.BytesIO(base)) as archive: text = archive.read(part)
+            data = replace_part(base, part, b'<?xml version="1.0" encoding="ISO-8859-1"?>'+text)
+            with self.subTest(part=part): self.rejects("INVALID_SPREADSHEET", self.stream, data)
+        self.stream(replace_part(base, "xl/styles.xml", b'<?xml version="1.0" encoding="UTF-8"?>'+STYLES.format(ns=TRANSITIONAL.main).encode()))
+
+    def test_missing_package_file_is_invalid_without_echoing_the_path(self):
+        missing = Path(self.directory.name)/"secret-folder"/"absent.xlsx"
+        error = self.rejects("INVALID_SPREADSHEET", open_package, missing)
+        self.assertNotIn("secret-folder", str(error))
+        self.assertNotIn("secret-folder", str(error.body))
+
     def test_fifty_thousand_cells_stream_in_bounded_memory(self):
         path = Path(self.directory.name)/"large.xlsx"
         reference = workbook_bytes({"Big": ""}, shared_strings=["one", "two"])

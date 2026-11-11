@@ -26,12 +26,17 @@ LARGE_PACKAGE = 64*1024*1024
 LARGE_SHEETS = 255
 LARGE_PARTS = 4096
 DEFERRED_MEMBERS = 10_000  # shared-formula members met before their master, per sheet
+DEFERRED_BYTES = 16*1024*1024  # text kept for those members, per sheet
 BATCH = 1000
 CHUNK = 65536
+SLICE = 4096  # bytes fed to the parser between bound checks
 MAX_DEPTH = 64
 # Elements attached to the tree at once: the open ancestors plus one unfinished record. A part within the
 # tree reader's 100,000-node bound never reaches it; it stops one huge record from exhausting memory.
 MAX_HELD = 100_000
+# Raw XML bytes of one record (a <c>, an <si>, or any other element at the record depth), and of the text
+# between two consecutive tags anywhere. Together they bound what the parser holds. Measured to within SLICE.
+MAX_RECORD_BYTES = 1024*1024
 
 _FORBIDDEN = (b"<!DOCTYPE", b"<!ENTITY")
 _OVERLAP = max(len(item) for item in _FORBIDDEN)-1
@@ -68,9 +73,13 @@ class ByteBudget:
 def open_package(path: Path) -> zipfile.ZipFile:
     """Open a package from disk with the entry, encryption and compression checks of interchange.package."""
     path = Path(path)
-    require(path.stat().st_size <= LARGE_PACKAGE, "LIMIT", f"Spreadsheet package exceeds {LARGE_PACKAGE//(1024*1024)} MiB")
+    try: size = path.stat().st_size
+    except OSError as error: raise EngineError("INVALID_SPREADSHEET", "Spreadsheet package cannot be read") from error
+    require(size <= LARGE_PACKAGE, "LIMIT", f"Spreadsheet package exceeds {LARGE_PACKAGE//(1024*1024)} MiB")
     try:
         archive = zipfile.ZipFile(path)
+    except OSError as error:
+        raise EngineError("INVALID_SPREADSHEET", "Spreadsheet package cannot be read") from error
     except (ValueError, EOFError, zipfile.BadZipFile) as error:
         raise EngineError("INVALID_SPREADSHEET", "Invalid spreadsheet ZIP data") from error
     try:
@@ -101,11 +110,14 @@ def read_part(archive, name, budget: ByteBudget, *, record_depth=2) -> Iterator[
 
     Once its "end" event has been consumed, an element at depth 2..record_depth (the root is depth 1) is
     detached from its parent, together with its subtree; deeper elements stay attached until then, so a
-    consumer handling records at record_depth sees each record complete. Hold a reference to keep one."""
+    consumer handling records at record_depth sees each record complete. Hold a reference to keep one.
+
+    A record longer than MAX_RECORD_BYTES of XML, or text longer than that between two tags, rejects the
+    part with LIMIT, so the parser never holds more than about that much of one record's text."""
     try:
         with archive.open(name) as stream:
             parser = ET.XMLPullParser(events=("start", "end"))
-            state = {"stack": [], "held": 0}
+            state = _PartState(record_depth)
             tail = b""; first = True
             while chunk := stream.read(CHUNK):
                 budget.charge(len(chunk))
@@ -114,41 +126,72 @@ def read_part(archive, name, budget: ByteBudget, *, record_depth=2) -> Iterator[
                 require(b"\0" not in chunk and not any(marker in window for marker in _FORBIDDEN),
                         "INVALID_SPREADSHEET", _INVALID_XML)
                 tail = window[-_OVERLAP:]
-                parser.feed(chunk)
-                yield from _events(parser, state, record_depth)
+                for offset in range(0, len(chunk), SLICE):
+                    piece = chunk[offset:offset+SLICE]
+                    parser.feed(piece)
+                    state.fed += len(piece)
+                    yield from state.events(parser)
+                    state.check()
             parser.close()
-            yield from _events(parser, state, record_depth)
+            yield from state.events(parser)
     except (KeyError, ET.ParseError, zipfile.BadZipFile, zlib.error, EOFError, RuntimeError, NotImplementedError) as error:
         raise EngineError("INVALID_SPREADSHEET", f"Invalid or missing XML part: {name}") from error
 
 
-def _events(parser, state, record_depth):
-    stack = state["stack"]
-    for event, item in parser.read_events():
-        if event == "start":
-            stack.append(item)
-            state["held"] += 1
-            require(len(stack) <= MAX_DEPTH and state["held"] <= MAX_HELD, "LIMIT", "XML structure exceeds the supported bounds")
-            yield event, item
-        else:
-            stack.pop()
-            yield event, item
-            if 1 <= len(stack) < record_depth:
-                stack[-1].remove(item)
-                state["held"] -= sum(1 for _ in item.iter())
+class _PartState:
+    """Open elements and the byte positions read_part bounds; positions are taken after each fed slice."""
+    def __init__(self, record_depth):
+        self.record_depth = record_depth
+        self.stack = []
+        self.held = 0
+        self.fed = 0           # bytes fed to the parser so far
+        self.last_tag = 0      # fed when the latest tag was reported
+        self.record = None     # (fed when the open record began, its tag)
+
+    def check(self):
+        if self.record is not None and self.fed-self.record[0] > MAX_RECORD_BYTES:
+            local = self.record[1].rsplit("}", 1)[-1]
+            raise EngineError("LIMIT", "A single cell or shared string exceeds 1 MiB of XML" if local in ("c", "si")
+                              else f"A worksheet record <{local}> exceeds 1 MiB of XML")
+        require(self.fed-self.last_tag <= MAX_RECORD_BYTES, "LIMIT", "Text between two XML tags exceeds 1 MiB")
+
+    def events(self, parser):
+        stack = self.stack
+        for event, item in parser.read_events():
+            self.last_tag = self.fed
+            if event == "start":
+                stack.append(item)
+                self.held += 1
+                require(len(stack) <= MAX_DEPTH, "LIMIT", "XML nesting exceeds 64 levels")
+                require(self.held <= MAX_HELD, "LIMIT",
+                        "XML structure exceeds the supported bounds: a worksheet extension block holds too many elements")
+                if len(stack) == self.record_depth: self.record = (self.fed, item.tag)
+                yield event, item
+            else:
+                if len(stack) == self.record_depth: self.record = None
+                stack.pop()
+                yield event, item
+                if 1 <= len(stack) < self.record_depth:
+                    stack[-1].remove(item)
+                    self.held -= sum(1 for _ in item.iter())
 
 
-def _charge_whole(archive, name, budget):
-    """Charge a small part (workbook, relationships, styles) that interchange.read_xml parses whole."""
-    try: size = archive.getinfo(name).file_size
-    except KeyError as error: raise EngineError("INVALID_SPREADSHEET", f"Invalid or missing XML part: {name}") from error
-    # zipfile never yields more than the declared size, so this is the most the read can produce.
-    require(size <= MAX_EXPANDED, "LIMIT", f"Workbook part exceeds {MAX_EXPANDED//(1024*1024)} MiB: {name}")
-    budget.charge(size)
+def _admit_whole(archive, name, budget):
+    """Charge and pre-check a small part (workbook, relationships, styles) that interchange.read_xml parses whole.
+
+    read_xml does not check the XML declaration, so the streaming path applies read_part's UTF-8 rule here."""
+    try:
+        size = archive.getinfo(name).file_size
+        # zipfile never yields more than the declared size, so this is the most the read can produce.
+        require(size <= MAX_EXPANDED, "LIMIT", f"Workbook part exceeds {MAX_EXPANDED//(1024*1024)} MiB: {name}")
+        budget.charge(size)
+        with archive.open(name) as stream: _check_declaration(stream.read(CHUNK))
+    except (KeyError, zipfile.BadZipFile, zlib.error, EOFError, RuntimeError, NotImplementedError) as error:
+        raise EngineError("INVALID_SPREADSHEET", f"Invalid or missing XML part: {name}") from error
 
 
 def _read_whole(archive, name, budget):
-    _charge_whole(archive, name, budget)
+    _admit_whole(archive, name, budget)
     return read_xml(archive, name)
 
 
@@ -164,13 +207,40 @@ class _SpooledStrings:
 
 
 class _Progress:
+    """Stored cells read so far, and units of work (a cell read, or a deferred cell resolved) between checkpoints."""
     def __init__(self, checkpoint):
         self.checkpoint = checkpoint
         self.cells = 0
+        self.work = 0
 
     def cell(self):
         self.cells += 1
         require(self.cells <= LARGE_CELLS, "LIMIT", f"Whole-workbook import exceeds {LARGE_CELLS:,} stored cells")
+
+    def step(self, flush, phase):
+        """Count one unit of work; every 1,000 units, flush pending edits to the sink and checkpoint."""
+        self.work += 1
+        if self.work % BATCH == 0:
+            flush()
+            self.checkpoint(self.cells, phase)
+
+
+def _deferred_copy(cell):
+    """A detached copy of a deferred member with only what convert_xlsx_cell reads, and its text size."""
+    copy = ET.Element(cell.tag, dict(cell.attrib))
+    size = sum(len(k)+len(v) for k, v in cell.attrib.items())
+    for child in cell:
+        local = child.tag.rsplit("}", 1)[-1]
+        if local in ("f", "v"):
+            kept = ET.SubElement(copy, child.tag, dict(child.attrib))
+            kept.text = child.text
+            size += len(child.text or "")+sum(len(k)+len(v) for k, v in child.attrib.items())
+        elif local == "is":
+            kept = ET.fromstring(ET.tostring(child))
+            for item in kept.iter(): item.tail = None
+            copy.append(kept)
+            size += sum(len(item.text or "") for item in kept.iter())
+    return copy, size
 
 
 def _read_shared_strings(archive, path, budget, ns, store, checkpoint):
@@ -195,13 +265,16 @@ def _read_sheet(archive, path, budget, context, sink, progress):
     root, sheet_data, row, cell = (f"{{{ns.main}}}{tag}" for tag in ("worksheet", "sheetData", "row", "c"))
     shared = context.shared_formulas
     batch, deferred, tags = [], [], []
+    deferred_bytes = 0
+
+    def flush():
+        if batch: sink.cells(batch[:]); batch.clear()
 
     def emit(item):
         edit = convert_xlsx_cell(item, context=context)
         if edit is None: return
         batch.append(edit)
-        if len(batch) == BATCH:
-            sink.cells(batch[:]); batch.clear()
+        if len(batch) == BATCH: flush()
 
     for event, item in read_part(archive, path, budget, record_depth=4):
         if event == "start":
@@ -218,14 +291,19 @@ def _read_sheet(archive, path, budget, context, sink, progress):
                 # Resolved once the sheet's masters are known; a group still without one rejects the file there.
                 require(len(deferred) < DEFERRED_MEMBERS, "LIMIT",
                         f"More than {DEFERRED_MEMBERS:,} shared formula members precede their master in one sheet")
-                deferred.append(item)
+                kept, size = _deferred_copy(item)
+                deferred_bytes += size
+                require(deferred_bytes <= DEFERRED_BYTES, "LIMIT",
+                        f"Shared formula members preceding their master hold more than {DEFERRED_BYTES//(1024*1024)} MiB of text in one sheet")
+                deferred.append(kept)
+                progress.step(flush, "Reading cells")
                 continue
         emit(item)
-        if progress.cells % BATCH == 0:
-            if batch: sink.cells(batch[:]); batch.clear()
-            progress.checkpoint(progress.cells, "Reading cells")
-    for item in deferred: emit(item)
-    if batch: sink.cells(batch)
+        progress.step(flush, "Reading cells")
+    for item in deferred:
+        emit(item)
+        progress.step(flush, "Resolving shared formulas")
+    flush()
 
 
 def scope_lines(request) -> list[str]:
@@ -234,7 +312,12 @@ def scope_lines(request) -> list[str]:
 
 
 def read_workbook(path: Path, request: dict, sink: Sink, checkpoint: Callable[[int, str], None]) -> ConversionReport:
-    """Read every sheet of the package at `path` into `sink` at original coordinates; return the report."""
+    """Read every sheet of the package at `path` into `sink` at original coordinates; return the report.
+
+    Within the tree reader's limits, the sheets, cells and report entries agree with interchange.xlsx_preview at
+    workbook scope, with one exception: a shared-formula member stored before its master is converted at the
+    end of its sheet, so its cell reaches the sink after later cells, and the samples of the report entries it
+    contributes (and the order of entries that tie when sorted) can differ from the tree reader's."""
     selected_mode = mode(request)
     policy = request.get("timezone_policy", "reject")
     require(policy in ("reject", "utc"), "INVALID_ARGUMENT", "Choose reject or utc timestamp policy")
@@ -253,7 +336,7 @@ def read_workbook(path: Path, request: dict, sink: Sink, checkpoint: Callable[[i
         count = _read_shared_strings(archive, shared_path, budget, ns, sink.strings, checkpoint) if shared_path else 0
         strings = _SpooledStrings(sink.strings, count)
         style_path = styles_path(archive, relationships, ns)
-        if style_path in archive.namelist(): _charge_whole(archive, style_path, budget)
+        if style_path in archive.namelist(): _admit_whole(archive, style_path, budget)
         styles = XlsxStyles(archive, style_path, ConversionReport(), ns)
         conversions = ConversionReport()
         progress = _Progress(checkpoint)
