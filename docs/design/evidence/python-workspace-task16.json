@@ -112,8 +112,7 @@
     "full_acceptance_run": {
       "command": "QT_SCALE_FACTOR=<1|2> build/native_acceptance <report>.json",
       "passed": false,
-      "observed": "Exited 1 at both scale requests with 'Job dialog did not acquire native window activation' (the existing operation-jobs dialog check, before the pythonWorkspace scenario is reached). The process could not take native window activation in this session; the workspace-only run does not require it and passed.",
-      "attempts": 3
+      "observed": "Exited 1 at both scale requests with 'Job dialog did not acquire native window activation' (the existing operation-jobs dialog check, before the pythonWorkspace scenario is reached). The process could not take native window activation in this session; the workspace-only run does not require it and passed."
     },
     "notes": [
       "QTest events are synthetic; this is not physical input.",
@@ -204,6 +203,7 @@
   },
   "not_run": [
     "Full native_acceptance run to completion: the pre-existing job-dialog window-activation check failed in this session at scale requests 1 and 2, so the general keyboard/clipboard/dialog checks did not complete; the pythonWorkspace scenario was run alone and passed at both scale requests.",
+    "The pythonWorkspace scenario's call inside the default full native_acceptance run has never executed: the full run fails earlier on the job-dialog window-activation check in this environment, so the scenario has only run on its own.",
     "The storyboard session in the installed application bundle by a person, without a terminal (design section 12): not performed. The native scenario drives the development build with synthetic QTest input.",
     "Physical keyboard/mouse input and VoiceOver acceptance of the workspace window.",
     "The full Python suite on the installed bundled runtime (the previous batch's bundled_python run); only the example and package smoke ran on it.",
@@ -227,5 +227,90 @@
     "Main-window action shortcuts still active while picking",
     "Debouncing the tables-view Cancel",
     "Physical input, VoiceOver, Windows/Linux and release gates"
-  ]
+  ],
+  "final_fix_wave": {
+    "date": "2026-11-11",
+    "code_commit": "e628c93 (HEAD before this evidence edit; contains all code, test and design-document changes of the fix wave)",
+    "evidence_commit": "The commit that edits this file; its SHA is not known while writing it",
+    "evidence_corrections": [
+      "Removed native.full_acceptance_run.attempts: the Task 16 report does not record a number of attempts.",
+      "Added to not_run that the pythonWorkspace scenario's call inside the default full native_acceptance run has never executed.",
+      "Re-hashed source.task16_files_tested against commit 0b09ee8 with git show | shasum -a 256 and git cat-file -s: all three bytes and SHA-256 values match; none changed."
+    ],
+    "resolves": [
+      "findings[0]: selection-scope XLSX/ODS reports now list names and bindings as native-only omissions; selection CSV export reports list them too",
+      "remaining_scope 'Main-window action shortcuts still active while picking': editing commands are disabled while Pick from sheet is armed"
+    ],
+    "verification": {
+      "python": {
+        "command": "PYTHONPATH=service python3 -m unittest discover -s tests",
+        "tests_run": 717,
+        "optional_skips": 23,
+        "failures": 0,
+        "errors": 0,
+        "seconds": 95.401,
+        "note": "Run on the working tree that became e628c93. Two ResourceWarning lines about unclosed SQLite connections also appear on 0b09ee8 (708 tests, 22 skips, 100.605 s)"
+      },
+      "optional_openapi_validators": {
+        "command": "PYTHONPATH=service build/review-validation-venv/bin/python -m unittest tests.test_names_clients tests.test_binding_clients tests.test_automation_openapi",
+        "tests_run": 17,
+        "failures": 0,
+        "seconds": 6.127
+      },
+      "build": {
+        "command": "cmake --build build --parallel",
+        "result": "succeeded"
+      },
+      "python_workspace_tests": {
+        "command": "QT_QPA_PLATFORM=offscreen DATAHORIZON_VIEW_STATE=$PWD/build/test-views.ini ./build/python_workspace_tests",
+        "runs": [
+          {
+            "passed": 72,
+            "failed": 0,
+            "ms": 60303
+          },
+          {
+            "passed": 72,
+            "failed": 0,
+            "ms": 60215
+          },
+          {
+            "passed": 72,
+            "failed": 0,
+            "ms": 60260
+          }
+        ]
+      },
+      "ctest": {
+        "command": "ctest --test-dir build --output-on-failure",
+        "tests": 4,
+        "passed": 4,
+        "seconds": 322.34,
+        "targets": {
+          "development_bundle_signature": 0.23,
+          "desktop": 165.49,
+          "python_workspace": 60.71,
+          "service": 95.91
+        },
+        "desktop_qt": {
+          "passed": 232,
+          "failed": 0
+        },
+        "python_workspace_qt": {
+          "passed": 72,
+          "failed": 0
+        },
+        "service_python": {
+          "tests_run": 717,
+          "optional_skips": 23,
+          "seconds": 95.682
+        },
+        "backgroundCalculationReportsSnapshotWithoutEdits": "passed (no flake in this run)"
+      }
+    },
+    "not_run": [
+      "Native acceptance (native_acceptance pythonWorkspace or the full run) was not re-run in the fix wave.",
+      "Package install and smoke were not re-run in the fix wave."
+    ]
+  }
 }
