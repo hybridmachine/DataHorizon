@@ -89,6 +89,8 @@ def apply(book,args):
     old=prepared['original'];target=prepared['table'];before_catalog=tables(book.db)
     from .table_indexes import dependencies,recreate
     dependencies(book,old,target)
+    from .query_views import schema_dependencies as query_dependencies
+    query_dependencies(book.db,old,target)
     from .relationships import schema_dependencies
     schema_dependencies(book,old,target)
     structure_hook(book,args,'before',before_catalog)

@@ -19,8 +19,29 @@ session history only on commit. Data-affecting conversions dispatch transactiona
 table-change events alongside structural events; hooks can inspect the prior
 schema with `context.table_schema(table, phase='before')`. Populated table drop
 requires explicit data-loss review. Rebuild/drop operations retain the ordinary
-10,000-field / 8-MiB before/after / five-second tier. Indexes, relationships,
-public record editing and SQL views follow in the relational implementation plan.
+10,000-field / 8-MiB before/after / five-second tier. Typed record operations share
+cell/record hooks and Undo/Redo. Full-table typed sort/filter uses authenticated
+keyset pages; registered indexes preserve dependencies. Relationships use native
+same-type RESTRICT foreign keys and owned indexes. Self/cyclic graphs and parent
+rebuilds with incoming relationships retain explicit restrictions. Restricted
+repair handles admit reviewed orphan fixes without replaying skipped handlers.
+
+Read-only SELECT/CTEs, joins, aggregates and named typed bindings run on private
+snapshots. Complete bounded query spools preserve label order, duplicate labels
+and exact large-integer tags. Saved definitions retain stable IDs, declarations,
+explicit defaults, dependencies and result shape. Opening a definition does not
+run it. Saved views are named definitions/results, not SQLite CREATE VIEW objects
+or editable/materialized tables. SQL mutations remain unavailable.
+
+Table/filter and completed-query CSV/XLSX/ODS export reads the complete frozen
+scope, independent of the displayed page. This first interchange tier allows
+10,000 values including headers and a 4-MiB response; larger exports reject
+without truncation. Exact integers with more than 15 decimal digits use reviewed
+Text fallback. Tables retain Boolean/temporal kinds; SQL expressions retain raw
+SQLite scalar kinds. CSV is untyped, collapses NULL/empty Text and has no temporal
+companion in this relational tier. XLSX/ODS retain supported explicit values and
+literal Text. Reports name actual omitted native objects. Native Save/copy keeps
+definitions, keys, relationships, indexes and data.
 
 ## Formula surface
 

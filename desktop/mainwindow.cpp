@@ -652,6 +652,7 @@ void MainWindow::buildUi() {
     connect(m_relational,&RelationalWorkbench::issue,this,&MainWindow::issue);
     connect(m_relational,&RelationalWorkbench::busyRequested,this,[this](bool busy){setBusy(busy);});
     connect(m_relational,&RelationalWorkbench::sheetsRequested,this,[this]{showRelational(false);});
+    connect(m_relational,&RelationalWorkbench::refreshRequested,this,[this]{refresh();});connect(m_relational,&RelationalWorkbench::sheetSelected,this,[this](const QString &id){showRelational(false);for(int i=0;i<m_tabs->count();++i)if(m_tabs->tabData(i).toString()==id){m_tabs->setCurrentIndex(i);break;}});
     m_status = new QLabel(tr("Starting local service…")); m_status->setAccessibleName(tr("Storage and calculation status"));
     m_status->setObjectName("storageStatus");
     statusBar()->addWidget(m_status, 1);
@@ -1233,6 +1234,7 @@ void MainWindow::newBook() {
 void MainWindow::openBook(const QString &path, bool create, bool readonly,bool repair) {
     if(repair && m_refreshFailed && !m_unknown && m_pendingId.isEmpty())setBusy(false);
     if (m_busy || m_unknown) return;
+    if(!discardQueryDraft())return;
     if(m_queryClosing)return;
     if(m_relational->hasQueryJob()){
         m_queryClosing=true;m_relational->closeQuery([this,path,create,readonly,repair](QString error){m_queryClosing=false;if(!error.isEmpty()){issue(error);return;}openBook(path,create,readonly,repair);});return;
@@ -1404,7 +1406,7 @@ bool MainWindow::preserveUnknownOperation() {
     if (!QDir().mkpath(dir)) { issue("Cannot create operation recovery directory: "+dir); return false; }
     if (m_recoveryRecord.isEmpty()) m_recoveryRecord=dir+"/operation-"+QUuid::createUuid().toString(QUuid::WithoutBraces)+".json";
     QSaveFile file(m_recoveryRecord);
-    const auto data=QJsonDocument(QJsonObject{{"workbook_path",m_info["path"]},{"operation_id",m_pendingId},{"outcome","unknown"},{"editor_draft",m_recoveredDraft},{"table_draft",m_relational->retainedDraft()},
+    const auto data=QJsonDocument(QJsonObject{{"workbook_path",m_info["path"]},{"operation_id",m_pendingId},{"outcome","unknown"},{"editor_draft",m_recoveredDraft},{"table_draft",m_relational->retainedDraft()},{"query_draft",m_relational->queryDraft()},
         {"instructions","Reopen the workbook and look up this operation ID before retrying any mutation."}}).toJson();
     if (!file.open(QIODevice::WriteOnly)) { issue(file.errorString()); return false; }
     file.setPermissions(QFileDevice::ReadOwner|QFileDevice::WriteOwner);
@@ -2628,8 +2630,12 @@ void MainWindow::findDialog(bool replace) {
 void MainWindow::closeEvent(QCloseEvent *event) {
     if(m_allowJobClose){event->accept();return;}
     if(m_queryClosing){event->ignore();return;}
-    if(m_relational->hasQueryJob()){
-        event->ignore();m_queryClosing=true;m_relational->closeQuery([this](QString error){m_queryClosing=false;if(!error.isEmpty()){issue(tr("Query cleanup was not confirmed: %1").arg(error));return;}close();});return;
+    const bool skipQueryCleanup=m_skipQueryCleanup;m_skipQueryCleanup=false;
+    if(!skipQueryCleanup && !m_released && m_relational->hasQueryJob()){
+        event->ignore();m_queryClosing=true;m_relational->closeQuery([this](QString error){m_queryClosing=false;if(!error.isEmpty()){
+            const auto draft=m_relational->queryDraft();const auto job=draft["query_job"].toString();if(!preserveJobRecovery(m_info,job,{{"kind","read-only query"},{"error",error},{"query_draft",draft}}))return;
+            QMessageBox review(QMessageBox::Warning,tr("Close with unconfirmed query cleanup?"),tr("Query cancellation or private storage release was not confirmed. The query is read-only. Keep its job ID and recovery record before closing.\nWorkbook: %1\nQuery: %2\nRecovery: %3\n%4").arg(m_info["path"].toString(),job,m_jobRecoveryRecord,error),QMessageBox::Yes|QMessageBox::Cancel,this);review.setObjectName("unconfirmedQueryClose");review.setOption(QMessageBox::Option::DontUseNativeDialog);review.setDefaultButton(QMessageBox::Cancel);if(review.exec()!=QMessageBox::Yes)return;m_skipQueryCleanup=true;
+        }close();});return;
     }
     if(m_jobClosing){event->ignore();return;}
     if(!m_activeOperationJob.isEmpty()){
@@ -2666,6 +2672,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     if (!m_pendingId.isEmpty() || m_unknown || m_releasing) {
         issue("Wait for a known operation outcome before closing. Committed work remains in the native workbook."); event->ignore(); return;
     }
+    if(!discardQueryDraft()){event->ignore();return;}
     captureGridDraft(false);
     if(!m_relational->retainedDraft().isEmpty()){
         if(QMessageBox::question(this,tr("Discard table draft?"),tr("Discard the retained table input before closing? Stored records remain in the workbook."))!=QMessageBox::Yes){event->ignore();return;}
@@ -2687,6 +2694,12 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         return;
     }
     event->accept();
+}
+
+bool MainWindow::discardQueryDraft(){
+    if(!m_relational->hasUnsavedQuery())return true;
+    QMessageBox review(QMessageBox::Question,tr("Discard SQL definition draft?"),tr("Discard the unsubmitted SQL and parameter definition? Saved native queries and stored data remain."),QMessageBox::Yes|QMessageBox::Cancel,this);review.setObjectName("discardQueryDraft");review.setOption(QMessageBox::Option::DontUseNativeDialog);review.setDefaultButton(QMessageBox::Cancel);
+    if(review.exec()!=QMessageBox::Yes)return false;m_relational->discardQueryDraft();return true;
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {

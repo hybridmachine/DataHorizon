@@ -289,6 +289,41 @@ class WorkbookClient:
         self._ensure_open()
         return self.client.request(self.base+'/queries/jobs',dict(sql=sql,parameters=parameters or [],values=values or {},job_id=job_id or str(uuid.uuid4()),expected_state=self.state))
 
+    def preview_query(self,name,sql,*,parameters=None,defaults=None,query=None):
+        self._ensure_open()
+        return self.client.request(self.base+'/queries/preview',dict(name=name,sql=sql,parameters=parameters or [],defaults=defaults or {},expected_state=self.state,**({'query':query} if query else {})))
+
+    def save_query(self,preview):return self.apply('query_save',**preview['source_request'],review_digest=preview['review_digest'],expected_state=preview['state'])
+
+    def query_definition(self,query):
+        self._ensure_open()
+        return self.client.request(self.base+'/queries/read',dict(query=query,expected_state=self.state))
+
+    def rename_query(self,query,name):return self.apply('query_rename',query=query,name=name)
+
+    def delete_query(self,query):return self.apply('query_delete',query=query)
+
+    def run_saved_query(self,query,*,values=None,job_id=None):
+        self._ensure_open()
+        return self.client.request(self.base+'/queries/jobs',dict(query=query,values=values or {},job_id=job_id or str(uuid.uuid4()),expected_state=self.state))
+
+    def export_table(self,table,format='csv',**scope):
+        self._ensure_open()
+        if format not in ('csv','xlsx','ods'):raise ValueError('Choose CSV, XLSX or ODS')
+        return self.client.request(self.base+'/tables/export/'+format,dict(table=table,expected_state=self.state,**scope))
+
+    def export_query(self,job_id,format='csv',**scope):
+        self._ensure_open()
+        if format not in ('csv','xlsx','ods'):raise ValueError('Choose CSV, XLSX or ODS')
+        return self.client.request(self.base+'/queries/jobs/'+quote(job_id,safe='')+'/export/'+format,dict(expected_state=self.state,**scope))
+
+    def publish_export(self,snapshot,path,*,overwrite=False):
+        from .publication import publish
+        def current():
+            self.refresh()
+            if self.state!=snapshot.get('state'):raise ValueError('Stored inputs changed; review a fresh export before publication')
+        return publish(snapshot,path,self.info['path'],current=current,overwrite=overwrite)
+
     def query(self,job_id,action=None,**page):
         self._ensure_open()
         if action not in (None,'page','cancel','release'):raise ValueError('Unknown query action')
