@@ -8,6 +8,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QFile>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QLabel>
@@ -86,6 +87,29 @@ QPlainTextEdit *editor(PythonWorkspace *workspace){return workspace->findChild<Q
 QString issues(MainWindow &window){return window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText();}
 
 void save(PythonWorkspace *workspace){workspace->findChild<QAction *>("saveModuleAction")->trigger();}
+
+// Stores a module change through a second window and service on the same
+// file, the way another user or script would. Omit module to create one.
+bool competingSave(const StartupOptions &options,const QString &path,const QString &name,const QString &source,const QString &module={}) {
+    MainWindow other(options);if(!boot(other,path,false))return false;
+    const auto code=readCode(other);QSignalSpy finished(&other,&MainWindow::operationFinished);
+    QJsonObject request{{"action","module_save"},{"name",name},{"source",source},{"macros",QJsonArray{}},{"fingerprint",code["fingerprint"]}};
+    if(!module.isEmpty())request["module"]=module;
+    other.submit(request);
+    return QTest::qWaitFor([&]{return finished.count()==1;},10000) && finished[0][0].toBool();
+}
+
+bool refreshWindow(MainWindow &window) {
+    QSignalSpy opened(&window,&MainWindow::workbookReady);
+    for(auto *action:window.findChildren<QAction *>())if(action->text()=="Refresh stored data")action->trigger();
+    return QTest::qWaitFor([&]{return opened.count()>=1;},10000);
+}
+
+bool clickButton(QWidget *modal,const QString &dialog,const QString &button) {
+    if(modal->objectName()!=dialog)return false;
+    auto *target=modal->findChild<QPushButton *>(button);if(!target)return false;
+    target->click();return true;
+}
 
 const QString kDraft=QStringLiteral("Draft · not saved to the workbook");
 const QString kSaved=QStringLiteral("Saved in workbook");
@@ -192,6 +216,7 @@ private slots:
         for(auto *action:window.findChildren<QAction *>())if(action->text()=="Refresh stored data")action->trigger();
         QTRY_VERIFY_WITH_TIMEOUT(opened.count()>=1,10000);
         QTRY_COMPARE_WITH_TIMEOUT(workspace->findChild<QListWidget *>("moduleList")->count(),2,5000);
+        int conflicts=0;ModalDriver noConflict([&](QWidget *modal){if(modal->objectName()!="codeConflictDialog")return false;++conflicts;qobject_cast<QDialog *>(modal)->reject();return true;});
         save(workspace);
         QTRY_VERIFY_WITH_TIMEOUT(issues(window).contains("CODE_CHANGED"),10000);
         QCOMPARE(editor(workspace)->toPlainText(),typed);QCOMPARE(status(workspace),kDraft);QVERIFY(workspace->hasDrafts());
@@ -199,7 +224,53 @@ private slots:
         auto modules=readCode(window)["modules"].toArray();QCOMPARE(modules.size(),1);QCOMPARE(modules[0].toObject()["name"].toString(),QString("other"));
         // After reviewing what changed, saving again stores the draft beside the competing module.
         save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
-        modules=readCode(window)["modules"].toArray();QCOMPARE(modules.size(),2);
+        modules=readCode(window)["modules"].toArray();QCOMPARE(modules.size(),2);QCOMPARE(conflicts,0);
+        QVERIFY(!workspace->findChild<QLabel *>("workspaceConflict")->isVisible());
+    }
+
+    void sameModuleConflictCancelThenTakeStored() {
+        QTemporaryDir temp;const auto path=temp.filePath("conflict.dhwb");StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,path));
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("pens = 1\n");
+        save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
+        const auto id=readCode(window)["modules"].toArray()[0].toObject()["id"].toString();
+        editor(workspace)->setPlainText("pens = 2  # mine\n");
+        QVERIFY(competingSave(options,path,"supplies","pens = 3  # theirs\n",id));
+        QVERIFY(refreshWindow(window));
+        auto *banner=workspace->findChild<QLabel *>("workspaceConflict");QTRY_VERIFY_WITH_TIMEOUT(banner->isVisible(),5000);
+        QCOMPARE(editor(workspace)->toPlainText(),QString("pens = 2  # mine\n"));
+        // Unrelated actions do not clear the warning.
+        workspace->findChild<QAction *>("findAction")->trigger();workspace->findChild<QLineEdit *>("findField")->setText("zzz");
+        QTest::keyClick(workspace->findChild<QLineEdit *>("findField"),Qt::Key_Return);QVERIFY(banner->isVisible());
+        QString stored,mine,title;QString choice="conflictCancel";bool storedReadOnly=false;
+        ModalDriver driver([&](QWidget *modal){
+            if(modal->objectName()!="codeConflictDialog")return false;title=modal->windowTitle();
+            stored=modal->findChild<QPlainTextEdit *>("conflictStoredSource")->toPlainText();mine=modal->findChild<QPlainTextEdit *>("conflictDraftSource")->toPlainText();
+            storedReadOnly=modal->findChild<QPlainTextEdit *>("conflictStoredSource")->isReadOnly();
+            return clickButton(modal,"codeConflictDialog",choice);});
+        save(workspace);QCOMPARE(driver.handled,1);
+        QCOMPARE(title,QString("This module changed in the workbook"));QCOMPARE(stored,QString("pens = 3  # theirs\n"));QCOMPARE(mine,QString("pens = 2  # mine\n"));QVERIFY(storedReadOnly);
+        QCOMPARE(readCode(window)["modules"].toArray()[0].toObject()["source"].toString(),QString("pens = 3  # theirs\n"));
+        QVERIFY(workspace->hasDrafts());QVERIFY(banner->isVisible());QCOMPARE(status(workspace),kDraft);
+        choice="conflictTakeStored";save(workspace);QCOMPARE(driver.handled,2);
+        QVERIFY(!workspace->hasDrafts());QCOMPARE(editor(workspace)->toPlainText(),QString("pens = 3  # theirs\n"));QCOMPARE(status(workspace),kSaved);QVERIFY(!banner->isVisible());
+        QCOMPARE(readCode(window)["modules"].toArray()[0].toObject()["source"].toString(),QString("pens = 3  # theirs\n"));
+    }
+
+    void sameModuleConflictKeepMineReplaces() {
+        QTemporaryDir temp;const auto path=temp.filePath("keep.dhwb");StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,path));
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("pens = 1\n");
+        save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
+        const auto id=readCode(window)["modules"].toArray()[0].toObject()["id"].toString();
+        editor(workspace)->setPlainText("pens = 2  # mine\n");
+        QVERIFY(competingSave(options,path,"supplies","pens = 3  # theirs\n",id));
+        QVERIFY(refreshWindow(window));QTRY_VERIFY_WITH_TIMEOUT(workspace->findChild<QLabel *>("workspaceConflict")->isVisible(),5000);
+        ModalDriver driver([](QWidget *modal){return clickButton(modal,"codeConflictDialog","conflictKeepMine");});
+        save(workspace);QCOMPARE(driver.handled,1);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
+        const auto module=readCode(window)["modules"].toArray()[0].toObject();
+        QCOMPARE(module["source"].toString(),QString("pens = 2  # mine\n"));QCOMPARE(module["id"].toString(),id);
+        QVERIFY(!workspace->hasDrafts());
     }
 
     void validationErrorKeepsDraft() {
@@ -267,6 +338,7 @@ private slots:
         QVERIFY(saveAction->toolTip().contains("read-only",Qt::CaseInsensitive));
         auto *button=workspace->findChild<QPushButton *>("newModuleButton");QVERIFY(button->isVisible());QVERIFY(!button->isEnabled());QVERIFY(button->toolTip().contains("read-only",Qt::CaseInsensitive));
         QVERIFY(editor(workspace)->isReadOnly());
+        for(const auto *name:{"renameModuleButton","deleteModuleButton"}){auto *control=workspace->findChild<QPushButton *>(name);QVERIFY(!control->isEnabled());QVERIFY(control->toolTip().contains("read-only",Qt::CaseInsensitive));}
         QTest::keyClicks(editor(workspace),"x");QVERIFY(!workspace->hasDrafts());
     }
 
@@ -288,6 +360,107 @@ private slots:
         }
     }
 
+    void unknownOutcomeCloseStillPromptsForDrafts() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.recoveryDirectory=temp.filePath("recovery");
+        options.handler=QString(DATAHORIZON_FIXTURES)+"/timeout_hook.py";MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("unknown.dhwb")));
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("pens = 1\n");
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}}}}});
+        auto *process=window.findChild<QProcess *>("ownedService");process->kill();QTRY_COMPARE_WITH_TIMEOUT(process->state(),QProcess::NotRunning,5000);
+        QMessageBox::StandardButton drafts=QMessageBox::Cancel;int unknown=0,prompts=0;
+        ModalDriver driver([&](QWidget *modal){
+            auto *box=qobject_cast<QMessageBox *>(modal);if(!box)return false;
+            if(box->objectName()=="pythonDraftsPrompt"){++prompts;box->button(drafts)->click();return true;}
+            if(box->text().startsWith("The edit may have committed.")){++unknown;box->button(QMessageBox::Yes)->click();return true;}
+            return false;});
+        QVERIFY(!window.close());QCOMPARE(unknown,1);QCOMPARE(prompts,1);QVERIFY(window.isVisible());QVERIFY(workspace->hasDrafts());
+        drafts=QMessageBox::Discard;QVERIFY(window.close());QCOMPARE(unknown,2);QCOMPARE(prompts,2);QVERIFY(!workspace->hasDrafts());QVERIFY(!workspace->isVisible());
+    }
+
+    void discardThenCancellingLaterClosePromptKeepsDrafts() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("ordering.dhwb")));
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("pens = 1\n");
+        auto *formula=window.findChild<QLineEdit *>("source");formula->setText("42");formula->setModified(true);
+        QMessageBox::StandardButton editorAnswer=QMessageBox::No;int prompts=0,editorPrompts=0;
+        ModalDriver driver([&](QWidget *modal){
+            auto *box=qobject_cast<QMessageBox *>(modal);if(!box)return false;
+            if(box->objectName()=="pythonDraftsPrompt"){++prompts;box->button(QMessageBox::Discard)->click();return true;}
+            if(box->text().startsWith("Discard the unsubmitted formula-bar draft?")){++editorPrompts;box->button(editorAnswer)->click();return true;}
+            return false;});
+        QVERIFY(!window.close());QCOMPARE(prompts,1);QCOMPARE(editorPrompts,1);
+        QVERIFY(window.isVisible());QVERIFY(workspace->hasDrafts());QCOMPARE(editor(workspace)->toPlainText(),QString("pens = 1\n"));
+        editorAnswer=QMessageBox::Yes;QVERIFY(window.close());QCOMPARE(prompts,2);QCOMPARE(editorPrompts,2);QVERIFY(!workspace->hasDrafts());
+    }
+
+    void openingAnotherWorkbookPromptsAndCancelKeepsBoth() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("first.dhwb")));const auto first=window.model()->workbook();
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("pens = 1\n");
+        QMessageBox::StandardButton answer=QMessageBox::Cancel;int prompts=0;
+        ModalDriver driver([&](QWidget *modal){
+            auto *box=qobject_cast<QMessageBox *>(modal);if(!box || box->objectName()!="pythonDraftsPrompt")return false;++prompts;box->button(answer)->click();return true;});
+        const auto second=temp.filePath("second.dhwb");window.openBook(second,true);
+        QCOMPARE(prompts,1);QCOMPARE(window.model()->workbook(),first);QVERIFY(!QFile::exists(second));QVERIFY(workspace->hasDrafts());
+        // Discard is applied only once the other workbook opens: a failed open keeps the drafts.
+        answer=QMessageBox::Discard;window.openBook(temp.filePath("missing/directory/third.dhwb"),true);
+        QCOMPARE(prompts,2);QTRY_VERIFY_WITH_TIMEOUT(issues(window).contains("third.dhwb") || window.findChild<QLabel *>("storageStatus")->text().contains("Open failed"),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(workspace->findChild<QPushButton *>("newModuleButton")->isEnabled(),5000);
+        QCOMPARE(window.model()->workbook(),first);QVERIFY(workspace->hasDrafts());
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(second,true);QTRY_VERIFY_WITH_TIMEOUT(opened.count()>=1,10000);
+        QCOMPARE(prompts,3);QVERIFY(window.model()->workbook()!=first);QVERIFY(!workspace->hasDrafts());
+    }
+
+    void renameKeepsModuleIdentityAndSource() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("rename.dhwb")));
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("pens = 1\n");
+        auto *rename=workspace->findChild<QPushButton *>("renameModuleButton");QVERIFY(!rename->isEnabled());QVERIFY(rename->toolTip().contains("Save"));
+        save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);QTRY_VERIFY_WITH_TIMEOUT(rename->isEnabled(),5000);
+        const auto before=readCode(window)["modules"].toArray()[0].toObject();
+        editor(workspace)->setPlainText("pens = 2\n");QVERIFY(!rename->isEnabled());QVERIFY(rename->toolTip().contains("draft"));
+        ModalDriver discard([](QWidget *modal){auto *box=qobject_cast<QMessageBox *>(modal);if(!box || box->objectName()!="discardModuleDraft")return false;box->button(QMessageBox::Discard)->click();return true;});
+        workspace->findChild<QPushButton *>("discardDraftButton")->click();QVERIFY(rename->isEnabled());
+        ModalDriver driver([](QWidget *modal){auto *input=qobject_cast<QInputDialog *>(modal);if(!input || input->objectName()!="renameModuleName")return false;input->setTextValue("stock");input->accept();return true;});
+        rename->click();QCOMPARE(driver.handled,1);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace->findChild<QListWidget *>("moduleList")->item(0)->text(),QString("stock"),10000);
+        const auto after=readCode(window)["modules"].toArray()[0].toObject();
+        QCOMPARE(after["name"].toString(),QString("stock"));QCOMPARE(after["id"],before["id"]);QCOMPARE(after["source"],before["source"]);QCOMPARE(after["macros"],before["macros"]);
+    }
+
+    void deleteRemovesModuleFromCatalog() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("delete.dhwb")));
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("pens = 1\n");
+        save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
+        editor(workspace)->setPlainText("pens = 2\n");QVERIFY(workspace->hasDrafts());
+        QTRY_VERIFY_WITH_TIMEOUT(workspace->findChild<QPushButton *>("deleteModuleButton")->isEnabled(),5000);
+        QString text;
+        ModalDriver driver([&](QWidget *modal){auto *box=qobject_cast<QMessageBox *>(modal);if(!box || box->objectName()!="deleteModuleConfirm")return false;text=box->text();box->button(QMessageBox::Yes)->click();return true;});
+        workspace->findChild<QPushButton *>("deleteModuleButton")->click();QCOMPARE(driver.handled,1);
+        QCOMPARE(text,QString("Delete module supplies? This cannot be undone with Undo."));
+        QTRY_COMPARE_WITH_TIMEOUT(workspace->findChild<QListWidget *>("moduleList")->count(),0,10000);
+        QVERIFY(!workspace->hasDrafts());QCOMPARE(readCode(window)["modules"].toArray().size(),0);
+    }
+
+    void deletingModuleUsedByBindingShowsRejection() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("inuse.dhwb")));
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("def check(ctx, event):\n    pass\n");
+        save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
+        const auto code=readCode(window);QSignalSpy finished(&window,&MainWindow::operationFinished);
+        window.submit({{"action","binding_save"},{"event","cell_change"},{"scope",QJsonObject{{"kind","sheet"},{"sheet",window.model()->sheet()}}},{"module","supplies"},{"function","check"},{"required",false},{"fingerprint",code["fingerprint"]}});
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(),1,10000);QVERIFY2(finished[0][0].toBool(),qPrintable(issues(window)));
+        QTRY_COMPARE_WITH_TIMEOUT(workspace->fingerprint(),readCode(window)["fingerprint"].toString(),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(workspace->findChild<QPushButton *>("deleteModuleButton")->isEnabled(),5000);
+        ModalDriver driver([](QWidget *modal){auto *box=qobject_cast<QMessageBox *>(modal);if(!box || box->objectName()!="deleteModuleConfirm")return false;box->button(QMessageBox::Yes)->click();return true;});
+        workspace->findChild<QPushButton *>("deleteModuleButton")->click();QCOMPARE(driver.handled,1);
+        QTRY_VERIFY_WITH_TIMEOUT(workspace->findChild<QLabel *>("workspaceMessage")->text().contains("MODULE_IN_USE"),10000);
+        QVERIFY(issues(window).contains("MODULE_IN_USE"));
+        QCOMPARE(readCode(window)["modules"].toArray().size(),1);QCOMPARE(workspace->findChild<QListWidget *>("moduleList")->count(),1);
+        QTRY_VERIFY_WITH_TIMEOUT(workspace->findChild<QPushButton *>("deleteModuleButton")->isEnabled(),5000);
+    }
+
     void geometryIsRestoredOnReopen() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");
         {
@@ -305,6 +478,7 @@ private slots:
         QVERIFY(boot(window,temp.filePath("restart.dhwb")));
         auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("pens = 1\n");
         save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace->fingerprint(),readCode(window)["fingerprint"].toString(),5000);
         const QString typed="pens = 1\nmarkers = 2\n";editor(workspace)->setPlainText(typed);QCOMPARE(status(workspace),kDraft);
         const auto before=workspace->fingerprint();
         QSignalSpy ready(&window,&MainWindow::serviceReady);QSignalSpy opened(&window,&MainWindow::workbookReady);

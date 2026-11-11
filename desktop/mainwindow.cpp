@@ -48,6 +48,7 @@
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QScopedValueRollback>
+#include <QScopeGuard>
 #include <QSettings>
 #include <QSaveFile>
 #include <QStandardPaths>
@@ -1251,10 +1252,16 @@ void MainWindow::newBook() {
 void MainWindow::openBook(const QString &path, bool create, bool readonly,bool repair) {
     if(repair && m_refreshFailed && !m_unknown && m_pendingId.isEmpty())setBusy(false);
     if (m_busy || m_unknown) return;
+    // Python drafts are decided first, but a Discard only takes effect once the
+    // other workbook has actually opened; every earlier return keeps them.
+    const bool otherWorkbook=!m_info.isEmpty() && QFileInfo(path).canonicalFilePath()!=QFileInfo(m_info["path"].toString()).canonicalFilePath();
+    if(otherWorkbook && !m_workspace->resolveDrafts())return;
+    auto keepDrafts=qScopeGuard([this]{m_workspace->keepDrafts();});
     if(!discardQueryDraft())return;
     if(m_queryClosing)return;
     if(m_relational->hasQueryJob()){
-        m_queryClosing=true;m_relational->closeQuery([this,path,create,readonly,repair](QString error){m_queryClosing=false;if(!error.isEmpty()){issue(error);return;}openBook(path,create,readonly,repair);});return;
+        keepDrafts.dismiss();
+        m_queryClosing=true;m_relational->closeQuery([this,path,create,readonly,repair](QString error){m_queryClosing=false;if(!error.isEmpty()){m_workspace->keepDrafts();issue(error);return;}openBook(path,create,readonly,repair);});return;
     }
     if(m_relational->hasActiveEditor())return;
     if(!m_relational->retainedDraft().isEmpty()){
@@ -1266,14 +1273,15 @@ void MainWindow::openBook(const QString &path, bool create, bool readonly,bool r
         if (QMessageBox::question(this,tr("Discard editor draft?"),tr("Discard the unsubmitted formula-bar draft before opening another workbook? Stored edits remain in the current workbook."))!=QMessageBox::Yes) return;
         m_source->setModified(false); clearRecoveredDraft();
     }
-    if(!m_info.isEmpty() && QFileInfo(path).canonicalFilePath()!=QFileInfo(m_info["path"].toString()).canonicalFilePath() && !m_workspace->resolveDrafts())return;
     m_enterRequest={}; m_enterNavigation={};
     if(!m_info.isEmpty() && QFileInfo(path).canonicalFilePath()==QFileInfo(m_info["path"].toString()).canonicalFilePath() && (m_info["repair"].toBool()!=repair || m_info["readonly"].toBool()!=readonly)){
         setBusy(true,tr("Releasing the previous workbook mode…"));m_client->request(base()+"/close",{},[this,path,create,readonly,repair](QJsonObject,QString error){if(!error.isEmpty()){setBusy(false);issue(error);return;}m_info={};m_model->bind({},{},{},true);m_relational->bind({});m_workspace->bind({});setBusy(false);openBook(path,create,readonly,repair);});return;
     }
+    keepDrafts.dismiss();
     setBusy(true, "Opening workbook…");
     m_client->request("/v1/open", {{"path", path}, {"create", create}, {"readonly", readonly},{"repair",repair}}, [this](QJsonObject info, QString error) {
-        if (!error.isEmpty()) { setBusy(false, "Open failed"); issue(error); return; }
+        if (!error.isEmpty()) { m_workspace->keepDrafts(); setBusy(false, "Open failed"); issue(error); return; }
+        m_workspace->commitDiscard();
         if (!m_info.isEmpty()) m_client->request(base()+"/close",{},[](QJsonObject,QString){});
         m_listSpec = {}; acceptInfo(info);
     });
@@ -2648,7 +2656,10 @@ void MainWindow::findDialog(bool replace) {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
-    if(m_allowJobClose){m_workspace->close();event->accept();return;}
+    if(m_allowJobClose){
+        if(!m_workspace->resolveDrafts()){m_allowJobClose=false;event->ignore();return;}
+        m_workspace->commitDiscard();m_workspace->close();event->accept();return;
+    }
     if(m_queryClosing){event->ignore();return;}
     const bool skipQueryCleanup=m_skipQueryCleanup;m_skipQueryCleanup=false;
     if(!skipQueryCleanup && !m_released && m_relational->hasQueryJob()){
@@ -2686,7 +2697,10 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         const auto answer=QMessageBox::warning(this,tr("Close with an unknown operation outcome?"),
             tr("The edit may have committed. Closing does not discard stored data.\n\nWorkbook: %1\nOperation: %2\nRecovery record: %3\n\nReopen and look up this ID before retrying the edit.")
                 .arg(m_info["path"].toString(),m_pendingId,m_recoveryRecord),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel);
-        if (answer==QMessageBox::Yes) { m_workspace->close(); event->accept(); return; }
+        if (answer==QMessageBox::Yes) {
+            if(!m_workspace->resolveDrafts()){event->ignore();return;}
+            m_workspace->commitDiscard(); m_workspace->close(); event->accept(); return;
+        }
         event->ignore(); return;
     }
     if (!m_pendingId.isEmpty() || m_unknown || m_releasing) {
@@ -2698,9 +2712,10 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         if(QMessageBox::question(this,tr("Discard table draft?"),tr("Discard the retained table input before closing? Stored records remain in the workbook."))!=QMessageBox::Yes){event->ignore();return;}
         m_relational->restoreDraft({});
     }
+    // A Python Discard takes effect only when the close is accepted below.
     if(!m_workspace->resolveDrafts()){event->ignore();return;}
     if (m_source->isModified() || !m_recoveredDraft.isEmpty()) {
-        if (QMessageBox::question(this, tr("Discard editor draft?"), tr("Discard the unsubmitted formula-bar draft? Already stored edits remain in the workbook.")) != QMessageBox::Yes) { event->ignore(); return; }
+        if (QMessageBox::question(this, tr("Discard editor draft?"), tr("Discard the unsubmitted formula-bar draft? Already stored edits remain in the workbook.")) != QMessageBox::Yes) { m_workspace->keepDrafts(); event->ignore(); return; }
         m_source->setModified(false); clearRecoveredDraft();
     }
     if (!m_options.url.isEmpty() && !m_info.isEmpty() && !m_released) {
@@ -2709,11 +2724,12 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         m_client->request(base()+"/close",{},[this,workbook,service](QJsonObject,QString){
             if (!m_releasing) return;
             m_releasing=false;
-            if (m_info["id"].toString()!=workbook || m_client->url()!=service) { setBusy(false,"Current workbook remains open"); return; }
+            if (m_info["id"].toString()!=workbook || m_client->url()!=service) { m_workspace->keepDrafts(); setBusy(false,"Current workbook remains open"); return; }
             m_released=true; close();
         });
         return;
     }
+    m_workspace->commitDiscard();
     m_workspace->close();
     event->accept();
 }

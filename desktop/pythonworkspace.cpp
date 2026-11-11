@@ -50,6 +50,8 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     m_modules=new QListWidget;m_modules->setObjectName("moduleList");m_modules->setAccessibleName(tr("Workbook modules"));modulesLayout->addWidget(m_modules,1);
     m_emptyHint=new QLabel(tr("This workbook has no Python modules yet. Create one to write macros."));m_emptyHint->setObjectName("moduleEmptyHint");m_emptyHint->setWordWrap(true);modulesLayout->addWidget(m_emptyHint);
     m_newModule=new QPushButton(tr("New module…"));m_newModule->setObjectName("newModuleButton");modulesLayout->addWidget(m_newModule);
+    m_renameModule=new QPushButton(tr("Rename module…"));m_renameModule->setObjectName("renameModuleButton");modulesLayout->addWidget(m_renameModule);
+    m_deleteModule=new QPushButton(tr("Delete module…"));m_deleteModule->setObjectName("deleteModuleButton");modulesLayout->addWidget(m_deleteModule);
     m_discard=new QPushButton(tr("Discard draft…"));m_discard->setObjectName("discardDraftButton");modulesLayout->addWidget(m_discard);
     splitter->addWidget(modulesColumn);
 
@@ -59,6 +61,10 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     m_findField=new QLineEdit;m_findField->setObjectName("findField");m_findField->setAccessibleName(tr("Find in module"));m_findField->setPlaceholderText(tr("Return finds the next match"));findLayout->addWidget(m_findField,1);
     auto *closeFind=new QPushButton(tr("Close"));closeFind->setObjectName("closeFindButton");findLayout->addWidget(closeFind);
     m_findBar->hide();editorLayout->addWidget(m_findBar);
+    // Persistent until the conflict is resolved or another module is selected;
+    // ordinary messages never clear it.
+    m_conflict=new QLabel;m_conflict->setObjectName("workspaceConflict");m_conflict->setAccessibleName(tr("Conflict with stored code"));m_conflict->setWordWrap(true);
+    m_conflict->setStyleSheet("QLabel{background:rgba(255,170,0,60);padding:4px;}");m_conflict->hide();editorLayout->addWidget(m_conflict);
     m_editor=new CodeEditor;m_editor->setObjectName("codeEditor");m_editor->setAccessibleName(tr("Module source"));editorLayout->addWidget(m_editor,1);
     new PythonHighlighter(m_editor->document());
     splitter->addWidget(editorColumn);
@@ -98,6 +104,8 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
         if(auto *item=m_macros->item(m_currentMacro))item->setText(declaration["name"].toString());
         updateDraft(m_editor->toPlainText(),macros);});
     connect(m_newModule,&QPushButton::clicked,this,&PythonWorkspace::newModule);
+    connect(m_renameModule,&QPushButton::clicked,this,&PythonWorkspace::renameModule);
+    connect(m_deleteModule,&QPushButton::clicked,this,&PythonWorkspace::deleteModule);
     connect(m_discard,&QPushButton::clicked,this,&PythonWorkspace::discardDraft);
     connect(m_addMacro,&QPushButton::clicked,this,&PythonWorkspace::addMacro);
     connect(m_removeMacro,&QPushButton::clicked,this,&PythonWorkspace::removeMacro);
@@ -122,19 +130,29 @@ void PythonWorkspace::closeEvent(QCloseEvent *event) {
     event->accept();
 }
 
+
 void PythonWorkspace::bind(const QJsonObject &info) {
     const auto workbook=info["workbook_id"].toString();
     if(!workbook.isEmpty() && !m_workbookId.isEmpty() && workbook!=m_workbookId) {
-        if(!m_drafts.isEmpty())emit issue(tr("Python drafts for the previous workbook were discarded when another workbook opened."));
-        m_drafts.clear();m_catalogs.clear();m_current.clear();m_catalog={};m_catalogReady=false;
+        // Drafts are never dropped here. They stay listed, marked as belonging
+        // to the previous workbook and unsaveable, until the user discards them.
+        m_catalog={};m_catalogReady=false;if(!m_drafts.contains(m_current))m_current.clear();
+        if(!m_drafts.isEmpty())emit issue(tr("Python drafts from the previously open workbook are kept in the Python workspace. They cannot be saved into this workbook; discard them when you no longer need them."));
     }
     if(!workbook.isEmpty())m_workbookId=workbook;
     // A new handle (reopen or service restart) needs a fresh catalog: approval
-    // belongs to the service process, so it is never carried across.
-    if(info["id"]!=m_info["id"])m_catalogReady=false;
+    // belongs to the service process, so it is never carried across. An
+    // operation still in flight on the old handle is reconciled by the owning
+    // window before this point; nothing here may stay waiting for it.
+    if(info["id"]!=m_info["id"]){m_catalogReady=false;resetPending();}
     m_info=info;
     if(info.isEmpty()){++m_readGeneration;m_catalogReady=false;updateState();return;}
     readCatalog();updateState();
+}
+
+void PythonWorkspace::resetPending() {
+    m_pending=Pending::None;m_pendingOperation.clear();m_pendingKey.clear();m_pendingName.clear();m_pendingBase.clear();
+    m_awaitingAdmission=false;m_reviewChanges=false;m_rebaseFrom.clear();m_rebaseTo.clear();
 }
 
 void PythonWorkspace::setLocked(bool locked){m_locked=locked;updateState();}
@@ -143,9 +161,14 @@ void PythonWorkspace::readCatalog() {
     const auto generation=++m_readGeneration;
     m_client->request("/v1/workbooks/"+m_info["id"].toString()+"/code",{{"expected_state",m_info["state"]}},[this,generation](QJsonObject result,QString error){
         if(generation!=m_readGeneration)return;
-        if(!error.isEmpty()){showMessage(tr("Could not read workbook code: %1").arg(error));return;}
+        if(!error.isEmpty()){m_reviewChanges=false;showMessage(tr("Could not read workbook code: %1").arg(error));return;}
         applyCatalog(result);
     });
+}
+
+QJsonObject PythonWorkspace::baseModule(const Draft &draft) const {
+    for(const auto &value:m_catalogs.value(draft.baseFingerprint))if(value.toObject()["id"].toString()==draft.moduleId)return value.toObject();
+    return {};
 }
 
 void PythonWorkspace::applyCatalog(const QJsonObject &catalog) {
@@ -156,13 +179,29 @@ void PythonWorkspace::applyCatalog(const QJsonObject &catalog) {
         if(m_rebaseTo==current)for(auto &draft:m_drafts)if(draft.baseFingerprint==m_rebaseFrom)draft.baseFingerprint=current;
         m_rebaseFrom.clear();m_rebaseTo.clear();
     }
+    for(auto it=m_drafts.begin();it!=m_drafts.end();) {
+        auto &draft=it.value();
+        if(draft.workbookId!=m_workbookId || draft.moduleId.isEmpty()){++it;continue;}
+        const auto stored=storedModule(draft.moduleId);
+        // A draft that already matches the stored module (for example after a
+        // reconciled save) is no longer a draft.
+        if(!stored.isEmpty() && draft.name==stored["name"].toString() && draft.source==stored["source"].toString() && draft.macros==stored["macros"].toArray()){it=m_drafts.erase(it);continue;}
+        // Its own module changed or was deleted since the draft's base: never
+        // rebase silently; Save asks first.
+        if(draft.baseFingerprint!=current && (!m_catalogs.contains(draft.baseFingerprint) || baseModule(draft)!=stored))draft.conflict=true;
+        ++it;
+    }
     if(m_reviewChanges) {
         m_reviewChanges=false;
-        if(m_drafts.contains(m_saveKey)) {
-            auto &draft=m_drafts[m_saveKey];const auto changes=describeChanges(m_catalogs.value(draft.baseFingerprint),catalogModules());
-            draft.baseFingerprint=current;
-            showMessage(tr("Workbook code changed since this draft began: %1. Your draft is kept; review it and Save again to replace the stored module.").arg(changes));
+        if(m_drafts.contains(m_pendingKey)) {
+            auto &draft=m_drafts[m_pendingKey];const auto changes=describeChanges(m_catalogs.value(draft.baseFingerprint),catalogModules());
+            if(draft.conflict)showMessage(tr("Workbook code changed since this draft began: %1. Save again to compare your draft with the stored module.").arg(changes));
+            else {
+                draft.baseFingerprint=current;
+                showMessage(tr("Workbook code changed since this draft began: %1. This module is unchanged; your draft is kept and Save again stores it.").arg(changes));
+            }
         }
+        m_pendingKey.clear();
     }
     QSet<QString> referenced{current};for(const auto &draft:std::as_const(m_drafts))referenced.insert(draft.baseFingerprint);
     for(auto it=m_catalogs.begin();it!=m_catalogs.end();)it=referenced.contains(it.key())?std::next(it):m_catalogs.erase(it);
@@ -182,10 +221,12 @@ QJsonObject PythonWorkspace::storedModule(const QString &key) const {
     return {};
 }
 
+bool PythonWorkspace::foreign(const QString &key) const{return m_drafts.contains(key) && m_drafts[key].workbookId!=m_workbookId;}
+
 PythonWorkspace::Draft PythonWorkspace::effective(const QString &key) const {
     if(m_drafts.contains(key))return m_drafts[key];
     const auto stored=storedModule(key);
-    return {stored["id"].toString(),stored["name"].toString(),stored["source"].toString(),stored["macros"].toArray(),fingerprint()};
+    return {stored["id"].toString(),stored["name"].toString(),stored["source"].toString(),stored["macros"].toArray(),fingerprint(),m_workbookId};
 }
 
 void PythonWorkspace::refreshList() {
@@ -193,11 +234,14 @@ void PythonWorkspace::refreshList() {
         QScopedValueRollback<bool> loading(m_loading,true);
         m_modules->clear();QSet<QString> listed;
         auto add=[this,&listed](const QString &key,const QString &name,const QString &tip){
-            const bool draft=m_drafts.contains(key);auto *item=new QListWidgetItem(draft?name+QStringLiteral(" •"):name);
+            const bool draft=m_drafts.contains(key);QString text=draft?name+QStringLiteral(" •"):name;
+            if(foreign(key))text+=tr(" (previous workbook)");
+            auto *item=new QListWidgetItem(text);
             item->setData(Qt::UserRole,key);item->setToolTip(draft?tip+"\n"+draftStatus():tip);m_modules->addItem(item);listed.insert(key);};
         for(const auto &value:catalogModules()){const auto module=value.toObject();add(module["id"].toString(),module["name"].toString(),tr("Stored module"));}
         for(auto it=m_drafts.begin();it!=m_drafts.end();++it)if(!listed.contains(it.key()))
-            add(it.key(),it.value().name,it.key().startsWith(kNewPrefix)?tr("New module, not yet stored"):tr("No longer stored in the workbook"));
+            add(it.key(),it.value().name,foreign(it.key())?tr("Draft from the previously open workbook; it cannot be saved here"):
+                it.key().startsWith(kNewPrefix)?tr("New module, not yet stored"):tr("No longer stored in the workbook"));
         if(!listed.contains(m_current)){m_current=m_modules->count()?m_modules->item(0)->data(Qt::UserRole).toString():QString();m_currentMacro=-1;}
         for(int row=0;row<m_modules->count();++row)if(m_modules->item(row)->data(Qt::UserRole).toString()==m_current)m_modules->setCurrentRow(row);
     }
@@ -227,23 +271,35 @@ void PythonWorkspace::loadMacros() {
 }
 
 bool PythonWorkspace::editable() const {
-    return !m_info.isEmpty() && !m_info["readonly"].toBool() && !m_locked && m_catalogReady && m_saveOperation.isEmpty() && !m_awaitingAdmission;
+    return !m_info.isEmpty() && !m_info["readonly"].toBool() && !m_locked && m_catalogReady && m_pending==Pending::None && !m_awaitingAdmission;
 }
 
 void PythonWorkspace::updateState() {
-    const bool readonly=m_info["readonly"].toBool(),canEdit=editable(),selected=!m_current.isEmpty(),draft=m_drafts.contains(m_current);
+    const bool readonly=m_info["readonly"].toBool(),other=foreign(m_current),canEdit=editable() && !other,selected=!m_current.isEmpty(),draft=m_drafts.contains(m_current);
+    const bool stored=!storedModule(m_current).isEmpty() && !other;
     const QString readOnlyReason=tr("Read-only workbook: reopen it for editing to change code.");
-    const QString waitReason=m_info.isEmpty()?tr("Open a workbook first."):!m_saveOperation.isEmpty() || m_awaitingAdmission?tr("Saving…"):tr("Wait for the current operation to finish.");
+    const QString otherReason=tr("This draft belongs to the previously open workbook and cannot be saved here. Discard it when you no longer need it.");
+    const QString waitReason=m_info.isEmpty()?tr("Open a workbook first."):m_pending!=Pending::None || m_awaitingAdmission?tr("Waiting for the workbook to confirm the last change…"):tr("Wait for the current operation to finish.");
+    const QString reason=readonly?readOnlyReason:other?otherReason:waitReason;
     m_editor->setReadOnly(!canEdit || !selected);
     m_save->setEnabled(canEdit && draft);
-    m_save->setToolTip(readonly?readOnlyReason:!canEdit?waitReason:!draft?tr("No unsaved changes in this module."):tr("Save this module to the workbook"));
-    m_newModule->setEnabled(canEdit && m_modules->count()<16);
-    m_newModule->setToolTip(readonly?readOnlyReason:!canEdit?waitReason:m_modules->count()>=16?tr("A workbook holds at most 16 modules."):tr("Create a module draft"));
-    m_discard->setEnabled(draft && m_saveOperation.isEmpty() && !m_awaitingAdmission);
-    m_addMacro->setEnabled(canEdit && selected);m_addMacro->setToolTip(readonly?readOnlyReason:QString());
+    m_save->setToolTip(!canEdit?reason:!draft?tr("No unsaved changes in this module."):tr("Save this module to the workbook"));
+    m_newModule->setEnabled(editable() && m_modules->count()<16);
+    m_newModule->setToolTip(!editable()?(readonly?readOnlyReason:waitReason):m_modules->count()>=16?tr("A workbook holds at most 16 modules."):tr("Create a module draft"));
+    m_renameModule->setEnabled(canEdit && stored && !draft);
+    m_renameModule->setToolTip(!canEdit?reason:!stored?tr("Save the new module before renaming it."):draft?tr("Save or discard this module's draft before renaming it."):tr("Rename this module in the workbook"));
+    m_deleteModule->setEnabled(canEdit && stored);
+    m_deleteModule->setToolTip(!canEdit?reason:!stored?tr("This module is not stored; use Discard draft instead."):tr("Delete this module from the workbook"));
+    m_discard->setEnabled(draft && m_pending==Pending::None && !m_awaitingAdmission);
+    m_addMacro->setEnabled(canEdit && selected);m_addMacro->setToolTip(!canEdit?reason:QString());
     m_removeMacro->setEnabled(canEdit && selected && m_currentMacro>=0);
     m_panel->setEnabled(canEdit && selected && m_currentMacro>=0);
     m_emptyHint->setVisible(m_modules->count()==0);
+    const bool conflict=draft && m_drafts[m_current].conflict;
+    m_conflict->setVisible(conflict);
+    if(conflict)m_conflict->setText(storedModule(m_current).isEmpty()
+        ?tr("%1 was deleted from the workbook since your draft began. Save asks whether to keep your draft or discard it.").arg(m_drafts[m_current].name)
+        :tr("%1 changed in the workbook since your draft began. Save shows both versions before anything is replaced.").arg(m_drafts[m_current].name));
     m_status->setText(readonly?tr("Read-only workbook"):!selected?QString():draft?draftStatus():tr("Saved in workbook"));
     m_approval->setText(m_catalogReady && m_catalog["approved"].toBool()?tr("Approved for this session"):tr("Not approved to run"));
 }
@@ -251,10 +307,11 @@ void PythonWorkspace::updateState() {
 void PythonWorkspace::showMessage(const QString &text){m_message->setText(text);}
 
 void PythonWorkspace::updateDraft(const QString &source,const QJsonArray &macros) {
+    m_discardConfirmed=false;
     const auto stored=storedModule(m_current);
-    Draft draft=m_drafts.contains(m_current)?m_drafts[m_current]:Draft{stored["id"].toString(),stored["name"].toString(),{},{},fingerprint()};
+    Draft draft=m_drafts.contains(m_current)?m_drafts[m_current]:Draft{stored["id"].toString(),stored["name"].toString(),{},{},fingerprint(),m_workbookId};
     draft.source=source;draft.macros=macros;
-    const bool unchanged=!stored.isEmpty() && draft.name==stored["name"].toString() && source==stored["source"].toString() && macros==stored["macros"].toArray();
+    const bool unchanged=!stored.isEmpty() && !draft.conflict && draft.workbookId==m_workbookId && draft.name==stored["name"].toString() && source==stored["source"].toString() && macros==stored["macros"].toArray();
     if(unchanged)m_drafts.remove(m_current);else m_drafts[m_current]=draft;
     for(int row=0;row<m_modules->count();++row) {
         auto *item=m_modules->item(row);if(item->data(Qt::UserRole).toString()!=m_current)continue;
@@ -273,18 +330,53 @@ bool PythonWorkspace::validName(const QString &name,QString *problem) const {
     return true;
 }
 
+bool PythonWorkspace::nameTaken(const QString &name,const QString &except) const {
+    for(int row=0;row<m_modules->count();++row) {
+        const auto key=m_modules->item(row)->data(Qt::UserRole).toString();
+        if(key!=except && !foreign(key) && effective(key).name==name)return true;
+    }
+    return false;
+}
+
 void PythonWorkspace::newModule() {
     if(!editable())return;
     QInputDialog input(this);input.setObjectName("newModuleName");input.setWindowTitle(tr("New module"));input.setLabelText(tr("Module name"));
-    input.setOption(QInputDialog::UsePlainTextEditForTextInput,false);
     input.setTextValue(QString("Module%1").arg(m_modules->count()+1));
-    if(input.exec()!=QDialog::Accepted)return;
+    if(input.exec()!=QDialog::Accepted || !editable())return;
     const auto name=input.textValue().trimmed();QString problem;
     if(!validName(name,&problem)){showMessage(problem);return;}
-    for(int row=0;row<m_modules->count();++row)if(effective(m_modules->item(row)->data(Qt::UserRole).toString()).name==name){showMessage(tr("A module named %1 already exists.").arg(name));return;}
+    if(nameTaken(name,{})){showMessage(tr("A module named %1 already exists.").arg(name));return;}
     const auto key=QString(kNewPrefix)+QUuid::createUuid().toString(QUuid::WithoutBraces);
-    m_drafts[key]=Draft{{},name,{},{},fingerprint()};m_current=key;m_currentMacro=-1;showMessage({});
+    m_discardConfirmed=false;
+    m_drafts[key]=Draft{{},name,{},{},fingerprint(),m_workbookId};m_current=key;m_currentMacro=-1;showMessage({});
     refreshList();m_editor->setFocus();
+}
+
+void PythonWorkspace::renameModule() {
+    const auto key=m_current;const auto stored=storedModule(key);
+    if(!editable() || stored.isEmpty() || m_drafts.contains(key))return;
+    QInputDialog input(this);input.setObjectName("renameModuleName");input.setWindowTitle(tr("Rename module"));input.setLabelText(tr("New name for %1").arg(stored["name"].toString()));
+    input.setTextValue(stored["name"].toString());
+    if(input.exec()!=QDialog::Accepted || !editable() || m_current!=key || m_drafts.contains(key))return;
+    const auto name=input.textValue().trimmed();QString problem;
+    if(name==stored["name"].toString())return;
+    if(!validName(name,&problem)){showMessage(problem);return;}
+    if(nameTaken(name,key)){showMessage(tr("A module named %1 already exists.").arg(name));return;}
+    if(!confirmHistory())return;
+    startOperation({{"action","module_save"},{"module",key},{"name",name},{"source",stored["source"]},{"macros",stored["macros"]},{"fingerprint",fingerprint()},{"label","Rename Python module"}},
+        Pending::Rename,key,name,fingerprint());
+}
+
+void PythonWorkspace::deleteModule() {
+    const auto key=m_current;const auto stored=storedModule(key);
+    if(!editable() || stored.isEmpty())return;
+    const auto name=stored["name"].toString();
+    QMessageBox box(QMessageBox::Warning,tr("Delete module?"),tr("Delete module %1? This cannot be undone with Undo.").arg(name),QMessageBox::Yes|QMessageBox::Cancel,this);
+    box.setObjectName("deleteModuleConfirm");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setDefaultButton(QMessageBox::Cancel);
+    if(m_drafts.contains(key))box.setInformativeText(tr("Your unsaved draft of this module is discarded once the delete is stored."));
+    if(box.exec()!=QMessageBox::Yes || !editable() || m_current!=key)return;
+    if(!confirmHistory())return;
+    startOperation({{"action","module_delete"},{"module",key},{"fingerprint",fingerprint()},{"label","Delete Python module"}},Pending::Delete,key,name,fingerprint());
 }
 
 void PythonWorkspace::discardDraft() {
@@ -292,11 +384,11 @@ void PythonWorkspace::discardDraft() {
     QMessageBox box(QMessageBox::Question,tr("Discard draft?"),tr("Discard your unsaved changes to %1? The stored workbook code is not changed.").arg(m_drafts[m_current].name),QMessageBox::Discard|QMessageBox::Cancel,this);
     box.setObjectName("discardModuleDraft");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setDefaultButton(QMessageBox::Cancel);
     if(box.exec()!=QMessageBox::Discard)return;
-    m_drafts.remove(m_current);showMessage({});refreshList();
+    m_drafts.remove(m_current);refreshList();
 }
 
 void PythonWorkspace::addMacro() {
-    if(!editable() || m_current.isEmpty())return;
+    if(!editable() || m_current.isEmpty() || foreign(m_current))return;
     QDialog dialog(this);dialog.setObjectName("addMacroDialog");dialog.setWindowTitle(tr("Add macro declaration"));dialog.resize(520,380);
     auto *layout=new QVBoxLayout(&dialog);
     auto *explanation=new QLabel(tr("Declare the function's typed arguments and result. If the module has no function with this name, a stub is added to the end of the source."));
@@ -318,7 +410,7 @@ void PythonWorkspace::addMacro() {
         source+=QStringLiteral("def %1(%2):\n    pass\n").arg(name,arguments.join(QStringLiteral(", ")));
         QScopedValueRollback<bool> loading(m_loading,true);m_editor->setPlainText(source);m_editor->moveCursor(QTextCursor::End);
     }
-    updateDraft(source,module.macros);m_currentMacro=int(module.macros.size())-1;showMessage({});loadCurrent();
+    updateDraft(source,module.macros);m_currentMacro=int(module.macros.size())-1;loadCurrent();
 }
 
 void PythonWorkspace::removeMacro() {
@@ -327,68 +419,132 @@ void PythonWorkspace::removeMacro() {
     macros.removeAt(m_currentMacro);updateDraft(m_editor->toPlainText(),macros);loadCurrent();
 }
 
-void PythonWorkspace::save() {
-    if(!editable() || !m_drafts.contains(m_current))return;
-    const auto draft=m_drafts[m_current];QString problem;
-    if(!validName(draft.name,&problem)){showMessage(problem);return;}
-    if(!s_skipHistoryPrompt && (m_info["undo"].isString() || m_info["redo"].isString())) {
-        QMessageBox box(QMessageBox::Question,tr("Clear Undo history?"),tr("Saving code clears Undo history for this workbook. Continue?"),QMessageBox::Yes|QMessageBox::Cancel,this);
-        box.setObjectName("codeSaveHistoryPrompt");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setDefaultButton(QMessageBox::Cancel);
-        auto *again=new QCheckBox(tr("Don't ask again this session"));again->setObjectName("codeSaveHistoryDontAsk");box.setCheckBox(again);
-        if(box.exec()!=QMessageBox::Yes)return;
-        if(again->isChecked())s_skipHistoryPrompt=true;
-        if(!editable() || !m_drafts.contains(m_current))return;
+bool PythonWorkspace::confirmHistory() {
+    if(s_skipHistoryPrompt || !(m_info["undo"].isString() || m_info["redo"].isString()))return true;
+    QMessageBox box(QMessageBox::Question,tr("Clear Undo history?"),tr("Saving code clears Undo history for this workbook. Continue?"),QMessageBox::Yes|QMessageBox::Cancel,this);
+    box.setObjectName("codeSaveHistoryPrompt");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setDefaultButton(QMessageBox::Cancel);
+    auto *again=new QCheckBox(tr("Don't ask again this session"));again->setObjectName("codeSaveHistoryDontAsk");box.setCheckBox(again);
+    if(box.exec()!=QMessageBox::Yes)return false;
+    if(again->isChecked())s_skipHistoryPrompt=true;
+    return editable();
+}
+
+// Shows the stored module beside the draft. True means "keep mine": the draft
+// is rebased onto the current catalog and Save continues.
+bool PythonWorkspace::resolveConflict() {
+    const auto key=m_current;const Draft draft=m_drafts[key];const auto stored=storedModule(draft.moduleId);
+    QDialog dialog(this);dialog.setObjectName("codeConflictDialog");dialog.setWindowTitle(tr("This module changed in the workbook"));dialog.resize(900,520);
+    auto *layout=new QVBoxLayout(&dialog);
+    auto *explanation=new QLabel(stored.isEmpty()
+        ?tr("%1 was deleted from the workbook after your draft began. Keeping your draft stores it as a new module.").arg(draft.name)
+        :tr("Someone else changed %1 after your draft began. Compare the versions before choosing.").arg(draft.name));
+    explanation->setWordWrap(true);layout->addWidget(explanation);
+    auto *panes=new QHBoxLayout;layout->addLayout(panes,1);
+    auto pane=[&](const QString &title,const QString &name,const QString &text){
+        auto *column=new QVBoxLayout;column->addWidget(new QLabel(title));
+        auto *view=new QPlainTextEdit(text);view->setObjectName(name);view->setReadOnly(true);view->setAccessibleName(title);view->setLineWrapMode(QPlainTextEdit::NoWrap);
+        view->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));column->addWidget(view,1);panes->addLayout(column,1);};
+    pane(stored.isEmpty()?tr("Stored version (deleted)"):tr("Stored version (%1)").arg(stored["name"].toString()),"conflictStoredSource",stored["source"].toString());
+    pane(tr("Your draft"),"conflictDraftSource",draft.source);
+    auto *buttons=new QDialogButtonBox;layout->addWidget(buttons);
+    auto *keep=buttons->addButton(tr("Keep mine and replace"),QDialogButtonBox::AcceptRole);keep->setObjectName("conflictKeepMine");
+    auto *take=buttons->addButton(tr("Discard mine and take the stored version"),QDialogButtonBox::DestructiveRole);take->setObjectName("conflictTakeStored");
+    auto *cancel=buttons->addButton(QDialogButtonBox::Cancel);cancel->setObjectName("conflictCancel");cancel->setDefault(true);
+    int choice=0;
+    connect(keep,&QPushButton::clicked,&dialog,[&]{choice=1;dialog.accept();});
+    connect(take,&QPushButton::clicked,&dialog,[&]{choice=2;dialog.accept();});
+    connect(cancel,&QPushButton::clicked,&dialog,&QDialog::reject);
+    dialog.exec();
+    if(!m_drafts.contains(key) || m_current!=key)return false;
+    if(choice==1) {
+        auto &kept=m_drafts[key];kept.baseFingerprint=fingerprint();kept.conflict=false;
+        if(stored.isEmpty())kept.moduleId.clear();
+        return true;
     }
+    if(choice==2){m_drafts.remove(key);showMessage(tr("Loaded the stored version of %1.").arg(stored["name"].toString()));refreshList();}
+    return false;
+}
+
+void PythonWorkspace::save() {
+    if(!editable() || !m_drafts.contains(m_current) || foreign(m_current))return;
+    QString problem;
+    if(!validName(m_drafts[m_current].name,&problem)){showMessage(problem);return;}
+    if(m_drafts[m_current].conflict && !resolveConflict())return;
+    if(!confirmHistory() || !m_drafts.contains(m_current))return;
+    const auto draft=m_drafts[m_current];
     QJsonObject request{{"action","module_save"},{"name",draft.name},{"source",draft.source},{"macros",draft.macros},{"fingerprint",draft.baseFingerprint},{"label","Save Python module"}};
     if(!draft.moduleId.isEmpty())request["module"]=draft.moduleId;
-    m_saveKey=m_current;m_saveBase=draft.baseFingerprint;m_editor->clearMarks();
+    m_editor->clearMarks();
+    startOperation(request,Pending::Save,m_current,draft.name,draft.baseFingerprint);
+}
+
+void PythonWorkspace::startOperation(QJsonObject request,Pending kind,const QString &key,const QString &name,const QString &base) {
+    m_pendingKey=key;m_pendingName=name;m_pendingBase=base;
     m_awaitingAdmission=true;updateState();
     emit submitRequested(request);
-    if(m_awaitingAdmission){m_awaitingAdmission=false;m_saveKey.clear();showMessage(tr("Save did not start. Wait for the current operation to finish, then Save again."));updateState();}
+    if(m_awaitingAdmission){m_awaitingAdmission=false;m_pendingKey.clear();showMessage(tr("The change did not start. Wait for the current operation to finish, then try again."));updateState();return;}
+    m_pending=kind;updateState();
 }
 
 void PythonWorkspace::operationAdmitted(const QString &operation) {
     if(!m_awaitingAdmission)return;
-    m_awaitingAdmission=false;m_saveOperation=operation;showMessage(tr("Saving %1…").arg(m_drafts.value(m_saveKey).name));updateState();
+    m_awaitingAdmission=false;m_pendingOperation=operation;showMessage(tr("Storing %1…").arg(m_pendingName));
 }
 
 void PythonWorkspace::operationReceipt(const QJsonObject &receipt) {
-    if(m_saveOperation.isEmpty() || receipt["operation_id"].toString()!=m_saveOperation)return;
-    const auto outcome=receipt["outcome"].toString();const auto name=m_drafts.value(m_saveKey).name;
-    if(outcome=="unknown"){showMessage(tr("The outcome of saving %1 is unknown. Your draft is kept while the operation is reconciled.").arg(name));return;}
-    m_saveOperation.clear();
+    if(m_pendingOperation.isEmpty() || receipt["operation_id"].toString()!=m_pendingOperation)return;
+    const auto outcome=receipt["outcome"].toString();const auto name=m_pendingName;const auto key=m_pendingKey;const auto kind=m_pending;
+    if(outcome=="unknown"){showMessage(tr("The outcome for %1 is unknown. Your draft is kept while the operation is reconciled.").arg(name));return;}
+    m_pending=Pending::None;m_pendingOperation.clear();
     if(outcome=="committed") {
-        m_drafts.remove(m_saveKey);
-        if(m_current==m_saveKey && receipt["module_id"].isString())m_current=receipt["module_id"].toString();
-        if(receipt["code_fingerprint"].isString()){m_rebaseFrom=m_saveBase;m_rebaseTo=receipt["code_fingerprint"].toString();}
-        showMessage(tr("Saved %1 in the workbook.").arg(name));
+        m_pendingKey.clear();
+        if(kind==Pending::Save) {
+            m_drafts.remove(key);
+            if(m_current==key && receipt["module_id"].isString())m_current=receipt["module_id"].toString();
+            if(receipt["code_fingerprint"].isString()){m_rebaseFrom=m_pendingBase;m_rebaseTo=receipt["code_fingerprint"].toString();}
+            showMessage(tr("Saved %1 in the workbook.").arg(name));
+        } else if(kind==Pending::Rename) {
+            showMessage(tr("Renamed the module to %1.").arg(name));
+        } else {
+            m_drafts.remove(key);showMessage(tr("Deleted %1 from the workbook.").arg(name));
+        }
     } else {
         const auto code=receipt["code"].toString(),message=receipt["message"].toString();
-        showMessage(tr("%1 was not saved (%2): %3").arg(name,code,message));
-        emit issue(tr("Python module %1 was not saved (%2): %3 Your draft is kept.").arg(name,code,message));
+        const auto what=kind==Pending::Rename?tr("renamed"):kind==Pending::Delete?tr("deleted"):tr("saved");
+        showMessage(tr("%1 was not %2 (%3): %4").arg(name,what,code,message));
+        emit issue(tr("Python module %1 was not %2 (%3): %4 Nothing was changed; drafts are kept.").arg(name,what,code,message));
         static const QRegularExpression line(QStringLiteral("line (\\d+)"));const auto match=line.match(message);
-        if(code=="INVALID_CODE" && match.hasMatch() && m_current==m_saveKey)m_editor->markLine(match.captured(1).toInt(),true);
-        if(code=="CODE_CHANGED"){m_reviewChanges=true;readCatalog();}
+        if(kind==Pending::Save && code=="INVALID_CODE" && match.hasMatch() && m_current==key)m_editor->markLine(match.captured(1).toInt(),true);
+        if(code=="CODE_CHANGED" && kind==Pending::Save){m_reviewChanges=true;readCatalog();}
+        else{m_pendingKey.clear();if(code=="CODE_CHANGED")readCatalog();}
     }
     updateState();
 }
 
 bool PythonWorkspace::resolveDrafts() {
-    if(m_drafts.isEmpty())return true;
-    QStringList names;for(const auto &draft:std::as_const(m_drafts))names.append(draft.name);
-    const bool canSave=editable();
+    if(m_drafts.isEmpty() || m_discardConfirmed)return true;
+    QStringList names;for(auto it=m_drafts.cbegin();it!=m_drafts.cend();++it)names.append(foreign(it.key())?tr("%1 (previous workbook)").arg(it.value().name):it.value().name);
+    QString saveable;
+    if(m_drafts.contains(m_current) && !foreign(m_current))saveable=m_current;
+    else for(auto it=m_drafts.cbegin();it!=m_drafts.cend();++it)if(!foreign(it.key())){saveable=it.key();break;}
+    const bool canSave=editable() && !saveable.isEmpty();
     QMessageBox box(QMessageBox::Question,tr("Unsaved Python drafts"),
         tr("These Python modules have changes that are not saved to the workbook: %1").arg(names.join(", ")),
         (canSave?QMessageBox::Save:QMessageBox::NoButton)|QMessageBox::Discard|QMessageBox::Cancel,isVisible()?static_cast<QWidget *>(this):parentWidget());
     box.setObjectName("pythonDraftsPrompt");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setDefaultButton(QMessageBox::Cancel);
-    box.setInformativeText(canSave?tr("Save stores the selected draft and keeps this window open. Discard drops every draft."):tr("Discard drops every draft."));
+    box.setInformativeText(canSave?tr("Save stores one draft and keeps this window open. Discard drops every draft."):tr("Discard drops every draft."));
     const auto answer=box.exec();
-    if(answer==QMessageBox::Discard){m_drafts.clear();showMessage({});refreshList();return true;}
+    if(answer==QMessageBox::Discard){m_discardConfirmed=true;return true;}
     if(answer==QMessageBox::Save) {
-        if(!m_drafts.contains(m_current)){m_current=m_drafts.firstKey();m_currentMacro=-1;refreshList();}
+        if(m_current!=saveable){m_current=saveable;m_currentMacro=-1;refreshList();}
         showWorkspace();save();
     }
     return false;
+}
+
+void PythonWorkspace::commitDiscard() {
+    if(!m_discardConfirmed)return;
+    m_discardConfirmed=false;m_drafts.clear();refreshList();
 }
 
 void PythonWorkspace::findNext() {
@@ -397,5 +553,4 @@ void PythonWorkspace::findNext() {
         auto cursor=m_editor->textCursor();cursor.movePosition(QTextCursor::Start);m_editor->setTextCursor(cursor);
         if(!m_editor->find(text)){showMessage(tr("No match for %1.").arg(text));return;}
     }
-    showMessage({});
 }
