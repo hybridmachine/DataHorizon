@@ -223,6 +223,52 @@ package installation, durable external-effect jobs and production remote access
 retain separate contracts. Physical GUI/VoiceOver and existing platform/release
 gates remain open.
 
+## Python workspace batch
+
+The [workspace design](python-workspace-design.md) is implemented on local
+branch `claude/python-workspace`, which is stacked on the unmerged relational
+and automation branches. No pull request has been opened and no hosted CI has
+run for it.
+
+Native v6 adds two inert catalog kinds. Names label one cell or rectangle by
+sheet identity, move with row/column changes, can become broken, and are
+limited to 256. Event bindings attach a top-level workbook function to
+`cell_change` (sheet, range or name scope) or `table_change` (table scope),
+up to 16, and are covered by the code fingerprint; a workbook without bindings
+keeps its previous fingerprint. Approved bindings run inside every managed edit
+in scope, after the external handler, and reject the whole edit with
+`BINDING_FAILED`/`BINDING_TIMEOUT`; required bindings that cannot run reject with
+`BINDING_NOT_APPROVED`/`BINDING_UNAVAILABLE`, optional ones are skipped with a
+notice. Structural rewrites do not call them. The broker context accepts
+sheet-qualified addresses and names (`get`, `value`, `set`, `values`). A
+service started with `--owner-channel` accepts approval lines from its parent
+over standard input only. Names and bindings have REST/OpenAPI, CLI and SDK
+operations.
+
+The desktop adds Tools ▸ Python workspace: a separate window with modules,
+an editor with find and bounded completion, macro declarations, Pick from
+sheet, a Names panel, Review & approve, Run/Output/Events tabs, and protected
+local drafts. The address box shows and accepts names and Data ▸ Name manager…
+manages them. Rejected grid edits keep their draft and name the rule.
+
+[Task 16 evidence](evidence/python-workspace-task16.json) records 708 Python
+tests (22 optional skips), 232 desktop and 70 workspace Qt checks, package
+install and smoke, and the [Supplies example](python-workspace-guide.md) on
+the installed bundled CPython 3.13.18 runtime: total 18 → 20.5, Undo to 18, a
+`Below zero` rollback and a rejected -1 edit. A 13-step Cocoa scenario drives
+the real workspace window through the storyboard at scale requests 1 and 2 with
+synthetic QTest input. The full native acceptance run did not complete in that
+session because its existing job-dialog activation check failed; the
+storyboard has not been performed by a person in the installed application.
+
+Open: names in formulas and XLSX/ODS interchange; Python custom worksheet
+functions; package installation; structure, workbook-open and code events for
+bindings; user-controllable binding order; a source/diff view in the approval
+dialog; changed-cell highlighting after a run; docking; crash-persistent drafts;
+main-window action shortcuts while picking; debouncing the tables-view Cancel;
+selection-scope XLSX/ODS export reports, which do not mention names or
+bindings. Physical input, VoiceOver, Windows/Linux and release gates remain open.
+
 ## Milestone ledger
 
 | Increment | Evidence and scope | Remaining before full milestone closure |
@@ -235,7 +281,7 @@ gates remain open.
 | M5 | Portable named bounded list definitions and persistent declared-record UUIDs; explicit external-edit reconciliation; reviewed record bulk edits and formula-preserving filtered copy/XLSX/ODS export; explicit locale/temporal conversion; durable staged atomic/batched jobs, frozen global sort/find paging and cooperative cancellation | Wider locale/timezone/duration policies, larger scopes and performance qualification (including large-file opening budget), full SQL/query/relational models at M8, production job scheduling and platform/manual acceptance |
 | M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures | Broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
 | M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
-| M8 | Bounded native tables/relationships/indexes, read-only SQL and saved views; native v5 modules, exact service-local activation, atomic macros, required hooks/history and managed clients | Proven managed SQL writes, Qt code editor, workbook event bindings, custom functions/packages, durable external effects, remote TLS/mTLS/password access and remaining foundation/platform qualification |
+| M8 | Bounded native tables/relationships/indexes, read-only SQL and saved views; native v5 modules, exact service-local activation, atomic macros, required hooks/history and managed clients; native v6 names and cell/table event bindings, owner-channel approval and the Qt Python workspace (local branch, no PR) | Proven managed SQL writes, names in formulas/interchange, structure/open/code binding events, custom functions/packages, durable external effects, remote TLS/mTLS/password access, physical-input/VoiceOver acceptance of the workspace and remaining foundation/platform qualification |
 
 Later-stage facilities in this preview are bounded development slices. They do
 not waive the dependencies or completion criteria in the implementation plan.

@@ -56,6 +56,12 @@ externally edited data does not replay skipped change handlers.
 DataHorizon provides general spreadsheet, relational, and programming capabilities.
 Users define business workflows in their own code or external applications.
 
+In the desktop application, Tools ▸ Python workspace opens a window beside the
+sheet for writing workbook modules, picking cell references, naming cells,
+approving code for the session, running macros and binding rules to edits. See
+the [Python workspace guide](docs/design/python-workspace-guide.md); it is part
+of the local development preview, not a qualified release.
+
 ## License direction
 
 All DataHorizon components are licensed under GPLv3 only; see [COPYING](COPYING)

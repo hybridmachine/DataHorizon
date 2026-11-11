@@ -1,9 +1,12 @@
 # Workbook Python automation guide
 
-Native v5 stores Python modules and explicit macro declarations. Stored code stays
-inert until an operator approves its exact workbook/code activation key and a
-client explicitly invokes a macro. The first tier supports REST, managed CLI and
-SDK; a Qt code editor and custom formula functions follow separately.
+Native v5 stores Python modules and explicit macro declarations; native v6 adds
+workbook names and event bindings. Stored code stays inert until an operator
+approves its exact workbook/code activation key and a client explicitly invokes
+a macro or a managed edit reaches a binding. This guide covers REST, the managed
+CLI and the SDK. The [Python workspace guide](python-workspace-guide.md) covers
+writing, approving, running and binding code from the desktop application.
+Custom formula functions follow separately.
 
 ## Run the example
 
@@ -156,6 +159,8 @@ describes the worker phase; the outer `outcome` determines whether data committe
 Approved Python runs with the service user's normal capabilities. A worker is
 not a secure sandbox. SQLite rollback covers context-mediated database edits;
 it cannot undo file/network effects. This tier provides short atomic database
-macros. Durable external-effect queues, package installation, automatic workbook
+macros and cell/table change bindings (see the
+[workspace guide](python-workspace-guide.md#rules-event-bindings)). Durable
+external-effect queues, package installation, workbook-open and structure
 events, multi-transaction macros and formula UDFs require separate contracts.
 Independent SQLite edits bypass hooks and never replay skipped events.

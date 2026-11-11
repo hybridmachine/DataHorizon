@@ -57,6 +57,8 @@ applications, and AI agents through REST.
 | [Implementation status](implementation-status.md) | Current local evidence, milestone gaps and next dependencies |
 | [Python automation plan](python-automation-plan.md) | Native modules, exact operator activation, atomic macros, clients and verification/review ledger |
 | [Python automation guide](python-automation-guide.md) | Runnable example, module API, activation, cancellation, durable results and execution limits |
+| [Python workspace design](python-workspace-design.md) | Approved design for the desktop workspace, names, owner-channel approval and event bindings, with as-built rulings |
+| [Python workspace guide](python-workspace-guide.md) | Supplies example, workspace window, picking, names, Review & approve, running, rules, SDK/CLI equivalents and known limits |
 | [Structured tables and query workbench plan](relational-workbench-plan.md) | Implemented bounded first M8 batch: native tables, managed record edits, relationships, read-only SQL, saved views and verification evidence |
 | [Table and query wireframes](relational-workbench-wireframes.md) | Qt object browser, table/schema review, record editing, relationships and query/result interactions |
 | [Relational manual acceptance](relational-workbench-manual.md) | Installed Customers/Orders fixture, required Python rule, independent edits, repair and pending physical GUI/VoiceOver steps |

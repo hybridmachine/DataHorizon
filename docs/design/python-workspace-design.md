@@ -1,6 +1,6 @@
 # Python workspace design
 
-Draft 0.2 | November 10, 2026 | Status: approved by the owner on November 10, 2026
+Draft 0.3 | November 11, 2026 | Status: approved by the owner on November 10, 2026; section 14 records how it was built
 
 The [implementation plan](python-workspace-plan.md) turns this design into tasks.
 
@@ -9,7 +9,10 @@ binding workbook Python from the desktop application. It follows the
 [storyboard](../../output/pptx/datahorizon-python-workspace-storyboard.pptx)
 the owner accepted on November 10, 2026, and builds on the
 [workbook Python automation batch](python-automation-plan.md). It is a design to
-plan from. It is not an implementation plan and claims no completed work.
+plan from. It is not an implementation plan. Section 14 records rulings made
+while building it; the [workspace guide](python-workspace-guide.md) describes
+the result and the [Task 16 evidence](evidence/python-workspace-task16.json)
+records its verification.
 
 Each decision below is marked **Owner** (stated by the owner) or **Call** (chosen
 by the author of this document and open to reversal). No owner decisions remain
@@ -142,8 +145,10 @@ restores its previous selection afterward. An active in-cell draft in the sheet
 must be resolved first.
 
 **Call: reference text.** The inserted text is a quoted address that always
-includes the sheet name, for example `"Supplies!B3"` or `"Supplies!B2:B4"`,
-using the formula engine's existing quoting rules for sheet names.
+includes the sheet name in quotes, for example `"'Supplies'!B3"` or
+`"'Supplies'!B2:B4"`, with an apostrophe in a sheet name doubled. The sheet
+name is quoted even when the formula engine would not require it; the context
+also accepts the unquoted form `"Supplies!B3"`.
 
 **Call: context methods.** The broker context gains an address form alongside
 the existing `(sheet, row, col)` form, which stays valid:
@@ -366,3 +371,41 @@ Class and file structure; the exact REST resource shapes and error codes,
 following existing conventions; the syntax-colouring implementation; the
 modifier key for picking; panel sizing; how the workspace shares the REST
 client; test fixture layout; and the split of increments into pull requests.
+
+## 14. As built
+
+Added November 11, 2026 with the Task 16 walkthrough. These rulings were made
+during implementation; the approved decisions above are unchanged.
+
+- Names are native v6 catalog objects with operations `name_save` and
+  `name_delete`, read through `POST /v1/workbooks/{id}/names`, the SDK
+  (`names`, `save_name`, `delete_name`) and the CLI (`names read|save|delete`).
+  Bindings use `binding_save` and `binding_delete`, `code()["bindings"]`, the SDK
+  (`save_binding`, `delete_binding`) and the CLI (`bindings read|save|delete`).
+- The picker always inserts a quoted, sheet-qualified address (section 6).
+- Context errors in a macro fail with outcome code `MACRO_CONTEXT`; the specific
+  code is in `macro.context_code`. A committed macro's scalar is
+  `macro_result`.
+- Approval: the service flag is `--owner-channel`; the owning process writes
+  `{"approve":"<workbook UUID>:<fingerprint>"}` lines to the service's standard
+  input. The SDK exposes this as `LocalService(owner_channel=True).approve(key)`.
+- The approval dialog lists changed modules, bindings and the fingerprint. It
+  does not display source or a diff.
+- The Undo-history confirmation appears on each code, name or rule change made
+  while history is not empty, until "Don't ask again this session" is ticked.
+- Save in the close prompt saves the selected module and leaves the window open.
+  A same-module conflict on save opens a dialog to keep the draft or take the
+  stored code.
+- Completion offers names only inside string literals and context methods only
+  after `ctx.`.
+- Changed-cell highlighting after a run is not implemented (section 9).
+- Binding edits are remove-and-add; there is no in-place edit.
+- Bindings run in catalog (identity) order after the external handler. They are
+  not called for rewrites caused by row/column insert or delete or by sheet
+  rename, delete or duplicate, but edits a handler makes during those
+  operations still reach them. An optional binding whose module fails to import
+  is skipped with a notice; a required one rejects with `BINDING_UNAVAILABLE`.
+- Rejected grid edits show `Rejected by <module>.<function>: <reason> · nothing
+  stored` and keep the cell draft.
+- Workbook-scope XLSX/ODS export lists names and bindings as native-only
+  omissions. Selection-scope export does not name them (an open finding).
