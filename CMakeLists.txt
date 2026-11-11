@@ -43,7 +43,7 @@ include(CTest)
 add_library(datahorizon_desktop STATIC
     desktop/restclient.cpp desktop/restclient.h desktop/servicepaths.cpp desktop/servicepaths.h
     desktop/sheetmodel.cpp desktop/sheetmodel.h desktop/viewportcalculations.h
-    desktop/mainwindow.cpp desktop/mainwindow.h desktop/frozentoprow.h)
+    desktop/mainwindow.cpp desktop/mainwindow.h desktop/frozentoprow.h desktop/conversionreportview.h)
 target_sources(datahorizon_desktop PRIVATE desktop/relationalworkbench.cpp desktop/relationalworkbench.h)
 target_sources(datahorizon_desktop PRIVATE desktop/tablerecordeditor.cpp desktop/recordinputdialog.h)
 target_sources(datahorizon_desktop PRIVATE desktop/tablerelationships.cpp)

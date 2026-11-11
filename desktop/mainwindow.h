@@ -12,6 +12,7 @@
 #include <QPersistentModelIndex>
 #include <QItemSelection>
 #include <functional>
+#include <memory>
 
 class QTableView;
 class QLineEdit;
@@ -49,6 +50,16 @@ public:
     void importSpreadsheetBytes(const QByteArray &bytes, const QString &format = "xlsx", const QString &mode = "formulas", int sheetIndex = 1, QJsonObject target = {});
     void inspectNativeFile(const QString &path);
     void exportSpreadsheetTo(const QString &path, const QString &format = "xlsx", const QString &mode = "formulas", QJsonObject target = {});
+    // Whole-workbook import through the large path: the file is streamed to an
+    // upload, prepared into a stage by a job, reviewed with its conversion
+    // report and applied as one workbook_import operation. target is
+    // replace_empty or add_sheets. Cancel at any stage changes nothing and
+    // releases what was created on the service.
+    void importWorkbookFile(const QString &path, const QString &format, const QString &mode = "mixed",
+                            const QString &target = "replace_empty", const QString &timezonePolicy = "reject");
+    // Whole-workbook formulas export through an export job and a streamed
+    // download into the destination's QSaveFile.
+    void exportWorkbookFile(const QString &path, const QString &format);
     void exportCsvTo(const QString &path, QJsonObject target = {});
     void saveNamedListView(const QString &name,bool replace = false);
     void applyNamedListView(const QString &name);
@@ -191,7 +202,20 @@ private:
     void importCsvOptions(const QByteArray &bytes, QJsonObject target, const QString &delimiter, QJsonObject temporalSchema = {});
     void previewCsv(QJsonObject request, QJsonObject target);
     void prepareImport(QJsonObject request, RestClient::Callback callback, const QString &format = "csv");
-    void importSpreadsheetOptions(const QByteArray &bytes, const QString &format, QJsonObject target);
+    void importSpreadsheetOptions(const QString &path, const QString &format, QJsonObject target);
+    void checkReplaceTarget(std::function<void(bool,QString)> done);
+    struct LargeImport;
+    struct LargeExport;
+    void finishLargeImport(const std::shared_ptr<LargeImport> &run, const QString &error = {});
+    void pollLargeImport(const std::shared_ptr<LargeImport> &run, const QJsonObject &view, const QString &error);
+    void reviewLargeImport(const std::shared_ptr<LargeImport> &run, const QJsonObject &summary);
+    void applyLargeImport(const std::shared_ptr<LargeImport> &run);
+    void largeImportReceipt(const std::shared_ptr<LargeImport> &run, const QJsonObject &receipt);
+    void finishLargeExport(const std::shared_ptr<LargeExport> &run, const QString &error = {});
+    void pollLargeExport(const std::shared_ptr<LargeExport> &run, const QJsonObject &view, const QString &error);
+    void downloadLargeExport(const std::shared_ptr<LargeExport> &run, const QJsonObject &result);
+    void discardJob(const QString &job, std::function<void()> then = {});
+    void releaseExport(const QString &exportId, int attempts = 25);
     bool csvTypesDialog(QJsonObject &request, const QJsonObject &preview);
     QJsonObject csvImportTarget() const;
     QJsonObject listValuesRequest(bool selectionOnly);
@@ -308,6 +332,9 @@ private:
     // The workbook handle whose unapproved-rules notice was decided.
     QString m_ruleNoticeHandle;
     QString m_pendingId;
+    // A sheet name to select when the next workbook info arrives (an import's
+    // first sheet); cleared once used.
+    QString m_selectSheetName;
     QString m_restartPath, m_recoveryRecord;
     quint64 m_clipboardGeneration = 0;
     bool m_busy = true, m_unknown = false, m_refreshing = false;

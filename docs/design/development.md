@@ -453,7 +453,18 @@ File → Import… accepts CSV, TSV, TXT, XLSX and ODS, detecting the type from 
 filename extension without a separate format choice. The picker filters to
 supported files; unsupported extensions also reject after selection. TSV defaults
 to Tab while CSV/TXT default to Comma, with the existing encoding/delimiter review.
-XLSX/ODS retain sheet/input options and conversion review.
+XLSX/ODS options choose the formula mode ("Formulas where possible, values
+otherwise" preselected, "Keep every formula", "Values only") and either one
+sheet at the selected cell (the bounded inline path) or All sheets. All sheets
+streams the file to an upload, prepares a stage in a job, and shows a review
+grouped by severity (formulas kept but not calculated, left out, approximated,
+converted) with sheets and cell counts before one explicit Apply; the target is
+"Replace this empty workbook" (offered only when the workbook info, names, code
+and the first 256×16 cells read empty; the service checks again) or "Add as new
+sheets". Cancel at any stage releases the upload and the job. File → Export… of
+the whole workbook with formulas runs an export job and streams the download
+into the destination's atomic save file after checking its size and SHA-256.
+[Review screenshot at scale 2](evidence/large-import-review-native-2.png).
 
 File → Export… opens one save dialog with a Format dropdown for CSV, XLSX or ODS.
 The filename follows the selected format, including a conflicting supported
