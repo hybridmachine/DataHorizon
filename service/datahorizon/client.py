@@ -497,13 +497,15 @@ class WorkbookClient:
 class LocalService:
     """Owns only the child service it started; external services are never stopped."""
 
-    def __init__(self, handler=None, *, approved_code=()):
+    def __init__(self, handler=None, *, approved_code=(), owner_channel=False):
         command = [sys.executable, "-I", "-B", "-X", "utf8", str(Path(__file__).resolve().with_name("launch.py"))]
         from .code_approval import validate_approvals
         for key in sorted(validate_approvals(approved_code)):command += ["--approve-code",key]
         if handler:
             command += ["--handler", str(handler)]
-        self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        self.owner_channel = bool(owner_channel)
+        if self.owner_channel:command.append("--owner-channel")
+        self.process = subprocess.Popen(command, stdin=subprocess.PIPE if self.owner_channel else subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
         self.diagnostics = deque(maxlen=40)
         self._diagnostics_thread=threading.Thread(target=lambda:self.diagnostics.extend(iter(self.process.stderr.readline,"")),daemon=True)
         self._diagnostics_thread.start()
@@ -516,7 +518,20 @@ class LocalService:
             self.close()
             raise RuntimeError("Local service failed to start; inspect its diagnostics and configured Python interpreter") from None
 
+    def approve(self, key):
+        """Owner-only grant: the single private line to the child's standard input."""
+        from .code_approval import validate_approvals
+        if not self.owner_channel:raise RuntimeError("This service was started without an owner channel")
+        validate_approvals([key])
+        if self.process.poll() is not None or self.process.stdin is None or self.process.stdin.closed:raise RuntimeError("The service is not running")
+        try:
+            self.process.stdin.write(json.dumps({"approve":key})+"\n");self.process.stdin.flush()
+        except (OSError,ValueError):raise RuntimeError("The service is not running") from None
+
     def close(self):
+        if self.owner_channel and self.process.stdin is not None:
+            try:self.process.stdin.close()
+            except (OSError,ValueError):pass
         if self.process.poll() is None:
             self.process.terminate()
             try:

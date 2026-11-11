@@ -377,13 +377,14 @@ out.textContent=r.status+'\\n'+JSON.stringify(await r.json(),null,2)}catch(e){ou
 class Service(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port=0, token=None, handler=None, *, max_requests=16, read_seconds=10, max_header_bytes=65536, approved_code=()):
+    def __init__(self, port=0, token=None, handler=None, *, max_requests=16, read_seconds=10, max_header_bytes=65536, approved_code=(), owner_channel=False):
         if type(max_requests) is not int or max_requests<1 or type(max_header_bytes) is not int or max_header_bytes<1:
             raise ValueError("Positive request and header limits required")
         if type(read_seconds) not in (int,float) or not math.isfinite(read_seconds) or read_seconds<=0:
             raise ValueError("Positive finite read deadline required")
-        from .workbook_code import approval_keys
-        self.approved_code=approval_keys(approved_code)
+        from .workbook_code import approval_store
+        self.approved_code=approval_store(approved_code)
+        self.owner_channel=bool(owner_channel)
         self._request_slots=threading.BoundedSemaphore(max_requests)
         self.read_seconds,self.max_header_bytes=read_seconds,max_header_bytes
         self.token, self.handler = token or secrets.token_urlsafe(32), handler
@@ -534,7 +535,8 @@ class Service(ThreadingHTTPServer):
         if method=="GET" and path=="/v1/functions":
             return function_catalog()
         if method == "GET" and path == "/v1/capabilities":
-            return CAPABILITIES
+            if not self.owner_channel:return CAPABILITIES
+            return dict(CAPABILITIES,macro_activation=CAPABILITIES['macro_activation']+'; owner channel')
         if method == "POST" and path == "/v1/open":
             return self._open(body)
         if method == "POST" and path == "/v1/recovery/inspect":
@@ -829,15 +831,44 @@ class RequestHandler(BaseHTTPRequestHandler):
     do_POST = run_request
 
 
+def read_owner_channel(stream, store, limit=4096):
+    """Apply {"approve": key} lines; problems yield one short stderr line and never stop the service."""
+    def warn(text):
+        try:print('owner channel: '+text,file=sys.stderr,flush=True)
+        except (OSError,ValueError):pass
+    while True:
+        try:line=stream.readline(limit+1)
+        except (OSError,ValueError):return
+        if not line:return
+        if len(line)>limit and not line.endswith(b'\n'):
+            while line and not line.endswith(b'\n'):
+                try:line=stream.readline(limit+1)
+                except (OSError,ValueError):return
+            warn('line too long, ignored')
+            continue
+        try:
+            message=json.loads(line.decode('utf-8'))
+            valid=isinstance(message,dict) and set(message)=={'approve'}
+        except (ValueError,UnicodeError):valid=False
+        if not valid:
+            warn('line ignored; expected {"approve": key}')
+            continue
+        try:store.grant(message['approve'])
+        except ValueError:warn('approval rejected')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--handler", type=Path, help="Explicitly activate a trusted service-side on_change Python file")
     parser.add_argument("--approve-code",action="append",default=[],help="Operator-approved workbook UUID:code SHA256 (repeatable; process-local)")
+    parser.add_argument("--owner-channel",action="store_true",help="Accept code approval lines from standard input (the owning parent process only)")
     args = parser.parse_args()
-    server = Service(args.port, handler=args.handler.resolve() if args.handler else None,approved_code=args.approve_code)
+    server = Service(args.port, handler=args.handler.resolve() if args.handler else None,approved_code=args.approve_code,owner_channel=args.owner_channel)
     # Only the launching parent receives this credential through its private pipe.
     print(encoded({"url": f"http://127.0.0.1:{server.server_port}", "token": server.token, "api_version": 1}), flush=True)
+    if args.owner_channel:
+        threading.Thread(target=read_owner_channel,args=(sys.stdin.buffer,server.approved_code),daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -78,6 +78,14 @@ handler to activate its validation and generated edit. The same CLI invocation:
 printf '%s' '{"delta":3}' | PYTHONPATH=service python3 -m datahorizon.cli --handler examples/automation_rules.py --approve-code '<activation key>' /tmp/Automation.dhwb macro MeasurementsCode adjust --fingerprint '<SHA256>' --operation-id '<retained UUID>'
 ```
 
+A service you start can also be approved while it runs: pass
+`LocalService(owner_channel=True)` and call `service.approve(activation_key)`
+(keep the service object; `with service as client` yields the client). The
+service reads `{"approve": key}` lines from its standard input only when started
+with `--owner-channel`; a later grant for the same workbook replaces the earlier
+one, start-up keys are kept, and changed code needs a new key. No HTTP request
+can grant approval.
+
 The service entry point accepts repeatable `--approve-code` options. Attached
 CLI clients use `--url` and `DATAHORIZON_TOKEN`; their operator configures grants
 when starting the service. A remote CLI cannot use `--approve-code` to change

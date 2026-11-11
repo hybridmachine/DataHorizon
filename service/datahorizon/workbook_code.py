@@ -82,6 +82,13 @@ def approval_keys(values):
     except ValueError as error:raise EngineError('INVALID_CODE_APPROVAL',str(error)) from error
 
 
+def approval_store(values):
+    from .code_approval import ApprovalStore
+    if isinstance(values,ApprovalStore):return values
+    try:return ApprovalStore(values)
+    except ValueError as error:raise EngineError('INVALID_CODE_APPROVAL',str(error)) from error
+
+
 def activation(book):
     digest=fingerprint(book.db);key=book.id+':'+digest
     return dict(fingerprint=digest,activation_key=key,approved=key in book.approved_code)
