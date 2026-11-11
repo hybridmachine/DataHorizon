@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import tempfile
 import threading
 import time
@@ -16,7 +17,8 @@ SIDE_FILES = ("-journal", "-wal", "-shm")
 
 
 class Staging:
-    """Files are named `<kind>-<identifier><suffix>`; the identifier is the only caller-controlled path part."""
+    """Retention counts from last access: `path()` and `touch()` refresh an entry's modification time, so an
+    entry in use is not swept. Files are named `<kind>-<identifier><suffix>`; the identifier is the only caller-controlled path part."""
 
     def __init__(self, root=None, *, capacity=4, retention=900):
         require(type(capacity) is int and capacity >= 1, "INVALID_ARGUMENT", "Staging capacity must be a positive integer")
@@ -28,8 +30,17 @@ class Staging:
         else:
             self.root = Path(root)
             self._owned = not self.root.exists()
-            self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(self.root, 0o700)
+            if self._owned:
+                self.root.mkdir(mode=0o700, parents=True)
+            else:
+                info = self.root.lstat()
+                if (not stat.S_ISDIR(info.st_mode) or (hasattr(os, "getuid") and info.st_uid != os.getuid())
+                        or info.st_mode & 0o022):
+                    raise ValueError("A supplied staging root must be a directory owned by the current user "
+                                     "and not group- or world-writable")
+        if self._owned:
+            os.chmod(self.root, 0o700)
+        self._created = set()
         self._closed = False
 
     def _file(self, kind, identifier):
@@ -51,13 +62,27 @@ class Staging:
             require(len(self._entries(kind)) < self.capacity, "JOB_LIMIT",
                     f"At most {self.capacity} {kind} entries can be staged at once; release one first", 409)
             os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+            self._created.add(path.name)
             return path
 
     def path(self, kind, identifier):
         with self._lock:
             path = self._file(kind, identifier)
             require(path.is_file() and not path.is_symlink(), "JOB_NOT_FOUND", "Staging entry is unavailable", 404)
+            self._touch(path)
             return path
+
+    def touch(self, kind, identifier):
+        """Mark an entry as in use, restarting its retention period."""
+        with self._lock:
+            path = self._file(kind, identifier)
+            require(path.is_file() and not path.is_symlink(), "JOB_NOT_FOUND", "Staging entry is unavailable", 404)
+            self._touch(path)
+
+    @staticmethod
+    def _touch(path):
+        try: os.utime(path)
+        except FileNotFoundError: pass
 
     def release(self, kind, identifier):
         with self._lock:
@@ -86,11 +111,9 @@ class Staging:
             if self._owned:
                 shutil.rmtree(self.root, ignore_errors=True)
             else:
-                for kind in SUFFIXES:
-                    for path in self._entries(kind):
-                        path.unlink(missing_ok=True)
-                try: self.root.rmdir()
-                except OSError: pass
+                for name in self._created:
+                    for side in ("", *SIDE_FILES):
+                        (self.root/(name+side)).unlink(missing_ok=True)
 
     def __enter__(self): return self
 

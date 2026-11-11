@@ -18,6 +18,10 @@ from .xlsx_stream import LARGE_CELLS, LARGE_SHEETS, scope_lines
 
 VERSION = 1
 SUMMARY_LIMIT = 1024*1024
+# fit_summary measures compact JSON; the service's response encoding is not pinned here, so aim for 900 KiB to
+# leave about 12% headroom for a more spacious serialisation.
+SUMMARY_TARGET = 900*1024
+MAX_EXTRA = 64*1024
 SAMPLE_SOURCE = 256
 SAMPLE_ENTRY_SAMPLES = 10
 MAX_STYLES = 65_536
@@ -38,7 +42,10 @@ class StageReader:
 
     def _meta(self):
         row = self.db.execute("SELECT payload FROM meta WHERE singleton = 1").fetchone()
-        return json.loads(row[0]) if row else None
+        if row is None: return None
+        meta = json.loads(row[0])
+        if not isinstance(meta, dict) or not isinstance(meta.get("summary", {}), dict): raise ValueError("bad meta")
+        return meta
 
     def summary(self):
         meta = self._meta()
@@ -99,14 +106,15 @@ class StageReader:
 class _ReadOnlyStage(StageReader):
     def __init__(self, path):
         require(Path(path).is_file(), "JOB_NOT_FOUND", "Import stage is unavailable", 404)
+        db = None
         try:
-            self.db = sqlite3.connect(f"file:{quote(str(Path(path).resolve()))}?mode=ro", uri=True, check_same_thread=False)
+            db = self.db = sqlite3.connect(f"file:{quote(str(Path(path).resolve()))}?mode=ro", uri=True, check_same_thread=False)
             meta = self._meta()
-        except sqlite3.Error as error:
-            self.db.close()
-            raise EngineError("JOB_CONFLICT", "The import stage is not a readable stage database", 409) from error
+        except (sqlite3.Error, ValueError) as error:
+            if db is not None: db.close()
+            raise EngineError("INVALID_STAGE", "The import stage is not a readable stage database", 409) from error
         if meta is None or meta.get("version") != VERSION:
-            self.db.close()
+            db.close()
             raise EngineError("JOB_CONFLICT", "The import stage is unfinished or of an unsupported version", 409)
 
 
@@ -145,21 +153,28 @@ class ImportStage(StageReader):
         path = Path(path)
         require(path.is_file(), "JOB_NOT_FOUND", "Import stage is unavailable", 404)
         self.path, self.finished, self._failed = path, False, False
-        self.db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
-        self.db.execute("PRAGMA journal_mode = OFF")
-        self.db.execute("PRAGMA synchronous = OFF")
-        self.db.execute("PRAGMA temp_store = MEMORY")
-        self.db.execute("PRAGMA cache_size = -16384")
-        self._strings = _Strings(self)
-        self.db.execute("BEGIN")
-        if path.stat().st_size == 0:
-            for statement in SCHEMA.split(";\n"):
-                self.db.execute(statement)
-        else:
-            self.finished = self._meta() is not None
-        self._styles = {payload: ident for ident, payload in self.db.execute("SELECT id, payload FROM styles")}
-        self._sheet_count = self.db.execute("SELECT count(*) FROM sheets").fetchone()[0]
-        self._count = self.count()
+        db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
+        try:
+            self.db = db
+            db.execute("PRAGMA journal_mode = OFF")
+            db.execute("PRAGMA synchronous = OFF")
+            db.execute("PRAGMA cache_size = -16384")
+            self._strings = _Strings(self)
+            db.execute("BEGIN")
+            if path.stat().st_size == 0:
+                for statement in SCHEMA.split(";\n"):
+                    db.execute(statement)
+            else:
+                self.finished = self._meta() is not None
+            self._styles = {payload: ident for ident, payload in db.execute("SELECT id, payload FROM styles")}
+            self._sheet_count = db.execute("SELECT count(*) FROM sheets").fetchone()[0]
+            self._count = self.count()
+        except (sqlite3.Error, ValueError) as error:
+            db.close()
+            raise EngineError("INVALID_STAGE", "The file is not a usable import stage database", 409) from error
+        except BaseException:
+            db.close()
+            raise
 
     open_readonly = staticmethod(open_readonly)
 
@@ -206,26 +221,34 @@ class ImportStage(StageReader):
         self._count += len(rows)
 
     def finish(self, report: ConversionReport, extra: dict) -> dict:
-        """Drop the string table, seal the stage and return the review summary (always under 1 MiB)."""
+        """Drop the string table, seal the stage and return the review summary (always under 1 MiB).
+
+        Nothing is dropped until the summary is built and validated; any failure marks the stage failed."""
         self._writable()
-        self._strings.flush()
-        summary = {"scope": "workbook", "stage_id": self.stage_id(), "stage_digest": None, "sheets": [],
-                   "stored_cells": self._count, "report": scope_lines({})+report.lines(),
-                   "report_entries": report.entries(), "totals": report.totals(), "sample": [], "can_import": True}
-        clash = set(extra) & set(summary)
-        if clash: raise ValueError(f"extra must not override summary keys: {sorted(clash)}")
-        self.db.execute("DROP TABLE strings")
-        summary["stage_digest"] = self.digest()
-        summary["sheets"] = [{"name": name, "stored_cells": total} for name, total in self.db.execute(
-            "SELECT sheets.name, count(cells.row) FROM sheets LEFT JOIN cells ON cells.sheet = sheets.position "
-            "GROUP BY sheets.position ORDER BY sheets.position")]
-        summary.update(extra)
-        summary["sample"] = self.sample(100, source_limit=SAMPLE_SOURCE)
-        summary = fit_summary(summary)
-        self.db.execute("INSERT INTO meta(singleton, payload) VALUES (1, ?)", (json.dumps({"version": VERSION, "summary": summary}),))
-        self.db.execute("COMMIT")
+        try:
+            self._strings.flush()
+            summary = {"scope": "workbook", "stage_id": self.stage_id(), "stage_digest": None, "sheets": [],
+                       "stored_cells": self._count, "report": scope_lines({})+report.lines(),
+                       "report_entries": report.entries(), "totals": report.totals(), "sample": [], "can_import": True}
+            clash = set(extra) & set(summary)
+            if clash: raise ValueError(f"extra must not override summary keys: {sorted(clash)}")
+            require(len(encoded(extra).encode()) <= MAX_EXTRA, "LIMIT", "Import summary extras exceed 64 KiB")
+            summary["stage_digest"] = self.digest()
+            summary["sheets"] = [{"name": name, "stored_cells": total} for name, total in self.db.execute(
+                "SELECT sheets.name, count(cells.row) FROM sheets LEFT JOIN cells ON cells.sheet = sheets.position "
+                "GROUP BY sheets.position ORDER BY sheets.position")]
+            summary.update(extra)
+            summary["sample"] = self.sample(100, source_limit=SAMPLE_SOURCE)
+            summary = fit_summary(summary)
+            payload = json.dumps({"version": VERSION, "summary": summary})
+            # No VACUUM and no in-memory temp store: either would rebuild the whole file in RAM.
+            self.db.execute("DROP TABLE strings")
+            self.db.execute("INSERT INTO meta(singleton, payload) VALUES (1, ?)", (payload,))
+            self.db.execute("COMMIT")
+        except BaseException:
+            self._failed = True
+            raise
         self.finished = True
-        self.db.execute("VACUUM")
         return summary
 
     def stage_id(self):
@@ -236,12 +259,12 @@ class ImportStage(StageReader):
 def fit_summary(summary):
     """Trim the summary below SUMMARY_LIMIT: entry samples, then sampled cells. Totals and counts are kept."""
     def size(): return len(json.dumps(summary, separators=(",", ":")).encode())
-    if size() <= SUMMARY_LIMIT: return summary
+    if size() <= SUMMARY_TARGET: return summary
     summary["report_entries"] = [{**entry, "samples": entry["samples"][:SAMPLE_ENTRY_SAMPLES]} for entry in summary["report_entries"]]
     keep = max((len(item["cells"]) for item in summary["sample"]), default=0)
-    while size() > SUMMARY_LIMIT and keep > 0:
+    while size() > SUMMARY_TARGET and keep > 0:
         keep //= 2
         for item in summary["sample"]:
             item["cells"] = item["cells"][:keep]
-    require(size() <= SUMMARY_LIMIT, "LIMIT", "The review summary exceeds 1 MiB")
+    require(size() <= SUMMARY_TARGET, "LIMIT", "The review summary exceeds 1 MiB")
     return summary

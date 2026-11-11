@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import json
 import os
+try:
+    import resource
+except ImportError:
+    resource = None
+import sys
 import sqlite3
 import tempfile
 import threading
@@ -14,7 +19,7 @@ from pathlib import Path
 from datahorizon import xlsx_stream
 from datahorizon.conversion_report import ConversionReport
 from datahorizon.engine import EngineError
-from datahorizon.import_stage import ImportStage, SUMMARY_LIMIT, open_readonly
+from datahorizon.import_stage import ImportStage, SCHEMA, SUMMARY_LIMIT, open_readonly
 from datahorizon.staging import Staging
 from test_xlsx_stream import FIXTURE, ListSink
 
@@ -221,11 +226,11 @@ class ImportStageTests(Base):
         path = self.path()
         stage = ImportStage(path)
         stage.sheet("A")
-        self.rejects("JOB_CONFLICT", open_readonly, path)
+        self.rejects("INVALID_STAGE", open_readonly, path)  # uncommitted: no schema visible yet
         stage.close()
         foreign = Path(self.directory.name)/"foreign.stage"
         foreign.write_bytes(b"not a database at all, definitely not sqlite")
-        self.rejects("JOB_CONFLICT", open_readonly, foreign)
+        self.rejects("INVALID_STAGE", open_readonly, foreign)
         self.rejects("JOB_NOT_FOUND", open_readonly, Path(self.directory.name)/"missing")
 
     def test_file_mode_when_created_by_staging(self):
@@ -236,6 +241,48 @@ class ImportStageTests(Base):
             stage.sheet("A"); stage.cells([cell(1, 1)]); stage.finish(ConversionReport(), {})
             stage.close()
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_corrupt_and_foreign_files_raise_invalid_stage(self):
+        foreign = self.path()
+        foreign.write_bytes(b"this is not sqlite, but it is not empty either"*10)
+        self.rejects("INVALID_STAGE", ImportStage, foreign)
+        corrupt = self.path()
+        with closing(sqlite3.connect(corrupt)) as db:
+            db.executescript(SCHEMA)
+            db.execute("INSERT INTO meta VALUES (1, '{not json')")
+            db.commit()
+        self.rejects("INVALID_STAGE", ImportStage, corrupt)
+        self.rejects("INVALID_STAGE", open_readonly, corrupt)
+
+    def test_failed_finish_leaves_strings_and_marks_failed(self):
+        stage = ImportStage(self.path())
+        self.addCleanup(stage.close)
+        stage.sheet("A")
+        stage.cells([cell(1, 1)])
+        with self.assertRaises(ValueError): stage.finish(ConversionReport(), {"sample": 1})
+        self.rejects("JOB_CONFLICT", stage.cells, [cell(2, 2)])
+        stage = ImportStage(self.path())
+        self.addCleanup(stage.close)
+        stage.sheet("A")
+        self.rejects("LIMIT", stage.finish, ConversionReport(), {"blob": "x"*70_000})
+        # nothing was dropped or sealed
+        self.assertEqual(stage.db.execute("SELECT count(*) FROM sqlite_master WHERE name = 'strings'").fetchone()[0], 1)
+        self.assertIsNone(stage._meta())
+        self.rejects("JOB_CONFLICT", stage.sheet, "B")
+
+    @unittest.skipIf(resource is None, "resource module unavailable")
+    def test_finish_memory_growth_is_bounded(self):
+        def peak():
+            value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            return value if sys.platform == "darwin" else value*1024
+        stage = ImportStage(self.path())
+        self.addCleanup(stage.close)
+        stage.sheet("Big")
+        before, text = peak(), "y"*2000
+        for start in range(0, 50_000, 1000):
+            stage.cells([cell(row, 1, text+str(row)) for row in range(start+1, start+1001)])
+        stage.finish(ConversionReport(), {})
+        self.assertLess(peak()-before, 128*1024*1024)
 
     def test_stages_200000_cells_quickly_in_bounded_memory(self):
         stage = ImportStage(self.path())
@@ -279,6 +326,43 @@ class ImportStageTests(Base):
 
 
 class StagingTests(Base):
+    def test_supplied_root_is_validated_not_chmodded(self):
+        root = Path(self.directory.name)/"open"
+        root.mkdir()
+        os.chmod(root, 0o775)
+        with self.assertRaises(ValueError): Staging(root)
+        os.chmod(root, 0o757)
+        with self.assertRaises(ValueError): Staging(root)
+        self.assertEqual(root.stat().st_mode & 0o777, 0o757)
+        os.chmod(root, 0o755)
+        Staging(root).close()
+        self.assertEqual(root.stat().st_mode & 0o777, 0o755)
+        self.assertTrue(root.exists())
+
+    def test_close_removes_only_own_entries_in_supplied_root(self):
+        root = Path(self.directory.name)/"shared"
+        root.mkdir(mode=0o700)
+        other = Staging(root)
+        theirs = other.new("stage", "theirs")
+        mine = Staging(root)
+        ours = mine.new("stage", "ours")
+        mine.close()
+        self.assertFalse(ours.exists())
+        self.assertTrue(theirs.exists())
+        self.assertTrue(root.exists())
+        other.close()
+
+    def test_path_and_touch_refresh_retention(self):
+        with Staging(Path(self.directory.name)/"s", retention=100) as staging:
+            used = staging.new("stage", "used"); touched = staging.new("stage", "touched"); idle = staging.new("stage", "idle")
+            stale = time.time()-1000
+            for item in (used, touched, idle): os.utime(item, (stale, stale))
+            staging.path("stage", "used")
+            staging.touch("stage", "touched")
+            self.assertEqual(staging.sweep(), 1)
+            self.assertFalse(idle.exists())
+            self.rejects("JOB_NOT_FOUND", staging.touch, "stage", "idle")
+
     def test_directory_is_private_and_removed(self):
         staging = Staging()
         root = staging.root
