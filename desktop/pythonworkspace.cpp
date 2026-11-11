@@ -45,6 +45,8 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     m_showMacro->setToolTip(tr("Show the selected macro's declaration"));
     m_showNames=toolbar->addAction(tr("Names"));m_showNames->setObjectName("showNamesAction");m_showNames->setCheckable(true);
     m_showNames->setToolTip(tr("Show the workbook's names"));
+    toolbar->addSeparator();
+    m_pick=toolbar->addAction(tr("Pick from sheet"));m_pick->setObjectName("pickFromSheetAction");m_pick->setCheckable(true);
     auto *sideGroup=new QActionGroup(this);sideGroup->setExclusionPolicy(QActionGroup::ExclusionPolicy::ExclusiveOptional);sideGroup->addAction(m_showMacro);sideGroup->addAction(m_showNames);
     m_find=new QAction(tr("Find…"),this);m_find->setObjectName("findAction");m_find->setShortcut(QKeySequence::Find);m_find->setShortcutContext(Qt::WindowShortcut);addAction(m_find);
 
@@ -103,6 +105,14 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
         // Inserting is an ordinary edit: it needs an editable module and makes a draft.
         if(m_editor->isReadOnly()){showMessage(tr("Names are inserted only into an editable module. %1").arg(blockedReason()));return;}
         m_editor->insertAtCursor(QStringLiteral("\"%1\"").arg(name));m_editor->setFocus();});
+    // Picking stays armed for several picks until Escape, a second press, or the
+    // owning window ends it.
+    m_pickEscape=new QShortcut(QKeySequence(Qt::Key_Escape),this,nullptr,nullptr,Qt::WindowShortcut);m_pickEscape->setEnabled(false);
+    connect(m_pickEscape,&QShortcut::activated,this,[this]{emit pickFromSheetRequested(false);});
+    connect(m_pick,&QAction::triggered,this,[this](bool on){
+        if(on){m_pickModule=m_current;showMessage(tr("Click a cell or drag a range in the workbook window to insert its reference. Esc or Pick from sheet again ends picking."));}
+        emit pickFromSheetRequested(on);
+        m_pickEscape->setEnabled(m_pick->isChecked());});
     connect(m_find,&QAction::triggered,this,[this]{m_findBar->show();m_findField->setFocus();m_findField->selectAll();});
     connect(m_findField,&QLineEdit::returnPressed,this,&PythonWorkspace::findNext);
     connect(closeFind,&QPushButton::clicked,this,[this]{m_findBar->hide();m_editor->setFocus();});
@@ -142,6 +152,7 @@ void PythonWorkspace::showWorkspace() {
 void PythonWorkspace::closeEvent(QCloseEvent *event) {
     // Closing the workspace only hides it; drafts stay in memory with the
     // workbook window, which asks about them when it closes.
+    if(m_pick->isChecked())emit pickFromSheetRequested(false);
     if(isVisible() && !m_viewStatePath.isEmpty()){QSettings settings(m_viewStatePath,QSettings::IniFormat);settings.setValue("pythonWorkspace/geometry",saveGeometry());settings.sync();}
     event->accept();
 }
@@ -318,6 +329,9 @@ void PythonWorkspace::updateState() {
     m_addMacro->setEnabled(canEdit && selected);m_addMacro->setToolTip(!canEdit?reason:QString());
     m_removeMacro->setEnabled(canEdit && selected && m_currentMacro>=0);
     m_panel->setEnabled(canEdit && selected && m_currentMacro>=0);
+    m_pick->setEnabled(canEdit && selected);
+    m_pick->setToolTip(!canEdit || !selected?reason:tr("Click a cell or drag a range in the workbook window to insert its reference at the cursor. Addresses in code are not updated when rows, columns or sheets change; names keep code stable."));
+    if(m_pick->isChecked() && !pickStillValid())emit pickFromSheetRequested(false);
     m_emptyHint->setVisible(m_modules->count()==0);
     const bool conflict=draft && m_drafts[m_current].conflict;
     m_conflict->setVisible(conflict);
@@ -329,6 +343,20 @@ void PythonWorkspace::updateState() {
 }
 
 void PythonWorkspace::showMessage(const QString &text){m_message->setText(text);}
+
+void PythonWorkspace::insertPickedReference(const QString &reference) {
+    // A Python string literal; the reference never contains a newline.
+    m_editor->insertAtCursor(QStringLiteral("\"%1\"").arg(QString(reference).replace("\\","\\\\").replace("\"","\\\"")));
+}
+
+bool PythonWorkspace::pickStillValid() const {
+    return m_pick->isChecked() && !m_editor->isReadOnly() && !m_current.isEmpty() && m_current==m_pickModule;
+}
+
+void PythonWorkspace::pickFinished(const QString &problem) {
+    m_pick->setChecked(false);m_pickEscape->setEnabled(false);m_pickModule.clear();
+    showMessage(problem.isEmpty()?QString():tr("Picking could not start: %1").arg(problem));
+}
 
 void PythonWorkspace::updateDraft(const QString &source,const QJsonArray &macros) {
     m_discardConfirmed=false;

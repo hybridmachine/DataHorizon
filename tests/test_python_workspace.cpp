@@ -14,22 +14,26 @@
 #include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QStackedWidget>
+#include <QTabBar>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
 #include <functional>
+#include <memory>
 
 namespace {
 
@@ -168,6 +172,51 @@ private:
     QWidget *m_widget;QString m_text;
 };
 
+QString mainStatus(MainWindow &window){return window.findChild<QLabel *>("storageStatus")->text();}
+QAction *pickAction(PythonWorkspace *workspace){return workspace->findChild<QAction *>("pickFromSheetAction");}
+QTableView *grid(MainWindow &window){return window.findChild<QTableView *>("grid");}
+
+void clickCell(MainWindow &window,int row,int col) {
+    auto *view=grid(window);QTest::mouseClick(view->viewport(),Qt::LeftButton,{},view->visualRect(window.model()->index(row,col)).center());
+}
+
+// Presses on one cell, moves to another and releases there, as a mouse drag does.
+void dragCells(MainWindow &window,int r1,int c1,int r2,int c2) {
+    auto *view=grid(window);auto *viewport=view->viewport();
+    const auto from=view->visualRect(window.model()->index(r1,c1)).center(),to=view->visualRect(window.model()->index(r2,c2)).center();
+    const auto global=viewport->mapToGlobal(to);
+    QMouseEvent press(QEvent::MouseButtonPress,from,viewport->mapToGlobal(from),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&press);
+    QMouseEvent move(QEvent::MouseMove,to,global,Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(viewport,&move);
+    QMouseEvent release(QEvent::MouseButtonRelease,to,global,Qt::LeftButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(viewport,&release);
+}
+
+// Adds a sheet through the window and shows it.
+bool showNewSheet(MainWindow &window,const QString &name) {
+    if(!apply(window,{{"action","sheet_add"},{"name",name}}))return false;
+    auto *tabs=window.findChild<QTabBar *>("sheets");
+    for(int index=0;index<tabs->count();++index)if(tabs->tabText(index)==name)tabs->setCurrentIndex(index);
+    return tabs->tabText(tabs->currentIndex())==name;
+}
+
+void placeCursor(PythonWorkspace *workspace,int position) {
+    auto cursor=editor(workspace)->textCursor();cursor.setPosition(position);editor(workspace)->setTextCursor(cursor);
+}
+
+// A workbook window showing sheet Supplies, with a workspace module whose
+// editor holds text and has its cursor at position.
+struct PickSetup {
+    QTemporaryDir temp;StartupOptions options;
+    std::unique_ptr<MainWindow> window;PythonWorkspace *workspace=nullptr;
+    bool start(const QString &file,const QString &sheet,const QString &text,int position) {
+        options.automaticWorkbook=false;window=std::make_unique<MainWindow>(options);
+        if(!boot(*window,temp.filePath(file)) || !showNewSheet(*window,sheet))return false;
+        workspace=openWorkspace(*window);if(!workspace || !createModule(workspace,"supplies"))return false;
+        editor(workspace)->setPlainText(text);placeCursor(workspace,position);
+        return pickAction(workspace)->isEnabled();
+    }
+};
+
+const QString kPicking=QStringLiteral("Picking a reference for Python · Esc to cancel");
 const QString kDraft=QStringLiteral("Draft · not saved to the workbook");
 const QString kSaved=QStringLiteral("Saved in workbook");
 
@@ -827,6 +876,182 @@ private slots:
         QTest::keyClick(code,Qt::Key_Return);QTest::keyClick(code,Qt::Key_Tab);
         QCOMPARE(code->toPlainText(),QString("x = \"Total\"\nctx.table_schema\n    "));
         QCOMPARE(status(workspace),kDraft);
+    }
+
+    void clickInsertsQualifiedCellAtCursor() {
+        PickSetup setup;const QString text="q = ctx.value()\n";QVERIFY(setup.start("click.dhwb","Supplies",text,text.indexOf(')')));
+        auto &window=*setup.window;auto *workspace=setup.workspace;auto *pick=pickAction(workspace);
+        QCOMPARE(pick->text(),QString("Pick from sheet"));QVERIFY(pick->isCheckable());
+        QSignalSpy finished(&window,&MainWindow::externalPickFinished);
+        pick->trigger();QVERIFY(pick->isChecked());QCOMPARE(mainStatus(window),kPicking);
+        clickCell(window,2,1);
+        QCOMPARE(editor(workspace)->toPlainText(),QString("q = ctx.value(\"'Supplies'!B3\")\n"));QCOMPARE(status(workspace),kDraft);
+        // Still armed: the next click inserts again, separated only by what the user typed.
+        QVERIFY(pick->isChecked());QCOMPARE(mainStatus(window),kPicking);QCOMPARE(finished.count(),0);
+        QTest::keyClicks(editor(workspace),", ");clickCell(window,0,0);
+        QCOMPARE(editor(workspace)->toPlainText(),QString("q = ctx.value(\"'Supplies'!B3\", \"'Supplies'!A1\")\n"));
+        // A second press of the button ends it.
+        pick->trigger();QVERIFY(!pick->isChecked());QCOMPARE(finished.count(),1);QCOMPARE(finished[0][0].toBool(),true);
+        QVERIFY(mainStatus(window)!=kPicking);
+        clickCell(window,3,3);QCOMPARE(editor(workspace)->toPlainText(),QString("q = ctx.value(\"'Supplies'!B3\", \"'Supplies'!A1\")\n"));
+    }
+
+    void dragInsertsRange() {
+        PickSetup setup;const QString text="rows = ctx.values()\n";QVERIFY(setup.start("drag.dhwb","Supplies",text,text.indexOf(')')));
+        auto &window=*setup.window;auto *workspace=setup.workspace;auto *pick=pickAction(workspace);
+        pick->trigger();QVERIFY(pick->isChecked());
+        dragCells(window,1,1,3,1);
+        QCOMPARE(editor(workspace)->toPlainText(),QString("rows = ctx.values(\"'Supplies'!B2:B4\")\n"));
+        // Dragged upward and left, the range is normalised; a drag ending on its start cell is one cell.
+        QTest::keyClicks(editor(workspace),", ");dragCells(window,4,3,2,2);
+        QTest::keyClicks(editor(workspace),", ");dragCells(window,5,0,5,0);
+        QCOMPARE(editor(workspace)->toPlainText(),QString("rows = ctx.values(\"'Supplies'!B2:B4\", \"'Supplies'!C3:D5\", \"'Supplies'!A6\")\n"));
+        // Hidden cells and over-limit ranges are refused as in formula picking, and picking stays armed.
+        grid(window)->setCurrentIndex(window.model()->index(7,0));window.findChild<QAction *>("hideRowsAction")->trigger();QVERIFY(grid(window)->isRowHidden(7));
+        const auto before=editor(workspace)->toPlainText();
+        dragCells(window,6,0,8,0);
+        QCOMPARE(editor(workspace)->toPlainText(),before);QVERIFY(issues(window).contains("Show hidden cells before picking"));QVERIFY(pick->isChecked());
+        workspace->activateWindow();QTRY_VERIFY_WITH_TIMEOUT(workspace->isActiveWindow(),5000);QTest::keyClick(editor(workspace),Qt::Key_Escape);QVERIFY(!pick->isChecked());
+    }
+
+    void exactNameMatchInsertsName() {
+        PickSetup setup;const QString text="x = \n";QVERIFY(setup.start("names.dhwb","Supplies",text,4));
+        auto &window=*setup.window;auto *workspace=setup.workspace;auto *pick=pickAction(workspace);
+        QVERIFY(saveName(window,"Total","Supplies!D6"));QVERIFY(saveName(window,"Quantities","Supplies!B2:B4"));
+        QVERIFY(saveName(window,"OtherSheet","Sheet1!D5"));
+        placeCursor(workspace,4);pick->trigger();QVERIFY(pick->isChecked());
+        clickCell(window,5,3);QTest::keyClicks(editor(workspace)," + ");
+        dragCells(window,1,1,3,1);QTest::keyClicks(editor(workspace)," + ");
+        // Part of a named range, or a name's cell on another sheet, is an address.
+        dragCells(window,1,1,2,1);QTest::keyClicks(editor(workspace)," + ");
+        clickCell(window,4,3);
+        QCOMPARE(editor(workspace)->toPlainText(),QString("x = \"Total\" + \"Quantities\" + \"'Supplies'!B2:B3\" + \"'Supplies'!D5\"\n"));
+    }
+
+    void quotedSheetNameRoundTrips() {
+        PickSetup setup;const QString text="def run(ctx):\n    return ctx.value()\n";
+        QVERIFY(setup.start("quoted.dhwb","Bob's Sheet",text,text.lastIndexOf(')')));
+        auto &window=*setup.window;auto *workspace=setup.workspace;
+        QVERIFY(apply(window,{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",3},{"col",2},{"source","42"}}}}}));
+        placeCursor(workspace,text.lastIndexOf(')'));
+        pickAction(workspace)->trigger();clickCell(window,2,1);pickAction(workspace)->trigger();
+        const auto source=editor(workspace)->toPlainText();
+        QCOMPARE(source,QString("def run(ctx):\n    return ctx.value(\"'Bob''s Sheet'!B3\")\n"));
+        // Stored and run by an operator-approved service, the macro reads that cell.
+        QJsonObject declaration{{"name","run"},{"parameters",QJsonArray{}},{"result",QJsonObject{{"type","number"}}}};
+        QVERIFY(apply(window,{{"action","module_save"},{"name","quoted"},{"source",source},{"macros",QJsonArray{declaration}},{"fingerprint",readCode(window)["fingerprint"]}}));
+        const auto code=readCode(window);QVERIFY(!code["activation_key"].toString().isEmpty());
+        QProcess cli;auto environment=QProcessEnvironment::systemEnvironment();environment.insert("PYTHONPATH",QString(DATAHORIZON_FIXTURES)+"/../../service");cli.setProcessEnvironment(environment);
+        cli.start("python3",{"-m","datahorizon.cli","--approve-code",code["activation_key"].toString(),setup.temp.filePath("quoted.dhwb"),"macro","quoted","run","--fingerprint",code["fingerprint"].toString()});
+        cli.write("{}");cli.closeWriteChannel();QVERIFY(cli.waitForFinished(30000));
+        const auto output=cli.readAllStandardOutput();QVERIFY2(cli.exitCode()==0,(output+cli.readAllStandardError()).constData());
+        QCOMPARE(QJsonDocument::fromJson(output).object()["macro_result"].toDouble(),42.0);
+    }
+
+    void pickingLeavesDataSelectionAndStateUnchanged() {
+        PickSetup setup;const QString text="x = \n";QVERIFY(setup.start("unchanged.dhwb","Supplies",text,4));
+        auto &window=*setup.window;auto *workspace=setup.workspace;auto *pick=pickAction(workspace);auto *view=grid(window);
+        auto *address=window.findChild<QLineEdit *>("address");auto *source=window.findChild<QLineEdit *>("source");
+        selectRange(window,"C5:D6");
+        const auto state=window.model()->state();const auto selection=view->selectionModel()->selection();const auto current=view->currentIndex();
+        const auto addressText=address->text();const auto sourceText=source->text();const auto before=mainStatus(window);
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);QSignalSpy finished(&window,&MainWindow::operationFinished);
+        pick->trigger();QVERIFY(pick->isChecked());
+        clickCell(window,2,1);dragCells(window,1,1,3,1);
+        // Double-click and typing in the grid neither edit nor navigate.
+        const auto point=view->visualRect(window.model()->index(6,6)).center();
+        QTest::mouseDClick(view->viewport(),Qt::LeftButton,{},point);
+        view->setFocus();QTest::keyClicks(view,"7");QTest::keyClick(view,Qt::Key_Down);QTest::keyClick(view,Qt::Key_Return);
+        for(auto *line:view->findChildren<QLineEdit *>())QVERIFY(!line->isVisible());
+        QVERIFY(pick->isChecked());QCOMPARE(view->selectionModel()->selection(),selection);QCOMPARE(view->currentIndex(),current);
+        QCOMPARE(address->text(),addressText);QCOMPARE(source->text(),sourceText);QVERIFY(!source->isModified());QVERIFY(!address->isModified());
+        // Navigation through the address box during picking is undone when it ends.
+        selectRange(window,"A1");QCOMPARE(view->currentIndex(),window.model()->index(0,0));
+        QTest::keyClick(view,Qt::Key_Escape);QVERIFY(!pick->isChecked());
+        QCOMPARE(view->selectionModel()->selection(),selection);QCOMPARE(view->currentIndex(),current);QCOMPARE(mainStatus(window),before);
+        QTest::qWait(300);
+        QCOMPARE(window.model()->state(),state);QCOMPARE(admitted.count(),0);QCOMPARE(finished.count(),0);
+        QCOMPARE(editor(workspace)->toPlainText(),QString("x = \"'Supplies'!B3\"\"'Supplies'!B2:B4\"\n"));
+        // A sheet switch during picking keeps it armed, and the new sheet's selection is left alone.
+        pick->trigger();auto *tabs=window.findChild<QTabBar *>("sheets");tabs->setCurrentIndex(0);
+        QVERIFY(pick->isChecked());view->setCurrentIndex(window.model()->index(1,1));
+        clickCell(window,0,0);QVERIFY(editor(workspace)->toPlainText().contains("\"'Sheet1'!A1\""));
+        QTest::keyClick(view,Qt::Key_Escape);QVERIFY(!pick->isChecked());QCOMPARE(view->currentIndex(),window.model()->index(1,1));
+    }
+
+    void escapeCancelsFromEitherWindow() {
+        PickSetup setup;const QString text="x = \n";QVERIFY(setup.start("escape.dhwb","Supplies",text,4));
+        auto &window=*setup.window;auto *workspace=setup.workspace;auto *pick=pickAction(workspace);
+        const auto before=mainStatus(window);QSignalSpy finished(&window,&MainWindow::externalPickFinished);
+        // In the workspace window.
+        pick->trigger();QVERIFY(pick->isChecked());QCOMPARE(mainStatus(window),kPicking);
+        QVERIFY(!workspace->findChild<QLabel *>("workspaceMessage")->text().isEmpty());
+        workspace->activateWindow();QTRY_VERIFY_WITH_TIMEOUT(workspace->isActiveWindow(),5000);QTest::keyClick(editor(workspace),Qt::Key_Escape);
+        QVERIFY(!pick->isChecked());QCOMPARE(mainStatus(window),before);QCOMPARE(finished.count(),1);QCOMPARE(finished[0][0].toBool(),false);
+        clickCell(window,2,1);QCOMPARE(editor(workspace)->toPlainText(),text);
+        // In the workbook window, from the grid and from the formula bar.
+        pick->trigger();QVERIFY(pick->isChecked());window.activateWindow();QTRY_VERIFY_WITH_TIMEOUT(window.isActiveWindow(),5000);grid(window)->setFocus();QTest::keyClick(grid(window),Qt::Key_Escape);
+        QVERIFY(!pick->isChecked());QCOMPARE(finished.count(),2);
+        pick->trigger();QVERIFY(pick->isChecked());auto *source=window.findChild<QLineEdit *>("source");source->setFocus();QTest::keyClick(source,Qt::Key_Escape);
+        QVERIFY(!pick->isChecked());QCOMPARE(finished.count(),3);
+        clickCell(window,2,1);QCOMPARE(editor(workspace)->toPlainText(),text);QCOMPARE(mainStatus(window),before);
+        // Selecting another module ends picking; so does a busy window.
+        pick->trigger();QVERIFY(pick->isChecked());QVERIFY(createModule(workspace,"other"));
+        QVERIFY(!pick->isChecked());QCOMPARE(finished.count(),4);
+        pick->trigger();QVERIFY(pick->isChecked());
+        QVERIFY(apply(window,{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","1"}}}}}));
+        QVERIFY(!pick->isChecked());QCOMPARE(finished.count(),5);
+    }
+
+    void refusedWhileCellDraftActive() {
+        PickSetup setup;const QString text="x = \n";QVERIFY(setup.start("refused.dhwb","Supplies",text,4));
+        auto &window=*setup.window;auto *workspace=setup.workspace;auto *pick=pickAction(workspace);auto *view=grid(window);
+        auto *source=window.findChild<QLineEdit *>("source");QSignalSpy finished(&window,&MainWindow::externalPickFinished);
+        // A formula-bar draft.
+        view->setCurrentIndex(window.model()->index(3,3));QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        source->setFocus();QTest::keyClicks(source,"12");QVERIFY(source->isModified());
+        pick->trigger();QVERIFY(!pick->isChecked());QVERIFY(issues(window).contains("cell draft"));
+        QVERIFY(workspace->findChild<QLabel *>("workspaceMessage")->text().contains("cell draft"));
+        QCOMPARE(source->text(),QString("12"));QVERIFY(source->isModified());
+        QTest::keyClick(source,Qt::Key_Escape);QVERIFY(!source->isModified());
+        // An in-cell editor.
+        view->setCurrentIndex(window.model()->index(4,4));QTRY_VERIFY_WITH_TIMEOUT(window.model()->sourceReady(view->currentIndex()),5000);
+        view->edit(view->currentIndex());auto *cellEditor=view->findChild<QLineEdit *>();QVERIFY(cellEditor);cellEditor->setFocus();QTest::keyClicks(cellEditor,"5");
+        pick->trigger();QVERIFY(!pick->isChecked());QTest::keyClick(cellEditor,Qt::Key_Escape);
+        // The relational view.
+        window.findChild<QAction *>("relationalWorkbenchAction")->trigger();
+        pick->trigger();QVERIFY(!pick->isChecked());QVERIFY(issues(window).contains("Return to sheets before picking"));
+        QCOMPARE(finished.count(),0);QCOMPARE(editor(workspace)->toPlainText(),text);
+        // A read-only workbook's editor is not editable, so picking is unavailable there.
+        StartupOptions options;options.automaticWorkbook=false;MainWindow readonly(options);QVERIFY(boot(readonly,setup.temp.filePath("refused.dhwb"),false,true));
+        auto *readWorkspace=openWorkspace(readonly);QVERIFY(readWorkspace);
+        QVERIFY(!pickAction(readWorkspace)->isEnabled());QVERIFY(pickAction(readWorkspace)->toolTip().contains("Read-only"));
+    }
+
+    void formulaReferencePickStillWorks() {
+        PickSetup setup;const QString text="x = \n";QVERIFY(setup.start("formula.dhwb","Supplies",text,4));
+        auto &window=*setup.window;auto *workspace=setup.workspace;auto *pick=pickAction(workspace);auto *view=grid(window);auto *model=window.model();
+        auto *source=window.findChild<QLineEdit *>("source");auto *formulaPick=window.findChild<QAction *>("pickReferenceAction");
+        QVERIFY(apply(window,{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","1"}},QJsonObject{{"row",1},{"col",2},{"source","2"}},QJsonObject{{"row",2},{"col",1},{"source","3"}},QJsonObject{{"row",2},{"col",2},{"source","4"}}}}}));
+        // The existing formula pick scenario: a dragged range goes into the formula draft and is stored on Enter.
+        view->setCurrentIndex(model->index(3,3));QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);source->setFocus();QTest::keyClicks(source,"=SUM(");
+        formulaPick->trigger();QVERIFY(formulaPick->isChecked());dragCells(window,0,0,1,1);
+        QCOMPARE(source->text(),QString("=SUM(A1:B2"));QCOMPARE(view->currentIndex(),model->index(3,3));QCOMPARE(editor(workspace)->toPlainText(),text);
+        // Starting Python picking cancels a formula pick; the formula draft is kept, so Python picking is refused.
+        formulaPick->trigger();QVERIFY(formulaPick->isChecked());
+        pick->trigger();QVERIFY(!formulaPick->isChecked());QVERIFY(!pick->isChecked());QCOMPARE(source->text(),QString("=SUM(A1:B2"));
+        // Arming the formula pick selected the operand for replacement; type after it.
+        source->end(false);QTest::keyClicks(source,")");QTest::keyClick(source,Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(3,3)).toString(),QString("10"),10000);
+        // Python picking, then a formula pick in the same session: neither inserts into the other.
+        QTRY_VERIFY_WITH_TIMEOUT(pick->isEnabled(),5000);placeCursor(workspace,4);
+        pick->trigger();QVERIFY(pick->isChecked());clickCell(window,0,1);
+        QCOMPARE(editor(workspace)->toPlainText(),QString("x = \"'Supplies'!B1\"\n"));QVERIFY(!source->isModified());
+        formulaPick->trigger();QVERIFY(!pick->isChecked());QVERIFY(!formulaPick->isChecked());
+        view->setCurrentIndex(model->index(4,3));QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);source->setFocus();QTest::keyClicks(source,"=A1+");
+        formulaPick->trigger();QVERIFY(formulaPick->isChecked());clickCell(window,1,1);
+        QCOMPARE(source->text(),QString("=A1+B2"));QCOMPARE(editor(workspace)->toPlainText(),QString("x = \"'Supplies'!B1\"\n"));
+        QTest::keyClick(source,Qt::Key_Escape);
     }
 };
 

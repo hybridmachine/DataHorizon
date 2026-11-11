@@ -14,6 +14,7 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
+class QShortcut;
 class QStackedWidget;
 
 // Separate top-level window for workbook Python. It reads the code catalog
@@ -52,8 +53,15 @@ public:
     // The Names page lists names and asks the owning window to change them.
     NamesPanel *namesPanel() const{return m_names;}
     void setNames(const QJsonArray &names);
+    // Picking from the sheet: the owning window arms it on
+    // pickFromSheetRequested(true), inserts through insertPickedReference while
+    // pickStillValid holds, and reports the end through pickFinished.
+    void insertPickedReference(const QString &reference);
+    bool pickStillValid() const;
+    void pickFinished(const QString &problem = {});
 signals:
     void submitRequested(QJsonObject operation);
+    void pickFromSheetRequested(bool on);
     void issue(QString message);
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -113,7 +121,9 @@ private:
     QString m_viewStatePath;
     inline static bool s_skipHistoryPrompt=false;
 
-    QAction *m_save,*m_showMacro,*m_showNames,*m_find;
+    QAction *m_save,*m_showMacro,*m_showNames,*m_find,*m_pick;
+    QShortcut *m_pickEscape;
+    QString m_pickModule;  // the module or draft that picking was armed for
     QListWidget *m_modules,*m_macros;
     QLabel *m_emptyHint,*m_status,*m_approval,*m_message,*m_conflict;
     QPushButton *m_newModule,*m_renameModule,*m_deleteModule,*m_discard,*m_addMacro,*m_removeMacro;

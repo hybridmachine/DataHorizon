@@ -9,6 +9,8 @@
 #include <QMap>
 #include <QJsonArray>
 #include <QPersistentModelIndex>
+#include <QItemSelection>
+#include <functional>
 
 class QTableView;
 class QLineEdit;
@@ -25,6 +27,12 @@ class RelationalWorkbench;
 class PythonWorkspace;
 class NamesPanel;
 class NameManagerDialog;
+
+// A destination outside the formula bar for references picked in the grid.
+// insert receives the exact-match name, or the always-quoted qualified address
+// ('Supplies'!B3, 'Supplies'!B2:B4). stillValid is asked before each insertion;
+// false ends picking without inserting.
+struct ReferencePickTarget { std::function<void(const QString &)> insert; std::function<bool()> stillValid; };
 
 struct StartupOptions { QString url, token, handler, recoveryDirectory, initialWorkbook, viewStatePath; bool automaticWorkbook = true; };
 
@@ -52,7 +60,17 @@ public:
     // The workbook's names as last read for the current handle, sorted by
     // case-insensitive identifier. Empty until the first read lands.
     QJsonArray names() const { return m_names; }
+    // Arms picking for a target outside this window. It stays armed across
+    // picks until cancelled (Escape in either window, the caller, or a guard
+    // such as a busy window, a model reset or a reconfigured client); a sheet
+    // switch by the user keeps it. Returns false, with an issue, when picking
+    // cannot start. Starting it cancels a formula pick, and vice versa.
+    bool startExternalReferencePick(ReferencePickTarget target,QString *problem = nullptr);
+    void cancelExternalReferencePick();
 signals:
+    // Emitted once when external picking ends; inserted is true when at least
+    // one reference was inserted while it was armed.
+    void externalPickFinished(bool inserted);
     void serviceReady();
     void workbookReady();
     void operationFinished(bool committed);
@@ -76,6 +94,8 @@ private:
     QJsonObject nameById(const QString &id) const;
     QJsonObject nameByText(const QString &text) const;
     QString selectionName() const;
+    QString nameForRange(int r1,int c1,int r2,int c2) const;
+    QString qualifiedReference(int r1,int c1,int r2,int c2) const;
     QString addressText(const QModelIndex &index) const;
     void updateAddress();
     bool selectionReference(QString *reference,QString *problem) const;
@@ -116,6 +136,7 @@ private:
     void pickOtherSheetReference();
     void finishReferencePick(bool insert);
     bool referenceMouseEvent(QObject *object,QEvent *event);
+    void insertExternalReference(int r1,int c1,int r2,int c2);
     void loadFunctionCatalog();
     void showFunctionHelp();
     void traceFormula(const QString &direction);
@@ -233,6 +254,13 @@ private:
     QString m_referenceText,m_referencePreview,m_referenceIssue;
     int m_referenceStart=0,m_referenceLength=0;
     QPoint m_referenceAnchor;
+    // External (Python) picking state; it shares the drag state above.
+    QAction *m_externalPickCancel = nullptr;
+    ReferencePickTarget m_externalTarget;
+    bool m_externalPicking=false,m_externalInserted=false,m_changingSheet=false;
+    QString m_externalWorkbook,m_externalSheet,m_externalStatus;
+    QPersistentModelIndex m_externalCurrent;
+    QItemSelection m_externalSelection;
     QJsonObject m_listSpec,m_namedViews;
     QJsonObject m_findScope;
     QList<QAction *> m_navigationActions;

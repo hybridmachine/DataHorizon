@@ -386,15 +386,22 @@ QJsonObject MainWindow::nameByText(const QString &text) const {
 // The first name, in case-insensitive order, whose rectangle on the current
 // sheet is exactly the selection.
 QString MainWindow::selectionName() const {
-    // Rectangles from before a pending read can be stale (a structural edit
-    // moves them), so only names read for the current state are shown.
-    if(!m_namesReady || m_names.isEmpty() || m_model->projected())return {};
+    if(m_model->projected())return {};
     const auto ranges=m_grid->selectionModel()->selection();if(ranges.size()!=1)return {};
     const auto &range=ranges.first();
+    return nameForRange(range.top()+1,range.left()+1,range.bottom()+1,range.right()+1);
+}
+
+// The first name, in case-insensitive order, whose rectangle on the current
+// sheet is exactly these 1-based stored coordinates.
+QString MainWindow::nameForRange(int r1,int c1,int r2,int c2) const {
+    // Rectangles from before a pending read can be stale (a structural edit
+    // moves them), so only names read for the current state are used.
+    if(!m_namesReady || m_names.isEmpty())return {};
     for(const auto &value:m_names) {
         const auto name=value.toObject();
-        if(!name["broken"].toBool() && name["sheet_id"].toString()==m_model->sheet() && name["row1"].toInt()==range.top()+1 && name["row2"].toInt()==range.bottom()+1
-            && name["col1"].toInt()==range.left()+1 && name["col2"].toInt()==range.right()+1)return name["name"].toString();
+        if(!name["broken"].toBool() && name["sheet_id"].toString()==m_model->sheet() && name["row1"].toInt()==r1 && name["row2"].toInt()==r2
+            && name["col1"].toInt()==c1 && name["col2"].toInt()==c2)return name["name"].toString();
     }
     return {};
 }
@@ -420,11 +427,19 @@ bool MainWindow::selectionReference(QString *reference,QString *problem) const {
     if(ranges.size()==1)range=ranges.first();
     else if(ranges.isEmpty() && m_grid->currentIndex().isValid())range=QItemSelectionRange(m_grid->currentIndex());
     else{*problem=tr("Select one cell or one rectangular range to name. Several separate areas cannot share a name.");return false;}
-    QString sheet;for(const auto &value:m_info["sheets"].toArray())if(value.toObject()["id"].toString()==m_model->sheet())sheet=value.toObject()["name"].toString();
-    if(sheet.isEmpty()){*problem=tr("The current sheet is unavailable. Refresh and try again.");return false;}
-    const auto first=SheetModel::columnName(range.left()+1)+QString::number(range.top()+1),last=SheetModel::columnName(range.right()+1)+QString::number(range.bottom()+1);
-    *reference="'"+QString(sheet).replace("'","''")+"'!"+(first==last?first:first+":"+last);
+    *reference=qualifiedReference(range.top()+1,range.left()+1,range.bottom()+1,range.right()+1);
+    if(reference->isEmpty()){*problem=tr("The current sheet is unavailable. Refresh and try again.");return false;}
     return true;
+}
+
+// The always-quoted qualified address on the current sheet, with apostrophes
+// in the sheet name doubled: 'Supplies'!B3 or 'Supplies'!B2:B4. Empty when the
+// current sheet is not listed.
+QString MainWindow::qualifiedReference(int r1,int c1,int r2,int c2) const {
+    QString sheet;for(const auto &value:m_info["sheets"].toArray())if(value.toObject()["id"].toString()==m_model->sheet())sheet=value.toObject()["name"].toString();
+    if(sheet.isEmpty())return {};
+    const auto first=SheetModel::columnName(c1)+QString::number(r1),last=SheetModel::columnName(c2)+QString::number(r2);
+    return "'"+sheet.replace("'","''")+"'!"+(first==last?first:first+":"+last);
 }
 
 void MainWindow::createName(QWidget *parent) {
@@ -665,6 +680,7 @@ void MainWindow::buildUi() {
     add(edit, tr("Reconcile unknown operation"), {}, [this] { reconcile(); });
     m_painterAction=add(formatMenu,tr("Format painter"),{},[this]{startFormatPainter();},true);m_painterAction->setObjectName("formatPainterAction");m_painterAction->setCheckable(true);m_painterAction->setToolTip(tr("Copy the selected style pattern, then click a destination or drag an exact multiple. Escape cancels."));
     m_painterCancel=new QAction(this);m_painterCancel->setShortcut(QKeySequence(Qt::Key_Escape));m_painterCancel->setShortcutContext(Qt::WidgetWithChildrenShortcut);m_painterCancel->setEnabled(false);addAction(m_painterCancel);connect(m_painterCancel,&QAction::triggered,this,[this]{cancelFormatPainter();m_status->setText(tr("Format painter cancelled"));});
+    m_externalPickCancel=new QAction(this);m_externalPickCancel->setObjectName("cancelExternalPickAction");m_externalPickCancel->setShortcut(QKeySequence(Qt::Key_Escape));m_externalPickCancel->setShortcutContext(Qt::WidgetWithChildrenShortcut);m_externalPickCancel->setEnabled(false);addAction(m_externalPickCancel);connect(m_externalPickCancel,&QAction::triggered,this,&MainWindow::cancelExternalReferencePick);
     add(formatMenu,tr("Format Cells…"),QKeySequence("Ctrl+1"),[this]{showFormatCells();})->setObjectName("formatCellsAction");
     add(edit,tr("Enter date/time…"),{},[this]{enterTemporal();})->setObjectName("enterTemporalAction");
     add(formatMenu, tr("Bold"), QKeySequence::Bold, [this] { format({{"bold", !m_model->cell(m_grid->currentIndex())["style"].toObject()["bold"].toBool()}}); }, true);
@@ -893,6 +909,12 @@ void MainWindow::buildUi() {
     connect(this,&MainWindow::operationAdmitted,m_workspace,&PythonWorkspace::operationAdmitted);
     connect(this,&MainWindow::operationReceipt,m_workspace,&PythonWorkspace::operationReceipt);
     connectNamesPanel(m_workspace->namesPanel());
+    connect(m_workspace,&PythonWorkspace::pickFromSheetRequested,this,[this](bool on){
+        if(!on){cancelExternalReferencePick();return;}
+        QString problem;
+        if(!startExternalReferencePick({[this](const QString &text){m_workspace->insertPickedReference(text);},[this]{return m_workspace->pickStillValid();}},&problem))m_workspace->pickFinished(problem);
+    });
+    connect(this,&MainWindow::externalPickFinished,m_workspace,[this]{m_workspace->pickFinished();});
     connect(this,&MainWindow::operationReceipt,this,[this](QJsonObject receipt){
         if(m_nameOperation.isEmpty() || receipt["operation_id"].toString()!=m_nameOperation)return;
         const auto outcome=receipt["outcome"].toString();
@@ -973,8 +995,8 @@ void MainWindow::buildUi() {
         goToRange(qMin(row,endRow),qMin(col,endCol),qMax(row,endRow),qMax(col,endCol),row,col);
     });
     auto referenceViews=m_frozenTop->views();referenceViews.append(m_grid);for(auto *pane:referenceViews){pane->installEventFilter(this);pane->viewport()->installEventFilter(this);}
-    connect(m_model,&QAbstractItemModel::modelAboutToBeReset,this,[this]{finishReferencePick(false);});
-    connect(m_client,&RestClient::configured,this,[this]{finishReferencePick(false);});
+    connect(m_model,&QAbstractItemModel::modelAboutToBeReset,this,[this]{finishReferencePick(false);if(!m_changingSheet)cancelExternalReferencePick();});
+    connect(m_client,&RestClient::configured,this,[this]{finishReferencePick(false);cancelExternalReferencePick();});
     setBusy(true);
 }
 
@@ -1345,7 +1367,7 @@ void MainWindow::updateFormulaReferences() {
 }
 
 void MainWindow::startReferencePick() {
-    cancelFormatPainter();
+    cancelFormatPainter();cancelExternalReferencePick();
     ++m_referenceGeneration;
     QSignalBlocker blocker(m_pickReferenceAction);m_pickReferenceAction->setChecked(false);
     if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected()){issue("Reference picking needs an editable source sheet.");return;}
@@ -1402,7 +1424,64 @@ bool MainWindow::referenceMouseEvent(QObject *object,QEvent *event) {
         m_referencePreview=SheetModel::columnName(c1)+QString::number(r1);if(r1!=r2 || c1!=c2)m_referencePreview+=":"+SheetModel::columnName(c2)+QString::number(r2);
         m_status->setText(m_referenceIssue.isEmpty()?tr("Reference preview %1 • Release to insert").arg(m_referencePreview):m_referenceIssue);
     }
-    if(event->type()==QEvent::MouseButtonRelease){if(!cell.isValid())m_referenceIssue="Release over a visible cell. Nothing inserted.";finishReferencePick(true);}return true;
+    if(event->type()==QEvent::MouseButtonRelease){
+        if(!cell.isValid())m_referenceIssue="Release over a visible cell. Nothing inserted.";
+        if(!m_externalPicking){finishReferencePick(true);return true;}
+        // External picking stays armed for the next click or drag.
+        m_referenceDragging=false;const auto problem=m_referenceIssue;m_referenceIssue.clear();m_referencePreview.clear();
+        if(!problem.isEmpty()){issue(problem);m_status->setText(tr("Picking a reference for Python · Esc to cancel"));return true;}
+        const int r1=qMin(m_referenceAnchor.y(),cell.row()+1),r2=qMax(m_referenceAnchor.y(),cell.row()+1),c1=qMin(m_referenceAnchor.x(),cell.column()+1),c2=qMax(m_referenceAnchor.x(),cell.column()+1);
+        insertExternalReference(m_model->sourceRow(r1-1)+1,c1,m_model->sourceRow(r2-1)+1,c2);
+    }
+    return true;
+}
+
+bool MainWindow::startExternalReferencePick(ReferencePickTarget target,QString *refusal) {
+    finishReferencePick(false);cancelFormatPainter();cancelExternalReferencePick();
+    bool editing=false;auto views=m_frozenTop->views();views.append(m_grid);
+    for(auto *view:views)if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))if(delegate->activeEditor())editing=true;
+    QString problem;
+    if(m_busy)problem=tr("Wait for the current operation to finish before picking a reference.");
+    else if(m_unknown)problem=tr("Reconcile the unknown operation before picking a reference.");
+    else if(m_info.isEmpty())problem=tr("Open a workbook before picking a reference.");
+    else if(m_relationalActive)problem=tr("Return to sheets before picking a reference.");
+    else if(editing || m_source->isModified())problem=tr("Enter or discard the cell draft before picking a reference.");
+    else if(m_model->projected())problem=tr("Clear the list view before picking a reference; references name stored cells.");
+    else if(!target.insert || !target.stillValid)problem=tr("Nothing can receive a picked reference.");
+    if(!problem.isEmpty()){issue(problem);if(refusal)*refusal=problem;return false;}
+    m_externalTarget=std::move(target);m_externalPicking=true;m_externalInserted=false;
+    m_externalWorkbook=m_info["id"].toString();m_externalSheet=m_model->sheet();
+    m_externalCurrent=m_grid->currentIndex();m_externalSelection=m_grid->selectionModel()->selection();m_externalStatus=m_status->text();
+    m_referenceDragging=false;m_referencePreview.clear();m_referenceIssue.clear();m_externalPickCancel->setEnabled(true);
+    m_status->setText(tr("Picking a reference for Python · Esc to cancel"));
+    return true;
+}
+
+void MainWindow::insertExternalReference(int r1,int c1,int r2,int c2) {
+    // The target is asked first: its editor or module may have changed since
+    // the previous pick.
+    if(m_busy || m_unknown || m_relationalActive || m_model->projected() || m_info["id"].toString()!=m_externalWorkbook || !m_externalTarget.stillValid()) {
+        issue(tr("The Python editor or workbook changed, so picking ended. Nothing inserted."));cancelExternalReferencePick();return;
+    }
+    auto text=nameForRange(r1,c1,r2,c2);if(text.isEmpty())text=qualifiedReference(r1,c1,r2,c2);
+    if(text.isEmpty()){issue(tr("The current sheet is unavailable. Refresh and try again."));return;}
+    m_externalInserted=true;const auto insert=m_externalTarget.insert;insert(text);
+    if(m_externalPicking)m_status->setText(tr("Picking a reference for Python · Esc to cancel"));
+}
+
+void MainWindow::cancelExternalReferencePick() {
+    if(!m_externalPicking)return;
+    m_externalPicking=false;m_referenceDragging=false;m_referencePreview.clear();m_referenceIssue.clear();m_externalPickCancel->setEnabled(false);
+    // Picking never moves the selection, but navigation during it may; it is
+    // put back unless the user switched sheets meanwhile.
+    auto *selection=m_grid->selectionModel();
+    if(m_model->sheet()==m_externalSheet && m_externalCurrent.isValid()) {
+        if(selection->currentIndex()!=m_externalCurrent)selection->setCurrentIndex(m_externalCurrent,QItemSelectionModel::NoUpdate);
+        if(selection->selection()!=m_externalSelection)selection->select(m_externalSelection,QItemSelectionModel::ClearAndSelect);
+    }
+    m_status->setText(m_externalStatus);
+    const bool inserted=m_externalInserted;m_externalTarget={};m_externalInserted=false;m_externalCurrent=QPersistentModelIndex();m_externalSelection.clear();
+    emit externalPickFinished(inserted);
 }
 
 void MainWindow::loadFunctionCatalog() {
@@ -1707,7 +1786,7 @@ void MainWindow::restartService() {
 
 void MainWindow::setBusy(bool busy, const QString &message) {
     busy=busy || !m_activeOperationJob.isEmpty();
-    if(busy){finishReferencePick(false);cancelFormatPainter();}
+    if(busy){finishReferencePick(false);cancelExternalReferencePick();cancelFormatPainter();}
     m_busy = busy || m_releasing;
     if(m_busy){clearFindResults();++m_navigationGeneration;m_navigationExtending=false;}
     for(auto *action:m_navigationActions)action->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
@@ -1894,8 +1973,12 @@ void MainWindow::changeSheet(int index) {
         return;
     }
     m_listSpec = {};
-    m_model->bind(m_info["id"].toString(), m_tabs->tabData(index).toString(), m_info["state"].toString(), m_info["readonly"].toBool());
-    restoreViewState();
+    {
+        // A sheet switch keeps external picking armed on the new sheet.
+        QScopedValueRollback switching(m_changingSheet,true);
+        m_model->bind(m_info["id"].toString(), m_tabs->tabData(index).toString(), m_info["state"].toString(), m_info["readonly"].toBool());
+        restoreViewState();
+    }
     m_grid->setCurrentIndex(m_model->index(0, 0)); syncSource();
 }
 
@@ -1984,7 +2067,7 @@ void MainWindow::cancelFormatPainter() {
 
 void MainWindow::startFormatPainter() {
     if(m_painterPending || !m_painterRows.isEmpty()){cancelFormatPainter();return;}
-    cancelFormatPainter();if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool())return;
+    cancelFormatPainter();cancelExternalReferencePick();if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool())return;
     if(m_address->isModified()){issue("Finish address entry before copying formatting.");return;}
     const auto range=selectedRange();if(range.isEmpty() || m_grid->selectionModel()->selection().size()!=1)return;const auto target=targetContext(range);const auto selection=m_grid->selectionModel()->selection();const auto current=QPersistentModelIndex(m_grid->currentIndex());const auto service=m_client->url();
     captureGridDraft(false);if(!resolveDraft() || !matchesTarget(target) || current!=m_grid->currentIndex() || selection!=m_grid->selectionModel()->selection())return;
@@ -2984,6 +3067,14 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
     if(m_painterPending || !m_painterRows.isEmpty()) {
         if(event->type()==QEvent::KeyPress){const auto key=static_cast<QKeyEvent *>(event)->key();cancelFormatPainter();if(key==Qt::Key_Escape)return true;}
         else if(!m_painterRows.isEmpty() && formatPainterMouseEvent(object,event))return true;
+    }
+    if(m_externalPicking){
+        // The grid neither edits nor navigates while picking for Python.
+        auto views=m_frozenTop->views();views.append(m_grid);bool pane=false;
+        for(auto *view:views)if(object==view || object==view->viewport())pane=true;
+        if(event->type()==QEvent::KeyPress){if(static_cast<QKeyEvent *>(event)->key()==Qt::Key_Escape){cancelExternalReferencePick();return true;}if(pane)return true;}
+        else if(event->type()==QEvent::MouseButtonDblClick && pane)return true;
+        else if(referenceMouseEvent(object,event))return true;
     }
     if(m_pickingReference){
         if(object==m_source && event->type()==QEvent::MouseButtonPress)finishReferencePick(false);
