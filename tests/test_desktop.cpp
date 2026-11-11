@@ -3785,6 +3785,24 @@ private slots:
         auto *tabs=window.findChild<QTabBar *>("sheets"); QCOMPARE(tabs->count(),2);
         QCOMPARE(tabs->tabText(0),QString("Other")); QCOMPARE(tabs->tabText(1),QString("Third"));
     }
+    void unmaintainedFormulaShowsReferenceErrorUntilReentered() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("unmaintained.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",2},{"source","=A5 ` 1"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        window.submit({{"action","rows_insert"},{"start",1},{"count",1}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        auto *model=window.model(); const auto index=model->index(1,1);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(index).toString(),QString("#REF!"),5000);
+        QCOMPARE(model->cell(index)["kind"].toString(),QString("unmaintained"));
+        QCOMPARE(model->data(index,Qt::ToolTipRole).toString(),QString("References in this formula were not maintained through a structural edit. Re-enter the formula."));
+        QCOMPARE(model->data(index,Qt::ForegroundRole).value<QBrush>().color(),QColor("#b3261e"));
+        model->data(index,Qt::EditRole); QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(index),5000);
+        QVERIFY(model->setData(index,"=A5 ` 1",Qt::EditRole)); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->cell(index)["kind"].toString(),QString("formula"),5000);
+    }
     void missingDraftSheetRequiresExplicitDiscardBeforeNewEdits() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);

@@ -1,4 +1,42 @@
-# Development native formats v1 through v6
+# Development native formats v1 through v7
+
+## Unmaintained formulas format v7
+
+v7 reuses v6's schema and adds the cell kind `unmaintained`. A workbook enters
+v7 in the same transaction as the first cell written with that kind, upgrading
+v1-v3 to the v4 relational catalog layout as v5 and v6 do; no operation lowers
+the version, including undo of the edit that marked the cell. v1-v6 readers
+reject v7, and an `unmaintained` row in a file below v7 is rejected as
+`INVALID_FORMAT`.
+
+An `unmaintained` cell holds a formula whose references a structural edit could
+not maintain: neither the strict parser nor the lenient reference scanner can
+read it (`formula.Unmaintainable`). Its `source` is the original formula text,
+starting with `=`. It has no dependencies and is never evaluated; its value is
+the error `#REF!` with the message "References in this formula were not
+maintained through a structural edit. Re-enter the formula." A formula that
+refers to it sees that error.
+
+Row/column insert and delete, sheet rename, delete and duplicate, and move mark
+a formula they scan for rewriting and cannot read, instead of rejecting the
+operation. A formula on a sheet the operation does not change is marked only
+when it contains an unclassified `!` (`has_sheet_reference`), since only a
+qualified reference can reach another sheet; a duplicated sheet's copy is
+marked, never its source. The marked cell keeps its style. The marking is part
+of the operation's transaction, history and changed-cell limits, and follows
+the event contract of other generated reference rewrites. The receipt adds
+`unmaintained` (the first 100 `{sheet, cell}` locations after the operation)
+and `unmaintained_count` when any cell was marked.
+
+Clients cannot write the kind directly: an edit naming it is `INVALID_INPUT`,
+and operation-job staging does not accept it. Full paste of a copied
+`unmaintained` cell, fill and record paste copy it unchanged, without
+translation; values paste rejects its error. Editing the cell with any other
+kind clears the state. XLSX and ODS formula exports write the source unchanged
+as the cell formula (ODS with the `of:` prefix and no cached value) and report
+`formula.unmaintained` with severity `approximated`; values exports reject it
+like other formula errors. The row is inert: a direct SQLite edit can change its
+kind or source, and DataHorizon does not replay or repair it.
 
 ## Workbook names and bindings format v6
 

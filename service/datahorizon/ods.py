@@ -14,7 +14,7 @@ from .formats import numeric_spec, simple_number_style
 from .temporal import Temporal, from_duration, to_duration, export_temporal_styles, import_temporal
 from .conversion_report import ConversionReport
 from .formula_admission import status as formula_status
-from .interchange import MAX_SOURCE_BYTES, map_formula_functions, import_edits, local_formula, mode, native_only_report, node, package, read_xml, xml, preparation_scope, prepare_workbook, validate_sheet_names, workbook_report
+from .interchange import MAX_SOURCE_BYTES, map_formula_functions, import_edits, local_formula, mode, native_only_report, node, package, read_xml, xml, preparation_scope, prepare_workbook, unmaintained_formula, validate_sheet_names, workbook_report
 
 O="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
 T="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
@@ -489,7 +489,7 @@ def ods_export(snapshot,request):
         if props: node(out,q(Y,"table-cell-properties"),**props)
         if paragraph: node(out,q(Y,"paragraph-properties"),**paragraph)
         if text: node(out,q(Y,"text-properties"),**text)
-    body=node(root,q(O,"body")); spreadsheet=node(body,q(O,"spreadsheet")); text_nodes=0
+    body=node(root,q(O,"body")); spreadsheet=node(body,q(O,"spreadsheet")); text_nodes=0; conversions=ConversionReport()
     for sheet in snapshots:
         table=node(spreadsheet,q(T,"table"),**{q(T,"name"):sheet["name"]})
         previous_row=0; previous_col=0; row_node=None
@@ -501,7 +501,10 @@ def ods_export(snapshot,request):
             if col-previous_col>1: node(row_node,q(T,"table-cell"),**{q(T,"number-columns-repeated"):str(col-previous_col-1)})
             previous_col=col
             out=node(row_node,q(T,"table-cell"),**{q(T,"style-name"):style_ids[encoded(cell.get("style",{}))]})
-            require(cell.get("calculation")=="current","CALCULATION_ERROR","ODS export requires error-free current values")
+            if cell["kind"]=="unmaintained" and selected_mode=="formulas":
+                # No cache: its value is the #REF! error, which ODS has no typed cell value for.
+                out.set(q(T,"formula"),"of:"+unmaintained_formula(cell,sheet["name"] if whole else None,conversions))
+            else: require(cell.get("calculation")=="current","CALCULATION_ERROR","ODS export requires error-free current values")
             if cell["kind"]=="formula" and selected_mode=="formulas": out.set(q(T,"formula"),native_to_ods(cell["source"],None if whole else sheet["range"],names if whole else None))
             value=cell.get("value")
             temporal_kind=cell.get("value_kind",cell.get("kind"))
@@ -541,7 +544,7 @@ def ods_export(snapshot,request):
         parts=[(name,xml(part)) for name,part in (("content.xml",root),("styles.xml",styles),("META-INF/manifest.xml",manifest))]
         require(sum(len(data) for _,data in parts)<=16*1024*1024,"LIMIT","Expanded ODS export exceeds 16 MiB")
         for name,data in parts: archive.writestr(name,data)
-    result={"file_base64":base64.b64encode(output.getvalue()).decode(),"state":snapshot["state"],"report":report}
+    result={"file_base64":base64.b64encode(output.getvalue()).decode(),"state":snapshot["state"],"report":report+conversions.lines(),"report_entries":conversions.entries()}
     require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","ODS export exceeds 4 MiB")
     return result
 

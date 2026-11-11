@@ -39,6 +39,12 @@ class Unmaintainable(FormulaError):
         super().__init__("#VALUE!", message)
 
 
+# The typed value of an `unmaintained` cell: a formula whose references a
+# structural edit met as Unmaintainable. It is never evaluated.
+UNMAINTAINED_MESSAGE = ("References in this formula were not maintained through a structural edit. "
+                        "Re-enter the formula.")
+
+
 def column_name(col):
     out = ""
     while col:
@@ -79,10 +85,11 @@ def split_ref(source):
 def has_sheet_reference(source):
     """Ignore error literals and quotes, retaining a quoted sheet's separator.
 
-    An incomplete quoted token stays conservative: an unclassified ! blocks
-    structural operations until the formula can be reviewed. Intentionally not
-    scanner-based yet: `=Other!#REF!` must stay True, and the next task replaces
-    its callers' blocking behaviour.
+    Structural edits use it for formulas no transform can read: one on a sheet
+    the edit does not touch can refer to that sheet only through a `!`, so a
+    False result leaves it unmarked. An incomplete quoted token stays
+    conservative, so an unclassified ! counts. Intentionally not scanner-based:
+    `=Other!#REF!` must stay True.
     """
     pos = 1
     while pos < len(source):
@@ -825,6 +832,8 @@ class Calculator:
                     raise FormulaError("#LIMIT!", "Calculation input cache exceeds 8 MiB")
             if item is None:
                 result = None
+            elif item["kind"] == "unmaintained":
+                raise FormulaError("#REF!", UNMAINTAINED_MESSAGE)
             elif item["kind"] == "formula":
                 result = self.evaluate(Parser(item["source"][1:]).parse(), sheet)
                 if isinstance(result, list):

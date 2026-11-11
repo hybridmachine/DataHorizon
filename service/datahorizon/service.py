@@ -32,7 +32,7 @@ from .list_export import export_list
 from .functions import function_catalog
 
 CAPABILITIES = {
-    "api_version": 1, "format_version": 6, "supported_format_versions": [1,2,3,4,5,6], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
+    "api_version": 1, "format_version": 7, "supported_format_versions": [1,2,3,4,5,6,7], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
     "workbook_modules":True,"atomic_macros":True,"macro_worker_seconds":2,"macro_activation":"operator-approved workbook UUID:code SHA256; set at service start-up, never over HTTP",
     "structured_tables":True,"table_types":["text","integer","number","boolean","date","time","datetime"],
     "readonly_sql":True,"query_jobs":True,"query_result_rows":100000,"query_result_values":1000000,"query_spool_bytes":64*1024*1024,
@@ -173,15 +173,17 @@ def openapi():
             "kind":{"type":"string","enum":kinds,"default":"auto","description":"Explicit date/time/datetime use YYYY-MM-DD, HH:MM:SS[.ffffff], or YYYY-MM-DDTHH:MM:SS[.ffffff], without timezone offsets. Auto never guesses dates."},
             "style":{"$ref":"#/components/schemas/Style"},
             "clear":{"type":"boolean"},"clear_input":{"type":"boolean"},"replace_style":{"type":"boolean"}}},
-        "ClipboardCell":{"type":"object","description":"A full clipboard cell, or {} for an absent cell. Full paste preserves input_kind and translates formula source using the origin coordinates.","properties":{
-            "source":{"type":"string"},"input_kind":{"type":"string","enum":kinds,"default":"text"},
-            "kind":{"type":"string","enum":[*kinds,"blank"]},"value":scalar,"value_kind":{"type":"string","enum":["date","time","datetime"]},"style":{"$ref":"#/components/schemas/Style"},
+        "ClipboardCell":{"type":"object","description":"A full clipboard cell, or {} for an absent cell. Full paste preserves input_kind and translates formula source using the origin coordinates. Kind unmaintained (native format 7) is a formula whose references a structural edit could not maintain: it is never evaluated, reads as the #REF! error, and copies as unmaintained without translation; edits cannot set it.","properties":{
+            "source":{"type":"string"},"input_kind":{"type":"string","enum":[*kinds,"unmaintained"],"default":"text"},
+            "kind":{"type":"string","enum":[*kinds,"unmaintained","blank"]},"value":scalar,"value_kind":{"type":"string","enum":["date","time","datetime"]},"style":{"$ref":"#/components/schemas/Style"},
             "calculation":{"type":"string","enum":["current","error","pending"]},"error":{"type":"string"},
             "source_omitted":{"type":"boolean"},"value_omitted":{"type":"boolean"}}},
         "Receipt": {"type":"object","required":["operation_id","outcome","state","changed_cells"],"properties":{
             "operation_id":{"type":"string"},"outcome":{"type":"string","enum":["committed"]},"state":{"type":"string"},"changed_cells":{"type":"integer"},
             "reference_warnings":{"type":"integer","description":"Newly broken reference expressions in a row/column operation"},
-            "reference_issues":{"type":"array","maxItems":100,"description":"First 100 affected formula locations after the structure change","items":{"type":"object","properties":{"sheet":sheet,"row":row,"col":col}}}}},
+            "reference_issues":{"type":"array","maxItems":100,"description":"First 100 affected formula locations after the structure change","items":{"type":"object","properties":{"sheet":sheet,"row":row,"col":col}}},
+            "unmaintained":{"type":"array","maxItems":100,"description":"First 100 formulas a row/column, sheet or move operation could not read and marked unmaintained, at their locations after the operation","items":{"type":"object","properties":{"sheet":{"type":"string"},"cell":{"type":"string"}}}},
+            "unmaintained_count":{"type":"integer","minimum":1,"description":"Number of formulas marked unmaintained; present only when nonzero"}}},
     }
     schemas["FunctionCatalog"]={"type":"object","required":["version","functions","notes"],"properties":{"version":{"type":"integer","enum":[1]},"notes":{"type":"array","items":{"type":"string"}},"functions":{"type":"array","items":{"type":"object","required":["name","signature","summary","rules","examples","category"],"properties":{**{key:{"type":"string"} for key in ("name","signature","summary","rules","category")},"examples":{"type":"array","items":{"type":"object","properties":{"formula":{"type":"string"},"result":scalar,"inputs":{"type":"array","items":{"$ref":"#/components/schemas/CellEdit"}}}}}}}}}}
     schemas["NavigationRequest"]={"type":"object","required":["row","col","direction","expected_state"],"properties":{

@@ -1975,7 +1975,9 @@ void MainWindow::submitDraft(bool advance, int direction) {
     const auto original=m_model->cell(index);
     const auto inputKind=draft["input_kind"].toString("auto");
     const bool sameSource=m_model->sourceReady(index) && source==original["source"].toString();
-    if (!sameSource || inputKind!=original["input_kind"].toString("auto")) {
+    if (inputKind=="unmaintained") {
+        cell["source"]=source; cell["kind"]=QString("auto"); // Re-entering clears the unmaintained state.
+    } else if (!sameSource || inputKind!=original["input_kind"].toString("auto")) {
         cell["source"]=source; cell["kind"]=sameSource || QStringList{"text","date","time","datetime"}.contains(inputKind)?inputKind:QString("auto");
     }
     m_source->setModified(false);

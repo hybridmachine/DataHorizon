@@ -3,9 +3,9 @@
 from contextlib import contextmanager
 import json
 import time
-from .engine import require,integer,encoded,typed,display,EngineError
+from .engine import EVALUATED,copied_formula,require,integer,encoded,typed,display,EngineError
 from . import records
-from .formula import Parser,ADDRESS,split_ref,address,translate,FormulaError
+from .formula import Parser,ADDRESS,split_ref,address,FormulaError
 from .temporal import Temporal,KINDS
 
 
@@ -61,7 +61,7 @@ def copy(book,request):
                     item=typed(raw);cell=dict(row=row,col=col,source=raw['source'],input_kind=raw['kind'],kind=item['kind'],style=item['style'])
                     if mode!='formats':
                         try:
-                            value=calc.cell(result['sheet'],row,col) if item['kind']=='formula' else item['value']
+                            value=calc.cell(result['sheet'],row,col) if item['kind'] in EVALUATED else item['value']
                             cell.update(value=value,display=display(value,item['style']),calculation='current')
                             if isinstance(value,Temporal):cell['value_kind']=value.kind
                         except FormulaError as error:
@@ -106,12 +106,12 @@ def edit(book,request):
                             source='' if scalar is None else 'TRUE' if scalar is True else 'FALSE' if scalar is False else str(scalar)
                         elif kind in ('auto','formula') and isinstance(source,str) and source.startswith('='):
                             origin_row=integer(value.get('row',row),1,1048576,'origin row');origin_col=integer(value.get('col',col),1,16384,'origin column')
-                            source=translate(source,row-origin_row,col-origin_col)
+                            source=copied_formula(source,row-origin_row,col-origin_col)
                         if kind=='blank':cell['clear_input']=True
                         else:cell.update(source=source,kind=kind)
                     if mode!='values':cell.update(style=value.get('style',{}),replace_style=True)
             edits.append(cell)
-    book.apply_edit(sheet,edits,preserve_inputs=True)
+    book.apply_edit(sheet,edits,preserve_inputs=True,copied=True)
 
 
 def _projected_formula(source,sheet,rows,cols,sheet_id=None):

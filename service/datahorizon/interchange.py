@@ -137,6 +137,18 @@ def native_formula_to_xlsx(source,bounds=None,sheet_names=None):
     return map_formula_functions(local_formula(source,bounds,sheet_names),FUTURE_PREFIX)
 
 
+UNMAINTAINED_DETAIL="references were not maintained through a structural edit; the source is written unchanged"
+
+
+def unmaintained_formula(cell,sheet,report):
+    """Source text for an unmaintained cell, which no transform can read: write it as is and report the approximation."""
+    source=cell["source"]
+    require(not any((ord(c)<32 and c not in "\t\n\r") or ord(c) in (65534,65535) for c in source),
+            "UNSUPPORTED_FORMULA","Formula contains characters unavailable in spreadsheet XML")
+    report.add("formula.unmaintained","approximated",UNMAINTAINED_DETAIL,sheet=sheet,cell=address(cell["row"],cell["col"]))
+    return source
+
+
 def local_formula(source, bounds=None, sheet_names=None, *, allow_unsupported_functions=False):
     """Strict check for export: only implemented, local A1 formulas inside the selection."""
     require(not any((ord(c)<32 and c not in "\t\n\r") or ord(c) in (65534,65535) for c in source),
@@ -442,7 +454,7 @@ def xlsx_export(snapshot,request):
     if selected_mode=="formulas" and any(map_formula_functions(c["source"],FUTURE_PREFIX)!=c["source"] for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"):report.append("Known modern functions use their _xlfn identifiers; target function/version support is required. Choose values for older targets.")
     from .xlsx_styles import export_styles
     styles,style_ids=export_styles([c for s in snapshots for c in s["cells"]])
-    worksheets=[]
+    worksheets=[];conversions=ConversionReport()
     for sheet in snapshots:
         root=ET.Element("worksheet",xmlns=S)
         data=node(root,"sheetData")
@@ -451,7 +463,9 @@ def xlsx_export(snapshot,request):
             if cell["row"]!=current:
                 current=cell["row"]; row=node(data,"row",r=str(current))
             out=node(row,"c",r=address(cell["row"],cell["col"]),s=str(style_ids[encoded(cell.get("style",{}))]))
-            if cell["kind"]=="formula" and selected_mode=="formulas":
+            if cell["kind"]=="unmaintained" and selected_mode=="formulas":
+                node(out,"f",unmaintained_formula(cell,sheet["name"] if whole else None,conversions)[1:])
+            elif cell["kind"]=="formula" and selected_mode=="formulas":
                 node(out,"f",native_formula_to_xlsx(cell["source"],None if whole else sheet["range"],names if whole else None)[1:])
             else:
                 require(cell.get("calculation")=="current","CALCULATION_ERROR","Values export requires current, error-free values")
@@ -490,7 +504,7 @@ def xlsx_export(snapshot,request):
         payload=[(name,xml(part)) for name,part in parts]
         require(sum(len(data) for _,data in payload)<=MAX_EXPANDED,"LIMIT","Expanded XLSX export exceeds 16 MiB")
         for name,data in payload: archive.writestr(name,data)
-    result={"file_base64":base64.b64encode(output.getvalue()).decode(),"state":snapshot["state"],"report":report}
+    result={"file_base64":base64.b64encode(output.getvalue()).decode(),"state":snapshot["state"],"report":report+conversions.lines(),"report_entries":conversions.entries()}
     require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Export response exceeds 4 MiB")
     return result
 

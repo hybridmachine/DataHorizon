@@ -4,7 +4,7 @@ from datetime import datetime
 import hashlib
 import math
 import time
-from .engine import EngineError, encoded, require, rectangle, boolean, typed, sql_deadline
+from .engine import EVALUATED, EngineError, encoded, require, rectangle, boolean, typed, sql_deadline
 from .formula import FormulaError
 from .relational import columns, name, value, tables
 from .temporal import Temporal, utc_clock
@@ -54,7 +54,7 @@ def prepare(book,args,*,deadline=None):
                 try:
                     item=typed(raw);kind='blank' if item is None else item['kind']
                     if raw and raw['style']:style_count+=1
-                    if kind=='formula':formula_count+=1;stored=calc.cell(sheet,row,col)
+                    if kind in EVALUATED:formula_count+=1;stored=calc.cell(sheet,row,col)
                     else:stored=None if item is None else item.get('value')
                 except (FormulaError,EngineError) as error:
                     stored=None
