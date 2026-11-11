@@ -175,7 +175,12 @@ sort/filter, state-bound authenticated keyset pages and registered native indexe
 now run through REST/SDK/CLI and Qt. The desktop retains at most 128 records and
 2,048 preview values per page and releases hidden sheet caches. Native index
 interruption produces a confirmed rollback receipt after reacquiring ownership.
-Relationships and querying are the following tasks.
+Native RESTRICT relationships and owned indexes now preserve ordinary SQLite
+access. Explicit orphan repair handles admit only reviewed child-key repairs or
+orphan deletions, with required hooks and complete final relationship validation.
+Self/cyclic graphs and rebuilding referenced parent tables retain explicit
+dependency restrictions. Full Python verification passes 537 tests (19 optional
+skips). Read-only querying is the following task.
 Automated evidence and the owner's later manual GUI
 walkthrough are tracked separately. Managed SQL mutations and
 the existing M1/M7/manual/platform/release gates retain their own requirements.

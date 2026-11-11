@@ -40,6 +40,8 @@ RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWi
     auto *columns=new QPushButton(tr("Choose displayed columns…"));columns->setObjectName("tableChooseColumns");buttons->addWidget(columns,2,0);connect(columns,&QPushButton::clicked,this,&RelationalWorkbench::chooseColumns);
     auto *indexes=new QPushButton(tr("Indexes…"));indexes->setObjectName("tableIndexes");buttons->addWidget(indexes,2,1);connect(indexes,&QPushButton::clicked,this,&RelationalWorkbench::manageIndexes);
     auto *cancel=new QPushButton(tr("Cancel current operation"));cancel->setObjectName("cancelTableOperation");buttons->addWidget(cancel,2,2);connect(cancel,&QPushButton::clicked,this,&RelationalWorkbench::cancelOperationRequested);
+    auto *relations=new QPushButton(tr("Relationships…"));relations->setObjectName("tableRelationships");buttons->addWidget(relations,3,0);connect(relations,&QPushButton::clicked,this,&RelationalWorkbench::manageRelationships);
+    auto *violations=new QPushButton(tr("Inspect relationship violations…"));violations->setObjectName("relationshipViolations");buttons->addWidget(violations,3,1);connect(violations,&QPushButton::clicked,this,&RelationalWorkbench::inspectViolations);
     layout->addLayout(buttons);
     auto *records=new QGridLayout;b=0;
     const QList<QPair<QPushButton **,QStringList>> actions{
@@ -69,7 +71,7 @@ RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWi
     connect(m_previous,&QPushButton::clicked,this,[this]{if(!m_previousPages.isEmpty())loadRecords(m_previousPages.takeLast());});
     m_status=new QLabel(tr("Choose a table or create an empty table."));m_status->setObjectName("tableStatus");m_status->setWordWrap(true);
     m_status->setAccessibleName(tr("Table operation status"));layout->addWidget(m_status);
-    connect(sheets,&QPushButton::clicked,this,&RelationalWorkbench::sheetsRequested);
+    connect(sheets,&QPushButton::clicked,this,[this]{if(m_info["repair"].toBool())emit issue(tr("This handle is restricted to relationship repair. Reopen normally to edit sheets."));else emit sheetsRequested();});
     connect(refresh,&QPushButton::clicked,this,&RelationalWorkbench::refreshCatalog);
     connect(m_create,&QPushButton::clicked,this,&RelationalWorkbench::createTable);
     connect(m_drop,&QPushButton::clicked,this,&RelationalWorkbench::dropTable);
@@ -100,7 +102,7 @@ void RelationalWorkbench::bind(const QJsonObject &info) {
 }
 
 void RelationalWorkbench::setLocked(bool locked) {
-    m_blocked=locked || m_info.isEmpty();m_locked=m_blocked || m_info.value("readonly").toBool();
+    m_blocked=locked || m_info.isEmpty();m_locked=m_blocked || m_info.value("readonly").toBool() || m_info.value("repair").toBool();
     m_create->setEnabled(!m_locked);m_drop->setEnabled(!m_locked && !m_table.isEmpty());
     m_editSchema->setEnabled(!m_locked && !m_table.isEmpty());
     m_previous->setEnabled(!m_blocked && !m_previousPages.isEmpty());m_next->setEnabled(!m_blocked && !m_nextAfter.isEmpty());

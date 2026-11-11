@@ -912,7 +912,8 @@ class Workbook:
                 kind = request.get("action")
                 require(isinstance(kind,str),'INVALID_ARGUMENT','Operation action must be Text')
                 self.operation_action=kind
-                require(not self.relational_issues,'DATA_REPAIR_REQUIRED','Use the explicit restricted repair interface before ordinary mutations',409)
+                require(not self.repair or kind=='table_repair','REPAIR_SCOPE','Repair handles admit only reviewed orphan repairs',409)
+                require(not self.relational_issues or kind=='table_repair' and self.repair,'DATA_REPAIR_REQUIRED','Use the explicit restricted repair interface before ordinary mutations',409)
                 from . import relational
                 sheet_structural = isinstance(kind, str) and (kind.startswith("sheet_") or kind == "workbook_import" or kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"))
                 structural=sheet_structural or kind in relational.STRUCTURAL
@@ -1104,6 +1105,11 @@ class Workbook:
                     raise EngineError("UNSUPPORTED_OPERATION", f"Operation is not available: {kind}")
                 if sheet_structural:self.structure_hook(operation,request,'after',before_catalog)
                 self.run_hooks(operation)
+                repaired_issues=None
+                if kind=='table_repair':
+                    from .relationships import finish_repair
+                    finish_repair(self)
+                    repaired_issues=relational.validate_data(self.db,relational.tables(self.db),self.deadline,repair=True)
                 records.finish(self,request,record_context)
                 self.check_operation()
                 self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1] or key in self.table_schema_keys}
@@ -1117,6 +1123,7 @@ class Workbook:
                 self.check_operation()
                 self.db.execute("COMMIT")
                 in_transaction = False
+                if repaired_issues is not None:self.relational_issues=repaired_issues
                 if structural or self.table_record_keys:self.dependencies.clear()
                 else:self.dependencies.invalidate(self.changes)
                 if structural:

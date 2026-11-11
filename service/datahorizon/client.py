@@ -119,8 +119,8 @@ class Client:
         path = "/v1/jobs/"+quote(job_id,safe="")
         return self.request(path+"/"+action, {}) if action in ("cancel","release") else self.request(path)
 
-    def open(self, path, create=False, readonly=False):
-        info = self.request("/v1/open", {"path": str(Path(path).expanduser().resolve()), "create": create, "readonly": readonly})
+    def open(self, path, create=False, readonly=False,repair=False):
+        info = self.request("/v1/open", {"path": str(Path(path).expanduser().resolve()), "create": create, "readonly": readonly,**({"repair":True} if repair else {})})
         return WorkbookClient(self, info)
 
 
@@ -209,6 +209,23 @@ class WorkbookClient:
     def read_table(self,table,**scope):
         self._ensure_open()
         return self.client.request(self.base+'/tables/read',dict(table=table,expected_state=self.state,**scope))
+
+    def create_relationship(self,name,parent_table,parent_column,child_table,child_column,**rules):
+        return self.apply('relationship_create',name=name,parent_table=parent_table,parent_column=parent_column,child_table=child_table,child_column=child_column,**rules)
+
+    def drop_relationship(self,relationship):return self.apply('relationship_drop',relationship=relationship)
+
+    def inspect_relationships(self):
+        self._ensure_open()
+        return self.client.request(self.base+'/relationships/inspect',dict(expected_state=self.state))
+
+    def preview_orphan_repair(self,relationship,mode,**targets):
+        self._ensure_open()
+        return self.client.request(self.base+'/relationships/repair-preview',dict(relationship=relationship,mode=mode,expected_state=self.state,**targets))
+
+    def apply_orphan_repair(self,preview):
+        operation=dict(preview['operation']);operation.pop('action',None)
+        return self.apply('table_repair',**operation,review_digest=preview['review_digest'],expected_state=preview['state'])
 
     def create_index(self,table,name,columns,*,unique=False):
         return self.apply('index_create',table=table,name=name,columns=columns,unique=unique)

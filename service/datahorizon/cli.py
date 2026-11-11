@@ -89,6 +89,7 @@ def main():
     parser.add_argument("--url", help="Attach to an existing localhost REST service")
     parser.add_argument("--handler", help="Explicit trusted hook activation for an owned local service")
     parser.add_argument("--readonly", action="store_true")
+    parser.add_argument("--repair",action="store_true",help="Restricted managed relationship repair handle")
     parser.add_argument("file")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("create")
@@ -104,6 +105,7 @@ def main():
     record=commands.add_parser('table-records',help='Read or atomically insert/update/delete table records; mutations read JSON stdin')
     record.add_argument('table');record.add_argument('record_action',choices=['read','insert','update','delete']);record.add_argument('--limit',type=int,default=256);record.add_argument('--after')
     record.add_argument('--preview',action='store_true');record.add_argument('--convert-inputs',action='store_true')
+    relation=commands.add_parser('relationship',help='Create from JSON stdin, drop by name/ID, inspect, or preview/apply orphan repair JSON');relation.add_argument('relation_action',choices=['create','drop','inspect','repair']);relation.add_argument('name',nargs='?');relation.add_argument('--apply',action='store_true')
     browse=commands.add_parser('table-browse',help='Read a full-table sorted/filtered/projected page from JSON stdin');browse.add_argument('table')
     index=commands.add_parser('table-index',help='Create an index from JSON stdin, or drop by name/ID');index.add_argument('index_action',choices=['create','drop']);index.add_argument('name')
     table_from=commands.add_parser('table-from-range',help='Preview a source selection from JSON stdin; --apply creates the reviewed value snapshot in this session')
@@ -136,6 +138,7 @@ def main():
         if args.command in ("read", "set"):
             row, col = coordinates(args.address)
         if args.command == "direct-sql":
+            if args.repair:raise ValueError('--repair is a restricted managed mode; use relationship repair commands')
             path = Path(args.file).expanduser().resolve()
             target = path.as_uri()+"?mode=ro" if args.readonly else str(path)
             with closing(sqlite3.connect(target, uri=args.readonly)) as db:
@@ -151,7 +154,7 @@ def main():
                 output=json.dumps(result,allow_nan=False)
                 releasing=True
             else:
-                with client.open(args.file, create=args.command == "create", readonly=args.readonly) as book:
+                with client.open(args.file, create=args.command == "create", readonly=args.readonly,repair=args.repair) as book:
                     if args.command in ("create", "info"):
                         result = book.info
                     elif args.command=='tables':result=book.tables()
@@ -168,6 +171,12 @@ def main():
                                 review=book.preview_record_edits(args.table,'table_'+args.record_action,**{key:payload})
                                 result=review if args.preview else book.apply_record_preview(review)
                             else:result=getattr(book,{'insert':'insert_records','update':'update_records','delete':'delete_records'}[args.record_action])(args.table,payload)
+                    elif args.command=='relationship':
+                        if args.relation_action=='inspect':result=book.inspect_relationships()
+                        elif args.relation_action=='create':result=book.create_relationship(args.name,**json.load(sys.stdin))
+                        elif args.relation_action=='drop':result=book.drop_relationship(args.name)
+                        else:
+                            review=book.preview_orphan_repair(args.name,**json.load(sys.stdin));result=book.apply_orphan_repair(review) if args.apply else review
                     elif args.command=='table-browse':result=book.read_table(args.table,**json.load(sys.stdin))
                     elif args.command=='table-index':result=book.drop_index(args.name) if args.index_action=='drop' else book.create_index(name=args.name,**json.load(sys.stdin))
                     elif args.command=='table-from-range':

@@ -1,0 +1,29 @@
+{
+  "task": 7,
+  "source_commit": "0b0d5f0e2384b54acb7a66cdbc74020daeb2323f",
+  "automated_status": "passed",
+  "full_python": {
+    "tests_run": 537,
+    "optional_skips": 19,
+    "elapsed_seconds": 47.51
+  },
+  "targeted": {
+    "relationship_tests": 10,
+    "qt_workflows": 3,
+    "qt_checks_including_setup_cleanup": 5
+  },
+  "contracts": [
+    "Same-type RESTRICT foreign keys to required UNIQUE parent keys; nullable children",
+    "Owned child indexes and atomic identity-preserving rebuilds",
+    "Dependency-ordered generated parent/child Undo/Redo",
+    "Explicit repair handles, orphan-only reviewed updates/deletes, required hooks and complete final validation",
+    "GUI relationship creation, independent SQLite orphan, restricted repair and normal reopen"
+  ],
+  "initial_restrictions": [
+    "No self/cyclic relationships",
+    "Remove incoming relationships before rebuilding a referenced table",
+    "All relationship orphans must be resolved in one bounded repair; scalar/schema corruption is separate"
+  ],
+  "manual_gui_acceptance": "pending",
+  "release_qualified": false
+}

@@ -10,7 +10,7 @@ ACTIONS={'index_create','index_drop'}
 def indexes(db):return [item for _,item in objects(db,'index')]
 
 
-def validate(item,registered):
+def validate(item,registered,relationships=()):
     require(set(item)=={'id','name','table','columns','unique','owner'},'INVALID_FORMAT','Invalid index metadata')
     name(item['name']);boolean(item['unique'],'unique')
     target=next((t for t in registered if t['id']==item['table']),None);require(target is not None,'TABLE_NOT_FOUND','Index table is missing')
@@ -18,7 +18,8 @@ def validate(item,registered):
     require(isinstance(entries,list) and 1<=len(entries)<=16,'INVALID_SCHEMA','Choose 1–16 index columns')
     for entry in entries:
         require(isinstance(entry,dict) and set(entry)=={'column','direction'} and isinstance(entry['column'],str) and entry['column'] in keys and entry['column'] not in seen and entry['direction'] in ('asc','desc'),'INVALID_SCHEMA','Choose unique existing index columns and asc/desc order');seen.add(entry['column'])
-    require(item['owner']=='user' or isinstance(item['owner'],str) and any(r['id']==item['owner'] for r in []),'INDEX_OWNED','Unsupported index owner')
+    owner=next((r for r in relationships if r['id']==item['owner']),None)
+    require(item['owner']=='user' or owner is not None and item['table']==owner['child_table'] and item['columns']==[dict(column=owner['child_column'],direction='asc')] and not item['unique'],'INDEX_OWNED','Invalid constraint-owned index')
     return target
 
 

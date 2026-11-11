@@ -37,7 +37,7 @@ void RelationalWorkbench::dataPreview(const QJsonObject &request,const QJsonObje
     if(reviewed["id"]!=m_info["id"] || reviewed["state"]!=m_info["state"]){dialog->stale(tr("Stored data changed. Review current values before retrying."));return;}
     m_recordDraft["request"]=request;dialog->pending(true);emit busyRequested(true);
     auto body=request;body["expected_state"]=reviewed["state"];
-    m_client->request(base()+"/tables/edit-preview",body,[this,reviewed,dialog](QJsonObject result,QString error){
+    m_client->request(base()+(request["action"]=="table_repair"?"/relationships/repair-preview":"/tables/edit-preview"),body,[this,reviewed,dialog](QJsonObject result,QString error){
         emit busyRequested(false);if(!dialog)return;
         if(reviewed["id"]!=m_info["id"] || reviewed["state"]!=m_info["state"]){dialog->stale(tr("Stored data changed. Review current values before retrying."));return;}
         if(!error.isEmpty()){dialog->error(error);return;}

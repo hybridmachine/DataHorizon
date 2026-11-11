@@ -14,7 +14,7 @@ from .hooks import invoke, supports_event
 SCHEMA = '''CREATE TABLE dh_relational (kind TEXT NOT NULL, id TEXT NOT NULL,
  payload TEXT NOT NULL, PRIMARY KEY(kind,id)) WITHOUT ROWID;'''
 TYPES = ('text','integer','number','boolean','date','time','datetime')
-STRUCTURAL = {'table_create','table_drop','table_promote','table_schema','index_create','index_drop'}
+STRUCTURAL = {'table_create','table_drop','table_promote','table_schema','index_create','index_drop','relationship_create','relationship_drop','table_repair'}
 ACTIONS = set(STRUCTURAL)
 DATA_ACTIONS={'table_insert','table_update','table_delete'}
 ACTIONS.update(DATA_ACTIONS)
@@ -115,6 +115,8 @@ def table_sql(item,relationships=(),all_tables=()):
                f"typeof({identifier})='text' AND length(CAST({identifier} AS BLOB))<=65536")
         fields.append(f'{identifier} {affinity}'+(' NOT NULL' if col['required'] else '')+
                       (' UNIQUE' if col['unique'] else '')+f' CHECK({identifier} IS NULL OR ({check}))')
+    from .relationships import foreign_keys
+    fields.extend(foreign_keys(item,relationships,all_tables))
     return 'CREATE TABLE '+quote(item['name'])+' ('+', '.join(fields)+')'
 
 
@@ -136,7 +138,7 @@ def validate_schema(db,signature,base_schema):
     require(expected_schema(SCHEMA)[0] in signature,'FORMAT_VERSION','Native format v4 requires its matching relational catalog',409)
     catalog=objects(db);registered=[];names=set()
     for kind,item in catalog:
-        require(kind in ('table','index'),'INVALID_FORMAT','Unsupported relational object kind',409)
+        require(kind in ('table','index','relationship'),'INVALID_FORMAT','Unsupported relational object kind',409)
         if kind!='table':continue
         require(set(item)=={'id','name','columns'},'INVALID_FORMAT','Invalid table catalog fields',409)
         name(item['name']);columns(item['columns'],stored=True)
@@ -144,10 +146,13 @@ def validate_schema(db,signature,base_schema):
         names.add(item['name'].lower());registered.append(item)
     require(len(registered)<=64,'LIMIT','At most 64 structured tables')
     from .table_indexes import indexes,validate,sql
+    from .relationships import relationships,validate as validate_relationships
+    registered_relationships=relationships(db);validate_relationships(registered_relationships,registered)
     registered_indexes=indexes(db)
     for item in registered_indexes:
-        validate(item,registered);require(item['name'].lower() not in names,'INVALID_FORMAT','Duplicate SQL names');names.add(item['name'].lower())
-    expected=expected_schema(base_schema+SCHEMA+';'.join([*(table_sql(item) for item in registered),*(sql(item,validate(item,registered)) for item in registered_indexes)])+';')
+        validate(item,registered,registered_relationships);require(item['name'].lower() not in names,'INVALID_FORMAT','Duplicate SQL names');names.add(item['name'].lower())
+    for rel in registered_relationships:require(sum(index['owner']==rel['id'] for index in registered_indexes)==1,'INVALID_FORMAT','Relationship supporting index is missing')
+    expected=expected_schema(base_schema+SCHEMA+';'.join([*(table_sql(item,registered_relationships,registered) for item in registered),*(sql(item,validate(item,registered,registered_relationships)) for item in registered_indexes)])+';')
     require(signature==expected,'SCHEMA_CHANGED','Relational schema does not match its supported catalog; preserve the file for recovery',409)
     return registered
 
@@ -165,7 +170,8 @@ def validate_data(db,registered,deadline,*,repair=False):
                 issue=dict(table=item['id'],row_id=str(row[0]),code='INVALID_VALUE',message=str(error)[:256])
                 require(repair,'DATA_REPAIR_REQUIRED','Stored table values require explicit inspection/repair: '+item['name'],409)
                 if len(issues)<100:issues.append(issue)
-    return issues
+    from .relationships import issues as relationship_issues
+    return (issues+relationship_issues(db,registered,deadline,repair=repair))[:100]
 
 
 def catalog(book,args):
@@ -176,7 +182,8 @@ def catalog(book,args):
                 book.refresh(deadline=deadline)
                 require(args.get('expected_state')==book.state(),'STALE_STATE','Refresh the workbook catalog',409)
                 from .table_indexes import indexes
-                result=dict(state=book.state(),tables=tables(book.db),indexes=indexes(book.db),relationships=[],queries=[])
+                from .relationships import relationships
+                result=dict(state=book.state(),tables=tables(book.db),indexes=indexes(book.db),relationships=relationships(book.db),queries=[])
                 require(len(encoded(result).encode())<=4*1024*1024,'READ_LIMIT','Relational catalog exceeds 4 MiB')
                 return result
         finally:book.db.execute('ROLLBACK')
@@ -192,6 +199,9 @@ def structure_hook(book,request,phase,before):
 
 
 def mutate(book,request):
+    if request['action'].startswith('relationship_') or request['action']=='table_repair':
+        from .relationships import mutate as relationship_mutate
+        return relationship_mutate(book,request)
     if request['action'].startswith('index_'):
         from .table_indexes import mutate as index_mutate
         return index_mutate(book,request)
@@ -223,6 +233,8 @@ def mutate(book,request):
             result['created_records']=len(prepared['records'])
     elif action=='table_drop':
         item=table(book.db,request.get('table'))
+        from .relationships import relationships
+        require(not any(item['id'] in (rel['parent_table'],rel['child_table']) for rel in relationships(book.db)),'DEPENDENCY_BLOCKED','Remove dependent relationships before dropping the table',409)
         from .table_indexes import indexes
         require(not any(index['table']==item['id'] for index in indexes(book.db)),'DEPENDENCY_BLOCKED','Remove dependent indexes before dropping the table',409)
         from .relational_rows import raw
