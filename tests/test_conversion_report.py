@@ -105,5 +105,22 @@ class ConversionReportTests(unittest.TestCase):
         self.assertEqual(report.lines(),["1 cell: gone (omitted); first at C3"])
 
 
+class SampleBoundTests(unittest.TestCase):
+    def test_long_sheet_name_is_truncated_in_samples(self):
+        report=ConversionReport()
+        name="S"*100000
+        for index in range(200):
+            for _ in range(100): report.add("style.number_format","omitted",f"code {index}",sheet=name,cell="A1")
+        self.assertLess(len(json.dumps(report.entries())),2*1024*1024)
+        sample=report.entries()[0]["samples"][0]
+        self.assertEqual(sample["sheet"],name[:64])
+        other=ConversionReport(); other.add("x","omitted",sheet="s",cell="A"*500)
+        self.assertEqual(len(other.entries()[0]["samples"][0]["cell"]),32)
+
+    def test_category_is_truncated(self):
+        report=ConversionReport(); report.add("c"*500,"omitted")
+        self.assertEqual(len(report.entries()[0]["category"]),64)
+
+
 if __name__ == "__main__":
     unittest.main()

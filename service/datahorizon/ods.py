@@ -425,6 +425,7 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
                 "totals":conversions.totals()}
         if result["can_import"]: result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","ODS preview exceeds 4 MiB")
+        if sheet_names is not None: result["_conversions"]=conversions
         return result
 
 

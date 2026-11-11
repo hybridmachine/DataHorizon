@@ -5,6 +5,9 @@ SEVERITIES = ("converted", "approximated", "omitted", "unevaluable")
 MAX_SAMPLES = 100
 MAX_ENTRIES = 200
 MAX_DETAIL = 160
+MAX_CATEGORY = 64
+MAX_SAMPLE_SHEET = 64
+MAX_SAMPLE_CELL = 32
 TRUNCATED_CATEGORY = "report.truncated"
 TRUNCATED_DETAIL = "further distinct entries were not itemized"
 _SEVERITY_RANK = {severity: rank for rank, severity in enumerate(SEVERITIES)}
@@ -21,8 +24,9 @@ class ConversionReport:
             raise ValueError(f"Unknown severity {severity!r}; expected one of {SEVERITIES}")
         if not isinstance(count, int) or count < 1:
             raise ValueError("count must be a positive integer")
-        samples = [{"sheet": sheet, "cell": cell}] if cell is not None else []
-        self._record((category, severity, detail[:MAX_DETAIL]), count, samples)
+        samples = ([{"sheet": sheet[:MAX_SAMPLE_SHEET] if sheet is not None else None, "cell": cell[:MAX_SAMPLE_CELL]}]
+                   if cell is not None else [])
+        self._record((category[:MAX_CATEGORY], severity, detail[:MAX_DETAIL]), count, samples)
 
     def merge(self, other):
         for key, item in other._items.items():

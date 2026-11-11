@@ -389,6 +389,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Spreadsheet preview exceeds 4 MiB")
         if result["can_import"]:
             result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
+        if sheet_names is not None: result["_conversions"]=conversions
         return result
 
 
@@ -516,21 +517,23 @@ def preparation_scope(request):
 def prepare_workbook(request,checkpoint,names,prepare):
     validate_sheet_names(names)
     require(request.get("row",1)==1 and request.get("col",1)==1,"INVALID_ARGUMENT","Whole-workbook import uses original coordinates")
-    result={"scope":"workbook","workbook_sheets":[],"stored_cells":0,"issues":[],"report":workbook_report(),"can_import":True}
+    require(names,"INVALID_SPREADSHEET","Workbook has no sheets")
+    result={"scope":"workbook","workbook_sheets":[],"stored_cells":0,"issues":[],"can_import":True}
+    conversions=ConversionReport()
     size=0
     for index,name in enumerate(names,1):
         checkpoint(index-1,"Reading sheet "+name)
         part=prepare({**request,"scope":"selection","sheet_index":index},checkpoint,sheet_names=names)
+        conversions.merge(part.pop("_conversions"))
         result["stored_cells"]+=part["stored_cells"]
         require(result["stored_cells"]<=MAX_CELLS,"LIMIT","Whole-workbook import exceeds 10,000 stored cells")
         size+=len(encoded(part["cells"]).encode())
         require(size<=3*1024*1024,"READ_LIMIT","Workbook input payload exceeds 3 MiB")
         result["workbook_sheets"].append({"name":name,"cells":part["cells"]})
-        result["issues"].extend({**issue,"sheet":name} for issue in part["issues"][:max(0,100-len(result["issues"]))])
-        # Keep per-sheet conversion details, removing single-selection scope statements.
-        result["report"].extend(name+": "+line for line in part["report"][3:])
-    if result["issues"]:
-        result.update(can_import=False,workbook_sheets=[])
+    # Sheets whose cells all degraded or were skipped are still created; their details are itemized here.
+    result["report"]=workbook_report()+conversions.lines()
+    result["report_entries"]=conversions.entries()
+    result["totals"]=conversions.totals()
     require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Workbook preview exceeds 4 MiB")
     return result
 
