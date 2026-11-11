@@ -24,10 +24,11 @@ public:
         m_tree->setAccessibleName(tr("Conversion report"));
         m_tree->setTextElideMode(Qt::ElideMiddle); m_tree->setWordWrap(false); m_tree->setUniformRowHeights(true);
         m_tree->setRootIsDecorated(true); m_tree->header()->setStretchLastSection(false);
-        m_tree->header()->setSectionResizeMode(0,QHeaderView::Interactive);
+        // Labels fit their text; the detail column takes all remaining width.
+        m_tree->header()->setSectionResizeMode(0,QHeaderView::ResizeToContents);
         m_tree->header()->setSectionResizeMode(1,QHeaderView::Stretch);
         m_tree->header()->setSectionResizeMode(2,QHeaderView::ResizeToContents);
-        m_tree->setColumnWidth(0,260);
+
         m_totals=new QLabel(this); m_totals->setObjectName("conversionTotals"); m_totals->setTextFormat(Qt::PlainText);
         m_totals->setAccessibleName(tr("Conversion totals"));
         layout->addWidget(m_tree); layout->addWidget(m_totals);
@@ -76,12 +77,16 @@ public:
                 const auto entry=value.toObject(); if(entry["severity"]!=severity) continue;
                 auto *row=new QTreeWidgetItem(group,{categoryLabel(entry["category"].toString()),plain(entry["detail"].toString()),QString::number(qint64(entry["count"].toDouble()))});
                 row->setData(0,Qt::UserRole,entry["category"].toString());
-                row->setToolTip(1,plain(entry["detail"].toString()));
+                // The detail elides in its column; the whole text is in the
+                // tooltip, escaped so markup from the file shows literally.
+                row->setToolTip(1,plainTip(plain(entry["detail"].toString())));
+                row->setToolTip(0,plainTip(entry["category"].toString()));
                 for(const auto &sampleValue:entry["samples"].toArray()) {
                     const auto sample=sampleValue.toObject();
                     const auto sheet=sample["sheet"].toString(), cell=sample["cell"].toString();
                     const auto where=sheet.isEmpty()?(cell.isEmpty()?tr("Workbook"):cell):sheet+"!"+cell;
-                    new QTreeWidgetItem(row,{plain(where)});
+                    auto *location=new QTreeWidgetItem(row,{plain(where)});
+                    location->setToolTip(0,plainTip(plain(where)));
                 }
             }
             group->setExpanded(true);
@@ -92,6 +97,9 @@ public:
     QTreeWidget *tree() const { return m_tree; }
 private:
     // One line, bounded: an untrusted text never spreads over many rows.
+    // Tooltips interpret markup they detect: escape, then mark as rich text so
+    // the escaped characters render literally.
+    static QString plainTip(const QString &text) { return QStringLiteral("<qt>%1</qt>").arg(text.toHtmlEscaped()); }
     static QString plain(QString text) {
         text.replace(QLatin1Char('\n'),QLatin1Char(' ')).replace(QLatin1Char('\r'),QLatin1Char(' '));
         return text.left(1024);

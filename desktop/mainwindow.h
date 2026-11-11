@@ -206,16 +206,21 @@ private:
     void checkReplaceTarget(std::function<void(bool,QString)> done);
     struct LargeImport;
     struct LargeExport;
-    void finishLargeImport(const std::shared_ptr<LargeImport> &run, const QString &error = {});
+    void finishLargeImport(const std::shared_ptr<LargeImport> &run, const QString &error = {}, std::function<void()> cleaned = {});
     void pollLargeImport(const std::shared_ptr<LargeImport> &run, const QJsonObject &view, const QString &error);
     void reviewLargeImport(const std::shared_ptr<LargeImport> &run, const QJsonObject &summary);
     void applyLargeImport(const std::shared_ptr<LargeImport> &run);
     void largeImportReceipt(const std::shared_ptr<LargeImport> &run, const QJsonObject &receipt);
-    void finishLargeExport(const std::shared_ptr<LargeExport> &run, const QString &error = {});
+    void finishLargeExport(const std::shared_ptr<LargeExport> &run, const QString &error = {}, std::function<void()> cleaned = {});
     void pollLargeExport(const std::shared_ptr<LargeExport> &run, const QJsonObject &view, const QString &error);
     void downloadLargeExport(const std::shared_ptr<LargeExport> &run, const QJsonObject &result);
     void discardJob(const QString &job, std::function<void()> then = {});
-    void releaseExport(const QString &exportId, int attempts = 25);
+    void releaseExport(const QString &exportId, std::function<void()> then = {}, int attempts = 25);
+    void releaseUpload(const QString &upload, std::function<void()> then = {});
+    // The large import or export in progress, if any; reset when it ends.
+    std::shared_ptr<LargeImport> m_largeImport;
+    std::shared_ptr<LargeExport> m_largeExport;
+    bool m_largeClosing = false;
     bool csvTypesDialog(QJsonObject &request, const QJsonObject &preview);
     QJsonObject csvImportTarget() const;
     QJsonObject listValuesRequest(bool selectionOnly);
@@ -334,7 +339,7 @@ private:
     QString m_pendingId;
     // A sheet name to select when the next workbook info arrives (an import's
     // first sheet); cleared once used.
-    QString m_selectSheetName;
+    QString m_selectSheetName, m_selectSheetWorkbook;
     QString m_restartPath, m_recoveryRecord;
     quint64 m_clipboardGeneration = 0;
     bool m_busy = true, m_unknown = false, m_refreshing = false;

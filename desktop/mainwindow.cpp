@@ -1639,6 +1639,9 @@ void MainWindow::newBook() {
 void MainWindow::openBook(const QString &path, bool create, bool readonly,bool repair) {
     if(repair && m_refreshFailed && !m_unknown && m_pendingId.isEmpty())setBusy(false);
     if (m_busy || m_unknown) return;
+    // A large import or export belongs to the open workbook: end it as Cancel does.
+    if (auto run=m_largeImport) finishLargeImport(run,tr("Another workbook was opened, so the import was cancelled. Nothing was imported."));
+    if (auto run=m_largeExport) finishLargeExport(run,tr("Another workbook was opened, so the export was cancelled. No file was written."));
     // Python drafts are decided first, but a Discard only takes effect once the
     // other workbook has actually opened; every earlier return keeps them.
     const bool otherWorkbook=!m_info.isEmpty() && QFileInfo(path).canonicalFilePath()!=QFileInfo(m_info["path"].toString()).canonicalFilePath();
@@ -1678,11 +1681,11 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     m_refreshFailed=false;
     QScopedValueRollback<bool> applying(m_applyingView,true);
     auto oldSheet = m_restoreDraft ? m_recoveredDraft["sheet"].toString() : selectSheet.isEmpty() ? m_model->sheet() : selectSheet;
-    if (!m_selectSheetName.isEmpty() && !m_restoreDraft) {
+    if (!m_selectSheetName.isEmpty() && !m_restoreDraft && info["id"].toString()==m_selectSheetWorkbook) {
         for (const auto &value : info["sheets"].toArray())
             if (value.toObject()["name"].toString().compare(m_selectSheetName,Qt::CaseInsensitive)==0) { oldSheet=value.toObject()["id"].toString(); break; }
     }
-    m_selectSheetName.clear();
+    m_selectSheetName.clear(); m_selectSheetWorkbook.clear();
     if (m_restoreDraft) m_listSpec={};
     const auto previous = m_grid->currentIndex();
     const int previousRow=previous.isValid()?m_model->sourceRow(previous.row()):0;
@@ -3150,6 +3153,21 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     if (!m_pendingId.isEmpty() || m_unknown || m_releasing) {
         issue("Wait for a known operation outcome before closing. Committed work remains in the native workbook."); event->ignore(); return;
     }
+    if (m_largeImport || m_largeExport) {
+        // Release what a large import or export created on the service, as
+        // Cancel does, then close. The wait is bounded like other releases.
+        event->ignore();
+        if (m_largeClosing) return;
+        m_largeClosing=true;
+        auto pending=std::make_shared<int>(int(bool(m_largeImport))+int(bool(m_largeExport)));
+        auto resume=[this]{ if(!m_largeClosing) return; m_largeClosing=false; close(); };
+        auto cleaned=[pending,resume]{ if(--*pending==0) resume(); };
+        QTimer::singleShot(5000,this,resume);
+        // Copies: finishing resets the members these would otherwise alias.
+        if (auto run=m_largeImport) finishLargeImport(run,tr("The window closed, so the import was cancelled. Nothing was imported."),cleaned);
+        if (auto run=m_largeExport) finishLargeExport(run,tr("The window closed, so the export was cancelled. No file was written."),cleaned);
+        return;
+    }
     if(!discardQueryDraft()){event->ignore();return;}
     captureGridDraft(false);
     if(!m_relational->retainedDraft().isEmpty()){
@@ -3227,6 +3245,11 @@ QString importModeLabel(const QString &mode) {
     return QCoreApplication::translate("MainWindow","Values only");
 }
 QString byteText(qint64 bytes) { return QLocale().formattedDataSize(bytes); }
+// Progress labels can carry service text (a job phase): never rich text.
+void plainLabel(QProgressDialog *progress) { if(auto *label=progress->findChild<QLabel *>()) label->setTextFormat(Qt::PlainText); }
+// A tooltip always interprets markup it detects; escape untrusted text and
+// mark it as rich text so the escaped characters show literally.
+QString plainTip(const QString &text) { return QStringLiteral("<qt>%1</qt>").arg(text.left(4096).toHtmlEscaped()); }
 // One line of untrusted text, bounded for display.
 QString oneLine(QString text, int length = 80) {
     text.replace(QLatin1Char('\n'),QLatin1Char(' ')).replace(QLatin1Char('\r'),QLatin1Char(' '));
@@ -3243,7 +3266,8 @@ struct MainWindow::LargeImport {
     QPointer<QLabel> message;
     QPointer<QPushButton> apply;
     QJsonObject summary;
-    QMetaObject::Connection receipts;
+    QMetaObject::Connection receipts, session;
+    quint64 generation=0;
     bool uploadRequested=false, jobRequested=false, finished=false;
 };
 
@@ -3252,6 +3276,8 @@ struct MainWindow::LargeExport {
     QPointer<QNetworkReply> reply;
     QPointer<QProgressDialog> progress;
     std::unique_ptr<QSaveFile> file;
+    QMetaObject::Connection session;
+    quint64 generation=0;
     bool jobRequested=false, finished=false;
 };
 
@@ -3263,18 +3289,30 @@ void MainWindow::checkReplaceTarget(std::function<void(bool,QString)> done) {
     // reports whether a whole sheet is empty.
     if(!m_info["tables"].toArray().isEmpty() || !m_info["queries"].toArray().isEmpty() || m_info["sheets"].toArray().size()!=1
        || m_info["undo"].isString() || m_info["redo"].isString()) { done(false,reason); return; }
+    // The answer arrives exactly once: from the reads, from a failed read, or
+    // when the service session changes and the client drops their callbacks.
+    auto answered=std::make_shared<bool>(false);
+    auto session=std::make_shared<QMetaObject::Connection>();
+    auto answer=[done,answered,session](bool allowed,const QString &why){
+        if(*answered) return; *answered=true; QObject::disconnect(*session); done(allowed,why);
+    };
+    const auto unchecked=[](const QString &error){return tr("The workbook could not be checked, so Replace is unavailable: %1").arg(error);};
+    *session=connect(m_client,&RestClient::configured,this,[answer,unchecked]{answer(false,unchecked(tr("the service session changed")));});
     const auto handle=m_info["id"].toString(), state=m_info["state"].toString();
     const auto sheet=m_info["sheets"].toArray().first().toObject()["id"].toString();
     // Three existing reads, each state-checked: names, code modules (event
     // bindings need a module) and the sheet's first 256 rows of 16 columns.
-    m_client->request(base()+"/names",{{"expected_state",state}},[this,done,reason,handle,state,sheet](QJsonObject names,QString error){
-    if(!error.isEmpty() || m_info["id"].toString()!=handle || !names["names"].isArray() || !names["names"].toArray().isEmpty()) { done(false,reason); return; }
-    m_client->request(base()+"/code",{{"expected_state",state}},[this,done,reason,handle,state,sheet](QJsonObject code,QString error){
-        if(!error.isEmpty() || m_info["id"].toString()!=handle || !code["modules"].isArray() || !code["modules"].toArray().isEmpty()) { done(false,reason); return; }
+    m_client->request(base()+"/names",{{"expected_state",state}},[this,answer,unchecked,reason,handle,state,sheet](QJsonObject names,QString error){
+    if(!error.isEmpty()) { answer(false,unchecked(error)); return; }
+    if(m_info["id"].toString()!=handle || !names["names"].isArray() || !names["names"].toArray().isEmpty()) { answer(false,reason); return; }
+    m_client->request(base()+"/code",{{"expected_state",state}},[this,answer,unchecked,reason,handle,state,sheet](QJsonObject code,QString error){
+        if(!error.isEmpty()) { answer(false,unchecked(error)); return; }
+        if(m_info["id"].toString()!=handle || !code["modules"].isArray() || !code["modules"].toArray().isEmpty()) { answer(false,reason); return; }
         m_client->request(base()+"/range",{{"sheet",sheet},{"r1",1},{"c1",1},{"r2",256},{"c2",16},{"preview",true},{"calculation","cached"}},
-            [this,done,reason,handle,state](QJsonObject range,QString error){
-            const bool empty=error.isEmpty() && m_info["id"].toString()==handle && range["state"].toString()==state && range["cells"].toArray().isEmpty();
-            done(empty,empty?QString():reason);
+            [this,answer,unchecked,reason,handle,state](QJsonObject range,QString error){
+            if(!error.isEmpty()) { answer(false,unchecked(error)); return; }
+            const bool empty=m_info["id"].toString()==handle && range["state"].toString()==state && range["cells"].toArray().isEmpty();
+            answer(empty,empty?QString():reason);
         });
     });
     });
@@ -3365,13 +3403,20 @@ void MainWindow::discardJob(const QString &job, std::function<void()> then) {
     m_client->request(resource+"/cancel",{},*poll);
 }
 
-void MainWindow::releaseExport(const QString &exportId, int attempts) {
+void MainWindow::releaseExport(const QString &exportId, std::function<void()> then, int attempts) {
     const auto resource="/v1/exports/"+QString::fromLatin1(QUrl::toPercentEncoding(exportId))+"/release";
-    m_client->request(resource,{},[this,exportId,attempts](QJsonObject result,QString error){
+    m_client->request(resource,{},[this,exportId,attempts,then](QJsonObject result,QString error){
         // An aborted download can still count as in progress for a moment.
-        if(!error.isEmpty() && result["code"]=="JOB_CONFLICT" && attempts>1)
-            QTimer::singleShot(200,this,[this,exportId,attempts]{releaseExport(exportId,attempts-1);});
+        if(!error.isEmpty() && result["code"]=="JOB_CONFLICT" && attempts>1) {
+            QTimer::singleShot(200,this,[this,exportId,attempts,then]{releaseExport(exportId,then,attempts-1);}); return;
+        }
+        if(then) then();
     });
+}
+
+void MainWindow::releaseUpload(const QString &upload, std::function<void()> then) {
+    if(upload.isEmpty()) { if(then) then(); return; }
+    m_client->request("/v1/uploads/"+upload+"/release",{},[then](QJsonObject,QString){if(then)then();});
 }
 
 void MainWindow::importWorkbookFile(const QString &path, const QString &format, const QString &mode, const QString &target, const QString &timezonePolicy) {
@@ -3387,8 +3432,14 @@ void MainWindow::importWorkbookFile(const QString &path, const QString &format, 
     run->path=path; run->format=format; run->mode=mode; run->target=target; run->timezone=timezonePolicy;
     run->workbook=m_info["id"].toString();
     run->upload=QUuid::createUuid().toString(QUuid::WithoutBraces); run->job=QUuid::createUuid().toString(QUuid::WithoutBraces);
+    run->generation=m_client->generation();
+    m_largeImport=run;
+    // A changed service session drops this client's callbacks: end the import
+    // here instead of waiting for answers that will not come.
+    run->session=connect(m_client,&RestClient::configured,this,[this,run]{finishLargeImport(run,tr("The service session changed, so the import was stopped. Nothing was imported."));});
     setBusy(true,tr("Importing %1 workbook…").arg(format.toUpper()));
     auto *progress=new QProgressDialog(tr("Checking the upload limit…"),tr("Cancel"),0,0,this);
+    plainLabel(progress);
     progress->setObjectName("largeImportProgress"); progress->setWindowTitle(tr("Import workbook"));
     progress->setAccessibleName(tr("Workbook import progress"));
     progress->setWindowModality(Qt::WindowModal); progress->setMinimumDuration(0); progress->setAutoClose(false); progress->setAutoReset(false);
@@ -3410,7 +3461,7 @@ void MainWindow::importWorkbookFile(const QString &path, const QString &format, 
             run->reply=nullptr;
             if(run->finished) {
                 // Cancelled while the body was finishing: release whatever arrived.
-                if(error.isEmpty()) m_client->request("/v1/uploads/"+run->upload+"/release",{},[](QJsonObject,QString){});
+                if(error.isEmpty()) releaseUpload(run->upload);
                 return;
             }
             if(!error.isEmpty()) { finishLargeImport(run,tr("Upload failed: %1").arg(error)); return; }
@@ -3419,7 +3470,10 @@ void MainWindow::importWorkbookFile(const QString &path, const QString &format, 
             run->jobRequested=true;
             m_client->request("/v1/import/"+run->format+"/jobs",{{"job_id",run->job},{"upload_id",run->upload},{"scope","workbook"},{"mode",run->mode},{"timezone_policy",run->timezone}},
                 [this,run](QJsonObject view,QString error){
-                if(run->finished) { if(error.isEmpty()) discardJob(run->job); return; }
+                // Cancelled while the job was being created: the cancel may have
+                // reached the service first, so the job and its upload are
+                // discarded again once the job exists.
+                if(run->finished) { if(error.isEmpty()) { const auto upload=run->upload; discardJob(run->job,[this,upload]{releaseUpload(upload);}); } return; }
                 pollLargeImport(run,view,error);
             });
         },[run](qint64 sent,qint64 total){
@@ -3448,22 +3502,25 @@ void MainWindow::pollLargeImport(const std::shared_ptr<LargeImport> &run, const 
         return;
     }
     // The stage holds everything Apply needs; the upload is no longer used.
-    m_client->request("/v1/uploads/"+run->upload+"/release",{},[](QJsonObject,QString){});
+    releaseUpload(run->upload);
     run->uploadRequested=false;
     reviewLargeImport(run,view["result"].toObject());
 }
 
-void MainWindow::finishLargeImport(const std::shared_ptr<LargeImport> &run, const QString &error) {
-    if(run->finished) return;
+void MainWindow::finishLargeImport(const std::shared_ptr<LargeImport> &run, const QString &error, std::function<void()> cleaned) {
+    if(run->finished) { if(cleaned) cleaned(); return; }
     run->finished=true;
+    if(m_largeImport==run) m_largeImport.reset();
+    disconnect(run->session);
     if(run->receipts) disconnect(run->receipts);
     if(run->reply) RestClient::cancel(run->reply);
     if(run->progress) { run->progress->hide(); run->progress->deleteLater(); }
     if(run->applying) { run->applying->hide(); run->applying->deleteLater(); }
     if(run->review) { auto *review=run->review.data(); run->review=nullptr; review->hide(); review->deleteLater(); }
     const auto upload=run->uploadRequested?run->upload:QString();
-    auto releaseUpload=[this,upload]{if(!upload.isEmpty())m_client->request("/v1/uploads/"+upload+"/release",{},[](QJsonObject,QString){});};
-    if(run->jobRequested) discardJob(run->job,releaseUpload); else releaseUpload();
+    if(m_client->generation()!=run->generation) { if(cleaned) cleaned(); }  // Another session: nothing of this run is reachable.
+    else if(run->jobRequested) discardJob(run->job,[this,upload,cleaned]{releaseUpload(upload,cleaned);});
+    else releaseUpload(upload,cleaned);
     if(m_info["id"].toString()==run->workbook && m_pendingId.isEmpty() && !m_unknown && !m_refreshing) setBusy(false,tr("Import ended • No workbook changes"));
     if(!error.isEmpty()) issue(error);
 }
@@ -3480,22 +3537,37 @@ void MainWindow::reviewLargeImport(const std::shared_ptr<LargeImport> &run, cons
     const auto sheets=summary["sheets"].toArray();
     const qint64 cells=qint64(summary["stored_cells"].toDouble());
     const auto sheetCount=sheets.size()==1?tr("1 sheet"):tr("%1 sheets").arg(sheets.size());
-    auto *heading=new QLabel(run->target=="replace_empty"
-        ? tr("Import %1 with %2 stored cells into this empty workbook? History will be cleared.").arg(sheetCount).arg(cells)
-        : tr("Add %1 with %2 stored cells after the existing sheets?").arg(sheetCount).arg(cells),dialog);
+    // A short summary in the desktop's own words; the service's fixed scope
+    // statements are kept under Details.
+    QStringList sentences;
+    sentences << (run->target=="replace_empty"
+        ? tr("%1 with %2 stored cells will replace this empty workbook's sheet.").arg(sheetCount).arg(cells)
+        : tr("%1 with %2 stored cells will be added after this workbook's sheets.").arg(sheetCount).arg(cells));
+    sentences << tr("The import is one operation that clears this workbook's undo history, so it cannot be undone.");
+    sentences << tr("The source file is not changed.");
+    auto *heading=new QLabel(sentences.join(' '),dialog);
     heading->setObjectName("importReviewSummary"); heading->setTextFormat(Qt::PlainText); heading->setWordWrap(true);
     layout->addWidget(heading);
     auto *mode=new QLabel(tr("Formulas: %1").arg(importModeLabel(run->mode)),dialog); mode->setTextFormat(Qt::PlainText); layout->addWidget(mode);
     const auto report=summary["report"].toArray(); const auto entries=summary["report_entries"].toArray();
     QStringList scopeLines; for(int i=0;i<report.size()-entries.size();++i) scopeLines.append(oneLine(report[i].toString(),400));
+    auto *details=new QToolButton(dialog); details->setObjectName("importReviewDetailsToggle"); details->setText(tr("Details"));
+    details->setAccessibleName(tr("Show import details")); details->setCheckable(true); details->setChecked(false);
+    details->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); details->setArrowType(Qt::RightArrow); details->setAutoRaise(true);
+    details->setVisible(!scopeLines.isEmpty()); layout->addWidget(details);
     auto *scope=new QLabel(scopeLines.join('\n'),dialog); scope->setObjectName("importReviewScope"); scope->setTextFormat(Qt::PlainText); scope->setWordWrap(true);
-    scope->setVisible(!scopeLines.isEmpty()); layout->addWidget(scope);
+    scope->setVisible(false); layout->addWidget(scope);
+    connect(details,&QToolButton::toggled,scope,[details,scope](bool shown){scope->setVisible(shown);details->setArrowType(shown?Qt::DownArrow:Qt::RightArrow);});
     auto *sheetList=new QTreeWidget(dialog); sheetList->setObjectName("importSheets"); sheetList->setAccessibleName(tr("Sheets to import"));
     sheetList->setHeaderLabels({tr("Sheet"),tr("Stored cells")}); sheetList->setRootIsDecorated(false); sheetList->setUniformRowHeights(true);
     sheetList->setTextElideMode(Qt::ElideMiddle); sheetList->setWordWrap(false); sheetList->setMaximumHeight(110);
     sheetList->header()->setSectionResizeMode(0,QHeaderView::Stretch); sheetList->header()->setSectionResizeMode(1,QHeaderView::ResizeToContents);
     sheetList->header()->setStretchLastSection(false);
-    for(const auto &value:sheets) { const auto sheet=value.toObject(); new QTreeWidgetItem(sheetList,{oneLine(sheet["name"].toString(),255),QString::number(qint64(sheet["stored_cells"].toDouble()))}); }
+    for(const auto &value:sheets) {
+        const auto sheet=value.toObject();
+        auto *item=new QTreeWidgetItem(sheetList,{oneLine(sheet["name"].toString(),255),QString::number(qint64(sheet["stored_cells"].toDouble()))});
+        item->setToolTip(0,plainTip(oneLine(sheet["name"].toString(),255)));
+    }
     layout->addWidget(sheetList);
     auto *view=new ConversionReportView(dialog); view->setReport(summary); view->setMinimumHeight(200); layout->addWidget(view,1);
     auto *message=new QLabel(dialog); message->setObjectName("importReviewMessage"); message->setTextFormat(Qt::PlainText); message->setWordWrap(true);
@@ -3528,6 +3600,9 @@ void MainWindow::applyLargeImport(const std::shared_ptr<LargeImport> &run) {
     submit({{"action","workbook_import"},{"label",tr("Import %1 workbook").arg(run->format.toUpper())},
             {"stage_id",run->summary["stage_id"]},{"stage_digest",run->summary["stage_digest"]},{"target",run->target}});
     if(m_pendingId.isEmpty()) {
+        // Declined before sending (another view active, a draft kept, a stale
+        // target): the review stays open and the window stays busy with it.
+        if(!m_busy && !m_unknown) setBusy(true,tr("Reviewing the workbook import…"));
         run->message->setText(tr("The import could not be submitted now. Review the issues and try Apply again, or cancel."));
         run->message->show(); return;
     }
@@ -3538,7 +3613,7 @@ void MainWindow::applyLargeImport(const std::shared_ptr<LargeImport> &run) {
     auto *applying=new QProgressDialog(tr("Applying the import… This can take a few minutes."),tr("Cancel"),0,0,run->review);
     applying->setObjectName("importApplyProgress"); applying->setWindowTitle(tr("Import workbook")); applying->setAccessibleName(tr("Import apply progress"));
     applying->setWindowModality(Qt::WindowModal); applying->setMinimumDuration(0); applying->setAutoClose(false); applying->setAutoReset(false);
-    run->applying=applying;
+    run->applying=applying; plainLabel(applying);
     connect(applying,&QProgressDialog::canceled,this,[this,run]{
         if(run->finished) return;
         cancelPendingOperation(run->operation);
@@ -3562,6 +3637,7 @@ void MainWindow::largeImportReceipt(const std::shared_ptr<LargeImport> &run, con
     if(outcome=="committed") {
         const auto sheets=run->summary["sheets"].toArray();
         m_selectSheetName=sheets.isEmpty()?QString():sheets.first().toObject()["name"].toString();
+        m_selectSheetWorkbook=run->workbook;
         const auto imported=receipt["imported"].toObject();
         finishLargeImport(run);
         m_status->setText(tr("Imported %1 sheets and %2 cells • Native workbook stored").arg(qint64(imported["sheets"].toDouble())).arg(qint64(imported["cells"].toDouble())));
@@ -3605,11 +3681,14 @@ void MainWindow::exportWorkbookFile(const QString &path, const QString &format) 
     run->job=QUuid::createUuid().toString(QUuid::WithoutBraces);
     if(sameFile(path,run->native)) { issue("Export destination is the native workbook. Choose a different file."); return; }
     if(QFileInfo(path).isDir()) { issue("Spreadsheet destination failed: the destination is a folder."); return; }
+    run->generation=m_client->generation();
+    m_largeExport=run;
+    run->session=connect(m_client,&RestClient::configured,this,[this,run]{finishLargeExport(run,tr("The service session changed, so the export was stopped. No file was written."));});
     setBusy(true,tr("Exporting the workbook…"));
     auto *progress=new QProgressDialog(tr("Preparing the %1 export…").arg(format.toUpper()),tr("Cancel"),0,0,this);
     progress->setObjectName("largeExportProgress"); progress->setWindowTitle(tr("Export workbook")); progress->setAccessibleName(tr("Workbook export progress"));
     progress->setWindowModality(Qt::WindowModal); progress->setMinimumDuration(0); progress->setAutoClose(false); progress->setAutoReset(false);
-    progress->setProperty("jobId",run->job);
+    progress->setProperty("jobId",run->job); plainLabel(progress);
     run->progress=progress;
     connect(progress,&QProgressDialog::canceled,this,[this,run]{finishLargeExport(run,tr("Export cancelled. No file was written."));});
     progress->show();
@@ -3617,7 +3696,9 @@ void MainWindow::exportWorkbookFile(const QString &path, const QString &format) 
     m_client->request(base()+"/export/"+format+"/jobs",{{"job_id",run->job},{"mode","formulas"}},[this,run](QJsonObject view,QString error){
         // Cancelled while the job was being created: the cancel may have
         // reached the service first, so the job is discarded again.
-        if(run->finished) { if(error.isEmpty()) discardJob(run->job); return; }
+        // Releasing the job deletes its export file; the export is released
+        // as well in case it completed in between.
+        if(run->finished) { if(error.isEmpty()) { const auto job=run->job; discardJob(job,[this,job]{releaseExport(job);}); } return; }
         pollLargeExport(run,view,error);
     });
 }
@@ -3680,16 +3761,20 @@ void MainWindow::downloadLargeExport(const std::shared_ptr<LargeExport> &run, co
     });
 }
 
-void MainWindow::finishLargeExport(const std::shared_ptr<LargeExport> &run, const QString &error) {
-    if(run->finished) return;
+void MainWindow::finishLargeExport(const std::shared_ptr<LargeExport> &run, const QString &error, std::function<void()> cleaned) {
+    if(run->finished) { if(cleaned) cleaned(); return; }
     run->finished=true;
+    if(m_largeExport==run) m_largeExport.reset();
+    disconnect(run->session);
     if(run->reply) RestClient::cancel(run->reply);
     if(run->file) { run->file->cancelWriting(); run->file.reset(); }
     if(run->progress) { run->progress->hide(); run->progress->deleteLater(); }
     // Releasing the export also forgets its job; before the export exists the
     // job itself is cancelled and released.
-    if(!run->exportId.isEmpty()) releaseExport(run->exportId);
-    else if(run->jobRequested) discardJob(run->job);
+    if(m_client->generation()!=run->generation) { if(cleaned) cleaned(); }
+    else if(!run->exportId.isEmpty()) releaseExport(run->exportId,cleaned);
+    else if(run->jobRequested) { const auto job=run->job; discardJob(job,[this,job,cleaned]{releaseExport(job,cleaned,1);}); }
+    else if(cleaned) cleaned();
     setBusy(false,error.isEmpty()?QString():tr("Export ended • No file written"));
     if(!error.isEmpty()) issue(error);
 }
