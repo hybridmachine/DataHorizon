@@ -1,0 +1,27 @@
+{
+  "task": 5,
+  "source_commit": "4417b9e0865cdeb6090a679df275f0e701a9b3b7",
+  "automated_status": "passed",
+  "full_python": {
+    "tests_run": 517,
+    "optional_skips": 19,
+    "elapsed_seconds": 47.07
+  },
+  "targeted": {
+    "python_checks": 23,
+    "qt_workflows": 4,
+    "qt_checks_including_setup_cleanup": 6
+  },
+  "contracts": [
+    "Explicit record/column identities, typed conversion previews and atomic CRUD",
+    "Shared table/cell hook transactions and Undo/Redo",
+    "No-op Redo retention, required-rule rejection, stale and unknown outcome handling",
+    "Lossless native values clipboard; TSV transformations explicit",
+    "Record identity exhaustion produces a durable rollback"
+  ],
+  "verification_fixes": [
+    "Qt assertions wait for asynchronous page replacement and guard absent items"
+  ],
+  "manual_gui_acceptance": "pending",
+  "release_qualified": false
+}

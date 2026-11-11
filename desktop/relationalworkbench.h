@@ -3,11 +3,13 @@
 #include "restclient.h"
 #include <QWidget>
 #include <QJsonArray>
+#include <QPointer>
 
 class QTreeWidget;
 class QTableWidget;
 class QLabel;
 class QPushButton;
+class RecordInputDialog;
 
 class RelationalWorkbench : public QWidget {
     Q_OBJECT
@@ -18,21 +20,43 @@ public:
     void refreshCatalog();
     void selectTable(const QString &id){m_table=id;}
     static bool editDefinition(QWidget *parent,QJsonObject &definition,const QString &title,bool fixedWidth=false);
+    void operationAdmitted(const QString &operation);
+    void operationReceipt(const QJsonObject &receipt);
+    void admissionRejected();
+    bool hasActiveEditor()const;
+    QJsonObject retainedDraft()const{return m_recordDraft;}
+    void restoreDraft(const QJsonObject &draft);
 signals:
     void submitRequested(QJsonObject operation);
     void issue(QString message);
     void sheetsRequested();
     void busyRequested(bool busy);
+    void reconcileRequested();
 private:
     void createTable();
     void dropTable();
     void editSchema();
+    void editCell(int row,int column);
+    void addRecord();
+    void recordDialog(const QJsonObject &table,const QJsonArray &columns,const QJsonObject &stored,const QString &rowId,const QJsonObject &retained={});
+    void reviewRecordDraft();
+    void deleteRecords();
+    void clearRecordCells();
+    void copyRecordCells();
+    void pasteRecordCells();
+    void dataPreview(const QJsonObject &request,const QJsonObject &reviewed,QPointer<RecordInputDialog> dialog);
     void showTable(const QString &id);
     void loadRecords(const QString &after = {});
     QString base()const;
     RestClient *m_client;
     QJsonObject m_info,m_catalog,m_draftDefinition;
     QJsonObject m_schemaDraft;
+    QJsonObject m_recordDraft;
+    QPointer<RecordInputDialog> m_recordDialog;
+    QString m_dataOperation;
+    bool m_awaitingDataAdmission=false;
+    QPushButton *m_addRecord,*m_editCell,*m_deleteRecords,*m_clearRecords,*m_copyRecords,*m_pasteRecords,*m_undoRecords,*m_redoRecords,*m_reviewDraft,*m_discardDraft,*m_inspectRecord;
+    QLabel *m_draftStatus;
     QString m_schemaDraftTable,m_schemaDraftState;
     QString m_table;
     quint64 m_generation=0;

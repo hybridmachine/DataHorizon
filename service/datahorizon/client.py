@@ -210,6 +210,24 @@ class WorkbookClient:
         self._ensure_open()
         return self.client.request(self.base+'/tables/read',dict(table=table,expected_state=self.state,**scope))
 
+    def insert_records(self,table,rows):
+        return self.apply('table_insert',table=table,rows=rows,label='Insert records')
+
+    def update_records(self,table,edits):
+        return self.apply('table_update',table=table,edits=edits,label='Edit records')
+
+    def delete_records(self,table,record_ids):
+        return self.apply('table_delete',table=table,record_ids=record_ids,label='Delete records')
+
+    def preview_record_edits(self,table,action,**options):
+        self._ensure_open()
+        return self.client.request(self.base+'/tables/edit-preview',dict(table=table,action=action,expected_state=self.state,**options))
+
+    def apply_record_preview(self,preview):
+        if preview.get('can_apply') is not True:raise ValueError('Correct record conversion errors before Apply')
+        request=dict(preview['operation']);action=request.pop('action')
+        return self.apply(action,**request,expected_state=preview['state'],review_digest=preview['review_digest'])
+
     def records(self,identifier,sheet='Sheet1',**criteria):
         self._ensure_open()
         return self.client.request(self.base+'/records/read',dict(id=identifier,sheet=sheet,expected_state=self.state,**criteria))

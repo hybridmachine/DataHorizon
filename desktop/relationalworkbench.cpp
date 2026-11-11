@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "relationalworkbench.h"
+#include "recordinputdialog.h"
+#include <QApplication>
+#include <QClipboard>
+#include <QMimeData>
+#include <QJsonDocument>
+#include <QTimer>
+#include <QGridLayout>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
@@ -20,14 +27,25 @@
 
 RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWidget(parent),m_client(client) {
     setObjectName("relationalWorkbench");
-    auto *layout=new QVBoxLayout(this);auto *buttons=new QHBoxLayout;
+    auto *layout=new QVBoxLayout(this);auto *buttons=new QGridLayout;
     auto *sheets=new QPushButton(tr("Return to sheets"));sheets->setObjectName("returnToSheets");
     m_create=new QPushButton(tr("Create empty table…"));m_create->setObjectName("createTable");
     m_drop=new QPushButton(tr("Drop table…"));m_drop->setObjectName("dropTable");
     m_editSchema=new QPushButton(tr("Edit table columns…"));m_editSchema->setObjectName("editTableSchema");
     auto *refresh=new QPushButton(tr("Refresh tables"));refresh->setObjectName("refreshTables");
-    for(auto *button:{sheets,m_create,m_editSchema,m_drop,refresh})buttons->addWidget(button);
-    buttons->addStretch();layout->addLayout(buttons);
+    int b=0;for(auto *button:{sheets,m_create,m_editSchema,m_drop,refresh}){buttons->addWidget(button,b/3,b%3);++b;}
+    layout->addLayout(buttons);
+    auto *records=new QGridLayout;b=0;
+    const QList<QPair<QPushButton **,QStringList>> actions{
+        {&m_addRecord,{tr("Add record…"),"addTableRecord"}},{&m_editCell,{tr("Edit cell…"),"editTableCell"}},
+        {&m_deleteRecords,{tr("Delete records…"),"deleteTableRecords"}},{&m_clearRecords,{tr("Clear cells…"),"clearTableCells"}},
+        {&m_copyRecords,{tr("Copy values"),"copyTableValues"}},{&m_pasteRecords,{tr("Paste values…"),"pasteTableValues"}},
+        {&m_undoRecords,{tr("Undo"),"undoTableRecords"}},{&m_redoRecords,{tr("Redo"),"redoTableRecords"}}};
+    for(const auto &entry:actions){auto *button=new QPushButton(entry.second[0]);button->setObjectName(entry.second[1]);*entry.first=button;records->addWidget(button,b/4,b%4);++b;}layout->addLayout(records);
+    auto *drafts=new QHBoxLayout;m_draftStatus=new QLabel;m_draftStatus->setWordWrap(true);drafts->addWidget(m_draftStatus,1);
+    m_reviewDraft=new QPushButton(tr("Review retained draft"));m_discardDraft=new QPushButton(tr("Discard draft"));m_inspectRecord=new QPushButton(tr("Inspect operation"));
+    m_reviewDraft->setObjectName("reviewRetainedTableDraft");m_discardDraft->setObjectName("discardTableDraft");
+    for(auto *button:{m_reviewDraft,m_discardDraft,m_inspectRecord})drafts->addWidget(button);layout->addLayout(drafts);
     auto *splitter=new QSplitter;layout->addWidget(splitter,1);
     m_objects=new QTreeWidget; m_objects->setObjectName("relationalObjects");m_objects->setHeaderLabel(tr("Workbook objects"));
     m_objects->setAccessibleName(tr("Workbook tables and queries"));splitter->addWidget(m_objects);
@@ -36,7 +54,7 @@ RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWi
     m_schema->setEditTriggers(QAbstractItemView::NoEditTriggers);m_schema->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     auto *tabs=new QTabWidget;tabs->setObjectName("tableViews");
     m_records=new QTableWidget; m_records->setObjectName("tableRecords");m_records->setAccessibleName(tr("Table records"));
-    m_records->setEditTriggers(QAbstractItemView::NoEditTriggers);m_records->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_records->setEditTriggers(QAbstractItemView::NoEditTriggers);m_records->setSelectionBehavior(QAbstractItemView::SelectItems);
     tabs->addTab(m_records,tr("Records"));tabs->addTab(m_schema,tr("Columns"));splitter->addWidget(tabs);splitter->setStretchFactor(1,1);
     auto *paging=new QHBoxLayout;m_previous=new QPushButton(tr("Previous page"));m_previous->setObjectName("previousTablePage");
     m_next=new QPushButton(tr("Next page"));m_next->setObjectName("nextTablePage");paging->addWidget(m_previous);paging->addWidget(m_next);paging->addStretch();layout->addLayout(paging);
@@ -49,6 +67,18 @@ RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWi
     connect(m_create,&QPushButton::clicked,this,&RelationalWorkbench::createTable);
     connect(m_drop,&QPushButton::clicked,this,&RelationalWorkbench::dropTable);
     connect(m_editSchema,&QPushButton::clicked,this,&RelationalWorkbench::editSchema);
+    connect(m_addRecord,&QPushButton::clicked,this,&RelationalWorkbench::addRecord);
+    connect(m_editCell,&QPushButton::clicked,this,[this]{editCell(m_records->currentRow(),m_records->currentColumn());});
+    connect(m_records,&QTableWidget::cellDoubleClicked,this,&RelationalWorkbench::editCell);
+    connect(m_deleteRecords,&QPushButton::clicked,this,&RelationalWorkbench::deleteRecords);
+    connect(m_clearRecords,&QPushButton::clicked,this,&RelationalWorkbench::clearRecordCells);
+    connect(m_copyRecords,&QPushButton::clicked,this,&RelationalWorkbench::copyRecordCells);
+    connect(m_pasteRecords,&QPushButton::clicked,this,&RelationalWorkbench::pasteRecordCells);
+    connect(m_undoRecords,&QPushButton::clicked,this,[this]{emit submitRequested({{"action","undo"}});});
+    connect(m_redoRecords,&QPushButton::clicked,this,[this]{emit submitRequested({{"action","redo"}});});
+    connect(m_reviewDraft,&QPushButton::clicked,this,&RelationalWorkbench::reviewRecordDraft);
+    connect(m_discardDraft,&QPushButton::clicked,this,[this]{m_recordDraft={};setLocked(m_blocked);});
+    connect(m_inspectRecord,&QPushButton::clicked,this,&RelationalWorkbench::reconcileRequested);
     connect(m_objects,&QTreeWidget::currentItemChanged,this,[this](QTreeWidgetItem *item){if(item)showTable(item->data(0,Qt::UserRole).toString());});
     connect(m_client,&RestClient::configured,this,[this]{++m_generation;m_info={};m_catalog={};m_objects->clear();m_schema->setRowCount(0);setLocked(true);});
     setLocked(true);
@@ -67,6 +97,12 @@ void RelationalWorkbench::setLocked(bool locked) {
     m_create->setEnabled(!m_locked);m_drop->setEnabled(!m_locked && !m_table.isEmpty());
     m_editSchema->setEnabled(!m_locked && !m_table.isEmpty());
     m_previous->setEnabled(!m_blocked && !m_previousPages.isEmpty());m_next->setEnabled(!m_blocked && !m_nextAfter.isEmpty());
+    for(auto *button:{m_addRecord,m_editCell,m_deleteRecords,m_clearRecords,m_pasteRecords})button->setEnabled(!m_locked && !m_table.isEmpty() && m_recordDraft.isEmpty());
+    m_copyRecords->setEnabled(!m_blocked && !m_table.isEmpty());
+    m_undoRecords->setText(tr("Undo %1").arg(m_info["undo"].toString()));m_redoRecords->setText(tr("Redo %1").arg(m_info["redo"].toString()));
+    m_undoRecords->setEnabled(!m_locked && m_recordDraft.isEmpty() && m_info["undo"].isString());m_redoRecords->setEnabled(!m_locked && m_recordDraft.isEmpty() && m_info["redo"].isString());
+    const bool draft=!m_recordDraft.isEmpty();m_draftStatus->setText(draft?tr("An unsubmitted or unresolved table draft is retained. Review its original targets before retrying."):QString{});
+    m_reviewDraft->setVisible(draft);m_reviewDraft->setEnabled(!m_locked && m_dataOperation.isEmpty());m_discardDraft->setVisible(draft);m_discardDraft->setEnabled(m_dataOperation.isEmpty());m_inspectRecord->setVisible(!m_dataOperation.isEmpty());
 }
 
 void RelationalWorkbench::refreshCatalog() {

@@ -28,6 +28,7 @@ def install(schemas,actions):
     schemas['TableReadRequest']={'type':'object','required':['table','expected_state'],'properties':{
         'table':{'type':'string'},'expected_state':{'type':'string'},'after':{'type':'string','pattern':'^[1-9][0-9]{0,18}$'},
         'columns':{'type':'array','maxItems':256,'uniqueItems':True,'items':{'type':'string','format':'uuid'}},
+        'record_ids':{'type':'array','minItems':1,'maxItems':256,'uniqueItems':True,'items':{'type':'string','pattern':'^[1-9][0-9]{0,18}$'}},
         'limit':{'type':'integer','minimum':1,'maximum':256,'description':'Combined projected width/height is at most 4,096 values'}},
         'example':{'table':'Customers','expected_state':'copy-from-workbook-info','limit':32}}
     schema={'table':{'type':'string','minLength':1},'name':column['properties']['name'],
@@ -37,3 +38,19 @@ def install(schemas,actions):
         'example':{'table':'Snapshot','columns':[{'id':'replace-with-current-column-id','name':'Value','type':'number'}],'expected_state':'copy-from-workbook-info'}}
     actions['table_schema']=(['table','columns','review_digest'],{**schema,'review_digest':{'type':'string','pattern':'^[0-9a-f]{64}$'}},
         {'table':'Snapshot','columns':[{'id':'replace-with-current-column-id','name':'Value','type':'number'}],'review_digest':'replace-with-reviewed-digest'})
+    scalar={'oneOf':[{'type':'string','nullable':True},{'type':'number'},{'type':'boolean'}]}
+    values={'type':'object','additionalProperties':scalar,'description':'Column IDs or exact catalog names as keys; numbers are finite and all values follow declared types'}
+    row_id={'type':'string','pattern':'^[1-9][0-9]{0,18}$'}
+    data={'table':{'type':'string','minLength':1},'review_digest':{'type':'string','pattern':'^[0-9a-f]{64}$'},
+        'rows':{'type':'array','minItems':1,'maxItems':10000,'items':values},
+        'edits':{'type':'array','minItems':1,'maxItems':10000,'items':{'type':'object','additionalProperties':False,'required':['row_id','values'],'properties':{'row_id':row_id,'values':values}}},
+        'record_ids':{'type':'array','minItems':1,'maxItems':10000,'uniqueItems':True,'items':row_id}}
+    for action,required,example in (
+        ('table_insert','rows',{'rows':[{'Value':2}]}),
+        ('table_update','edits',{'edits':[{'row_id':'1','values':{'Value':3}}]}),
+        ('table_delete','record_ids',{'record_ids':['1']})):
+        actions[action]=(['table',required],{'table':data['table'],required:data[required],'review_digest':data['review_digest']},{'table':'Snapshot',**example})
+    schemas['TableEditPreviewRequest']={'type':'object','required':['table','action','expected_state'],'properties':{**data,
+        'expected_state':preview['expected_state'],'action':{'type':'string','enum':['table_insert','table_update','table_delete']},'blank_as_null':{'type':'boolean','default':False}},
+        'description':'Read-only invariant type conversion. Apply the returned canonical operation and digest at the reviewed state. Native constraints and Python rules execute on Apply.',
+        'example':{'table':'Snapshot','action':'table_insert','rows':[{'Value':'2.5'}],'expected_state':'copy-from-workbook-info'}}

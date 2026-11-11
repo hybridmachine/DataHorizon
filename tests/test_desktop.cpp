@@ -321,6 +321,23 @@ public:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void typedTableRecordEditorRetainsInvalidInputAndUsesManagedHistory() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();
+        QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("records.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","table_create"},{"name","Data"},{"columns",QJsonArray{QJsonObject{{"name","ID"},{"required",true}},QJsonObject{{"name","Qty"},{"type","integer"},{"required",true}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);auto *grid=window.findChild<QTableWidget *>("tableRecords");
+        int phase=0;QTimer timer;timer.setInterval(10);connect(&timer,&QTimer::timeout,&window,[&]{
+            auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());if(!dialog || dialog->objectName()!="recordInputDialog")return;
+            if(phase==0){phase=1;dialog->findChild<QLineEdit *>("recordInput_0")->setText("=literal");dialog->findChild<QLineEdit *>("recordInput_1")->setText("3");dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();}
+            else if(phase==2){phase=3;dialog->findChild<QLineEdit *>("recordInput_0")->setText("bad");dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();}
+            else if(phase==3 && dialog->findChild<QLabel *>("recordEditStatus")->text().contains("Record 1")){phase=4;QCOMPARE(dialog->findChild<QLineEdit *>("recordInput_0")->text(),QString("bad"));dialog->findChild<QLineEdit *>("recordInput_0")->setText("7");dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->click();}
+        });timer.start();window.findChild<QPushButton *>("addTableRecord")->click();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);QTRY_COMPARE_WITH_TIMEOUT(grid->rowCount(),1,5000);
+        QCOMPARE(grid->item(0,0)->text(),QString("=literal"));QCOMPARE(grid->item(0,1)->text(),QString("3"));const auto identity=grid->item(0,1)->data(Qt::UserRole);
+        phase=2;grid->setCurrentCell(0,1);window.findChild<QPushButton *>("editTableCell")->click();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);timer.stop();QCOMPARE(phase,4);
+        QTRY_VERIFY_WITH_TIMEOUT(grid->item(0,1) && grid->item(0,1)->text()=="7",5000);QCOMPARE(grid->item(0,1)->data(Qt::UserRole),identity);
+        window.findChild<QPushButton *>("undoTableRecords")->click();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);QTRY_VERIFY_WITH_TIMEOUT(grid->item(0,1) && grid->item(0,1)->text()=="3",5000);
+    }
     void tableSchemaReviewPreservesObjectIdentityAndAppliesConstraints() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();
         QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);

@@ -50,6 +50,8 @@ signals:
     void serviceReady();
     void workbookReady();
     void operationFinished(bool committed);
+    void operationAdmitted(QString operationId);
+    void operationReceipt(QJsonObject receipt);
 protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *object, QEvent *event) override;

@@ -22,13 +22,21 @@ def fields(item,values):
     return mapped
 
 
-def raw(book,item,row_id):
+def raw(book,item,row_id,columns=None):
     row_id=identity(row_id)
-    row=book.db.execute('SELECT '+','.join(quote(col['name']) for col in item['columns'])+
+    selected=item['columns']
+    if columns is not None:
+        require(isinstance(columns,list) and bool(columns) and len(columns)<=256 and all(isinstance(col,str) for col in columns),'INVALID_ARGUMENT','Choose a bounded list of column IDs')
+        known={col['id']:col for col in selected};require(all(col in known for col in columns) and len(columns)==len(set(columns)),'COLUMN_NOT_FOUND','Choose unique existing column IDs')
+        selected=[known[key] for key in columns]
+    row=book.db.execute('SELECT '+','.join(quote(col['name']) for col in selected)+
         ' FROM '+quote(item['name'])+' WHERE "_dh_row_id"=?',(row_id,)).fetchone()
     if row is None:return None
-    result={col['id']:from_sql(col,stored) for col,stored in zip(item['columns'],row)}
-    for col in item['columns']:value(col,result[col['id']])
+    result={};size=0
+    for col,stored in zip(selected,row):
+        stored=from_sql(col,stored);value(col,stored);size+=len(encoded(stored).encode())+len(col['id'])+8
+        require(size<=4*1024*1024,'LIMIT','A record image exceeds 4 MiB; choose projected reads or smaller records')
+        result[col['id']]=stored
     return result
 
 
@@ -52,6 +60,10 @@ def put(book,item,row_id,values):
     if values is None:
         book.db.execute('DELETE FROM '+quote(item['name'])+' WHERE "_dh_row_id"=?',(identity(row_id),))
     elif row_id is None:
+        sequence=book.db.execute('SELECT seq FROM sqlite_sequence WHERE name=?',(item['name'],)).fetchone()
+        maximum=book.db.execute('SELECT coalesce(max("_dh_row_id"),0) FROM '+quote(item['name'])).fetchone()[0]
+        require(sequence is None or type(sequence[0]) is int,'INVALID_FORMAT','Invalid native identity high-water mark',409)
+        require(max(maximum,sequence[0] if sequence else 0)<2**63-1,'ROW_ID_LIMIT','Record identity limit reached; no new record was inserted',409)
         row_id=str(book.db.execute('INSERT INTO '+quote(item['name'])+' ('+','.join(map(quote,names))+') VALUES('+','.join('?' for _ in names)+')',stored).lastrowid)
     elif before is None:
         book.db.execute('INSERT INTO '+quote(item['name'])+' ("_dh_row_id",'+','.join(map(quote,names))+') VALUES('+','.join('?' for _ in range(len(names)+1))+')',[identity(row_id),*stored])
@@ -82,7 +94,7 @@ def dispatch(book,method,args):
     if method=='table_schema':require(args.get('phase','current')=='current','INVALID_ARGUMENT','Schema phase is current or before')
     item=table(book.db,args.get('table'))
     if method=='table_schema':return item
-    if method=='table_get':return dict(row_id=args.get('row_id'),values=raw(book,item,args.get('row_id')))
+    if method=='table_get':return dict(row_id=args.get('row_id'),values=raw(book,item,args.get('row_id'),args.get('columns')))
     if method=='table_insert':return dict(row_id=insert(book,item,args.get('values')))
     row_id=args.get('row_id');current=raw(book,item,row_id)
     require(current is not None,'RECORD_NOT_FOUND','Record does not exist',404)
@@ -108,13 +120,26 @@ def read(book,args):
                 limit=integer(args.get('limit',min(256,4096//len(selected))),1,min(256,4096//len(selected)),'limit')
                 after=args.get('after');where='' if after is None else ' WHERE "_dh_row_id">?'
                 parameters=[] if after is None else [identity(after)]
+                targets=args.get('record_ids')
+                if targets is not None:
+                    require(after is None and isinstance(targets,list) and 1<=len(targets)<=limit and all(isinstance(r,str) for r in targets) and len(targets)==len(set(targets)),
+                            'INVALID_ARGUMENT','Choose bounded unique record IDs without an after cursor')
+                    parameters=[identity(row_id) for row_id in targets];where=' WHERE "_dh_row_id" IN ('+','.join('?' for _ in parameters)+')'
                 rows=[];size=0
                 cursor=book.db.execute('SELECT "_dh_row_id",'+','.join(quote(col['name']) for col in selected)+' FROM '+quote(item['name'])+where+' ORDER BY "_dh_row_id" LIMIT ?',[*parameters,limit+1])
                 for row in cursor:
-                    record=dict(row_id=str(row[0]),values={col['id']:from_sql(col,stored) for col,stored in zip(selected,row[1:])})
+                    values={};record_size=0
+                    for col,stored in zip(selected,row[1:]):
+                        stored=from_sql(col,stored);record_size+=len(encoded(stored).encode())+len(col['id'])+8
+                        require(record_size<=3*1024*1024,'READ_LIMIT','A table record exceeds the page budget; request fewer columns')
+                        values[col['id']]=stored
+                    record=dict(row_id=str(row[0]),values=values)
                     size+=len(encoded(record).encode());require(size<=3*1024*1024,'READ_LIMIT','Table page exceeds its payload budget')
                     rows.append(record)
                 more=len(rows)>limit;rows=rows[:limit]
+                if targets is not None:
+                    by_id={row['row_id']:row for row in rows};require(set(by_id)==set(targets),'RECORD_NOT_FOUND','A requested record does not exist',404)
+                    rows=[by_id[row_id] for row_id in targets];more=False
                 result=dict(table=item['id'],state=book.state(),columns=selected,records=rows,
                             next_after=rows[-1]['row_id'] if rows and more else None,count_status='not_requested')
                 require(len(encoded(result).encode())<=4*1024*1024,'READ_LIMIT','Table response exceeds 4 MiB')

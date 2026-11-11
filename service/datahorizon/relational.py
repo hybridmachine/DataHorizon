@@ -16,6 +16,8 @@ SCHEMA = '''CREATE TABLE dh_relational (kind TEXT NOT NULL, id TEXT NOT NULL,
 TYPES = ('text','integer','number','boolean','date','time','datetime')
 STRUCTURAL = {'table_create','table_drop','table_promote','table_schema'}
 ACTIONS = set(STRUCTURAL)
+DATA_ACTIONS={'table_insert','table_update','table_delete'}
+ACTIONS.update(DATA_ACTIONS)
 MAX_INTEGER = 2**53-1
 
 
@@ -67,6 +69,7 @@ def columns(value,*,stored=False):
                     required=item.get('required',False),unique=item.get('unique',False))
         require(valid_uuid(column['id']) and column['id'] not in identities and column['name'].lower() not in names,
                 'INVALID_SCHEMA','Duplicate column name or identity')
+        require(str(uuid.UUID(column['id']))==column['id'],'INVALID_SCHEMA','Column IDs use canonical lowercase UUID spelling')
         require(column['type'] in TYPES and type(column['required']) is bool and type(column['unique']) is bool,
                 'INVALID_SCHEMA','Invalid column type or constraint')
         require(not stored or item==column,'INVALID_FORMAT','Incomplete stored column metadata',409)
@@ -87,6 +90,7 @@ def value(column,stored):
         try:finite=math.isfinite(stored)
         except OverflowError:finite=False
         require(finite and (type(stored) is not int or abs(stored)<=MAX_INTEGER),'INVALID_VALUE','Number is nonfinite or loses integer precision')
+        stored=float(stored)
     elif kind=='boolean':
         require(type(stored) is bool,'INVALID_VALUE',column['name']+' requires Boolean true/false')
     else:
@@ -182,6 +186,9 @@ def structure_hook(book,request,phase,before):
 
 
 def mutate(book,request):
+    if request['action'] in DATA_ACTIONS:
+        from .table_edits import mutate as edit
+        return edit(book,request)
     if request['action']=='table_schema':
         from .table_schema import apply
         return apply(book,request)
@@ -216,7 +223,7 @@ def mutate(book,request):
             book.check_operation();require(permitted,'TABLE_NOT_EMPTY','Explicitly review data loss before dropping a populated table')
             require(len(rows)<limit,'LIMIT','Table deletion exceeds 10,000 affected scalar fields')
             rows.append((str(identity),raw(book,item,str(identity))))
-        for identity,before in rows:capture(book,item,identity,before,None)
+        for identity,record_before in rows:capture(book,item,identity,record_before,None)
         book.db.execute('DROP TABLE '+quote(item['name']));book.db.execute("DELETE FROM dh_relational WHERE kind='table' AND id=?",(item['id'],));result={}
     else:raise EngineError('UNSUPPORTED_OPERATION','Unsupported table operation')
     structure_hook(book,request,'after',before)
