@@ -7,6 +7,7 @@ import posixpath
 import re
 import zipfile
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 
 from .engine import EngineError, MAX_CELLS, encoded, integer, require, typed
 from .formula import SUPPORTED_FUNCTIONS, FormulaError, Parser, address, coordinates, split_ref, translate
@@ -178,16 +179,13 @@ class SharedFormulas:
             require(r1<=row<=r2 and c1<=col<=c2 and (r2-r1+1)*(c2-c1+1)<=MAX_CELLS,
                     "LIMIT","Shared formula extent must contain its master and at most 10,000 cells")
             source="="+formula.text
-            typed({"source":source,"kind":"formula","style":{}})
             self.groups[key]=(row,col,(r1,c1,r2,c2),source)
 
     def source(self,cell,formula):
         kind=formula.get("t","normal")
         require(formula.get("ca","0") in ("0","1","false","true"),"INVALID_SPREADSHEET","Invalid formula calculation flag")
-        if kind=="normal":
-            require(set(formula.attrib)<={"t","ca"},"UNSUPPORTED_FORMULA","Unsupported formula metadata")
-            return "="+(formula.text or "")
-        require(kind=="shared" and set(formula.attrib)<={"t","si","ref","ca"},"UNSUPPORTED_FORMULA","Only ordinary and bounded shared formulas are available")
+        if kind=="normal": return "="+(formula.text or "")
+        require(kind=="shared","INVALID_SPREADSHEET","Unknown formula type")
         key=formula.get("si","")
         require(key in self.groups,"INVALID_SPREADSHEET","Shared formula has no master")
         origin_row,origin_col,(r1,c1,r2,c2),source=self.groups[key]
@@ -195,6 +193,127 @@ class SharedFormulas:
         require(r1<=row<=r2 and c1<=col<=c2,"INVALID_SPREADSHEET","Shared formula member lies outside its master extent")
         require(formula.text or "ref" not in formula.attrib,"INVALID_SPREADSHEET","Only the shared master may declare an extent")
         return translate(source,row-origin_row,col-origin_col)
+
+
+STYLE_SCOPE_LINES=[
+    "Mapped direct cell styles replace destination styles: general/Text/number/percentage/explicit currency labels with 0–15 decimal places, portable font family/size/RGB color, bold/italic, alignment, wrapping, solid RGB fill and individual solid/dashed/dotted border edges.",
+    "Rich-text runs, named-style inheritance, conditional formatting, row/column defaults and dimensions are omitted."]
+
+
+@dataclass
+class XlsxCellContext:
+    """Everything one cell conversion needs; a streaming reader builds the same object."""
+    mode: str
+    shared_strings: list
+    styles: object
+    date_system: str
+    sheet_names: object
+    sheet: str
+    report: ConversionReport
+    shared_formulas: object = None
+    timezone_policy: str = "reject"
+    shift: tuple = (0, 0)
+    seen: set = field(default_factory=set)
+
+
+def convert_xlsx_cell(cell,*,context):
+    """Convert one stored <c> to an edit, or None when it is skipped (with a report entry).
+
+    Raises EngineError only when the package itself is malformed."""
+    report,sheet,mode_=context.report,context.sheet,context.mode
+    location=cell.get("r","")
+    try: row,col=coordinates(location)
+    except FormulaError as error: raise EngineError("INVALID_SPREADSHEET","Invalid cell reference") from error
+    require((row,col) not in context.seen,"INVALID_SPREADSHEET","Duplicate cell coordinates")
+    context.seen.add((row,col))
+
+    def skip(category,detail=""):
+        report.add(category,"omitted",detail,sheet=sheet,cell=location)
+
+    formula=cell.find(f"{{{S}}}f")
+    value=cell.findtext(f"{{{S}}}v")
+    kind=cell.get("t","n")
+    cached=value is not None and kind!="e"
+    noted=[]
+    item=None
+    if formula is not None:
+        formula_type=formula.get("t","normal")
+        require(formula_type in ("normal","shared","array","dataTable"),"INVALID_SPREADSHEET","Unknown formula type")
+    if formula is not None and mode_!="values":
+        native=None
+        if formula_type in ("array","dataTable"):
+            problem=("formula.array" if formula_type=="array" else "formula.data_table","")
+            if formula.text: native=xlsx_formula_to_native("="+formula.text)
+        else:
+            try:
+                native=xlsx_formula_to_native(context.shared_formulas.source(cell,formula))
+                problem=formula_status(native,context.sheet_names)
+            except FormulaError: problem=("formula.untranslatable","")
+        if cached and (native is None or (mode_=="mixed" and problem is not None)):
+            noted.append((problem[0],"converted",problem[1]))
+        elif native is None:
+            skip(*problem); return None
+        else:
+            if problem is not None: noted.append((problem[0],"unevaluable",problem[1]))
+            if context.shift!=(0,0):
+                try: translate(native,*context.shift)
+                except FormulaError:
+                    # import_edits could not move this source; omit it here, where the report is still open.
+                    skip("formula.untranslatable"); return None
+            item={"source":native,"kind":"formula"}
+    if item is None:
+        if mode_=="values" and formula is not None and value is None and kind!="inlineStr":
+            skip("cell.missing_cache"); return None
+        try:
+            if kind=="e":
+                if value is None: skip("cell.invalid_value","error cell without a value"); return None
+                item={"source":value,"kind":"text"}
+                noted.append(("cell.error_value","converted",""))
+            elif kind=="inlineStr": item={"source":xlsx_text(cell.find(f"{{{S}}}is")),"kind":"text"}
+            elif kind=="s":
+                require(value is not None and re.fullmatch(r"[0-9]+",value) is not None and int(value)<len(context.shared_strings),"INVALID_SPREADSHEET","Invalid shared string index")
+                item={"source":context.shared_strings[int(value)],"kind":"text"}
+            elif kind=="d":
+                if value is None: skip("cell.invalid_value","date cell without a value"); return None
+                temporal=import_temporal(value,"datetime" if "T" in value or " " in value else "date" if "-" in value else "time",context.timezone_policy)
+                item={"source":str(temporal),"kind":temporal.kind}
+            elif kind=="str":
+                if value is None: skip("cell.invalid_value","text cell without a value"); return None
+                item={"source":text_decode(value),"kind":"text"}
+            elif kind=="b":
+                if value not in ("0","1"): skip("cell.invalid_value","Boolean cell without 0 or 1"); return None
+                item={"source":"TRUE" if value=="1" else "FALSE","kind":"boolean"}
+            elif kind=="n": item={"source":value or "","kind":"number" if value else "auto"}
+            else: skip("cell.unsupported_type",kind); return None
+        except (ValueError,UnicodeError,OverflowError) as error:
+            skip("cell.invalid_value",str(error)); return None
+    if item["kind"] in ("text","formula"):
+        try: typed({**item,"style":{}})
+        except EngineError:
+            # The engine's managed source limit decides; nothing else can fail for text or a formula.
+            skip("cell.text_too_long","formula source" if item["kind"]=="formula" else ""); return None
+    elif item["kind"]=="number":
+        try: typed({**item,"style":{}})
+        except EngineError:
+            item={"source":item["source"],"kind":"text"}
+            noted.append(("cell.number_out_of_range","converted",""))
+    style=context.styles.style(cell.get("s","0"),sheet=sheet,cell=location)
+    if item["kind"]=="number" and style.get("format") in TEMPORAL_FORMATS:
+        temporal_mode=style["format"]
+        try:
+            temporal=from_serial(float(item["source"]),"time" if temporal_mode=="time24" else "datetime" if temporal_mode=="datetime_iso" else "date",context.date_system)
+            # A date display can conceal a non-midnight clock; retain it.
+            if temporal_mode.startswith("date_"):
+                complete=from_serial(float(item["source"]),"datetime",context.date_system)
+                if complete.parsed().time().isoformat()!="00:00:00":temporal=complete
+        except (ValueError,OverflowError):
+            style={k:v for k,v in style.items() if k!="format"}
+            noted.append(("cell.date_conversion","approximated","date format dropped; the number is kept"))
+        else: item.update(source=str(temporal),kind=temporal.kind)
+    item.update(style=style,replace_style=True)
+    typed(item)
+    for category,severity,detail in noted: report.add(category,severity,detail,sheet=sheet,cell=location)
+    return {"row":row,"col":col,**item}
 
 
 def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None):
@@ -241,84 +360,28 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         from .xlsx_styles import XlsxStyles
         style_path=related_part(relationships,"styles")
         require(style_path is None or style_path in archive.namelist(),"INVALID_SPREADSHEET","Missing related stylesheet")
-        styles=XlsxStyles(archive,style_path or "xl/styles.xml")
-        edits,issues,seen=[],[],set()
         conversions=ConversionReport()
+        styles=XlsxStyles(archive,style_path or "xl/styles.xml",conversions)
+        edits,issues=[],[]
         shift=(integer(request.get("row",1),1,1048576,"row")-1,integer(request.get("col",1),1,16384,"col")-1)
         sheet_label=sheets[selected-1].get("name","")
         count=0
         stored=root.findall(f"{{{S}}}sheetData/{{{S}}}row/{{{S}}}c")
         require(len(stored)<=MAX_CELLS,"LIMIT","Import exceeds 10,000 stored cells")
-        shared_formulas=None
-        if selected_mode!="values":
-            try: shared_formulas=SharedFormulas(stored)
-            except EngineError as error:
-                shared_formulas=SharedFormulas([])
-                issues.append({"cell":"shared formula groups","message":str(error)[:200]})
+        # Shared-formula structure is package structure: a broken group rejects the file.
+        shared_formulas=SharedFormulas(stored) if selected_mode!="values" else None
+        context=XlsxCellContext(mode=selected_mode,shared_strings=shared,styles=styles,date_system=system,
+                                sheet_names=sheet_names,sheet=sheet_label,report=conversions,
+                                shared_formulas=shared_formulas,timezone_policy=request.get("timezone_policy","reject"),shift=shift)
         for cell in stored:
             count+=1; checkpoint(count,"Reading cells")
             require(count<=MAX_CELLS,"LIMIT","Import exceeds 10,000 stored cells")
-            location=cell.get("r","")
-            try:
-                row,col=coordinates(location)
-                require((row,col) not in seen,"INVALID_SPREADSHEET","Duplicate cell coordinates")
-                seen.add((row,col))
-                formula=cell.find(f"{{{S}}}f")
-                value=cell.findtext(f"{{{S}}}v")
-                kind=cell.get("t","n")
-                noted=None
-                if formula is not None and selected_mode!="values":
-                    native=xlsx_formula_to_native(shared_formulas.source(cell,formula))
-                    problem=formula_status(native,sheet_names)
-                    cached=value is not None and kind!="e"
-                    if problem is not None: noted=(*problem,"converted" if selected_mode=="mixed" and cached else "unevaluable")
-                    keep_formula=problem is None or not (selected_mode=="mixed" and cached)
-                else: keep_formula=False
-                if keep_formula:
-                    if shift!=(0,0):
-                        try: translate(native,*shift)
-                        except FormulaError:
-                            # import_edits could not move this source; omit it here, where the report is still open.
-                            conversions.add("formula.untranslatable","omitted",sheet=sheet_label,cell=location)
-                            continue
-                    item={"source":native,"kind":"formula"}
-                elif kind=="inlineStr":
-                    item={"source":xlsx_text(cell.find(f"{{{S}}}is")),"kind":"text"}
-                elif kind=="s":
-                    require(value is not None and re.fullmatch(r"[0-9]+",value) is not None and int(value)<len(shared),"INVALID_SPREADSHEET","Invalid shared string index")
-                    item={"source":shared[int(value)],"kind":"text"}
-                elif kind=="d":
-                    require(value is not None,"INVALID_SPREADSHEET","Missing ISO date/time value")
-                    temporal=import_temporal(value,"datetime" if "T" in value or " " in value else "date" if "-" in value else "time",request.get("timezone_policy","reject"))
-                    item={"source":str(temporal),"kind":temporal.kind}
-                elif kind=="str":
-                    require(value is not None,"INVALID_SPREADSHEET","Missing text/date value")
-                    item={"source":text_decode(value),"kind":"text"}
-                elif kind=="b":
-                    require(value in ("0","1"),"INVALID_SPREADSHEET","Invalid Boolean value")
-                    item={"source":"TRUE" if value=="1" else "FALSE","kind":"boolean"}
-                elif kind=="n":
-                    require(formula is None or value is not None,"MISSING_CACHE","Formula has no cached value")
-                    item={"source":value or "","kind":"number" if value else "auto"}
-                else: raise EngineError("UNSUPPORTED_CELL",f"Unsupported cell type: {kind}")
-                item.update(style=styles.style(cell.get("s","0")),replace_style=True)
-                if item["kind"]=="number" and item["style"].get("format") in TEMPORAL_FORMATS:
-                    temporal_mode=item["style"]["format"]
-                    temporal=from_serial(float(item["source"]),"time" if temporal_mode=="time24" else "datetime" if temporal_mode=="datetime_iso" else "date",system)
-                    # A date display can conceal a non-midnight clock; retain it.
-                    if temporal_mode.startswith("date_"):
-                        complete=from_serial(float(item["source"]),"datetime",system)
-                        if complete.parsed().time().isoformat()!="00:00:00":temporal=complete
-                    item.update(source=str(temporal),kind=temporal.kind)
-                typed(item)
-                if noted: conversions.add(noted[0],noted[2],noted[1],sheet=sheet_label,cell=location)
-                edits.append({"row":row,"col":col,**item})
-            except (EngineError,FormulaError,UnicodeError,ValueError,OverflowError) as error:
-                if len(issues)<100: issues.append({"cell":location,"message":str(error)[:200]})
+            edit=convert_xlsx_cell(cell,context=context)
+            if edit is not None: edits.append(edit)
         if shared_formulas and shared_formulas.groups: report.append("Shared formulas expand to explicit per-cell sources with relative/absolute reference translation; caches are discarded.")
-        report.extend(styles.report())
+        report.extend(STYLE_SCOPE_LINES)
         report.extend(conversions.lines())
-        result={"cells":edits if not issues else [],"can_import":bool(edits) and not issues,"issues":issues,
+        result={"cells":edits,"can_import":bool(edits),"issues":issues,
                 "sheet":sheet_label,"sheets":[s.get("name","") for s in sheets],"report":report,"report_entries":conversions.entries(),
                 "totals":conversions.totals(),"stored_cells":count}
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Spreadsheet preview exceeds 4 MiB")

@@ -29,17 +29,16 @@ class FidelityTests(unittest.TestCase):
         self.assertIn("Shared formulas expand"," ".join(result["report"]))
         self.assertEqual([c["source"] for c in preview(data,mode="values")["cells"]],["99","99"])
 
-    def test_broken_shared_groups_block_every_cell(self):
+    def test_broken_shared_groups_reject_the_file(self):
         samples=[
             '<c r="C3"><f t="shared" si="4"/></c>',
             '<c r="C2"><f t="shared" si="4" ref="C2">A1</f></c><c r="C3"><f t="shared" si="4"/></c>',
             '<c r="C2"><f t="shared" si="4" ref="C2:C3">A1</f></c><c r="C3"><f t="shared" si="4" ref="C2:C3">A2</f></c>',
-            '<c r="C2"><f t="shared" si="4" ref="A1:XFD1048576">A1</f></c>',
-            '<c r="C2"><f t="array" ref="C2:C3">A1</f></c>']
+            '<c r="C2"><f t="shared" si="4" ref="A1:XFD1048576">A1</f></c>']
         for sample in samples:
             with self.subTest(sample=sample):
-                result=preview(fixture('<c r="A1"><v>7</v></c>'+sample))
-                self.assertFalse(result["can_import"]); self.assertEqual(result["cells"],[])
+                with self.assertRaises(EngineError) as failure: preview(fixture('<c r="A1"><v>7</v></c>'+sample))
+                self.assertIn(failure.exception.body["code"],("INVALID_SPREADSHEET","LIMIT"))
 
     def test_ods_inherits_parent_properties_and_child_resets(self):
         styles='''<style:style style:name="Parent" style:family="table-cell"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/><style:table-cell-properties fo:background-color="#12ab34" fo:wrap-option="wrap" fo:border="0.75pt solid #000000"/></style:style>

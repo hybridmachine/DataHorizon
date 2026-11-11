@@ -5,6 +5,7 @@ import re
 from .engine import encoded, require, validate_style, EngineError
 from .borders import SIDES, BORDER_STYLES, border_edges
 from .formats import number_format_code, simple_number_style
+from .conversion_report import ConversionReport
 from .interchange import S,R,node,read_xml
 
 
@@ -13,9 +14,12 @@ def enabled(item):
 
 
 class XlsxStyles:
-    def __init__(self,archive,path="xl/styles.xml"):
+    def __init__(self,archive,path="xl/styles.xml",report=None):
         self.cache={}
-        self.losses=set()
+        self.recorded={}
+        self.report=report if report is not None else ConversionReport()
+        self._where=(None,None)
+        self._current=[]
         self.fonts=[]; self.fills=[]; self.borders=[]; self.formats={}; self.xfs=[]
         if path not in archive.namelist(): return
         root=read_xml(archive,path)
@@ -25,8 +29,10 @@ class XlsxStyles:
             require(len(getattr(self,attr))<=4096,"LIMIT","Stylesheet table exceeds 4,096 entries")
         self.formats={item.get("numFmtId"):item.get("formatCode","") for item in root.findall(f"{{{S}}}numFmts/{{{S}}}numFmt")}
 
-    def loss(self,message):
-        if len(self.losses)<100: self.losses.add(message[:160])
+    def loss(self,category,detail,severity="omitted"):
+        """Record one style loss for the cell being resolved (and for later cells sharing the style)."""
+        self._current.append((category,severity,detail))
+        self.report.add(category,severity,detail,sheet=self._where[0],cell=self._where[1])
 
     @staticmethod
     def index(value,table):
@@ -34,13 +40,22 @@ class XlsxStyles:
                 "INVALID_SPREADSHEET","Invalid stylesheet index")
         return table[int(value)]
 
-    def style(self,index="0"):
+    def style(self,index="0",*,sheet=None,cell=None):
+        """The native style for an xf index; its losses are reported once per cell that uses it."""
         if not self.xfs:
             require(index=="0","INVALID_SPREADSHEET","Cell references a missing stylesheet")
             return {}
-        if index in self.cache: return self.cache[index]
+        if index in self.cache:
+            for category,severity,detail in self.recorded[index]: self.report.add(category,severity,detail,sheet=sheet,cell=cell)
+            return self.cache[index]
+        self._where=(sheet,cell); self._current=[]
+        self.cache[index]=result=self._resolve(index)
+        self.recorded[index]=self._current
+        return result
+
+    def _resolve(self,index):
         xf=self.index(index,self.xfs); result={}
-        if xf.get("xfId","0")!="0": self.loss("Named style inheritance is omitted; direct cell formatting is mapped.")
+        if xf.get("xfId","0")!="0": self.loss("style.named_style","Named style inheritance is omitted; direct cell formatting is mapped.")
         fmt=xf.get("numFmtId","0")
         custom=self.formats.get(fmt)
         if fmt=="49" or custom=="@": result["format"]="text"
@@ -49,8 +64,8 @@ class XlsxStyles:
             mapped=simple_number_style(code)
             if mapped:
                 result.update(mapped)
-                if mapped.get("format") in ("date_iso","date_mdy","date_dmy","time24","datetime_iso") and code!=number_format_code(mapped):self.loss("Date/time display is normalized to the supported invariant format; source date/time values are retained.")
-            elif code!="General": self.loss(f"Number format {fmt} ({custom or 'built-in'}) is omitted; numeric inputs remain numbers, including date/time serials.")
+                if mapped.get("format") in ("date_iso","date_mdy","date_dmy","time24","datetime_iso") and code!=number_format_code(mapped):self.loss("style.number_format","Date/time display is normalized to the supported invariant format; source date/time values are retained.","approximated")
+            elif code!="General": self.loss("style.number_format",f"Number format {fmt} ({custom or 'built-in'}) is omitted; numeric inputs remain numbers, including date/time serials.")
         font=self.index(xf.get("fontId","0"),self.fonts)
         if enabled(font.find(f"{{{S}}}b")): result["bold"]=True
         if enabled(font.find(f"{{{S}}}i")): result["italic"]=True
@@ -62,7 +77,7 @@ class XlsxStyles:
             elif key=="text_color":
                 rgb=element.get("rgb","");value="#"+rgb[2:].lower() if re.fullmatch(r"[0-9a-fA-F]{8}",rgb) and element.get("tint","0") in ("0","0.0") else None
             try:validate_style({key:value})
-            except EngineError:self.loss(f"Unsupported {key} (including theme/tinted colors or fractional/out-of-range sizes) is omitted.")
+            except EngineError:self.loss("style.font",f"Unsupported {key} (including theme/tinted colors or fractional/out-of-range sizes) is omitted.")
             else:result[key]=value
         fill=self.index(xf.get("fillId","0"),self.fills)
         pattern=fill.find(f"{{{S}}}patternFill")
@@ -70,7 +85,7 @@ class XlsxStyles:
             color=pattern.find(f"{{{S}}}fgColor")
             rgb=color.get("rgb","") if color is not None else ""
             if pattern.get("patternType")=="solid" and re.fullmatch(r"[0-9a-fA-F]{8}",rgb) and color.get("tint","0") in ("0","0.0"): result["background"]="#"+rgb[2:].lower()
-            else: self.loss("Non-solid, tinted, indexed or theme fills are omitted.")
+            else: self.loss("style.fill","Non-solid, tinted, indexed or theme fills are omitted.")
         border=self.index(xf.get("borderId","0"),self.borders)
         sides=[border.find(f"{{{S}}}{side}") for side in ("left","right","top","bottom")]
         styles=[side.get("style") if side is not None else None for side in sides]
@@ -78,23 +93,18 @@ class XlsxStyles:
         else:
             for side,style in zip(SIDES,styles):
                 if style in BORDER_STYLES and style!="none":result["border_"+side]=style
-                elif style not in (None,"none"):self.loss("Partial mapping: unsupported border line styles are omitted.")
-        if any(style in BORDER_STYLES and style!="none" for style in styles):self.loss("Border colors map to the native default color.")
+                elif style not in (None,"none"):self.loss("style.border","Partial mapping: unsupported border line styles are omitted.")
+        if any(style in BORDER_STYLES and style!="none" for style in styles):self.loss("style.border","Border colors map to the native default color.","approximated")
         if any(edge.tag.rsplit("}",1)[-1] not in ("left","right","top","bottom") and edge.get("style") for edge in border):
-            self.loss("Diagonal and additional border edges are omitted.")
+            self.loss("style.border","Diagonal and additional border edges are omitted.")
         alignment=xf.find(f"{{{S}}}alignment")
         if alignment is not None:
             horizontal=alignment.get("horizontal")
             if horizontal in ("left","center","right"): result["align"]=horizontal
-            elif horizontal not in (None,"general"): self.loss("Unsupported horizontal alignment is omitted.")
+            elif horizontal not in (None,"general"): self.loss("style.alignment","Unsupported horizontal alignment is omitted.")
             if alignment.get("wrapText") in ("1","true"): result["wrap"]=True
-            if any(key not in ("horizontal","wrapText") for key in alignment.attrib): self.loss("Vertical alignment, rotation, indent and shrink-to-fit are omitted.")
-        self.cache[index]=result
+            if any(key not in ("horizontal","wrapText") for key in alignment.attrib): self.loss("style.alignment","Vertical alignment, rotation, indent and shrink-to-fit are omitted.")
         return result
-
-    def report(self):
-        return ["Mapped direct cell styles replace destination styles: general/Text/number/percentage/explicit currency labels with 0–15 decimal places, portable font family/size/RGB color, bold/italic, alignment, wrapping, solid RGB fill and individual solid/dashed/dotted border edges.",
-                "Rich-text runs, named-style inheritance, conditional formatting, row/column defaults and dimensions are omitted.",*sorted(self.losses)]
 
 
 def export_styles(cells):

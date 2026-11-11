@@ -107,9 +107,8 @@ class WorkbookInterchangeTests(unittest.TestCase):
                 value=source.read(name)
                 if name=="xl/worksheets/sheet2.xml": value=value.replace(b"<v>1</v>",b'<f t="shared" si="9"/>')
                 target.writestr(name,value)
-        result=xlsx_preview({"file_base64":base64.b64encode(output.getvalue()).decode(),"scope":"workbook"})
-        self.assertFalse(result["can_import"]); self.assertEqual(result["workbook_sheets"],[])
-        self.assertEqual(result["issues"][0]["sheet"],"Two")
+        with self.assertRaises(EngineError) as failure: xlsx_preview({"file_base64":base64.b64encode(output.getvalue()).decode(),"scope":"workbook"})
+        self.assertEqual(failure.exception.body["code"],"INVALID_SPREADSHEET")
         # A reference to a sheet the workbook lacks is kept as an unevaluable formula, not a blocking issue.
         output=io.BytesIO()
         with zipfile.ZipFile(io.BytesIO(data)) as source,zipfile.ZipFile(output,"w") as target:

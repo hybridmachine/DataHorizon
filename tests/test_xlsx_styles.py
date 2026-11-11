@@ -8,6 +8,7 @@ import unittest
 import zipfile
 
 from datahorizon.client import LocalService
+from datahorizon.engine import EngineError
 from datahorizon.interchange import S,xlsx_export,xlsx_preview
 from test_interchange import fixture
 
@@ -47,8 +48,8 @@ class XlsxStyleTests(unittest.TestCase):
         self.assertEqual(result["cells"][0]["kind"],"date")
         report=" ".join(result["report"])
         for word in ("serials","theme","Partial","alignment","rotation"): self.assertIn(word,report)
-        invalid=preview(styled_fixture('<c r="A1" s="99"><v>7</v></c>',styles))
-        self.assertFalse(invalid["can_import"]); self.assertEqual(invalid["cells"],[])
+        with self.assertRaises(EngineError) as failure: preview(styled_fixture('<c r="A1" s="99"><v>7</v></c>',styles))
+        self.assertEqual(failure.exception.body["code"],"INVALID_SPREADSHEET")
 
     def test_rgb_alpha_case_is_ignored_for_cell_fills_and_tint_is_reported(self):
         for rgb in ("0012ab34","ff12AB34","7f12ab34"):

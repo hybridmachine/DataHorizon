@@ -49,15 +49,17 @@ class XlsxTests(unittest.TestCase):
             [(2,2,"text","00123"),(4,4,"text","=1+1"),(4,5,"boolean","TRUE"),(4,6,"number","7"),(4,7,"formula","=SUM(F4,$E$3)")])
         self.assertIn("mergeCells"," ".join(result["report"]))
 
-    def test_unsupported_or_invalid_cell_blocks_all_inputs_and_cached_values_is_explicit(self):
-        bad=('<c r="A1"><f t="shared" si="1">A2</f><v>8</v></c>',
-             '<c r="A1" t="e"><v>#N/A</v></c>',
-             '<c r="XFE1"><v>8</v></c>','<c r="A1"><v>9007199254740992</v></c>',
-             '<c r="A1" t="s"><v>900</v></c>','<c r="A1"><v>NaN</v></c>')
-        for cell in bad:
+    def test_malformed_cells_reject_the_file_and_unsupported_content_degrades_with_an_entry(self):
+        for cell in ('<c r="A1"><f t="shared" si="1">A2</f><v>8</v></c>','<c r="XFE1"><v>8</v></c>','<c r="A1" t="s"><v>900</v></c>'):
+            with self.subTest(cell=cell), self.assertRaises(EngineError) as failure:
+                preview(fixture('<c r="B1"><v>7</v></c>'+cell))
+            self.assertEqual(failure.exception.body["code"],"INVALID_SPREADSHEET")
+        for cell,category in (('<c r="A1" t="e"><v>#N/A</v></c>',"cell.error_value"),('<c r="A1"><v>9007199254740992</v></c>',"cell.number_out_of_range"),
+                              ('<c r="A1"><v>NaN</v></c>',"cell.number_out_of_range")):
             with self.subTest(cell=cell):
                 result=preview(fixture('<c r="B1"><v>7</v></c>'+cell))
-                self.assertFalse(result["can_import"]); self.assertEqual(result["cells"],[]); self.assertTrue(result["issues"])
+                self.assertTrue(result["can_import"]); self.assertEqual(result["issues"],[]); self.assertEqual(len(result["cells"]),2)
+                self.assertEqual([e["category"] for e in result["report_entries"]],[category])
         # Formulas the calculator cannot evaluate no longer block; they are kept and itemized (see test_xlsx_degrade).
         for body,category in (("Other!A1","formula.missing_sheet"),("MEDIAN(A2:A3)","formula.unsupported_function")):
             with self.subTest(body=body):
@@ -102,7 +104,8 @@ class XlsxTests(unittest.TestCase):
         for data in (b"not zip",):
             with self.assertRaises(EngineError): preview(data)
         for cells in ('<c r="A1"><v>7</v></c><c r="A1"><v>8</v></c>',):
-            self.assertFalse(preview(fixture(cells))["can_import"])
+            with self.assertRaises(EngineError) as failure: preview(fixture(cells))
+            self.assertEqual(failure.exception.body["code"],"INVALID_SPREADSHEET")
         data=fixture('<c r="XFD1048576"><v>7</v></c>')
         with self.assertRaises(EngineError): preview(data,row=2)
         output=io.BytesIO()

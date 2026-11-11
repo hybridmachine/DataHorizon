@@ -48,9 +48,14 @@ class TemporalInterchangeTests(unittest.TestCase):
             result=xlsx_preview(serial_package(serial,epoch))
             self.assertTrue(result["can_import"],result)
             self.assertEqual(result["cells"][0]["source"],expected)
-        for serial in (60,60.5,"NaN","1e999"):
+        for serial in (60,60.5):
             result=xlsx_preview(serial_package(serial))
-            self.assertFalse(result["can_import"]);self.assertEqual(result["cells"],[])
+            self.assertTrue(result["can_import"],result);self.assertEqual(result["cells"][0]["kind"],"number");self.assertNotIn("format",result["cells"][0]["style"])
+            self.assertIn("cell.date_conversion",[e["category"] for e in result["report_entries"]])
+        for serial in ("NaN","1e999"):
+            result=xlsx_preview(serial_package(serial))
+            self.assertEqual((result["cells"][0]["kind"],result["cells"][0]["source"]),("text",serial))
+            self.assertIn("cell.number_out_of_range",[e["category"] for e in result["report_entries"]])
         self.assertEqual(xlsx_preview(serial_package(.5,fmt="21"))["cells"][0]["source"],"12:00:00")
 
     def test_independent_iso_and_duration_sources_reject_offsets_and_long_durations(self):
