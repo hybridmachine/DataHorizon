@@ -183,7 +183,6 @@ class CellDegradeTests(unittest.TestCase):
         self.assertIn(entry("cell.text_too_long", "omitted", "", "A1"), result["report_entries"])
 
     def test_same_oversize_shared_string_used_many_times_is_one_entry(self):
-        cells = "".join(f'<c r="A{r}" t="s"><v>0</v></c>' for r in range(1, 301))
         rows = "".join(f'<row r="{r}"><c r="A{r}" t="s"><v>0</v></c></row>' for r in range(1, 301))
         data = workbook_bytes({"Sheet1": rows}, shared_strings=["y" * 70_000])
         result = xlsx_preview({"file_base64": b64(data)})
@@ -191,7 +190,6 @@ class CellDegradeTests(unittest.TestCase):
         self.assertFalse(result["can_import"])
         (found,) = [e for e in result["report_entries"] if e["category"] == "cell.text_too_long"]
         self.assertEqual((found["count"], found["severity"], len(found["samples"])), (300, "omitted", 100))
-        self.assertEqual(cells.count("<c"), 300)
 
     def test_number_the_engine_rejects_becomes_text_with_original_characters(self):
         result = preview('<row r="1"><c r="A1"><v>NaN</v></c><c r="B1"><v>1e999</v></c><c r="C1"><v>12345678901234567890</v></c></row>')
@@ -208,6 +206,24 @@ class CellDegradeTests(unittest.TestCase):
         self.assertEqual((a1["source"], a1["kind"], a1["style"]), ("60", "number", {}))
         self.assertEqual((b1["source"], b1["kind"]), ("1900-03-01", "date"))
         self.assertIn(entry("cell.date_conversion", "approximated", "date format dropped; the number is kept", "A1"), result["report_entries"])
+
+    def test_non_size_engine_rejection_is_not_reported_as_too_long(self):
+        from unittest import mock
+        with mock.patch("datahorizon.interchange.typed", side_effect=EngineError("INVALID_INPUT", "nope")):
+            result = preview('<row r="1"><c r="A1" t="inlineStr"><is><t>hi</t></is></c></row>')
+        self.assertEqual(result["cells"], [])
+        self.assertEqual([(e["category"], e["detail"]) for e in result["report_entries"]], [("cell.invalid_value", "rejected by the engine")])
+
+    def test_formulas_mode_takes_the_cache_when_the_formula_is_empty_or_untranslatable(self):
+        sheet = ('<row r="1"><c r="A1"><f t="shared" si="0" ref="A1:A2">{1,2}</f><v>1</v></c>'
+                 '<c r="B1"><f t="array" ref="B1"/><v>7</v></c></row>'
+                 '<row r="2"><c r="A2"><f t="shared" si="0"/><v>2</v></c></row>')
+        result = preview(sheet, mode="formulas")
+        self.assertEqual(len(result["cells"]), 3)
+        self.assertEqual(cell(result, "A2"), {"source": "2", "kind": "number"})
+        self.assertEqual(cell(result, "B1"), {"source": "7", "kind": "number"})
+        self.assertIn(entry("formula.untranslatable", "converted", "", "A1", "A2"), result["report_entries"])
+        self.assertIn(entry("formula.array", "converted", "", "B1"), result["report_entries"])
 
     def test_invalid_temporal_and_boolean_values_are_skipped(self):
         result = preview('<row r="1"><c r="A1" t="d"><v>2023-02-29</v></c><c r="B1" t="b"><v>2</v></c><c r="C1" t="str"/><c r="D1"><v>1</v></c></row>')

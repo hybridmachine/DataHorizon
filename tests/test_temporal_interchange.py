@@ -65,6 +65,7 @@ class TemporalInterchangeTests(unittest.TestCase):
         for source in ("2023-02-29","2024-02-29T00:00:00Z"):
             result=xlsx_preview(dict(file_base64=base64.b64encode(xlsx_fixture(f'<c r="A1" t="d"><v>{source}</v></c>')).decode()))
             self.assertFalse(result["can_import"])
+            self.assertEqual([(e["category"],e["detail"],e["severity"]) for e in result["report_entries"]],[("cell.invalid_value","date/time","omitted")])
         for duration,expected in (("PT2H","02:00:00"),("P0DT12H34M56.123456S","12:34:56.123456")):
             data=ods_fixture(f'<table:table-row><table:table-cell office:value-type="time" office:time-value="{duration}"/></table:table-row>')
             result=ods_preview(dict(file_base64=base64.b64encode(data).decode()));self.assertTrue(result["can_import"],result);self.assertEqual(result["cells"][0]["source"],expected)

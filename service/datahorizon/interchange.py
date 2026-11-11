@@ -22,6 +22,7 @@ R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 P = "http://schemas.openxmlformats.org/package/2006/relationships"
 MAX_PACKAGE = 3*1024*1024
 MAX_EXPANDED = 16*1024*1024
+MAX_SOURCE_BYTES = 65_536  # typed() limit on a managed cell source
 
 
 def node(parent, tag, text=None, **attrs):
@@ -266,7 +267,7 @@ def convert_xlsx_cell(cell,*,context):
             skip("cell.missing_cache"); return None
         try:
             if kind=="e":
-                if value is None: skip("cell.invalid_value","error cell without a value"); return None
+                if value is None: skip("cell.invalid_value","missing value"); return None
                 item={"source":value,"kind":"text"}
                 noted.append(("cell.error_value","converted",""))
             elif kind=="inlineStr": item={"source":xlsx_text(cell.find(f"{{{S}}}is")),"kind":"text"}
@@ -274,24 +275,25 @@ def convert_xlsx_cell(cell,*,context):
                 require(value is not None and re.fullmatch(r"[0-9]+",value) is not None and int(value)<len(context.shared_strings),"INVALID_SPREADSHEET","Invalid shared string index")
                 item={"source":context.shared_strings[int(value)],"kind":"text"}
             elif kind=="d":
-                if value is None: skip("cell.invalid_value","date cell without a value"); return None
+                if value is None: skip("cell.invalid_value","missing value"); return None
                 temporal=import_temporal(value,"datetime" if "T" in value or " " in value else "date" if "-" in value else "time",context.timezone_policy)
                 item={"source":str(temporal),"kind":temporal.kind}
             elif kind=="str":
-                if value is None: skip("cell.invalid_value","text cell without a value"); return None
+                if value is None: skip("cell.invalid_value","missing value"); return None
                 item={"source":text_decode(value),"kind":"text"}
             elif kind=="b":
-                if value not in ("0","1"): skip("cell.invalid_value","Boolean cell without 0 or 1"); return None
+                if value not in ("0","1"): skip("cell.invalid_value","boolean"); return None
                 item={"source":"TRUE" if value=="1" else "FALSE","kind":"boolean"}
             elif kind=="n": item={"source":value or "","kind":"number" if value else "auto"}
             else: skip("cell.unsupported_type",kind); return None
-        except (ValueError,UnicodeError,OverflowError) as error:
-            skip("cell.invalid_value",str(error)); return None
+        except (ValueError,UnicodeError,OverflowError):
+            skip("cell.invalid_value","date/time" if kind=="d" else "text encoding"); return None
     if item["kind"] in ("text","formula"):
-        try: typed({**item,"style":{}})
-        except EngineError:
-            # The engine's managed source limit decides; nothing else can fail for text or a formula.
+        # Same limit typed() enforces on managed cell source.
+        if len(item["source"].encode("utf-8","surrogatepass"))>MAX_SOURCE_BYTES:
             skip("cell.text_too_long","formula source" if item["kind"]=="formula" else ""); return None
+        try: typed({**item,"style":{}})
+        except EngineError: skip("cell.invalid_value","rejected by the engine"); return None
     elif item["kind"]=="number":
         try: typed({**item,"style":{}})
         except EngineError:
