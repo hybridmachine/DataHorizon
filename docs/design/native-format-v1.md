@@ -1,4 +1,12 @@
-# Development native formats v1 through v5
+# Development native formats v1 through v6
+
+## Workbook names and bindings format v6
+
+v6 reuses v4's `dh_relational(kind,id,payload)` schema and adds the catalog
+kinds `name` and `binding`. A workbook enters v6 in the same transaction as the
+first use of either kind; module saves never lower an existing v6 version.
+v1-v5 readers reject v6, and a `name` or `binding` row in a file below v6 is
+rejected as `INVALID_FORMAT`.
 
 ## Workbook code format v5
 

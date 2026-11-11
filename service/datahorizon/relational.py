@@ -125,6 +125,10 @@ def ensure(book):
         book.ensure_metadata();book.db.execute(SCHEMA);book.db.execute('UPDATE dh_meta SET format_version=4')
 
 
+def ensure_version(book,minimum):
+    ensure(book);book.db.execute('UPDATE dh_meta SET format_version=MAX(format_version,?)',(minimum,))
+
+
 def store(book,kind,item):
     ensure(book)
     payload=encoded(item)
@@ -136,9 +140,9 @@ def store(book,kind,item):
 def validate_schema(db,signature,base_schema):
     from .engine import expected_schema
     require(expected_schema(SCHEMA)[0] in signature,'FORMAT_VERSION','Native format v4 requires its matching relational catalog',409)
-    catalog=objects(db);registered=[];names=set()
+    catalog=objects(db);registered=[];names=set();version=db.execute('SELECT format_version FROM dh_meta').fetchone()[0]
     for kind,item in catalog:
-        require(kind in ('table','index','relationship','query') or kind=='module' and db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=5,'INVALID_FORMAT','Unsupported relational object kind',409)
+        require(kind in ('table','index','relationship','query') or kind=='module' and version>=5 or kind in ('name','binding') and version>=6,'INVALID_FORMAT','Unsupported relational object kind',409)
         if kind!='table':continue
         require(set(item)=={'id','name','columns'},'INVALID_FORMAT','Invalid table catalog fields',409)
         name(item['name']);columns(item['columns'],stored=True)

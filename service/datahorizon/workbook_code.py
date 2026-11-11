@@ -123,7 +123,7 @@ def mutate(book,request):
     def event(phase):
         if book.handler:invoke(book.handler,dict(phase=phase,action=request['action'],operation_id=request['operation_id'],before=before,after=after),request['operation_id'],book.hook_dispatch,book.deadline,event='on_code_structure')
     event('before')
-    relational.ensure(book);book.db.execute('UPDATE dh_meta SET format_version=5')
+    relational.ensure_version(book,5)
     if after:relational.store(book,'module',after)
     else:book.db.execute("DELETE FROM dh_relational WHERE kind='module' AND id=?",(before['id'],))
     modules(book.db);event('after')
