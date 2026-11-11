@@ -67,6 +67,7 @@
 #include "jobcloser.h"
 #include "clipboarddata.h"
 #include "relationalworkbench.h"
+#include "pythonworkspace.h"
 #include <QStackedWidget>
 #include <QTableWidget>
 #include <algorithm>
@@ -285,6 +286,12 @@ void MainWindow::showRelational(bool visible) {
     setBusy(m_busy);
 }
 
+void MainWindow::showPythonWorkspace() {
+    if(m_info.isEmpty()){issue(tr("Open a workbook before opening the Python workspace."));return;}
+    m_workspace->setViewStatePath(viewSettingsPath());
+    m_workspace->showWorkspace();
+}
+
 void MainWindow::createTableFromSelection() {
     if(m_busy || m_unknown || m_info.isEmpty() || m_info.value("readonly").toBool() || m_relationalActive)return;
     if(m_model->projected()){issue(tr("Clear the list view before creating a table from source coordinates."));return;}
@@ -337,6 +344,10 @@ void MainWindow::buildUi() {
     auto *records=dataMenu->addAction(tr("Work with declared records…"));records->setObjectName("recordCommandAction");connect(records,&QAction::triggered,this,&MainWindow::recordCommand);
     auto *jobs=dataMenu->addAction(tr("Operation jobs…"));jobs->setObjectName("operationJobsAction");connect(jobs,&QAction::triggered,this,&MainWindow::operationJobs);
     auto *calculate=dataMenu->addAction(tr("Recalculate selection in background…"));calculate->setObjectName("calculateSelectionAction");connect(calculate,&QAction::triggered,this,&MainWindow::calculateSelection);
+    // Tools stays enabled while the relational workbench is shown so the
+    // Python workspace can be opened whenever a workbook is open.
+    auto *tools=menuBar()->addMenu(tr("&Tools"));
+    auto *workspace=tools->addAction(tr("Python workspace"));workspace->setObjectName("pythonWorkspaceAction");connect(workspace,&QAction::triggered,this,&MainWindow::showPythonWorkspace);
     auto *view = menuBar()->addMenu(tr("&View"));
     auto *savePortable=view->addAction(tr("Save view in workbook"));savePortable->setObjectName("savePortableViewAction");connect(savePortable,&QAction::triggered,this,[this]{portableView(true);});
     auto *loadPortable=view->addAction(tr("Load view from workbook"));loadPortable->setObjectName("loadPortableViewAction");connect(loadPortable,&QAction::triggered,this,[this]{portableView(false);});
@@ -653,6 +664,11 @@ void MainWindow::buildUi() {
     connect(m_relational,&RelationalWorkbench::issue,this,&MainWindow::issue);
     connect(m_relational,&RelationalWorkbench::busyRequested,this,[this](bool busy){setBusy(busy);});
     connect(m_relational,&RelationalWorkbench::sheetsRequested,this,[this]{showRelational(false);});
+    m_workspace=new PythonWorkspace(m_client,this);
+    connect(m_workspace,&PythonWorkspace::submitRequested,this,&MainWindow::submit);
+    connect(m_workspace,&PythonWorkspace::issue,this,&MainWindow::issue);
+    connect(this,&MainWindow::operationAdmitted,m_workspace,&PythonWorkspace::operationAdmitted);
+    connect(this,&MainWindow::operationReceipt,m_workspace,&PythonWorkspace::operationReceipt);
     connect(m_relational,&RelationalWorkbench::refreshRequested,this,[this]{refresh();});connect(m_relational,&RelationalWorkbench::sheetSelected,this,[this](const QString &id){showRelational(false);for(int i=0;i<m_tabs->count();++i)if(m_tabs->tabData(i).toString()==id){m_tabs->setCurrentIndex(i);break;}});
     m_status = new QLabel(tr("Starting local service…")); m_status->setAccessibleName(tr("Storage and calculation status"));
     m_status->setObjectName("storageStatus");
@@ -1250,9 +1266,10 @@ void MainWindow::openBook(const QString &path, bool create, bool readonly,bool r
         if (QMessageBox::question(this,tr("Discard editor draft?"),tr("Discard the unsubmitted formula-bar draft before opening another workbook? Stored edits remain in the current workbook."))!=QMessageBox::Yes) return;
         m_source->setModified(false); clearRecoveredDraft();
     }
+    if(!m_info.isEmpty() && QFileInfo(path).canonicalFilePath()!=QFileInfo(m_info["path"].toString()).canonicalFilePath() && !m_workspace->resolveDrafts())return;
     m_enterRequest={}; m_enterNavigation={};
     if(!m_info.isEmpty() && QFileInfo(path).canonicalFilePath()==QFileInfo(m_info["path"].toString()).canonicalFilePath() && (m_info["repair"].toBool()!=repair || m_info["readonly"].toBool()!=readonly)){
-        setBusy(true,tr("Releasing the previous workbook mode…"));m_client->request(base()+"/close",{},[this,path,create,readonly,repair](QJsonObject,QString error){if(!error.isEmpty()){setBusy(false);issue(error);return;}m_info={};m_model->bind({},{},{},true);m_relational->bind({});setBusy(false);openBook(path,create,readonly,repair);});return;
+        setBusy(true,tr("Releasing the previous workbook mode…"));m_client->request(base()+"/close",{},[this,path,create,readonly,repair](QJsonObject,QString error){if(!error.isEmpty()){setBusy(false);issue(error);return;}m_info={};m_model->bind({},{},{},true);m_relational->bind({});m_workspace->bind({});setBusy(false);openBook(path,create,readonly,repair);});return;
     }
     setBusy(true, "Opening workbook…");
     m_client->request("/v1/open", {{"path", path}, {"create", create}, {"readonly", readonly},{"repair",repair}}, [this](QJsonObject info, QString error) {
@@ -1274,6 +1291,7 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     if(m_info["id"]!=info["id"] && m_relationalActive)showRelational(false);
     m_info = info;
     m_relational->bind(info);
+    m_workspace->bind(info);
     m_tabs->blockSignals(true);
     while (m_tabs->count()) m_tabs->removeTab(0);
     int current = 0;
@@ -1320,7 +1338,7 @@ void MainWindow::refresh(const QString &selectSheet) {
 void MainWindow::submit(QJsonObject operation) {
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
     const auto action=operation["action"].toString();
-    if(m_relationalActive && !(action.startsWith("table_") || action.startsWith("index_") || action.startsWith("relationship_") || action.startsWith("query_") || action=="undo" || action=="redo")) {
+    if(m_relationalActive && !action.startsWith("module_") && !(action.startsWith("table_") || action.startsWith("index_") || action.startsWith("relationship_") || action.startsWith("query_") || action=="undo" || action=="redo")) {
         issue(tr("Return to sheets before applying a sheet operation."));return;
     }
     const auto defaults=targetContext();
@@ -1454,6 +1472,7 @@ void MainWindow::setBusy(bool busy, const QString &message) {
     for(auto *action:m_navigationActions)action->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
     m_model->setBusy(m_busy); m_toolbar->setEnabled(!m_busy && !m_relationalActive); m_tabs->setEnabled(!m_busy);
     if(m_relational)m_relational->setLocked(m_busy || m_unknown);
+    if(m_workspace)m_workspace->setLocked(m_busy || m_unknown);
     if(m_freezePanesAction)m_freezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
     if(m_unfreezePanesAction)m_unfreezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && (m_frozenRows>0 || m_frozenColumns>0));
     if(m_freezeColumnAction)m_freezeColumnAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenColumns.contains(0));
@@ -2629,7 +2648,7 @@ void MainWindow::findDialog(bool replace) {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
-    if(m_allowJobClose){event->accept();return;}
+    if(m_allowJobClose){m_workspace->close();event->accept();return;}
     if(m_queryClosing){event->ignore();return;}
     const bool skipQueryCleanup=m_skipQueryCleanup;m_skipQueryCleanup=false;
     if(!skipQueryCleanup && !m_released && m_relational->hasQueryJob()){
@@ -2667,7 +2686,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         const auto answer=QMessageBox::warning(this,tr("Close with an unknown operation outcome?"),
             tr("The edit may have committed. Closing does not discard stored data.\n\nWorkbook: %1\nOperation: %2\nRecovery record: %3\n\nReopen and look up this ID before retrying the edit.")
                 .arg(m_info["path"].toString(),m_pendingId,m_recoveryRecord),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel);
-        if (answer==QMessageBox::Yes) { event->accept(); return; }
+        if (answer==QMessageBox::Yes) { m_workspace->close(); event->accept(); return; }
         event->ignore(); return;
     }
     if (!m_pendingId.isEmpty() || m_unknown || m_releasing) {
@@ -2679,6 +2698,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         if(QMessageBox::question(this,tr("Discard table draft?"),tr("Discard the retained table input before closing? Stored records remain in the workbook."))!=QMessageBox::Yes){event->ignore();return;}
         m_relational->restoreDraft({});
     }
+    if(!m_workspace->resolveDrafts()){event->ignore();return;}
     if (m_source->isModified() || !m_recoveredDraft.isEmpty()) {
         if (QMessageBox::question(this, tr("Discard editor draft?"), tr("Discard the unsubmitted formula-bar draft? Already stored edits remain in the workbook.")) != QMessageBox::Yes) { event->ignore(); return; }
         m_source->setModified(false); clearRecoveredDraft();
@@ -2694,6 +2714,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         });
         return;
     }
+    m_workspace->close();
     event->accept();
 }
 

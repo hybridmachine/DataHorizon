@@ -49,6 +49,8 @@ target_sources(datahorizon_desktop PRIVATE desktop/tablerecordeditor.cpp desktop
 target_sources(datahorizon_desktop PRIVATE desktop/tablerelationships.cpp)
 target_sources(datahorizon_desktop PRIVATE desktop/queryworkbench.cpp desktop/queryworkbench.h)
 target_sources(datahorizon_desktop PRIVATE desktop/querydefinitions.cpp desktop/relationalexport.h)
+target_sources(datahorizon_desktop PRIVATE desktop/pythonworkspace.cpp desktop/pythonworkspace.h
+    desktop/codeeditor.h desktop/pythonhighlighter.h desktop/macrodeclarationpanel.h)
 target_link_libraries(datahorizon_desktop PUBLIC Qt6::Widgets Qt6::Network)
 target_include_directories(datahorizon_desktop PUBLIC desktop)
 target_compile_definitions(datahorizon_desktop PRIVATE
@@ -126,6 +128,10 @@ if(BUILD_TESTING)
     # These cover the complete process suites, including spawned services and
     # modal-dialog automation. Individual operation deadlines remain unchanged.
     set_tests_properties(desktop PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;DATAHORIZON_VIEW_STATE=${CMAKE_CURRENT_BINARY_DIR}/test-views.ini" TIMEOUT 600)
+    add_executable(python_workspace_tests tests/test_python_workspace.cpp)
+    target_link_libraries(python_workspace_tests PRIVATE datahorizon_desktop Qt6::Test)
+    add_test(NAME python_workspace COMMAND python_workspace_tests -o python-workspace-tests.txt,txt)
+    set_tests_properties(python_workspace PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;DATAHORIZON_VIEW_STATE=${CMAKE_CURRENT_BINARY_DIR}/test-views.ini" TIMEOUT 600)
     add_test(NAME service COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s tests -v)
     set_tests_properties(service PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/service" TIMEOUT 180)

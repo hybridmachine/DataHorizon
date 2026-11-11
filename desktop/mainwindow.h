@@ -22,6 +22,7 @@ class QTimer;
 class QMenu;
 class QStackedWidget;
 class RelationalWorkbench;
+class PythonWorkspace;
 
 struct StartupOptions { QString url, token, handler, recoveryDirectory, initialWorkbook, viewStatePath; bool automaticWorkbook = true; };
 
@@ -57,7 +58,9 @@ protected:
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
     void showRelational(bool visible);
+    void showPythonWorkspace();
     RelationalWorkbench *m_relational=nullptr;
+    PythonWorkspace *m_workspace=nullptr;
     QStackedWidget *m_objectStack=nullptr;
     QList<QMenu *> m_sheetMenus;
     QList<QAction *> m_sheetFileActions;
