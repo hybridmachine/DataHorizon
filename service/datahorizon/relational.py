@@ -143,6 +143,9 @@ def validate_schema(db,signature,base_schema):
     catalog=objects(db);registered=[];names=set();version=db.execute('SELECT format_version FROM dh_meta').fetchone()[0]
     for kind,item in catalog:
         require(kind in ('table','index','relationship','query') or kind=='module' and version>=5 or kind in ('name','binding') and version>=6,'INVALID_FORMAT','Unsupported relational object kind',409)
+        if kind=='name':
+            from .names import definition
+            definition(item)
         if kind!='table':continue
         require(set(item)=={'id','name','columns'},'INVALID_FORMAT','Invalid table catalog fields',409)
         name(item['name']);columns(item['columns'],stored=True)

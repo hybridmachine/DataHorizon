@@ -929,7 +929,7 @@ class Workbook:
                 require(not self.relational_issues or kind=='table_repair' and self.repair,'DATA_REPAIR_REQUIRED','Use the explicit restricted repair interface before ordinary mutations',409)
                 from . import relational
                 sheet_structural = isinstance(kind, str) and (kind.startswith("sheet_") or kind == "workbook_import" or kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"))
-                structural=sheet_structural or kind in relational.STRUCTURAL or kind in ("module_save","module_delete")
+                structural=sheet_structural or kind in relational.STRUCTURAL or kind in ("module_save","module_delete","name_save","name_delete")
                 from . import records
                 record_context=records.capture(self)
                 self.relational_before={item['id']:item for item in relational.tables(self.db)}
@@ -942,6 +942,9 @@ class Workbook:
                 elif kind in ("module_save","module_delete"):
                     from .workbook_code import mutate as mutate_code
                     reference_report=mutate_code(self,request)
+                elif kind in ("name_save","name_delete"):
+                    from .names import mutate as mutate_name
+                    reference_report=mutate_name(self,request)
                 elif kind in relational.ACTIONS:
                     reference_report=relational.mutate(self,request)
                 elif kind=='list_edit':
