@@ -12,7 +12,7 @@ from unittest import mock
 
 from datahorizon import xlsx_stream
 from datahorizon.engine import EngineError, require
-from datahorizon.interchange import STRICT, TRANSITIONAL, workbook_report, xlsx_preview
+from datahorizon.interchange import STRICT, TRANSITIONAL, workbook_report, xlsx_preview, xlsx_text
 from datahorizon.xlsx_stream import ByteBudget, open_package, read_part, read_workbook, scope_lines
 from xlsx_builder import workbook_bytes
 
@@ -408,7 +408,7 @@ class StreamingReaderTests(unittest.TestCase):
         self.assertEqual(report.entries(), tree["report_entries"])
         many = "".join(f'<row r="{r}"><c r="A{r}" t="str"><f t="shared" si="0"/><v>{"z"*1000}</v></c></row>' for r in range(1, 21))
         many += '<row r="21"><c r="A21"><f t="shared" ref="A1:A21" si="0">1</f></c></row>'
-        with mock.patch.object(xlsx_stream, "DEFERRED_BYTES", 20*1000+2000): self.stream(workbook_bytes({"S": many}))
+        with mock.patch.object(xlsx_stream, "DEFERRED_BYTES", 20*1300): self.stream(workbook_bytes({"S": many}))
         with mock.patch.object(xlsx_stream, "DEFERRED_BYTES", 15*1000): self.rejects("LIMIT", self.stream, workbook_bytes({"S": many}))
 
     def test_report_entries_from_deferred_members_agree_up_to_sample_order(self):
@@ -467,7 +467,55 @@ class StreamingReaderTests(unittest.TestCase):
                             SHEET_OPEN+sheet+'</sheetData><extLst><ext uri="u"><x>'+"<y/>"*50+"</x></ext></extLst></worksheet>")
         with mock.patch.object(xlsx_stream, "MAX_HELD", 40):
             error = self.rejects("LIMIT", self.stream, data)
-        self.assertIn("extension block holds too many elements", str(error))
+        self.assertIn("another worksheet block holds too many elements", str(error))
+        cell = replace_part(workbook_bytes({"S": ""}), "xl/worksheets/sheet1.xml",
+                            SHEET_OPEN+'<row r="1"><c r="A1" t="inlineStr"><is>'+"<r/>"*50+"</is></c></row>"+SHEET_CLOSE)
+        strings = workbook_bytes({"S": ""}, shared_strings=["a"])
+        strings = replace_part(strings, "xl/sharedStrings.xml", f'<sst xmlns="{TRANSITIONAL.main}"><si>'+"<r/>"*50+"</si></sst>")
+        with mock.patch.object(xlsx_stream, "MAX_HELD", 40):
+            self.assertIn("a cell holds too many elements", str(self.rejects("LIMIT", self.stream, cell)))
+            self.assertIn("a shared string holds too many elements", str(self.rejects("LIMIT", self.stream, strings)))
+
+    def test_deferred_inline_strings_keep_only_their_text(self):
+        def sheet(runs, deferred):
+            member = (f'<c r="A1" t="inlineStr"><f t="shared" si="0"/><is><t>a_x0042_</t>{runs}<r><t>c</t></r>'
+                      '<rPh><t>phonetic</t></rPh></is></c>')
+            master = '<c r="A2"><f t="shared" ref="A1:A2" si="0">WEBSERVICE("u")</f><v>1</v></c>'
+            return (f'<row r="1">{member}</row><row r="2">{master}</row>' if deferred else
+                    f'<row r="2">{master}</row><row r="1">{member}</row>')
+        # 90,000 empty runs: the most one cell can hold under MAX_HELD (100,000 attached elements).
+        for mode in ("mixed", "values"):
+            first, _ = self.stream(workbook_bytes({"S": sheet("<r/>"*90_000, True)}), mode)
+            second, _ = self.stream(workbook_bytes({"S": sheet("<r/>"*90_000, False)}), mode)
+            key = lambda c: c["row"]
+            self.assertEqual(sorted(first.sheets[0][1], key=key), sorted(second.sheets[0][1], key=key))
+        cell = xlsx_stream.ET.fromstring(f'<c xmlns="{TRANSITIONAL.main}" r="A1" t="inlineStr"><f t="shared" si="0"/>'
+                                         '<is><t>a_x0042_</t>'+"<r/>"*1000+'<r><t>é</t></r><rPh><t>zz</t></rPh></is><extLst/></c>')
+        copy, size = xlsx_stream._deferred_copy(cell)
+        self.assertEqual(sum(1 for _ in copy.iter()), 4)  # c, f, is, t
+        self.assertEqual(size, 256+len("rA1tinlineStr")+len("tsharedsi0")+len("a_x0042_é".encode()))
+        main = f"{{{TRANSITIONAL.main}}}"
+        self.assertEqual(xlsx_text(copy.find(main+"is")), xlsx_text(cell.find(main+"is")))
+        self.assertEqual(xlsx_text(copy.find(main+"is")), "aBé")
+
+    def test_ten_thousand_deferred_members_stay_small(self):
+        runs = "<r/>"*20
+        rows = "".join(f'<row r="{r}">'+"".join(f'<c r="{col}{r}" t="inlineStr"><f t="shared" si="{si}"/><is><t>x</t>{runs}</is></c>'
+                                                for si, col in enumerate("AB"))+"</row>" for r in range(1, 5001))
+        rows += ('<row r="5001"><c r="A5001"><f t="shared" ref="A1:A5001" si="0">1</f></c>'
+                 '<c r="B5001"><f t="shared" ref="B1:B5001" si="1">2</f></c></row>')
+        path = self.write(workbook_bytes({"S": rows}))
+        with mock.patch.object(xlsx_stream, "DEFERRED_MEMBERS", 10_000):
+            tracemalloc.start()
+            try:
+                read_workbook(path, {"mode": "mixed"}, CountingSink(), lambda *_: None)
+                peak = tracemalloc.get_traced_memory()[1]
+            finally:
+                tracemalloc.stop()
+        self.assertLess(peak, 64*1024*1024)
+        each = 256+len("rA1tinlineStr")+len("tsharedsi0")+1  # at least this per member
+        with mock.patch.object(xlsx_stream, "DEFERRED_BYTES", each*9_000):
+            self.rejects("LIMIT", read_workbook, path, {"mode": "mixed"}, ListSink(), lambda *_: None)
 
     def test_whole_read_parts_must_be_utf8(self):
         base = rich_package()

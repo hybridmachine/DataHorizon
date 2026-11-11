@@ -163,8 +163,10 @@ class _PartState:
                 stack.append(item)
                 self.held += 1
                 require(len(stack) <= MAX_DEPTH, "LIMIT", "XML nesting exceeds 64 levels")
-                require(self.held <= MAX_HELD, "LIMIT",
-                        "XML structure exceeds the supported bounds: a worksheet extension block holds too many elements")
+                if self.held > MAX_HELD:
+                    local = self.record[1].rsplit("}", 1)[-1] if self.record else ""
+                    where = {"c": "a cell", "si": "a shared string"}.get(local, "another worksheet block")
+                    raise EngineError("LIMIT", f"XML structure exceeds the supported bounds: {where} holds too many elements")
                 if len(stack) == self.record_depth: self.record = (self.fed, item.tag)
                 yield event, item
             else:
@@ -225,21 +227,34 @@ class _Progress:
             self.checkpoint(self.cells, phase)
 
 
+DEFERRED_OVERHEAD = 256  # bytes charged per deferred member besides the text it keeps
+
+
+def _utf8(text):
+    return len((text or "").encode("utf-8", "surrogatepass"))
+
+
 def _deferred_copy(cell):
-    """A detached copy of a deferred member with only what convert_xlsx_cell reads, and its text size."""
+    """A small detached element with only what convert_xlsx_cell reads from a deferred member, and its size.
+
+    convert_xlsx_cell reads the <c> attributes and the first <f>, <v> and <is>. An inline string is reduced to one
+    <t> holding the undecoded text xlsx_text concatenates (phonetic runs excluded), so it converts identically.
+    The size is the UTF-8 length of every key, value and text kept, plus DEFERRED_OVERHEAD."""
+    main = cell.tag[:-len("c")]
     copy = ET.Element(cell.tag, dict(cell.attrib))
-    size = sum(len(k)+len(v) for k, v in cell.attrib.items())
-    for child in cell:
-        local = child.tag.rsplit("}", 1)[-1]
-        if local in ("f", "v"):
-            kept = ET.SubElement(copy, child.tag, dict(child.attrib))
-            kept.text = child.text
-            size += len(child.text or "")+sum(len(k)+len(v) for k, v in child.attrib.items())
-        elif local == "is":
-            kept = ET.fromstring(ET.tostring(child))
-            for item in kept.iter(): item.tail = None
-            copy.append(kept)
-            size += sum(len(item.text or "") for item in kept.iter())
+    size = DEFERRED_OVERHEAD+sum(_utf8(k)+_utf8(v) for k, v in cell.attrib.items())
+    for local in ("f", "v"):
+        child = cell.find(main+local)
+        if child is None: continue
+        kept = ET.SubElement(copy, child.tag, dict(child.attrib))
+        kept.text = child.text
+        size += _utf8(child.text)+sum(_utf8(k)+_utf8(v) for k, v in child.attrib.items())
+    inline = cell.find(main+"is")
+    if inline is not None:
+        raw = "".join((child.text or "") if child.tag == main+"t" else (child.findtext(main+"t") or "") if child.tag == main+"r" else ""
+                      for child in inline)
+        ET.SubElement(ET.SubElement(copy, main+"is"), main+"t").text = raw
+        size += _utf8(raw)
     return copy, size
 
 
