@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """The large XLSX/ODS path through the Python SDK and the managed CLI: upload or local path, staged import, export download."""
-from contextlib import closing
+from contextlib import closing, redirect_stderr, redirect_stdout
 import io
 import json
 import os
@@ -11,11 +11,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from datahorizon.client import APIError, IntegrityError, LocalService
+from datahorizon import cli as cli_module
+from datahorizon.client import APIError, Client, IntegrityError, LocalService
 from datahorizon.engine import Workbook
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ods_builder import manifest_document, workbook_bytes
+from xlsx_builder import workbook_bytes as xlsx_bytes
 
 FIXTURES = Path(__file__).resolve().parent/'fixtures'
 CLI = [sys.executable, '-m', 'datahorizon.cli']
@@ -179,6 +181,54 @@ class SdkTests(unittest.TestCase):
                     self.assertEqual([name for name in os.listdir(self.temp) if not name.startswith('download.dhwb')], [])
                     self.assertEqual(len(released), 1); gone(self, lambda: client.release_export(released[0]))
 
+    def test_import_staged_on_a_released_stage_is_rejected_and_the_handle_stays_usable(self):
+        with LocalService() as client:
+            book = client.open(self.temp/'released.dhwb', create=True)
+            summary = client.prepare_spreadsheet_file(FIXTURES/'fidelity.xlsx')
+            client.discard_job(summary['stage_id'])
+            with self.assertRaises(APIError) as error: book.import_staged(summary, operation_id='released-stage')
+            self.assertEqual((error.exception.status, error.exception.body['code'], error.exception.body['outcome'], error.exception.body['operation_id']),
+                             (404, 'JOB_NOT_FOUND', 'rejected', 'released-stage'))
+            self.assertIsNone(book.pending_operation)
+            self.assertEqual(book.set(1, 1, 'after')['outcome'], 'committed')
+            self.assertEqual(book.close(), {'closed': True})
+
+    def test_published_files_take_ordinary_or_existing_permissions(self):
+        mask = os.umask(0o022); os.umask(mask)
+        with LocalService() as client, client.open(self.temp/'modes.dhwb', create=True) as book:
+            book.set(1, 1, '7')
+            fresh = self.temp/'fresh.xlsx'; book.export_spreadsheet_file(fresh)
+            self.assertEqual(fresh.stat().st_mode & 0o777, 0o666 & ~mask)
+            kept = self.temp/'kept.ods'; kept.write_bytes(b'old'); os.chmod(kept, 0o640)
+            book.export_spreadsheet_file(kept, overwrite=True)
+            self.assertEqual(kept.stat().st_mode & 0o777, 0o640); self.assertNotEqual(kept.read_bytes(), b'old')
+
+    def test_a_dangling_symlink_destination_is_refused_before_the_job(self):
+        link = self.temp/'dangling.xlsx'; os.symlink(self.temp/'missing-target', link)
+        with LocalService() as client, client.open(self.temp/'links.dhwb', create=True) as book:
+            with patch.object(client, 'start_job', side_effect=AssertionError('job started')), self.assertRaises(FileExistsError) as error:
+                book.export_spreadsheet_file(link)
+            self.assertIn(str(link), str(error.exception))
+        self.assertTrue(link.is_symlink()); self.assertFalse((self.temp/'missing-target').exists())
+
+    def test_an_unanswered_job_creation_discards_the_job(self):
+        with LocalService() as client, client.open(self.temp/'lost.dhwb', create=True) as book:
+            original = client.request
+            def lost(path, body=None, **options):
+                result = original(path, body, **options)
+                if path.endswith('/jobs'): raise TimeoutError('lost acknowledgement')
+                return result
+            for start in (lambda: client.prepare_spreadsheet_file(FIXTURES/'fidelity.xlsx', job_id='lost-import', local=True),
+                          lambda: book.export_spreadsheet_file(self.temp/'lost.xlsx')):
+                discarded = []
+                with patch.object(client, 'request', lost), patch.object(client, 'discard_job', side_effect=discarded.append), self.assertRaises(TimeoutError):
+                    start()
+                self.assertEqual(len(discarded), 1)
+                client.discard_job(discarded[0]); gone(self, lambda: client.preparation(discarded[0]))
+            refused = []
+            with patch.object(client, 'discard_job', side_effect=refused.append), self.assertRaises(APIError):
+                client.prepare_spreadsheet_file(FIXTURES/'fidelity.xlsx', mode='bogus', local=True)
+            self.assertEqual(refused, [])  # A structured refusal created no job.
 
 class CliTests(unittest.TestCase):
     def setUp(self):
@@ -203,16 +253,18 @@ class CliTests(unittest.TestCase):
         self.assertLess(omitted, approximated)
         self.assertIn('33  style.font:', lines[omitted]); self.assertTrue(lines[omitted].endswith('first at Inputs!A1'))
         self.assertIn('  Inputs: 48 cells', lines); self.assertIn('Total: 49 cells in 3 sheets', lines)
-        self.assertNotIn('[y/N]', run.stdout)
+        self.assertNotIn('[y/N]', run.stdout + run.stderr)
         self.assertTrue(lines[-1].startswith('Imported 49 cells into 3 sheets'))
         self.assertEqual(self.sheets(), FIDELITY_SHEETS)
 
     def test_confirmation_on_stdin(self):
         declined = self.run_cli('import-spreadsheet', str(FIXTURES/'fidelity.ods'), input='n\n')
-        self.assertEqual(declined.returncode, 1); self.assertEqual(json.loads(declined.stderr)['code'], 'DECLINED')
-        self.assertIn('Import 49 cells into 3 sheets? [y/N]', declined.stdout)
+        self.assertEqual(declined.returncode, 1); self.assertEqual(json.loads(declined.stderr.splitlines()[-1])['code'], 'DECLINED')
+        self.assertIn('Import 49 cells into 3 sheets? [y/N]', declined.stderr)  # Seen even when stdout is redirected.
+        self.assertNotIn('[y/N]', declined.stdout)
         unanswered = self.run_cli('import-spreadsheet', str(FIXTURES/'fidelity.ods'), input='')
-        self.assertEqual(unanswered.returncode, 2); self.assertEqual(json.loads(unanswered.stderr)['code'], 'CONFIRMATION_REQUIRED')
+        self.assertEqual(unanswered.returncode, 2)
+        self.assertEqual(json.loads(unanswered.stderr.splitlines()[-1])['code'], 'CONFIRMATION_REQUIRED')
         self.assertEqual(self.sheets(), ['Sheet1'])
         accepted = self.run_cli('import-spreadsheet', str(FIXTURES/'fidelity.ods'), input='y\n')
         self.assertEqual(accepted.returncode, 0, accepted.stderr)
@@ -268,6 +320,52 @@ class CliTests(unittest.TestCase):
             self.assertEqual(replaced.returncode, 0, replaced.stderr)
         self.assertFalse([name for name in os.listdir(self.temp) if name.startswith('.datahorizon-')])
 
+    def test_untrusted_text_is_escaped_for_the_terminal(self):
+        name = 'A\x9bB\u202eC\x7f'
+        source = self.temp/'hostile.xlsx'; source.write_bytes(xlsx_bytes({name: '<row r="1"><c r="A1"><v>1</v></c></row>'}))
+        run = self.run_cli('import-spreadsheet', str(source), '--add-sheets', '--yes')
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn('  A\\x9bB\\u202eC\\x7f: 1 cell', run.stdout.splitlines())
+        conflict = self.run_cli('import-spreadsheet', str(source), '--add-sheets', '--yes')
+        self.assertEqual(conflict.returncode, 1)
+        for text in (run.stdout + run.stderr, conflict.stdout + conflict.stderr):
+            self.assertFalse({'\x9b', '\u202e', '\x7f'} & set(text))
+        self.assertEqual(json.loads(conflict.stderr)['conflicts'], [name])
+
+    def test_report_json_is_published_atomically_and_never_silently_replaced(self):
+        report = self.temp/'report.json'; report.write_text('keep')
+        refused = self.run_cli('import-spreadsheet', str(FIXTURES/'fidelity.xlsx'), '--report-json', str(report), '--yes')
+        self.assertEqual(refused.returncode, 1); self.assertIn('--overwrite', json.loads(refused.stderr)['message'])
+        self.assertEqual(report.read_text(), 'keep'); self.assertEqual(self.sheets(), ['Sheet1'])  # Refused before any work.
+        replaced = self.run_cli('import-spreadsheet', str(FIXTURES/'fidelity.xlsx'), '--report-json', str(report), '--overwrite', '--yes')
+        self.assertEqual(replaced.returncode, 0, replaced.stderr); self.assertEqual(json.loads(report.read_text())['stored_cells'], 49)
+        exported = self.run_cli('export-spreadsheet', str(self.temp/'out.xlsx'), '--report-json', str(report))
+        self.assertEqual(exported.returncode, 1); self.assertFalse((self.temp/'out.xlsx').exists())
+        exported = self.run_cli('export-spreadsheet', str(self.temp/'out.xlsx'), '--report-json', str(report), '--overwrite')
+        self.assertEqual(exported.returncode, 0, exported.stderr); self.assertIn('sha256', json.loads(report.read_text()))
+        self.assertFalse([name for name in os.listdir(self.temp) if name.startswith('.datahorizon-')])
+
+    def test_a_stage_released_at_the_prompt_is_a_rejected_error(self):
+        """Through --url: the stage disappears while the CLI waits for confirmation (as after retention)."""
+        with LocalService() as client:
+            stages, original = [], Client.prepare_spreadsheet_file
+            def prepare(self, *args, **kwargs):
+                summary = original(self, *args, **kwargs); stages.append(summary['stage_id']); return summary
+            class Answer:
+                def readline(self): client.discard_job(stages[0]); return 'y\n'
+                def isatty(self): return False
+            out, err = io.StringIO(), io.StringIO()
+            argv = ['datahorizon', '--url', client.url, str(self.book), 'import-spreadsheet', str(FIXTURES/'fidelity.xlsx')]
+            with patch.object(Client, 'prepare_spreadsheet_file', prepare), patch.object(sys, 'argv', argv), \
+                 patch.dict(os.environ, {'DATAHORIZON_TOKEN': client.token}), patch.object(sys, 'stdin', Answer()), \
+                 redirect_stdout(out), redirect_stderr(err), self.assertRaises(SystemExit) as exit:
+                cli_module.main()
+            self.assertEqual(exit.exception.code, 1)
+            error = json.loads(err.getvalue().splitlines()[-1])
+            self.assertEqual((error['code'], error['outcome']), ('JOB_NOT_FOUND', 'rejected'))
+            self.assertNotIn('cleanup_errors', error); self.assertNotIn('Imported', out.getvalue())
+            with client.open(self.book, readonly=True) as book:
+                self.assertEqual([sheet['name'] for sheet in book.info['sheets']], ['Sheet1'])
 
 if __name__ == '__main__':
     unittest.main()

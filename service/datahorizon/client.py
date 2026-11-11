@@ -99,7 +99,43 @@ def _check_destination(target, overwrite, native=None):
         source = Path(native).expanduser().absolute()
         if target == source or target.exists() and source.exists() and os.path.samefile(target, source):
             raise ValueError("Export destination identifies the native workbook")
-    if target.exists() and not overwrite: raise FileExistsError("Export destination exists; explicitly enable overwrite")
+    # lexists: a dangling symlink is an existing destination too.
+    if os.path.lexists(target) and not overwrite:
+        raise FileExistsError(f"Destination {target} exists; explicitly enable overwrite")
+
+
+def _new_file_mode():
+    mask = os.umask(0o022); os.umask(mask)
+    return 0o666 & ~mask
+
+
+def publish_file(temporary, target, overwrite):
+    """Move a complete temporary sibling file into place: replacing (keeping the existing file's permissions) only when
+    overwrite, otherwise with an atomic no-clobber link. The temporary file is left for the caller to remove."""
+    target = Path(target)
+    try: mode = os.stat(target).st_mode & 0o7777 if overwrite else None
+    except FileNotFoundError: mode = None
+    os.chmod(temporary, _new_file_mode() if mode is None else mode)
+    if overwrite: os.replace(temporary, target)
+    else:
+        # Atomic no-clobber publication; a concurrent creator wins safely.
+        try: os.link(temporary, target)
+        except FileExistsError: raise FileExistsError(f"Destination {target} exists; explicitly enable overwrite") from None
+        os.unlink(temporary)
+
+
+def write_file(path, data, *, overwrite=False):
+    """Write bytes to `path` through a temporary sibling, published as publish_file does."""
+    target = Path(path).expanduser().absolute()
+    _check_destination(target, overwrite)
+    descriptor, temporary = tempfile.mkstemp(prefix=".datahorizon-write-", dir=target.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(data); output.flush(); os.fsync(output.fileno())
+        publish_file(temporary, target, overwrite)
+    finally:
+        try: os.unlink(temporary)
+        except FileNotFoundError: pass
 
 
 class _HashingReader:
@@ -197,12 +233,23 @@ class Client:
             else:
                 upload = self.upload(source)["upload_id"]
                 request["upload_id"] = upload
-            view = self.request("/v1/import/" + format + "/jobs", request)
+            view = self.start_job("/v1/import/" + format + "/jobs", request)
             return self.finish_job(view, progress, "Preparation")
         finally:
             if upload is not None:
                 try: self.release_upload(upload)
                 except (APIError, OSError, ValueError, HTTPException): pass  # Uploads expire after 15 minutes.
+
+    def start_job(self, path, request):
+        """Send a job-creating request. When it ends without the service's answer (a timeout, a lost connection or an
+        interruption) the job may exist, so it is discarded; a structured refusal created nothing and discards nothing."""
+        try:
+            return self.request(path, request)
+        except APIError:
+            raise
+        except BaseException:
+            self.discard_job(request["job_id"])
+            raise
 
     def finish_job(self, view, progress=None, label="Job"):
         """Poll a preparation-style job until it leaves running; return its result or raise its error. An interruption or
@@ -256,10 +303,7 @@ class Client:
             if expected is not None and (expected.get("bytes") != written or expected.get("sha256") != digest.hexdigest()):
                 raise IntegrityError("The downloaded file does not match the export's size and SHA-256", export_id=export_id)
             _check_destination(target, overwrite, native)
-            if overwrite: os.replace(temporary, target)
-            else:
-                # Atomic no-clobber publication; a concurrent creator wins safely.
-                os.link(temporary, target); os.unlink(temporary)
+            publish_file(temporary, target, overwrite)
             return {"path": str(target), "bytes": written, "sha256": digest.hexdigest()}
         finally:
             try: os.unlink(temporary)
@@ -571,7 +615,7 @@ class WorkbookClient:
         if format not in ("xlsx", "ods"): raise ValueError("Unsupported spreadsheet format")
         _check_destination(target, overwrite, self.info.get("path"))
         job = uuid.uuid4().hex
-        view = self.client.request(self.base + "/export/" + format + "/jobs", {"job_id": job, "mode": "formulas"})
+        view = self.client.start_job(self.base + "/export/" + format + "/jobs", {"job_id": job, "mode": "formulas"})
         result = self.client.finish_job(view, progress, "Export")
         try:
             written = self.client.download(result["export_id"], target, overwrite=overwrite, expected=result, native=self.info.get("path"))

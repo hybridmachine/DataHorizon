@@ -1216,12 +1216,17 @@ class Service(ThreadingHTTPServer):
         if method == "POST" and suffix == ["find"]:
             return book.find(body.get("sheet", "Sheet1"), body)
         if method == "POST" and suffix == ["operations"]:
-            require(STAGE_PATH not in body,"INVALID_ARGUMENT",f"{STAGE_PATH} is set by the service; name a stage with stage_id")
             operation=body.get('operation_id');require(isinstance(operation,str) and 1<=len(operation)<=100,'OPERATION_ID','An operation ID is required')
             staged=body.get("action")=="workbook_import" and "stage_id" in body
-            if staged:
-                path,identity=self._stage_file(body["stage_id"])
-                body={**body,STAGE_PATH:path}
+            try:
+                # Refusals before the engine is entered name the operation and are rejected: nothing was admitted.
+                require(STAGE_PATH not in body,"INVALID_ARGUMENT",f"{STAGE_PATH} is set by the service; name a stage with stage_id")
+                if staged:
+                    path,identity=self._stage_file(body["stage_id"])
+                    body={**body,STAGE_PATH:path}
+            except EngineError as error:
+                error.body.update(outcome="rejected",operation_id=operation)
+                raise
             key=(book,operation)
             with self.registry_lock:
                 require(key not in self.active_operations,'OPERATION_RUNNING','Operation is active; inspect its receipt before retrying',409)

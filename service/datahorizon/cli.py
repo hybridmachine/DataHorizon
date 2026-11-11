@@ -10,9 +10,10 @@ import os
 from pathlib import Path
 import sqlite3
 import sys
+import unicodedata
 from urllib.parse import quote
 
-from .client import APIError, Client, LocalService
+from .client import APIError, Client, LocalService, write_file
 from .formula import FormulaError, coordinates
 
 
@@ -57,7 +58,7 @@ def direct_sql_result(db, sql):
 def emit_result(output, result, command, cleanup=None):
     try:
         # Flush here so a buffered pipe failure remains inside outcome handling.
-        print(output,flush=True)
+        print(output.replace("\x7f","\\u007f"),flush=True)
     except (OSError,ValueError) as error:
         # Avoid a second failed stdout flush at interpreter shutdown corrupting
         # the structured diagnostic or replacing the exit status with 120.
@@ -77,15 +78,31 @@ def emit_result(output, result, command, cleanup=None):
         elif command=="create":
             diagnostic.update(outcome="committed",path=result["path"],workbook_id=result.get("workbook_id"))
         if cleanup is not None: diagnostic["cleanup_errors"]=[cleanup]
-        try: print(json.dumps(diagnostic),file=sys.stderr,flush=True)
+        try: print(json_text(diagnostic),file=sys.stderr,flush=True)
         except OSError: pass  # Neither output channel is available; still fail.
         raise SystemExit(1)
     if cleanup is not None:
-        try: print(json.dumps(cleanup),file=sys.stderr,flush=True)
+        try: print(json_text(cleanup),file=sys.stderr,flush=True)
         except OSError: raise SystemExit(1)
 
 
 SEVERITY_ORDER = ("unevaluable", "omitted", "approximated", "converted")
+UNPRINTABLE = {"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"}
+
+
+def terminal_text(value):
+    """Text from a file or the service, safe to print: controls, format characters (including bidi overrides),
+    surrogates, private-use, unassigned characters and line/paragraph separators become \\xNN, \\uNNNN or \\UNNNNNNNN."""
+    def escape(character):
+        point = ord(character)
+        if unicodedata.category(character) not in UNPRINTABLE: return character
+        return f"\\x{point:02x}" if point < 0x100 else f"\\u{point:04x}" if point < 0x10000 else f"\\U{point:08x}"
+    return "".join(escape(character) for character in str(value))
+
+
+def json_text(value):
+    """JSON for a terminal: ensure_ascii escapes everything outside ASCII, and DEL is escaped as well."""
+    return json.dumps(value, allow_nan=False).replace("\x7f", "\\u007f")
 
 
 def plural(count, word):
@@ -109,13 +126,18 @@ def report_text(review):
         lines.append("Sheets:")
         lines += [f"  {sheet['name']}: {plural(sheet['stored_cells'], 'cell')}" for sheet in review["sheets"]]
         lines.append(f"Total: {plural(review['stored_cells'], 'cell')} in {plural(len(review['sheets']), 'sheet')}")
-    return "\n".join(lines)
+    return "\n".join(terminal_text(line) for line in lines)
 
 
-def write_report(path, review, keys):
-    with open(path, "w", encoding="utf-8") as stream:
-        json.dump({key: review[key] for key in keys if key in review}, stream, allow_nan=False, indent=2)
-        stream.write("\n")
+def write_report(path, review, keys, overwrite):
+    """Write the report JSON through a temporary sibling; an existing file needs overwrite."""
+    data = json.dumps({key: review[key] for key in keys if key in review}, allow_nan=False, indent=2) + "\n"
+    write_file(path, data.encode("utf-8"), overwrite=overwrite)
+
+
+def check_report_path(path, overwrite):
+    if path and os.path.lexists(Path(path).expanduser()) and not overwrite:
+        raise FileExistsError(f"Report destination {path} exists; pass --overwrite to replace it")
 
 
 def show_progress(label):
@@ -125,46 +147,49 @@ def show_progress(label):
     def report(completed, phase):
         if phase and phase not in seen:
             seen.append(phase)
-            print(f"{label}: {phase}", file=sys.stderr, flush=True)
+            print(terminal_text(f"{label}: {phase}"), file=sys.stderr, flush=True)
     return report
 
 
 def confirm(question):
-    """True on y/yes, False on anything else; None when stdin has nothing to answer with (non-interactive)."""
-    print(question + " [y/N] ", end="", flush=True)
+    """True on y/yes, False on anything else; None when stdin has nothing to answer with (non-interactive).
+    The question goes to stderr, so it is seen when stdout is redirected."""
+    print(question + " [y/N] ", end="", file=sys.stderr, flush=True)
     try:
         answer = sys.stdin.readline() if sys.stdin is not None else ""
     except (OSError, ValueError):
         answer = ""
     if not answer:
-        print(flush=True)
+        print(file=sys.stderr, flush=True)
         return None
-    if not sys.stdin.isatty(): print(answer.strip(), flush=True)  # Echo a piped answer so the transcript reads as asked.
+    # Echo a piped answer so the transcript reads as asked.
+    if not sys.stdin.isatty(): print(terminal_text(answer.strip()), file=sys.stderr, flush=True)
     return answer.strip().lower() in ("y", "yes")
 
 
 def import_spreadsheet(client, book, args):
     """Prepare, show the report, confirm and apply. The prepared job is cancelled and released unless the import commits."""
+    check_report_path(args.report_json, args.overwrite)
     summary = client.prepare_spreadsheet_file(args.source, mode=args.mode, local=args.local, timezone_policy=args.timezone_policy,
                                               progress=show_progress("Preparing"))
     job, receipt = summary["stage_id"], None
     try:
         print(report_text(summary), flush=True)
         if args.report_json:
-            write_report(args.report_json, summary, ("format", "mode", "stored_cells", "sheets", "totals", "report", "report_entries"))
+            write_report(args.report_json, summary, ("format", "mode", "stored_cells", "sheets", "totals", "report", "report_entries"), args.overwrite)
         if not args.yes:
             answer = confirm(f"Import {plural(summary['stored_cells'], 'cell')} into {plural(len(summary['sheets']), 'sheet')}?")
             if answer is not True:
                 body = ({"code": "CONFIRMATION_REQUIRED", "message": "No confirmation on standard input; pass --yes to import without asking. Nothing was imported.", "outcome": "rejected"}
                         if answer is None else {"code": "DECLINED", "message": "Import declined; nothing was imported.", "outcome": "rejected"})
-                print(json.dumps(body), file=sys.stderr, flush=True)
+                print(json_text(body), file=sys.stderr, flush=True)
                 raise SystemExit(2 if answer is None else 1)
         receipt = book.import_staged(summary, target="add_sheets" if args.add_sheets else "replace_empty")
     finally:
         if receipt is None: client.discard_job(job)  # The service releases the stage only after a successful apply.
     imported = receipt["imported"]
-    return (f"Imported {plural(imported['cells'], 'cell')} into {plural(imported['sheets'], 'sheet')} "
-            f"(operation {receipt['operation_id']}, state {receipt['state']})"), receipt
+    return terminal_text(f"Imported {plural(imported['cells'], 'cell')} into {plural(imported['sheets'], 'sheet')} "
+                         f"(operation {receipt['operation_id']}, state {receipt['state']})"), receipt
 
 
 def main():
@@ -235,8 +260,9 @@ def main():
     spreadsheet_import.add_argument('--report-json',help='Also write the full conversion report as JSON to this path')
     spreadsheet_import.add_argument('--yes',action='store_true',help='Import without asking for confirmation')
     spreadsheet_import.add_argument('--timezone-policy',choices=['reject','utc'],default='reject')
+    spreadsheet_import.add_argument('--overwrite',action='store_true',help='Replace an existing --report-json file')
     spreadsheet_export=commands.add_parser('export-spreadsheet',help='Export the whole workbook (formulas) as .xlsx/.ods, streamed to DESTINATION')
-    spreadsheet_export.add_argument('destination');spreadsheet_export.add_argument('--overwrite',action='store_true');spreadsheet_export.add_argument('--report-json')
+    spreadsheet_export.add_argument('destination');spreadsheet_export.add_argument('--overwrite',action='store_true',help='Replace an existing destination and --report-json file');spreadsheet_export.add_argument('--report-json')
     direct = commands.add_parser("direct-sql", help="Explicit independent SQLite access; bypasses application behavior")
     direct.add_argument("sql")
     args = parser.parse_args()
@@ -370,10 +396,11 @@ def main():
                             time.sleep(.05);result=book.operation_job(result['job_id'])
                     elif args.command=='import-spreadsheet':output,result=import_spreadsheet(client,book,args)
                     elif args.command=='export-spreadsheet':
+                        check_report_path(args.report_json,args.overwrite)
                         written=book.export_spreadsheet_file(args.destination,overwrite=args.overwrite,progress=show_progress('Exporting'))
                         print(report_text(written),flush=True)
-                        if args.report_json:write_report(args.report_json,written,('path','bytes','sha256','state','report','report_entries','totals'))
-                        output=f"Wrote {written['path']} ({written['bytes']} bytes)";result=None
+                        if args.report_json:write_report(args.report_json,written,('path','bytes','sha256','state','report','report_entries','totals'),args.overwrite)
+                        output=terminal_text(f"Wrote {written['path']} ({written['bytes']} bytes)");result=None
                     elif args.command=='calculate':
                         import time
                         result=book.calculate(args.sheet,r1=args.r1,c1=args.c1,r2=args.r2,c2=args.c2)
@@ -398,7 +425,7 @@ def main():
         fallback = {"code": code, "message": str(error), "outcome": "rejected"}
         body=dict(getattr(error, "body", fallback))
         if getattr(error,"cleanup_errors",None): body["cleanup_errors"]=error.cleanup_errors
-        print(json.dumps(body), file=sys.stderr)
+        print(json_text(body), file=sys.stderr)
         sys.exit(1)
 
 

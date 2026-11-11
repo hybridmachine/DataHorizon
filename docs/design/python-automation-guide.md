@@ -190,16 +190,22 @@ given. It returns the review summary (sheets, cell counts, `report_entries`,
 returns a receipt with `imported: {sheets, cells}`. A failed preparation raises
 `APIError` with the job's error (status `None`); `STALE_PLAN`,
 `SHEET_NAME_CONFLICT` (with `conflicts`) and `DESTINATION_NOT_EMPTY` raise from
-`import_staged` and keep the stage, so release an unused summary with
+`import_staged` and keep the stage (a stage that is already gone is a rejected
+`JOB_NOT_FOUND`; nothing was applied), so release an unused summary with
 `client.discard_job(summary['stage_id'])`. `export_spreadsheet_file` runs an
 export job, downloads to a temporary file beside the destination, checks its size
 and SHA-256, moves it into place, and releases the export; an existing
 destination needs `overwrite=True`. `client.upload`, `client.download` and
 `client.release_upload`/`release_export` are the underlying primitives.
 
-The CLI prints the grouped report and asks before applying; `--yes` skips the
-question, and without it a standard input with nothing to answer exits 2 and
-imports nothing (a declined prompt exits 1):
+The CLI prints the grouped report and asks before applying (the question goes to
+stderr); `--yes` skips the question, and without it a standard input with nothing
+to answer exits 2 and imports nothing (a declined prompt exits 1). Text from the
+file or the service is printed with control, format and bidi characters escaped.
+`--report-json` is written atomically and refuses an existing file unless
+`--overwrite` is given (for `export-spreadsheet`, `--overwrite` covers both the
+destination and the report). Published files take ordinary permissions, or the
+replaced file's permissions:
 
 ```sh
 PYTHONPATH=service python3 -m datahorizon.cli /tmp/Budget.dhwb create
