@@ -70,7 +70,10 @@ def modules(db):
 
 
 def fingerprint(db):
-    return hashlib.sha256(encoded(modules(db)).encode()).hexdigest()
+    from .bindings import bindings,fingerprint_view
+    attached=bindings(db) if db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=6 else []
+    value=modules(db) if not attached else dict(modules=modules(db),bindings=[fingerprint_view(item) for item in attached])
+    return hashlib.sha256(encoded(value).encode()).hexdigest()
 
 
 def approval_keys(values):
@@ -106,7 +109,8 @@ def read(book,args):
             book.refresh();require(args.get('expected_state')==book.state(),'STALE_STATE','Refresh code before inspection',409)
             items=modules(book.db)
             if 'module' in args:items=[find(book.db,args['module'])]
-            return dict(state=book.state(),modules=items,**activation(book))
+            from .bindings import described
+            return dict(state=book.state(),modules=items,bindings=described(book.db) if book.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=6 else [],**activation(book))
         finally:book.db.execute('ROLLBACK')
 
 
@@ -116,6 +120,9 @@ def mutate(book,request):
     before=find(book.db,request['module']) if 'module' in request else None
     require(request['action']=='module_save' or before is not None,'MODULE_NOT_FOUND','Choose the module to delete',404)
     after=None
+    if request['action']=='module_delete':
+        from .bindings import stored
+        require(all(item['module_id']!=before['id'] for item in stored(book)),'MODULE_IN_USE','Delete the bindings that use this module first',409)
     if request['action']=='module_save':
         after=definition(dict(id=before['id'] if before else str(uuid.uuid4()),name=request.get('name'),source=request.get('source'),macros=request.get('macros',[])))
         require(all(item['id']==after['id'] or item['name']!=after['name'] for item in modules(book.db)),'DUPLICATE_MODULE','Module name already exists')

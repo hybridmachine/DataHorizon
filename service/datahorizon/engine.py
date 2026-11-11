@@ -689,7 +689,7 @@ class Workbook:
                     result={"state":self.state(),"sheets":[{"name":name,"cells":[]} for _,name in catalog]}
                     from .relational import objects
                     found=list(objects(self.db))
-                    result['native_omissions']=[item['name'] for kind,item in found if kind!='name']
+                    result['native_omissions']=[item['name'] if kind!='binding' else 'binding '+item['function'] for kind,item in found if kind!='name']
                     result['native_names']=[item['name'] for kind,item in found if kind=='name']
                     targets={key:result["sheets"][index]["cells"] for index,(key,_) in enumerate(catalog)}
                     calc=self.calculator(seconds=2); size=0
@@ -944,7 +944,7 @@ class Workbook:
                 require(not self.relational_issues or kind=='table_repair' and self.repair,'DATA_REPAIR_REQUIRED','Use the explicit restricted repair interface before ordinary mutations',409)
                 from . import relational
                 sheet_structural = isinstance(kind, str) and (kind.startswith("sheet_") or kind == "workbook_import" or kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"))
-                structural=sheet_structural or kind in relational.STRUCTURAL or kind in ("module_save","module_delete","name_save","name_delete")
+                structural=sheet_structural or kind in relational.STRUCTURAL or kind in ("module_save","module_delete","name_save","name_delete","binding_save","binding_delete")
                 from . import records
                 record_context=records.capture(self)
                 self.relational_before={item['id']:item for item in relational.tables(self.db)}
@@ -957,6 +957,9 @@ class Workbook:
                 elif kind in ("module_save","module_delete"):
                     from .workbook_code import mutate as mutate_code
                     reference_report=mutate_code(self,request)
+                elif kind in ("binding_save","binding_delete"):
+                    from .bindings import mutate as mutate_binding
+                    reference_report=mutate_binding(self,request)
                 elif kind in ("name_save","name_delete"):
                     from .names import mutate as mutate_name
                     reference_report=mutate_name(self,request)
@@ -1322,9 +1325,12 @@ class Workbook:
                 self.put(*key,None)
             from .names import break_sheet
             broken_names = break_sheet(self,target)
+            from .bindings import break_sheet as break_binding_sheet
+            broken_bindings = break_binding_sheet(self,target)
             self.db.execute("DELETE FROM sheets WHERE id=?",(target,))
         result = {"reference_warnings":warnings,"reference_issues":locations}
         if broken_names:result["broken_names"] = broken_names
+        if broken_bindings:result["broken_bindings"] = broken_bindings
         return result
 
     def duplicate_sheet(self, target, new_name):
@@ -1435,8 +1441,11 @@ class Workbook:
                 self.put(*key,item)
             from .names import adjust_structure
             broken_names = adjust_structure(self,target,axis,start,count,delete)
+            from .bindings import adjust_structure as adjust_bindings
+            broken_bindings = adjust_bindings(self,target,axis,start,count,delete)
         result = {"reference_warnings":warnings,"reference_issues":locations}
         if broken_names:result["broken_names"] = broken_names
+        if broken_bindings:result["broken_bindings"] = broken_bindings
         return result
 
     @staticmethod

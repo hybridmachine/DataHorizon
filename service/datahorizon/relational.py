@@ -146,6 +146,9 @@ def validate_schema(db,signature,base_schema):
         if kind=='name':
             from .names import definition
             definition(item)
+        if kind=='binding':
+            from .bindings import definition as binding_definition
+            binding_definition(item)
         if kind!='table':continue
         require(set(item)=={'id','name','columns'},'INVALID_FORMAT','Invalid table catalog fields',409)
         name(item['name']);columns(item['columns'],stored=True)
@@ -163,6 +166,8 @@ def validate_schema(db,signature,base_schema):
     require(signature==expected,'SCHEMA_CHANGED','Relational schema does not match its supported catalog; preserve the file for recovery',409)
     from .workbook_code import modules
     modules(db)
+    from .bindings import validate as validate_bindings
+    validate_bindings(db)
     from .query_views import validate as validate_queries
     validate_queries(db,registered,time.monotonic()+2)
     return registered
