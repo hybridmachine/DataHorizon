@@ -30,6 +30,11 @@ MAX_HISTORY_BYTES = 16*1024*1024
 MAX_REVISION = 2**63-1
 MAX_SHEET_POSITION = 2**63-1
 SNAPSHOT_SECONDS = 5
+# workbook_import from a prepared stage: the service puts the stage file's path in this request field (a client
+# cannot), the operation may exceed MAX_CELLS, and it runs under STAGE_SECONDS loading STAGE_BATCH cells at a time.
+STAGE_PATH = "_stage_path"
+STAGE_SECONDS = 300
+STAGE_BATCH = 10_000
 NUMBER_SOURCE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 # Typed kinds whose value comes from the calculator; an unmaintained cell always yields its #REF! error.
 EVALUATED = ("formula", "unmaintained")
@@ -752,27 +757,111 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
-    def import_workbook(self,request):
+    def plan_import(self,request):
+        """Validate a workbook_import request before any change. Reviewed sheets come inline (at most 10,000 cells) or
+        from a prepared stage, which is opened in one read snapshot and must still be what was reviewed: its content
+        digest, and for a local file the source's recorded size and modification time."""
         from .interchange import validate_sheet_names
-        from .relational import objects
-        present={kind for kind,_ in objects(self.db)}
-        if present:
-            labels=[label for kind,label in (("table","tables"),("query","saved queries"),("relationship","relationships"),("index","indexes"),
-                ("name","names"),("module","Python modules"),("binding","event bindings")) if kind in present]
-            labels+=sorted(kind for kind in present if kind not in ("table","query","relationship","index","name","module","binding"))
-            listed=labels[0] if len(labels)==1 else ", ".join(labels[:-1])+" or "+labels[-1]
-            raise EngineError("DESTINATION_NOT_EMPTY",f"Whole-workbook import requires a destination without {listed}; create a new workbook")
-        require(self.db.execute("SELECT 1 FROM cells LIMIT 1").fetchone() is None,"DESTINATION_NOT_EMPTY","Whole-workbook import requires an empty destination; create a new workbook")
-        sheets=request.get("sheets")
-        require(isinstance(sheets,list) and all(isinstance(s,dict) for s in sheets),"INVALID_ARGUMENT","sheets must be an array of sheet objects")
-        validate_sheet_names([s.get("name") for s in sheets])
-        require(all(isinstance(s.get("cells"),list) for s in sheets),"INVALID_ARGUMENT","Each sheet needs cells")
-        require(sum(len(s["cells"]) for s in sheets)<=MAX_CELLS,"LIMIT","Workbook import exceeds 10,000 stored cells")
-        self.db.execute("DELETE FROM sheets")
-        for index,sheet in enumerate(sheets):
-            identity=str(uuid.uuid4())
-            self.db.execute("INSERT INTO sheets VALUES(?,?,?)",(identity,sheet["name"],index))
-            if sheet["cells"]: self.apply_edit(identity,sheet["cells"])
+        target=request.get("target","replace_empty")
+        require(target in ("replace_empty","add_sheets"),"INVALID_ARGUMENT","target must be replace_empty or add_sheets")
+        if "stage_id" not in request:
+            require("stage_digest" not in request,"INVALID_ARGUMENT","stage_digest applies only with stage_id")
+            sheets=request.get("sheets")
+            require(isinstance(sheets,list) and all(isinstance(s,dict) for s in sheets),"INVALID_ARGUMENT","sheets must be an array of sheet objects")
+            validate_sheet_names([s.get("name") for s in sheets])
+            require(all(isinstance(s.get("cells"),list) for s in sheets),"INVALID_ARGUMENT","Each sheet needs cells")
+            require(sum(len(s["cells"]) for s in sheets)<=MAX_CELLS,"LIMIT","Workbook import exceeds 10,000 stored cells")
+            return {"target":target,"sheets":sheets,"stage":None,"names":[s["name"] for s in sheets],"counts":[len(s["cells"]) for s in sheets]}
+        require("sheets" not in request,"INVALID_ARGUMENT","Supply sheets or stage_id, not both")
+        require(isinstance(request["stage_id"],str) and bool(request["stage_id"]),"INVALID_ARGUMENT","stage_id must be text")
+        digest=request.get("stage_digest")
+        require(isinstance(digest,str) and re.fullmatch(r"[0-9a-f]{64}",digest) is not None,"INVALID_ARGUMENT","stage_digest must be the reviewed SHA-256 digest")
+        path=request.get(STAGE_PATH)
+        require(isinstance(path,str),"JOB_NOT_FOUND","Import stage is unavailable; prepare the workbook again",404)
+        from .import_stage import open_readonly
+        from .xlsx_stream import LARGE_SHEETS
+        stage=open_readonly(path)
+        try:
+            # Held until the last cell is loaded, so the cells loaded are the cells verified.
+            stage.db.execute("BEGIN")
+            with sql_deadline(stage.db,self.deadline,cancel_event=self.cancel_event):
+                summary=stage.summary()
+                require(stage.digest()==digest,"STALE_PLAN","The import stage is not the reviewed one; prepare the workbook again",409)
+                source=summary.get("source")
+                if isinstance(source,dict) and source.get("kind")=="path":
+                    try: info=os.stat(source["path"])
+                    except (OSError,KeyError,TypeError,ValueError) as error:
+                        raise EngineError("STALE_PLAN","The source file is no longer available; prepare it again",409) from error
+                    require((info.st_size,info.st_mtime_ns)==(source.get("size"),source.get("mtime_ns")),"STALE_PLAN",
+                            "The source file changed after it was reviewed; prepare it again",409)
+                names=stage.sheets(); counts=stage.sheet_counts(); temporal=stage.has_temporal()
+            validate_sheet_names(names,limit=LARGE_SHEETS)
+        except BaseException:
+            stage.close()
+            raise
+        return {"target":target,"sheets":None,"stage":stage,"names":names,"counts":counts,"temporal":temporal}
+
+    @staticmethod
+    def import_arguments(plan):
+        """The structure event's description of an import: its target and each sheet's name and cell count."""
+        return {"target":plan["target"],"sheets":[{"name":name,"cells":count} for name,count in zip(plan["names"],plan["counts"])]}
+
+    def import_workbook(self,plan):
+        """Load a planned import in the open operation: replace an empty workbook's sheets, or add sheets after the existing ones."""
+        from .interchange import fold_name
+        names=plan["names"]
+        if plan["target"]=="replace_empty":
+            from .relational import objects
+            present={kind for kind,_ in objects(self.db)}
+            if present:
+                labels=[label for kind,label in (("table","tables"),("query","saved queries"),("relationship","relationships"),("index","indexes"),
+                    ("name","names"),("module","Python modules"),("binding","event bindings")) if kind in present]
+                labels+=sorted(kind for kind in present if kind not in ("table","query","relationship","index","name","module","binding"))
+                listed=labels[0] if len(labels)==1 else ", ".join(labels[:-1])+" or "+labels[-1]
+                raise EngineError("DESTINATION_NOT_EMPTY",f"Whole-workbook import requires a destination without {listed}; create a new workbook")
+            require(self.db.execute("SELECT 1 FROM cells LIMIT 1").fetchone() is None,"DESTINATION_NOT_EMPTY","Whole-workbook import requires an empty destination; create a new workbook")
+            self.db.execute("DELETE FROM sheets")
+            start=0
+        else:
+            existing={fold_name(name) for (name,) in self.db.execute("SELECT name FROM sheets")}
+            conflicts=[name for name in names if fold_name(name) in existing]
+            if conflicts:
+                raise EngineError("SHEET_NAME_CONFLICT","Imported sheet names already exist in this workbook; rename them and import again",409,conflicts=conflicts)
+            start=self.next_sheet_position()
+            require(len(names)-1<=MAX_SHEET_POSITION-start,"POSITION_LIMIT","Reorder sheets before adding more; display positions are exhausted",409)
+        identities=[str(uuid.uuid4()) for _ in names]
+        if plan["stage"] is None:
+            for index,(identity,sheet) in enumerate(zip(identities,plan["sheets"])):
+                self.db.execute("INSERT INTO sheets VALUES(?,?,?)",(identity,sheet["name"],start+index))
+                if sheet["cells"]: self.apply_edit(identity,sheet["cells"])
+            # Imported cells are new structure, not edits: no change events, as for a staged import.
+            fresh=set(identities)
+            self.pending={key:change for key,change in self.pending.items() if key[0] not in fresh}
+            marks=",".join("?"*len(identities))
+            cells=self.db.execute(f"SELECT count(*) FROM cells WHERE sheet_id IN ({marks})",identities).fetchone()[0]
+        else:
+            cells=self.load_stage(plan["stage"],identities,names,start)
+            if plan["temporal"]:self.db.execute("UPDATE dh_meta SET format_version=2 WHERE format_version=1")
+        return {"imported":{"sheets":len(names),"cells":cells}}
+
+    def load_stage(self,stage,identities,names,start):
+        """Insert every staged cell straight into cells, in batches, without per-cell change images; the stage was
+        validated when it was written. Deadline and cancellation are checked between batches and inside SQLite."""
+        loaded=0;unmaintained=False
+        with sql_deadline(self.db,self.deadline,cancel_event=self.cancel_event),sql_deadline(stage.db,self.deadline,cancel_event=self.cancel_event):
+            for position,(identity,name) in enumerate(zip(identities,names)):
+                self.db.execute("INSERT INTO sheets VALUES(?,?,?)",(identity,name,start+position))
+                for rows in stage.iter_cells(position,batch=STAGE_BATCH):
+                    self.check_operation()
+                    self.db.executemany("INSERT INTO cells VALUES(?,?,?,?,?,?)",[(identity,*row) for row in rows])
+                    loaded+=len(rows)
+                    unmaintained=unmaintained or any(row[3]=="unmaintained" for row in rows)
+            self.check_operation()
+        if unmaintained:
+            from .relational import ensure_version
+            ensure_version(self,7)
+        self.bulk_loaded=loaded
+        return loaded
 
     def put(self, sheet, row, col, item):
         integer(row, 1, MAX_ROWS, "row")
@@ -877,12 +966,12 @@ class Workbook:
         elif type(source) is float:source=interchange_text(source)
         self.apply_edit(sheet,[dict(row=row,col=col,source=source,kind=args.get('kind','auto'))])
 
-    def structure_hook(self,operation,request,phase,before):
+    def structure_hook(self,operation,request,phase,before,arguments=None):
         if not self.handler:return
         require(supports_structure(self.handler),'UNSUPPORTED_HOOK_SCOPE','Required handler must explicitly define top-level on_structure(context,event)')
         catalog=[dict(id=i,name=n,position=p) for i,n,p in self.db.execute('SELECT id,name,position FROM sheets ORDER BY position,id LIMIT 257')]
         require(len(catalog)<=256,'LIMIT','Structural events support at most 256 sheets')
-        event=dict(phase=phase,action=request['action'],arguments={k:request[k] for k in ('sheet','name','start','count','order') if k in request},before=before if before is not None else catalog,after=catalog if phase=='after' else None)
+        event=dict(phase=phase,action=request['action'],arguments=arguments if arguments is not None else {k:request[k] for k in ('sheet','name','start','count','order') if k in request},before=before if before is not None else catalog,after=catalog if phase=='after' else None)
         invoke(self.handler,event,operation,self.hook_dispatch,self.deadline,event='on_structure')
         return catalog
 
@@ -947,7 +1036,9 @@ class Workbook:
             operation.encode("utf-8")
         except UnicodeEncodeError as error:
             raise EngineError("OPERATION_ID","operation_id must be valid Unicode text") from error
-        fingerprint = hashlib.sha256(encoded(request).encode()).hexdigest()
+        # The service-only stage path is where a stage happens to be, not part of the request's identity.
+        fingerprint = hashlib.sha256(encoded({key:value for key,value in request.items() if key!=STAGE_PATH}).encode()).hexdigest()
+        staged = request.get("action")=="workbook_import" and "stage_id" in request
         with self.lock:
             self.cancel_event=cancel_event
             try:
@@ -955,8 +1046,11 @@ class Workbook:
                 receipt = self.recorded_operation(operation, fingerprint)
                 if receipt is not None:
                     return receipt
+                # A released stage can only be answered from a stored receipt, as just tried.
+                require(not staged or isinstance(request.get(STAGE_PATH),str),"JOB_NOT_FOUND","Import stage is unavailable; prepare the workbook again",404)
                 require(not self.readonly, "READ_ONLY", "Workbook is open read-only", 403)
-                self.deadline = time.monotonic() + 5
+                self.deadline = time.monotonic() + (STAGE_SECONDS if staged else 5)
+                self.bulk_loaded = 0
                 self.refresh(deadline=self.deadline)
                 self.changes, self.pending = {}, {}
                 self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
@@ -987,6 +1081,7 @@ class Workbook:
                                   409 if isinstance(error,(OSError,sqlite3.Error)) else 500,
                                   "unknown",operation_id=operation) from error
             in_transaction = True
+            import_plan = None
             try:
                 self.db.execute("SAVEPOINT operation_changes")
                 self.check_operation()
@@ -1011,7 +1106,9 @@ class Workbook:
                 from . import records
                 record_context=records.capture(self)
                 self.relational_before={item['id']:item for item in relational.tables(self.db)}
-                before_catalog=self.structure_hook(operation,request,'before',None) if sheet_structural else None
+                import_plan=self.plan_import(request) if kind=="workbook_import" else None
+                event_arguments=self.import_arguments(import_plan) if import_plan else None
+                before_catalog=self.structure_hook(operation,request,'before',None,event_arguments) if sheet_structural else None
                 # Cells edited so far (by a before-structure handler) are not structural content when moved.
                 self.structure_touched=set(self.changes)
                 reference_report = {}
@@ -1182,7 +1279,7 @@ class Workbook:
                 elif kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"):
                     reference_report = self.change_structure(request)
                 elif kind == "workbook_import":
-                    self.import_workbook(request)
+                    reference_report=self.import_workbook(import_plan)
                 elif kind == "sheet_add":
                     name = request.get("name", "Sheet")
                     self.check_name(name)
@@ -1210,7 +1307,7 @@ class Workbook:
                     raise EngineError("UNSUPPORTED_OPERATION", f"Operation is not available: {kind}")
                 # Records produced only by a structural rewrite are not cell-change events for bindings.
                 self.structural_records={key:self.pending[key]['after'] for key,quiet in self.structural_marks.items() if quiet and key in self.pending}
-                if sheet_structural:self.structure_hook(operation,request,'after',before_catalog)
+                if sheet_structural:self.structure_hook(operation,request,'after',before_catalog,event_arguments)
                 self.run_hooks(operation)
                 repaired_issues=None
                 if kind=='table_repair':
@@ -1221,7 +1318,7 @@ class Workbook:
                 self.check_operation()
                 self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1] or key in self.table_schema_keys}
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
-                result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": sum(key[0]!='table' for key in self.changes),
+                result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": sum(key[0]!='table' for key in self.changes)+self.bulk_loaded,
                           "changed_records":sum(key[0]=='table' for key in self.changes)}
                 result.update(reference_report)
                 if self.binding_notices:result["binding_notices"]=self.binding_notices
@@ -1321,6 +1418,8 @@ class Workbook:
                         pass
                     raise EngineError("OUTCOME_UNKNOWN","Data changes were rolled back but the receipt could not be confirmed; reconcile the operation ID",500,"unknown",operation_id=operation) from receipt_error
                 raise failure
+            finally:
+                if import_plan is not None and import_plan["stage"] is not None:import_plan["stage"].close()
 
     @staticmethod
     def history_cost(label,changes):

@@ -24,7 +24,7 @@ import traceback
 from urllib.parse import unquote, urlsplit
 import uuid
 
-from .engine import EngineError, MAX_CELLS, Workbook, boolean, encoded, require
+from .engine import EngineError, MAX_CELLS, STAGE_PATH, Workbook, boolean, encoded, require
 from .formula import MAX_COLS, MAX_ROWS, SUPPORTED_FUNCTIONS
 from .csv_import import COLUMN_TYPES, ENCODINGS, preview_csv
 from .jobs import PreparationJobs
@@ -235,7 +235,11 @@ def openapi():
         "replace_all": (["needle","replacement"],{"sheet":sheet,**rectangle,**search,"replacement":{"type":"string"}},
                         {"r1":1,"c1":1,"r2":3,"c2":1,"needle":"7","replacement":"9"}),
         "undo": ([],{},{}), "redo": ([],{},{}),
-        "workbook_import": (["sheets"],{"sheets":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","required":["name","cells"],"properties":{"name":name,"cells":{"type":"array","items":{"$ref":"#/components/schemas/CellEdit"}}}}}},{"sheets":[{"name":"Sheet1","cells":[]}]}),
+        "workbook_import": ([],{"sheets":{"type":"array","minItems":1,"maxItems":64,"description":"Reviewed sheets from a bounded preparation, at most 10,000 cells in all","items":{"type":"object","required":["name","cells"],"properties":{"name":name,"cells":{"type":"array","items":{"$ref":"#/components/schemas/CellEdit"}}}}},
+            "stage_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$","description":"A completed upload or source_path preparation's stage_id; a missing or released stage is JOB_NOT_FOUND (404) unless this operation_id already has a receipt"},
+            "stage_digest":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"The reviewed summary's stage_digest; it must equal the digest recomputed from the stage, and a source_path stage's file must keep its recorded size and modification time, otherwise STALE_PLAN (409) with nothing changed"},
+            "target":{"type":"string","enum":["replace_empty","add_sheets"],"default":"replace_empty","description":"replace_empty replaces the sheets of a workbook with no cells, tables, queries, names, modules or bindings (DESTINATION_NOT_EMPTY otherwise). add_sheets appends the sheets after the existing ones and leaves everything else untouched; a name equal to an existing sheet's, ignoring ASCII case, rejects the whole import with SHEET_NAME_CONFLICT (409) listing conflicts. Formulas naming an existing sheet refer to it."}},
+            {"sheets":[{"name":"Sheet1","cells":[]}]}),
         "sheet_add": ([],{"name":{**name,"default":"Sheet"}},{"name":"Other"}),
         "sheet_rename": (["sheet","name"],{"sheet":sheet,"name":name},{"sheet":"Other","name":"Renamed"}),
         "sheet_duplicate": (["sheet","name"],{"sheet":sheet,"name":name},{"sheet":"Renamed","name":"Copy"}),
@@ -271,6 +275,19 @@ def openapi():
             "properties":{**common,"action":{"type":"string","enum":[action]},**properties},
             "example":{"operation_id":"generate-a-uuid","expected_state":"copy-from-workbook-info","action":action,**example}}
         if action in ("module_save","module_delete","macro_run","name_save","name_delete","binding_save","binding_delete"):schemas[schema_name]["additionalProperties"]=False
+    schemas["WorkbookImportOperation"].update(oneOf=[
+        {"title":"Reviewed sheets","required":["sheets"],"not":{"anyOf":[{"required":["stage_id"]},{"required":["stage_digest"]}]},
+         "example":schemas["WorkbookImportOperation"]["example"]},
+        {"title":"Prepared stage","required":["stage_id","stage_digest"],"not":{"required":["sheets"]},
+         "example":{"operation_id":"generate-a-uuid","expected_state":"copy-from-workbook-info","action":"workbook_import",
+                    "stage_id":"example-xlsx-apply","stage_digest":"copy-from-the-review-summary","target":"replace_empty"}}],
+        description="Imports a whole workbook as one operation that clears Undo/Redo, raises the structural before/after event "
+            "(arguments: target and each imported sheet's name and cell count) and no cell change events; an activated required handler "
+            "without on_structure rejects before any change. Supply reviewed sheets (at most 10,000 cells) or a prepared stage (up to "
+            "1,000,000 cells and 255 sheets, a 300-second budget with cooperative cancellation). A stage is loaded in one transaction; "
+            "cancellation or any failure rolls back sheets and cells and records a rolled-back receipt. Temporal inputs raise the native "
+            "format to 2. A successful apply deletes the stage and its preparation job; a refused or failed apply keeps the stage. "
+            "The receipt adds imported: {sheets, cells}.")
     schemas["OperationRequest"] = {"oneOf":[{"$ref":ref} for ref in mapping.values()],
         "discriminator":{"propertyName":"action","mapping":mapping},
         "description":"Atomic operations: at most 10,000 affected cells and a 4 MiB request. Range endpoints are inclusive and must be ordered. Copy fill uses the top-left input; series requires a numeric seed. Same-sheet Move retargets supported scalar/fully-contained range references into the cut rectangle; partially intersecting referenced ranges and unsupported syntax reject atomically. Sheet rename updates qualified name references while preserving stable UUID references, scanning at most 10,000 formulas/8 MiB. Sheet duplication preserves other-sheet references and retargets copied self-references, including UUIDs; it copies at most 10,000 stored cells/8 MiB. Sheet deletion replaces surviving name/UUID references and inherited ranges with permanent #REF! errors and reports affected locations; deleted and rewritten cells share the 10,000-cell limit. Unsupported syntax and required hooks reject reference-changing structure operations. Row/column changes retarget absolute and relative A1 references across sheets, expand/contract ranges and report newly broken references; required handlers, unsupported formula syntax and grid overflow reject atomically. Structure changes clear history. No managed SQL or chunked commits.",
@@ -776,6 +793,26 @@ class Service(ThreadingHTTPServer):
                 require(self.workbooks.get(parts[2]) is book,"NOT_FOUND","Workbook handle was released",404)
             return self._dispatch_book(method,parts[2],book,suffix,body)
 
+    def _stage_file(self, stage_id):
+        """The stage's path for the engine, or None when it is gone: then only a stored receipt can answer."""
+        require(isinstance(stage_id,str),"INVALID_ARGUMENT","stage_id must be text")
+        try:
+            return str(self.staging.path("stage",stage_id))
+        except EngineError as error:
+            if error.body["code"] != "JOB_NOT_FOUND": raise
+            return None
+
+    def _consume_stage(self, stage_id):
+        """An applied stage is spent: its job is forgotten without its discard callback, and the file is deleted.
+        The import has committed, so a failure to delete is logged and left to the staging retention sweep."""
+        try:
+            with self.jobs.lock:
+                self.jobs.consume(stage_id)
+                self.staging.release("stage",stage_id)
+        except OSError:
+            print("Applied import stage could not be released:", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+
     def _cancel_operation(self,book,operation):
         with self.registry_lock:event=self.active_operations.get((book,operation))
         if event is not None:event.set()
@@ -893,14 +930,19 @@ class Service(ThreadingHTTPServer):
         if method == "POST" and suffix == ["find"]:
             return book.find(body.get("sheet", "Sheet1"), body)
         if method == "POST" and suffix == ["operations"]:
+            require(STAGE_PATH not in body,"INVALID_ARGUMENT",f"{STAGE_PATH} is set by the service; name a stage with stage_id")
             operation=body.get('operation_id');require(isinstance(operation,str) and 1<=len(operation)<=100,'OPERATION_ID','An operation ID is required')
+            staged=body.get("action")=="workbook_import" and "stage_id" in body
+            if staged:body={**body,STAGE_PATH:self._stage_file(body["stage_id"])}
             key=(book,operation)
             with self.registry_lock:
                 require(key not in self.active_operations,'OPERATION_RUNNING','Operation is active; inspect its receipt before retrying',409)
                 event=threading.Event();self.active_operations[key]=event
-            try:return book.mutate(body,cancel_event=event)
+            try:receipt=book.mutate(body,cancel_event=event)
             finally:
                 with self.registry_lock:self.active_operations.pop(key,None)
+            if staged and body[STAGE_PATH] is not None:self._consume_stage(body["stage_id"])
+            return receipt
         if method=='POST' and len(suffix)==3 and suffix[0]=='operations' and suffix[2]=='cancel':
             return self._cancel_operation(book,unquote(suffix[1]))
         if method == "GET" and len(suffix) == 2 and suffix[0] == "operations":

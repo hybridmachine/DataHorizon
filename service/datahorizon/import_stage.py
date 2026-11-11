@@ -58,6 +58,12 @@ class StageReader:
     def count(self):
         return self.db.execute("SELECT count(*) FROM cells").fetchone()[0]
 
+    def sheet_counts(self):
+        """Stored cells per sheet, in sheet order."""
+        return [total for (total,) in self.db.execute(
+            "SELECT count(cells.row) FROM sheets LEFT JOIN cells ON cells.sheet = sheets.position "
+            "GROUP BY sheets.position ORDER BY sheets.position")]
+
     def has_temporal(self):
         marks = ",".join("?"*len(TEMPORAL_KINDS))
         return self.db.execute(f"SELECT 1 FROM cells WHERE kind IN ({marks}) LIMIT 1", tuple(TEMPORAL_KINDS)).fetchone() is not None
@@ -234,9 +240,7 @@ class ImportStage(StageReader):
             if clash: raise ValueError(f"extra must not override summary keys: {sorted(clash)}")
             require(len(encoded(extra).encode()) <= MAX_EXTRA, "LIMIT", "Import summary extras exceed 64 KiB")
             summary["stage_digest"] = self.digest()
-            summary["sheets"] = [{"name": name, "stored_cells": total} for name, total in self.db.execute(
-                "SELECT sheets.name, count(cells.row) FROM sheets LEFT JOIN cells ON cells.sheet = sheets.position "
-                "GROUP BY sheets.position ORDER BY sheets.position")]
+            summary["sheets"] = [{"name": name, "stored_cells": total} for name, total in zip(self.sheets(), self.sheet_counts())]
             summary.update(extra)
             summary["sample"] = self.sample(100, source_limit=SAMPLE_SOURCE)
             summary = fit_summary(summary)

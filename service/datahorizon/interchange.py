@@ -572,7 +572,7 @@ def validate_sheet_names(names,limit=64):
 
 def workbook_report():
     return ["All sheets, names, stored inputs and mapped direct cell styles from one consistent workbook state.",
-            "Whole-workbook import replaces sheets only in an empty destination, as one atomic operation; history is cleared. Required handlers reject until structure events are defined.",
+            "Whole-workbook import replaces sheets only in an empty destination, or adds them after the existing sheets when no name collides, as one atomic operation; history is cleared. Required handlers reject until structure events are defined.",
             "Code, queries, relationships, history, dimensions, view state and unsupported spreadsheet features are omitted. No code activates; retain the native/source file."]
 
 
