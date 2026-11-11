@@ -2,8 +2,10 @@
 #include "pythonworkspace.h"
 #include "codeeditor.h"
 #include "macrodeclarationpanel.h"
+#include "namemanager.h"
 #include "pythonhighlighter.h"
 #include <QAction>
+#include <QActionGroup>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QDialog>
@@ -41,6 +43,9 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     toolbar->addSeparator();
     m_showMacro=toolbar->addAction(tr("Declaration"));m_showMacro->setObjectName("showMacroAction");m_showMacro->setCheckable(true);m_showMacro->setChecked(true);
     m_showMacro->setToolTip(tr("Show the selected macro's declaration"));
+    m_showNames=toolbar->addAction(tr("Names"));m_showNames->setObjectName("showNamesAction");m_showNames->setCheckable(true);
+    m_showNames->setToolTip(tr("Show the workbook's names"));
+    auto *sideGroup=new QActionGroup(this);sideGroup->setExclusionPolicy(QActionGroup::ExclusionPolicy::ExclusiveOptional);sideGroup->addAction(m_showMacro);sideGroup->addAction(m_showNames);
     m_find=new QAction(tr("Find…"),this);m_find->setObjectName("findAction");m_find->setShortcut(QKeySequence::Find);m_find->setShortcutContext(Qt::WindowShortcut);addAction(m_find);
 
     auto *splitter=new QSplitter(Qt::Horizontal);splitter->setObjectName("workspaceSplitter");setCentralWidget(splitter);
@@ -70,14 +75,18 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     splitter->addWidget(editorColumn);
 
     m_side=new QStackedWidget;m_side->setObjectName("sidePanel");
-    auto *macroPage=new QWidget;macroPage->setObjectName("macroPage");auto *macroLayout=new QVBoxLayout(macroPage);macroLayout->setContentsMargins(4,4,4,4);
+    auto *macroPage=m_macroPage=new QWidget;macroPage->setObjectName("macroPage");auto *macroLayout=new QVBoxLayout(macroPage);macroLayout->setContentsMargins(4,4,4,4);
     macroLayout->addWidget(new QLabel(tr("Macros")));
     m_macros=new QListWidget;m_macros->setObjectName("macroList");m_macros->setAccessibleName(tr("Declared macros"));m_macros->setMaximumHeight(140);macroLayout->addWidget(m_macros);
     auto *macroButtons=new QHBoxLayout;macroLayout->addLayout(macroButtons);
     m_addMacro=new QPushButton(tr("Add declaration…"));m_addMacro->setObjectName("addMacroButton");macroButtons->addWidget(m_addMacro);
     m_removeMacro=new QPushButton(tr("Remove declaration"));m_removeMacro->setObjectName("removeMacroButton");macroButtons->addWidget(m_removeMacro);
     m_panel=new MacroDeclarationPanel;macroLayout->addWidget(m_panel,1);
-    m_side->addWidget(macroPage);splitter->addWidget(m_side);
+    m_side->addWidget(macroPage);
+    m_namesPage=new QWidget;m_namesPage->setObjectName("namesPage");auto *namesLayout=new QVBoxLayout(m_namesPage);namesLayout->setContentsMargins(4,4,4,4);
+    namesLayout->addWidget(new QLabel(tr("Names (double-click to insert)")));
+    m_names=new NamesPanel;namesLayout->addWidget(m_names,1);
+    m_side->addWidget(m_namesPage);splitter->addWidget(m_side);
     splitter->setStretchFactor(0,1);splitter->setStretchFactor(1,4);splitter->setStretchFactor(2,2);
 
     m_status=new QLabel;m_status->setObjectName("workspaceStatus");m_status->setAccessibleName(tr("Draft or saved state"));
@@ -86,7 +95,14 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     m_message->setTextInteractionFlags(Qt::TextSelectableByMouse);
     statusBar()->addWidget(m_status);statusBar()->addWidget(m_message,1);statusBar()->addPermanentWidget(m_approval);
 
-    connect(m_showMacro,&QAction::toggled,m_side,&QWidget::setVisible);
+    auto showSide=[this]{
+        const bool names=m_showNames->isChecked();m_side->setVisible(names || m_showMacro->isChecked());
+        m_side->setCurrentWidget(names?m_namesPage:m_macroPage);};
+    connect(m_showMacro,&QAction::toggled,this,showSide);connect(m_showNames,&QAction::toggled,this,showSide);
+    connect(m_names,&NamesPanel::insertRequested,this,[this](const QString &name){
+        // Inserting is an ordinary edit: it needs an editable module and makes a draft.
+        if(m_editor->isReadOnly()){showMessage(tr("Names are inserted only into an editable module. %1").arg(blockedReason()));return;}
+        m_editor->insertAtCursor(QStringLiteral("\"%1\"").arg(name));m_editor->setFocus();});
     connect(m_find,&QAction::triggered,this,[this]{m_findBar->show();m_findField->setFocus();m_findField->selectAll();});
     connect(m_findField,&QLineEdit::returnPressed,this,&PythonWorkspace::findNext);
     connect(closeFind,&QPushButton::clicked,this,[this]{m_findBar->hide();m_editor->setFocus();});
@@ -274,13 +290,21 @@ bool PythonWorkspace::editable() const {
     return !m_info.isEmpty() && !m_info["readonly"].toBool() && !m_locked && m_catalogReady && m_pending==Pending::None && !m_awaitingAdmission;
 }
 
+QString PythonWorkspace::blockedReason() const {
+    if(m_info["readonly"].toBool())return tr("Read-only workbook: reopen it for editing to change code.");
+    if(foreign(m_current))return tr("This draft belongs to the previously open workbook and cannot be saved here. Discard it when you no longer need it.");
+    if(m_info.isEmpty())return tr("Open a workbook first.");
+    if(m_pending!=Pending::None || m_awaitingAdmission)return tr("Waiting for the workbook to confirm the last change…");
+    if(editable() && m_current.isEmpty())return tr("Create or select a module first.");
+    return tr("Wait for the current operation to finish.");
+}
+
 void PythonWorkspace::updateState() {
     const bool readonly=m_info["readonly"].toBool(),other=foreign(m_current),canEdit=editable() && !other,selected=!m_current.isEmpty(),draft=m_drafts.contains(m_current);
     const bool stored=!storedModule(m_current).isEmpty() && !other;
     const QString readOnlyReason=tr("Read-only workbook: reopen it for editing to change code.");
-    const QString otherReason=tr("This draft belongs to the previously open workbook and cannot be saved here. Discard it when you no longer need it.");
     const QString waitReason=m_info.isEmpty()?tr("Open a workbook first."):m_pending!=Pending::None || m_awaitingAdmission?tr("Waiting for the workbook to confirm the last change…"):tr("Wait for the current operation to finish.");
-    const QString reason=readonly?readOnlyReason:other?otherReason:waitReason;
+    const QString reason=blockedReason();
     m_editor->setReadOnly(!canEdit || !selected);
     m_save->setEnabled(canEdit && draft);
     m_save->setToolTip(!canEdit?reason:!draft?tr("No unsaved changes in this module."):tr("Save this module to the workbook"));
@@ -419,14 +443,24 @@ void PythonWorkspace::removeMacro() {
     macros.removeAt(m_currentMacro);updateDraft(m_editor->toPlainText(),macros);loadCurrent();
 }
 
-bool PythonWorkspace::confirmHistory() {
-    if(s_skipHistoryPrompt || !(m_info["undo"].isString() || m_info["redo"].isString()))return true;
-    QMessageBox box(QMessageBox::Question,tr("Clear Undo history?"),tr("Saving code clears Undo history for this workbook. Continue?"),QMessageBox::Yes|QMessageBox::Cancel,this);
-    box.setObjectName("codeSaveHistoryPrompt");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setDefaultButton(QMessageBox::Cancel);
-    auto *again=new QCheckBox(tr("Don't ask again this session"));again->setObjectName("codeSaveHistoryDontAsk");box.setCheckBox(again);
+bool PythonWorkspace::confirmHistoryClear(QWidget *parent,const QJsonObject &info,const QString &text,const QString &name) {
+    if(s_skipHistoryPrompt || !(info["undo"].isString() || info["redo"].isString()))return true;
+    QMessageBox box(QMessageBox::Question,tr("Clear Undo history?"),text,QMessageBox::Yes|QMessageBox::Cancel,parent);
+    box.setObjectName(name+"Prompt");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setDefaultButton(QMessageBox::Cancel);
+    auto *again=new QCheckBox(tr("Don't ask again this session"));again->setObjectName(name+"DontAsk");box.setCheckBox(again);
     if(box.exec()!=QMessageBox::Yes)return false;
     if(again->isChecked())s_skipHistoryPrompt=true;
-    return editable();
+    return true;
+}
+
+bool PythonWorkspace::confirmHistory() {
+    return confirmHistoryClear(this,m_info,tr("Saving code clears Undo history for this workbook. Continue?"),QStringLiteral("codeSaveHistory")) && editable();
+}
+
+void PythonWorkspace::setNames(const QJsonArray &names) {
+    m_names->setNames(names);
+    QStringList identifiers;for(const auto &value:names)identifiers.append(value.toObject()["name"].toString());
+    m_editor->setCompletionNames(identifiers);
 }
 
 // Shows the stored module beside the draft. True means "keep mine": the draft

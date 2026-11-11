@@ -23,6 +23,8 @@ class QMenu;
 class QStackedWidget;
 class RelationalWorkbench;
 class PythonWorkspace;
+class NamesPanel;
+class NameManagerDialog;
 
 struct StartupOptions { QString url, token, handler, recoveryDirectory, initialWorkbook, viewStatePath; bool automaticWorkbook = true; };
 
@@ -47,18 +49,47 @@ public:
     void showList(QJsonObject scope);
     static bool isRecoveryPath(QString path);
     SheetModel *model() const { return m_model; }
+    // The workbook's names as last read for the current handle, sorted by
+    // case-insensitive identifier. Empty until the first read lands.
+    QJsonArray names() const { return m_names; }
 signals:
     void serviceReady();
     void workbookReady();
     void operationFinished(bool committed);
     void operationAdmitted(QString operationId);
     void operationReceipt(QJsonObject receipt);
+    void namesChanged();
 protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
     void showRelational(bool visible);
     void showPythonWorkspace();
+    void showNameManager();
+    void readNames(const QJsonObject &info);
+    void clearNames();
+    void publishNames();
+    void updateNameControls();
+    bool nameWritable(QString *reason) const;
+    void nameMessage(const QString &text);
+    void connectNamesPanel(NamesPanel *panel);
+    QJsonObject nameById(const QString &id) const;
+    QJsonObject nameByText(const QString &text) const;
+    QString selectionName() const;
+    QString addressText(const QModelIndex &index) const;
+    void updateAddress();
+    bool selectionReference(QString *reference,QString *problem) const;
+    void createName(QWidget *parent);
+    void renameName(QWidget *parent,const QString &id);
+    void retargetName(QWidget *parent,const QString &id);
+    void deleteName(QWidget *parent,const QString &id);
+    void submitName(QWidget *parent,const QJsonObject &target,QJsonObject operation,const QString &success,const QString &failure);
+    void goToName(const QJsonObject &name);
+    void goToRange(int r1,int c1,int r2,int c2,int row,int col);
+    NameManagerDialog *m_nameManager=nullptr;
+    quint64 m_namesGeneration=0;
+    bool m_namesReady=false,m_namesReadFailed=false;
+    QString m_namesHandle,m_nameOperation,m_nameSuccess,m_nameFailure;
     RelationalWorkbench *m_relational=nullptr;
     PythonWorkspace *m_workspace=nullptr;
     QStackedWidget *m_objectStack=nullptr;
@@ -191,6 +222,7 @@ private:
     bool m_painterPending=false,m_painterDragging=false;QPoint m_painterAnchor;
     QAction *m_undo = nullptr, *m_redo = nullptr;
     QJsonObject m_info,m_functionCatalog;
+    QJsonArray m_names;
     QLabel *m_formulaCues=nullptr;
     QList<FormulaReferenceCue> m_formulaReferences;
     QAction *m_pickReferenceAction = nullptr;

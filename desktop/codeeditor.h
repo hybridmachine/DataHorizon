@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
+#include <QAbstractItemView>
+#include <QCompleter>
 #include <QFontDatabase>
 #include <QKeyEvent>
 #include <QPainter>
 #include <QPlainTextEdit>
+#include <QRegularExpression>
+#include <QScrollBar>
+#include <QStringListModel>
 #include <QTextBlock>
 
 // Plain text editor for workbook Python: line numbers, four-space
-// indentation and line marks. It holds text only; nothing here runs code.
+// indentation, line marks and completion of workbook names and context
+// methods. It holds text only; nothing here runs code.
 class CodeEditor : public QPlainTextEdit {
     Q_OBJECT
 public:
@@ -21,7 +27,17 @@ public:
             if(dy)m_numbers->scroll(0,dy);else m_numbers->update(0,rect.y(),m_numbers->width(),rect.height());
             if(rect.contains(viewport()->rect()))updateMargin();});
         updateMargin();
+        m_names=new QStringListModel(this);m_methods=new QStringListModel(contextMethods(),this);
+        m_completer=new QCompleter(m_names,this);m_completer->setObjectName("codeCompleter");m_completer->setWidget(this);
+        m_completer->setCompletionMode(QCompleter::PopupCompletion);m_completer->setCaseSensitivity(Qt::CaseInsensitive);
+        m_completer->setModelSorting(QCompleter::UnsortedModel);
+        connect(m_completer,qOverload<const QString &>(&QCompleter::activated),this,&CodeEditor::complete);
     }
+    // The ctx methods offered after "ctx.", in the order they are listed.
+    static QStringList contextMethods(){return {"get","set","table_delete","table_get","table_insert","table_schema","table_set","value","values"};}
+    // Workbook names are offered as bare identifiers; code passes them in quotes.
+    void setCompletionNames(QStringList names){names.sort(Qt::CaseInsensitive);m_names->setStringList(names);}
+    QStringList completionNames() const{return m_names->stringList();}
     // Lines are 1-based, matching tracebacks and service messages.
     void markLine(int line,bool error) {
         const auto block=document()->findBlockByNumber(line-1);if(!block.isValid())return;
@@ -37,8 +53,19 @@ public:
     }
 protected:
     void keyPressEvent(QKeyEvent *event) override {
+        auto *popup=m_completer->popup();
+        if(popup->isVisible()) {
+            const int key=event->key();
+            if(key==Qt::Key_Return || key==Qt::Key_Enter || key==Qt::Key_Tab) {
+                const auto index=popup->currentIndex().isValid()?popup->currentIndex():m_completer->completionModel()->index(0,0);
+                popup->hide();complete(index.data().toString());event->accept();return;
+            }
+            if(key==Qt::Key_Escape){popup->hide();event->accept();return;}
+        }
         if(event->key()==Qt::Key_Tab && !(event->modifiers()&~Qt::KeypadModifier) && !isReadOnly()){insertAtCursor(QStringLiteral("    "));return;}
         QPlainTextEdit::keyPressEvent(event);
+        if((event->text().isEmpty() && event->key()!=Qt::Key_Backspace) || (event->modifiers()&(Qt::ControlModifier|Qt::MetaModifier))){popup->hide();return;}
+        updateCompletion();
     }
     void resizeEvent(QResizeEvent *event) override {
         QPlainTextEdit::resizeEvent(event);const auto area=contentsRect();
@@ -55,6 +82,27 @@ private:
         CodeEditor *m_editor;
     };
     void updateMargin(){setViewportMargins(lineNumberWidth(),0,0,0);}
+    // Offers completions for the identifier before the cursor once it has two
+    // or more characters: context methods after "ctx.", workbook names elsewhere.
+    void updateCompletion() {
+        auto *popup=m_completer->popup();
+        if(isReadOnly()){popup->hide();return;}
+        const auto cursor=textCursor();const auto before=cursor.block().text().left(cursor.positionInBlock());
+        static const QRegularExpression word(QStringLiteral("([A-Za-z_][A-Za-z0-9_]*)$")),context(QStringLiteral("(?:^|[^A-Za-z0-9_.])ctx\\.$"));
+        const auto match=word.match(before);const auto prefix=match.hasMatch()?match.captured(1):QString();
+        if(prefix.size()<2){popup->hide();return;}
+        auto *model=context.match(before.left(before.size()-prefix.size())).hasMatch()?m_methods:m_names;
+        if(m_completer->model()!=model)m_completer->setModel(model);
+        m_completer->setCompletionPrefix(prefix);
+        if(m_completer->completionCount()==0 || (m_completer->completionCount()==1 && m_completer->currentCompletion()==prefix)){popup->hide();return;}
+        auto rect=cursorRect();rect.setWidth(popup->sizeHintForColumn(0)+popup->verticalScrollBar()->sizeHint().width());
+        m_completer->complete(rect);popup->setCurrentIndex(m_completer->completionModel()->index(0,0));
+    }
+    void complete(const QString &completion) {
+        if(isReadOnly() || completion.isEmpty())return;
+        auto cursor=textCursor();cursor.movePosition(QTextCursor::Left,QTextCursor::KeepAnchor,int(m_completer->completionPrefix().size()));
+        cursor.insertText(completion);setTextCursor(cursor);
+    }
     void paintNumbers(QPaintEvent *event) {
         QPainter painter(m_numbers);painter.fillRect(event->rect(),palette().color(QPalette::AlternateBase));
         painter.setPen(palette().color(QPalette::PlaceholderText));
@@ -67,5 +115,7 @@ private:
         }
     }
     LineNumbers *m_numbers;
+    QCompleter *m_completer;
+    QStringListModel *m_names,*m_methods;
     QList<QTextEdit::ExtraSelection> m_marks;
 };

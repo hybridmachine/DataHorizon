@@ -9,6 +9,7 @@
 
 class CodeEditor;
 class MacroDeclarationPanel;
+class NamesPanel;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -44,6 +45,13 @@ public:
     // The "Don't ask again this session" choices last until the application
     // exits; tests reset them between cases.
     static void resetSessionChoices(){s_skipHistoryPrompt=false;}
+    // Asks before a change that clears the workbook's Undo history, honouring
+    // the session's "Don't ask again" choice. The prompt is named
+    // <name>Prompt and its check box <name>DontAsk.
+    static bool confirmHistoryClear(QWidget *parent,const QJsonObject &info,const QString &text,const QString &name);
+    // The Names page lists names and asks the owning window to change them.
+    NamesPanel *namesPanel() const{return m_names;}
+    void setNames(const QJsonArray &names);
 signals:
     void submitRequested(QJsonObject operation);
     void issue(QString message);
@@ -80,6 +88,7 @@ private:
     void findNext();
     void showMessage(const QString &text);
     bool editable() const;
+    QString blockedReason() const;
     bool foreign(const QString &key) const;
     bool validName(const QString &name,QString *problem) const;
     bool nameTaken(const QString &name,const QString &except) const;
@@ -104,7 +113,7 @@ private:
     QString m_viewStatePath;
     inline static bool s_skipHistoryPrompt=false;
 
-    QAction *m_save,*m_showMacro,*m_find;
+    QAction *m_save,*m_showMacro,*m_showNames,*m_find;
     QListWidget *m_modules,*m_macros;
     QLabel *m_emptyHint,*m_status,*m_approval,*m_message,*m_conflict;
     QPushButton *m_newModule,*m_renameModule,*m_deleteModule,*m_discard,*m_addMacro,*m_removeMacro;
@@ -112,5 +121,7 @@ private:
     QWidget *m_findBar;
     QLineEdit *m_findField;
     QStackedWidget *m_side;
+    QWidget *m_macroPage,*m_namesPage;
     MacroDeclarationPanel *m_panel;
+    NamesPanel *m_names;
 };

@@ -2,14 +2,17 @@
 #include "mainwindow.h"
 #include "pythonworkspace.h"
 #include "macrodeclarationpanel.h"
+#include "codeeditor.h"
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCompleter>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFile>
 #include <QInputDialog>
+#include <QItemSelectionModel>
 #include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
@@ -109,6 +112,45 @@ bool clickButton(QWidget *modal,const QString &dialog,const QString &button) {
     if(modal->objectName()!=dialog)return false;
     auto *target=modal->findChild<QPushButton *>(button);if(!target)return false;
     target->click();return true;
+}
+
+// Stores a managed operation through the window and waits for its refresh.
+bool apply(MainWindow &window,const QJsonObject &operation) {
+    QSignalSpy finished(&window,&MainWindow::operationFinished);QSignalSpy opened(&window,&MainWindow::workbookReady);
+    window.submit(operation);
+    return QTest::qWaitFor([&]{return finished.count()==1 && opened.count()>=1;},10000) && finished[0][0].toBool();
+}
+
+QJsonObject findName(MainWindow &window,const QString &name) {
+    for(const auto &value:window.names())if(value.toObject()["name"].toString()==name)return value.toObject();
+    return {};
+}
+
+bool saveName(MainWindow &window,const QString &name,const QString &reference) {
+    const int before=int(window.names().size());
+    return apply(window,{{"action","name_save"},{"name",name},{"reference",reference}})
+        && QTest::qWaitFor([&]{return window.names().size()==before+1;},10000);
+}
+
+void selectRange(MainWindow &window,const QString &address) {
+    auto *box=window.findChild<QLineEdit *>("address");box->setFocus();box->selectAll();
+    QTest::keyClicks(box,address);QTest::keyClick(box,Qt::Key_Return);
+}
+
+QListWidget *namesList(QWidget *host){return host->findChild<QListWidget *>("namesList");}
+QString namesMessage(QWidget *host){return host->findChild<QLabel *>("namesMessage")->text();}
+QListWidgetItem *nameItem(QWidget *host,const QString &name) {
+    auto *list=namesList(host);
+    for(int row=0;row<list->count();++row)if(list->item(row)->data(Qt::UserRole+1).toString()==name)return list->item(row);
+    return nullptr;
+}
+void chooseName(QWidget *host,const QString &name){namesList(host)->setCurrentItem(nameItem(host,name));}
+
+QWidget *openNameManager(MainWindow &window) {
+    window.findChild<QAction *>("nameManagerAction")->trigger();
+    auto *dialog=window.findChild<QDialog *>("nameManagerDialog");
+    if(dialog)(void)QTest::qWaitFor([&]{return dialog->isVisible() && dialog->findChild<QPushButton *>("newNameButton")->isEnabled();},5000);
+    return dialog;
 }
 
 const QString kDraft=QStringLiteral("Draft · not saved to the workbook");
@@ -545,6 +587,161 @@ private slots:
         QCOMPARE(workspace->findChild<QLabel *>("workspaceApproval")->text(),QString("Not approved to run"));
         save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
         QCOMPARE(readCode(window)["modules"].toArray()[0].toObject()["source"].toString(),typed);
+    }
+
+    void addressBoxShowsAndJumpsToName() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("address.dhwb")));
+        QVERIFY(saveName(window,"Total","Sheet1!D6"));QVERIFY(saveName(window,"Quantities","Sheet1!B2:B4"));
+        auto *grid=window.findChild<QTableView *>("grid");auto *address=window.findChild<QLineEdit *>("address");
+        grid->setFocus();grid->setCurrentIndex(window.model()->index(5,3));
+        QTRY_COMPARE_WITH_TIMEOUT(address->text(),QString("Total"),5000);
+        grid->setCurrentIndex(window.model()->index(5,4));QCOMPARE(address->text(),QString("E6"));
+        selectRange(window,"quantities");
+        const auto ranges=grid->selectionModel()->selection();QCOMPARE(ranges.size(),1);
+        QCOMPARE(ranges[0].top(),1);QCOMPARE(ranges[0].bottom(),3);QCOMPARE(ranges[0].left(),1);QCOMPARE(ranges[0].right(),1);
+        QCOMPARE(grid->currentIndex(),window.model()->index(1,1));QCOMPARE(address->text(),QString("Quantities"));
+        // A typed address is always an address; a name on another sheet switches to it.
+        selectRange(window,"B2");QCOMPARE(address->text(),QString("B2"));
+        const auto first=window.model()->sheet();
+        QVERIFY(apply(window,{{"action","sheet_add"},{"name","Other"}}));QVERIFY(saveName(window,"Far","Other!C3"));
+        QCOMPARE(window.model()->sheet(),first);
+        selectRange(window,"FAR");
+        QVERIFY(window.model()->sheet()!=first);QCOMPARE(grid->currentIndex(),window.model()->index(2,2));QCOMPARE(address->text(),QString("Far"));
+        selectRange(window,"Nowhere");QVERIFY(issues(window).contains("Nowhere"));
+        // Another workbook's view never starts with these names, even before its own read lands.
+        int shownWithNames=-1;QSignalSpy opened(&window,&MainWindow::workbookReady);
+        connect(&window,&MainWindow::workbookReady,this,[&]{if(shownWithNames<0)shownWithNames=int(window.names().size());});
+        window.openBook(temp.filePath("other.dhwb"),true);QTRY_VERIFY_WITH_TIMEOUT(opened.count()>=1,10000);
+        QCOMPARE(shownWithNames,0);
+        grid->setFocus();grid->setCurrentIndex(window.model()->index(5,3));QCOMPARE(address->text(),QString("D6"));
+    }
+
+    void newNameFromSelectionCreatesName() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("create.dhwb")));
+        QVERIFY(apply(window,{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}}}}}));
+        auto *dialog=openNameManager(window);QVERIFY(dialog);
+        auto *grid=window.findChild<QTableView *>("grid");
+        // Several areas cannot be one name.
+        grid->selectionModel()->select(QItemSelection(window.model()->index(0,0),window.model()->index(0,0)),QItemSelectionModel::ClearAndSelect);
+        grid->selectionModel()->select(QItemSelection(window.model()->index(4,4),window.model()->index(4,4)),QItemSelectionModel::Select);
+        dialog->findChild<QPushButton *>("newNameButton")->click();
+        QVERIFY(namesMessage(dialog).contains("one rectangular range"));
+        selectRange(window,"B2:B4");
+        QString prompt,label;int prompts=0;bool dontAsk=true;
+        ModalDriver driver([&](QWidget *modal){
+            if(auto *input=qobject_cast<QInputDialog *>(modal);input && input->objectName()=="newNameInput"){label=input->labelText();input->setTextValue(prompts?"Spare":"Quantities");input->accept();return true;}
+            auto *box=qobject_cast<QMessageBox *>(modal);if(!box || box->objectName()!="nameHistoryPrompt")return false;
+            ++prompts;prompt=box->text();box->checkBox()->setChecked(dontAsk);box->button(QMessageBox::Yes)->click();return true;});
+        QCOMPARE(dialog->findChild<QPushButton *>("newNameButton")->text(),QString("New name from selection…"));
+        dialog->findChild<QPushButton *>("newNameButton")->click();
+        QTRY_VERIFY_WITH_TIMEOUT(!findName(window,"Quantities").isEmpty(),10000);
+        QCOMPARE(prompts,1);QCOMPARE(prompt,QString("Changing a name clears Undo history for this workbook. Continue?"));QVERIFY(label.contains("B2:B4"));
+        const auto name=findName(window,"Quantities");QCOMPARE(name["reference"].toString(),QString("'Sheet1'!B2:B4"));
+        QTRY_VERIFY_WITH_TIMEOUT(nameItem(dialog,"Quantities"),5000);QVERIFY(nameItem(dialog,"Quantities")->text().contains("'Sheet1'!B2:B4"));
+        // The refresh after the change leaves the current cell selected; selecting the range again shows the name.
+        grid->selectionModel()->select(QItemSelection(window.model()->index(1,1),window.model()->index(3,1)),QItemSelectionModel::ClearAndSelect);
+        QCOMPARE(window.findChild<QLineEdit *>("address")->text(),QString("Quantities"));
+        // The workspace's Names panel creates from the same selection and shares
+        // the session's "Don't ask again" choice.
+        QVERIFY(apply(window,{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","8"}}}}}));
+        auto *workspace=openWorkspace(window);QVERIFY(workspace);
+        workspace->findChild<QAction *>("showNamesAction")->trigger();
+        auto *panel=workspace->findChild<QWidget *>("namesPanel");QVERIFY(panel->isVisible());
+        selectRange(window,"C1");
+        QTRY_VERIFY_WITH_TIMEOUT(panel->findChild<QPushButton *>("newNameButton")->isEnabled(),5000);
+        panel->findChild<QPushButton *>("newNameButton")->click();
+        QTRY_VERIFY_WITH_TIMEOUT(!findName(window,"Spare").isEmpty(),10000);QCOMPARE(prompts,1);
+        QCOMPARE(findName(window,"Spare")["reference"].toString(),QString("'Sheet1'!C1"));
+        QTRY_VERIFY_WITH_TIMEOUT(nameItem(panel,"Spare"),5000);
+    }
+
+    void doubleClickInsertsQuotedNameAtCursor() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("insert.dhwb")));
+        QVERIFY(saveName(window,"Total","Sheet1!D6"));
+        auto *workspace=openWorkspace(window);QVERIFY(workspace);
+        workspace->findChild<QAction *>("showNamesAction")->trigger();
+        auto *side=workspace->findChild<QStackedWidget *>("sidePanel");QCOMPARE(side->currentWidget()->objectName(),QString("namesPage"));
+        QTRY_VERIFY_WITH_TIMEOUT(nameItem(workspace,"Total"),5000);
+        auto *list=namesList(workspace);auto doubleClick=[&]{const auto rect=list->visualItemRect(nameItem(workspace,"Total"));QTest::mouseClick(list->viewport(),Qt::LeftButton,{},rect.center());QTest::mouseDClick(list->viewport(),Qt::LeftButton,{},rect.center());};
+        // Without an editable module, the insert is refused and nothing becomes a draft.
+        doubleClick();QVERIFY(workspace->findChild<QLabel *>("workspaceMessage")->text().contains("editable"));QVERIFY(!workspace->hasDrafts());
+        QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("total = ctx.value()\n");
+        auto cursor=editor(workspace)->textCursor();cursor.setPosition(QString("total = ctx.value(").size());editor(workspace)->setTextCursor(cursor);
+        doubleClick();
+        QCOMPARE(editor(workspace)->toPlainText(),QString("total = ctx.value(\"Total\")\n"));QCOMPARE(status(workspace),kDraft);
+        workspace->findChild<QAction *>("showMacroAction")->trigger();QCOMPARE(side->currentWidget()->objectName(),QString("macroPage"));
+    }
+
+    void invalidNameShowsServiceMessage() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("invalidname.dhwb")));
+        auto *dialog=openNameManager(window);QVERIFY(dialog);
+        selectRange(window,"B2");
+        ModalDriver driver([](QWidget *modal){
+            auto *input=qobject_cast<QInputDialog *>(modal);if(!input || input->objectName()!="newNameInput")return false;
+            input->setTextValue("A1");input->accept();return true;});
+        dialog->findChild<QPushButton *>("newNameButton")->click();QCOMPARE(driver.handled,1);
+        QTRY_VERIFY_WITH_TIMEOUT(namesMessage(dialog).contains("NAME_INVALID"),10000);
+        QVERIFY(namesMessage(dialog).contains("not cell addresses"));QVERIFY(issues(window).contains("not cell addresses"));
+        QVERIFY(window.names().isEmpty());QCOMPARE(namesList(dialog)->count(),0);
+    }
+
+    void brokenNameIsMarkedAndDoesNotJump() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("broken.dhwb")));
+        QVERIFY(saveName(window,"Spare","Sheet1!A2"));QVERIFY(saveName(window,"Kept","Sheet1!B5"));
+        QVERIFY(apply(window,{{"action","rows_delete"},{"start",2},{"count",1}}));
+        QVERIFY(issues(window).contains("Names that no longer refer to any cells: Spare"));
+        QTRY_VERIFY_WITH_TIMEOUT(findName(window,"Spare")["broken"].toBool(),10000);
+        QCOMPARE(findName(window,"Kept")["reference"].toString(),QString("'Sheet1'!B4"));
+        auto *dialog=openNameManager(window);QVERIFY(dialog);
+        QTRY_VERIFY_WITH_TIMEOUT(nameItem(dialog,"Spare"),5000);QVERIFY(nameItem(dialog,"Spare")->text().contains("Broken"));
+        auto *workspace=openWorkspace(window);QVERIFY(workspace);
+        QTRY_VERIFY_WITH_TIMEOUT(nameItem(workspace,"Spare"),5000);QVERIFY(nameItem(workspace,"Spare")->text().contains("Broken"));
+        auto *grid=window.findChild<QTableView *>("grid");
+        selectRange(window,"E7");const auto before=grid->selectionModel()->selection();
+        selectRange(window,"spare");
+        QVERIFY(issues(window).contains("Name Spare no longer refers to any cells"));
+        QCOMPARE(grid->selectionModel()->selection(),before);QCOMPARE(grid->currentIndex(),window.model()->index(6,4));
+        // A broken name can be retargeted to the selection, then deleted.
+        selectRange(window,"C3");chooseName(dialog,"Spare");
+        dialog->findChild<QPushButton *>("retargetNameButton")->click();
+        QTRY_COMPARE_WITH_TIMEOUT(findName(window,"Spare")["reference"].toString(),QString("'Sheet1'!C3"),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(nameItem(dialog,"Spare") && !nameItem(dialog,"Spare")->text().contains("Broken"),5000);
+        chooseName(dialog,"Spare");
+        ModalDriver driver([](QWidget *modal){auto *box=qobject_cast<QMessageBox *>(modal);if(!box || box->objectName()!="deleteNameConfirm")return false;box->button(QMessageBox::Yes)->click();return true;});
+        dialog->findChild<QPushButton *>("deleteNameButton")->click();QCOMPARE(driver.handled,1);
+        QTRY_VERIFY_WITH_TIMEOUT(findName(window,"Spare").isEmpty(),10000);QCOMPARE(window.names().size(),1);
+    }
+
+    void completionOffersNames() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("complete.dhwb")));
+        QVERIFY(saveName(window,"Total","Sheet1!D6"));
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));
+        auto *code=qobject_cast<CodeEditor *>(editor(workspace));QVERIFY(code);
+        auto *completer=code->findChild<QCompleter *>("codeCompleter");QVERIFY(completer);
+        workspace->activateWindow();code->setFocus();
+        QTRY_VERIFY_WITH_TIMEOUT(code->completionNames().contains("Total"),5000);
+        QTest::keyClicks(code,"x = \"T");QVERIFY(!completer->popup()->isVisible());
+        QTest::keyClicks(code,"o");QTRY_VERIFY_WITH_TIMEOUT(completer->popup()->isVisible(),2000);QCOMPARE(completer->currentCompletion(),QString("Total"));
+        QTest::keyClick(code,Qt::Key_Tab);QVERIFY(!completer->popup()->isVisible());
+        QCOMPARE(code->toPlainText(),QString("x = \"Total"));
+        // After ctx. it offers the context methods; Escape dismisses without changing text.
+        QTest::keyClicks(code,"\"");QTest::keyClick(code,Qt::Key_Return);QTest::keyClicks(code,"ctx.ta");QTRY_VERIFY_WITH_TIMEOUT(completer->popup()->isVisible(),2000);
+        QStringList offered;for(int row=0;completer->setCurrentRow(row);++row)offered.append(completer->currentCompletion());
+        QCOMPARE(offered,(QStringList{"table_delete","table_get","table_insert","table_schema","table_set"}));
+        QTest::keyClick(code,Qt::Key_Escape);QVERIFY(!completer->popup()->isVisible());
+        QCOMPARE(code->toPlainText(),QString("x = \"Total\"\nctx.ta"));
+        QTest::keyClicks(code,"ble_sc");QTRY_VERIFY_WITH_TIMEOUT(completer->popup()->isVisible(),2000);
+        QTest::keyClick(code,Qt::Key_Return);QCOMPARE(code->toPlainText(),QString("x = \"Total\"\nctx.table_schema"));
+        // With no popup, Tab still indents by four spaces.
+        QTest::keyClick(code,Qt::Key_Return);QTest::keyClick(code,Qt::Key_Tab);
+        QCOMPARE(code->toPlainText(),QString("x = \"Total\"\nctx.table_schema\n    "));
+        QCOMPARE(status(workspace),kDraft);
     }
 };
 
