@@ -44,8 +44,10 @@ orphan child-key updates/deletions are admitted. Required hooks still participat
 and all relationship orphans must be resolved before commit. Repair clears
 history; reopen normally afterward. Invalid scalar/schema corruption remains
 separate from orphan repair. Read-only repair inspection is supported.
-Query work follows in
-the [relational plan](relational-workbench-plan.md).
+Read-only queries use private native snapshots and bounded, ephemeral result
+spools. Saved definitions/defaults/dependencies/shape live in v4 metadata; opening
+them does not execute SQL. See [saved definitions and export](#saved-definitions-and-relational-export)
+and the [relational plan](relational-workbench-plan.md).
 
 The sections below describe the earlier formats and their retained behavior.
 

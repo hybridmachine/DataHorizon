@@ -1,0 +1,81 @@
+{
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "python": "3.14.6",
+  "sqlite": "3.53.4",
+  "rows": 300000,
+  "payload_bytes": 1024,
+  "native_bytes": 359841792,
+  "fixture_construction": "Independent SQLite, one transaction; deliberately bypasses managed hooks/ingestion limits",
+  "fixture_build_seconds": null,
+  "fixture_reused": true,
+  "logical_payload_bytes": 307200000,
+  "provenance": "Fresh service process; OS cache not purged and warmed by fixture construction. Subsequent reads are warm.",
+  "service_memory_target_bytes": 268435456,
+  "dataset_larger_than_service_memory_target": true,
+  "fresh_service_open_ms": 1439.4228339660913,
+  "unindexed_first_page_ms": [
+    100.65804119221866,
+    108.8755838572979,
+    100.94758309423923
+  ],
+  "managed_index_ms": 118.05016594007611,
+  "indexed_plan": [
+    "SEARCH Large USING COVERING INDEX LargeByGroupAndID (GroupKey<?)"
+  ],
+  "indexed_full_filter_paging": {
+    "records": 37504,
+    "pages": 147,
+    "seconds": 0.664877540897578,
+    "first_page_ms": 3.8500830996781588,
+    "median_page_ms": 4.315166035667062,
+    "max_page_ms": 5.16554107889533,
+    "max_encoded_page_bytes": 38753,
+    "all_ids_match_independent_sqlite": true
+  },
+  "aggregate_query": {
+    "columns": [
+      {
+        "id": "0",
+        "name": "GroupKey"
+      },
+      {
+        "id": "1",
+        "name": "Records"
+      },
+      {
+        "id": "2",
+        "name": "Total"
+      }
+    ],
+    "dependencies": [
+      {
+        "columns": [
+          "27ab1891-a6f4-4923-b05e-9cfc41a09ef2",
+          "32e2c62e-97f1-42ba-9417-0ed7ee0f640e"
+        ],
+        "table": "77a2f6fd-1151-497a-b4be-9b967bec53ec"
+      }
+    ],
+    "encoded_bytes": 2450,
+    "execution_seconds": 0.019380874931812286,
+    "report": [
+      "Read-only SQLite result; aliases do not imply declared types. Large integers use tagged decimal strings. No partial results are published."
+    ],
+    "row_count": 128,
+    "snapshot_bytes": 359841792,
+    "snapshot_seconds": 0.8987671250943094,
+    "spool_bytes": 8192,
+    "value_count": 384
+  },
+  "complete_query_paging": {
+    "records": 18752,
+    "spool_bytes": 344064,
+    "snapshot_bytes": 359841792
+  },
+  "query_cancel_ms": 178.35720907896757,
+  "sparse_sheet_value": 6.0,
+  "service_rss_sample_bytes": 42795008,
+  "service_process_peak_rss_bytes": 50757632,
+  "memory_scope": "Combined engine and query threads in one service process; no separate query worker process. Child peak is OS-reported after service exit.",
+  "unqualified": "True OS-cold runs, eight concurrent workbooks, worst-case SQLite temporary-sort disk and universal capacity are not claimed."
+}

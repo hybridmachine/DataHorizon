@@ -1,0 +1,30 @@
+{
+  "native_bytes": 359841792,
+  "provenance": "Already warmed disposable large fixture; sequential edits and one query worker in the shared service.",
+  "managed_record_edits": {
+    "without_query_ms": [
+      2.9000421054661274,
+      1.1603750754147768,
+      1.0827919468283653,
+      1.079666893929243,
+      1.1588339693844318
+    ],
+    "with_executing_query_ms": [
+      1.306875143200159,
+      1.2687498237937689,
+      1.4617079868912697,
+      1.258542062714696,
+      1.4213339891284704
+    ]
+  },
+  "actual_spool_limit": {
+    "status": "failed",
+    "error": {
+      "code": "QUERY_LIMIT",
+      "message": "database or disk is full",
+      "outcome": "rejected"
+    },
+    "page_error": "QUERY_NOT_READY",
+    "successful_partial_result": false
+  }
+}

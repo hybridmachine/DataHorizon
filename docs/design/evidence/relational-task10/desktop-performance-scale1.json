@@ -1,0 +1,48 @@
+{
+    "accessible_children": 516,
+    "device_pixel_ratio": 2,
+    "first_table_page_ms": 158.03475,
+    "fresh_process_open_ms": 1640.858542,
+    "gui_cancel_confirmed_ms": 108.061792,
+    "gui_peak_rss_bytes": 179273728,
+    "heartbeat": {
+        "max_ms": 23.575917,
+        "median_ms": 3.964208,
+        "samples": 46
+    },
+    "hidden_sheet_cache": {
+        "active_viewport_calculation": false,
+        "pending_tiles": 0,
+        "queued_calculation_tiles": 0,
+        "source_budget_bytes": 2097152,
+        "source_charge_bytes": 0,
+        "tile_budget_bytes": 14680064,
+        "tile_charge_bytes": 0,
+        "tiles": 0
+    },
+    "input_while_query_runs": {
+        "max_ms": 2.739708,
+        "median_ms": 1.746916,
+        "samples": 40
+    },
+    "native_bytes": 359841792,
+    "platform": "cocoa",
+    "provenance": "Fresh GUI/service process on an already warmed native fixture; OS caches were not purged. GUI peak excludes its service child.",
+    "query_cache": {
+        "budget_bytes": 16777216,
+        "estimated_bytes": 3192,
+        "loaded_records": 0,
+        "loaded_values": 0
+    },
+    "table_cache": {
+        "budget_bytes": 16777216,
+        "estimated_bytes": 333999,
+        "loaded_records": 128,
+        "loaded_values": 384
+    },
+    "warm_next_page": {
+        "max_ms": 47.68625,
+        "median_ms": 42.47275,
+        "samples": 30
+    }
+}

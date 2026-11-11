@@ -1,0 +1,12 @@
+{
+  "platform": "Darwin",
+  "relocated_managed_edit_calculation": true,
+  "temporal_types_and_ten_functions": true,
+  "m3_m5_installed_sdk_service": true,
+  "developer_overrides_removed": true,
+  "missing_service_fails_explicitly": true,
+  "python_bundled": true,
+  "developer_path_removed": true,
+  "runtime_dependency": "Bundled checksum-pinned CPython",
+  "clean_machine_qualified": false
+}

@@ -89,7 +89,8 @@ class QueryJobs:
 
     def _execute(self,entry):
         with self.lock:entry['phase']='Copying private snapshot'
-        snapshot,registered=self._snapshot(entry);deadline=time.monotonic()+self.seconds;spool=Path(entry['directory'].name)/'result.sqlite'
+        started=time.monotonic();snapshot,registered=self._snapshot(entry);snapshot_seconds=time.monotonic()-started;snapshot_bytes=snapshot.stat().st_size
+        execution_started=time.monotonic();deadline=execution_started+self.seconds;spool=Path(entry['directory'].name)/'result.sqlite'
         try:
             with closing(sqlite3.connect(snapshot,isolation_level=None)) as db,closing(sqlite3.connect(spool)) as output:
                 configure(db);dependencies,denied=authorize(db,registered)
@@ -118,7 +119,7 @@ class QueryJobs:
                         code=getattr(error,'sqlite_errorcode',0)&255
                         raise EngineError('QUERY_LIMIT' if code in (sqlite3.SQLITE_FULL,sqlite3.SQLITE_TOOBIG,sqlite3.SQLITE_NOMEM) else 'QUERY_FAILED',str(error)[:512],409) from error
                 disk=spool.stat().st_size;require(disk<=self.max_bytes,'QUERY_LIMIT','Query result file exceeds 64 MiB',409)
-                return dict(columns=columns,row_count=count,value_count=count*len(columns),spool_bytes=disk,encoded_bytes=size,
+                return dict(columns=columns,row_count=count,value_count=count*len(columns),spool_bytes=disk,encoded_bytes=size,snapshot_bytes=snapshot_bytes,snapshot_seconds=snapshot_seconds,execution_seconds=time.monotonic()-execution_started,
                     dependencies=[dict(table=key,columns=sorted(value)) for key,value in sorted(dependencies.items())],
                     report=['Read-only SQLite result; aliases do not imply declared types. Large integers use tagged decimal strings. No partial results are published.'])
         finally:

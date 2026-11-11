@@ -580,8 +580,8 @@ separate contracts.
 | 6 | Full-table typed sort/filter, authenticated keyset paging, native indexes and bounded GUI pages implemented; [PR 120](https://github.com/hybridmachine/DataHorizon/pull/120) | [527 Python tests and three Qt workflows pass](evidence/relational-task6.json); larger combined measurements in task 10 | Pending |
 | 7 | Native RESTRICT relationships, owned indexes, dependency blockers and restricted reviewed orphan repair implemented; [PR 121](https://github.com/hybridmachine/DataHorizon/pull/121) | [537 Python tests and three Qt workflows pass](evidence/relational-task7.json) | Pending |
 | 8 | Read-only SQL authorization, typed named bindings, private snapshot jobs, disk spools and Qt workbench implemented; [PR 122](https://github.com/hybridmachine/DataHorizon/pull/122) | [553 Python tests and four Qt workflows pass](evidence/relational-task8.json) | Pending |
-| 9 | Native saved definitions/defaults/dependencies, explicit Refresh and complete bounded table/query exports implemented | [Verification record](evidence/relational-task9.json) | Pending |
-| 10 | Planned | Pending | Walkthrough and fixture acceptance pending |
+| 9 | Native saved definitions/defaults/dependencies, explicit Refresh and complete bounded table/query exports implemented; [PR 123](https://github.com/hybridmachine/DataHorizon/pull/123) | [Verification record](evidence/relational-task9.json) | Pending |
+| 10 | Integrated native/installed qualification, reproducible fixtures, resource probes and [manual guide](relational-workbench-manual.md) implemented; [PR 124](https://github.com/hybridmachine/DataHorizon/pull/124) | [232 Qt checks, 571 Python tests on development and bundled runtimes, optional coverage, Cocoa scales 1/2, installed clients and independent consumers pass](evidence/relational-task10.json) | Physical GUI/VoiceOver walkthrough pending |
 
 For each task, record the tested commit/source fingerprint, relevant commands,
 pass/fail/skip counts, native/installed artifact identity, measured limits,

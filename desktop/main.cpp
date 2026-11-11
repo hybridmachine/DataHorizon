@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QTemporaryDir>
 #include <QTimer>
+#include "relationalsmoke.h"
 
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
@@ -17,9 +18,10 @@ int main(int argc, char **argv) {
     parser.addOption({"connect", "Attach to a localhost service; credential comes from DATAHORIZON_TOKEN", "url"});
     parser.addOption({"handler", "Explicitly activate a trusted Python handler for the owned service", "path"});
     parser.addOption({"smoke-test", "Create a temporary workbook, exercise managed calculation, and exit"});
+    parser.addOption({"relational-smoke-test", "Exercise temporary Customers/Orders, history, saved SQL and complete export through REST, and exit"});
     parser.addPositionalArgument("workbook", "Native workbook to open"); parser.process(app);
     StartupOptions options; options.url = parser.value("connect"); options.token = qEnvironmentVariable("DATAHORIZON_TOKEN"); options.handler = parser.value("handler");
-    const auto files = parser.positionalArguments(); const bool smoke=parser.isSet("smoke-test"); options.automaticWorkbook = files.isEmpty() && !smoke;
+    const auto files = parser.positionalArguments(); const bool relational=parser.isSet("relational-smoke-test");const bool smoke=parser.isSet("smoke-test") || relational; options.automaticWorkbook = files.isEmpty() && !smoke;
     if (!smoke && !files.isEmpty()) options.initialWorkbook=files.first();
     QTemporaryDir smokeDirectory;
     if(smoke) options.viewStatePath=smokeDirectory.filePath("views.ini");
@@ -29,7 +31,8 @@ int main(int argc, char **argv) {
     }
     bool smokeSubmitted=false;
     MainWindow window(options);
-    if (smoke) {
+    if(relational)relationalSmoke(window,app,smokeDirectory.filePath("relational-smoke.dhwb"));
+    else if (smoke) {
         QObject::connect(&window,&MainWindow::serviceReady,&window,[&]{window.openBook(smokeDirectory.filePath("smoke.dhwb"),true);},Qt::SingleShotConnection);
         QObject::connect(&window,&MainWindow::workbookReady,&window,[&]{
             if(smokeSubmitted) return;

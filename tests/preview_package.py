@@ -25,7 +25,8 @@ def inventory(prefix):
             entries.append({"path":name,"size":path.stat().st_size,"mode":stat.S_IMODE(path.stat().st_mode),"sha256":digest.hexdigest()})
     names={e['path'] for e in entries}
     if not any(n.endswith('/service/datahorizon/launch.py') for n in names): raise ValueError('Installed service launcher is missing')
-    if not any(n.endswith('/licenses/GUI-GPLv3.txt') for n in names): raise ValueError('GUI license text is missing')
+    for license_file in ('COPYING','LICENSES.md'):
+        if not any(n.endswith('/licenses/'+license_file) for n in names): raise ValueError('Component license file is missing: '+license_file)
     if not any(n in ('bin/DataHorizon','bin/DataHorizon.exe','DataHorizon.app/Contents/MacOS/DataHorizon') for n in names): raise ValueError('Application executable is missing')
     return entries
 
@@ -36,7 +37,7 @@ def package(prefix,output,toolchain):
     entries=inventory(prefix)
     manifest={'format':1,'kind':'local-development-preview','platform':platform.system(),
               'toolchain':json.loads(Path(toolchain).read_text()),'files':entries,'release_qualified':False,
-              'open_distribution_gates':['service/SDK licenses','dependency notices and redistribution review','runtime selection/bundling','signing and installers','clean-machine and platform/manual acceptance']}
+              'open_distribution_gates':['dependency redistribution review','signing and installers','clean-machine and platform/manual acceptance']}
     try:
         manifest['source_head']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=Path(__file__).resolve().parents[1],text=True).strip()
         manifest['source_dirty']=bool(subprocess.check_output(['git','status','--porcelain'],cwd=Path(__file__).resolve().parents[1],text=True).strip())

@@ -1,0 +1,30 @@
+{
+  "build/relational-handoff/Installed/DataHorizon.app/Contents/MacOS/DataHorizon": {
+    "bytes": 4883856,
+    "sha256": "325f6d98175b50b59c5d7189f6342da6afbac566a1af4e19acb80869281cd6cc"
+  },
+  "build/relational-handoff/Installed/DataHorizon.app/Contents/Resources/source.json": {
+    "bytes": 79,
+    "sha256": "6b23206b60f4f06126364c85d5e7b8aa55d0e51b63660af0ee6d750cff2744a9"
+  },
+  "build/relational-handoff/DataHorizon-relational-6718386-macos-arm64.tar.gz": {
+    "bytes": 51986327,
+    "sha256": "ac8e783e5f95b2f57417280be260664c0b2f9fe54e0b71c98787a38f99c87b24"
+  },
+  "build/relational-handoff/CustomersOrders.dhwb": {
+    "bytes": 139264,
+    "sha256": "2a645687599cb26af303d23cd12c16002bc6180898ce83b8188c555f29fc0f41"
+  },
+  "packaging/runtime-macos-arm64.json": {
+    "bytes": 854,
+    "sha256": "eb9a640e3ebe4e7655f542bf009462f85e2af8f3c4c424616a3bc84880e763a9"
+  },
+  "tests/fixtures/relational_rules.py": {
+    "bytes": 834,
+    "sha256": "f164f472cd21a84b6c17a77a253de52783d1aaa41c6a02490a9560c8d9007acf"
+  },
+  "tests/relational_fixture.py": {
+    "bytes": 8354,
+    "sha256": "69842f7c4cc27c42a2cc0001a6505a7d002bb1554a2963a677bc3ba5bfe05e51"
+  }
+}

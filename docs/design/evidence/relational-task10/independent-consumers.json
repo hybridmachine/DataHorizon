@@ -1,0 +1,9 @@
+{
+  "csv": "stdlib csv",
+  "xlsx": "openpyxl 3.1.5",
+  "ods": "odfpy",
+  "complete_rows": 2,
+  "columns": 4,
+  "baseline_total": 56,
+  "passed": true
+}

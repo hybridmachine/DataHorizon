@@ -1,0 +1,283 @@
+{
+  "task": 10,
+  "automated_status": "passed",
+  "application_source_commit": "671838683e3223fd85b3b3326a3b1d8a2ce4b73b",
+  "qualification_harness_source_commit": "c1217171e7a5e8b375cbe5d38844dc7d9b6a6052",
+  "qualification_source_fingerprint": "5d05d20e0c9558a2d51377f024f5a2c41613e9ecdc0c9c5e943e874597e94ca6",
+  "application_code_unchanged_since_frozen_commit": true,
+  "fingerprint_scope": "tests/qualify_preview.py candidate(): CMakeLists, COPYING, LICENSES, desktop/service/tests/cmake/tools/packaging; Git-normalized file hashes. Docs/evidence excluded.",
+  "host": {
+    "os": "macOS 26.6.2 (25G83)",
+    "architecture": "arm64",
+    "cpu": "Apple M1",
+    "memory_bytes": 8589934592,
+    "qt": "6.12.0",
+    "compiler": "AppleClang 17.0.0.17000603",
+    "development_python": "3.14.6",
+    "development_sqlite": "3.53.4",
+    "bundled_python": "3.13.18",
+    "bundled_sqlite": "3.53.1"
+  },
+  "full_ctest": {
+    "suites": 3,
+    "failed": 0,
+    "elapsed_seconds": 196.41,
+    "qt_checks": 232,
+    "python_tests_run": 571,
+    "python_optional_skips": 19,
+    "python_seconds": 50.254,
+    "raw": "relational-task10/ctest.txt"
+  },
+  "optional_coverage": [
+    {
+      "command": "PYTHONPATH=service build/review-validation-venv/bin/python -m unittest discover -s tests -p test_job_openapi.py -v",
+      "passed": 4,
+      "skipped": 0,
+      "seconds": 8.077
+    },
+    {
+      "command": "PYTHONPATH=service build/capture-binding-venv/bin/python -m unittest discover -s tests -p test_native_capture.py -v",
+      "passed": 15,
+      "skipped": 0,
+      "seconds": 0.404
+    }
+  ],
+  "bundled_suite": {
+    "command": "PYTHONPATH=<installed service> <installed runtime>/bin/python3 -B -m unittest discover -s tests -v",
+    "tests_run": 571,
+    "optional_skips": 19,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 57.623,
+    "service_imports": "installed resources",
+    "harness_note": "Some pre-existing subprocess tests explicitly choose the source service path; isolated relocated app/SDK/CLI checks below remove developer overrides entirely."
+  },
+  "targeted_after_harness_fixes": {
+    "packaging_tests_passed": 4,
+    "development_query_tests_passed": 14,
+    "application_changes": false
+  },
+  "managed_conformance": {
+    "expected_baseline": [
+      [
+        "C001",
+        "Ada",
+        2,
+        35
+      ],
+      [
+        "C002",
+        "Grace",
+        1,
+        21
+      ]
+    ],
+    "minimum_30": [
+      [
+        "C001",
+        "Ada",
+        2,
+        35
+      ]
+    ],
+    "quantity_4": [
+      60,
+      21
+    ],
+    "undo_restores_table_and_generated_cell": true,
+    "required_rule_rejection_atomic": true,
+    "parent_delete_restrict": true,
+    "independent_edit_no_historical_hook_replay": true,
+    "orphan_inspection_and_required_hook_repair": true,
+    "raw": "relational-task10/installed-sdk-cli.json"
+  },
+  "native": {
+    "scale_requests": [
+      1,
+      2
+    ],
+    "actual_retina_ratios": [
+      2,
+      4
+    ],
+    "relational_workflow": "passed both scales",
+    "legacy_spreadsheet_workflow": "passed both scales; scale 1 passed on retry after OS window activation failure",
+    "synthetic_input_only": true,
+    "screenshots_visually_inspected": [
+      "final-scale1-customer-totals.png",
+      "final-scale1-orders-table.png",
+      "final-scale1-required-rule-rollback.png",
+      "final-scale2-complete-export-review.png",
+      "final-scale2-narrow-query.png"
+    ],
+    "all_captures_local": "build/relational-handoff/native",
+    "narrow_logical_size": [
+      [
+        820,
+        801
+      ],
+      [
+        820,
+        725
+      ]
+    ],
+    "caveat": "Narrow parameter tables/SQL use scrolling; no claim of all content simultaneously visible. Capture-inclusive ratio-4 peak 348536832 bytes exceeds 256-MiB target; separate no-capture benchmarks remain within it."
+  },
+  "performance": {
+    "raw_service": "relational-task10/service-performance.json",
+    "raw_gui": [
+      "relational-task10/desktop-performance-scale1.json",
+      "relational-task10/desktop-performance-scale2.json"
+    ],
+    "raw_edits_and_actual_spool_limit": "relational-task10/resource-probe.json",
+    "native_bytes": 359841792,
+    "rows": 300000,
+    "logical_payload_bytes": 307200000,
+    "service_peak_rss_bytes": 50757632,
+    "gui_no_capture_peak_rss_bytes": [
+      179273728,
+      263553024
+    ],
+    "cache_estimate_max_bytes": 333999,
+    "query_snapshot_bytes": 359841792,
+    "indexed_paged_records_verified": 37504,
+    "indexed_pages": 147,
+    "indexed_rest_page_max_ms": 5.166,
+    "gui_warm_page_max_ms": [
+      47.687,
+      74.717
+    ],
+    "gui_heartbeat_max_ms": [
+      23.576,
+      44.729
+    ],
+    "gui_input_batch_max_ms": [
+      2.74,
+      3.193
+    ],
+    "gui_cancel_ms": [
+      108.062,
+      131.44
+    ],
+    "service_cancel_ms": 178.358,
+    "actual_64_mib_spool_exhaustion": "QUERY_LIMIT; QUERY_NOT_READY on page; no successful partial result",
+    "memory_scope": "GUI and service measured separately. Engine/query threads share the service process. GUI excludes service child; service benchmark has no required Python hook worker.",
+    "disk_scope": "One full native snapshot per retained job plus result spool/SQLite temporary files. The 64-MiB spool limit is not a total job disk bound.",
+    "unqualified": [
+      "true OS-cold cache",
+      "eight concurrent workbooks",
+      "worst-case temporary-sort disk",
+      "hook-worker peak on large fixture",
+      "universal capacity",
+      "physical compositor/input latency"
+    ]
+  },
+  "installed": {
+    "application": "build/relational-handoff/Installed/DataHorizon.app",
+    "archive": "build/relational-handoff/DataHorizon-relational-6718386-macos-arm64.tar.gz",
+    "inventory_files": 1942,
+    "inventory_verified": true,
+    "archive_manifest_source_head": "c1217171e7a5e8b375cbe5d38844dc7d9b6a6052",
+    "archive_manifest_source_dirty": true,
+    "runtime_archive_sha256": "e5af2fde6a937a0e0c795a0c595c4efb70578d57463a2657c819992b9b9acbac",
+    "runtime_manifest": "packaging/runtime-macos-arm64.json",
+    "relocated_legacy_smoke": {
+      "platform": "Darwin",
+      "relocated_managed_edit_calculation": true,
+      "temporal_types_and_ten_functions": true,
+      "m3_m5_installed_sdk_service": true,
+      "developer_overrides_removed": true,
+      "missing_service_fails_explicitly": true,
+      "python_bundled": true,
+      "developer_path_removed": true,
+      "runtime_dependency": "Bundled checksum-pinned CPython",
+      "clean_machine_qualified": false
+    },
+    "relocated_relational_gui": {
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "cwd": "/private/tmp",
+      "developer_overrides_removed": true,
+      "python_bundled": true
+    },
+    "signing": "ad-hoc development; not distribution notarization",
+    "clean_machine_qualified": false,
+    "relocated_inventory_matches_archive": true,
+    "strict_signature_verified_after_installed_smoke": true,
+    "signature_command": "codesign --verify --deep --strict build/relational-handoff/Installed/DataHorizon.app",
+    "archive_source_note": "Application source stamp remains 6718386. Manifest source_head identifies packaging/harness state; dirty files were the final documentation/evidence."
+  },
+  "independent_consumers": {
+    "csv": "stdlib csv",
+    "xlsx": "openpyxl 3.1.5",
+    "ods": "odfpy",
+    "complete_rows": 2,
+    "columns": 4,
+    "baseline_total": 56,
+    "passed": true
+  },
+  "artifacts": {
+    "build/relational-handoff/Installed/DataHorizon.app/Contents/MacOS/DataHorizon": {
+      "bytes": 4883856,
+      "sha256": "325f6d98175b50b59c5d7189f6342da6afbac566a1af4e19acb80869281cd6cc"
+    },
+    "build/relational-handoff/Installed/DataHorizon.app/Contents/Resources/source.json": {
+      "bytes": 79,
+      "sha256": "6b23206b60f4f06126364c85d5e7b8aa55d0e51b63660af0ee6d750cff2744a9"
+    },
+    "build/relational-handoff/DataHorizon-relational-6718386-macos-arm64.tar.gz": {
+      "bytes": 51986327,
+      "sha256": "ac8e783e5f95b2f57417280be260664c0b2f9fe54e0b71c98787a38f99c87b24"
+    },
+    "build/relational-handoff/CustomersOrders.dhwb": {
+      "bytes": 139264,
+      "sha256": "2a645687599cb26af303d23cd12c16002bc6180898ce83b8188c555f29fc0f41"
+    },
+    "packaging/runtime-macos-arm64.json": {
+      "bytes": 854,
+      "sha256": "eb9a640e3ebe4e7655f542bf009462f85e2af8f3c4c424616a3bc84880e763a9"
+    },
+    "tests/fixtures/relational_rules.py": {
+      "bytes": 834,
+      "sha256": "f164f472cd21a84b6c17a77a253de52783d1aaa41c6a02490a9560c8d9007acf"
+    },
+    "tests/relational_fixture.py": {
+      "bytes": 8354,
+      "sha256": "69842f7c4cc27c42a2cc0001a6505a7d002bb1554a2963a677bc3ba5bfe05e51"
+    }
+  },
+  "reproduce": [
+    "ctest --test-dir build --output-on-failure",
+    "QT_QPA_PLATFORM=cocoa QT_SCALE_FACTOR=1|2 build/relational_native_acceptance <fresh fixture copy> <new report.json> tests/fixtures/relational_rules.py",
+    "PYTHONPATH=service python3 tests/relational_benchmark.py <directory> --output <report.json> [--reuse]",
+    "QT_QPA_PLATFORM=cocoa QT_SCALE_FACTOR=1|2 build/relational_desktop_benchmark <LargeRelational.dhwb> <report.json>",
+    "PYTHONPATH=service python3 tests/relational_resource_probe.py <disposable LargeRelational.dhwb> --output <report.json>",
+    "python3 tests/package_smoke.py <installed prefix> --output <report.json>",
+    "python3 tests/preview_package.py <installed prefix> <new archive.tar.gz> --toolchain <build-toolchain.json>"
+  ],
+  "verification_fixes": [
+    "Route F2/Return and record keyboard actions through the table event filter",
+    "Give SQL Tab navigation, bounded accessibility and compact source labels; release hidden sheet toolbar/cache",
+    "Name the Issues widget so existing automation does not inspect the SQL editor",
+    "Align archive license inventory/test fixture with installed COPYING and LICENSES.md",
+    "Use a 70,000-character scalar probe instead of version-dependent excessive printf behavior",
+    "Correct benchmark cursor placement and provide installed service path for CLI child test processes",
+    "Remove bytecode caches generated by direct runtime probes from the final handoff; verify the original sealed signature after installed smoke and archive the exact relocated prefix"
+  ],
+  "task1_comparison": "The five contract probes remain in the final passing suite. Native identity, DDL/metadata/hook rollback, RESTRICT semantics, SELECT authorization and snapshot isolation are now implemented and exercised across managed clients; budgets are unchanged.",
+  "manual_guide": "docs/design/relational-workbench-manual.md",
+  "manual_gui_acceptance": "pending owner execution",
+  "release_qualified": false,
+  "open_gates": [
+    "physical/native OS dialogs and clipboard",
+    "VoiceOver spoken output and navigation",
+    "Windows/Linux",
+    "clean-machine installation",
+    "distribution signing/notarization",
+    "dependency redistribution review",
+    "remaining M1/M7 and full M8 contracts"
+  ],
+  "pull_request": "https://github.com/hybridmachine/DataHorizon/pull/124",
+  "hosted_ci": "Not yet reported when the PR was opened; local qualification is recorded separately."
+}

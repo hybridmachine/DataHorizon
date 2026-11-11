@@ -1,0 +1,595 @@
+{
+  "developer_overrides_removed": true,
+  "cwd": "/private/tmp",
+  "steps": [
+    {
+      "action": "create",
+      "result": {
+        "tables": [
+          {
+            "columns": [
+              {
+                "id": "ec405e21-085a-4585-b4e8-34b1d26d0112",
+                "name": "OrderID",
+                "required": true,
+                "type": "text",
+                "unique": true
+              },
+              {
+                "id": "c5b7d67e-bc59-4432-815f-10875d61b4f1",
+                "name": "CustomerID",
+                "required": true,
+                "type": "text",
+                "unique": false
+              },
+              {
+                "id": "1cb88faa-62f0-4fae-aaed-053ee1f24fe3",
+                "name": "Quantity",
+                "required": true,
+                "type": "integer",
+                "unique": false
+              },
+              {
+                "id": "fd97751a-3508-45d6-9e75-32cead39dc81",
+                "name": "UnitPrice",
+                "required": true,
+                "type": "number",
+                "unique": false
+              }
+            ],
+            "id": "4e1f3917-513f-455c-9d1c-f8deb25c8e71",
+            "name": "Orders"
+          },
+          {
+            "columns": [
+              {
+                "id": "c0facbe7-2ab7-4408-a256-5b0d96053356",
+                "name": "CustomerID",
+                "required": true,
+                "type": "text",
+                "unique": true
+              },
+              {
+                "id": "229cc336-e7e6-4560-a94a-4d599b74ea4b",
+                "name": "Name",
+                "required": false,
+                "type": "text",
+                "unique": false
+              }
+            ],
+            "id": "fc54fbec-e6d4-4809-ab10-732e841572ec",
+            "name": "Customers"
+          }
+        ],
+        "baseline": [
+          [
+            "C001",
+            "Ada",
+            2,
+            35.0
+          ],
+          [
+            "C002",
+            "Grace",
+            1,
+            21.0
+          ]
+        ],
+        "minimum_30": [
+          [
+            "C001",
+            "Ada",
+            2,
+            35.0
+          ]
+        ],
+        "format_version": 4,
+        "sdk_module": "/Users/btabone/source/DataHorizon/build/relational-handoff/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/__init__.py",
+        "workbook": "/Users/btabone/source/DataHorizon/build/relational-handoff/InstalledChecks.dhwb",
+        "workbook_sha256": "2196e1145ad29f3fa799ee200013bbbeeec728afd3de2aa791152cc33384cbbd"
+      }
+    },
+    {
+      "action": "exercise",
+      "result": {
+        "baseline": [
+          [
+            "C001",
+            "Ada",
+            2,
+            35.0
+          ],
+          [
+            "C002",
+            "Grace",
+            1,
+            21.0
+          ]
+        ],
+        "minimum_30": [
+          [
+            "C001",
+            "Ada",
+            2,
+            35.0
+          ]
+        ],
+        "changed_quantity": [
+          [
+            "C001",
+            "Ada",
+            2,
+            60.0
+          ],
+          [
+            "C002",
+            "Grace",
+            1,
+            21.0
+          ]
+        ],
+        "undo_restored": true,
+        "required_rule_checked": true,
+        "parent_restrict_checked": true,
+        "exports": [
+          {
+            "path": "/Users/btabone/source/DataHorizon/build/relational-handoff/installed-exports/customer-totals.csv",
+            "bytes": 66,
+            "state": "154e4ade-1401-4b5f-9f46-5b3b7df77d03:13",
+            "outcome": "committed",
+            "sha256": "93718c16614bb40aa981802942aaa6c193ca79b650c3b9b7c1c973775e6ce1ba"
+          },
+          {
+            "path": "/Users/btabone/source/DataHorizon/build/relational-handoff/installed-exports/customer-totals.xlsx",
+            "bytes": 2136,
+            "state": "154e4ade-1401-4b5f-9f46-5b3b7df77d03:13",
+            "outcome": "committed",
+            "sha256": "7caa12e37d7e35c310ea66d64f936724647da3dbd205b7115459aafc273392d5"
+          },
+          {
+            "path": "/Users/btabone/source/DataHorizon/build/relational-handoff/installed-exports/customer-totals.ods",
+            "bytes": 1301,
+            "state": "154e4ade-1401-4b5f-9f46-5b3b7df77d03:13",
+            "outcome": "committed",
+            "sha256": "1f4d4dc80337acc8b6825558929f4ad4387e20ca29c8901997407ebc11552fa3"
+          }
+        ],
+        "final_state": "154e4ade-1401-4b5f-9f46-5b3b7df77d03:13",
+        "sdk_module": "/Users/btabone/source/DataHorizon/build/relational-handoff/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/__init__.py",
+        "workbook": "/Users/btabone/source/DataHorizon/build/relational-handoff/InstalledChecks.dhwb",
+        "workbook_sha256": "462eb715c5e1072900722c063feb51730ba6b2822f7ab20fdc46ba16c2887865"
+      }
+    },
+    {
+      "action": "direct-edit",
+      "result": {
+        "mode": "independent SQLite",
+        "handlers": false,
+        "orphan": false,
+        "automation_marker_unchanged": true,
+        "sdk_module": "/Users/btabone/source/DataHorizon/build/relational-handoff/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/__init__.py",
+        "workbook": "/Users/btabone/source/DataHorizon/build/relational-handoff/InstalledChecks.dhwb",
+        "workbook_sha256": "2e1a04021ce733dafcf3b2072062cdbae7d0e4b8cd4cbf15402425eff4aaa5d2"
+      }
+    },
+    {
+      "action": "verify",
+      "result": {
+        "totals": [
+          [
+            "C001",
+            "Ada",
+            2,
+            35.0
+          ],
+          [
+            "C002",
+            "Grace",
+            1,
+            28.0
+          ]
+        ],
+        "catalog": {
+          "indexes": [
+            {
+              "columns": [
+                {
+                  "column": "1cb88faa-62f0-4fae-aaed-053ee1f24fe3",
+                  "direction": "asc"
+                }
+              ],
+              "id": "499b1f82-85ab-492b-b8f3-3d5816052d66",
+              "name": "OrdersByQuantity",
+              "owner": "user",
+              "table": "4e1f3917-513f-455c-9d1c-f8deb25c8e71",
+              "unique": false
+            },
+            {
+              "columns": [
+                {
+                  "column": "c5b7d67e-bc59-4432-815f-10875d61b4f1",
+                  "direction": "asc"
+                }
+              ],
+              "id": "5e7ab720-d971-41c6-a316-7354d7c3d260",
+              "name": "Relabeb119a59c6434fad0cbb0f78afe0fa",
+              "owner": "abeb119a-59c6-434f-ad0c-bb0f78afe0fa",
+              "table": "4e1f3917-513f-455c-9d1c-f8deb25c8e71",
+              "unique": false
+            }
+          ],
+          "queries": [
+            {
+              "columns": 4,
+              "id": "201043e6-878f-43a2-9127-3c4099922fa4",
+              "name": "Customer totals",
+              "parameter_count": 1
+            }
+          ],
+          "relationships": [
+            {
+              "child_column": "c5b7d67e-bc59-4432-815f-10875d61b4f1",
+              "child_table": "4e1f3917-513f-455c-9d1c-f8deb25c8e71",
+              "id": "abeb119a-59c6-434f-ad0c-bb0f78afe0fa",
+              "name": "CustomerOrders",
+              "on_delete": "restrict",
+              "on_update": "restrict",
+              "parent_column": "c0facbe7-2ab7-4408-a256-5b0d96053356",
+              "parent_table": "fc54fbec-e6d4-4809-ab10-732e841572ec"
+            }
+          ],
+          "state": "43d2f331-5c91-467b-a51b-73379b516e72:13",
+          "tables": [
+            {
+              "columns": [
+                {
+                  "id": "ec405e21-085a-4585-b4e8-34b1d26d0112",
+                  "name": "OrderID",
+                  "required": true,
+                  "type": "text",
+                  "unique": true
+                },
+                {
+                  "id": "c5b7d67e-bc59-4432-815f-10875d61b4f1",
+                  "name": "CustomerID",
+                  "required": true,
+                  "type": "text",
+                  "unique": false
+                },
+                {
+                  "id": "1cb88faa-62f0-4fae-aaed-053ee1f24fe3",
+                  "name": "Quantity",
+                  "required": true,
+                  "type": "integer",
+                  "unique": false
+                },
+                {
+                  "id": "fd97751a-3508-45d6-9e75-32cead39dc81",
+                  "name": "UnitPrice",
+                  "required": true,
+                  "type": "number",
+                  "unique": false
+                }
+              ],
+              "id": "4e1f3917-513f-455c-9d1c-f8deb25c8e71",
+              "name": "Orders"
+            },
+            {
+              "columns": [
+                {
+                  "id": "c0facbe7-2ab7-4408-a256-5b0d96053356",
+                  "name": "CustomerID",
+                  "required": true,
+                  "type": "text",
+                  "unique": true
+                },
+                {
+                  "id": "229cc336-e7e6-4560-a94a-4d599b74ea4b",
+                  "name": "Name",
+                  "required": false,
+                  "type": "text",
+                  "unique": false
+                }
+              ],
+              "id": "fc54fbec-e6d4-4809-ab10-732e841572ec",
+              "name": "Customers"
+            }
+          ]
+        },
+        "sdk_module": "/Users/btabone/source/DataHorizon/build/relational-handoff/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/__init__.py",
+        "workbook": "/Users/btabone/source/DataHorizon/build/relational-handoff/InstalledChecks.dhwb",
+        "workbook_sha256": "2e1a04021ce733dafcf3b2072062cdbae7d0e4b8cd4cbf15402425eff4aaa5d2"
+      }
+    },
+    {
+      "action": "orphan",
+      "result": {
+        "mode": "independent SQLite",
+        "handlers": false,
+        "orphan": true,
+        "automation_marker_unchanged": true,
+        "sdk_module": "/Users/btabone/source/DataHorizon/build/relational-handoff/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/__init__.py",
+        "workbook": "/Users/btabone/source/DataHorizon/build/relational-handoff/InstalledChecks.dhwb",
+        "workbook_sha256": "3b90b5fe9b8e4279d027f561d00b7673fdddb2dc4e0a2b436c766fa1ee62f167"
+      }
+    },
+    {
+      "action": "repair",
+      "result": {
+        "repaired": true,
+        "remaining": [],
+        "sdk_module": "/Users/btabone/source/DataHorizon/build/relational-handoff/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/__init__.py",
+        "workbook": "/Users/btabone/source/DataHorizon/build/relational-handoff/InstalledChecks.dhwb",
+        "workbook_sha256": "c0df36f4a847bfc1de22be5410be2a5f2553eb84a65b223051709ef1611b5738"
+      }
+    },
+    {
+      "action": "verify",
+      "result": {
+        "totals": [
+          [
+            "C001",
+            "Ada",
+            2,
+            35.0
+          ],
+          [
+            "C002",
+            "Grace",
+            1,
+            28.0
+          ]
+        ],
+        "catalog": {
+          "indexes": [
+            {
+              "columns": [
+                {
+                  "column": "1cb88faa-62f0-4fae-aaed-053ee1f24fe3",
+                  "direction": "asc"
+                }
+              ],
+              "id": "499b1f82-85ab-492b-b8f3-3d5816052d66",
+              "name": "OrdersByQuantity",
+              "owner": "user",
+              "table": "4e1f3917-513f-455c-9d1c-f8deb25c8e71",
+              "unique": false
+            },
+            {
+              "columns": [
+                {
+                  "column": "c5b7d67e-bc59-4432-815f-10875d61b4f1",
+                  "direction": "asc"
+                }
+              ],
+              "id": "5e7ab720-d971-41c6-a316-7354d7c3d260",
+              "name": "Relabeb119a59c6434fad0cbb0f78afe0fa",
+              "owner": "abeb119a-59c6-434f-ad0c-bb0f78afe0fa",
+              "table": "4e1f3917-513f-455c-9d1c-f8deb25c8e71",
+              "unique": false
+            }
+          ],
+          "queries": [
+            {
+              "columns": 4,
+              "id": "201043e6-878f-43a2-9127-3c4099922fa4",
+              "name": "Customer totals",
+              "parameter_count": 1
+            }
+          ],
+          "relationships": [
+            {
+              "child_column": "c5b7d67e-bc59-4432-815f-10875d61b4f1",
+              "child_table": "4e1f3917-513f-455c-9d1c-f8deb25c8e71",
+              "id": "abeb119a-59c6-434f-ad0c-bb0f78afe0fa",
+              "name": "CustomerOrders",
+              "on_delete": "restrict",
+              "on_update": "restrict",
+              "parent_column": "c0facbe7-2ab7-4408-a256-5b0d96053356",
+              "parent_table": "fc54fbec-e6d4-4809-ab10-732e841572ec"
+            }
+          ],
+          "state": "aad57a62-a152-423c-a77c-6c1a9972f3cf:14",
+          "tables": [
+            {
+              "columns": [
+                {
+                  "id": "ec405e21-085a-4585-b4e8-34b1d26d0112",
+                  "name": "OrderID",
+                  "required": true,
+                  "type": "text",
+                  "unique": true
+                },
+                {
+                  "id": "c5b7d67e-bc59-4432-815f-10875d61b4f1",
+                  "name": "CustomerID",
+                  "required": true,
+                  "type": "text",
+                  "unique": false
+                },
+                {
+                  "id": "1cb88faa-62f0-4fae-aaed-053ee1f24fe3",
+                  "name": "Quantity",
+                  "required": true,
+                  "type": "integer",
+                  "unique": false
+                },
+                {
+                  "id": "fd97751a-3508-45d6-9e75-32cead39dc81",
+                  "name": "UnitPrice",
+                  "required": true,
+                  "type": "number",
+                  "unique": false
+                }
+              ],
+              "id": "4e1f3917-513f-455c-9d1c-f8deb25c8e71",
+              "name": "Orders"
+            },
+            {
+              "columns": [
+                {
+                  "id": "c0facbe7-2ab7-4408-a256-5b0d96053356",
+                  "name": "CustomerID",
+                  "required": true,
+                  "type": "text",
+                  "unique": true
+                },
+                {
+                  "id": "229cc336-e7e6-4560-a94a-4d599b74ea4b",
+                  "name": "Name",
+                  "required": false,
+                  "type": "text",
+                  "unique": false
+                }
+              ],
+              "id": "fc54fbec-e6d4-4809-ab10-732e841572ec",
+              "name": "Customers"
+            }
+          ]
+        },
+        "sdk_module": "/Users/btabone/source/DataHorizon/build/relational-handoff/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/__init__.py",
+        "workbook": "/Users/btabone/source/DataHorizon/build/relational-handoff/InstalledChecks.dhwb",
+        "workbook_sha256": "c0df36f4a847bfc1de22be5410be2a5f2553eb84a65b223051709ef1611b5738"
+      }
+    },
+    {
+      "cli": [
+        "/Users/btabone/source/DataHorizon/build/relational-handoff/InstalledChecks.dhwb",
+        "view",
+        "read",
+        "Customer totals"
+      ],
+      "result": {
+        "definition_digest": "5c6e273843c34106e5c768dfbbbd0c51c52f66193c7753606a110ef35f1f98cf",
+        "query": {
+          "defaults": {
+            "minimum_total": 0.0
+          },
+          "dependencies": [
+            {
+              "columns": [
+                "1cb88faa-62f0-4fae-aaed-053ee1f24fe3",
+                "c5b7d67e-bc59-4432-815f-10875d61b4f1",
+                "ec405e21-085a-4585-b4e8-34b1d26d0112",
+                "fd97751a-3508-45d6-9e75-32cead39dc81"
+              ],
+              "table": "4e1f3917-513f-455c-9d1c-f8deb25c8e71"
+            },
+            {
+              "columns": [
+                "229cc336-e7e6-4560-a94a-4d599b74ea4b",
+                "c0facbe7-2ab7-4408-a256-5b0d96053356"
+              ],
+              "table": "fc54fbec-e6d4-4809-ab10-732e841572ec"
+            }
+          ],
+          "id": "201043e6-878f-43a2-9127-3c4099922fa4",
+          "name": "Customer totals",
+          "parameters": [
+            {
+              "name": "minimum_total",
+              "nullable": false,
+              "type": "number"
+            }
+          ],
+          "shape": [
+            {
+              "id": "0",
+              "name": "CustomerID"
+            },
+            {
+              "id": "1",
+              "name": "Name"
+            },
+            {
+              "id": "2",
+              "name": "OrderCount"
+            },
+            {
+              "id": "3",
+              "name": "Total"
+            }
+          ],
+          "sql": "SELECT c.CustomerID, c.Name,\n       COUNT(o.OrderID) AS OrderCount,\n       COALESCE(SUM(o.Quantity * o.UnitPrice), 0) AS Total\nFROM Customers AS c\nLEFT JOIN Orders AS o ON o.CustomerID = c.CustomerID\nGROUP BY c.CustomerID, c.Name\nHAVING COALESCE(SUM(o.Quantity * o.UnitPrice), 0) >= :minimum_total\nORDER BY c.CustomerID;"
+        },
+        "state": "69485ac6-4ce8-4185-9a57-9d5f60dce75e:14"
+      }
+    },
+    {
+      "cli": [
+        "/Users/btabone/source/DataHorizon/build/relational-handoff/InstalledChecks.dhwb",
+        "query",
+        "run",
+        "--saved",
+        "Customer totals",
+        "--export",
+        "csv",
+        "--output",
+        "/Users/btabone/source/DataHorizon/build/relational-handoff/installed-cli-totals.csv"
+      ],
+      "result": {
+        "generation": 1,
+        "job_id": "5575cf6b-4a7d-4d3a-bcff-837aca1b740c",
+        "phase": "Complete frozen result",
+        "result": {
+          "columns": [
+            {
+              "id": "0",
+              "name": "CustomerID"
+            },
+            {
+              "id": "1",
+              "name": "Name"
+            },
+            {
+              "id": "2",
+              "name": "OrderCount"
+            },
+            {
+              "id": "3",
+              "name": "Total"
+            }
+          ],
+          "dependencies": [
+            {
+              "columns": [
+                "1cb88faa-62f0-4fae-aaed-053ee1f24fe3",
+                "c5b7d67e-bc59-4432-815f-10875d61b4f1",
+                "ec405e21-085a-4585-b4e8-34b1d26d0112",
+                "fd97751a-3508-45d6-9e75-32cead39dc81"
+              ],
+              "table": "4e1f3917-513f-455c-9d1c-f8deb25c8e71"
+            },
+            {
+              "columns": [
+                "229cc336-e7e6-4560-a94a-4d599b74ea4b",
+                "c0facbe7-2ab7-4408-a256-5b0d96053356"
+              ],
+              "table": "fc54fbec-e6d4-4809-ab10-732e841572ec"
+            }
+          ],
+          "encoded_bytes": 44,
+          "execution_seconds": 0.0011289590038359165,
+          "report": [
+            "Read-only SQLite result; aliases do not imply declared types. Large integers use tagged decimal strings. No partial results are published."
+          ],
+          "row_count": 2,
+          "snapshot_bytes": 139264,
+          "snapshot_seconds": 0.001311416970565915,
+          "spool_bytes": 8192,
+          "value_count": 8
+        },
+        "rows_processed": 2,
+        "state": "980c83c9-e0c0-474a-8b04-7aeba5dbae36:14",
+        "status": "completed",
+        "export": {
+          "path": "/Users/btabone/source/DataHorizon/build/relational-handoff/installed-cli-totals.csv",
+          "bytes": 66,
+          "state": "980c83c9-e0c0-474a-8b04-7aeba5dbae36:14",
+          "outcome": "committed"
+        }
+      }
+    }
+  ],
+  "cli_csv_sha256": "10a4d64631c5c31be0c9209de1392466bf62987e740b4c25c89e162d73b80fa0"
+}
