@@ -85,6 +85,88 @@ def emit_result(output, result, command, cleanup=None):
         except OSError: raise SystemExit(1)
 
 
+SEVERITY_ORDER = ("unevaluable", "omitted", "approximated", "converted")
+
+
+def plural(count, word):
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def report_text(review):
+    """The conversion report grouped for reading: totals by severity, then one line per entry in severity order."""
+    entries = review.get("report_entries") or []
+    totals = review.get("totals") or {}
+    report = review.get("report") or []
+    lines = ["Conversion report: " + ", ".join(f"{severity} {totals.get(severity, 0)}" for severity in SEVERITY_ORDER)]
+    # The report's lines are its fixed scope statements followed by one line per entry.
+    lines += ["  " + line for line in report[:len(report) - len(entries)]]
+    rank = {severity: index for index, severity in enumerate(SEVERITY_ORDER)}
+    for entry in sorted(entries, key=lambda item: rank.get(item["severity"], len(rank))):
+        first = (entry.get("samples") or [None])[0]
+        where = "" if first is None else "; first at " + (f"{first['sheet']}!{first['cell']}" if first.get("sheet") else first.get("cell", "workbook"))
+        lines.append(f"  {entry['severity']:<12} {entry['count']:>7}  {entry['category']}: {entry['detail']}{where}")
+    if "sheets" in review:
+        lines.append("Sheets:")
+        lines += [f"  {sheet['name']}: {plural(sheet['stored_cells'], 'cell')}" for sheet in review["sheets"]]
+        lines.append(f"Total: {plural(review['stored_cells'], 'cell')} in {plural(len(review['sheets']), 'sheet')}")
+    return "\n".join(lines)
+
+
+def write_report(path, review, keys):
+    with open(path, "w", encoding="utf-8") as stream:
+        json.dump({key: review[key] for key in keys if key in review}, stream, allow_nan=False, indent=2)
+        stream.write("\n")
+
+
+def show_progress(label):
+    """Progress lines on an interactive stderr only, so redirected error output stays structured."""
+    if not sys.stderr.isatty(): return None
+    seen = []
+    def report(completed, phase):
+        if phase and phase not in seen:
+            seen.append(phase)
+            print(f"{label}: {phase}", file=sys.stderr, flush=True)
+    return report
+
+
+def confirm(question):
+    """True on y/yes, False on anything else; None when stdin has nothing to answer with (non-interactive)."""
+    print(question + " [y/N] ", end="", flush=True)
+    try:
+        answer = sys.stdin.readline() if sys.stdin is not None else ""
+    except (OSError, ValueError):
+        answer = ""
+    if not answer:
+        print(flush=True)
+        return None
+    if not sys.stdin.isatty(): print(answer.strip(), flush=True)  # Echo a piped answer so the transcript reads as asked.
+    return answer.strip().lower() in ("y", "yes")
+
+
+def import_spreadsheet(client, book, args):
+    """Prepare, show the report, confirm and apply. The prepared job is cancelled and released unless the import commits."""
+    summary = client.prepare_spreadsheet_file(args.source, mode=args.mode, local=args.local, timezone_policy=args.timezone_policy,
+                                              progress=show_progress("Preparing"))
+    job, receipt = summary["stage_id"], None
+    try:
+        print(report_text(summary), flush=True)
+        if args.report_json:
+            write_report(args.report_json, summary, ("format", "mode", "stored_cells", "sheets", "totals", "report", "report_entries"))
+        if not args.yes:
+            answer = confirm(f"Import {plural(summary['stored_cells'], 'cell')} into {plural(len(summary['sheets']), 'sheet')}?")
+            if answer is not True:
+                body = ({"code": "CONFIRMATION_REQUIRED", "message": "No confirmation on standard input; pass --yes to import without asking. Nothing was imported.", "outcome": "rejected"}
+                        if answer is None else {"code": "DECLINED", "message": "Import declined; nothing was imported.", "outcome": "rejected"})
+                print(json.dumps(body), file=sys.stderr, flush=True)
+                raise SystemExit(2 if answer is None else 1)
+        receipt = book.import_staged(summary, target="add_sheets" if args.add_sheets else "replace_empty")
+    finally:
+        if receipt is None: client.discard_job(job)  # The service releases the stage only after a successful apply.
+    imported = receipt["imported"]
+    return (f"Imported {plural(imported['cells'], 'cell')} into {plural(imported['sheets'], 'sheet')} "
+            f"(operation {receipt['operation_id']}, state {receipt['state']})"), receipt
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", help="Attach to an existing localhost REST service")
@@ -146,6 +228,15 @@ def main():
     calculate.add_argument('--sheet',default='Sheet1');calculate.add_argument('--r1',type=int,default=1);calculate.add_argument('--c1',type=int,default=1);calculate.add_argument('--r2',type=int,default=32);calculate.add_argument('--c2',type=int,default=16)
     job=commands.add_parser('job',help='Durable reviewed operation jobs; create/append/start/resume read JSON stdin; execution waits for a terminal outcome')
     job.add_argument('job_action',choices=['create','append','seal','status','start','resume','cancel','release']);job.add_argument('--job-id');job.add_argument('--offset',type=int,default=0);job.add_argument('--limit',type=int,default=100)
+    spreadsheet_import=commands.add_parser('import-spreadsheet',help='Prepare a whole .xlsx/.ods workbook, print its conversion report, and import it after confirmation')
+    spreadsheet_import.add_argument('source');spreadsheet_import.add_argument('--mode',choices=['formulas','mixed','values'],default='mixed')
+    spreadsheet_import.add_argument('--add-sheets',action='store_true',help='Add the sheets after the existing ones instead of filling an empty workbook')
+    spreadsheet_import.add_argument('--local',action='store_true',help='Let a service on this machine read SOURCE by path instead of uploading it')
+    spreadsheet_import.add_argument('--report-json',help='Also write the full conversion report as JSON to this path')
+    spreadsheet_import.add_argument('--yes',action='store_true',help='Import without asking for confirmation')
+    spreadsheet_import.add_argument('--timezone-policy',choices=['reject','utc'],default='reject')
+    spreadsheet_export=commands.add_parser('export-spreadsheet',help='Export the whole workbook (formulas) as .xlsx/.ods, streamed to DESTINATION')
+    spreadsheet_export.add_argument('destination');spreadsheet_export.add_argument('--overwrite',action='store_true');spreadsheet_export.add_argument('--report-json')
     direct = commands.add_parser("direct-sql", help="Explicit independent SQLite access; bypasses application behavior")
     direct.add_argument("sql")
     args = parser.parse_args()
@@ -277,6 +368,12 @@ def main():
                             result=book.operation_job(args.job_id,args.job_action,**arguments)
                         while result.get('status') in ('running',) or (args.job_action=='create' and 'source_path' in arguments and result.get('status')=='staging'):
                             time.sleep(.05);result=book.operation_job(result['job_id'])
+                    elif args.command=='import-spreadsheet':output,result=import_spreadsheet(client,book,args)
+                    elif args.command=='export-spreadsheet':
+                        written=book.export_spreadsheet_file(args.destination,overwrite=args.overwrite,progress=show_progress('Exporting'))
+                        print(report_text(written),flush=True)
+                        if args.report_json:write_report(args.report_json,written,('path','bytes','sha256','state','report','report_entries','totals'))
+                        output=f"Wrote {written['path']} ({written['bytes']} bytes)";result=None
                     elif args.command=='calculate':
                         import time
                         result=book.calculate(args.sheet,r1=args.r1,c1=args.c1,r2=args.r2,c2=args.c2)
@@ -284,7 +381,7 @@ def main():
                         book.calculation(result['job_id'],'release')
                     else:
                         result = book.outcome(args.operation_id)
-                    output=json.dumps(result, allow_nan=False)
+                    if args.command not in ('import-spreadsheet','export-spreadsheet'):output=json.dumps(result, allow_nan=False)
                     releasing=True
         releasing=False
         emit_result(output,result,args.command)

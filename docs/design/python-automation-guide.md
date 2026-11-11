@@ -164,3 +164,60 @@ macros and cell/table change bindings (see the
 external-effect queues, package installation, workbook-open and structure
 events, multi-transaction macros and formula UDFs require separate contracts.
 Independent SQLite edits bypass hooks and never replay skipped events.
+
+## Importing and exporting workbooks
+
+Whole `.xlsx` and `.ods` workbooks (up to 64 MiB packed and 1,000,000 cells)
+use the large interchange path. The SDK streams files in 64-KiB chunks in both
+directions, checks SHA-256 on the way, and waits up to 330 seconds for
+preparation, apply and transfers; ordinary calls keep their 15-second timeout.
+
+```python
+with LocalService() as client, client.open(native_path) as book:
+    summary = client.prepare_spreadsheet_file('Budget.xlsx', mode='mixed')
+    print(summary['totals'], summary['report_entries'][:3])
+    receipt = book.import_staged(summary)            # an empty workbook
+    # book.import_staged(summary, target='add_sheets') adds the sheets instead
+    written = book.export_spreadsheet_file('Budget-copy.ods', overwrite=False)
+```
+
+`prepare_spreadsheet_file` uploads the file and always releases the upload
+afterwards; `local=True` instead sends its absolute path for a service on the
+same machine to read. The format comes from the extension unless `format` is
+given. It returns the review summary (sheets, cell counts, `report_entries`,
+`totals`, a sample) and stages the cells; nothing changes until
+`import_staged`, which applies the stage as one `workbook_import` operation and
+returns a receipt with `imported: {sheets, cells}`. A failed preparation raises
+`APIError` with the job's error (status `None`); `STALE_PLAN`,
+`SHEET_NAME_CONFLICT` (with `conflicts`) and `DESTINATION_NOT_EMPTY` raise from
+`import_staged` and keep the stage, so release an unused summary with
+`client.discard_job(summary['stage_id'])`. `export_spreadsheet_file` runs an
+export job, downloads to a temporary file beside the destination, checks its size
+and SHA-256, moves it into place, and releases the export; an existing
+destination needs `overwrite=True`. `client.upload`, `client.download` and
+`client.release_upload`/`release_export` are the underlying primitives.
+
+The CLI prints the grouped report and asks before applying; `--yes` skips the
+question, and without it a standard input with nothing to answer exits 2 and
+imports nothing (a declined prompt exits 1):
+
+```sh
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/Budget.dhwb create
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/Budget.dhwb import-spreadsheet Budget.xlsx --report-json report.json
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/Budget.dhwb import-spreadsheet Budget.xlsx --local --yes
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/Other.dhwb import-spreadsheet Extra.ods --add-sheets --yes
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/Budget.dhwb export-spreadsheet Budget-copy.xlsx --overwrite
+```
+
+Both commands also work against `--url` with `DATAHORIZON_TOKEN`; `--local`
+then names a path on the service's machine. Errors print the structured error
+to stderr and exit 1.
+
+Each report entry has a severity: *converted* (stored in another form, such
+as a formula replaced by its cached value or an error value kept as text),
+*approximated* (kept with a close but different meaning, such as a border color
+mapped to the default), *omitted* (dropped) or *unevaluable* (a formula kept that
+DataHorizon cannot calculate). The import `--mode` decides what a formula
+becomes: `formulas` keeps every formula, `mixed` (the default) uses the file's
+cached value only for formulas DataHorizon cannot evaluate, and `values` keeps
+only cached values. Export always writes formulas, without cached values.

@@ -1,14 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Thin Python REST SDK. It never opens a workbook database."""
 
+import hashlib
 import json
 from http.client import HTTPException
 from collections import deque
+import os
 from pathlib import Path
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
+import time
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from urllib.parse import quote
@@ -67,6 +71,50 @@ def _exit_context(owner, error):
     return False
 
 
+class IntegrityError(ValueError):
+    """Bytes sent or received do not match what the service reported."""
+
+    def __init__(self, message, **identifiers):
+        super().__init__(message)
+        self.body = {"code": "INTEGRITY_MISMATCH", "message": message, "outcome": "rejected", **identifiers}
+
+
+# Ordinary requests keep a short timeout; transfers and a staged import's apply (up to 300 seconds) get their own.
+REQUEST_SECONDS = 15
+TRANSFER_SECONDS = 330
+APPLY_SECONDS = 330
+JOB_WAIT_SECONDS = 330
+DOWNLOAD_CHUNK = 64 * 1024
+
+
+def spreadsheet_format(path):
+    """xlsx or ods from a file name's extension."""
+    suffix = Path(path).suffix.lower()
+    if suffix not in (".xlsx", ".ods"): raise ValueError("Use a .xlsx or .ods file name, or name the format explicitly")
+    return suffix[1:]
+
+
+def _check_destination(target, overwrite, native=None):
+    if native is not None:
+        source = Path(native).expanduser().absolute()
+        if target == source or target.exists() and source.exists() and os.path.samefile(target, source):
+            raise ValueError("Export destination identifies the native workbook")
+    if target.exists() and not overwrite: raise FileExistsError("Export destination exists; explicitly enable overwrite")
+
+
+class _HashingReader:
+    """A file-like request body that hashes and counts what is sent, stopping at the declared size."""
+
+    def __init__(self, source, size):
+        self.source, self.remaining, self.sent, self.digest = source, size, 0, hashlib.sha256()
+
+    def read(self, size=-1):
+        if self.remaining <= 0: return b""
+        chunk = self.source.read(min(DOWNLOAD_CHUNK if size is None or size < 0 else size, self.remaining))
+        self.digest.update(chunk); self.sent += len(chunk); self.remaining -= len(chunk)
+        return chunk
+
+
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, request, response, code, message, headers, url):
         return None
@@ -79,13 +127,17 @@ class Client:
         # configured connection, independently of ambient proxy settings.
         self._opener = build_opener(ProxyHandler({}), _NoRedirect())
 
-    def request(self, path, body=None):
+    def request(self, path, body=None, *, timeout=REQUEST_SECONDS):
         data = json.dumps(body, allow_nan=False).encode() if body is not None else None
         request = Request(self.url + path, data=data,
                           headers={"Authorization": "Bearer " + self.token, "Content-Type": "application/json"})
+        with self._open(request, timeout) as response:
+            return json.load(response)
+
+    def _open(self, request, timeout):
+        """Open a request on the configured connection; a structured error response raises APIError."""
         try:
-            with self._opener.open(request, timeout=15) as response:
-                return json.load(response)
+            return self._opener.open(request, timeout=timeout)
         except HTTPError as error:
             try:
                 if 300 <= error.code < 400:
@@ -96,6 +148,125 @@ class Client:
             if not isinstance(body, dict):
                 raise ValueError("Invalid JSON error response")
             raise APIError(error.code, body) from error
+
+    def capabilities(self):
+        return self.request("/v1/capabilities")
+
+    def upload(self, path, upload_id=None):
+        """Stream one spreadsheet package to the service's upload staging and return its receipt.
+
+        The file is read in chunks while it is sent, never wholly; its SHA-256 is computed on the way and must equal
+        the service's, otherwise the upload is released and IntegrityError is raised."""
+        upload = upload_id or uuid.uuid4().hex
+        with open(Path(path).expanduser(), "rb") as source:
+            size = os.fstat(source.fileno()).st_size
+            limit = self.capabilities().get("max_upload_bytes")
+            if not size: raise ValueError("The spreadsheet file is empty; nothing was uploaded")
+            if isinstance(limit, int) and size > limit:
+                raise ValueError(f"The spreadsheet file is {size} bytes, more than the service's {limit}-byte upload limit; nothing was uploaded")
+            reader = _HashingReader(source, size)
+            request = Request(self.url + "/v1/uploads/" + quote(upload, safe=""), data=reader, method="PUT",
+                              headers={"Authorization": "Bearer " + self.token, "Content-Type": "application/octet-stream",
+                                       "Content-Length": str(size)})
+            with self._open(request, TRANSFER_SECONDS) as response:
+                receipt = json.load(response)
+        if reader.sent != size or not isinstance(receipt, dict) or receipt.get("bytes") != size or receipt.get("sha256") != reader.digest.hexdigest():
+            try: self.release_upload(upload)
+            except (APIError, OSError, ValueError, HTTPException): pass
+            raise IntegrityError("The service received different bytes than were read from the file; the upload was released", upload_id=upload)
+        return receipt
+
+    def release_upload(self, upload_id):
+        return self.request("/v1/uploads/" + quote(upload_id, safe="") + "/release", {})
+
+    def prepare_spreadsheet_file(self, path, *, format=None, mode="mixed", job_id=None, local=False, timezone_policy="reject", progress=None):
+        """Prepare a whole XLSX or ODS workbook file into an import stage and return the completed review summary.
+
+        The file is uploaded (and the upload released afterwards, whatever happens), or with local=True named by its
+        absolute path for a service on this machine to read. A failed or cancelled preparation raises APIError with
+        the job's error (status None) after releasing the job; an interruption cancels the job."""
+        source = Path(path).expanduser()
+        format = format or spreadsheet_format(source)
+        if format not in ("xlsx", "ods"): raise ValueError("Unsupported spreadsheet format")
+        job = job_id or uuid.uuid4().hex
+        request = {"job_id": job, "scope": "workbook", "mode": mode, "timezone_policy": timezone_policy}
+        upload = None
+        try:
+            if local:
+                request["source_path"] = str(source.resolve())
+            else:
+                upload = self.upload(source)["upload_id"]
+                request["upload_id"] = upload
+            view = self.request("/v1/import/" + format + "/jobs", request)
+            return self.finish_job(view, progress, "Preparation")
+        finally:
+            if upload is not None:
+                try: self.release_upload(upload)
+                except (APIError, OSError, ValueError, HTTPException): pass  # Uploads expire after 15 minutes.
+
+    def finish_job(self, view, progress=None, label="Job"):
+        """Poll a preparation-style job until it leaves running; return its result or raise its error. An interruption or
+        an exhausted wait cancels the job and releases it once it has stopped."""
+        job, deadline, pause = view["job_id"], time.monotonic() + JOB_WAIT_SECONDS, 0.02
+        try:
+            while view["status"] == "running":
+                if progress is not None: progress(view.get("completed", 0), view.get("phase", ""))
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"{label} job {job} did not finish within {JOB_WAIT_SECONDS} seconds; it was cancelled")
+                time.sleep(pause); pause = min(pause * 2, 0.5)
+                view = self.preparation(job)
+        except BaseException:
+            self.discard_job(job)
+            raise
+        if progress is not None: progress(view.get("completed", 0), view.get("phase", ""))
+        if view["status"] == "completed": return view["result"]
+        self.discard_job(job)
+        error = view.get("error") if isinstance(view.get("error"), dict) else {"code": "JOB_" + view["status"].upper(), "message": label + " did not complete", "outcome": "rejected"}
+        raise APIError(None, {**error, "job_id": job})
+
+    def discard_job(self, job):
+        """Best-effort cancel and release of a job this client started; the service expires it otherwise."""
+        try:
+            view = self.preparation(job, "cancel")
+            for _ in range(100):
+                if view.get("status") != "running": break
+                time.sleep(0.02); view = self.preparation(job)
+            self.preparation(job, "release")
+        except (APIError, OSError, ValueError, HTTPException): pass
+
+    def download(self, export_id, destination, *, overwrite=False, expected=None, native=None):
+        """Stream a completed export to `destination` through a temporary sibling file, then move it into place.
+
+        An existing destination is refused unless overwrite. `expected` ({bytes, sha256}) is checked before the file is
+        moved into place; a short or mismatched body raises and leaves no temporary file. Returns {path, bytes, sha256}."""
+        target = Path(destination).expanduser().absolute()
+        _check_destination(target, overwrite, native)
+        request = Request(self.url + "/v1/exports/" + quote(export_id, safe=""), method="GET",
+                          headers={"Authorization": "Bearer " + self.token})
+        descriptor, temporary = tempfile.mkstemp(prefix=".datahorizon-download-", dir=target.parent)
+        try:
+            digest, written = hashlib.sha256(), 0
+            with os.fdopen(descriptor, "wb") as output, self._open(request, TRANSFER_SECONDS) as response:
+                length = response.headers.get("Content-Length")
+                while chunk := response.read(DOWNLOAD_CHUNK):
+                    digest.update(chunk); output.write(chunk); written += len(chunk)
+                output.flush(); os.fsync(output.fileno())
+            if length is None or not length.isdigit() or int(length) != written:
+                raise IntegrityError("The download ended before its Content-Length", export_id=export_id)
+            if expected is not None and (expected.get("bytes") != written or expected.get("sha256") != digest.hexdigest()):
+                raise IntegrityError("The downloaded file does not match the export's size and SHA-256", export_id=export_id)
+            _check_destination(target, overwrite, native)
+            if overwrite: os.replace(temporary, target)
+            else:
+                # Atomic no-clobber publication; a concurrent creator wins safely.
+                os.link(temporary, target); os.unlink(temporary)
+            return {"path": str(target), "bytes": written, "sha256": digest.hexdigest()}
+        finally:
+            try: os.unlink(temporary)
+            except FileNotFoundError: pass
+
+    def release_export(self, export_id):
+        return self.request("/v1/exports/" + quote(export_id, safe="") + "/release", {})
 
     def functions(self):
         return self.request("/v1/functions")
@@ -389,14 +560,46 @@ class WorkbookClient:
         if format not in ("xlsx","ods"): raise ValueError("Unsupported spreadsheet format")
         return self.client.request(self.base+"/export/"+format,scope)
 
+    def export_spreadsheet_file(self, destination, *, format=None, overwrite=False, progress=None):
+        """Export the whole workbook (formulas) with an export job and stream it to `destination`.
+
+        The file is downloaded to a temporary sibling, checked against the job's size and SHA-256, and moved into place;
+        the export is released afterwards whatever happens. Returns {path, bytes, sha256, state, report, report_entries, totals}."""
+        self._ensure_open()
+        target = Path(destination).expanduser().absolute()
+        format = format or spreadsheet_format(target)
+        if format not in ("xlsx", "ods"): raise ValueError("Unsupported spreadsheet format")
+        _check_destination(target, overwrite, self.info.get("path"))
+        job = uuid.uuid4().hex
+        view = self.client.request(self.base + "/export/" + format + "/jobs", {"job_id": job, "mode": "formulas"})
+        result = self.client.finish_job(view, progress, "Export")
+        try:
+            written = self.client.download(result["export_id"], target, overwrite=overwrite, expected=result, native=self.info.get("path"))
+        finally:
+            try: self.client.release_export(result["export_id"])
+            except (APIError, OSError, ValueError, HTTPException): pass  # Exports expire five minutes after last use.
+        return {**written, **{key: result[key] for key in ("state", "report", "report_entries", "totals")}}
+
+    def import_staged(self, summary, *, target="replace_empty", operation_id=None):
+        """Apply a prepared stage's review summary as one workbook_import operation and return the receipt."""
+        if summary.get("can_import") is not True:
+            raise ValueError("Correct import issues and review again before Apply")
+        if not summary.get("stage_id") or not summary.get("stage_digest"):
+            raise ValueError("This review summary has no import stage; use import_prepared")
+        if target not in ("replace_empty", "add_sheets"): raise ValueError("Choose target replace_empty or add_sheets")
+        return self.apply("workbook_import", operation_id=operation_id, request_timeout=APPLY_SECONDS, stage_id=summary["stage_id"],
+                          stage_digest=summary["stage_digest"], target=target, label="Import workbook")
+
     def import_prepared(self, preview, sheet="Sheet1"):
         if preview.get("can_import") is not True:
             raise ValueError("Correct import issues and review again before Apply")
+        if preview.get("stage_id"):
+            return self.import_staged(preview)
         if preview.get("scope")=="workbook":
             return self.apply("workbook_import",sheets=preview["workbook_sheets"],label="Import workbook")
         return self.apply("edit",sheet,cells=preview["cells"],label="Import spreadsheet")
 
-    def apply(self, action, sheet="Sheet1", operation_id=None, **arguments):
+    def apply(self, action, sheet="Sheet1", operation_id=None, *, request_timeout=REQUEST_SECONDS, **arguments):
         self._ensure_open()
         if self.pending_operation:
             if self._refresh_receipt is not None:
@@ -418,7 +621,9 @@ class WorkbookClient:
             raise ValueError("Request exceeds the 4 MiB limit; request was not sent")
         self.pending_operation=request["operation_id"]
         try:
-            response = self.client.request(self.base + "/operations", request)
+            # Only a longer-running action names its own timeout; ordinary calls are sent exactly as before.
+            response = self.client.request(self.base + "/operations", request,
+                                           **({} if request_timeout == REQUEST_SECONDS else {"timeout": request_timeout}))
             self.validate_receipt(response, request["operation_id"], committed=True)
         except APIError as error:
             if (error.body.get("outcome") in ("rejected","rolled_back")

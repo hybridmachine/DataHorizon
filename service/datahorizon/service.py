@@ -424,15 +424,83 @@ def openapi():
         "example":{"job_id":"example-ods-export","mode":"formulas"}}
     schemas["OdsExportJobRequest"]["properties"]["mode"]={**schemas["OdsExportJobRequest"]["properties"]["mode"],"description":
         "Formulas are written without cached values. values and mixed are UNSUPPORTED (400) here; the bounded POST /v1/workbooks/{workbook}/export/ods route still exports values"}
-    entry={"type":"object","required":["category","severity","detail","count","samples"],"properties":{
-        "category":{"type":"string"},"severity":{"type":"string","enum":["converted","approximated","omitted","unevaluable"]},"detail":{"type":"string"},
-        "count":{"type":"integer","minimum":1},"samples":{"type":"array","maxItems":100,"items":{"type":"object","properties":{"sheet":{"type":"string","nullable":True},"cell":{"type":"string"}}}}}}
-    schemas["XlsxExportJobResult"]={"type":"object","required":["export_id","bytes","sha256","state","report","report_entries","totals"],"additionalProperties":False,"properties":{
+    severities=("converted","approximated","omitted","unevaluable")
+    report_example=[{"category":"style.border","severity":"approximated","detail":"Border colors map to the native default color.","count":1,"samples":[{"sheet":"Sheet1","cell":"A1"}]}]
+    totals_example={"converted":0,"approximated":1,"omitted":0,"unevaluable":0}
+    schemas["ReportEntry"]={"type":"object","required":["category","severity","detail","count","samples"],"properties":{
+        "category":{"type":"string","description":"Stable dotted category, such as style.border or formula.function"},
+        "severity":{"type":"string","enum":list(severities),"description":
+            "converted: stored in another form (for example a formula replaced by its cached value, or an error value kept as text); "
+            "approximated: kept with a close but not identical meaning; omitted: dropped; unevaluable: a formula kept that DataHorizon cannot calculate"},
+        "detail":{"type":"string"},"count":{"type":"integer","minimum":1,"description":"Cells (or items) this entry covers"},
+        "samples":{"type":"array","maxItems":100,"description":"First locations in reading order; a null sheet is workbook-wide",
+                   "items":{"type":"object","properties":{"sheet":{"type":"string","nullable":True},"cell":{"type":"string"}}}}},
+        "description":"One merged line of a conversion report. Entries are ordered by severity (unevaluable, omitted, approximated, converted), then count; at most 200, the last of which may summarise the remainder.",
+        "example":report_example[0]}
+    schemas["ReportTotals"]={"type":"object","required":list(severities),"properties":{key:{"type":"integer","minimum":0} for key in severities},
+        "description":"Counts per severity over every report entry, including any not itemized","example":totals_example}
+    entry={"$ref":"#/components/schemas/ReportEntry"}
+    totals={"$ref":"#/components/schemas/ReportTotals"}
+    lines={"type":"array","items":{"type":"string"},"description":"Fixed scope statements, then one readable line per report entry"}
+    schemas["ExportJobResult"]={"type":"object","required":["export_id","bytes","sha256","state","report","report_entries","totals"],"additionalProperties":False,"properties":{
         "export_id":export_id,"bytes":{"type":"integer","minimum":1},"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"SHA-256 of the file GET /v1/exports/{export} returns"},
-        "state":{"type":"string","description":"The workbook state that was exported"},"report":{"type":"array","items":{"type":"string"}},
-        "report_entries":{"type":"array","maxItems":200,"items":entry},
-        "totals":{"type":"object","required":["converted","approximated","omitted","unevaluable"],"properties":{key:{"type":"integer","minimum":0} for key in ("converted","approximated","omitted","unevaluable")}}},
-        "description":"The result of a completed export job: what to download and the conversion report (approximated cells, such as unmaintained formulas written unchanged, are itemized)."}
+        "state":{"type":"string","description":"The workbook state that was exported"},"report":lines,
+        "report_entries":{"type":"array","maxItems":200,"items":entry},"totals":totals},
+        "description":"The result of a completed XLSX or ODS export job: what to download and the conversion report (approximated cells, such as unmaintained formulas written unchanged, are itemized).",
+        "example":{"export_id":"example-xlsx-export","bytes":5120,"sha256":"0"*64,"state":"copy-from-workbook-info","report":["Formulas are written without cached values."],
+                   "report_entries":report_example,"totals":totals_example}}
+    schemas["XlsxExportJobResult"]=schemas["ExportJobResult"]  # The earlier name of the same result, kept for clients.
+    schemas["StagedImportSummary"]={"type":"object","required":["scope","stage_id","stage_digest","sheets","stored_cells","report","report_entries","totals","sample","can_import","format","mode","source"],"properties":{
+        "scope":{"type":"string","enum":["workbook"]},"stage_id":{**upload_id,"description":"Equal to the job_id; names the stage for workbook_import"},
+        "stage_digest":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"Send unchanged with stage_id to workbook_import"},
+        "sheets":{"type":"array","maxItems":LARGE_SHEETS,"items":{"type":"object","required":["name","stored_cells"],"properties":{"name":name,"stored_cells":{"type":"integer","minimum":0}}}},
+        "stored_cells":{"type":"integer","minimum":0,"maximum":LARGE_CELLS},"report":lines,"report_entries":{"type":"array","maxItems":200,"items":entry},"totals":totals,
+        "sample":{"type":"array","description":"The first 100 stored cells of each sheet, row-major, with resolved styles; long sources are truncated and flagged",
+                  "items":{"type":"object","required":["sheet","cells"],"properties":{"sheet":{"type":"string"},"cells":{"type":"array","maxItems":100,"items":{"type":"object","properties":{
+                      "row":row,"col":col,"source":{"type":"string"},"kind":{"type":"string"},"style":{"$ref":"#/components/schemas/Style"},"truncated":{"type":"boolean"}}}}}}},
+        "can_import":{"type":"boolean","description":"True for every completed stage: unsupported content is itemized in the report instead of blocking"},
+        "format":{"type":"string","enum":list(LARGE_FORMATS)},"mode":{"type":"string","enum":["formulas","mixed","values"]},
+        "source":{"type":"object","required":["kind"],"properties":{"kind":{"type":"string","enum":["upload","path"]},"upload_id":upload_id,
+            "sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"An upload's SHA-256 as read by the preparation"},
+            "path":{"type":"string","description":"The resolved source_path"},"size":{"type":"integer","minimum":0},"mtime_ns":{"type":"integer"}}}},
+        "description":"The completed result of a whole-workbook preparation from upload_id or source_path: what Apply would import and what it converts, approximates or omits. Always under 1 MiB; never the cells.",
+        "example":{"scope":"workbook","stage_id":"example-xlsx-upload","stage_digest":"0"*64,"sheets":[{"name":"Sheet1","stored_cells":1}],"stored_cells":1,
+                   "report":["All sheets, names, stored inputs and mapped direct cell styles from one consistent workbook state."],"report_entries":report_example,"totals":totals_example,
+                   "sample":[{"sheet":"Sheet1","cells":[{"row":1,"col":1,"source":"7","kind":"number","style":{}}]}],"can_import":True,"format":"xlsx","mode":"mixed",
+                   "source":{"kind":"upload","upload_id":"example-upload","sha256":"0"*64}}}
+    schemas["SpreadsheetImportPreview"]={"type":"object","required":["can_import","report","report_entries","totals","stored_cells","issues"],"properties":{
+        "can_import":{"type":"boolean"},"issues":{"type":"array","items":{"type":"string"},"description":"Problems that block Apply"},"report":lines,
+        "report_entries":{"type":"array","maxItems":200,"items":entry},"totals":totals,"stored_cells":{"type":"integer","minimum":0,"maximum":MAX_CELLS},
+        "scope":{"type":"string","enum":["workbook"],"description":"Present for a whole-workbook preview"},
+        "sheet":{"type":"string","description":"The selected sheet (selection scope)"},"sheets":{"type":"array","items":{"type":"string"},"description":"Every sheet name in the package (selection scope)"},
+        "cells":{"type":"array","items":{"$ref":"#/components/schemas/CellEdit"},"description":"Reviewed edits for one managed edit (selection scope)"},
+        "workbook_sheets":{"type":"array","items":{"type":"object","required":["name","cells"],"properties":{"name":name,"cells":{"type":"array","items":{"$ref":"#/components/schemas/CellEdit"}}}},
+                           "description":"Reviewed sheets for workbook_import (workbook scope)"}},
+        "description":"The completed result of a bounded inline (file_base64) preparation.",
+        "example":{"can_import":True,"issues":[],"report":[],"report_entries":[],"totals":dict.fromkeys(severities,0),"stored_cells":1,"scope":"workbook",
+                   "workbook_sheets":[{"name":"Sheet1","cells":[{"row":1,"col":1,"source":"7","kind":"number"}]}]}}
+    job_status={"type":"string","enum":["running","completed","failed","cancelled"]}
+    job_view={"job_id":{"type":"string"},"status":job_status,"completed":{"type":"integer","minimum":0,"description":"Progress units of the current phase"},"phase":{"type":"string"},
+              "error":{"$ref":"#/components/schemas/Error"}}
+    schemas["PreparationJob"]={"type":"object","required":["job_id","status","completed","phase"],"properties":{**job_view,"result":{"type":"object","description":
+        "Present when completed: a CSV preview, a SpreadsheetImportPreview, a StagedImportSummary or an ExportJobResult, by the route that started the job"}},
+        "description":"A preparation or export job. Poll while status is running; error is present when failed or cancelled.",
+        "example":{"job_id":"example-xlsx-upload","status":"running","completed":0,"phase":"Queued"}}
+    schemas["SpreadsheetPreparationJob"]={"type":"object","required":["job_id","status","completed","phase"],"properties":{**job_view,"result":{"anyOf":[
+        {"$ref":"#/components/schemas/StagedImportSummary"},{"$ref":"#/components/schemas/SpreadsheetImportPreview"}],
+        "description":"A StagedImportSummary for upload_id or source_path, a SpreadsheetImportPreview for file_base64"}},
+        "description":"An XLSX or ODS preparation job; poll GET /v1/jobs/{job} while status is running.",
+        "example":{"job_id":"example-xlsx-upload","status":"running","completed":0,"phase":"Queued"}}
+    schemas["ExportJob"]={"type":"object","required":["job_id","status","completed","phase"],"properties":{**job_view,"result":{"$ref":"#/components/schemas/ExportJobResult"}},
+        "description":"A large export job; poll GET /v1/jobs/{job} while status is running, then download GET /v1/exports/{export}.",
+        "example":{"job_id":"example-xlsx-export","status":"running","completed":0,"phase":"Queued"}}
+    schemas["SpreadsheetExportResult"]={"type":"object","required":["file_base64","report","state"],"properties":{
+        "file_base64":{"type":"string","format":"byte"},"report":lines,"report_entries":{"type":"array","maxItems":200,"items":entry},"state":{"type":"string"}},
+        "description":"A bounded XLSX or ODS export: the package and its conversion report from one consistent state.",
+        "example":{"file_base64":"UEsDBA==","report":[],"report_entries":[],"state":"copy-from-workbook-info"}}
+    schemas["Receipt"]["properties"]["imported"]={"type":"object","required":["sheets","cells"],"properties":{"sheets":{"type":"integer","minimum":0},"cells":{"type":"integer","minimum":0}},
+        "description":"workbook_import only: sheets and stored cells imported"}
+    schemas["Error"]["properties"]["conflicts"]={"type":"array","items":{"type":"string"},"description":"SHEET_NAME_CONFLICT only: imported sheet names that already exist"}
     schemas["ExportReleased"]={"type":"object","required":["released","export_id"],"additionalProperties":False,"properties":{"released":{"type":"boolean","enum":[True]},"export_id":export_id},
         "example":{"released":True,"export_id":"example-xlsx-export"}}
     paths = {}
@@ -478,6 +546,11 @@ def openapi():
             operation['responses']['200']['content']={'application/json':{'schema':{'$ref':'#/components/schemas/'+response}}}
         if path.startswith('/v1/uploads/'):
             operation['responses']['200']['content']={'application/json':{'schema':{'$ref':'#/components/schemas/'+('UploadReleased' if path.endswith('/release') else 'UploadReceipt')}}}
+        response={'/v1/import/xlsx/jobs':'SpreadsheetPreparationJob','/v1/import/ods/jobs':'SpreadsheetPreparationJob','/v1/jobs/{job}':'PreparationJob',
+                  '/v1/jobs/{job}/cancel':'PreparationJob','/v1/jobs/{job}/release':'JobReleased'}.get(path)
+        if path.endswith(('/export/xlsx/jobs','/export/ods/jobs')):response='ExportJob'
+        if path.endswith(('/workbooks/{workbook}/export/xlsx','/workbooks/{workbook}/export/ods')):response='SpreadsheetExportResult'
+        if response:operation['responses']['200']['content']={'application/json':{'schema':{'$ref':'#/components/schemas/'+response}}}
         if path.startswith('/v1/exports/') and method=='post':
             operation['description']="Deletes the export file and forgets its completed job. JOB_NOT_FOUND unless the export job has completed; JOB_CONFLICT while a download of it is in progress."
             operation['responses']['200']['content']={'application/json':{'schema':{'$ref':'#/components/schemas/ExportReleased'}}}
@@ -516,9 +589,9 @@ EXPLORER = """<!doctype html><meta charset="utf-8"><title>DataHorizon API explor
 <label>Resource<select id="endpoint"></select></label>
 <label hidden>Operation<select id="example"></select></label>
 <label>Local bearer token<input id="token" type="password" autocomplete="off"></label>
-<label>Method<select id="method"><option>GET</option><option>POST</option></select></label>
+<label>Method<select id="method"><option>GET</option><option>POST</option><option>PUT</option></select></label>
 <label>Path<input id="path" value="/v1/capabilities"></label>
-<label>JSON body<textarea id="body" rows="8">{}</textarea></label><button id="run">Send request</button><pre id="result">Ready</pre>
+<label>Body (JSON; raw bytes for PUT uploads)<textarea id="body" rows="8">{}</textarea></label><button id="run">Send request</button><pre id="result">Ready</pre>
 <script>fetch('/openapi.json').then(r=>r.json()).then(api=>{let select=document.querySelector('#endpoint');
 for(let [path,methods] of Object.entries(api.paths))for(let [method,op] of Object.entries(methods)){
 let option=document.createElement('option');option.textContent=method.toUpperCase()+' '+path+' — '+op.summary;option.value=JSON.stringify([path,method,op]);select.append(option)}
@@ -526,12 +599,13 @@ select.onchange=()=>{let[path,method,op]=JSON.parse(select.value);document.query
 let ref=op.requestBody?.content?.['application/json']?.schema?.['$ref'],schema=ref?api.components.schemas[ref.split('/').pop()]:{};
 let variants=schema.oneOf?schema.oneOf.map(v=>api.components.schemas[v['$ref'].split('/').pop()]):[schema],examples=document.querySelector('#example');examples.replaceChildren();
 for(let variant of variants){let option=document.createElement('option');option.textContent=variant.title||variant.example?.action||'Request';option.value=JSON.stringify(variant.example||{});examples.append(option)}
-examples.parentElement.hidden=variants.length<2;examples.onchange=()=>{document.querySelector('#body').value=JSON.stringify(JSON.parse(examples.value),null,2)};examples.onchange()};select.onchange()});
+examples.parentElement.hidden=variants.length<2;examples.onchange=()=>{document.querySelector('#body').value=JSON.stringify(JSON.parse(examples.value),null,2)};examples.onchange();
+let raw=op.requestBody?.content?.['application/octet-stream'];if(raw)document.querySelector('#body').value=raw.example??''};select.onchange()});
 document.querySelector('#run').onclick=async()=>{let out=document.querySelector('#result');try{
 let method=document.querySelector('#method').value,path=document.querySelector('#path').value;
 if(!path.startsWith('/v1/')||path.startsWith('//'))throw Error('Use a /v1/ path');
-let r=await fetch(path,{method,headers:{'Authorization':'Bearer '+document.querySelector('#token').value,'Content-Type':'application/json'},body:method==='POST'?document.querySelector('#body').value:undefined});
-out.textContent=r.status+'\\n'+JSON.stringify(await r.json(),null,2)}catch(e){out.textContent=String(e)}};</script>"""
+let r=await fetch(path,{method,headers:{'Authorization':'Bearer '+document.querySelector('#token').value,'Content-Type':method==='PUT'?'application/octet-stream':'application/json'},body:method==='GET'?undefined:document.querySelector('#body').value});
+let type=r.headers.get('Content-Type')||'';out.textContent=r.status+'\\n'+(type.startsWith('application/json')?JSON.stringify(await r.json(),null,2):type+', '+(await r.blob()).size+' bytes (save downloads with the SDK or CLI)')}catch(e){out.textContent=String(e)}};</script>"""
 
 
 class Service(ThreadingHTTPServer):
