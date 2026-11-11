@@ -20,6 +20,27 @@ from .xlsx_future_functions import PREFIX as FUTURE_PREFIX, strip_prefix
 S = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 P = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+
+@dataclass(frozen=True)
+class Namespaces:
+    """The OOXML namespace set of one workbook: transitional or strict (ISO 29500)."""
+    main: str      # SpreadsheetML main
+    rel: str       # r:id attribute namespace and base of relationship Type URIs
+    doc_rel: str   # officeDocument relationships (identical to rel in both variants)
+
+
+TRANSITIONAL = Namespaces(S, R, R)
+STRICT = Namespaces("http://purl.oclc.org/ooxml/spreadsheetml/main",
+                    "http://purl.oclc.org/ooxml/officeDocument/relationships",
+                    "http://purl.oclc.org/ooxml/officeDocument/relationships")
+
+
+def namespaces(workbook_root):
+    """The namespace set named by the workbook root's tag; anything else is not a workbook."""
+    for ns in (TRANSITIONAL, STRICT):
+        if workbook_root.tag == f"{{{ns.main}}}workbook": return ns
+    raise EngineError("INVALID_SPREADSHEET", "Workbook root is not a SpreadsheetML workbook (transitional or strict)")
 MAX_PACKAGE = 3*1024*1024
 MAX_EXPANDED = 16*1024*1024
 MAX_SOURCE_BYTES = 65_536  # typed() limit on a managed cell source
@@ -80,8 +101,8 @@ def read_xml(archive,path):
         raise EngineError("INVALID_SPREADSHEET",f"Invalid or missing XML part: {path}") from error
 
 
-def related_part(relationships,kind):
-    candidates=[item for item in relationships if item.get("Type")==R+"/"+kind]
+def related_part(relationships,kind,ns=TRANSITIONAL):
+    candidates=[item for item in relationships if item.get("Type")==ns.rel+"/"+kind]
     require(len(candidates)<=1,"INVALID_SPREADSHEET","Duplicate workbook part relationships")
     if not candidates: return None
     item=candidates[0]
@@ -156,18 +177,18 @@ def text_encode(value):
     return "".join(f"_x{ord(c):04X}_" if (ord(c)<32 and c not in "\t\n") or ord(c) in (65534,65535) else c for c in value)
 
 
-def xlsx_text(item):
+def xlsx_text(item,ns=TRANSITIONAL):
     if item is None: return ""
-    return text_decode("".join((child.text or "") if child.tag==f"{{{S}}}t" else
-                       (child.findtext(f"{{{S}}}t") or "") if child.tag==f"{{{S}}}r" else "" for child in item))
+    return text_decode("".join((child.text or "") if child.tag==f"{{{ns.main}}}t" else
+                       (child.findtext(f"{{{ns.main}}}t") or "") if child.tag==f"{{{ns.main}}}r" else "" for child in item))
 
 
 class SharedFormulas:
     """Expand only stored shared members, never a group's potentially empty rectangle."""
-    def __init__(self,cells):
+    def __init__(self,cells,ns=TRANSITIONAL):
         self.groups={}
         for cell in cells:
-            formula=cell.find(f"{{{S}}}f")
+            formula=cell.find(f"{{{ns.main}}}f")
             if formula is None or formula.get("t")!="shared" or not formula.text: continue
             key=formula.get("si","")
             require(re.fullmatch(r"[0-9]{1,8}",key) is not None,"INVALID_SPREADSHEET","Invalid shared formula group")
@@ -214,6 +235,7 @@ class XlsxCellContext:
     shared_formulas: object = None
     timezone_policy: str = "reject"
     shift: tuple = (0, 0)
+    ns: Namespaces = TRANSITIONAL
     seen: set = field(default_factory=set)
 
 
@@ -231,8 +253,8 @@ def convert_xlsx_cell(cell,*,context):
     def skip(category,detail=""):
         report.add(category,"omitted",detail,sheet=sheet,cell=location)
 
-    formula=cell.find(f"{{{S}}}f")
-    value=cell.findtext(f"{{{S}}}v")
+    formula=cell.find(f"{{{context.ns.main}}}f")
+    value=cell.findtext(f"{{{context.ns.main}}}v")
     kind=cell.get("t","n")
     cached=value is not None and kind!="e"
     noted=[]
@@ -270,7 +292,7 @@ def convert_xlsx_cell(cell,*,context):
                 if value is None: skip("cell.invalid_value","missing value"); return None
                 item={"source":value,"kind":"text"}
                 noted.append(("cell.error_value","converted",""))
-            elif kind=="inlineStr": item={"source":xlsx_text(cell.find(f"{{{S}}}is")),"kind":"text"}
+            elif kind=="inlineStr": item={"source":xlsx_text(cell.find(f"{{{context.ns.main}}}is"),context.ns),"kind":"text"}
             elif kind=="s":
                 require(value is not None and re.fullmatch(r"[0-9]+",value) is not None and int(value)<len(context.shared_strings),"INVALID_SPREADSHEET","Invalid shared string index")
                 item={"source":context.shared_strings[int(value)],"kind":"text"}
@@ -330,51 +352,53 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
     with package(request) as archive:
         checkpoint(0,"Reading workbook")
         workbook=read_xml(archive,"xl/workbook.xml")
-        properties=workbook.find(f"{{{S}}}workbookPr")
+        ns=namespaces(workbook)
+        properties=workbook.find(f"{{{ns.main}}}workbookPr")
         epoch=properties.get("date1904","0") if properties is not None else "0"
         require(epoch in ("0","1","false","true"),"INVALID_SPREADSHEET","Invalid XLSX date1904 flag")
         system="1904" if epoch in ("1","true") else "1900"
         report.append("ISO shorthand is normalized to native seconds; timezone offsets require explicit timezone_policy=utc, which stores UTC civil values and omits the original offset.")
         report.append(f"Date/time serials with supported formats use the {system} epoch; serial 60 in the 1900 system is rejected. Formula numeric literals are not epoch-shifted; native formulas use the 1900 system.")
-        require(workbook.tag==f"{{{S}}}workbook","INVALID_SPREADSHEET","Only transitional SpreadsheetML XLSX is supported")
-        sheets=workbook.findall(f"{{{S}}}sheets/{{{S}}}sheet")
+        sheets=workbook.findall(f"{{{ns.main}}}sheets/{{{ns.main}}}sheet")
         require(0<len(sheets)<=64 and selected<=len(sheets),"INVALID_SPREADSHEET","Choose an existing sheet (at most 64)")
         relationships=read_xml(archive,"xl/_rels/workbook.xml.rels")
         mapping={item.get("Id"):item for item in relationships}
-        rel=mapping.get(sheets[selected-1].get(f"{{{R}}}id"))
-        require(rel is not None and rel.get("TargetMode")!="External" and rel.get("Type")==R+"/worksheet",
+        rel=mapping.get(sheets[selected-1].get(f"{{{ns.rel}}}id"))
+        require(rel is not None and rel.get("TargetMode")!="External" and rel.get("Type")==ns.rel+"/worksheet",
                 "INVALID_SPREADSHEET","Selected sheet must have a local worksheet relationship")
         target=rel.get("Target","")
         path=posixpath.normpath(target.lstrip("/") if target.startswith("/") else "xl/"+target)
         require(path.startswith("xl/") and "\\" not in path,"INVALID_SPREADSHEET","Invalid worksheet target")
         root=read_xml(archive,path)
-        require(root.tag==f"{{{S}}}worksheet","INVALID_SPREADSHEET","Invalid worksheet")
+        require(root.tag==f"{{{ns.main}}}worksheet","INVALID_SPREADSHEET","Invalid worksheet")
         shared=[]
-        shared_path=related_part(relationships,"sharedStrings") or ("xl/sharedStrings.xml" if "xl/sharedStrings.xml" in archive.namelist() else None)
+        shared_path=related_part(relationships,"sharedStrings",ns) or ("xl/sharedStrings.xml" if "xl/sharedStrings.xml" in archive.namelist() else None)
         if shared_path:
-            for item in read_xml(archive,shared_path):
-                shared.append(xlsx_text(item))
+            table=read_xml(archive,shared_path)
+            require(table.tag==f"{{{ns.main}}}sst","INVALID_SPREADSHEET","Shared strings part does not match the workbook's namespaces")
+            for item in table:
+                shared.append(xlsx_text(item,ns))
                 require(len(shared)<=MAX_CELLS,"LIMIT","Shared strings exceed 10,000 entries")
-        features=sorted({item.tag.rsplit("}",1)[-1] for item in root if item.tag!=f"{{{S}}}sheetData"})
+        features=sorted({item.tag.rsplit("}",1)[-1] for item in root if item.tag!=f"{{{ns.main}}}sheetData"})
         report.append("Worksheet features outside cell inputs: "+", ".join(features[:40]))
         advanced=[name for name in archive.namelist() if any(part in name.lower() for part in ("vba","externallink","drawing","chart","pivot","table","comment"))]
         if advanced: report.append(f"{len(advanced)} advanced package parts are omitted; no external resources are fetched.")
         from .xlsx_styles import XlsxStyles
-        style_path=related_part(relationships,"styles")
+        style_path=related_part(relationships,"styles",ns)
         require(style_path is None or style_path in archive.namelist(),"INVALID_SPREADSHEET","Missing related stylesheet")
         conversions=ConversionReport()
-        styles=XlsxStyles(archive,style_path or "xl/styles.xml",conversions)
+        styles=XlsxStyles(archive,style_path or "xl/styles.xml",conversions,ns)
         edits,issues=[],[]
         shift=(integer(request.get("row",1),1,1048576,"row")-1,integer(request.get("col",1),1,16384,"col")-1)
         sheet_label=sheets[selected-1].get("name","")
         count=0
-        stored=root.findall(f"{{{S}}}sheetData/{{{S}}}row/{{{S}}}c")
+        stored=root.findall(f"{{{ns.main}}}sheetData/{{{ns.main}}}row/{{{ns.main}}}c")
         require(len(stored)<=MAX_CELLS,"LIMIT","Import exceeds 10,000 stored cells")
         # Shared-formula structure is package structure: a broken group rejects the file.
-        shared_formulas=SharedFormulas(stored) if selected_mode!="values" else None
+        shared_formulas=SharedFormulas(stored,ns) if selected_mode!="values" else None
         context=XlsxCellContext(mode=selected_mode,shared_strings=shared,styles=styles,date_system=system,
                                 sheet_names=sheet_names,sheet=sheet_label,report=conversions,
-                                shared_formulas=shared_formulas,timezone_policy=request.get("timezone_policy","reject"),shift=shift)
+                                shared_formulas=shared_formulas,timezone_policy=request.get("timezone_policy","reject"),shift=shift,ns=ns)
         for cell in stored:
             count+=1; checkpoint(count,"Reading cells")
             require(count<=MAX_CELLS,"LIMIT","Import exceeds 10,000 stored cells")
@@ -542,5 +566,6 @@ def xlsx_preview(request,checkpoint=lambda completed,phase:None):
     if preparation_scope(request)!="workbook": return _xlsx_preview(request,checkpoint)
     with package(request) as archive:
         root=read_xml(archive,"xl/workbook.xml")
-        names=[s.get("name","") for s in root.findall(f"{{{S}}}sheets/{{{S}}}sheet")]
+        ns=namespaces(root)
+        names=[s.get("name","") for s in root.findall(f"{{{ns.main}}}sheets/{{{ns.main}}}sheet")]
     return prepare_workbook(request,checkpoint,names,_xlsx_preview)
