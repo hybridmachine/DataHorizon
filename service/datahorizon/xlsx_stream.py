@@ -6,12 +6,13 @@ applies the same package and XML safety rules, converts every cell with the same
 hands prepared cells to a sink in bounded batches. Within the tree reader's limits both produce the same
 sheets, cells and report entries.
 """
+import os
 import re
 import xml.etree.ElementTree as ET
 import zipfile
 import zlib
 from pathlib import Path
-from typing import Callable, Iterator, Protocol
+from typing import BinaryIO, Callable, Iterator, Protocol
 
 from .conversion_report import ConversionReport
 from .engine import EngineError, require
@@ -70,14 +71,19 @@ class ByteBudget:
         require(self.used <= self.limit, "LIMIT", f"Expanded spreadsheet exceeds {self.limit:,} bytes")
 
 
-def open_package(path: Path) -> zipfile.ZipFile:
-    """Open a package from disk with the entry, encryption and compression checks of interchange.package."""
-    path = Path(path)
-    try: size = path.stat().st_size
+def open_package(source: Path | BinaryIO) -> zipfile.ZipFile:
+    """Open a package from disk with the entry, encryption and compression checks of interchange.package.
+
+    `source` is a path or an open, seekable binary file; a file is read from its start and stays open
+    (and owned by the caller) after the archive closes, so callers can parse exactly the bytes they checked."""
+    opened = hasattr(source, "read")
+    if not opened: source = Path(source)
+    try: size = os.fstat(source.fileno()).st_size if opened else source.stat().st_size
     except OSError as error: raise EngineError("INVALID_SPREADSHEET", "Spreadsheet package cannot be read") from error
     require(size <= LARGE_PACKAGE, "LIMIT", f"Spreadsheet package exceeds {LARGE_PACKAGE//(1024*1024)} MiB")
     try:
-        archive = zipfile.ZipFile(path)
+        if opened: source.seek(0)
+        archive = zipfile.ZipFile(source)
     except OSError as error:
         raise EngineError("INVALID_SPREADSHEET", "Spreadsheet package cannot be read") from error
     except (ValueError, EOFError, zipfile.BadZipFile) as error:
@@ -326,8 +332,8 @@ def scope_lines(request) -> list[str]:
     return workbook_report()
 
 
-def read_workbook(path: Path, request: dict, sink: Sink, checkpoint: Callable[[int, str], None]) -> ConversionReport:
-    """Read every sheet of the package at `path` into `sink` at original coordinates; return the report.
+def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: Callable[[int, str], None]) -> ConversionReport:
+    """Read every sheet of the package at `path` (or in an open binary file) into `sink` at original coordinates; return the report.
 
     Within the tree reader's limits, the sheets, cells and report entries agree with interchange.xlsx_preview at
     workbook scope, with one exception: a shared-formula member stored before its master is converted at the

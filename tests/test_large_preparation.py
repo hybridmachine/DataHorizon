@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 import base64
 import copy
+import hashlib
 import http.client
 import json
 import os
@@ -226,11 +227,89 @@ class LargePreparationTests(unittest.TestCase):
                                                        'size': info.st_size, 'mtime_ns': info.st_mtime_ns})
             self.assertEqual(job['result']['mode'], 'values')
 
+    def test_upload_replaced_after_hashing_parses_the_hashed_bytes(self):
+        original, replacement = FIXTURE.read_bytes(), large_workbook(10)
+        real = service_module.read_workbook
+        def replacing(package, request, sink, checkpoint):
+            # The client releases the upload and stores different bytes under the same ID.
+            self.assertEqual(self.post('/v1/uploads/u/release', {})[0], 200)
+            self.upload('u', replacement)
+            return real(package, request, sink, checkpoint)
+        with self.service(), patch.object(service_module, 'read_workbook', replacing):
+            self.upload('u', original)
+            self.prepare({'job_id': 'swap', 'upload_id': 'u', 'scope': 'workbook'})
+            job = self.terminal('swap')
+            self.assertEqual(job['status'], 'completed', job)
+            self.assertEqual(job['result']['source']['sha256'], hashlib.sha256(original).hexdigest())
+            self.assertEqual([s['name'] for s in job['result']['sheets']], ['Inputs', 'Summary', 'Empty'])
+            self.assertEqual(job['result']['stored_cells'], 49)
+            self.assertEqual((self.server.staging.root/'upload-u.upload').read_bytes(), replacement)
+
+    @unittest.skipUnless(hasattr(os, 'mkfifo'), 'FIFOs are unavailable')
+    def test_fifo_is_rejected_promptly_even_when_swapped_in(self):
+        with self.service():
+            fifo = self.temp/'pipe.xlsx'; os.mkfifo(fifo)
+            self.rejected({'job_id': 'pipe', 'source_path': str(fifo), 'scope': 'workbook'}, 400, 'INVALID_PATH')
+            target = self.temp/'swapped.xlsx'; target.write_bytes(FIXTURE.read_bytes())
+            validate = self.server._package_source
+            def swap(body):
+                source = validate(body)
+                target.unlink(); os.mkfifo(target)
+                return source
+            with patch.object(self.server, '_package_source', swap):
+                started = time.monotonic()
+                self.prepare({'job_id': 'swap', 'source_path': str(target), 'scope': 'workbook'})
+                job = self.terminal('swap', 5)
+            self.assertLess(time.monotonic()-started, 5)
+            self.assertEqual((job['status'], job['error']['code']), ('failed', 'INVALID_PATH'))
+            self.assertEqual(self.stages(), [])
+
+    @unittest.skipIf(hasattr(os, 'geteuid') and os.geteuid() == 0, 'root can read any file')
+    def test_unreadable_source_path_is_invalid_path(self):
+        with self.service():
+            target = self.temp/'locked.xlsx'; target.write_bytes(FIXTURE.read_bytes()); target.chmod(0)
+            try:
+                self.rejected({'job_id': 'locked', 'source_path': str(target), 'scope': 'workbook'}, 400, 'INVALID_PATH')
+            finally:
+                target.chmod(0o600)
+
+    def test_closing_during_a_long_preparation_is_prompt_and_removes_the_stage(self):
+        reached = threading.Event()
+        real = service_module.read_workbook
+        def endless(package, request, sink, checkpoint):
+            def tick(completed, phase):
+                if completed >= 1000:
+                    reached.set()
+                    while True:  # A long read that honours cancellation at each checkpoint.
+                        checkpoint(completed, phase); time.sleep(.01)
+                checkpoint(completed, phase)
+            return real(package, request, sink, tick)
+        with tempfile.TemporaryDirectory() as temp, patch.object(service_module, 'read_workbook', endless):
+            server = Service(staging_root=Path(temp)/'staging')
+            worker = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .01}, daemon=True)
+            worker.start()
+            self.server = server
+            try:
+                self.upload('u', large_workbook(1000))
+                self.prepare({'job_id': 'long', 'upload_id': 'u', 'scope': 'workbook'})
+                self.assertTrue(reached.wait(10))
+                job = server.jobs.entries['long']
+                self.assertEqual(self.stages(), ['stage-long.stage'])
+            finally:
+                server.shutdown(); worker.join(timeout=2)
+                started = time.monotonic()
+                server.server_close()
+            self.assertLess(time.monotonic()-started, 5)
+            self.assertFalse(job['worker'].is_alive())
+            self.assertEqual(job['status'], 'cancelled')
+            self.assertNotIn('on_discard', job)  # The stage was released before staging closed.
+            self.assertFalse(server.staging.root.exists())
+
     def test_source_changed_while_reading_fails(self):
         real = service_module.read_workbook
         def touching(path, request, sink, checkpoint):
             report = real(path, request, sink, checkpoint)
-            os.utime(path, ns=(0, 0))
+            os.utime(self.temp/'moving.xlsx', ns=(0, 0))
             return report
         with self.service(), patch.object(service_module, 'read_workbook', touching):
             target = self.temp/'moving.xlsx'; target.write_bytes(FIXTURE.read_bytes())
@@ -293,6 +372,20 @@ class LargePreparationTests(unittest.TestCase):
                 self.assertEqual(job['status'], 'completed', job)
                 self.assertEqual(self.post(f"/v1/jobs/{request['job_id']}/release", {})[0], 200)
             self.assertEqual(self.stages(), [])
+
+
+class OpenPackageTests(unittest.TestCase):
+    def test_open_file_is_checked_read_from_its_start_and_left_open(self):
+        from datahorizon.xlsx_stream import open_package
+        with open(FIXTURE, 'rb') as package:
+            package.read(10)
+            with open_package(package) as archive:
+                self.assertIn('xl/workbook.xml', archive.namelist())
+            self.assertFalse(package.closed)
+        with tempfile.TemporaryFile() as huge:
+            huge.truncate(LARGE_PACKAGE+1)
+            with self.assertRaises(EngineError) as failure: open_package(huge)
+            self.assertEqual(failure.exception.body['code'], 'LIMIT')
 
 
 class DiscardTests(unittest.TestCase):

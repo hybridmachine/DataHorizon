@@ -631,6 +631,8 @@ class Service(ThreadingHTTPServer):
         import_mode(body)
         require(body.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
         # One lock orders the retry check, stage reservation and job creation against expiry and release.
+        # Expired jobs' on_discard callbacks can run while it is held; lock order: jobs.lock, then the
+        # upload lock, then the staging lock (see PreparationJobs).
         with self.jobs.lock:
             try:
                 self.jobs.access(job_id)
@@ -656,7 +658,7 @@ class Service(ThreadingHTTPServer):
             with self._upload_lock:
                 require(upload not in self._uploads,"JOB_CONFLICT","The upload is still in progress",409)
                 path = self.staging.path("upload",upload)
-            return {"kind":"upload","upload_id":upload,"file":path}
+            return {"kind":"upload","upload_id":upload,"file":path,"missing":("JOB_NOT_FOUND","The upload was released before it was read",404)}
         raw = body["source_path"]
         require(isinstance(raw,str) and os.path.isabs(raw),"INVALID_PATH","source_path must be an absolute path")
         try:
@@ -668,7 +670,29 @@ class Service(ThreadingHTTPServer):
         require(stat.S_ISREG(info.st_mode),"INVALID_PATH","source_path must name a regular file")
         require(os.access(resolved,os.R_OK),"INVALID_PATH","source_path is not readable by the service")
         require(info.st_size<=LARGE_PACKAGE,"LIMIT",f"Spreadsheet package exceeds {LARGE_PACKAGE//(1024*1024)} MiB")
-        return {"kind":"path","path":str(resolved),"size":info.st_size,"mtime_ns":info.st_mtime_ns,"file":resolved}
+        return {"kind":"path","path":str(resolved),"size":info.st_size,"mtime_ns":info.st_mtime_ns,"file":resolved,
+                "missing":("INVALID_PATH","source_path is no longer a readable file",400)}
+
+    @staticmethod
+    def _open_package(source):
+        """Open the package once, without blocking (a FIFO swapped in after validation cannot hang the job) and
+        without following a link at the resolved path; only a regular file matching what was validated is read."""
+        flags = os.O_RDONLY|getattr(os,"O_NONBLOCK",0)|getattr(os,"O_CLOEXEC",0)|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_BINARY",0)
+        try:
+            descriptor = os.open(source["file"],flags)
+        except OSError as error:
+            raise EngineError(*source["missing"]) from error
+        package = None
+        try:
+            info = os.fstat(descriptor)
+            require(stat.S_ISREG(info.st_mode),*source["missing"])
+            if source["kind"] == "path":
+                require((info.st_size,info.st_mtime_ns) == (source["size"],source["mtime_ns"]),"STALE_PLAN",
+                        "The source file changed after it was validated; prepare it again",409)
+            package = open(descriptor,"rb")
+            return package
+        finally:
+            if package is None: os.close(descriptor)
 
     def _stage_preparation(self, job_id, source):
         """The job body: read the package into the reserved stage and return its review summary."""
@@ -684,24 +708,25 @@ class Service(ThreadingHTTPServer):
                     if source["kind"] == "upload":
                         try: self.staging.touch("upload",source["upload_id"])
                         except EngineError: pass  # The client may release an upload that is open for reading.
-            recorded = {key:value for key,value in source.items() if key != "file"}
-            if source["kind"] == "upload":
-                digest = hashlib.sha256()
-                with open(source["file"],"rb") as package:
+            recorded = {key:value for key,value in source.items() if key not in ("file","missing")}
+            # One open file: the bytes hashed and checked are the bytes parsed, whatever happens at the path.
+            with self._open_package(source) as package:
+                if source["kind"] == "upload":
+                    digest = hashlib.sha256()
                     while chunk := package.read(1024*1024):
                         digest.update(chunk)
                         progress(0,"Checking upload")
-                recorded["sha256"] = digest.hexdigest()
-            stage = ImportStage(self.staging.path("stage",job_id))
-            try:
-                report = read_workbook(source["file"],request,stage,progress)
-                if source["kind"] == "path":
-                    info = source["file"].stat()
-                    require((info.st_size,info.st_mtime_ns) == (source["size"],source["mtime_ns"]),"STALE_PLAN",
-                            "The source file changed while it was prepared; prepare it again",409)
-                return stage.finish(report,{"format":"xlsx","mode":import_mode(request),"source":recorded})
-            finally:
-                stage.close()
+                    recorded["sha256"] = digest.hexdigest()
+                stage = ImportStage(self.staging.path("stage",job_id))
+                try:
+                    report = read_workbook(package,request,stage,progress)
+                    if source["kind"] == "path":
+                        info = os.fstat(package.fileno())
+                        require((info.st_size,info.st_mtime_ns) == (source["size"],source["mtime_ns"]),"STALE_PLAN",
+                                "The source file changed while it was prepared; prepare it again",409)
+                    return stage.finish(report,{"format":"xlsx","mode":import_mode(request),"source":recorded})
+                finally:
+                    stage.close()
         return prepare
 
     def dispatch(self, method, path, body):

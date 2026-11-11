@@ -11,6 +11,11 @@ from .engine import EngineError, encoded, require
 
 
 class PreparationJobs:
+    """`lock` is reentrant and callers may hold it around start/access. on_discard callbacks run outside any
+    critical section this object opens, but inside `lock` when the caller already holds it, so a callback may
+    only take locks ordered after it. Service lock order: jobs.lock, then the upload lock, then the staging lock."""
+    CLOSE_WAIT = 30
+
     def __init__(self, *, capacity=4, seconds=10, retention=300):
         self.lock = threading.RLock()
         self.entries = {}
@@ -40,7 +45,8 @@ class PreparationJobs:
                 require(not any(e["status"] == "running" for e in self.entries.values()),
                         "JOB_BUSY", "Another preparation job is running", 409)
                 entry = {"status":"running", "completed":0, "phase":"Queued", "fingerprint":fingerprint,
-                         "cancel":threading.Event(), "finished":None, "seconds":self.seconds if seconds is None else seconds}
+                         "cancel":threading.Event(), "finished":None,
+                         "deadline":time.monotonic()+(self.seconds if seconds is None else seconds)}
                 if on_discard is not None: entry["on_discard"] = on_discard
                 worker = threading.Thread(target=self._run, args=(entry,payload,prepare), daemon=True)
                 entry["worker"] = worker
@@ -73,7 +79,7 @@ class PreparationJobs:
                 traceback.print_exc(file=sys.stderr)
 
     def _run(self, entry, payload, prepare):
-        deadline = time.monotonic()+entry["seconds"]
+        deadline = entry["deadline"]
         def checkpoint(completed, phase):
             require(not entry["cancel"].is_set(), "CANCELLED", "Preparation cancelled; no workbook changes were made")
             require(time.monotonic() <= deadline, "TIMEOUT", "Preparation exceeded its time budget")
@@ -133,8 +139,10 @@ class PreparationJobs:
             entries = list(self.entries.values())
             for entry in entries:
                 entry["cancel"].set()
+        # Cancellation is honoured within 1,000 cells, so this normally returns at once; a worker is waited
+        # for at most until its own deadline (plus a grace second), capped at CLOSE_WAIT.
         for entry in entries:
-            entry["worker"].join(timeout=min(entry["seconds"], self.seconds)+1)
+            entry["worker"].join(timeout=min(max(entry["deadline"]-time.monotonic(), 0)+1, self.CLOSE_WAIT))
         with self.lock:
             self.entries.clear()
         # A worker still running discards its own storage when it stops.
