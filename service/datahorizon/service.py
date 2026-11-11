@@ -33,7 +33,7 @@ from .functions import function_catalog
 
 CAPABILITIES = {
     "api_version": 1, "format_version": 6, "supported_format_versions": [1,2,3,4,5,6], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
-    "workbook_modules":True,"atomic_macros":True,"macro_worker_seconds":2,"macro_activation":"operator-approved workbook UUID:code SHA256",
+    "workbook_modules":True,"atomic_macros":True,"macro_worker_seconds":2,"macro_activation":"operator-approved workbook UUID:code SHA256; set at service start-up, never over HTTP",
     "structured_tables":True,"table_types":["text","integer","number","boolean","date","time","datetime"],
     "readonly_sql":True,"query_jobs":True,"query_result_rows":100000,"query_result_values":1000000,"query_spool_bytes":64*1024*1024,
     "temporal_types": ["date","time","datetime"], "calculation_timezone": "UTC",
@@ -536,7 +536,7 @@ class Service(ThreadingHTTPServer):
             return function_catalog()
         if method == "GET" and path == "/v1/capabilities":
             if not self.owner_channel:return CAPABILITIES
-            return dict(CAPABILITIES,macro_activation=CAPABILITIES['macro_activation']+'; owner channel')
+            return dict(CAPABILITIES,macro_activation=CAPABILITIES['macro_activation']+', or by the owning process over its owner channel; never over HTTP')
         if method == "POST" and path == "/v1/open":
             return self._open(body)
         if method == "POST" and path == "/v1/recovery/inspect":
@@ -832,29 +832,39 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 
 def read_owner_channel(stream, store, limit=4096):
-    """Apply {"approve": key} lines; problems yield one short stderr line and never stop the service."""
+    """Apply {"approve": key} lines read from an unbuffered stream.
+
+    Problems yield one short stderr line and never stop the service. Lines are split here
+    because a buffered reader's lock can abort interpreter shutdown while a daemon thread waits.
+    """
     def warn(text):
         try:print('owner channel: '+text,file=sys.stderr,flush=True)
         except (OSError,ValueError):pass
-    while True:
-        try:line=stream.readline(limit+1)
-        except (OSError,ValueError):return
-        if not line:return
-        if len(line)>limit and not line.endswith(b'\n'):
-            while line and not line.endswith(b'\n'):
-                try:line=stream.readline(limit+1)
-                except (OSError,ValueError):return
-            warn('line too long, ignored')
-            continue
+    def apply(line):
         try:
             message=json.loads(line.decode('utf-8'))
             valid=isinstance(message,dict) and set(message)=={'approve'}
         except (ValueError,UnicodeError):valid=False
-        if not valid:
-            warn('line ignored; expected {"approve": key}')
-            continue
+        if not valid:return warn('line ignored; expected {"approve": key}')
         try:store.grant(message['approve'])
         except ValueError:warn('approval rejected')
+    pending,skipping=bytearray(),False
+    while True:
+        try:chunk=stream.read(4096)
+        except (OSError,ValueError):return
+        if not chunk:
+            if pending and not skipping:apply(bytes(pending))
+            return
+        while chunk:
+            end=chunk.find(b'\n')
+            piece,chunk=(chunk,b'') if end<0 else (chunk[:end],chunk[end+1:])
+            if not skipping:
+                pending+=piece
+                if len(pending)>limit:skipping=True;pending.clear()
+            if end>=0:
+                if skipping:warn('line too long, ignored')
+                elif pending:apply(bytes(pending))
+                pending.clear();skipping=False
 
 
 def main():
@@ -868,7 +878,7 @@ def main():
     # Only the launching parent receives this credential through its private pipe.
     print(encoded({"url": f"http://127.0.0.1:{server.server_port}", "token": server.token, "api_version": 1}), flush=True)
     if args.owner_channel:
-        threading.Thread(target=read_owner_channel,args=(sys.stdin.buffer,server.approved_code),daemon=True).start()
+        threading.Thread(target=read_owner_channel,args=(open(sys.stdin.fileno(),'rb',buffering=0,closefd=False),server.approved_code),daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

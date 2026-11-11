@@ -67,15 +67,16 @@ startup option (repeatable) or the embedded service/SDK constructor. The
 allowlist lives only in that service process. A service started with
 `--owner-channel` also accepts one JSON line per approval, `{"approve": key}`,
 on its standard input, which only the parent process that started it holds
-(`LocalService(owner_channel=True).approve(key)`). Through that channel the
-allowlist is append-only for the life of the process: a grant reaches workbooks
-already open, replaces any earlier granted key for the same workbook UUID,
-never removes a start-up key, and the total of start-up and granted keys stays
-within 256. Without the flag standard input is never read. REST exposes
+(`LocalService(owner_channel=True).approve(key)`). The allowlist grows only
+through that channel, with one granted key per workbook: a grant reaches
+workbooks already open, replaces any earlier granted key for the same workbook
+UUID, never removes a start-up key, and keeps the total of start-up and granted
+keys within 256. Without the flag standard input is never read. REST exposes
 inspection and refusal but no endpoint that grants execution; request-body
 fields cannot create grants. The authenticated localhost bearer does not by
 itself activate code, and a client attached to a service it did not start
-cannot approve; that service's operator configures grants. Native copies with the same workbook identity and identical code match the same
+cannot approve; that service's operator configures grants.
+Native copies with the same workbook identity and identical code match the same
 explicit key within an already configured service; a fresh service needs its own
 operator grant. Reverting to an identical approved code version matches again.
 

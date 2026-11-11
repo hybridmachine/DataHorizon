@@ -3,8 +3,10 @@ import contextlib
 from contextlib import closing
 import io
 import json
+import os
 from pathlib import Path
 import sqlite3
+import signal
 import subprocess
 import sys
 import tempfile
@@ -52,6 +54,15 @@ class ApprovalStoreTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()) as captured:read_owner_channel(io.BytesIO(b''.join(lines)),store)
         self.assertEqual(len(captured.getvalue().splitlines()),6)
         self.assertEqual(store.snapshot(),frozenset([good,other]))
+
+    def test_reader_joins_partial_writes_and_stops_at_end_of_input(self):
+        store=ApprovalStore();key=key_for(str(uuid.uuid4()));data=json.dumps(dict(approve=key)).encode()+b'\n'
+        read,write=os.pipe()
+        with os.fdopen(read,'rb',buffering=0) as stream:
+            thread=threading.Thread(target=read_owner_channel,args=(stream,store));thread.start()
+            for index in range(0,len(data),7):os.write(write,data[index:index+7]);time.sleep(0.01)
+            self.assertTrue(wait_until(lambda:key in store));os.close(write);thread.join(5)
+            self.assertFalse(thread.is_alive())
 
 
 class OwnerChannelTests(unittest.TestCase):
@@ -135,6 +146,17 @@ class OwnerChannelTests(unittest.TestCase):
             service.process.stdin.close();time.sleep(0.3)
             self.assertIsNone(service.process.poll());book.code()
         with self.assertRaises(RuntimeError):service.approve(key_for(str(uuid.uuid4())))
+
+    def test_interrupt_exits_cleanly_while_stdin_is_open_and_idle(self):
+        command=[sys.executable,'-I','-B',str(Path(sys.modules['datahorizon.client'].__file__).with_name('launch.py')),'--owner-channel']
+        process=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            json.loads(process.stdout.readline());time.sleep(0.3);process.send_signal(signal.SIGINT)
+            code=process.wait(timeout=10);errors=process.stderr.read()
+        finally:
+            if process.poll() is None:process.kill();process.wait()
+            for stream in (process.stdin,process.stdout,process.stderr):stream.close()
+        self.assertEqual(code,0);self.assertNotIn('Fatal Python error',errors)
 
     def test_attached_client_has_no_approve(self):
         self.assertFalse(hasattr(Client,'approve'));self.assertFalse(hasattr(Client,'grant'))
