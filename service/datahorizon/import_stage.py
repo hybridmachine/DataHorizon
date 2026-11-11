@@ -2,7 +2,7 @@
 """A prepared whole-workbook import held in a private SQLite file for review and a later atomic apply.
 
 Everything in the file comes from an uploaded package and is data only. The writer is a sink for
-xlsx_stream.read_workbook; once finished, the file is read-only and can be opened from any thread or process.
+xlsx_stream.read_workbook and ods_stream.read_workbook; once finished, the file is read-only and can be opened from any thread or process.
 The file is throwaway: it is written with journal_mode=OFF and synchronous=OFF, so a crash mid-write leaves it
 unusable and it must be discarded (it is never an input to anything until finish has committed it)."""
 from contextlib import closing
@@ -229,15 +229,16 @@ class ImportStage(StageReader):
         self._execute_many("INSERT INTO cells(sheet, row, col, source, kind, style_id) VALUES (?, ?, ?, ?, ?, ?)", rows)
         self._count += len(rows)
 
-    def finish(self, report: ConversionReport, extra: dict) -> dict:
+    def finish(self, report: ConversionReport, extra: dict, *, scope: list[str] | None = None) -> dict:
         """Drop the string table, seal the stage and return the review summary (always under 1 MiB).
 
-        Nothing is dropped until the summary is built and validated; any failure marks the stage failed."""
+        `scope` is the reader's fixed report lines, which precede the conversion report's (by default the XLSX
+        reader's). Nothing is dropped until the summary is built and validated; any failure marks the stage failed."""
         self._writable()
         try:
             self._strings.flush()
             summary = {"scope": "workbook", "stage_id": self.stage_id(), "stage_digest": None, "sheets": [],
-                       "stored_cells": self._count, "report": scope_lines({})+report.lines(),
+                       "stored_cells": self._count, "report": (scope_lines({}) if scope is None else list(scope))+report.lines(),
                        "report_entries": report.entries(), "totals": report.totals(), "sample": [], "can_import": True}
             clash = set(extra) & set(summary)
             if clash: raise ValueError(f"extra must not override summary keys: {sorted(clash)}")

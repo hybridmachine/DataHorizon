@@ -3,6 +3,7 @@
 
 import argparse
 from contextlib import contextmanager
+import copy
 import hashlib
 import hmac
 from http.client import LineTooLong
@@ -37,6 +38,8 @@ from .functions import function_catalog
 from .staging import IDENTIFIER, Staging
 from .conversion_report import ConversionReport
 from .xlsx_stream import LARGE_CELLS, LARGE_EXPANDED, LARGE_PACKAGE, LARGE_SHEETS, export_lines, read_workbook, write_workbook
+from . import ods_stream
+from .ods_stream import read_workbook as ods_read_workbook, write_workbook as ods_write_workbook
 
 CAPABILITIES = {
     "api_version": 1, "format_version": 7, "supported_format_versions": [1,2,3,4,5,6,7], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
@@ -69,9 +72,15 @@ PACKAGE_INPUTS = ("file_base64","upload_id","source_path")
 CAPABILITIES.update(import_source_path=True,large_preparation_job_seconds=LARGE_PREPARATION_SECONDS)
 MAX_DOWNLOADS, DOWNLOAD_SECONDS, DOWNLOAD_CHUNK = 2, 300, 64*1024
 EXPORT_JOB_SECONDS = 300
-EXPORT_JOB = "xlsx_export"  # the PreparationJobs kind of a large export
+EXPORT_JOB = "xlsx_export"  # the PreparationJobs kind of a large XLSX export
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-CAPABILITIES.update(export_jobs=True,max_export_cells=LARGE_CELLS,export_job_seconds=EXPORT_JOB_SECONDS,max_concurrent_downloads=MAX_DOWNLOADS)
+ODS_TYPE = "application/vnd.oasis.opendocument.spreadsheet"
+# The formats of the large path: the PreparationJobs kind of each format's export job, and what its download is.
+LARGE_FORMATS = ("xlsx","ods")
+EXPORT_KINDS = {"xlsx":EXPORT_JOB,"ods":"ods_export"}
+DOWNLOADS = {EXPORT_JOB:(XLSX_TYPE,"export.xlsx"),"ods_export":(ODS_TYPE,"export.ods")}
+CAPABILITIES.update(export_jobs=True,max_export_cells=LARGE_CELLS,export_job_seconds=EXPORT_JOB_SECONDS,max_concurrent_downloads=MAX_DOWNLOADS,
+                    large_interchange_formats=list(LARGE_FORMATS))
 
 ROUTES = {
     "/v1/workbooks/{workbook}/code": ("post", "Inspect inert workbook modules and the exact service-local activation key"),
@@ -118,7 +127,7 @@ ROUTES = {
     "/v1/recovery/inspect": ("post", "Read-only native-file inspection without code activation or repair"),
     "/v1/import/csv/preview": ("post", "Decode CSV and review explicit column conversions without mutation"),
     "/v1/import/csv/jobs": ("post", "Start a cancellable CSV preparation; never writes workbook data"),
-    "/v1/import/ods/jobs": ("post", "Prepare bounded ODS selected-sheet or whole-workbook inputs with conversion review"),
+    "/v1/import/ods/jobs": ("post", "Prepare bounded ODS selected-sheet or whole-workbook inputs with conversion review, or a whole workbook from an upload or local file into an import stage"),
     "/v1/workbooks/{workbook}/export/ods": ("post", "Bounded ODS selection or whole-workbook snapshot and conversion report"),
     "/v1/import/xlsx/jobs": ("post", "Prepare bounded selected-sheet or whole-workbook XLSX with conversion review, or a whole workbook from an upload or local file into an import stage"),
     "/v1/workbooks/{workbook}/export/xlsx": ("post", "Bounded XLSX selection or whole-workbook snapshot and conversion report"),
@@ -147,8 +156,9 @@ ROUTES = {
     "/v1/uploads/{upload}": ("put", "Stream a raw spreadsheet package of 1 byte to 64 MiB into private staging; never parsed by this route"),
     "/v1/uploads/{upload}/release": ("post", "Delete a completed staged upload"),
     "/v1/workbooks/{workbook}/export/xlsx/jobs": ("post", "Export the whole workbook, up to 1,000,000 cells, as XLSX formulas into private staging from one consistent state"),
-    "/v1/exports/{export}": ("get", "Stream a completed large XLSX export as a binary download"),
-    "/v1/exports/{export}/release": ("post", "Delete a large XLSX export and forget its job"),
+    "/v1/workbooks/{workbook}/export/ods/jobs": ("post", "Export the whole workbook, up to 1,000,000 cells, as ODS formulas into private staging from one consistent state"),
+    "/v1/exports/{export}": ("get", "Stream a completed large XLSX or ODS export as a binary download"),
+    "/v1/exports/{export}/release": ("post", "Delete a large XLSX or ODS export and forget its job"),
 }
 
 
@@ -380,6 +390,14 @@ def openapi():
             "With upload_id or source_path, scope must be workbook and row, col and sheet_index are refused; a missing upload is JOB_NOT_FOUND, "
             "a source_path that is not an absolute path to an existing regular file is INVALID_PATH, an oversized file is LIMIT. "
             "A malformed package ends the job failed with INVALID_SPREADSHEET, a limit with LIMIT, a cancel with CANCELLED; the stage is then deleted."}
+    # The same staged preparation for ODS, read by the streaming ODS reader.
+    schemas["OdsUploadPreparation"]={**copy.deepcopy(schemas["XlsxUploadPreparation"]),
+        "example":{"job_id":"example-ods-upload","upload_id":"example-ods","scope":"workbook","mode":"mixed"}}
+    schemas["OdsPathPreparation"]={**copy.deepcopy(schemas["XlsxPathPreparation"]),"example":{"job_id":"example-ods-path","source_path":"/tmp/example.ods","scope":"workbook"}}
+    schemas["OdsPreparationRequest"]={"oneOf":[{"$ref":"#/components/schemas/"+name} for name in ("SpreadsheetPreparation","OdsUploadPreparation","OdsPathPreparation")],
+        "description":schemas["XlsxPreparationRequest"]["description"]+" The ODS package must start with its uncompressed mimetype entry; "
+            "an encrypted package is INVALID_SPREADSHEET. Empty repeated rows and cells cost nothing; a repeat that would store more than "
+            f"{LARGE_CELLS:,} cells is LIMIT before any cell is stored. The summary's format is ods."}
     schemas["UploadReleased"]={"type":"object","required":["released","upload_id"],"additionalProperties":False,"properties":{"released":{"type":"boolean","enum":[True]},"upload_id":upload_id},
         "example":{"released":True,"upload_id":"example-upload"}}
     export_id={"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"}
@@ -396,6 +414,16 @@ def openapi():
             "A retry with the same job_id and inputs from the same workbook returns the existing job; any other reuse is JOB_CONFLICT. "
             "At most four exports are stored at once (JOB_LIMIT), and one preparation or export job runs at a time (JOB_BUSY)."),
         "example":{"job_id":"example-xlsx-export","mode":"formulas"}}
+    schemas["OdsExportJobRequest"]={**copy.deepcopy(schemas["XlsxExportJobRequest"]),
+        "description":schemas["XlsxExportJobRequest"]["description"].replace("Strings are written inline. Exceeding a limit, or text over Excel's 32,767-character cell limit,",
+            "Formulas carry no cached values (each is itemized as approximated). Exceeding a limit")
+            +" The body of content.xml is first written to a second private staging file, deleted when the job ends, because the "
+            "automatic styles that precede it are known only after every cell. As in the bounded ODS export, a formula the published "
+            "function tier cannot translate fails the job with UNSUPPORTED_FORMULA and text with XML control characters with UNSUPPORTED_CELL. "
+            "The download is served as application/vnd.oasis.opendocument.spreadsheet named export.ods.",
+        "example":{"job_id":"example-ods-export","mode":"formulas"}}
+    schemas["OdsExportJobRequest"]["properties"]["mode"]={**schemas["OdsExportJobRequest"]["properties"]["mode"],"description":
+        "Formulas are written without cached values. values and mixed are UNSUPPORTED (400) here; the bounded POST /v1/workbooks/{workbook}/export/ods route still exports values"}
     entry={"type":"object","required":["category","severity","detail","count","samples"],"properties":{
         "category":{"type":"string"},"severity":{"type":"string","enum":["converted","approximated","omitted","unevaluable"]},"detail":{"type":"string"},
         "count":{"type":"integer","minimum":1},"samples":{"type":"array","maxItems":100,"items":{"type":"object","properties":{"sheet":{"type":"string","nullable":True},"cell":{"type":"string"}}}}}}
@@ -419,7 +447,7 @@ def openapi():
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = "JobAction" if path.startswith(("/v1/uploads/","/v1/exports/")) else "XlsxExportJobRequest" if path.endswith("/export/xlsx/jobs") else ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "XlsxPreparationRequest" if path=="/v1/import/xlsx/jobs" else "SpreadsheetPreparation" if path=="/v1/import/ods/jobs" else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = "JobAction" if path.startswith(("/v1/uploads/","/v1/exports/")) else "XlsxExportJobRequest" if path.endswith("/export/xlsx/jobs") else "OdsExportJobRequest" if path.endswith("/export/ods/jobs") else ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "XlsxPreparationRequest" if path=="/v1/import/xlsx/jobs" else "OdsPreparationRequest" if path=="/v1/import/ods/jobs" else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "code":"CodeReadRequest","names":"NamesReadRequest","inspect":"TableCatalogRequest","repair-preview":"RelationshipRepairRequest","cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             if '/queries/' in path and path.endswith('/preview'):schema={'$ref':'#/components/schemas/QueryDefinitionRequest'}
@@ -455,15 +483,16 @@ def openapi():
             operation['responses']['200']['content']={'application/json':{'schema':{'$ref':'#/components/schemas/ExportReleased'}}}
             operation['responses']['409']['description']='JOB_CONFLICT (a download is in progress)'
         if path=='/v1/exports/{export}':
-            operation['description']=(f"Streams the file of a completed export job in 64-KiB chunks with Content-Length and Content-Disposition: attachment; filename=\"export.xlsx\". "
+            operation['description']=(f"Streams the file of a completed export job in 64-KiB chunks with Content-Length and Content-Disposition: attachment; filename=\"export.xlsx\" "
+                f"(an XLSX export job) or filename=\"export.ods\" (an ODS export job), with that format's content type. "
                 f"Origin and bearer-token checks apply as on every route. Downloading restarts the job's and the file's retention; it can be repeated until the export is released. "
                 f"At most {MAX_DOWNLOADS} downloads are in progress at once (DOWNLOAD_BUSY). A download stops after {DOWNLOAD_SECONDS} seconds; a client that stops reading loses the connection.")
-            operation['responses']['200']={'description':'The XLSX package','headers':{
-                'Content-Length':{'schema':{'type':'integer','minimum':1}},'Content-Disposition':{'schema':{'type':'string','enum':['attachment; filename="export.xlsx"']}}},
-                'content':{XLSX_TYPE:{'schema':{'type':'string','format':'binary'}}}}
+            operation['responses']['200']={'description':'The XLSX or ODS package','headers':{
+                'Content-Length':{'schema':{'type':'integer','minimum':1}},'Content-Disposition':{'schema':{'type':'string','enum':['attachment; filename="export.xlsx"','attachment; filename="export.ods"']}}},
+                'content':{XLSX_TYPE:{'schema':{'type':'string','format':'binary'}},ODS_TYPE:{'schema':{'type':'string','format':'binary'}}}}
             operation['responses']['404']['description']='JOB_NOT_FOUND: no completed export job has that ID (including while it is still running, and after release)'
             operation['responses']['409']['description']='DOWNLOAD_BUSY (two downloads in progress)'
-        if path.endswith('/export/xlsx/jobs'):
+        if path.endswith(('/export/xlsx/jobs','/export/ods/jobs')):
             operation['responses']['200']['description']='The job view (job_id, status, completed, phase, and result or error); poll GET /v1/jobs/{job} until it is not running'
             operation['responses']['400']['description']='INVALID_JOB, INVALID_ARGUMENT, or UNSUPPORTED for mode values or mixed'
             operation['responses']['409']['description']='JOB_CONFLICT (job_id used for different inputs), JOB_BUSY (another job running) or JOB_LIMIT (four stored jobs or exports)'
@@ -689,12 +718,13 @@ class Service(ThreadingHTTPServer):
             self.staging.release("upload",identifier)
         return {"released":True,"upload_id":identifier}
 
-    def _prepare_xlsx(self, body):
-        """Inline packages keep the bounded tree preview; an upload or local file is read into a stage."""
+    def _prepare_package(self, body, fmt):
+        """Inline packages keep the bounded tree preview of format `fmt` (xlsx or ods); an upload or local file is read
+        into a stage by that format's streaming reader."""
         inputs = [key for key in PACKAGE_INPUTS if key in body]
         require(len(inputs)==1,"INVALID_ARGUMENT","Supply exactly one of file_base64, upload_id or source_path")
         if inputs == ["file_base64"]:
-            return self.jobs.start(body,xlsx_preview,"xlsx")
+            return self.jobs.start(body,xlsx_preview if fmt=="xlsx" else ods_preview,fmt)
         job_id = body.get("job_id")
         # The stage is named after the job, and staging identifiers are shorter than job IDs.
         require(isinstance(job_id,str) and IDENTIFIER.fullmatch(job_id),"INVALID_JOB",
@@ -713,11 +743,11 @@ class Service(ThreadingHTTPServer):
                 if error.body["code"] != "JOB_NOT_FOUND": raise
             else:
                 # A retry: the existing job (or JOB_CONFLICT); its stage already exists, so none is reserved.
-                return self.jobs.start(body,self._stage_preparation(job_id,None),"xlsx",seconds=LARGE_PREPARATION_SECONDS)
+                return self.jobs.start(body,self._stage_preparation(job_id,None,fmt),fmt,seconds=LARGE_PREPARATION_SECONDS)
             source = self._package_source(body)
             self.staging.new("stage",job_id)
             try:
-                return self.jobs.start(body,self._stage_preparation(job_id,source),"xlsx",seconds=LARGE_PREPARATION_SECONDS,
+                return self.jobs.start(body,self._stage_preparation(job_id,source,fmt),fmt,seconds=LARGE_PREPARATION_SECONDS,
                                        on_discard=lambda:self.staging.release("stage",job_id))
             except BaseException:
                 self.staging.release("stage",job_id)
@@ -767,8 +797,8 @@ class Service(ThreadingHTTPServer):
         finally:
             if package is None: os.close(descriptor)
 
-    def _stage_preparation(self, job_id, source):
-        """The job body: read the package into the reserved stage and return its review summary."""
+    def _stage_preparation(self, job_id, source, fmt):
+        """The job body: read the package of format `fmt` into the reserved stage and return its review summary."""
         def prepare(request, checkpoint):
             require(source is not None,"JOB_NOT_FOUND","Preparation job expired while it was retried; start it again",404)
             touched = [time.monotonic()]
@@ -791,46 +821,65 @@ class Service(ThreadingHTTPServer):
                         progress(0,"Checking upload")
                     recorded["sha256"] = digest.hexdigest()
                 stage = ImportStage(self.staging.path("stage",job_id))
+                # Looked up when the job runs, so the readers can be replaced in tests.
+                reader,scope = (read_workbook,None) if fmt=="xlsx" else (ods_read_workbook,ods_stream.scope_lines(request))
                 try:
-                    report = read_workbook(package,request,stage,progress)
+                    report = reader(package,request,stage,progress)
                     if source["kind"] == "path":
                         info = os.fstat(package.fileno())
                         require((info.st_size,info.st_mtime_ns) == (source["size"],source["mtime_ns"]),"STALE_PLAN",
                                 "The source file changed while it was prepared; prepare it again",409)
-                    return stage.finish(report,{"format":"xlsx","mode":import_mode(request),"source":recorded})
+                    return stage.finish(report,{"format":fmt,"mode":import_mode(request),"source":recorded},scope=scope)
                 finally:
                     stage.close()
         return prepare
 
-    def _start_export(self, book, body):
-        """A large XLSX export job; the export file is reserved under the job id and owned by the job."""
+    def _start_export(self, book, body, fmt):
+        """A large export job of format `fmt` (xlsx or ods); the export file is reserved under the job id and owned by the job."""
+        label = fmt.upper()
         job_id = body.get("job_id")
         require(isinstance(job_id,str) and IDENTIFIER.fullmatch(job_id),"INVALID_JOB",
                 "job_id must be 1-64 ASCII letters, digits, underscores or hyphens; it also names the export")
-        require(not set(body)-{"job_id","mode"},"INVALID_ARGUMENT","A large XLSX export takes only job_id and mode")
+        require(not set(body)-{"job_id","mode"},"INVALID_ARGUMENT",f"A large {label} export takes only job_id and mode")
         selected = body.get("mode","formulas")
         require(selected in ("formulas","mixed","values"),"INVALID_ARGUMENT","mode must be formulas")
-        require(selected=="formulas","UNSUPPORTED","A large XLSX export writes formulas only; export values with the bounded "
-                "POST /v1/workbooks/{workbook}/export/xlsx route (at most 10,000 cells)")
+        require(selected=="formulas","UNSUPPORTED",f"A large {label} export writes formulas only; export values with the bounded "
+                f"POST /v1/workbooks/{{workbook}}/export/{fmt} route (at most 10,000 cells)")
         # The workbook is an input: a retry must come from the same workbook to find its job.
         request = {"job_id":job_id,"mode":"formulas","workbook":book.id,"path":str(book.path)}
-        # As in _prepare_xlsx, one lock orders the retry check, file reservation and job creation against expiry and release.
+        kind = EXPORT_KINDS[fmt]
+        # As in _prepare_package, one lock orders the retry check, file reservation and job creation against expiry and release.
         with self.jobs.lock:
             try:
                 self.jobs.access(job_id)
             except EngineError as error:
                 if error.body["code"] != "JOB_NOT_FOUND": raise
             else:
-                return self.jobs.start(request,self._export_job(book,job_id),EXPORT_JOB,seconds=EXPORT_JOB_SECONDS)
+                return self.jobs.start(request,self._export_job(book,job_id,fmt),kind,seconds=EXPORT_JOB_SECONDS)
             self.staging.new("export",job_id)
             try:
-                return self.jobs.start(request,self._export_job(book,job_id),EXPORT_JOB,seconds=EXPORT_JOB_SECONDS,
+                return self.jobs.start(request,self._export_job(book,job_id,fmt),kind,seconds=EXPORT_JOB_SECONDS,
                                        on_discard=lambda:self.staging.release("export",job_id))
             except BaseException:
                 self.staging.release("export",job_id)
                 raise
 
-    def _export_job(self, book, job_id):
+    def _write_export(self, fmt, job_id, target, stream, report, progress):
+        """Write the snapshot as format `fmt` into `target`; return the written summary and the fixed report lines.
+        The ODS writer's body scratch file is a staging entry of the job, released whatever happens."""
+        if fmt == "xlsx":
+            written = write_workbook(target,stream,report,progress)
+            return written,export_lines(stream.native,written["future_functions"],written["unevaluated_formulas"])
+        def reserve():
+            self.staging.release("part",job_id)  # Left over from a crash: the job's id is held by its export file.
+            return self.staging.new("part",job_id)
+        try:
+            written = ods_write_workbook(target,stream,report,progress,scratch=reserve)
+        finally:
+            self.staging.release("part",job_id)
+        return written,ods_stream.export_lines(stream.native,written["modern_functions"],written["formulas"],written["unevaluated_formulas"])
+
+    def _export_job(self, book, job_id, fmt):
         """The job body: snapshot the workbook, write the package into the reserved file and return its summary."""
         def prepare(request, checkpoint):
             touched = [time.monotonic()]
@@ -849,21 +898,22 @@ class Service(ThreadingHTTPServer):
             try:
                 with book.stream_workbook(reserve,checkpoint=progress) as stream:
                     report = ConversionReport()
-                    written = write_workbook(target,stream,report,progress)
+                    written,lines = self._write_export(fmt,job_id,target,stream,report,progress)
             finally:
                 self.staging.release("snapshot",job_id)
             return {"export_id":job_id,"bytes":written["bytes"],"sha256":written["sha256"],"state":stream.state,
-                    "report":export_lines(stream.native,written["future_functions"],written["unevaluated_formulas"])+report.lines(),
+                    "report":lines+report.lines(),
                     "report_entries":report.entries(),"totals":report.totals()}
         return prepare
 
     @contextmanager
     def download_slot(self, identifier):
-        """Reserve one of MAX_DOWNLOADS in-progress downloads of a completed export; yield its open file and size.
-        The export's retention restarts."""
+        """Reserve one of MAX_DOWNLOADS in-progress downloads of a completed export; yield its open file, its size and
+        (content type, file name) for the format the job wrote. The export's retention restarts."""
         require(isinstance(identifier,str) and IDENTIFIER.fullmatch(identifier),"INVALID_JOB","Identifier needs 1–64 ASCII letters, digits, _ or -")
         with self.jobs.lock:
-            result = self.jobs.retain(identifier,EXPORT_JOB)
+            result = self.jobs.retain(identifier,tuple(DOWNLOADS))
+            served = DOWNLOADS[self.jobs.entries[identifier]["kind"]]
             with self._download_lock:
                 require(sum(self._downloads.values())<MAX_DOWNLOADS,"DOWNLOAD_BUSY",
                         f"At most {MAX_DOWNLOADS} downloads can be in progress; retry when one finishes",409)
@@ -877,7 +927,7 @@ class Service(ThreadingHTTPServer):
                     raise
                 self._downloads[identifier] = self._downloads.get(identifier,0)+1
         try:
-            yield file,size
+            yield file,size,served
         finally:
             file.close()
             with self._download_lock:
@@ -887,7 +937,7 @@ class Service(ThreadingHTTPServer):
     def _release_export(self, identifier):
         require(IDENTIFIER.fullmatch(identifier),"INVALID_JOB","Identifier needs 1–64 ASCII letters, digits, _ or -")
         with self.jobs.lock:
-            self.jobs.retain(identifier,EXPORT_JOB)
+            self.jobs.retain(identifier,tuple(DOWNLOADS))
             with self._download_lock:
                 require(identifier not in self._downloads,"JOB_CONFLICT","A download of this export is in progress; retry when it finishes",409)
             # The job is forgotten without its discard callback, which this release replaces.
@@ -918,10 +968,8 @@ class Service(ThreadingHTTPServer):
             return preview_csv(body)
         if method == "POST" and path == "/v1/import/csv/jobs":
             return self.jobs.start(body, preview_csv)
-        if method == "POST" and path == "/v1/import/ods/jobs":
-            return self.jobs.start(body,ods_preview,"ods")
-        if method == "POST" and path == "/v1/import/xlsx/jobs":
-            return self._prepare_xlsx(body)
+        if method == "POST" and path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs"):
+            return self._prepare_package(body,path.split("/")[3])
         parts = path.strip("/").split("/")
         if len(parts) in (3,4) and parts[:2] == ["v1","jobs"]:
             if method == "GET" and len(parts) == 3:
@@ -1123,8 +1171,8 @@ class Service(ThreadingHTTPServer):
                     error=EngineError("SNAPSHOT_FAILED",f"Native copy failed: {error}. Retain the source and preserve any destination for inspection",409)
                 error.body.update(destination=body["path"],copy_outcome="incomplete",destination_requires_inspection=True)
                 raise error
-        if method == "POST" and suffix == ["export","xlsx","jobs"]:
-            return self._start_export(book,body)
+        if method == "POST" and len(suffix) == 3 and suffix[0] == "export" and suffix[1] in LARGE_FORMATS and suffix[2] == "jobs":
+            return self._start_export(book,body,suffix[1])
         if method == "POST" and suffix in (["export", "xlsx"],["export","ods"]):
             require("rows" not in body,"INVALID_ARGUMENT","Spreadsheet export requires a contiguous rectangle")
             whole=preparation_scope(body)=="workbook"
@@ -1245,14 +1293,14 @@ class RequestHandler(BaseHTTPRequestHandler):
         identifier=unquote(path[len("/v1/exports/"):])
         stem,_,action=identifier.rpartition("/")
         require(not (action=="release" and IDENTIFIER.fullmatch(stem)),"METHOD_NOT_ALLOWED","Release an export with POST",405)
-        with self.server.download_slot(identifier) as (file,size):
+        with self.server.download_slot(identifier) as (file,size,(content_type,filename)):
             deadline=time.monotonic()+DOWNLOAD_SECONDS
             try:
                 self.connection.settimeout(30)
                 self.send_response(200)
-                self.send_header("Content-Type",XLSX_TYPE)
+                self.send_header("Content-Type",content_type)
                 self.send_header("Content-Length",str(size))
-                self.send_header("Content-Disposition",'attachment; filename="export.xlsx"')
+                self.send_header("Content-Disposition",f'attachment; filename="{filename}"')
                 self.send_header("Cache-Control","no-store")
                 self.send_header("X-Content-Type-Options","nosniff")
                 self.send_header("X-Frame-Options","DENY")

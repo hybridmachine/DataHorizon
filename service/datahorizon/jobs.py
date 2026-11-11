@@ -134,15 +134,17 @@ class PreparationJobs:
             self._discard(*discarded)
 
     def retain(self, job_id, kind):
-        """Return the result of a completed job of `kind` and restart its retention period, as a use of that result
-        does. A running, failed or cancelled job, one of another kind, or an unknown or expired one is JOB_NOT_FOUND."""
+        """Return the result of a completed job of `kind` (one kind, or a tuple of kinds) and restart its retention
+        period, as a use of that result does. A running, failed or cancelled job, one of another kind, or an unknown or
+        expired one is JOB_NOT_FOUND."""
+        kinds = kind if isinstance(kind, tuple) else (kind,)
         expired = []
         try:
             with self.lock:
                 expired = self._expire()
                 entry = self.entries.get(job_id)
-                require(entry is not None and entry["status"] == "completed" and entry["kind"] == kind, "JOB_NOT_FOUND",
-                        f"No completed {kind} job has that ID", 404)
+                require(entry is not None and entry["status"] == "completed" and entry["kind"] in kinds, "JOB_NOT_FOUND",
+                        f"No completed {' or '.join(kinds)} job has that ID", 404)
                 entry["finished"] = time.monotonic()
                 return entry["result"]
         finally:

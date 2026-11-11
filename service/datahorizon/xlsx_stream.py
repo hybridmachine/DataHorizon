@@ -8,6 +8,9 @@ sheets, cells and report entries.
 
 The writer is the mirror of the bounded whole-workbook formulas export: every cell goes through the same
 interchange.export_cell, written to the archive as it is read.
+
+The package and XML streaming pieces (open_package, read_part, ByteBudget, the progress counters and the LARGE_*
+limits) are format-neutral; ods_stream uses them from here, so one patch of a limit here governs both formats.
 """
 import hashlib
 import os
@@ -118,19 +121,21 @@ def _check_declaration(chunk):
     require(match is None or match[2].lower() in (b"utf-8", b"utf8"), "INVALID_SPREADSHEET", _INVALID_XML)
 
 
-def read_part(archive, name, budget: ByteBudget, *, record_depth=2) -> Iterator[tuple[str, ET.Element]]:
+def read_part(archive, name, budget: ByteBudget, *, record_depth=2, record_tags=None) -> Iterator[tuple[str, ET.Element]]:
     """Yield ("start"|"end", element) events of one part, read in 64-KiB chunks.
 
-    Once its "end" event has been consumed, an element at depth 2..record_depth (the root is depth 1) is
-    detached from its parent, together with its subtree; deeper elements stay attached until then, so a
-    consumer handling records at record_depth sees each record complete. Hold a reference to keep one.
+    The records are the elements at record_depth (the root is depth 1), or, given record_tags, the outermost
+    elements whose tag is in record_tags, at any depth. Once its "end" event has been consumed, an element that
+    is not inside a record (a record itself included) is detached from its parent, together with its subtree;
+    elements inside a record stay attached until then, so a consumer sees each record complete. Hold a
+    reference to keep one.
 
     A record longer than MAX_RECORD_BYTES of XML, or text longer than that between two tags, rejects the
     part with LIMIT, so the parser never holds more than about that much of one record's text."""
     try:
         with archive.open(name) as stream:
             parser = ET.XMLPullParser(events=("start", "end"))
-            state = _PartState(record_depth)
+            state = _PartState(record_depth, record_tags)
             tail = b""; first = True
             while chunk := stream.read(CHUNK):
                 budget.charge(len(chunk))
@@ -151,25 +156,29 @@ def read_part(archive, name, budget: ByteBudget, *, record_depth=2) -> Iterator[
         raise EngineError("INVALID_SPREADSHEET", f"Invalid or missing XML part: {name}") from error
 
 
+_CELL_RECORDS = {"c": "a cell", "si": "a shared string", "table-cell": "a cell", "covered-table-cell": "a cell"}
+
+
 class _PartState:
     """Open elements and the byte positions read_part bounds; positions are taken after each fed slice."""
-    def __init__(self, record_depth):
+    def __init__(self, record_depth, record_tags=None):
         self.record_depth = record_depth
+        self.record_tags = record_tags
         self.stack = []
         self.held = 0
         self.fed = 0           # bytes fed to the parser so far
         self.last_tag = 0      # fed when the latest tag was reported
-        self.record = None     # (fed when the open record began, its tag)
+        self.record = None     # (fed when the open record began, its tag, its depth)
 
     def check(self):
         if self.record is not None and self.fed-self.record[0] > MAX_RECORD_BYTES:
             local = self.record[1].rsplit("}", 1)[-1]
-            raise EngineError("LIMIT", "A single cell or shared string exceeds 1 MiB of XML" if local in ("c", "si")
+            raise EngineError("LIMIT", "A single cell or shared string exceeds 1 MiB of XML" if local in _CELL_RECORDS
                               else f"A worksheet record <{local}> exceeds 1 MiB of XML")
         require(self.fed-self.last_tag <= MAX_RECORD_BYTES, "LIMIT", "Text between two XML tags exceeds 1 MiB")
 
     def events(self, parser):
-        stack = self.stack
+        stack, tags = self.stack, self.record_tags
         for event, item in parser.read_events():
             self.last_tag = self.fed
             if event == "start":
@@ -178,15 +187,17 @@ class _PartState:
                 require(len(stack) <= MAX_DEPTH, "LIMIT", "XML nesting exceeds 64 levels")
                 if self.held > MAX_HELD:
                     local = self.record[1].rsplit("}", 1)[-1] if self.record else ""
-                    where = {"c": "a cell", "si": "a shared string"}.get(local, "another worksheet block")
+                    where = _CELL_RECORDS.get(local, "another worksheet block")
                     raise EngineError("LIMIT", f"XML structure exceeds the supported bounds: {where} holds too many elements")
-                if len(stack) == self.record_depth: self.record = (self.fed, item.tag)
+                if self.record is None and (len(stack) == self.record_depth if tags is None else item.tag in tags):
+                    self.record = (self.fed, item.tag, len(stack))
                 yield event, item
             else:
-                if len(stack) == self.record_depth: self.record = None
+                if self.record is not None and len(stack) == self.record[2]: self.record = None
+                inside = self.record is not None
                 stack.pop()
                 yield event, item
-                if 1 <= len(stack) < self.record_depth:
+                if stack and not inside:
                     stack[-1].remove(item)
                     self.held -= sum(1 for _ in item.iter())
 
@@ -404,12 +415,13 @@ def export_lines(native: dict, future_functions: bool, unevaluated_formulas: int
 
 class _Expanded:
     """Uncompressed bytes written to the package."""
-    def __init__(self):
+    def __init__(self, label="XLSX"):
         self.used = 0
+        self.label = label
 
     def charge(self, size):
         self.used += size
-        require(self.used <= LARGE_EXPANDED, "LIMIT", f"Expanded XLSX export exceeds {LARGE_EXPANDED//(1024*1024)} MiB")
+        require(self.used <= LARGE_EXPANDED, "LIMIT", f"Expanded {self.label} export exceeds {LARGE_EXPANDED//(1024*1024)} MiB")
 
 
 def _write_sheet(part, name, cells, context, expanded, progress):

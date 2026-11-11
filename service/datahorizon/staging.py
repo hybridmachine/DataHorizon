@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""A private directory for uploads, import stages, exports and the workbook snapshots exports read, with per-kind
-capacity and age-based expiry."""
+"""A private directory for uploads, import stages, exports, the workbook snapshots exports read and the parts they
+assemble, with per-kind capacity and age-based expiry."""
 import os
 from pathlib import Path
 import re
@@ -12,7 +12,8 @@ import time
 
 from .engine import require
 
-SUFFIXES = {"upload": ".upload", "stage": ".stage", "export": ".export", "snapshot": ".snapshot"}
+# A "part" is the body of an ODS export's content.xml, written before it is assembled into the export file.
+SUFFIXES = {"upload": ".upload", "stage": ".stage", "export": ".export", "snapshot": ".snapshot", "part": ".part"}
 IDENTIFIER = re.compile(r"[A-Za-z0-9_-]{1,64}")
 SIDE_FILES = ("-journal", "-wal", "-shm")
 
@@ -45,7 +46,7 @@ class Staging:
         self._closed = False
 
     def _file(self, kind, identifier):
-        require(kind in SUFFIXES, "INVALID_ARGUMENT", "Staging kind must be upload, stage, export or snapshot")
+        require(kind in SUFFIXES, "INVALID_ARGUMENT", "Staging kind must be upload, stage, export, snapshot or part")
         require(isinstance(identifier, str) and IDENTIFIER.fullmatch(identifier), "INVALID_JOB",
                 "Identifier needs 1–64 ASCII letters, digits, _ or -")
         return self.root/f"{kind}-{identifier}{SUFFIXES[kind]}"
