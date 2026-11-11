@@ -50,15 +50,21 @@ class XlsxTests(unittest.TestCase):
         self.assertIn("mergeCells"," ".join(result["report"]))
 
     def test_unsupported_or_invalid_cell_blocks_all_inputs_and_cached_values_is_explicit(self):
-        bad=('<c r="A1"><f>Other!A1</f><v>8</v></c>', '<c r="A1"><f t="shared" si="1">A2</f><v>8</v></c>',
-             '<c r="A1"><f>MEDIAN(A2:A3)</f><v>8</v></c>', '<c r="A1" t="e"><v>#N/A</v></c>',
+        bad=('<c r="A1"><f t="shared" si="1">A2</f><v>8</v></c>',
+             '<c r="A1" t="e"><v>#N/A</v></c>',
              '<c r="XFE1"><v>8</v></c>','<c r="A1"><v>9007199254740992</v></c>',
              '<c r="A1" t="s"><v>900</v></c>','<c r="A1"><v>NaN</v></c>')
         for cell in bad:
             with self.subTest(cell=cell):
                 result=preview(fixture('<c r="B1"><v>7</v></c>'+cell))
                 self.assertFalse(result["can_import"]); self.assertEqual(result["cells"],[]); self.assertTrue(result["issues"])
-        result=preview(fixture(bad[0]),mode="values")
+        # Formulas the calculator cannot evaluate no longer block; they are kept and itemized (see test_xlsx_degrade).
+        for body,category in (("Other!A1","formula.missing_sheet"),("MEDIAN(A2:A3)","formula.unsupported_function")):
+            with self.subTest(body=body):
+                result=preview(fixture(f'<c r="A1"><f>{body}</f><v>8</v></c>'))
+                self.assertTrue(result["can_import"]); self.assertEqual(result["issues"],[])
+                self.assertEqual([e["category"] for e in result["report_entries"]],[category])
+        result=preview(fixture('<c r="A1"><f>Other!A1</f><v>8</v></c>'),mode="values")
         self.assertEqual(result["cells"][0]["source"],"8"); self.assertIn("freshness"," ".join(result["report"]))
         self.assertFalse(preview(fixture('<c r="A1"><f>A2</f></c>'),mode="values")["can_import"])
 

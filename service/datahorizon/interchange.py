@@ -12,6 +12,9 @@ from .engine import EngineError, MAX_CELLS, encoded, integer, require, typed
 from .formula import SUPPORTED_FUNCTIONS, FormulaError, Parser, address, coordinates, split_ref, translate
 from .temporal import Temporal, from_serial, export_temporal_styles, import_temporal
 from .formats import TEMPORAL_FORMATS
+from .conversion_report import ConversionReport
+from .formula_admission import status as formula_status
+from .xlsx_future_functions import PREFIX as FUTURE_PREFIX, strip_prefix
 
 S = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -32,7 +35,7 @@ def xml(root):
 
 def mode(request):
     value=request.get("mode","formulas")
-    require(value in ("formulas","values"),"INVALID_ARGUMENT","mode must be formulas or values")
+    require(value in ("formulas","mixed","values"),"INVALID_ARGUMENT","mode must be formulas, mixed or values")
     return value
 
 
@@ -87,7 +90,6 @@ def related_part(relationships,kind):
     return path
 
 
-FUTURE_XLSX_FUNCTIONS={"TEXTJOIN":"_xlfn.TEXTJOIN","IFNA":"_xlfn.IFNA","CONCAT":"_xlfn.CONCAT","XLOOKUP":"_xlfn.XLOOKUP"}
 FUNCTION_SPELLING=re.compile(r'"(?:[^"]|"")*"|\'(?:[^\']|\'\')*\'|([A-Za-z_][A-Za-z_0-9.]*)(?=\s*\()')
 
 
@@ -96,16 +98,22 @@ def map_formula_functions(source,mapping):
     return FUNCTION_SPELLING.sub(lambda match:mapping.get(match[1].upper(),match[0]) if match[1] else match[0],source)
 
 
-def xlsx_formula_to_native(source,sheet_names=None):
-    return local_formula(map_formula_functions(source,{value.upper():key for key,value in FUTURE_XLSX_FUNCTIONS.items()}),sheet_names=sheet_names)
+def xlsx_formula_to_native(source):
+    """Drop Excel's future-function prefixes; whether the calculator can evaluate the result is formula_admission's call."""
+    return strip_prefix(source)
 
 
 def native_formula_to_xlsx(source,bounds=None,sheet_names=None):
-    return map_formula_functions(local_formula(source,bounds,sheet_names),FUTURE_XLSX_FUNCTIONS)
+    # A function the calculator lacks is stored verbatim, so it still exports; everything else stays strict.
+    if (formula_status(source,sheet_names) or ("",))[0]=="formula.unsupported_function":
+        try: Parser(source[1:]).parse()
+        except FormulaError: return map_formula_functions(source,FUTURE_PREFIX)  # spelling the parser cannot read, e.g. STDEV.S
+        return map_formula_functions(local_formula(source,bounds,sheet_names,allow_unsupported_functions=True),FUTURE_PREFIX)
+    return map_formula_functions(local_formula(source,bounds,sheet_names),FUTURE_PREFIX)
 
 
-def local_formula(source, bounds=None, sheet_names=None):
-    """The interchange tier preserves only implemented, local A1 formulas."""
+def local_formula(source, bounds=None, sheet_names=None, *, allow_unsupported_functions=False):
+    """Strict check for export: only implemented, local A1 formulas inside the selection."""
     require(not any((ord(c)<32 and c not in "\t\n\r") or ord(c) in (65534,65535) for c in source),
             "UNSUPPORTED_FORMULA","Formula contains characters unavailable in spreadsheet XML")
     try:
@@ -113,7 +121,7 @@ def local_formula(source, bounds=None, sheet_names=None):
         while pending:
             item=pending.pop()
             if item[0]=="call":
-                require(item[1] in SUPPORTED_FUNCTIONS,"UNSUPPORTED_FORMULA",f"Unsupported function: {item[1]}")
+                require(allow_unsupported_functions or item[1] in SUPPORTED_FUNCTIONS,"UNSUPPORTED_FORMULA",f"Unsupported function: {item[1]}")
                 pending.extend(item[2])
             elif item[0] in ("binary","range"):
                 if item[0]=="range":
@@ -195,6 +203,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
             "Dimensions, other sheets and advanced features are omitted; unsupported styles are listed below.",
             "Formulas recalculate with DataHorizon's declared compatibility tier; imported code is never activated."]
     if selected_mode=="values": report.append("Formula caches become literal values. Cache freshness cannot be verified; missing/error caches block import.")
+    if selected_mode=="mixed": report.append("Formulas DataHorizon can evaluate stay formulas; those it cannot become their cached values when a usable cache exists. Cache freshness cannot be verified.")
     with package(request) as archive:
         checkpoint(0,"Reading workbook")
         workbook=read_xml(archive,"xl/workbook.xml")
@@ -232,11 +241,13 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         require(style_path is None or style_path in archive.namelist(),"INVALID_SPREADSHEET","Missing related stylesheet")
         styles=XlsxStyles(archive,style_path or "xl/styles.xml")
         edits,issues,seen=[],[],set()
+        conversions=ConversionReport()
+        sheet_label=sheets[selected-1].get("name","")
         count=0
         stored=root.findall(f"{{{S}}}sheetData/{{{S}}}row/{{{S}}}c")
         require(len(stored)<=MAX_CELLS,"LIMIT","Import exceeds 10,000 stored cells")
         shared_formulas=None
-        if selected_mode=="formulas":
+        if selected_mode!="values":
             try: shared_formulas=SharedFormulas(stored)
             except EngineError as error:
                 shared_formulas=SharedFormulas([])
@@ -252,8 +263,16 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
                 formula=cell.find(f"{{{S}}}f")
                 value=cell.findtext(f"{{{S}}}v")
                 kind=cell.get("t","n")
-                if formula is not None and selected_mode=="formulas":
-                    item={"source":xlsx_formula_to_native(shared_formulas.source(cell,formula),sheet_names=sheet_names),"kind":"formula"}
+                noted=None
+                if formula is not None and selected_mode!="values":
+                    native=xlsx_formula_to_native(shared_formulas.source(cell,formula))
+                    problem=formula_status(native,sheet_names)
+                    cached=value is not None and kind!="e"
+                    if problem is not None: noted=(*problem,"converted" if selected_mode=="mixed" and cached else "unevaluable")
+                    keep_formula=problem is None or not (selected_mode=="mixed" and cached)
+                else: keep_formula=False
+                if keep_formula:
+                    item={"source":native,"kind":"formula"}
                 elif kind=="inlineStr":
                     item={"source":xlsx_text(cell.find(f"{{{S}}}is")),"kind":"text"}
                 elif kind=="s":
@@ -283,13 +302,16 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
                         if complete.parsed().time().isoformat()!="00:00:00":temporal=complete
                     item.update(source=str(temporal),kind=temporal.kind)
                 typed(item)
+                if noted: conversions.add(noted[0],noted[2],noted[1],sheet=sheet_label,cell=location)
                 edits.append({"row":row,"col":col,**item})
             except (EngineError,FormulaError,UnicodeError,ValueError,OverflowError) as error:
                 if len(issues)<100: issues.append({"cell":location,"message":str(error)[:200]})
         if shared_formulas and shared_formulas.groups: report.append("Shared formulas expand to explicit per-cell sources with relative/absolute reference translation; caches are discarded.")
         report.extend(styles.report())
+        report.extend(conversions.lines())
         result={"cells":edits if not issues else [],"can_import":bool(edits) and not issues,"issues":issues,
-                "sheet":sheets[selected-1].get("name",""),"sheets":[s.get("name","") for s in sheets],"report":report,"stored_cells":count}
+                "sheet":sheet_label,"sheets":[s.get("name","") for s in sheets],"report":report,"report_entries":conversions.entries(),
+                "totals":conversions.totals(),"stored_cells":count}
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Spreadsheet preview exceeds 4 MiB")
         if result["can_import"]:
             result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
@@ -306,6 +328,7 @@ def native_only_report(snapshot):
 
 def xlsx_export(snapshot,request):
     selected_mode=mode(request)
+    require(selected_mode!="mixed","INVALID_ARGUMENT","mode mixed applies to import; export formulas or values")
     report=["Selection only, at original source coordinates, from one consistent native state.",
             "Native cell styles are mapped. Other sheets, code, queries, relationships, history, dimensions and view preferences are omitted.",
             "Native NULL becomes an empty cell. Formula semantics follow the target application's compatibility; formula caches are omitted and recalculation is requested."]
@@ -316,7 +339,7 @@ def xlsx_export(snapshot,request):
     if snapshot.get('native_omissions'):report.append('Native relational objects omitted from this sheet export: '+', '.join(snapshot['native_omissions']))
     report.extend(native_only_report(snapshot))
     report.append("Typed dates/times export as ISO XLSX date cells with native precision. Supported numeric date formats are interpreted as serials on import. Target readers may reduce subsecond precision; volatile functions recalculate using the target clock/timezone. Native civil arithmetic and pre-March-1900/typed comparisons may differ from target serial semantics; choose values to freeze results.")
-    if selected_mode=="formulas" and any(map_formula_functions(c["source"],FUTURE_XLSX_FUNCTIONS)!=c["source"] for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"):report.append("Known modern functions use their _xlfn identifiers; target function/version support is required. Choose values for older targets.")
+    if selected_mode=="formulas" and any(map_formula_functions(c["source"],FUTURE_PREFIX)!=c["source"] for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"):report.append("Known modern functions use their _xlfn identifiers; target function/version support is required. Choose values for older targets.")
     from .xlsx_styles import export_styles
     styles,style_ids=export_styles([c for s in snapshots for c in s["cells"]])
     worksheets=[]
@@ -380,7 +403,9 @@ def import_edits(preview,row=1,col=1):
         item={**original,"row":original["row"]+row-1,"col":original["col"]+col-1}
         integer(item["row"],1,1048576,"destination row")
         integer(item["col"],1,16384,"destination column")
-        if item["kind"]=="formula": item["source"]=translate(item["source"],row-1,col-1)
+        if item["kind"]=="formula" and (row,col)!=(1,1):
+            try: item["source"]=translate(item["source"],row-1,col-1)
+            except FormulaError as error: raise EngineError("UNSUPPORTED_FORMULA",f"Formula at row {original['row']}, column {original['col']} cannot be moved to another destination: {error}") from error
         typed({**item,"style":{}})
         edits.append(item)
     return edits

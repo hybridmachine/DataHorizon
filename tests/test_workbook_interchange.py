@@ -105,11 +105,21 @@ class WorkbookInterchangeTests(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(data)) as source,zipfile.ZipFile(output,"w") as target:
             for name in source.namelist():
                 value=source.read(name)
-                if name=="xl/worksheets/sheet2.xml": value=value.replace(b"<v>1</v>",b"<f>Missing!A1</f>")
+                if name=="xl/worksheets/sheet2.xml": value=value.replace(b"<v>1</v>",b'<f t="shared" si="9"/>')
                 target.writestr(name,value)
         result=xlsx_preview({"file_base64":base64.b64encode(output.getvalue()).decode(),"scope":"workbook"})
         self.assertFalse(result["can_import"]); self.assertEqual(result["workbook_sheets"],[])
         self.assertEqual(result["issues"][0]["sheet"],"Two")
+        # A reference to a sheet the workbook lacks is kept as an unevaluable formula, not a blocking issue.
+        output=io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(data)) as source,zipfile.ZipFile(output,"w") as target:
+            for name in source.namelist():
+                value=source.read(name)
+                if name=="xl/worksheets/sheet2.xml": value=value.replace(b"<v>1</v>",b"<f>Missing!A1</f>")
+                target.writestr(name,value)
+        result=xlsx_preview({"file_base64":base64.b64encode(output.getvalue()).decode(),"scope":"workbook"})
+        self.assertTrue(result["can_import"],result)
+        self.assertIn("Two: 1 cell: Missing (unevaluable); first at Two!A1"," ".join(result["report"]))
 
     def test_missing_sheet_reference_blocks_whole_preview_and_values_mode_is_explicit(self):
         snapshot={"state":"s","sheets":[{"name":"One","cells":[{"row":1,"col":1,"kind":"formula","source":"=Missing!A1","value":7,"calculation":"current","style":{}}]}]}

@@ -293,8 +293,8 @@ def openapi():
         "file_base64":{"type":"string","format":"byte","description":"At most 3 MiB of ZIP data / 16 MiB expanded, 128 entries"},
         "scope":{"type":"string","enum":["selection","workbook"],"default":"selection"},
         "sheet_index":{"type":"integer","minimum":1,"maximum":64,"default":1},"row":row,"col":col,
-        "mode":{"type":"string","enum":["formulas","values"],"default":"formulas"}},
-        "description":"Selected sheet or whole-workbook inputs, at most 10,000 stored cells total. Whole-workbook XLSX/ODS requires an empty destination and an explicit structural hook when handlers are activated, replaces sheets atomically and clears history. Values mode uses unverified formula caches. Issues block the entire applicable payload. Explicit reviewed Apply is one managed edit; no code activation."}
+        "mode":{"type":"string","enum":["formulas","mixed","values"],"default":"formulas"}},
+        "description":"Selected sheet or whole-workbook inputs, at most 10,000 stored cells total. Whole-workbook XLSX/ODS requires an empty destination and an explicit structural hook when handlers are activated, replaces sheets atomically and clears history. Values mode uses unverified formula caches; mixed mode uses them only for formulas DataHorizon cannot evaluate. XLSX formulas DataHorizon cannot evaluate are kept as formulas (or cached values) and itemized in the report instead of blocking. Issues block the entire applicable payload. Explicit reviewed Apply is one managed edit; no code activation."}
     schemas["SpreadsheetExport"] = {**schemas["CsvExportRequest"],"properties":{**schemas["CsvExportRequest"]["properties"],
         "scope":{"type":"string","enum":["selection","workbook"],"default":"selection"},
         "mode":{"type":"string","enum":["formulas","values"],"default":"formulas"}}}

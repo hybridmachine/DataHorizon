@@ -33,8 +33,8 @@ class ConcatenationTests(unittest.TestCase):
     def test_namespace_mapping_preserves_strings_and_unknown_functions(self):
         source='=CONCAT("CONCAT(",\'CONCAT(name)\'!A1)'
         encoded=native_formula_to_xlsx(source,sheet_names=['CONCAT(name)'])
-        self.assertEqual(encoded,'=_xlfn.CONCAT("CONCAT(",\'CONCAT(name)\'!A1)');self.assertEqual(xlsx_formula_to_native(encoded,sheet_names=['CONCAT(name)']),source)
-        with self.assertRaises(EngineError):xlsx_formula_to_native('=_xlfn.UNSUPPORTED(1)')
+        self.assertEqual(encoded,'=_xlfn.CONCAT("CONCAT(",\'CONCAT(name)\'!A1)');self.assertEqual(xlsx_formula_to_native(encoded),source)
+        self.assertEqual(xlsx_formula_to_native('=_xlfn.UNSUPPORTED(1)'),'=UNSUPPORTED(1)')  # admission, not import, decides evaluability
 
     def test_native_packages_and_transforms_preserve_semantics_and_types(self):
         with tempfile.TemporaryDirectory() as temp,closing(Workbook(Path(temp)/'concat.dhwb',create=True)) as book:
