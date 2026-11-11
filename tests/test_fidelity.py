@@ -49,7 +49,8 @@ class FidelityTests(unittest.TestCase):
         self.assertEqual(result["cells"][0]["style"],{"italic":True,"border":"box"})
         for parent in ("Child","Missing"):
             invalid=styles.replace('style:parent-style-name="Parent"',f'style:parent-style-name="{parent}"')
-            self.assertFalse(ods_parse(ods_fixture('<table:table-row><table:table-cell table:style-name="Child" office:value-type="float" office:value="7"/></table:table-row>',invalid))["can_import"])
+            with self.assertRaises(EngineError) as failure: ods_parse(ods_fixture('<table:table-row><table:table-cell table:style-name="Child" office:value-type="float" office:value="7"/></table:table-row>',invalid))
+            self.assertEqual(failure.exception.body["code"],"INVALID_SPREADSHEET")
 
     def test_checked_independent_producer_workbooks_calculate_and_retain_styles(self):
         provenance=json.loads((Path(__file__).parent/"fixtures"/"fidelity-provenance.json").read_text())
