@@ -68,6 +68,39 @@ class NameTests(unittest.TestCase):
         self.assertTrue(valid_name('x'*64));self.assertTrue(valid_name('_a1b'));self.assertFalse(valid_name('XFE1'))
         self.assertEqual(self.read()['names'],[])
 
+    def test_r1c1_style_identifiers_rejected(self):
+        for bad in ['R1C1','r10c2','R1048576C16384','R0C0','R1','C12','r0','c0','R007']:
+            self.assertEqual(self.code_of(lambda:self.save(bad,"'Supplies'!A1")),'NAME_INVALID',bad)
+        nid=self.save('Total','Supplies!A1')['name_id']
+        self.assertEqual(self.code_of(lambda:self.apply('name_save',name='R2C3',name_id=nid)),'NAME_INVALID')
+        for good in ['R','C','RC','R1C','RC1x','Row_1','Col_2','R1C1x','xR1C1']:
+            self.save(good,"'Supplies'!A1")
+        self.assertEqual(sorted(item['name'] for item in self.read()['names']),sorted(['Total','R','C','RC','R1C','RC1x','Row_1','Col_2','R1C1x','xR1C1']))
+
+    def test_stored_r1c1_style_name_still_opens(self):
+        nid=self.save('Total','Supplies!A1')['name_id']
+        with closing(sqlite3.connect(self.path,isolation_level=None)) as db:
+            db.execute("UPDATE dh_relational SET payload=? WHERE kind='name'",(json.dumps(dict(id=nid,name='R1C1',sheet_id=self.book.sheet('Supplies'),row1=1,col1=1,row2=1,col2=1)),))
+        self.book.close();self.book=Workbook(self.path);self.addCleanup(self.book.close)
+        self.assertEqual([item['name'] for item in self.read()['names']],['R1C1'])
+        self.save('R1C1','Supplies!B2',name_id=nid)
+        self.assertEqual(self.read()['names'][0]['reference'],"'Supplies'!B2")
+        self.assertEqual(self.code_of(lambda:self.apply('name_save',name='r1c1',name_id=nid)),'NAME_INVALID')
+        self.apply('name_save',name='Total',name_id=nid)
+        self.assertEqual(self.read()['names'][0]['name'],'Total')
+
+    def test_workbook_import_refusal_names_what_is_present(self):
+        from datahorizon.workbook_code import fingerprint
+        self.save('Total','Supplies!A1')
+        with self.assertRaises(EngineError) as error:self.apply('workbook_import',sheets=[dict(name='Replacement',cells=[])])
+        self.assertEqual(error.exception.body['code'],'DESTINATION_NOT_EMPTY')
+        self.assertEqual(error.exception.body['message'],'Whole-workbook import requires a destination without names; create a new workbook')
+        self.apply('module_save',name='Rules',source='def on_edit(ctx):\n    pass\n',macros=[],fingerprint=fingerprint(self.book.db))
+        self.apply('binding_save',event='cell_change',scope=dict(kind='name',name='Total'),module='Rules',function='on_edit',fingerprint=fingerprint(self.book.db))
+        self.apply('table_create',name='Items',columns=[dict(name='Title',type='text')])
+        with self.assertRaises(EngineError) as error:self.apply('workbook_import',sheets=[dict(name='Replacement',cells=[])])
+        self.assertEqual(error.exception.body['message'],'Whole-workbook import requires a destination without tables, names, Python modules or event bindings; create a new workbook')
+
     def test_duplicate_is_case_insensitive(self):
         nid=self.save('Total','Supplies!A1')['name_id']
         self.assertEqual(self.code_of(lambda:self.save('TOTAL','Supplies!A2')),'NAME_DUPLICATE')

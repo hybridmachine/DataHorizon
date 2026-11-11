@@ -62,6 +62,9 @@ public:
     static bool confirmHistoryClear(QWidget *parent,const QJsonObject &info,const QString &text,const QString &name);
     // The Names page lists names and asks the owning window to change them.
     NamesPanel *namesPanel() const{return m_names;}
+    // The rules in the code catalog read for the current workbook handle;
+    // ready is false (and the list empty) until that catalog has been read.
+    QJsonArray catalogBindings(bool *ready=nullptr) const{if(ready)*ready=m_catalogReady;return m_catalogReady?m_catalog["bindings"].toArray():QJsonArray{};}
     void setNames(const QJsonArray &names);
     // Whether the owning window has read names for the current workbook state;
     // scope text is never resolved against names that are still being read.

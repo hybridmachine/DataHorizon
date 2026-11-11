@@ -157,4 +157,23 @@ class BindingClientTests(unittest.TestCase):
                 self.assertNotIn('Event bindings',' '.join(empty.export_spreadsheet('xlsx',scope='workbook')['report']))
 
 
+    def test_selection_and_csv_exports_report_names_and_bindings(self):
+        self.prepare()
+        names_line='Workbook names are native-only and omitted from this export: Quantities'
+        rules_line='Event bindings are native-only and omitted from this export: rules.check_quantity'
+        with LocalService() as client,client.open(self.path) as book:
+            book.save_name('Quantities','Sheet1!B2:B4')
+            for form in ('xlsx','ods'):
+                report=book.export_spreadsheet(form,sheet='Sheet1',r1=1,c1=1,r2=3,c2=3)['report']
+                self.assertIn(names_line,report);self.assertIn(rules_line,report)
+                whole=book.export_spreadsheet(form,scope='workbook')['report']
+                self.assertEqual([line for line in whole if 'native-only' in line],[names_line,rules_line])
+            report=client.request(book.base+'/export/csv',dict(sheet='Sheet1',r1=1,c1=1,r2=3,c2=3))['report']
+            self.assertIn(names_line,report);self.assertIn(rules_line,report)
+            clean=self.path.with_name('clean.dhwb')
+            with client.open(clean,create=True) as empty:
+                for form in ('xlsx','ods'):
+                    self.assertFalse([line for line in empty.export_spreadsheet(form,sheet='Sheet1',r1=1,c1=1,r2=3,c2=3)['report'] if 'native-only' in line])
+                self.assertFalse([line for line in client.request(empty.base+'/export/csv',dict(sheet='Sheet1',r1=1,c1=1,r2=3,c2=3))['report'] if 'native-only' in line])
+
 if __name__=='__main__':unittest.main()

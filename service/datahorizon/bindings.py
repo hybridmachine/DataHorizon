@@ -228,6 +228,20 @@ def adjust_structure(book,sheet_id,axis,start,count,delete):
     return sorted(broken)
 
 
+def scoped(book,kind,ids):
+    """Labels of the bindings whose name or table scope refers to one of ids."""
+    ids=set(ids)
+    return sorted(label(book.db,item) for item in stored(book) if item['scope']['kind']==kind and item['scope'][kind+'_id'] in ids)
+
+
+def scoped_to_names(book,broken):
+    """Labels of the bindings scoped to names (by identifier) that an operation just broke."""
+    if not broken:return []
+    from .names import names
+    keys={text.lower() for text in broken}
+    return scoped(book,'name',[item['id'] for item in names(book.db) if item['name'].lower() in keys])
+
+
 def break_sheet(book,sheet_id):
     """Break every sheet or range scope on a sheet that is being deleted."""
     broken=[]

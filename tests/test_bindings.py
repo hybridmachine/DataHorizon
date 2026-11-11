@@ -10,6 +10,7 @@ import uuid
 
 from datahorizon.engine import Workbook,EngineError,encoded
 from datahorizon.workbook_code import fingerprint,modules,read as read_code
+from datahorizon.names import names as stored_names
 
 SOURCE='def on_edit(ctx):\n    pass\n\nasync def later(ctx):\n    pass\n\nclass Holder:\n    def method(self):\n        pass\n'
 
@@ -108,6 +109,40 @@ class BindingTests(unittest.TestCase):
         self.save(dict(kind='table',table='Items'),event='table_change')
         item=self.read()['bindings'][0];self.assertFalse(item['broken']);self.assertIsNone(item['reference'])
         self.apply('table_drop',table='Items');self.assertTrue(self.read()['bindings'][0]['broken'])
+
+    def test_name_delete_reports_rules_scoped_to_it(self):
+        self.apply('name_save',name='Quantities',reference="Supplies!B2:B4")
+        self.apply('name_save',name='Other',reference="Supplies!C1")
+        self.apply('module_save',name='Audit',source=SOURCE,macros=[],fingerprint=fingerprint(self.book.db))
+        self.save(dict(kind='name',name='Quantities'));self.save(dict(kind='name',name='Quantities'),module='Audit')
+        self.save(dict(kind='name',name='Other'),required=False)
+        target=next(item['scope']['name_id'] for item in self.read()['bindings'] if item['module']=='Rules' and item['required'])
+        receipt=self.apply('name_save',name='Quantities',name_id=target,reference="Supplies!D1:D2")
+        self.assertNotIn('broken_bindings',receipt)
+        receipt=self.apply('name_delete',name_id=target)
+        self.assertEqual(receipt['broken_bindings'],['Audit.on_edit','Rules.on_edit'])
+        self.apply('name_save',name='Unused',reference="Supplies!E1")
+        unused=next(item['id'] for item in stored_names(self.book.db) if item['name']=='Unused')
+        self.assertNotIn('broken_bindings',self.apply('name_delete',name_id=unused))
+
+    def test_structural_name_break_reports_rules_scoped_to_it(self):
+        self.apply('name_save',name='Quantities',reference="Supplies!B2:B4")
+        self.apply('sheet_add',name='Other');self.apply('name_save',name='Elsewhere',reference="Other!A1")
+        self.save(dict(kind='name',name='Quantities'));self.save(dict(kind='name',name='Elsewhere'),required=False)
+        receipt=self.apply('rows_delete',sheet='Supplies',start=2,count=3)
+        self.assertEqual(receipt['broken_names'],['Quantities']);self.assertEqual(receipt['broken_bindings'],['Rules.on_edit'])
+        receipt=self.apply('sheet_delete',sheet='Other')
+        self.assertEqual(receipt['broken_names'],['Elsewhere']);self.assertEqual(receipt['broken_bindings'],['Rules.on_edit'])
+        self.assertTrue(all(item['broken'] for item in self.read()['bindings']))
+
+    def test_table_drop_reports_rules_scoped_to_it(self):
+        self.apply('table_create',name='Items',columns=[dict(name='Title',type='text')])
+        self.apply('table_create',name='Kept',columns=[dict(name='Title',type='text')])
+        self.save(dict(kind='table',table='Items'),event='table_change')
+        self.save(dict(kind='table',table='Kept'),event='table_change',required=False)
+        self.assertNotIn('broken_bindings',self.apply('table_create',name='Spare',columns=[dict(name='Title',type='text')]))
+        self.assertNotIn('broken_bindings',self.apply('table_drop',table='Spare'))
+        receipt=self.apply('table_drop',table='Items');self.assertEqual(receipt['broken_bindings'],['Rules.on_edit'])
 
     def test_event_and_scope_pairing(self):
         self.apply('table_create',name='Items',columns=[dict(name='Title',type='text')])

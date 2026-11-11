@@ -66,9 +66,13 @@ installation and durable external-effect execution remain separate increments.
 Native v6 adds workbook names and event bindings; see the
 [workspace guide](python-workspace-guide.md). Both are native-only. Names
 resolve in Python, binding scopes and the address box, not in formulas. CSV
-carries neither. Workbook-scope XLSX and ODS exports omit them and list each
-name and binding in the report as a native-only omission; selection-scope
-exports also omit them, but their report does not mention names or bindings. XLSX/ODS import does not create names or bindings.
+carries neither. XLSX and ODS exports, at workbook or selection scope, omit them
+and list each name and binding in the report as a native-only omission; a
+selection CSV export's report lists them the same way. Table, query,
+declared-list and list-view value exports do not list them. XLSX/ODS import
+does not create names or bindings. Names that look like R1C1 references
+(`R1C1`, `R2`, `C3`) cannot be created, so a later formula or interchange
+mapping cannot confuse them with cell references.
 
 ## Formula surface
 

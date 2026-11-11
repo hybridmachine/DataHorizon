@@ -407,5 +407,33 @@ during implementation; the approved decisions above are unchanged.
   is skipped with a notice; a required one rejects with `BINDING_UNAVAILABLE`.
 - Rejected grid edits show `Rejected by <module>.<function>: <reason> · nothing
   stored` and keep the cell draft.
-- Workbook-scope XLSX/ODS export lists names and bindings as native-only
-  omissions. Selection-scope export does not name them (an open finding).
+- XLSX/ODS export lists names and bindings as native-only omissions for both
+  workbook and selection scope, with the same two report lines. Selection CSV
+  export, which also returns a report, adds the same lines. Table, query,
+  declared-list and list-view value exports do not.
+- Deleting a name breaks every rule scoped to that name, and dropping a table
+  breaks every rule scoped to that table. A row, column or sheet delete that
+  breaks a name also breaks the rules scoped to it. The receipt lists those
+  rules in `broken_bindings` (sorted `<module>.<function>`, present only when
+  non-empty), and the desktop adds `Rules that no longer cover any cells: …` to
+  Issues. The name-delete confirmation adds `Rules that use this name will stop
+  covering any cells: …` when the code catalog has been read; the table-drop
+  confirmation does not list rules, because the relational workbench has no
+  code catalog, so Issues is the only notice there. Renaming or retargeting a
+  name does not break its rules. A broken rule stays stored, is labelled Broken,
+  and covers no cells, so edits it used to check commit without it.
+- New or renamed names that look like R1C1-notation references (`R1C1`,
+  `r10c2`, `R1`, `C12`, `R0`) are rejected with `NAME_INVALID`. A stored name
+  of that form still opens and can be retargeted under the same text.
+- `name_save` requires `reference` when creating a name or retargeting; it may
+  be omitted to rename a name that is not broken.
+- While Pick from sheet is armed, the main window's commands that could change
+  the workbook (Edit, Format, Sheet and Data commands, Import, Save view in
+  workbook) are disabled, so their shortcuts do nothing. Copy, Find, tracing,
+  refresh, section sizing and hiding, list views, freeze, navigation, sheet
+  switching and Escape stay available, and the formula picks still end Python
+  picking. Each command returns to its previous enabled state when picking
+  ends.
+- A whole-workbook import into a destination that holds catalog objects is
+  refused with `DESTINATION_NOT_EMPTY`, and the message names the kinds
+  present (for example "names, Python modules or event bindings").

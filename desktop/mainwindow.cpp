@@ -51,6 +51,7 @@
 #include <QScopeGuard>
 #include <QSettings>
 #include <QSaveFile>
+#include <QSet>
 #include <QStandardPaths>
 #include <QSpinBox>
 #include <QStyledItemDelegate>
@@ -283,7 +284,7 @@ void MainWindow::showRelational(bool visible) {
     m_model->setSuspended(visible);
     if(!visible)m_relational->suspend();
     for(auto *menu:m_sheetMenus)menu->setEnabled(!visible);
-    for(auto *action:m_sheetFileActions)action->setEnabled(!visible);
+    for(auto *action:m_sheetFileActions)setEditingEnabled(action,!visible);
     if(visible)m_relational->bind(m_info);
     setBusy(m_busy);
 }
@@ -480,7 +481,16 @@ void MainWindow::deleteName(QWidget *parent,const QString &id) {
     if(current.isEmpty())return;
     if(!nameWritable(&problem)){nameMessage(problem);return;}
     const auto target=targetContext();const auto name=current["name"].toString();
-    QMessageBox box(QMessageBox::Warning,tr("Delete name?"),tr("Delete name %1? Python code that uses it stops resolving it.").arg(name),QMessageBox::Yes|QMessageBox::Cancel,parent);
+    auto text=tr("Delete name %1? Python code that uses it stops resolving it.").arg(name);
+    // Rules scoped to the name are named only from a catalog already read.
+    bool ready=false;QStringList rules;
+    for(const auto &value:m_workspace->catalogBindings(&ready)) {
+        const auto binding=value.toObject();const auto scope=binding["scope"].toObject();
+        if(scope["kind"].toString()=="name" && scope["name_id"].toString()==id)rules.append(binding["module"].toString()+"."+binding["function"].toString());
+    }
+    rules.sort();
+    if(ready && !rules.isEmpty())text+="\n"+tr("Rules that use this name will stop covering any cells: %1").arg(rules.join(", "));
+    QMessageBox box(QMessageBox::Warning,tr("Delete name?"),text,QMessageBox::Yes|QMessageBox::Cancel,parent);
     box.setObjectName("deleteNameConfirm");box.setOption(QMessageBox::Option::DontUseNativeDialog);box.setTextFormat(Qt::PlainText);box.setDefaultButton(QMessageBox::Cancel);
     if(box.exec()!=QMessageBox::Yes)return;
     submitName(parent,target,{{"action","name_delete"},{"name_id",id},{"label","Delete name"}},tr("Deleted %1.").arg(name),tr("%1 was not deleted").arg(name));
@@ -589,7 +599,7 @@ void MainWindow::buildUi() {
     auto *savePortable=view->addAction(tr("Save view in workbook"));savePortable->setObjectName("savePortableViewAction");connect(savePortable,&QAction::triggered,this,[this]{portableView(true);});
     auto *loadPortable=view->addAction(tr("Load view from workbook"));loadPortable->setObjectName("loadPortableViewAction");connect(loadPortable,&QAction::triggered,this,[this]{portableView(false);});
     auto *help = menuBar()->addMenu(tr("&Help"));
-    m_sheetMenus={edit,formatMenu,sheetMenu,dataMenu,view};
+    m_sheetMenus={edit,formatMenu,sheetMenu,dataMenu,view};m_editingMenus={edit,formatMenu,sheetMenu,dataMenu};
     auto *tables=dataMenu->addAction(tr("Tables and queries…"));tables->setObjectName("relationalWorkbenchAction");
     connect(tables,&QAction::triggered,this,[this]{showRelational(true);});
     auto *promote=dataMenu->addAction(tr("Create table from selection…"));promote->setObjectName("tableFromSelectionAction");
@@ -637,11 +647,11 @@ void MainWindow::buildUi() {
     file->addSeparator();
     add(file, tr("&Close"), QKeySequence::Close, [this] { close(); });
     add(file, tr("Restart local service"), {}, [this] { restartService(); })->setObjectName("restartServiceAction");
-    m_undo = add(edit, tr("&Undo"), QKeySequence::Undo, [this] { submit({{"action", "undo"}}); }, true);
-    m_redo = add(edit, tr("&Redo"), QKeySequence::Redo, [this] { submit({{"action", "redo"}}); });
+    m_undo = add(edit, tr("&Undo"), QKeySequence::Undo, [this] { submit({{"action", "undo"}}); }, true);m_undo->setObjectName("undoAction");
+    m_redo = add(edit, tr("&Redo"), QKeySequence::Redo, [this] { submit({{"action", "redo"}}); });m_redo->setObjectName("redoAction");
     edit->addSeparator();
-    add(edit, tr("Cu&t"), QKeySequence::Cut, [this] { copy(true); });
-    add(edit, tr("&Copy"), QKeySequence::Copy, [this] { copy(); });
+    add(edit, tr("Cu&t"), QKeySequence::Cut, [this] { copy(true); })->setObjectName("cutAction");
+    add(edit, tr("&Copy"), QKeySequence::Copy, [this] { copy(); })->setObjectName("copyAction");
     add(edit, tr("&Paste"), QKeySequence::Paste, [this] { paste(); }, true)->setObjectName("pasteAction");
     add(edit, tr("Paste values only"), QKeySequence(tr("Ctrl+Shift+V")), [this] { paste(true); });
     add(edit, tr("Paste formats only"), {}, [this] { paste(false, true); });
@@ -667,7 +677,7 @@ void MainWindow::buildUi() {
         bool ok; auto step = QInputDialog::getDouble(this,tr("Numeric series"),tr("Step, in row-major order"),1,-1e12,1e12,4,&ok);
         if (ok) { command["action"]="fill"; command["mode"]="series"; command["step"]=step; command["label"]="Fill series"; submit(command); }
     });
-    add(edit, tr("Refresh stored data"), QKeySequence::Refresh, [this] { if (!m_busy) refresh(); });
+    add(edit, tr("Refresh stored data"), QKeySequence::Refresh, [this] { if (!m_busy) refresh(); })->setObjectName("refreshStoredDataAction");
     add(edit, tr("Find in selection…"), QKeySequence::Find, [this] { findDialog(false); })->setObjectName("findAction");
     m_findNext=add(edit,tr("Find next in results"),QKeySequence::FindNext,[this]{navigateFind(1);});
     m_findPrevious=add(edit,tr("Find previous in results"),QKeySequence::FindPrevious,[this]{navigateFind(-1);});
@@ -678,7 +688,7 @@ void MainWindow::buildUi() {
     connect(m_model,&QAbstractItemModel::modelReset,this,&MainWindow::clearFindResults);
     connect(m_client,&RestClient::configured,this,&MainWindow::clearFindResults);
     add(edit, tr("Replace all in selection…"), QKeySequence::Replace, [this] { findDialog(true); });
-    add(edit, tr("Reconcile unknown operation"), {}, [this] { reconcile(); });
+    add(edit, tr("Reconcile unknown operation"), {}, [this] { reconcile(); })->setObjectName("reconcileAction");
     m_painterAction=add(formatMenu,tr("Format painter"),{},[this]{startFormatPainter();},true);m_painterAction->setObjectName("formatPainterAction");m_painterAction->setCheckable(true);m_painterAction->setToolTip(tr("Copy the selected style pattern, then click a destination or drag an exact multiple. Escape cancels."));
     m_painterCancel=new QAction(this);m_painterCancel->setShortcut(QKeySequence(Qt::Key_Escape));m_painterCancel->setShortcutContext(Qt::WidgetWithChildrenShortcut);m_painterCancel->setEnabled(false);addAction(m_painterCancel);connect(m_painterCancel,&QAction::triggered,this,[this]{cancelFormatPainter();m_status->setText(tr("Format painter cancelled"));});
     m_externalPickCancel=new QAction(this);m_externalPickCancel->setObjectName("cancelExternalPickAction");m_externalPickCancel->setShortcut(QKeySequence(Qt::Key_Escape));m_externalPickCancel->setShortcutContext(Qt::WidgetWithChildrenShortcut);m_externalPickCancel->setEnabled(false);addAction(m_externalPickCancel);connect(m_externalPickCancel,&QAction::triggered,this,&MainWindow::cancelExternalReferencePick);
@@ -1469,6 +1479,9 @@ bool MainWindow::startExternalReferencePick(ReferencePickTarget target,QString *
     else if(!target.insert || !target.stillValid)problem=tr("Nothing can receive a picked reference.");
     if(!problem.isEmpty()){issue(problem);if(refusal)*refusal=problem;return false;}
     m_externalTarget=std::move(target);m_externalPicking=true;m_externalInserted=false;
+    // Shortcuts reach actions without a key press in the grid: every command
+    // that could change the workbook is off until picking ends.
+    for(auto *action:pickBlockedActions()){if(!m_pickSuspended.contains(action))m_pickSuspended.insert(action,action->isEnabled());action->setEnabled(false);}
     m_externalWorkbook=m_info["id"].toString();m_externalSheet=m_model->sheet();
     m_externalCurrent=m_grid->currentIndex();m_externalSelection=m_grid->selectionModel()->selection();m_externalStatus=m_status->text();
     m_referenceDragging=false;m_referencePreview.clear();m_referenceIssue.clear();m_externalPickCancel->setEnabled(true);
@@ -1488,9 +1501,37 @@ void MainWindow::insertExternalReference(int r1,int c1,int r2,int c2) {
     if(m_externalPicking)m_status->setText(tr("Picking a reference for Python · Esc to cancel"));
 }
 
+QList<QAction *> MainWindow::pickBlockedActions() const {
+    // View-only commands (copying, finding, tracing, refreshing, sizing and
+    // hiding sections, list views, opening other views), and the formula
+    // picks, which end Python picking before they start.
+    static const QSet<QString> viewOnly{"pickReferenceAction","pickOtherSheetReferenceAction","copyAction","findAction","findNextAction","findPreviousAction","tracePrecedentsAction","traceDependentsAction",
+        "refreshStoredDataAction","reconcileAction","rowHeightAction","columnWidthAction","fitColumnsAction","resetDimensionsAction","hideRowsAction",
+        "hideColumnsAction","showRowsAction","showColumnsAction","listCriteriaAction","applyNamedListViewAction","exportListValuesAction",
+        "copyListValuesAction","clearListAction","calculateSelectionAction","relationalWorkbenchAction","nameManagerAction"};
+    QList<QAction *> result;
+    std::function<void(QMenu *)> collect=[&](QMenu *menu){
+        for(auto *action:menu->actions()) {
+            if(action->isSeparator())continue;
+            if(action->menu()){collect(action->menu());continue;}
+            if(!viewOnly.contains(action->objectName()))result.append(action);
+        }
+    };
+    for(auto *menu:m_editingMenus)collect(menu);
+    for(const char *name:{"importAction","savePortableViewAction"})if(auto *action=findChild<QAction *>(name))result.append(action);
+    return result;
+}
+
+void MainWindow::setEditingEnabled(QAction *action,bool enabled) {
+    if(m_pickSuspended.contains(action))m_pickSuspended[action]=enabled;
+    else action->setEnabled(enabled);
+}
+
 void MainWindow::cancelExternalReferencePick() {
     if(!m_externalPicking)return;
     m_externalPicking=false;m_referenceDragging=false;m_referencePreview.clear();m_referenceIssue.clear();m_externalPickCancel->setEnabled(false);
+    const auto suspended=std::exchange(m_pickSuspended,{});
+    for(auto action=suspended.begin();action!=suspended.end();++action)action.key()->setEnabled(action.value());
     // Picking never moves the selection, but navigation during it may; it is
     // put back unless the user switched sheets meanwhile.
     auto *selection=m_grid->selectionModel();
@@ -1657,8 +1698,8 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     m_undo->setText(info["undo"].isString() ? "Undo " + info["undo"].toString() : "Undo");
     m_redo->setText(info["redo"].isString() ? "Redo " + info["redo"].toString() : "Redo");
     setBusy(false, info["readonly"].toBool() ? "Read-only • Visible formulas calculate in background" : "Stored automatically • Visible formulas calculate in background");
-    m_undo->setEnabled(info["undo"].isString() && !info["readonly"].toBool());
-    m_redo->setEnabled(info["redo"].isString() && !info["readonly"].toBool());
+    setEditingEnabled(m_undo,info["undo"].isString() && !info["readonly"].toBool());
+    setEditingEnabled(m_redo,info["redo"].isString() && !info["readonly"].toBool());
     setWindowTitle(QFileInfo(info["path"].toString()).fileName() + " — DataHorizon development preview");
     syncSource();
     if(info["repair"].toBool() && !m_relationalActive)showRelational(true);

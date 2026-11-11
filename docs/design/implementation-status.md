@@ -251,6 +251,15 @@ sheet, a Names panel, Review & approve, Run/Output/Events tabs, and protected
 local drafts. The address box shows and accepts names and Data ▸ Name manager…
 manages them. Rejected grid edits keep their draft and name the rule.
 
+The final fix wave (November 11, 2026) reports rules broken by a name delete,
+a table drop, or a structural edit or sheet delete that breaks a name in the
+receipt's `broken_bindings` and in Issues, and the name-delete confirmation
+lists the rules scoped to the name. New R1C1-style names are rejected. Main
+window commands that could change the workbook are disabled while Pick from
+sheet is armed. Selection XLSX/ODS/CSV export reports list names and rules as
+native-only omissions. The `name_save` schema no longer requires `reference`
+for a rename.
+
 [Task 16 evidence](evidence/python-workspace-task16.json) records 708 Python
 tests (22 optional skips), 232 desktop and 70 workspace Qt checks, package
 install and smoke, and the [Supplies example](python-workspace-guide.md) on
@@ -265,9 +274,8 @@ Open: names in formulas and XLSX/ODS interchange; Python custom worksheet
 functions; package installation; structure, workbook-open and code events for
 bindings; user-controllable binding order; a source/diff view in the approval
 dialog; changed-cell highlighting after a run; docking; crash-persistent drafts;
-main-window action shortcuts while picking; debouncing the tables-view Cancel;
-selection-scope XLSX/ODS export reports, which do not mention names or
-bindings. Physical input, VoiceOver, Windows/Linux and release gates remain open.
+debouncing the tables-view Cancel; listing rules in the table-drop
+confirmation. Physical input, VoiceOver, Windows/Linux and release gates remain open.
 
 ## Milestone ledger
 

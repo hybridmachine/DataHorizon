@@ -6,6 +6,7 @@
 #include <QMainWindow>
 #include "formulasyntax.h"
 #include <QProcess>
+#include <QHash>
 #include <QMap>
 #include <QJsonArray>
 #include <QPersistentModelIndex>
@@ -129,6 +130,9 @@ private:
     PythonWorkspace *m_workspace=nullptr;
     QStackedWidget *m_objectStack=nullptr;
     QList<QMenu *> m_sheetMenus;
+    // Edit, Format, Sheet and Data: their commands other than view-only ones
+    // are disabled while picking a reference for Python.
+    QList<QMenu *> m_editingMenus;
     QList<QAction *> m_sheetFileActions;
     bool m_relationalActive=false;
     bool m_refreshFailed=false;
@@ -272,6 +276,11 @@ private:
     QPoint m_referenceAnchor;
     // External (Python) picking state; it shares the drag state above.
     QAction *m_externalPickCancel = nullptr;
+    // Each editing action disabled for the pick, with the enabled state it
+    // returns to when picking ends.
+    QHash<QAction *,bool> m_pickSuspended;
+    QList<QAction *> pickBlockedActions() const;
+    void setEditingEnabled(QAction *action,bool enabled);
     ReferencePickTarget m_externalTarget;
     bool m_externalPicking=false,m_externalInserted=false,m_changingSheet=false;
     QString m_externalWorkbook,m_externalSheet,m_externalStatus;

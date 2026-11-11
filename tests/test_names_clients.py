@@ -63,6 +63,24 @@ class NamesClientTests(unittest.TestCase):
             delete=dict(schemas['NameDeleteOperation']['example'],name_id=catalog['names'][0]['id'],operation_id=str(uuid.uuid4()),expected_state=catalog['state'])
             client.request(book.base+'/operations',delete)
 
+    def test_rename_without_reference_over_http(self):
+        with LocalService() as client,client.open(self.path,create=True) as book:
+            nid=book.save_name('Quantities','Sheet1!B2:B4')['name_id']
+            body=dict(action='name_save',name='Amounts',name_id=nid,operation_id=str(uuid.uuid4()),expected_state=book.state)
+            receipt=client.request(book.base+'/operations',body)
+            self.assertEqual(receipt['outcome'],'committed');self.assertEqual(receipt['name_id'],nid);book.state=receipt['state']
+            item=book.names()['names'][0];self.assertEqual((item['name'],item['reference']),('Amounts',"'Sheet1'!B2:B4"))
+        schemas=openapi()['components']['schemas']
+        self.assertEqual(schemas['NameSaveOperation']['required'],['operation_id','expected_state','action','name'])
+        self.assertIn('retarget',schemas['NameSaveOperation']['properties']['reference']['description'])
+        self.assertIn('name_id',schemas['Receipt']['properties'])
+
+    @unittest.skipIf(OAS30Validator is None,'Optional build-only OpenAPI validators unavailable')
+    def test_rename_payload_validates_against_schema(self):
+        document=openapi();schemas=document['components']['schemas']
+        rename=dict(action='name_save',name='Amounts',name_id='00000000-0000-4000-8000-000000000000',operation_id=str(uuid.uuid4()),expected_state='copy-from-workbook-info')
+        OAS30Validator({**schemas['NameSaveOperation'],'components':document['components']}).validate(rename)
+
     def test_unknown_field_rejected(self):
         with LocalService() as client,client.open(self.path,create=True) as book:
             body=dict(action='name_save',name='X',reference='Sheet1!A1',approved=True,operation_id=str(uuid.uuid4()),expected_state=book.state)

@@ -511,7 +511,7 @@ class Workbook:
                 "SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? AND row=? AND col BETWEEN ? AND ? ORDER BY col",
                 (sheet,row,c1,c2))
 
-    def read(self, sheet, args, *, limit=4096):
+    def read(self, sheet, args, *, limit=4096, native=False):
         require(args.get('calculation','fresh') in ('fresh','cached'),'INVALID_ARGUMENT','calculation must be fresh or cached')
         preview=args.get("preview",False)
         require(type(preview) is bool, "INVALID_ARGUMENT", "preview must be boolean")
@@ -539,6 +539,7 @@ class Workbook:
                     sheet, calc = self.sheet(sheet), self.calculator()
                     cells = []
                     response = {"cells":cells, "state":self.state(), "sheet":sheet, "range":[r1,c1,r2,c2]}
+                    if native: response.update(self.native_catalog())
                     response_bytes = len(encoded(response).encode())
                     for row, col, source, kind, style in self.range_cells(sheet,rows,c1,c2,deadline):
                         require(time.monotonic()<=deadline,"TIMEOUT","Read exceeded its time budget")
@@ -673,6 +674,16 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
+    def native_catalog(self, *, omissions=False):
+        """Names and binding labels (and optionally other native objects) in the current read snapshot, for export reports."""
+        from .relational import objects
+        from .bindings import label as binding_label
+        found=list(objects(self.db))
+        result={'native_bindings':[binding_label(self.db,item) for kind,item in found if kind=='binding'],
+                'native_names':[item['name'] for kind,item in found if kind=='name']}
+        if omissions:result['native_omissions']=[item['name'] for kind,item in found if kind not in ('name','binding')]
+        return result
+
     def read_workbook(self):
         """One bounded read transaction, including every sheet and formula dependency."""
         from .interchange import validate_sheet_names
@@ -687,12 +698,7 @@ class Workbook:
                     validate_sheet_names([name for _,name in catalog])
                     rows=self.db.execute("SELECT sheet_id,row,col,source,kind,style FROM cells ORDER BY sheet_id,row,col LIMIT ?",(MAX_CELLS+1,))
                     result={"state":self.state(),"sheets":[{"name":name,"cells":[]} for _,name in catalog]}
-                    from .relational import objects
-                    found=list(objects(self.db))
-                    result['native_omissions']=[item['name'] for kind,item in found if kind not in ('name','binding')]
-                    from .bindings import label as binding_label
-                    result['native_bindings']=[binding_label(self.db,item) for kind,item in found if kind=='binding']
-                    result['native_names']=[item['name'] for kind,item in found if kind=='name']
+                    result.update(self.native_catalog(omissions=True))
                     targets={key:result["sheets"][index]["cells"] for index,(key,_) in enumerate(catalog)}
                     calc=self.calculator(seconds=2); size=0
                     for count,(sheet,row,col,source,kind,style) in enumerate(rows,1):
@@ -722,7 +728,13 @@ class Workbook:
     def import_workbook(self,request):
         from .interchange import validate_sheet_names
         from .relational import objects
-        require(not objects(self.db),"DESTINATION_NOT_EMPTY","Whole-workbook import requires a destination without tables or saved queries")
+        present={kind for kind,_ in objects(self.db)}
+        if present:
+            labels=[label for kind,label in (("table","tables"),("query","saved queries"),("relationship","relationships"),("index","indexes"),
+                ("name","names"),("module","Python modules"),("binding","event bindings")) if kind in present]
+            labels+=sorted(kind for kind in present if kind not in ("table","query","relationship","index","name","module","binding"))
+            listed=labels[0] if len(labels)==1 else ", ".join(labels[:-1])+" or "+labels[-1]
+            raise EngineError("DESTINATION_NOT_EMPTY",f"Whole-workbook import requires a destination without {listed}; create a new workbook")
         require(self.db.execute("SELECT 1 FROM cells LIMIT 1").fetchone() is None,"DESTINATION_NOT_EMPTY","Whole-workbook import requires an empty destination; create a new workbook")
         sheets=request.get("sheets")
         require(isinstance(sheets,list) and all(isinstance(s,dict) for s in sheets),"INVALID_ARGUMENT","sheets must be an array of sheet objects")
@@ -1349,7 +1361,8 @@ class Workbook:
             from .names import break_sheet
             broken_names = break_sheet(self,target)
             from .bindings import break_sheet as break_binding_sheet
-            broken_bindings = break_binding_sheet(self,target)
+            from .bindings import scoped_to_names
+            broken_bindings = sorted(break_binding_sheet(self,target)+scoped_to_names(self,broken_names))
             self.db.execute("DELETE FROM sheets WHERE id=?",(target,))
         result = {"reference_warnings":warnings,"reference_issues":locations}
         if broken_names:result["broken_names"] = broken_names
@@ -1465,7 +1478,8 @@ class Workbook:
             from .names import adjust_structure
             broken_names = adjust_structure(self,target,axis,start,count,delete)
             from .bindings import adjust_structure as adjust_bindings
-            broken_bindings = adjust_bindings(self,target,axis,start,count,delete)
+            from .bindings import scoped_to_names
+            broken_bindings = sorted(adjust_bindings(self,target,axis,start,count,delete)+scoped_to_names(self,broken_names))
         result = {"reference_warnings":warnings,"reference_issues":locations}
         if broken_names:result["broken_names"] = broken_names
         if broken_bindings:result["broken_bindings"] = broken_bindings
@@ -1721,6 +1735,8 @@ class Workbook:
                     require(output_bytes <= 4*1024*1024, "LIMIT", "CSV response exceeds 4 MiB; export a smaller selection")
                     output.write(text)
                 result["csv"] = output.getvalue()
+                from .interchange import native_only_report
+                result["report"].extend(native_only_report(self.native_catalog()))
                 if temporal_entries:
                     result["temporal_schema"]=temporal_schema(result["csv"],temporal_entries)
                     result["report"].append("ISO date/time values require the companion temporal_schema to restore native kinds automatically; CSV alone is untyped.")

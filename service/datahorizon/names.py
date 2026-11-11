@@ -12,6 +12,8 @@ MAX_NAMES=256
 IDENTIFIER=re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,63}\Z')
 FIELDS={'id','name','sheet_id','row1','col1','row2','col2'}
 SPAN=('row1','col1','row2','col2')
+# R1C1-notation cell, row and column references; rejected for new or renamed names only, so stored names still open.
+R1C1=re.compile(r'(?:[Rr][0-9]+[Cc][0-9]+|[RrCc][0-9]+)\Z')
 
 
 def valid_name(text):
@@ -109,6 +111,7 @@ def mutate(book,request):
     after=None
     if action=='name_save':
         require(valid_name(request.get('name')),'NAME_INVALID','Names are identifiers of at most 64 letters, digits and underscores that are not cell addresses, TRUE/FALSE or function names')
+        require(before is not None and before['name']==request['name'] or R1C1.match(request['name']) is None,'NAME_INVALID','Names cannot look like R1C1-style references such as R1C1, R2 or C3')
         if 'reference' in request:target=parse_reference(book,request['reference'])
         else:
             require(before is not None,'REFERENCE_INVALID','A new name requires a reference')
@@ -127,7 +130,12 @@ def mutate(book,request):
     if after:relational.store(book,'name',after)
     else:book.db.execute("DELETE FROM dh_relational WHERE kind='name' AND id=?",(before['id'],))
     names(book.db);event('after')
-    return dict(name_id=(after or before)['id'])
+    result=dict(name_id=(after or before)['id'])
+    if after is None:
+        from .bindings import scoped
+        broken=scoped(book,'name',[before['id']])
+        if broken:result['broken_bindings']=broken
+    return result
 
 
 def adjust_structure(book,sheet_id,axis,start,count,delete):

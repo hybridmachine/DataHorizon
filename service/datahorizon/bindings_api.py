@@ -31,5 +31,5 @@ def install(schemas,actions):
         description='Names the binding that rejected the operation with BINDING_FAILED (409), BINDING_TIMEOUT (408), BINDING_NOT_APPROVED (403) or BINDING_UNAVAILABLE (409).')
     schemas['Receipt']['properties'].update(binding_id=binding_id,binding_notices=dict(type='array',items={'$ref':'#/components/schemas/BindingNotice'}),
         broken_names=dict(type='array',items=dict(type='string'),description='Names broken by this structural change'),
-        broken_bindings=dict(type='array',items=dict(type='string'),description='Bindings, as "<module>.<function>", whose scope this structural change broke'))
+        broken_bindings=dict(type='array',items=dict(type='string'),description='Bindings, as "<module>.<function>", whose scope this operation broke: a row or column delete, sheet delete, name delete or table drop'))
     schemas['Error']['properties']['binding']={'$ref':'#/components/schemas/BindingDiagnostics'}

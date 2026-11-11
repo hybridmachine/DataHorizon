@@ -275,6 +275,9 @@ def mutate(book,request):
             rows.append((str(identity),raw(book,item,str(identity))))
         for identity,record_before in rows:capture(book,item,identity,record_before,None)
         book.db.execute('DROP TABLE '+quote(item['name']));book.db.execute("DELETE FROM dh_relational WHERE kind='table' AND id=?",(item['id'],));result={}
+        from .bindings import scoped
+        broken=scoped(book,'table',[item['id']])
+        if broken:result['broken_bindings']=broken
     else:raise EngineError('UNSUPPORTED_OPERATION','Unsupported table operation')
     structure_hook(book,request,'after',before)
     return result

@@ -1484,6 +1484,35 @@ private slots:
         QVERIFY(!pickAction(readWorkspace)->isEnabled());QVERIFY(pickAction(readWorkspace)->toolTip().contains("Read-only"));
     }
 
+    void editingActionsAreDisabledWhilePicking() {
+        PickSetup setup;const QString text="x = \n";QVERIFY(setup.start("blocked.dhwb","Supplies",text,4));
+        auto &window=*setup.window;auto *workspace=setup.workspace;auto *pick=pickAction(workspace);auto *view=grid(window);
+        QVERIFY(apply(window,{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","1"}}}}}));
+        auto *paste=window.findChild<QAction *>("pasteAction");auto *undo=window.findChild<QAction *>("undoAction");
+        QVERIFY(paste);QVERIFY(undo);QTRY_VERIFY_WITH_TIMEOUT(undo->isEnabled(),10000);QVERIFY(paste->isEnabled());
+        auto *redo=window.findChild<QAction *>("redoAction");QVERIFY(redo);QVERIFY(!redo->isEnabled());
+        QGuiApplication::clipboard()->setText("9");
+        window.activateWindow();QTRY_VERIFY_WITH_TIMEOUT(window.isActiveWindow(),5000);
+        view->setCurrentIndex(window.model()->index(2,2));
+        const auto state=window.model()->state();
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        pick->trigger();QVERIFY(pick->isChecked());
+        view->setFocus();QTest::keySequence(view,QKeySequence::Paste);QTest::keySequence(view,QKeySequence::Undo);
+        paste->trigger();undo->trigger();
+        QTest::qWait(300);
+        QCOMPARE(admitted.count(),0);QCOMPARE(window.model()->state(),state);QVERIFY(pick->isChecked());
+        for(const char *name:{"pasteAction","undoAction","redoAction","clearContentsAction","fillDownAction","formatCellsAction","formatPainterAction","deleteRowsAction","addSheetAction","declareRecordsAction","importAction","savePortableViewAction"})
+            QVERIFY2(!window.findChild<QAction *>(name)->isEnabled(),name);
+        // View-only actions, navigation and sheet switching stay available.
+        for(const char *name:{"copyAction","findAction","freezeTopRowAction","dataJumpDownAction","rowHeightAction","nameManagerAction","cancelExternalPickAction"})
+            QVERIFY2(window.findChild<QAction *>(name)->isEnabled(),name);
+        QVERIFY(window.findChild<QTabBar *>("sheets")->isEnabled());
+        QTest::keyClick(view,Qt::Key_Escape);QVERIFY(!pick->isChecked());
+        QVERIFY(paste->isEnabled());QVERIFY(undo->isEnabled());QVERIFY(!redo->isEnabled());
+        QVERIFY(window.findChild<QAction *>("formatCellsAction")->isEnabled());
+        QCOMPARE(editor(workspace)->toPlainText(),text);
+    }
+
     void formulaReferencePickStillWorks() {
         PickSetup setup;const QString text="x = \n";QVERIFY(setup.start("formula.dhwb","Supplies",text,4));
         auto &window=*setup.window;auto *workspace=setup.workspace;auto *pick=pickAction(workspace);auto *view=grid(window);auto *model=window.model();
@@ -1886,6 +1915,26 @@ private slots:
         QVERIFY2(issues(window).contains("Rules that no longer cover any cells: rules.check_quantity"),qPrintable(issues(window)));
         QTRY_COMPARE_WITH_TIMEOUT(bindingRows(workspace),QStringList{"cells change → rules.check_quantity · Broken: its cells no longer exist"},10000);
         QVERIFY(readCode(window)["bindings"].toArray()[0].toObject()["broken"].toBool());
+    }
+
+    void deletingNameUsedByRuleNamesTheRule() {
+        BindingSetup setup;QVERIFY(setup.start("delete-name.dhwb"));auto &window=*setup.window;auto *workspace=setup.workspace;
+        QVERIFY(saveName(window,"Spare","'Supplies'!D2"));
+        QVERIFY(addRule(window,workspace,"Quantities","rules.check_quantity"));
+        auto *dialog=openNameManager(window);QVERIFY(dialog);
+        QStringList shown;
+        ModalDriver driver([&](QWidget *modal){auto *box=qobject_cast<QMessageBox *>(modal);if(!box || box->objectName()!="deleteNameConfirm")return false;shown.append(box->text());box->button(QMessageBox::Yes)->click();return true;});
+        // A name no rule uses: no rules line.
+        QTRY_VERIFY_WITH_TIMEOUT(nameItem(dialog,"Spare"),5000);chooseName(dialog,"Spare");
+        dialog->findChild<QPushButton *>("deleteNameButton")->click();QCOMPARE(driver.handled,1);
+        QTRY_VERIFY_WITH_TIMEOUT(findName(window,"Spare").isEmpty(),10000);
+        QVERIFY2(!shown[0].contains("Rules"),qPrintable(shown[0]));QVERIFY(!issues(window).contains("Rules that no longer cover any cells"));
+        QTRY_VERIFY_WITH_TIMEOUT(nameItem(dialog,"Quantities") && !nameItem(dialog,"Spare"),5000);chooseName(dialog,"Quantities");
+        dialog->findChild<QPushButton *>("deleteNameButton")->click();QCOMPARE(driver.handled,2);
+        QVERIFY2(shown[1].contains("Rules that use this name will stop covering any cells: rules.check_quantity"),qPrintable(shown[1]));
+        QTRY_VERIFY_WITH_TIMEOUT(findName(window,"Quantities").isEmpty(),10000);
+        QTRY_VERIFY2_WITH_TIMEOUT(issues(window).contains("Rules that no longer cover any cells: rules.check_quantity"),qPrintable(issues(window)),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(readCode(window)["bindings"].toArray()[0].toObject()["broken"].toBool(),10000);
     }
 
     void hostileRuleMessageIsShownLiterally() {

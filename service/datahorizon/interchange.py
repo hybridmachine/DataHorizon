@@ -296,6 +296,14 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         return result
 
 
+def native_only_report(snapshot):
+    """Report lines for workbook names and event bindings, which no interchange format carries."""
+    report=[]
+    if snapshot.get('native_names'):report.append('Workbook names are native-only and omitted from this export: '+', '.join(snapshot['native_names']))
+    if snapshot.get('native_bindings'):report.append('Event bindings are native-only and omitted from this export: '+', '.join(snapshot['native_bindings']))
+    return report
+
+
 def xlsx_export(snapshot,request):
     selected_mode=mode(request)
     report=["Selection only, at original source coordinates, from one consistent native state.",
@@ -306,8 +314,7 @@ def xlsx_export(snapshot,request):
     names=validate_sheet_names([s["name"] for s in snapshots])
     if whole: report=workbook_report()+["Formula caches are omitted; target recalculation is requested."]
     if snapshot.get('native_omissions'):report.append('Native relational objects omitted from this sheet export: '+', '.join(snapshot['native_omissions']))
-    if snapshot.get('native_names'):report.append('Workbook names are native-only and omitted from this export: '+', '.join(snapshot['native_names']))
-    if snapshot.get('native_bindings'):report.append('Event bindings are native-only and omitted from this export: '+', '.join(snapshot['native_bindings']))
+    report.extend(native_only_report(snapshot))
     report.append("Typed dates/times export as ISO XLSX date cells with native precision. Supported numeric date formats are interpreted as serials on import. Target readers may reduce subsecond precision; volatile functions recalculate using the target clock/timezone. Native civil arithmetic and pre-March-1900/typed comparisons may differ from target serial semantics; choose values to freeze results.")
     if selected_mode=="formulas" and any(map_formula_functions(c["source"],FUTURE_XLSX_FUNCTIONS)!=c["source"] for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"):report.append("Known modern functions use their _xlfn identifiers; target function/version support is required. Choose values for older targets.")
     from .xlsx_styles import export_styles

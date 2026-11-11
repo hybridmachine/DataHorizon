@@ -114,6 +114,11 @@ you choose Pick from sheet again or press Escape in either window.
 
 Picking never edits the sheet, never opens a cell editor and restores the
 previous selection. If a cell edit is in progress, finish or cancel it first.
+While picking is on, the main window's commands that could change the workbook
+(Edit, Format, Sheet and Data commands, Import, Save view in workbook) are
+disabled, along with their shortcuts. Copy, Find, freezing, navigation and
+switching sheets still work, and starting a formula reference pick ends
+picking for Python.
 
 ## Names
 
@@ -131,18 +136,25 @@ and `Total` for `'Supplies'!D6`.
 
 Names are case-insensitive, start with a letter or underscore, contain only
 letters, digits and underscores, are at most 64 characters, and cannot look like
-a cell address, `TRUE`/`FALSE` or a function name. A workbook holds at most 256.
+a cell address, an R1C1-style reference such as `R1C1`, `R2` or `C3`,
+`TRUE`/`FALSE` or a function name. A workbook holds at most 256. A workbook
+that already stores an R1C1-style name still opens, and the name can be
+retargeted, but no new name of that form can be created.
 
 Inserting or deleting rows and columns moves and resizes a name like a range
 reference. Renaming a sheet does not affect names. Deleting every cell a name
 covers, or its sheet, leaves a broken name; it is marked in the lists and any
 use of it fails. Duplicating a sheet does not copy names, and sorting does not
-move them.
+move them. Deleting a name, or breaking it this way, also breaks every rule
+scoped to it. Before you delete a name that rules use, the confirmation lists
+them: `Rules that use this name will stop covering any cells: rules.check_quantity`.
+After the change, Issues shows `Rules that no longer cover any cells: …`.
 
 In this version names work in Python, in rule scopes and in the address box.
 They do not work in formulas: `=SUM(Quantities)` is not supported. XLSX and ODS
-whole-workbook exports list names as native-only omissions; CSV carries no
-names.
+exports, of a selection or the whole workbook, list names and rules as
+native-only omissions in their report; CSV carries neither, and a CSV export's
+report lists them the same way.
 
 ## Save
 
@@ -268,8 +280,11 @@ What rules do not cover:
   rewrite. A scope still moves with its cells. Edits that a configured external
   handler makes during those actions do reach rules.
 - Direct SQLite edits run no Python and are never replayed later.
-- A rule whose scope cells or name no longer exist is marked broken and covers
-  nothing until it is repaired.
+- A rule whose scope cells, name or table no longer exist is marked broken and
+  covers nothing until it is repaired; edits it used to check then commit
+  without it. Deleting the scope's name or dropping its table reports the rule
+  in Issues (`Rules that no longer cover any cells: …`); dropping a table does
+  not list the rules in its confirmation.
 
 ## SDK and CLI equivalents
 
@@ -318,5 +333,4 @@ rules appear in the receipt's `binding_notices`.
 - Changed cells are not highlighted after a run.
 - The workspace is a separate window; it cannot be docked.
 - Drafts are lost if the application crashes.
-- While picking, the main window's menu shortcuts remain active.
 - Physical-input, VoiceOver and Windows/Linux acceptance have not been done.

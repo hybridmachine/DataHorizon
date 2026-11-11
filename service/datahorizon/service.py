@@ -713,7 +713,7 @@ class Service(ThreadingHTTPServer):
         if method == "POST" and suffix in (["export", "xlsx"],["export","ods"]):
             require("rows" not in body,"INVALID_ARGUMENT","Spreadsheet export requires a contiguous rectangle")
             whole=preparation_scope(body)=="workbook"
-            snapshot=book.read_workbook() if whole else book.read(body.get("sheet","Sheet1"),{**body,"preview":False},limit=MAX_CELLS)
+            snapshot=book.read_workbook() if whole else book.read(body.get("sheet","Sheet1"),{**body,"preview":False},limit=MAX_CELLS,native=True)
             return (xlsx_export if suffix[1]=="xlsx" else ods_export)(snapshot,body)
         if method == "POST" and suffix == ["export", "csv"]:
             return book.csv_export(body.get("sheet", "Sheet1"), body)
