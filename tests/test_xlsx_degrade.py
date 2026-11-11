@@ -96,6 +96,12 @@ class XlsxDegradeTests(unittest.TestCase):
         self.assertEqual(cell(result,"C2"),{"source":"=IFS(A2>1,B:B)","kind":"formula"})
         self.assertNotIn("formula.untranslatable",reasons(result))
 
+    def test_shared_member_shifts_relative_external_references(self):
+        sheet=('<row r="1"><c r="C1"><f t="shared" si="0" ref="C1:C2">[1]Data!A1*2+[1]Data!$A$1</f><v>1</v></c></row>'
+               '<row r="2"><c r="C2"><f t="shared" si="0"/><v>1</v></c></row>')
+        result=preview(sheet)
+        self.assertEqual(cell(result,"C2"),{"source":"=[1]Data!A2*2+[1]Data!$A$1","kind":"formula"})
+
     def test_untranslatable_formula_is_omitted_and_reported_at_another_destination(self):
         sheet=('<row r="1"><c r="A1"><v>5</v></c><c r="B1"><f>{1,2}</f></c><c r="C1"><f>STDEV.S(A1:A1)</f></c>'
                '<c r="D1"><f>VLOOKUP(A1,B:C,2,0)</f></c><c r="E1"><f>A1 ` 2</f></c></row>')

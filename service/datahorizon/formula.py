@@ -80,7 +80,9 @@ def has_sheet_reference(source):
     """Ignore error literals and quotes, retaining a quoted sheet's separator.
 
     An incomplete quoted token stays conservative: an unclassified ! blocks
-    structural operations until the formula can be reviewed.
+    structural operations until the formula can be reviewed. Intentionally not
+    scanner-based yet: `=Other!#REF!` must stay True, and the next task replaces
+    its callers' blocking behaviour.
     """
     pos = 1
     while pos < len(source):
@@ -471,9 +473,8 @@ def _target_endpoints(item, matches, action):
 def _scanned_translate(source, rows, cols):
     _scanned(source)
     def change(item):
+        # Copy/fill shifts relative parts of external references too; only their prefix stays verbatim.
         endpoints = _endpoints(item)
-        if any(external for *_ignored, external in endpoints):
-            return None
         bodies = {}
         for index, (ref, *_ignored) in enumerate(endpoints):
             row = ref.row if ref.row is None or ref.abs_row else ref.row + rows
@@ -499,7 +500,15 @@ def _scanned_structure(source, matches, axis, start, count, delete):
         old = [getattr(ref, field) for ref in refs]
         if old[0] is None:
             return None  # a whole column under a row edit, or a whole row under a column edit
-        new = adjust_interval(old[0], old[-1], start, count, delete, maximum)
+        if refs[0].kind != "cell" and not delete:
+            # A range already spanning the whole axis (A:XFD, 1:1048576) stays; otherwise an insert
+            # pushing its far end past the grid edge clamps it there instead of breaking it.
+            shifted = [value + count if value >= start else value for value in old]
+            if sorted(old) == [1, maximum]:
+                shifted = old
+            new = None if min(shifted) > maximum else [min(value, maximum) for value in shifted]
+        else:
+            new = adjust_interval(old[0], old[-1], start, count, delete, maximum)
         if new is None:
             broken += 1
             return "#REF!"
@@ -575,7 +584,8 @@ def _scanned_delete(source, matches):
     _scanned(source)
     broken = 0
     def deleted(sheet, sheet_last):
-        # Removing an inner sheet leaves a 3D span valid; removing an end breaks it.
+        # Removing an inner sheet leaves a 3D span valid; removing an end breaks it. Known limitation:
+        # Excel shrinks the span to the neighbouring sheet instead, which needs the display order.
         if sheet_last is None:
             return matches(sheet)
         return matches.named(sheet) or matches.named(sheet_last)

@@ -36,6 +36,13 @@ class StructureFallbackTests(unittest.TestCase):
         self.assertEqual(transform_structure("=SUM(B:C)+1", "Sheet1", "Sheet1", "col", 2, 2, True), ("=SUM(#REF!)+1", 1))
         self.assertEqual(transform_structure("=SUM(Sheet1!B:B)", "Sheet1", "Sheet1", "col", 2, 1, True), ("=SUM(#REF!)", 1))
 
+    def test_full_span_whole_references_clamp_at_the_grid_edge_on_insert(self):
+        self.assertEqual(transform_structure("=SUM(A:XFD)", "Sheet1", "Sheet1", "col", 1, 1), ("=SUM(A:XFD)", 0))
+        self.assertEqual(transform_structure("=SUM(1:1048576)", "Sheet1", "Sheet1", "row", 1, 3), ("=SUM(1:1048576)", 0))
+        self.assertEqual(transform_structure("=SUM(B:XFC)", "Sheet1", "Sheet1", "col", 2, 5), ("=SUM(G:XFD)", 0))
+        self.assertEqual(transform_structure("=SUM(XFD:XFD)", "Sheet1", "Sheet1", "col", 1, 1), ("=SUM(#REF!)", 1))
+        self.assertEqual(transform_structure("=SUM(A1:XFD1)+A1", "Sheet1", "Sheet1", "col", 1, 1), ("=SUM(#REF!)+B1", 1))
+
     def test_whole_column_and_row_references_follow_only_their_axis(self):
         self.assertEqual(transform_structure("=SUM(B:C)", "Sheet1", "Sheet1", "row", 1, 5), ("=SUM(B:C)", 0))
         self.assertEqual(transform_structure("=SUM(B:C)", "Sheet1", "Sheet1", "row", 1, 5, True), ("=SUM(B:C)", 0))
@@ -109,7 +116,10 @@ class TranslateFallbackTests(unittest.TestCase):
 
     def test_cells_absolute_markers_external_and_opaque_text(self):
         self.assertEqual(translate("=IFS($A1,A$1,Data!B2:C3)", 1, 1), "=IFS($A2,B$1,Data!C3:D4)")
-        self.assertEqual(translate("=IFS([1]Sheet1!A1,A1)", 1, 0), "=IFS([1]Sheet1!A1,A2)")
+        # Copy/fill shifts relative parts of external references too, keeping the prefix verbatim.
+        self.assertEqual(translate("=IFS([1]Sheet1!A1,A1)", 1, 0), "=IFS([1]Sheet1!A2,A2)")
+        self.assertEqual(translate("=IFS([1]Sheet1!$A$1,'[Book.xlsx]S 1'!B:B)", 1, 1), "=IFS([1]Sheet1!$A$1,'[Book.xlsx]S 1'!C:C)")
+        self.assertEqual(translate("=IFS([1]Sheet1!A1:B2)", -1, 0), "=IFS(#REF!)")
         self.assertEqual(translate(MIXED, 1, 1), "=IFS(B2," + OPAQUE + ",Sheet1!D4)")
         self.assertEqual(translate("=SUM(Jan:Mar!B2)", 1, 0), "=SUM(Jan:Mar!B3)")
 
