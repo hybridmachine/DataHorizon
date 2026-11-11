@@ -32,7 +32,8 @@ from .list_export import export_list
 from .functions import function_catalog
 
 CAPABILITIES = {
-    "api_version": 1, "format_version": 4, "supported_format_versions": [1,2,3,4], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
+    "api_version": 1, "format_version": 5, "supported_format_versions": [1,2,3,4,5], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
+    "workbook_modules":True,"atomic_macros":True,"macro_worker_seconds":2,"macro_activation":"operator-approved workbook UUID:code SHA256",
     "structured_tables":True,"table_types":["text","integer","number","boolean","date","time","datetime"],
     "readonly_sql":True,"query_jobs":True,"query_result_rows":100000,"query_result_values":1000000,"query_spool_bytes":64*1024*1024,
     "temporal_types": ["date","time","datetime"], "calculation_timezone": "UTC",
@@ -49,8 +50,10 @@ CAPABILITIES = {
 CAPABILITIES['operations'].extend(['table_create','table_drop','table_promote','table_schema','table_insert','table_update','table_delete','index_create','index_drop'])
 CAPABILITIES['operations'].extend(['relationship_create','relationship_drop','table_repair'])
 CAPABILITIES['operations'].extend(['query_save','query_rename','query_delete'])
+CAPABILITIES['operations'].extend(['module_save','module_delete','macro_run'])
 
 ROUTES = {
+    "/v1/workbooks/{workbook}/code": ("post", "Inspect inert workbook modules and the exact service-local activation key"),
     "/v1/workbooks/{workbook}/tables":("post","Read the state-checked structured table catalog"),
     "/v1/workbooks/{workbook}/tables/preview":("post","Review selection values and types before independent table creation"),
     "/v1/workbooks/{workbook}/tables/read":("post","Read a bounded state-checked record page"),
@@ -235,12 +238,15 @@ def openapi():
         actions[action]=(['namespace','id']+(['payload'] if action=='metadata_set' else []),{'sheet':sheet,'namespace':{'type':'string','enum':['presentation','list']},'id':{'type':'string','minLength':1,'maxLength':64},'payload':{'type':'object'}},{'namespace':'presentation','id':'view',**({'payload':{'frozen_rows':1}} if action=='metadata_set' else {})})
     from .relational_api import install as install_relational_schemas
     install_relational_schemas(schemas,actions)
+    from .code_api import install as install_code_schemas
+    install_code_schemas(schemas,actions)
     for action, (required, properties, example) in actions.items():
         schema_name = "".join(word.title() for word in action.split("_"))+"Operation"
         mapping[action] = "#/components/schemas/"+schema_name
         schemas[schema_name] = {"type":"object","required":["operation_id","expected_state","action",*required],
             "properties":{**common,"action":{"type":"string","enum":[action]},**properties},
             "example":{"operation_id":"generate-a-uuid","expected_state":"copy-from-workbook-info","action":action,**example}}
+        if action in ("module_save","module_delete","macro_run"):schemas[schema_name]["additionalProperties"]=False
     schemas["OperationRequest"] = {"oneOf":[{"$ref":ref} for ref in mapping.values()],
         "discriminator":{"propertyName":"action","mapping":mapping},
         "description":"Atomic operations: at most 10,000 affected cells and a 4 MiB request. Range endpoints are inclusive and must be ordered. Copy fill uses the top-left input; series requires a numeric seed. Same-sheet Move retargets supported scalar/fully-contained range references into the cut rectangle; partially intersecting referenced ranges and unsupported syntax reject atomically. Sheet rename updates qualified name references while preserving stable UUID references, scanning at most 10,000 formulas/8 MiB. Sheet duplication preserves other-sheet references and retargets copied self-references, including UUIDs; it copies at most 10,000 stored cells/8 MiB. Sheet deletion replaces surviving name/UUID references and inherited ranges with permanent #REF! errors and reports affected locations; deleted and rewritten cells share the 10,000-cell limit. Unsupported syntax and required hooks reject reference-changing structure operations. Row/column changes retarget absolute and relative A1 references across sheets, expand/contract ranges and report newly broken references; required handlers, unsupported formula syntax and grid overflow reject atomically. Structure changes clear history. No managed SQL or chunked commits.",
@@ -302,7 +308,7 @@ def openapi():
                      "security": [{"localToken": []}]}
         if method == "post":
             name = ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
-                "inspect":"TableCatalogRequest","repair-preview":"RelationshipRepairRequest","cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
+                "code":"CodeReadRequest","inspect":"TableCatalogRequest","repair-preview":"RelationshipRepairRequest","cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             if '/queries/' in path and path.endswith('/preview'):schema={'$ref':'#/components/schemas/QueryDefinitionRequest'}
             if '/queries/' in path and path.endswith('/read'):schema={'$ref':'#/components/schemas/QueryReadRequest'}
@@ -311,7 +317,9 @@ def openapi():
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
         for status in ("400","401","403","404","409","413","500","503"):
             operation["responses"][status]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}
-        if path=="/v1/functions":
+        if path.endswith("/code"):
+            operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/CodeCatalog"}}}
+        elif path=="/v1/functions":
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/FunctionCatalog"}}}
         elif path.endswith("/styles"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Styles"}}}
@@ -541,10 +549,21 @@ class Service(ThreadingHTTPServer):
             book = self.workbooks.get(parts[2])
         require(book is not None, "NOT_FOUND", "Workbook is not open in this service", 404)
         suffix = parts[3:]
+        if method=='POST' and len(suffix)==3 and suffix[0]=='operations' and suffix[2]=='cancel':
+            # Cancellation must reach the running writer, rather than queue
+            # behind the same path lock held for its synchronous REST request.
+            with self.registry_lock:
+                require(self.workbooks.get(parts[2]) is book,'NOT_FOUND','Workbook handle was released',404)
+                return self._cancel_operation(book,unquote(suffix[1]))
         with self._path_access(book.path):
             with self.registry_lock:
                 require(self.workbooks.get(parts[2]) is book,"NOT_FOUND","Workbook handle was released",404)
             return self._dispatch_book(method,parts[2],book,suffix,body)
+
+    def _cancel_operation(self,book,operation):
+        with self.registry_lock:event=self.active_operations.get((book,operation))
+        if event is not None:event.set()
+        return dict(operation_id=operation,cancel_requested=event is not None,instructions='Inspect the durable receipt; a committed operation cannot be undone by cancellation.')
 
     def _dispatch_book(self, method, handle, book, suffix, body):
         if suffix and suffix[0]=='operation-jobs':
@@ -664,9 +683,7 @@ class Service(ThreadingHTTPServer):
             finally:
                 with self.registry_lock:self.active_operations.pop(key,None)
         if method=='POST' and len(suffix)==3 and suffix[0]=='operations' and suffix[2]=='cancel':
-            with self.registry_lock:event=self.active_operations.get((book,unquote(suffix[1])))
-            if event is not None:event.set()
-            return dict(operation_id=unquote(suffix[1]),cancel_requested=event is not None,instructions='Inspect the durable receipt; a committed operation cannot be undone by cancellation.')
+            return self._cancel_operation(book,unquote(suffix[1]))
         if method == "GET" and len(suffix) == 2 and suffix[0] == "operations":
             return book.operation(unquote(suffix[1]))
         if method == "POST" and suffix == ["snapshot"]:

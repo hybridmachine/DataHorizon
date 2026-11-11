@@ -1,0 +1,28 @@
+{
+  "status": "passed",
+  "verification": {
+    "real_client_tests": 5,
+    "automation_openapi_checks": 1,
+    "existing_openapi_checks": 4,
+    "existing_service_checks": 43
+  },
+  "review": {
+    "performed": true,
+    "scope": [
+      "OpenAPI and capability parity",
+      "SDK thin REST behavior and CLI operator activation",
+      "live HTTP cancellation",
+      "lost acknowledgement and durable result reconciliation",
+      "remote clients cannot grant execution"
+    ],
+    "fixes": [
+      "Route exact operation cancellation outside the path lock after checking the handle lease",
+      "Publish native v5 and all automation capabilities",
+      "Check cancellation before starting Python and preserve cancellation/timeout from broker work",
+      "Keep approval-dependent API examples in a separately approved service fixture"
+    ]
+  },
+  "task": 5,
+  "source_commit": "ee88e87d9eb65acf1e89504c06f5cd610e02673f",
+  "release_qualified": false
+}

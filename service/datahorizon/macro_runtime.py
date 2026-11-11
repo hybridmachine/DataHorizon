@@ -65,6 +65,7 @@ def invoke(module,name,arguments,operation,dispatch,deadline,check,diagnostics):
                 _send(parent,reply)
         except Exception as error:offer(error)
     try:
+        check()
         context=multiprocessing.get_context('spawn');parent,child=context.Pipe()
         process=context.Process(target=_worker,args=(child,module['source'],module['name'],name,arguments,operation),daemon=True)
         process.start();child.close();pump=threading.Thread(target=broker,daemon=True,name='DataHorizonMacroBroker');pump.start()
@@ -91,6 +92,7 @@ def invoke(module,name,arguments,operation,dispatch,deadline,check,diagnostics):
                 raise MacroFailure('MACRO_PROTOCOL','Unknown macro context method',diagnostics['logs'])
             try:result=dispatch(method,message)
             except Exception as error:
+                if getattr(error,'body',{}).get('code') in ('CANCELLED','TIMEOUT'):raise
                 diagnostics['context_code']=getattr(error,'body',{}).get('code',getattr(error,'sqlite_errorname',type(error).__name__))
                 raise MacroFailure('MACRO_CONTEXT',str(error),diagnostics['logs']) from error
             replies.put(dict(result=result))
