@@ -138,7 +138,7 @@ def validate_schema(db,signature,base_schema):
     require(expected_schema(SCHEMA)[0] in signature,'FORMAT_VERSION','Native format v4 requires its matching relational catalog',409)
     catalog=objects(db);registered=[];names=set()
     for kind,item in catalog:
-        require(kind in ('table','index','relationship','query'),'INVALID_FORMAT','Unsupported relational object kind',409)
+        require(kind in ('table','index','relationship','query') or kind=='module' and db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=5,'INVALID_FORMAT','Unsupported relational object kind',409)
         if kind!='table':continue
         require(set(item)=={'id','name','columns'},'INVALID_FORMAT','Invalid table catalog fields',409)
         name(item['name']);columns(item['columns'],stored=True)
@@ -154,6 +154,8 @@ def validate_schema(db,signature,base_schema):
     for rel in registered_relationships:require(sum(index['owner']==rel['id'] for index in registered_indexes)==1,'INVALID_FORMAT','Relationship supporting index is missing')
     expected=expected_schema(base_schema+SCHEMA+';'.join([*(table_sql(item,registered_relationships,registered) for item in registered),*(sql(item,validate(item,registered,registered_relationships)) for item in registered_indexes)])+';')
     require(signature==expected,'SCHEMA_CHANGED','Relational schema does not match its supported catalog; preserve the file for recovery',409)
+    from .workbook_code import modules
+    modules(db)
     from .query_views import validate as validate_queries
     validate_queries(db,registered,time.monotonic()+2)
     return registered
