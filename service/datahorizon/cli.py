@@ -100,6 +100,8 @@ def main():
     code.add_argument('code_action',choices=['read','save','delete']);code.add_argument('module',nargs='?');code.add_argument('--fingerprint')
     names=commands.add_parser('names',help='Inspect workbook names; save reads JSON name/reference/name_id? from stdin; delete takes the name id')
     names.add_argument('names_action',choices=['read','save','delete']);names.add_argument('name_id',nargs='?')
+    bindings=commands.add_parser('bindings',help='Inspect event bindings; save reads JSON event/scope/module/function/fingerprint/required?/binding_id? from stdin; delete takes the binding id and --fingerprint')
+    bindings.add_argument('bindings_action',choices=['read','save','delete']);bindings.add_argument('binding_id',nargs='?');bindings.add_argument('--fingerprint')
     macro=commands.add_parser('macro',help='Invoke one approved atomic macro; JSON scalar arguments on stdin')
     macro.add_argument('module');macro.add_argument('name');macro.add_argument('--fingerprint',required=True);macro.add_argument('--operation-id')
     query=commands.add_parser('query',help='Read-only SQL jobs; run reads JSON stdin and returns the complete frozen result. Later actions require a workbook kept open on --url.')
@@ -193,6 +195,12 @@ def main():
                         else:
                             if not args.name_id:raise ValueError('names delete requires the name id')
                             result=book.delete_name(args.name_id)
+                    elif args.command=='bindings':
+                        if args.bindings_action=='read':result=book.code()['bindings']
+                        elif args.bindings_action=='save':result=book.save_binding(**json.load(sys.stdin))
+                        else:
+                            if not args.binding_id or not args.fingerprint:raise ValueError('bindings delete requires the binding id and --fingerprint')
+                            result=book.delete_binding(args.binding_id,fingerprint=args.fingerprint)
                     elif args.command=='macro':result=book.run_macro(args.module,args.name,fingerprint=args.fingerprint,arguments=json.load(sys.stdin),operation_id=args.operation_id)
                     elif args.command=='tables':result=book.tables()
                     elif args.command=='query':

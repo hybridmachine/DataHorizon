@@ -689,7 +689,9 @@ class Workbook:
                     result={"state":self.state(),"sheets":[{"name":name,"cells":[]} for _,name in catalog]}
                     from .relational import objects
                     found=list(objects(self.db))
-                    result['native_omissions']=[item['name'] if kind!='binding' else 'binding '+item['function'] for kind,item in found if kind!='name']
+                    result['native_omissions']=[item['name'] for kind,item in found if kind not in ('name','binding')]
+                    from .bindings import label as binding_label
+                    result['native_bindings']=[binding_label(self.db,item) for kind,item in found if kind=='binding']
                     result['native_names']=[item['name'] for kind,item in found if kind=='name']
                     targets={key:result["sheets"][index]["cells"] for index,(key,_) in enumerate(catalog)}
                     calc=self.calculator(seconds=2); size=0

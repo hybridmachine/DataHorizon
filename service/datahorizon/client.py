@@ -198,6 +198,12 @@ class WorkbookClient:
     def delete_name(self,name_id,*,operation_id=None):
         return self.apply('name_delete',name_id=name_id,operation_id=operation_id)
 
+    def save_binding(self,event,scope,module,function,*,fingerprint,required=True,binding_id=None,operation_id=None):
+        return self.apply('binding_save',event=event,scope=scope,module=module,function=function,required=required,fingerprint=fingerprint,operation_id=operation_id,**(dict(binding_id=binding_id) if binding_id is not None else {}))
+
+    def delete_binding(self,binding_id,*,fingerprint,operation_id=None):
+        return self.apply('binding_delete',binding_id=binding_id,fingerprint=fingerprint,operation_id=operation_id)
+
     def run_macro(self,module,macro,*,fingerprint,arguments=None,operation_id=None):
         return self.apply('macro_run',module=module,macro=macro,fingerprint=fingerprint,arguments={} if arguments is None else arguments,operation_id=operation_id,label='Macro '+module+'.'+macro)
 

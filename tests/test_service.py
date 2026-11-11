@@ -442,7 +442,7 @@ class ServiceTests(unittest.TestCase):
                 # Approved code examples execute in test_automation_clients;
                 # this service deliberately has no operator code activation.
                 # Name examples execute in test_names_clients (delete needs a live name id).
-                self.assertEqual(set(sequence)|{'module_save','module_delete','macro_run','name_save','name_delete'},set(mapping))
+                self.assertEqual(set(sequence)|{'module_save','module_delete','macro_run','name_save','name_delete','binding_save','binding_delete'},set(mapping))
                 for action in sequence:
                     with self.subTest(action=action):
                         schema=schemas[mapping[action].rsplit("/",1)[-1]]
