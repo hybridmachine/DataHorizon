@@ -80,6 +80,8 @@ applications, and AI agents through REST.
 | [Next five qualification increments](qualification-next-five.md) | Native plugin checks, cache/RSS, HTTP/worker hardening and native capture binding |
 | [Everyday spreadsheet increments](everyday-next-five.md) | Wrap, borders, sizing, hide/unhide and freeze |
 | [Editing and CSV increments](editing-csv-next-five.md) | Sheet reference changes, CSV dialects and column types |
+| [Excel fidelity programme](excel-fidelity-plan.md) | Approved design and ten-increment plan for native features and full XLSX data/formatting import and export |
+| [Excel fidelity increment 1 plan](excel-fidelity-increment-1-plan.md) | Task-level plan for import foundations: degrade instead of block, reference scanner, large staged import/export, clients, corpus and limits |
 | [Interchange and recovery increments](interchange-next-five.md) | Preparation jobs, XLSX/ODS fidelity stages and failure recovery |
 | [Workbook compatibility, recovery and qualification](workbook-next-five.md) | Authorized next five increments and bounded whole-workbook contracts |
 | [Next ten spreadsheet increments](spreadsheet-next-ten.md) | Formula, formatting, editing, navigation and selection-summary stages |
