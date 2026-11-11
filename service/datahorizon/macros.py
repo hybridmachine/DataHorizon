@@ -19,7 +19,7 @@ def run(book,request):
         require(parameter['name'] in supplied or 'default' in parameter,'MACRO_ARGUMENT','Missing macro argument: '+parameter['name'])
         try:arguments[parameter['name']]=scalar(parameter,supplied.get(parameter['name'],parameter.get('default')))
         except EngineError as error:raise EngineError('MACRO_ARGUMENT',str(error)) from error
-    diagnostics=dict(module=module['id'],name=declaration['name'],fingerprint=current['fingerprint'],logs='')
+    diagnostics=dict(module=module['id'],name=declaration['name'],fingerprint=current['fingerprint'],logs='',execution='running')
     book.macro_diagnostics=diagnostics
     operation_deadline=book.deadline;book.deadline=min(operation_deadline,time.monotonic()+2)
     try:
@@ -27,10 +27,13 @@ def run(book,request):
         try:result=scalar(declaration['result'],result)
         except EngineError as error:raise EngineError('MACRO_RESULT',str(error),409) from error
     except MacroFailure as error:
+        diagnostics['execution']='failed'
         raise EngineError(error.code,str(error),409) from error
     except EngineError as error:
+        diagnostics['execution']='failed'
         if error.body['code']=='TIMEOUT' and time.monotonic()<operation_deadline:
             raise EngineError('MACRO_TIMEOUT','Python macro exceeded its two-second budget',409) from error
         raise
     finally:book.deadline=operation_deadline
+    diagnostics['execution']='completed'
     return dict(macro_result=result,macro=diagnostics)
