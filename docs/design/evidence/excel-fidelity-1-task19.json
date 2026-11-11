@@ -1,0 +1,151 @@
+{
+  "task": 19,
+  "status": "passed",
+  "title": "Qualify and record large interchange limits",
+  "source": {
+    "measured_commit": "8a3d6d01ced1d6888da9e2e8404df1668328d064",
+    "measured_working_tree": "HEAD plus the two new untracked scripts; no service source was modified before measuring",
+    "scope": "service/datahorizon/xlsx_stream.py and service.py limit constants and descriptions, tests/qualify_large_interchange.py, tests/fixtures/generate_large_xlsx.py, tests/test_capacity_qualification.py, design documents"
+  },
+  "host": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu_count": 8,
+    "cpu": "Apple M1",
+    "memory_bytes": 8589934592,
+    "model": "MacBookAir10,1",
+    "python": "3.14.6",
+    "sqlite": "3.53.4",
+    "os_cache": "warm, uncontrolled"
+  },
+  "verification": {
+    "python": {
+      "tests_run": 1076,
+      "optional_skips": 26,
+      "failures": 0,
+      "errors": 0,
+      "seconds": 159.733,
+      "command": "PYTHONPATH=service python3 -m unittest discover -s tests",
+      "note": "Baseline before the task: 1073 tests, 26 skips, OK; the same two pre-existing ResourceWarnings from names_api.py appear in both runs."
+    },
+    "focused": {
+      "tests_run": 3,
+      "failures": 0,
+      "seconds": 3.024,
+      "command": "cd tests && PYTHONPATH=../service python3 -m unittest -v test_capacity_qualification"
+    },
+    "capacity_runs": {
+      "evidence": "docs/design/evidence/excel-fidelity-1-capacity.json",
+      "commands": [
+        "python3 tests/qualify_large_interchange.py --output <standard>.json",
+        "python3 tests/qualify_large_interchange.py --sizes 1000000 --long-text-share 0 --output <lean>.json"
+      ]
+    }
+  },
+  "measurements": {
+    "xlsx_100000": {
+      "qualifies": true,
+      "slowest_phase": {
+        "name": "prepare",
+        "seconds": 3.237
+      },
+      "peak_service_rss_bytes": 92995584,
+      "native_bytes": 26034176
+    },
+    "ods_100000": {
+      "qualifies": true,
+      "slowest_phase": {
+        "name": "prepare",
+        "seconds": 6.345
+      },
+      "peak_service_rss_bytes": 92848128,
+      "native_bytes": 26157056
+    },
+    "xlsx_500000": {
+      "qualifies": true,
+      "slowest_phase": {
+        "name": "prepare",
+        "seconds": 15.489
+      },
+      "peak_service_rss_bytes": 92848128,
+      "native_bytes": 132235264
+    },
+    "ods_500000": {
+      "qualifies": true,
+      "slowest_phase": {
+        "name": "prepare",
+        "seconds": 31.919
+      },
+      "peak_service_rss_bytes": 92930048,
+      "native_bytes": 131923968
+    },
+    "xlsx_1000000": {
+      "qualifies": true,
+      "slowest_phase": {
+        "name": "prepare",
+        "seconds": 30.907
+      },
+      "peak_service_rss_bytes": 93044736,
+      "native_bytes": 262078464
+    },
+    "ods_1000000": {
+      "qualifies": false,
+      "slowest_phase": null,
+      "peak_service_rss_bytes": 0,
+      "error": "Expanded ODS export exceeds 256 MiB"
+    },
+    "xlsx_1000000_without_long_text": {
+      "qualifies": true,
+      "slowest_phase": {
+        "name": "reimport_prepare",
+        "seconds": 27.976
+      },
+      "peak_service_rss_bytes": 100073472,
+      "native_bytes": 187064320
+    },
+    "ods_1000000_without_long_text": {
+      "qualifies": true,
+      "slowest_phase": {
+        "name": "reimport_prepare",
+        "seconds": 35.33
+      },
+      "peak_service_rss_bytes": 100335616,
+      "native_bytes": 187695104
+    }
+  },
+  "contracts": {
+    "LARGE_CELLS": 1000000,
+    "LARGE_EXPANDED": 268435456,
+    "LARGE_PACKAGE": 50331648,
+    "LARGE_PACKAGE_previous": 67108864,
+    "LARGE_SHEETS": 255,
+    "MAX_RECORD_BYTES": 1048576,
+    "SNAPSHOT_BYTES": 2147483648,
+    "max_concurrent_uploads": 2,
+    "max_concurrent_downloads": 2,
+    "max_export_styles": 1024,
+    "phase_seconds": 300,
+    "service_memory_target_bytes": 268435456,
+    "opening_budget_seconds": 5,
+    "MAX_CELLS": 10000,
+    "opening_budget_changed": false,
+    "MAX_CELLS_changed": false
+  },
+  "decision": "XLSX qualifies at 100,000, 500,000 and 1,000,000 cells with the standard mix (slowest phase 30.907 s prepare, peak service RSS 93,044,736 B). ODS qualifies at 100,000 and 500,000 with the standard mix and at 1,000,000 with the same mix minus long text (slowest 35.33 s, peak 100,335,616 B). Every qualifying 1,000,000-cell case reopened in at most 0.792 s including its first viewport. ODS workbooks of 1,000,000 cells are therefore qualified only within LARGE_EXPANDED; text-heavier ones are rejected by that byte limit with LIMIT.",
+  "not_qualified_or_not_run": [
+    "ODS at 1,000,000 cells with the standard mix (rejected by LARGE_EXPANDED while producing its source; see ods_1000000_standard_mix)",
+    "ODS at 500,000 cells without long text was not run",
+    "Inline-string XLSX was not measured (generator default: shared strings)",
+    "OS-cold opening was not measured (warm, uncontrolled cache)",
+    "Other hosts (Windows, Linux, Intel Mac) were not measured"
+  ],
+  "review": {
+    "type": "Implementation self-review; no independent human approval is claimed",
+    "performed": true,
+    "findings_fixed": [],
+    "observations": [
+      "ODS export of prose text writes each space as <text:s/> and the text twice, about four times XLSX's expanded size; this bounds ODS by LARGE_EXPANDED, not by cells. Not changed in this task (an existing export representation, not a time or memory fault).",
+      "No avoidable memory or time cause was found: service RSS stayed between 92.8 MB and 100.3 MB from 100,000 to 1,000,000 cells."
+    ]
+  }
+}

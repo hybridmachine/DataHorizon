@@ -167,7 +167,7 @@ Independent SQLite edits bypass hooks and never replay skipped events.
 
 ## Importing and exporting workbooks
 
-Whole `.xlsx` and `.ods` workbooks (up to 64 MiB packed and 1,000,000 cells)
+Whole `.xlsx` and `.ods` workbooks (up to 48 MiB packed and 1,000,000 cells)
 use the large interchange path. The SDK streams files in 64-KiB chunks in both
 directions, checks SHA-256 on the way, and waits up to 330 seconds for
 preparation, apply and transfers; ordinary calls keep their 15-second timeout.

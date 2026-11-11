@@ -211,12 +211,54 @@ constant. **Call**: interchange gets its own path and limits.
 - **New**: importing a workbook's sheets as additional sheets of a non-empty
   workbook, also atomic. **Call**
 - Export streams sheet by sheet from one read snapshot.
-- Targets to qualify, to be replaced by measured values: 1,000,000 stored cells
-  and 256 MiB expanded per import or export, 255 sheets, with progress and
-  cooperative cancellation throughout. **Call**. If measurement on the
-  reference Mac shows a target cannot be met inside the existing service
-  memory target, the limit is set at what was measured and the document says
-  so.
+- **Measured limits** (qualified November 11, 2026 on the reference Mac, an
+  Apple M1 MacBook Air with 8 GB of memory, macOS 26.6.2, Python 3.14.6,
+  SQLite 3.53.1, warm and uncontrolled OS file cache; evidence:
+  [excel-fidelity-1-capacity.json](evidence/excel-fidelity-1-capacity.json),
+  produced by `tests/qualify_large_interchange.py` from workbooks written by
+  `tests/fixtures/generate_large_xlsx.py`). These numbers hold for this host
+  only. A size qualifies when every phase (upload, prepare in `mixed` mode,
+  apply, close, reopen in a fresh service, first viewport, export job,
+  download, and at the largest size a re-import of the export) finishes within
+  300 seconds, the service process's peak resident memory stays under the
+  256-MiB service target in every phase, and the reopened file opens and
+  serves its first viewport within the five-second opening budget.
+
+  | Case | Slowest phase | Peak service RSS | Open + first viewport |
+  | --- | --- | --- | --- |
+  | XLSX 100,000 cells | prepare 3.2 s | 93.0 MB | 0.08 s |
+  | XLSX 500,000 cells | prepare 15.5 s | 92.8 MB | 0.32 s |
+  | XLSX 1,000,000 cells | prepare 30.9 s | 93.0 MB | 0.79 s |
+  | ODS 100,000 cells | prepare 6.3 s | 92.8 MB | 0.09 s |
+  | ODS 500,000 cells | prepare 31.9 s | 92.9 MB | 0.33 s |
+  | ODS 1,000,000 cells, no long text | re-import prepare 35.3 s | 100.3 MB | 0.66 s |
+
+  The generated mix is about 60% numbers, 25% short text, 5% long text
+  (200–2,000 characters), 5% dates and 5% formulas (one in five using a
+  function DataHorizon lacks), 331 cell formats, three sheets. Service memory
+  stays flat with size because every phase streams. At 1,000,000 cells the
+  native file is 262 MB and the import stage 230 MB; the XLSX package is
+  23 MB (92 MB expanded) and its export 28 MB (105 MB expanded).
+
+  Limits in force: **1,000,000 stored cells** (`LARGE_CELLS`, kept), **256 MiB
+  expanded** (`LARGE_EXPANDED`, kept), **48 MiB compressed package**
+  (`LARGE_PACKAGE`, lowered from the 64-MiB target: the largest qualifying
+  package measured was 31.2 MB, and the limit is that with 1.5× headroom,
+  rounded up to 16 MiB), 255 sheets, 300 seconds per upload, preparation,
+  apply, export job and download, at most 1 MiB of XML per cell or shared
+  string, a native file of at most 2 GiB for an export snapshot, 2 concurrent
+  uploads and 2 concurrent downloads, and 1,024 distinct styles per export.
+  Progress and cooperative cancellation run throughout.
+
+  What was not qualified: ODS at 1,000,000 cells with the standard mix could
+  not be produced. DataHorizon's ODS export writes each text twice and every
+  space as an explicit element (about 406 expanded bytes per cell for this
+  mix), so its export of the 1,000,000-cell workbook is rejected with `LIMIT`
+  by the 256-MiB expanded limit. ODS at 1,000,000 cells is therefore
+  qualified only within that byte limit; it was measured with the same mix
+  minus long text (112 MB expanded). ODS at 500,000 cells without long text,
+  inline-string XLSX, OS-cold opening and other hosts were not measured. The
+  opening budget and `MAX_CELLS` are unchanged.
 - **Transport.** Import and export today carry the file as base64 inside a
   4-MiB JSON body. **Call**: add raw-body streaming upload to a staged
   preparation job and streaming download of a prepared export, used by the

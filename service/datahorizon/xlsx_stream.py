@@ -31,9 +31,12 @@ from .formula import address
 from .temporal import export_temporal_style
 from .xlsx_styles import StyleTable, XlsxStyles, stylesheet
 
+# Qualified on November 11, 2026 on the reference Mac (docs/design/evidence/excel-fidelity-1-capacity.json): 1,000,000 cells
+# imported, reopened and exported through the SDK within 300 s per phase and under the 256-MiB service memory target.
+# LARGE_PACKAGE is the measured largest qualifying package (31.2 MB) with 1.5x headroom, rounded up to 16 MiB.
 LARGE_CELLS = 1_000_000
 LARGE_EXPANDED = 256*1024*1024
-LARGE_PACKAGE = 64*1024*1024
+LARGE_PACKAGE = 48*1024*1024
 LARGE_SHEETS = 255
 LARGE_PARTS = 4096
 DEFERRED_MEMBERS = 10_000  # shared-formula members met before their master, per sheet

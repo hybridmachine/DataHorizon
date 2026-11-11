@@ -153,10 +153,10 @@ ROUTES = {
     "/v1/workbooks/{workbook}/snapshot": ("post", "Exclusive consistent native copy"),
     "/v1/workbooks/{workbook}/close": ("post", "Release this client handle; other client handles remain valid"),
     "/v1/workbooks/{workbook}/export/csv": ("post", "Consistent values-only CSV export"),
-    "/v1/uploads/{upload}": ("put", "Stream a raw spreadsheet package of 1 byte to 64 MiB into private staging; never parsed by this route"),
+    "/v1/uploads/{upload}": ("put", f"Stream a raw spreadsheet package of 1 byte to {LARGE_PACKAGE//(1024*1024)} MiB into private staging; never parsed by this route"),
     "/v1/uploads/{upload}/release": ("post", "Delete a completed staged upload"),
-    "/v1/workbooks/{workbook}/export/xlsx/jobs": ("post", "Export the whole workbook, up to 1,000,000 cells, as XLSX formulas into private staging from one consistent state"),
-    "/v1/workbooks/{workbook}/export/ods/jobs": ("post", "Export the whole workbook, up to 1,000,000 cells, as ODS formulas into private staging from one consistent state"),
+    "/v1/workbooks/{workbook}/export/xlsx/jobs": ("post", f"Export the whole workbook, up to {LARGE_CELLS:,} cells, as XLSX formulas into private staging from one consistent state"),
+    "/v1/workbooks/{workbook}/export/ods/jobs": ("post", f"Export the whole workbook, up to {LARGE_CELLS:,} cells, as ODS formulas into private staging from one consistent state"),
     "/v1/exports/{export}": ("get", "Stream a completed large XLSX or ODS export as a binary download"),
     "/v1/exports/{export}/release": ("post", "Delete a large XLSX or ODS export and forget its job"),
 }
@@ -369,7 +369,8 @@ def openapi():
     large={"job_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$","description":"Also names the import stage, so at most 64 characters"},
         "scope":{"type":"string","enum":["workbook"],"description":"Required: a whole workbook is prepared into a stage"},
         "mode":schemas["SpreadsheetPreparation"]["properties"]["mode"],"timezone_policy":schemas["SpreadsheetPreparation"]["properties"]["timezone_policy"]}
-    staged=("Reads the package with the streaming reader into a private import stage (at most 1,000,000 stored cells, 255 sheets, 64 MiB packed, 256 MiB expanded) "
+    staged=(f"Reads the package with the streaming reader into a private import stage (at most {LARGE_CELLS:,} stored cells, {LARGE_SHEETS} sheets, "
+            f"{LARGE_PACKAGE//(1024*1024)} MiB packed, {LARGE_EXPANDED//(1024*1024)} MiB expanded) "
             "within 300 seconds. The completed job result is the review summary (scope, stage_id equal to job_id, stage_digest, sheets, stored_cells, report, report_entries, totals, "
             "sample of the first 100 cells per sheet, can_import, format, mode, source), always under 1 MiB, never the cells. No workbook changes. "
             "Cancelling or releasing the job, or its five-minute expiry, deletes the stage; at most four stages exist at once (JOB_LIMIT).")

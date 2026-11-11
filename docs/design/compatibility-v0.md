@@ -273,6 +273,19 @@ Export uses one bounded read transaction and translates stable native IDs to nam
 Aggregate limits and omissions remain explicit in the
 [workbook contract](workbook-next-five.md). Single-selection tiers remain available.
 
+Large whole-workbook XLSX and ODS files (streamed upload, staged preparation,
+atomic apply, export job and streamed download) are limited to 1,000,000
+stored cells, a 48-MiB package, 256 MiB expanded, 255 sheets, 1 MiB of XML per
+cell or shared string, 1,024 distinct styles per export and 300 seconds per
+phase. These limits were measured on November 11, 2026 on an Apple M1 Mac
+(macOS 26.6.2, Python 3.14.6, SQLite 3.53.1) and hold for that host only; see
+[section 5.2 of the fidelity plan](excel-fidelity-plan.md#52-size) and the
+[evidence](evidence/excel-fidelity-1-capacity.json). XLSX qualified at 1,000,000 cells. ODS
+qualified at 500,000 cells with the generated standard mix and at 1,000,000
+cells only within the expanded limit: DataHorizon's ODS export of text-heavy
+workbooks is about four times larger than XLSX, so such an export of 1,000,000
+cells is rejected with `LIMIT` rather than written.
+
 
 The [formula/style fidelity increment](workbook-next-five.md#formula-and-style-fidelity)
 adds bounded XLSX shared-formula expansion and explicit ODS parent-cell-style
