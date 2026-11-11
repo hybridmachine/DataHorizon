@@ -87,6 +87,8 @@ def apply(book,args):
     require(prepared['can_apply'],'TABLE_CONVERSION_FAILED','Correct schema conversion issues before Apply')
     require(args.get('review_digest')==prepared['review_digest'],'STALE_REVIEW','Review the complete current schema conversion again',409)
     old=prepared['original'];target=prepared['table'];before_catalog=tables(book.db)
+    from .table_indexes import dependencies,recreate
+    dependencies(book,old,target)
     structure_hook(book,args,'before',before_catalog)
     # Preparatory edits must never be silently replaced by frozen conversion rows.
     rechecked=prepare(book,args,deadline=book.deadline)
@@ -104,6 +106,7 @@ def apply(book,args):
         if current:book.db.execute('UPDATE sqlite_sequence SET seq=max(seq,?) WHERE name=?',(sequence[0],target['name']))
         else:book.db.execute('INSERT INTO sqlite_sequence(name,seq) VALUES(?,?)',(target['name'],sequence[0]))
     store(book,'table',target)
+    recreate(book,target)
     old_columns={col['id']:col for col in old['columns']};new_columns={col['id']:col for col in target['columns']}
     semantic_changes={key for key in set(old_columns)|set(new_columns) if key not in old_columns or key not in new_columns or old_columns[key]['type']!=new_columns[key]['type']}
     for identity,before,after in prepared['rows']:

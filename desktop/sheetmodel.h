@@ -42,6 +42,7 @@ public:
     void setHiddenSections(const QSet<int> &rows,const QSet<int> &columns);
     void setVisibleRanges(const QList<QRect> &ranges);
     void setBackgroundEnabled(bool enabled);
+    void setSuspended(bool suspended);
 signals:
     void editRequested(int row, int col, QString source, QString kind);
     void issue(QString message);
@@ -58,6 +59,7 @@ private:
     RestClient *m_client;
     QString m_workbook, m_sheet, m_state;
     bool m_readonly = true, m_busy = false;
+    bool m_suspended=false;
     int m_generation = 0;
     int m_rows, m_cols;
     bool m_projected = false;

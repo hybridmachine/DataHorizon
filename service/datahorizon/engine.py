@@ -1141,7 +1141,25 @@ class Workbook:
                 if not in_transaction:
                     raise EngineError("OUTCOME_UNKNOWN","Data may have committed; reconcile the durable receipt",500,"unknown",operation_id=operation) from error
                 if not self.db.in_transaction:
-                    raise EngineError("OUTCOME_UNKNOWN","Transaction outcome requires receipt lookup",500,"unknown",operation_id=operation) from error
+                    # SQLITE_INTERRUPT during a write can roll back the whole
+                    # transaction, including its savepoint. Reacquire ownership
+                    # before reserving a failed receipt: another service may
+                    # have acquired this ID after SQLite released our lock.
+                    cause=error.__cause__
+                    interrupted=(isinstance(error,EngineError) and error.body['code'] in ('CANCELLED','TIMEOUT')
+                        and isinstance(cause,sqlite3.Error) and getattr(cause,'sqlite_errorcode',0)&255==sqlite3.SQLITE_INTERRUPT)
+                    if not interrupted:raise EngineError("OUTCOME_UNKNOWN","Transaction outcome requires receipt lookup",500,"unknown",operation_id=operation) from error
+                    try:
+                        self.verify_file();self.db.execute('BEGIN IMMEDIATE')
+                        receipt=self.recorded_operation(operation,fingerprint)
+                        if receipt is not None:
+                            self.db.execute('ROLLBACK');self.refresh();return receipt
+                        self.db.execute('SAVEPOINT operation_changes')
+                        self.dependencies.clear()
+                    except Exception as reacquire_error:
+                        if self.db.in_transaction:self.db.execute('ROLLBACK')
+                        if isinstance(reacquire_error,EngineError) and reacquire_error.body.get('operation_id')==operation:raise
+                        raise EngineError('OUTCOME_UNKNOWN','SQLite confirmed interruption, but receipt ownership could not be reacquired; reconcile the operation ID',500,'unknown',operation_id=operation) from reacquire_error
                 try:
                     # Keep the writer lock while reverting data and reserving
                     # this ID's failed outcome. Another service cannot steal it.

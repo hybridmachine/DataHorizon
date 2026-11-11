@@ -26,6 +26,7 @@ public:
         auto *note=new QLabel(tr("Source rectangle: rows %1–%2, columns %3–%4. Sort priority is top to bottom. All filters must match. No sort keys keeps source order. Original source rows remain stable.")
             .arg(scope["r1"].toInt()).arg(scope["r2"].toInt()).arg(scope["c1"].toInt()).arg(scope["c2"].toInt()),this);note->setWordWrap(true);layout->addWidget(note);
         m_header=new QCheckBox(tr("First row is a header"),this);m_header->setObjectName("listHeader");m_header->setChecked(scope["header"].toBool(false));layout->addWidget(m_header);
+        if(scope.contains("table_columns")){m_header->hide();setWindowTitle(tr("Sort and filter the complete table"));QStringList names;int index=0;for(const auto &entry:scope["table_columns"].toArray())names.append(QString::number(++index)+": "+entry.toObject()["name"].toString());note->setText(tr("Column numbers refer to the table schema. All filters must match. NULL sorts first ascending and last descending; stable record IDs break ties.\n%1").arg(names.join(", ")));}
         m_sort=table(layout,true);m_filters=table(layout,false);
         m_error=new QLabel(this);m_error->setObjectName("criteriaError");m_error->setWordWrap(true);m_error->setAccessibleName(tr("Criteria validation error"));layout->addWidget(m_error);
         auto *buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,this);layout->addWidget(buttons);

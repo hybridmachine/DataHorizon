@@ -321,6 +321,20 @@ public:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void tableFullScopeBrowseUsesKeysetPagesAndReleasesHiddenSheetCache() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("browse.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","table_create"},{"name","Data"},{"columns",QJsonArray{QJsonObject{{"name","Qty"},{"type","integer"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QJsonArray rows;for(int i=0;i<300;++i)rows.append(QJsonObject{{"Qty",i}});window.submit({{"action","table_insert"},{"table","Data"},{"rows",rows}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        auto *grid=window.findChild<QTableWidget *>("tableRecords");QTRY_COMPARE_WITH_TIMEOUT(grid->rowCount(),128,5000);
+        int phase=0;QTimer timer;timer.setInterval(10);connect(&timer,&QTimer::timeout,&window,[&]{auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());if(phase || !dialog || dialog->objectName()!="listCriteriaDialog")return;phase=1;
+            dialog->findChild<QPushButton *>("addSort")->click();auto *sort=dialog->findChild<QTableWidget *>("sortCriteria");qobject_cast<QComboBox *>(sort->cellWidget(0,1))->setCurrentIndex(1);
+            dialog->findChild<QPushButton *>("addFilter")->click();auto *filters=dialog->findChild<QTableWidget *>("filterCriteria");qobject_cast<QComboBox *>(filters->cellWidget(0,1))->setCurrentText(">");qobject_cast<QComboBox *>(filters->cellWidget(0,2))->setCurrentIndex(1);qobject_cast<QLineEdit *>(filters->cellWidget(0,3))->setText("50");dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();});timer.start();window.findChild<QPushButton *>("tableBrowseOptions")->click();timer.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(grid->item(0,0) && grid->item(0,0)->text()=="299",5000);window.findChild<QPushButton *>("nextTablePage")->click();QTRY_VERIFY_WITH_TIMEOUT(grid->item(0,0) && grid->item(0,0)->text()=="171",5000);
+        window.findChild<QPushButton *>("previousTablePage")->click();QTRY_VERIFY_WITH_TIMEOUT(grid->item(0,0) && grid->item(0,0)->text()=="299",5000);
+        auto *workbench=window.findChild<RelationalWorkbench *>();QVERIFY(workbench->cacheMetrics()["estimated_bytes"].toInteger()<16*1024*1024);QCOMPARE(window.model()->cacheMetrics()["tile_charge_bytes"].toInt(),0);
+        window.findChild<QPushButton *>("returnToSheets")->click();QCOMPARE(workbench->cacheMetrics()["loaded_values"].toInt(),0);
+    }
     void typedTableRecordEditorRetainsInvalidInputAndUsesManagedHistory() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();
         QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);

@@ -18,7 +18,7 @@ public:
     void bind(const QJsonObject &info);
     void setLocked(bool locked);
     void refreshCatalog();
-    void selectTable(const QString &id){m_table=id;}
+    void selectTable(const QString &id){if(id!=m_table){m_browse={};m_projection={};}m_table=id;}
     static bool editDefinition(QWidget *parent,QJsonObject &definition,const QString &title,bool fixedWidth=false);
     void operationAdmitted(const QString &operation);
     void operationReceipt(const QJsonObject &receipt);
@@ -26,16 +26,22 @@ public:
     bool hasActiveEditor()const;
     QJsonObject retainedDraft()const{return m_recordDraft;}
     void restoreDraft(const QJsonObject &draft);
+    void suspend();
+    QJsonObject cacheMetrics()const;
 signals:
     void submitRequested(QJsonObject operation);
     void issue(QString message);
     void sheetsRequested();
     void busyRequested(bool busy);
     void reconcileRequested();
+    void cancelOperationRequested();
 private:
     void createTable();
     void dropTable();
     void editSchema();
+    void browseOptions();
+    void chooseColumns();
+    void manageIndexes();
     void editCell(int row,int column);
     void addRecord();
     void recordDialog(const QJsonObject &table,const QJsonArray &columns,const QJsonObject &stored,const QString &rowId,const QJsonObject &retained={});
@@ -65,6 +71,8 @@ private:
     QString m_nextAfter,m_after;
     QStringList m_previousPages;
     QJsonObject m_page;
+    QJsonObject m_browse;
+    QJsonArray m_projection;
     QTreeWidget *m_objects;
     QTableWidget *m_schema;
     QTableWidget *m_records;

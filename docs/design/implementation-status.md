@@ -170,8 +170,12 @@ skips), with targeted Qt review workflows. Public record insert/update/delete,
 invariant typed previews, explicit-target bulk operations and Qt typed editors
 now share required hooks, atomic rollback and record/cell Undo/Redo. Invalid input
 stays in its editor; unknown outcomes retain the operation identity and draft.
-Full Python verification passes 517 tests (19 optional skips). Bounded full-table
-browsing and querying are the following tasks.
+Full Python verification passes 527 tests (19 optional skips). Full-table typed
+sort/filter, state-bound authenticated keyset pages and registered native indexes
+now run through REST/SDK/CLI and Qt. The desktop retains at most 128 records and
+2,048 preview values per page and releases hidden sheet caches. Native index
+interruption produces a confirmed rollback receipt after reacquiring ownership.
+Relationships and querying are the following tasks.
 Automated evidence and the owner's later manual GUI
 walkthrough are tracked separately. Managed SQL mutations and
 the existing M1/M7/manual/platform/release gates retain their own requirements.

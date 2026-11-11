@@ -1,0 +1,28 @@
+{
+  "task": 6,
+  "source_commit": "0e7cc1736708c7e78bf59179d62803155eca51f4",
+  "automated_status": "passed",
+  "full_python": {
+    "tests_run": 527,
+    "optional_skips": 19,
+    "elapsed_seconds": 46.54
+  },
+  "targeted": {
+    "python_browse_tests": 10,
+    "qt_workflows": 3,
+    "qt_checks_including_setup_cleanup": 5
+  },
+  "contracts": [
+    "Full-table typed predicates and eight-key sorting with explicit NULL order",
+    "Session-authenticated state/schema/view cursors, row-ID tie breaker and bounded projected pages",
+    "Native unique/nonunique indexes, rebuild preservation and dependency blockers",
+    "Deadline and native index cancellation; durable rollback receipt ownership rechecked",
+    "Hidden sheet cache released; GUI page at most 128 rows / 2048 preview values"
+  ],
+  "verification_fixes": [
+    "Index interruption can auto-rollback SQLite transaction; safely reacquire writer/receipt ownership before recording failure"
+  ],
+  "larger_combined_performance": "task 10",
+  "manual_gui_acceptance": "pending",
+  "release_qualified": false
+}

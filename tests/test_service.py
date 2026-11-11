@@ -438,7 +438,7 @@ class ServiceTests(unittest.TestCase):
                     self.assertIn(schema["$ref"].rsplit("/",1)[-1],schemas,path)
             with client.open(Path(temp)/"examples.dhwb",create=True) as book:
                 sequence=("workbook_import","edit","paste","fill","move","replace_all","undo","redo", "sheet_add","sheet_rename","sheet_duplicate","sheet_reorder","sheet_delete",
-                          "rows_insert","rows_delete","columns_insert","columns_delete","metadata_set","metadata_delete","list_declare","list_reconcile","list_edit","list_forget","table_create","table_drop","table_promote","table_schema","table_insert","table_update","table_delete")
+                          "rows_insert","rows_delete","columns_insert","columns_delete","metadata_set","metadata_delete","list_declare","list_reconcile","list_edit","list_forget","table_create","table_drop","table_promote","table_schema","table_insert","table_update","table_delete","index_create","index_drop")
                 self.assertEqual(set(sequence),set(mapping))
                 for action in sequence:
                     with self.subTest(action=action):
@@ -457,6 +457,7 @@ class ServiceTests(unittest.TestCase):
                             columns=book.tables()['tables'][0]['columns'];columns[0]['type']='number'
                             preview=book.preview_table_schema('Snapshot',columns)
                             request.update(columns=preview['source_request']['columns'],review_digest=preview['review_digest'])
+                        if action=='index_create':request['columns'][0]['column']=book.tables()['tables'][0]['columns'][0]['id']
                         if action=="sheet_reorder": request["order"]=[sheet["id"] for sheet in reversed(book.info["sheets"])]
                         result=client.request(book.base+"/operations",request)
                         self.assertEqual(result["outcome"],"committed")
