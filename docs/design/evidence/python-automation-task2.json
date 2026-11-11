@@ -1,0 +1,22 @@
+{
+  "status": "passed",
+  "verification": {
+    "activation_tests": 2,
+    "existing_service_tests": 43
+  },
+  "review": {
+    "performed": true,
+    "scope": [
+      "grants are process-local immutable startup configuration",
+      "all stored source and declarations determine approval",
+      "REST cannot grant itself execution",
+      "data edits retain approval and external source changes revoke it"
+    ],
+    "fixes": [
+      "Extract standard-library-only activation-key validator so the SDK does not import the storage engine"
+    ]
+  },
+  "task": 2,
+  "source_commit": "b096ab274275d9364124e4598c631c538c767a8a",
+  "release_qualified": false
+}
