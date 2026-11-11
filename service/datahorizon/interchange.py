@@ -107,7 +107,9 @@ def native_formula_to_xlsx(source,bounds=None,sheet_names=None):
     # A function the calculator lacks is stored verbatim, so it still exports; everything else stays strict.
     if (formula_status(source,sheet_names) or ("",))[0]=="formula.unsupported_function":
         try: Parser(source[1:]).parse()
-        except FormulaError: return map_formula_functions(source,FUTURE_PREFIX)  # spelling the parser cannot read, e.g. STDEV.S
+        except FormulaError:
+            # A spelling the parser cannot read (e.g. STDEV.S) cannot be bounds-checked: only whole-workbook export passes it through.
+            if bounds is None: return map_formula_functions(source,FUTURE_PREFIX)
         return map_formula_functions(local_formula(source,bounds,sheet_names,allow_unsupported_functions=True),FUTURE_PREFIX)
     return map_formula_functions(local_formula(source,bounds,sheet_names),FUTURE_PREFIX)
 
@@ -242,6 +244,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         styles=XlsxStyles(archive,style_path or "xl/styles.xml")
         edits,issues,seen=[],[],set()
         conversions=ConversionReport()
+        shift=(integer(request.get("row",1),1,1048576,"row")-1,integer(request.get("col",1),1,16384,"col")-1)
         sheet_label=sheets[selected-1].get("name","")
         count=0
         stored=root.findall(f"{{{S}}}sheetData/{{{S}}}row/{{{S}}}c")
@@ -272,6 +275,12 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
                     keep_formula=problem is None or not (selected_mode=="mixed" and cached)
                 else: keep_formula=False
                 if keep_formula:
+                    if shift!=(0,0):
+                        try: translate(native,*shift)
+                        except FormulaError:
+                            # import_edits could not move this source; omit it here, where the report is still open.
+                            conversions.add("formula.untranslatable","omitted",sheet=sheet_label,cell=location)
+                            continue
                     item={"source":native,"kind":"formula"}
                 elif kind=="inlineStr":
                     item={"source":xlsx_text(cell.find(f"{{{S}}}is")),"kind":"text"}

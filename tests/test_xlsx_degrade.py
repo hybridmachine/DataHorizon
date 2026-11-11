@@ -80,10 +80,32 @@ class XlsxDegradeTests(unittest.TestCase):
         result = preview('<row r="1"><c r="A1"><f>IFS(B1,1)</f></c></row>', row=2, col=2)
         self.assertEqual(cell(result, "B2")["source"], "=IFS(C2,1)")
 
-    def test_untranslatable_formula_cannot_move_to_another_destination(self):
-        with self.assertRaises(EngineError):
-            preview('<row r="1"><c r="A1"><f>{1,2}</f></c></row>', row=2)
-        self.assertTrue(preview('<row r="1"><c r="A1"><f>{1,2}</f></c></row>')["can_import"])
+    def test_untranslatable_formula_is_omitted_and_reported_at_another_destination(self):
+        sheet='<row r="1"><c r="A1"><v>5</v></c><c r="B1"><f>{1,2}</f></c><c r="C1"><f>STDEV.S(A1:A1)</f></c></row>'
+        result=preview(sheet,row=2)
+        self.assertTrue(result["can_import"],result)
+        self.assertEqual([(c["row"],c["col"]) for c in result["cells"]],[(2,1)])
+        entry={"category":"formula.untranslatable","severity":"omitted","detail":"","count":2,
+               "samples":[{"sheet":"Sheet1","cell":"B1"},{"sheet":"Sheet1","cell":"C1"}]}
+        self.assertIn(entry,result["report_entries"])
+        self.assertEqual(result["totals"]["omitted"],2)
+        self.assertTrue(any("formula.untranslatable" in line and "Sheet1!B1" in line for line in result["report"]))
+        kept=preview(sheet)
+        self.assertEqual([c["source"] for c in kept["cells"]],["5","={1,2}","=STDEV.S(A1:A1)"])
+
+    def test_untranslatable_formula_with_cache_becomes_a_value_in_mixed_mode_at_any_destination(self):
+        result=preview('<row r="1"><c r="B1"><f>{1,2}</f><v>1</v></c></row>',mode="mixed",row=2)
+        self.assertEqual(cell(result,"B2"),{"source":"1","kind":"number"})
+
+    def test_selection_export_keeps_bounds_and_sheet_checks_for_unparsable_formulas(self):
+        for source in ("=STDEV.S(A1:Z99)","=STDEV.S(Other!A1)"):
+            snapshot={"state":"s","range":[1,1,2,2],"cells":[{"row":1,"col":1,"kind":"formula","source":source,"value":None,"calculation":"error","style":{}}]}
+            with self.subTest(source), self.assertRaises(EngineError):
+                xlsx_export(snapshot,{})
+        whole={"state":"s","sheets":[{"name":"One","cells":[{"row":1,"col":1,"kind":"formula","source":"=STDEV.S(A1:Z99)","value":None,"calculation":"error","style":{}}]}]}
+        data=base64.b64decode(xlsx_export(whole,{})["file_base64"])
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            self.assertIn("_xlfn.STDEV.S(A1:Z99)",archive.read("xl/worksheets/sheet1.xml").decode())
 
     def test_other_cell_problems_still_block(self):
         result = preview('<row r="1"><c r="A1" t="q"><v>1</v></c></row>')

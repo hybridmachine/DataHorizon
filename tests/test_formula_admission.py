@@ -35,6 +35,8 @@ class FormulaAdmissionTests(unittest.TestCase):
         self.assertEqual(PREFIX["FILTER"], "_xlfn._xlws.FILTER")
 
     def test_prefix_removal_leaves_strings_alone(self):
+        self.assertEqual(strip_prefix("'_xlfn.x'!A1+_xlfn.IFS(1)"),"'_xlfn.x'!A1+IFS(1)")
+        self.assertLessEqual({"COMBINA","ENCODEURL","DETECTLANGUAGE","TRANSLATE"},FUTURE)
         self.assertEqual(strip_prefix('_xlfn.IFS(A1,"_xlfn.x")+_xlfn._xlws.SORT(A1)'), 'IFS(A1,"_xlfn.x")+SORT(A1)')
 
 
