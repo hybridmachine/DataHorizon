@@ -64,7 +64,7 @@ class SheetTests(unittest.TestCase):
         self.assertEqual(rename_sheet_references("='ä'!A1", "Ä", "New"),"='ä'!A1")
 
     def test_rename_unsupported_syntax_and_hook_reject_without_catalog_change(self):
-        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2%+1"}])
+        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2 ` 1"}])
         self.assertRollback("sheet_rename","REFERENCE_TRANSFORM_UNAVAILABLE",name="New")
         self.book.handler="required.py"
         self.assertRollback("sheet_rename","UNSUPPORTED_HOOK_SCOPE",name="New")
@@ -153,7 +153,7 @@ class SheetTests(unittest.TestCase):
             self.assertRollback("sheet_duplicate","INJECTED",name="Copy")
         self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2"+" "*65520}])
         self.assertRollback("sheet_duplicate","INVALID_INPUT",name="a"*31)
-        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2%+1"}])
+        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2 ` 1"}])
         self.assertRollback("sheet_duplicate","REFERENCE_TRANSFORM_UNAVAILABLE",name="Copy")
         self.book.handler="required.py"
         self.assertRollback("sheet_duplicate","UNSUPPORTED_HOOK_SCOPE",name="Copy")
@@ -195,9 +195,9 @@ class SheetTests(unittest.TestCase):
         self.assertEqual(self.book.read("Other",{})["cells"][0]["error"],"#REF!")
 
     def test_delete_ignores_deleted_formulas_but_rejects_unsupported_survivors_and_hooks(self):
-        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2%+1"}])
+        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2 ` 1"}])
         self.apply("sheet_add",name="Other")
-        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"=Sheet1!A2%+1"}])
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"=Sheet1!A2 ` 1"}])
         self.assertRollback("sheet_delete","REFERENCE_TRANSFORM_UNAVAILABLE")
         self.apply(sheet="Other",cells=[{"row":1,"col":1,"clear":True}])
         self.book.handler="required.py"

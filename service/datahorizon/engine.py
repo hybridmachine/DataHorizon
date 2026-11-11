@@ -1299,6 +1299,7 @@ class Workbook:
         if dr==0 and dc==0:return
         sources={};source_bytes=0;formulas={};scan_bytes=0
         target_name=self.db.execute("SELECT name FROM sheets WHERE id=?",(sheet,)).fetchone()[0]
+        sheet_order=[name for (name,) in self.db.execute("SELECT name FROM sheets ORDER BY position,id")]
         with sql_deadline(self.db,self.deadline):
             for row in range(r1,r2+1):
                 for col in range(c1,c2+1):
@@ -1315,7 +1316,7 @@ class Workbook:
                 moving=identity==sheet and r1<=row<=r2 and c1<=col<=c2
                 overwritten=identity==sheet and dest_row<=row<=dest_row+r2-r1 and dest_col<=col<=dest_col+c2-c1
                 if overwritten and not moving:continue
-                try:transformed=move_references(source,name,target_name,rectangle,dr,dc,target_id=sheet)
+                try:transformed=move_references(source,name,target_name,rectangle,dr,dc,target_id=sheet,sheet_order=sheet_order)
                 except FormulaError as error:
                     raise EngineError("REFERENCE_TRANSFORM_UNAVAILABLE",f"Cannot safely move reference at {name}!{address(row,col)}: {error}") from error
                 if transformed!=source:
@@ -1420,6 +1421,7 @@ class Workbook:
         """Bounded whole-row/column changes, including references on other sheets."""
         target = self.sheet(request.get("sheet", "Sheet1"))
         target_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
+        sheet_order = [name for (name,) in self.db.execute("SELECT name FROM sheets ORDER BY position,id")]
         axis = "row" if request["action"].startswith("rows_") else "col"
         maximum = MAX_ROWS if axis == "row" else MAX_COLS
         start = integer(request.get("start"), 1, maximum, "start")
@@ -1455,7 +1457,7 @@ class Workbook:
                 payload_bytes += len(source.encode())+len(style.encode())+128
                 require(payload_bytes<=8*1024*1024, "LIMIT", "Structure sources exceed 8 MiB")
                 try:
-                    transformed, broken = transform_structure(source,name,target_name,axis,start,count,delete,target_id=target)
+                    transformed, broken = transform_structure(source,name,target_name,axis,start,count,delete,target_id=target,sheet_order=sheet_order)
                 except FormulaError as error:
                     raise EngineError("REFERENCE_TRANSFORM_UNAVAILABLE", f"Cannot safely transform {name}!{address(row,col)}: {error}") from error
                 warnings += broken

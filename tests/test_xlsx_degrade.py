@@ -89,18 +89,28 @@ class XlsxDegradeTests(unittest.TestCase):
         result = preview('<row r="1"><c r="A1"><f>IFS(B1,1)</f></c></row>', row=2, col=2)
         self.assertEqual(cell(result, "B2")["source"], "=IFS(C2,1)")
 
+    def test_shared_member_translates_through_an_unevaluable_master(self):
+        sheet=('<row r="1"><c r="C1"><f t="shared" si="0" ref="C1:C2">_xlfn.IFS(A1&gt;1,B:B)</f></c></row>'
+               '<row r="2"><c r="C2"><f t="shared" si="0"/></c></row>')
+        result=preview(sheet)
+        self.assertEqual(cell(result,"C2"),{"source":"=IFS(A2>1,B:B)","kind":"formula"})
+        self.assertNotIn("formula.untranslatable",reasons(result))
+
     def test_untranslatable_formula_is_omitted_and_reported_at_another_destination(self):
-        sheet='<row r="1"><c r="A1"><v>5</v></c><c r="B1"><f>{1,2}</f></c><c r="C1"><f>STDEV.S(A1:A1)</f></c></row>'
+        sheet=('<row r="1"><c r="A1"><v>5</v></c><c r="B1"><f>{1,2}</f></c><c r="C1"><f>STDEV.S(A1:A1)</f></c>'
+               '<c r="D1"><f>VLOOKUP(A1,B:C,2,0)</f></c><c r="E1"><f>A1 ` 2</f></c></row>')
         result=preview(sheet,row=2)
         self.assertTrue(result["can_import"],result)
-        self.assertEqual([(c["row"],c["col"]) for c in result["cells"]],[(2,1)])
-        entry={"category":"formula.untranslatable","severity":"omitted","detail":"","count":2,
-               "samples":[{"sheet":"Sheet1","cell":"B1"},{"sheet":"Sheet1","cell":"C1"}]}
+        self.assertEqual([(c["row"],c["col"]) for c in result["cells"]],[(2,1),(2,2),(2,3),(2,4)])
+        # Formulas the calculator cannot parse still translate when the scanner can read their references.
+        self.assertEqual([c["source"] for c in result["cells"]],["5","={1,2}","=STDEV.S(A2:A2)","=VLOOKUP(A2,B:C,2,0)"])
+        entry={"category":"formula.untranslatable","severity":"omitted","detail":"","count":1,
+               "samples":[{"sheet":"Sheet1","cell":"E1"}]}
         self.assertIn(entry,result["report_entries"])
-        self.assertEqual(result["totals"]["omitted"],2)
-        self.assertTrue(any("formula.untranslatable" in line and "Sheet1!B1" in line for line in result["report"]))
+        self.assertEqual(result["totals"]["omitted"],1)
+        self.assertTrue(any("formula.untranslatable" in line and "Sheet1!E1" in line for line in result["report"]))
         kept=preview(sheet)
-        self.assertEqual([c["source"] for c in kept["cells"]],["5","={1,2}","=STDEV.S(A1:A1)"])
+        self.assertEqual([c["source"] for c in kept["cells"]],["5","={1,2}","=STDEV.S(A1:A1)","=VLOOKUP(A1,B:C,2,0)","=A1 ` 2"])
 
     def test_untranslatable_formula_with_cache_becomes_a_value_in_mixed_mode_at_any_destination(self):
         result=preview('<row r="1"><c r="B1"><f>{1,2}</f><v>1</v></c></row>',mode="mixed",row=2)
@@ -215,7 +225,7 @@ class CellDegradeTests(unittest.TestCase):
         self.assertEqual([(e["category"], e["detail"]) for e in result["report_entries"]], [("cell.invalid_value", "rejected by the engine")])
 
     def test_formulas_mode_takes_the_cache_when_the_formula_is_empty_or_untranslatable(self):
-        sheet = ('<row r="1"><c r="A1"><f t="shared" si="0" ref="A1:A2">{1,2}</f><v>1</v></c>'
+        sheet = ('<row r="1"><c r="A1"><f t="shared" si="0" ref="A1:A2">1 ` 2</f><v>1</v></c>'
                  '<c r="B1"><f t="array" ref="B1"/><v>7</v></c></row>'
                  '<row r="2"><c r="A2"><f t="shared" si="0"/><v>2</v></c></row>')
         result = preview(sheet, mode="formulas")

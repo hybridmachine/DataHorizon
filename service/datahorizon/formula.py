@@ -33,6 +33,12 @@ class FormulaError(Exception):
         self.code = code
 
 
+class Unmaintainable(FormulaError):
+    """Neither the strict parser nor the lenient scanner can find this formula's references."""
+    def __init__(self, message="Cannot maintain references in unsupported formula syntax"):
+        super().__init__("#VALUE!", message)
+
+
 def column_name(col):
     out = ""
     while col:
@@ -96,6 +102,8 @@ def translate(source, rows, cols):
     """Copy/fill offsets affect relative components; string literals are untouched."""
     if not source.startswith("="):
         return source
+    if _strict_parse(source) is None:
+        return _scanned_translate(source, rows, cols)
     out, pos = ["="], 1
     while pos < len(source):
         if source[pos:].isspace():
@@ -103,7 +111,7 @@ def translate(source, rows, cols):
             break
         match = TOKEN.match(source, pos)
         if not match:
-            # Preserve an unsupported formula unchanged rather than corrupting it.
+            # Unreachable after a successful parse; never corrupt the source.
             raise FormulaError("#VALUE!", "Cannot translate unsupported formula syntax")
         token = match.group(0)
         if match.lastgroup == "ref":
@@ -127,8 +135,9 @@ def translate(source, rows, cols):
 
 def rename_sheet_references(source, old_name, new_name, *, target_id=None, new_id=None):
     """Retarget qualified names; copies can also retarget explicit self UUIDs."""
-    parser = Parser(source[1:], track_spans=True)
-    pending = [parser.parse()]
+    if (parsed := _strict_parse(source)) is None:
+        return _scanned_rename(source, old_name, new_name, target_id, new_id)
+    parser, pending = parsed[0], [parsed[1]]
     fold = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
     edits = []
     while pending:
@@ -161,8 +170,9 @@ def rename_sheet_references(source, old_name, new_name, *, target_id=None, new_i
 
 def delete_sheet_references(source, local_sheet, target_sheet, *, target_id=None):
     """Make deleted-sheet references permanent errors, including inherited ranges."""
-    parser = Parser(source[1:], track_spans=True)
-    pending = [parser.parse()]
+    if (parsed := _strict_parse(source)) is None:
+        return _scanned_delete(source, _sheet_matcher(local_sheet, target_sheet, target_id))
+    parser, pending = parsed[0], [parsed[1]]
     fold = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
     def targets(name):
         return (target_id is not None and name == target_id or
@@ -222,15 +232,20 @@ def adjust_interval(first, last, start, count, delete, maximum=None):
     return (low, high) if first <= last else (high, low)
 
 
-def transform_structure(source, local_sheet, target_sheet, axis, start, count, delete=False, *, target_id=None):
+def transform_structure(source, local_sheet, target_sheet, axis, start, count, delete=False, *, target_id=None,
+                        sheet_order=None):
     """Retarget A1 references after a whole-row/column edit; preserve token spelling.
 
     Absolute markers control copying, not structural edits. A range contracts
     around deleted members and expands for insertions inside its endpoints.
     Return the source and number of newly broken reference expressions.
+    sheet_order (display order of sheet names) places 3D references; without
+    it a 3D reference is edited only when the edited sheet is one of its ends.
     """
-    parser = Parser(source[1:], track_spans=True)
-    pending = [parser.parse()]  # Use the same range semantics as the calculator.
+    if (parsed := _strict_parse(source)) is None:
+        matcher = _sheet_matcher(local_sheet, target_sheet, target_id, sheet_order)
+        return _scanned_structure(source, matcher, axis, start, count, delete)
+    parser, pending = parsed[0], [parsed[1]]  # Use the same range semantics as the calculator.
     fold = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
     def targets(name):
         if target_id is not None and name == target_id:
@@ -295,13 +310,17 @@ def transform_structure(source, local_sheet, target_sheet, axis, start, count, d
     return "".join(out), broken
 
 
-def move_references(source, local_sheet, target_sheet, rectangle, rows, cols, *, target_id=None):
+def move_references(source, local_sheet, target_sheet, rectangle, rows, cols, *, target_id=None, sheet_order=None):
     """Same-sheet cut: referenced targets follow the moved rectangle, even $ refs.
 
     Discontiguous partial range moves cannot be represented in the scalar tier.
     Moved formulas keep their original external targets, unlike Copy/Fill.
     """
-    parser=Parser(source[1:],track_spans=True);pending=[parser.parse()];edits=[]
+    edits=[]
+    if (parsed:=_strict_parse(source)) is None:
+        matcher=_sheet_matcher(local_sheet,target_sheet,target_id,sheet_order)
+        return _scanned_move(source,matcher,rectangle,rows,cols)
+    parser,pending=parsed[0],[parsed[1]]
     fold=str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz")
     r1,c1,r2,c2=rectangle
     def targets(name):
@@ -335,6 +354,244 @@ def move_references(source, local_sheet, target_sheet, rectangle, rows, cols, *,
     out=[];pos=0
     for begin,end,replacement in sorted(edits):out.extend((source[pos:begin],replacement));pos=end
     out.append(source[pos:]);return "".join(out)
+
+
+# Fallbacks for formulas the strict parser rejects (unknown functions, whole
+# rows/columns, 3D and external references). They apply the strict rules to
+# the references formula_refs.scan finds and keep all other text verbatim.
+
+def _fold(name):
+    # SQLite NOCASE is ASCII-only, unlike str.casefold().
+    return name.translate(str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"))
+
+
+def _strict_parse(source):
+    """Return (parser, tree) for the strict transforms, or None when only the scanner reads it right.
+
+    Besides syntax the parser rejects, that is a `2:3` whole-row range (parsed
+    as two numbers) and a quoted prefix holding a `:` or `[`, which sheet names
+    cannot contain: a 3D or external reference.
+    """
+    try:
+        parser = Parser(source[1:], track_spans=True)
+        tree = parser.parse()
+    except FormulaError:
+        return None
+    pending = [tree]
+    while pending:
+        node = pending.pop()
+        if node[0] == "call":
+            pending.extend(node[2])
+        elif node[0] in ("binary", "range"):
+            if node[0] == "range" and all(end[0] == "literal" and type(end[1]) is float for end in node[2:]):
+                return None
+            pending.extend(node[2:])
+        elif node[0] == "unary":
+            pending.append(node[2])
+        elif node[0] == "ref" and "!" in node[1] and any(char in node[1].rsplit("!", 1)[0] for char in ":["):
+            return None
+    return parser, tree
+
+
+def _scanned(source):
+    from .formula_refs import scan
+    items = scan(source)
+    if items is None:
+        raise Unmaintainable()
+    return items
+
+
+def _rewrite(source, change):
+    from .formula_refs import rewrite
+    return rewrite(source, change)
+
+
+def _endpoints(item):
+    """[(ref, sheet, sheet_last, external)], resolving a second endpoint's inherited prefix."""
+    from .formula_refs import RefRange
+    if not isinstance(item, RefRange):
+        return [(item, item.sheet, item.sheet_last, item.external)]
+    first, last = item.first, item.last
+    resolved = [(first, first.sheet, first.sheet_last, first.external)]
+    if last.prefix_start == last.start:  # Sheet1!A1:B2 inherits Sheet1 (and a 3D span or workbook)
+        resolved.append((last, first.sheet, first.sheet_last, first.external))
+    else:
+        resolved.append((last, last.sheet, last.sheet_last, last.external))
+    return resolved
+
+
+def _sheet_matcher(local_sheet, target_sheet, target_id=None, sheet_order=None):
+    """Return matches(sheet, sheet_last): does a reference with this prefix point at the target sheet?"""
+    target = _fold(target_sheet)
+    positions = {_fold(name): index for index, name in enumerate(sheet_order or ())}
+    def named(name):
+        return target_id is not None and name == target_id or _fold(name) == target
+    def matches(sheet, sheet_last=None):
+        if sheet is None:
+            return _fold(local_sheet) == target
+        if sheet_last is None:
+            return named(sheet)
+        if named(sheet) or named(sheet_last):
+            return True
+        low, high, edited = positions.get(_fold(sheet)), positions.get(_fold(sheet_last)), positions.get(target)
+        return None not in (low, high, edited) and min(low, high) <= edited <= max(low, high)
+    matches.named = named
+    return matches
+
+
+def _body(ref, row, col):
+    column = "" if ref.kind == "row" else ("$" if ref.abs_col else "") + column_name(col)
+    number = "" if ref.kind == "column" else ("$" if ref.abs_row else "") + str(row)
+    return column + number
+
+
+def _item_text(source, endpoints, bodies=None, prefixes=None):
+    """Rebuild an item's text, replacing the given endpoint bodies/prefixes by index."""
+    bodies, prefixes = bodies or {}, prefixes or {}
+    out = []
+    for index, (ref, *_ignored) in enumerate(endpoints):
+        if index:
+            out.append(source[endpoints[0][0].end:ref.prefix_start])
+        out.append(prefixes.get(index, source[ref.prefix_start:ref.start]))
+        out.append(bodies.get(index, source[ref.start:ref.end]))
+    return "".join(out)
+
+
+def _target_endpoints(item, matches, action):
+    """Endpoints of a non-external item on the target sheet, or None; a split range is refused."""
+    endpoints = _endpoints(item)
+    if any(external for *_ignored, external in endpoints):
+        return None
+    hits = {matches(sheet, sheet_last) for _ref, sheet, sheet_last, _external in endpoints}
+    if len(hits) > 1:
+        raise FormulaError("#REF!", f"Cannot {action} a range spanning different sheets")
+    return endpoints if hits.pop() else None
+
+
+def _scanned_translate(source, rows, cols):
+    _scanned(source)
+    def change(item):
+        endpoints = _endpoints(item)
+        if any(external for *_ignored, external in endpoints):
+            return None
+        bodies = {}
+        for index, (ref, *_ignored) in enumerate(endpoints):
+            row = ref.row if ref.row is None or ref.abs_row else ref.row + rows
+            col = ref.col if ref.col is None or ref.abs_col else ref.col + cols
+            if (row is not None and not 1 <= row <= MAX_ROWS) or (col is not None and not 1 <= col <= MAX_COLS):
+                return "#REF!"
+            if (row, col) != (ref.row, ref.col):
+                bodies[index] = _body(ref, row, col)
+        return _item_text(source, endpoints, bodies) if bodies else None
+    return _rewrite(source, change)
+
+
+def _scanned_structure(source, matches, axis, start, count, delete):
+    _scanned(source)
+    field, maximum = ("row", MAX_ROWS) if axis == "row" else ("col", MAX_COLS)
+    broken = 0
+    def change(item):
+        nonlocal broken
+        endpoints = _target_endpoints(item, matches, "transform")
+        if endpoints is None:
+            return None
+        refs = [ref for ref, *_ignored in endpoints]
+        old = [getattr(ref, field) for ref in refs]
+        if old[0] is None:
+            return None  # a whole column under a row edit, or a whole row under a column edit
+        new = adjust_interval(old[0], old[-1], start, count, delete, maximum)
+        if new is None:
+            broken += 1
+            return "#REF!"
+        bodies = {}
+        for index, (ref, before, after) in enumerate(zip(refs, old, new)):
+            if before != after:
+                bodies[index] = _body(ref, after if field == "row" else ref.row, after if field == "col" else ref.col)
+        return _item_text(source, endpoints, bodies) if bodies else None
+    return _rewrite(source, change), broken
+
+
+def _scanned_move(source, matches, rectangle, rows, cols):
+    _scanned(source)
+    r1, c1, r2, c2 = rectangle
+    def change(item):
+        endpoints = _target_endpoints(item, matches, "move")
+        if endpoints is None:
+            return None
+        refs = [ref for ref, *_ignored in endpoints]
+        low_row, high_row = (1, MAX_ROWS) if refs[0].row is None else sorted((refs[0].row, refs[-1].row))
+        low_col, high_col = (1, MAX_COLS) if refs[0].col is None else sorted((refs[0].col, refs[-1].col))
+        if high_row < r1 or low_row > r2 or high_col < c1 or low_col > c2:
+            return None
+        if any(sheet_last is not None for _ref, _sheet, sheet_last, _external in endpoints):
+            raise FormulaError("#REF!", "Cut intersects a 3D reference; a move cannot retarget one sheet of it")
+        if source[:refs[0].prefix_start].rstrip().endswith(":") or source[refs[-1].end:].lstrip().startswith(":"):
+            # One end of a range the scanner cannot pair, such as A1:Sheet2!B:B: its extent is unknown.
+            raise FormulaError("#REF!", "Cut intersects a range whose extent cannot be followed; use Copy")
+        if not (r1 <= low_row <= high_row <= r2 and c1 <= low_col <= high_col <= c2):
+            raise FormulaError("#REF!", "Cut partially intersects a formula range; move its entire referenced range or use Copy")
+        bodies = {}
+        for index, ref in enumerate(refs):
+            row = None if ref.row is None else ref.row + rows
+            col = None if ref.col is None else ref.col + cols
+            if (row is not None and not 1 <= row <= MAX_ROWS) or (col is not None and not 1 <= col <= MAX_COLS):
+                raise FormulaError("#REF!", "Move would place a reference outside the grid")
+            if ref.kind == "column" and rows or ref.kind == "row" and cols:
+                raise FormulaError("#REF!", "Move would place a reference outside the grid")
+            bodies[index] = _body(ref, row, col)
+        return _item_text(source, endpoints, bodies)
+    return _rewrite(source, change)
+
+
+def _scanned_rename(source, old_name, new_name, target_id, new_id):
+    _scanned(source)
+    def renamed(name):
+        if name == target_id:
+            return new_id  # Rename preserves identity; copy creates one.
+        return new_name if _fold(name) == _fold(old_name) else None
+    def quoted(name):
+        return name.replace("'", "''")
+    def change(item):
+        endpoints = _endpoints(item)
+        if any(external for *_ignored, external in endpoints):
+            return None
+        prefixes = {}
+        for index, (ref, *_ignored) in enumerate(endpoints):
+            if ref.sheet is None or ref.prefix_start == ref.start:
+                continue  # unqualified, or inheriting the first endpoint's prefix
+            first = renamed(ref.sheet)
+            last = None if ref.sheet_last is None else renamed(ref.sheet_last)
+            if first is None and last is None:
+                continue
+            name = quoted(ref.sheet if first is None else first)
+            if ref.sheet_last is not None:
+                name += ":" + quoted(ref.sheet_last if last is None else last)
+            prefixes[index] = "'" + name + "'!"
+        return _item_text(source, endpoints, prefixes=prefixes) if prefixes else None
+    return _rewrite(source, change)
+
+
+def _scanned_delete(source, matches):
+    _scanned(source)
+    broken = 0
+    def deleted(sheet, sheet_last):
+        # Removing an inner sheet leaves a 3D span valid; removing an end breaks it.
+        if sheet_last is None:
+            return matches(sheet)
+        return matches.named(sheet) or matches.named(sheet_last)
+    def change(item):
+        nonlocal broken
+        endpoints = _endpoints(item)
+        if any(external for *_ignored, external in endpoints):
+            return None
+        hits = {deleted(sheet, sheet_last) for _ref, sheet, sheet_last, _external in endpoints}
+        if len(hits) > 1:
+            raise FormulaError("#REF!", "Cannot transform a range spanning different sheets")
+        if not hits.pop():
+            return None
+        broken += 1
+        return "#REF!"
+    return _rewrite(source, change), broken
 
 
 class Parser:

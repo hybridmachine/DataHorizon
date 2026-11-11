@@ -98,13 +98,17 @@ class OdsFormulaDegradeTests(unittest.TestCase):
         self.assertEqual(cell(result, "B2")["source"], "=IFS(C2,1)")
 
     def test_untranslatable_formula_is_omitted_and_reported_at_another_destination(self):
-        rows = row(number(5), formula("of:=STDEV.S([.A1])", "5"), formula("of:=STDEV.S([.A1])"))
+        rows = row(number(5), formula("of:=STDEV.S([.A1])", "5"), formula("of:=STDEV.S([.A1])"),
+                   formula("of:=[.A1] ` 2", "5"), formula("of:=[.A1] ` 2"))
         result = preview(rows, row=2)
         self.assertTrue(result["can_import"], result)
-        self.assertEqual([(c["row"], c["col"]) for c in result["cells"]], [(2, 1)])
-        self.assertIn(entry("formula.untranslatable", "omitted", "", "B1", "C1"), result["report_entries"])
+        # Formulas the calculator cannot parse still translate when the scanner can read their references.
+        self.assertEqual([(c["row"], c["col"], c["source"]) for c in result["cells"]],
+                         [(2, 1, "5"), (2, 2, "=STDEV.S(A2)"), (2, 3, "=STDEV.S(A2)")])
+        self.assertIn(entry("formula.untranslatable", "omitted", "", "D1", "E1"), result["report_entries"])
         self.assertEqual(result["totals"]["omitted"], 2)
-        self.assertEqual([c["source"] for c in preview(rows)["cells"]], ["5", "=STDEV.S(A1)", "=STDEV.S(A1)"])
+        self.assertEqual([c["source"] for c in preview(rows)["cells"]],
+                         ["5", "=STDEV.S(A1)", "=STDEV.S(A1)", "=A1 ` 2", "=A1 ` 2"])
 
     def test_untranslatable_formula_with_cache_becomes_a_value_in_mixed_mode_at_any_destination(self):
         result = preview(row(formula("of:=STDEV.S([.A1])", "1")), mode="mixed", row=2)

@@ -344,7 +344,8 @@ def convert_ods_cell(cell,*,context):
             if context.shift!=(0,0):
                 try: translate(native,*context.shift)
                 except FormulaError:
-                    # import_edits could not move this source; omit it here, where the report is still open.
+                    # Neither the parser nor the reference scanner can read this source (formula.Unmaintainable),
+                    # so import_edits could not move it; omit it here, where the report is still open.
                     skip("formula.untranslatable"); return None
             item={"source":native,"kind":"formula"}
     if item is None:
