@@ -113,6 +113,34 @@ def related_part(relationships,kind,ns=TRANSITIONAL):
     return path
 
 
+def date_system(workbook,ns):
+    properties=workbook.find(f"{{{ns.main}}}workbookPr")
+    epoch=properties.get("date1904","0") if properties is not None else "0"
+    require(epoch in ("0","1","false","true"),"INVALID_SPREADSHEET","Invalid XLSX date1904 flag")
+    return "1904" if epoch in ("1","true") else "1900"
+
+
+def worksheet_path(mapping,sheet,ns):
+    """The local part of a workbook <sheet>, given the workbook relationships keyed by Id."""
+    rel=mapping.get(sheet.get(f"{{{ns.rel}}}id"))
+    require(rel is not None and rel.get("TargetMode")!="External" and rel.get("Type")==ns.rel+"/worksheet",
+            "INVALID_SPREADSHEET","Selected sheet must have a local worksheet relationship")
+    target=rel.get("Target","")
+    path=posixpath.normpath(target.lstrip("/") if target.startswith("/") else "xl/"+target)
+    require(path.startswith("xl/") and "\\" not in path,"INVALID_SPREADSHEET","Invalid worksheet target")
+    return path
+
+
+def shared_strings_path(archive,relationships,ns):
+    return related_part(relationships,"sharedStrings",ns) or ("xl/sharedStrings.xml" if "xl/sharedStrings.xml" in archive.namelist() else None)
+
+
+def styles_path(archive,relationships,ns):
+    path=related_part(relationships,"styles",ns)
+    require(path is None or path in archive.namelist(),"INVALID_SPREADSHEET","Missing related stylesheet")
+    return path or "xl/styles.xml"
+
+
 FUNCTION_SPELLING=re.compile(r'"(?:[^"]|"")*"|\'(?:[^\']|\'\')*\'|([A-Za-z_][A-Za-z_0-9.]*)(?=\s*\()')
 
 
@@ -201,24 +229,30 @@ def xlsx_text(item,ns=TRANSITIONAL):
 
 
 class SharedFormulas:
-    """Expand only stored shared members, never a group's potentially empty rectangle."""
-    def __init__(self,cells,ns=TRANSITIONAL):
+    """Expand only stored shared members, never a group's potentially empty rectangle.
+
+    Per group only the master's origin, extent and source are kept; a streaming reader registers masters as it meets them."""
+    def __init__(self,cells=(),ns=TRANSITIONAL):
+        self.ns=ns
         self.groups={}
-        for cell in cells:
-            formula=cell.find(f"{{{ns.main}}}f")
-            if formula is None or formula.get("t")!="shared" or not formula.text: continue
-            key=formula.get("si","")
-            require(re.fullmatch(r"[0-9]{1,8}",key) is not None,"INVALID_SPREADSHEET","Invalid shared formula group")
-            require(key not in self.groups,"INVALID_SPREADSHEET","Duplicate shared formula master")
-            ends=formula.get("ref","").split(":")
-            require(1<=len(ends)<=2,"INVALID_SPREADSHEET","Invalid shared formula extent")
-            try:
-                r1,c1=coordinates(ends[0]); r2,c2=coordinates(ends[-1]); row,col=coordinates(cell.get("r",""))
-            except FormulaError as error: raise EngineError("INVALID_SPREADSHEET","Invalid shared formula coordinates") from error
-            require(r1<=row<=r2 and c1<=col<=c2 and (r2-r1+1)*(c2-c1+1)<=MAX_CELLS,
-                    "LIMIT","Shared formula extent must contain its master and at most 10,000 cells")
-            source="="+formula.text
-            self.groups[key]=(row,col,(r1,c1,r2,c2),source)
+        for cell in cells: self.register(cell)
+
+    def register(self,cell):
+        """Record the group of a shared master; any other cell is ignored."""
+        formula=cell.find(f"{{{self.ns.main}}}f")
+        if formula is None or formula.get("t")!="shared" or not formula.text: return
+        key=formula.get("si","")
+        require(re.fullmatch(r"[0-9]{1,8}",key) is not None,"INVALID_SPREADSHEET","Invalid shared formula group")
+        require(key not in self.groups,"INVALID_SPREADSHEET","Duplicate shared formula master")
+        ends=formula.get("ref","").split(":")
+        require(1<=len(ends)<=2,"INVALID_SPREADSHEET","Invalid shared formula extent")
+        try:
+            r1,c1=coordinates(ends[0]); r2,c2=coordinates(ends[-1]); row,col=coordinates(cell.get("r",""))
+        except FormulaError as error: raise EngineError("INVALID_SPREADSHEET","Invalid shared formula coordinates") from error
+        require(r1<=row<=r2 and c1<=col<=c2 and (r2-r1+1)*(c2-c1+1)<=MAX_CELLS,
+                "LIMIT","Shared formula extent must contain its master and at most 10,000 cells")
+        source="="+formula.text
+        self.groups[key]=(row,col,(r1,c1,r2,c2),source)
 
     def source(self,cell,formula):
         kind=formula.get("t","normal")
@@ -253,7 +287,7 @@ class XlsxCellContext:
     timezone_policy: str = "reject"
     shift: tuple = (0, 0)
     ns: Namespaces = TRANSITIONAL
-    seen: set = field(default_factory=set)
+    seen: set | None = field(default_factory=set)  # None: duplicate coordinates are detected downstream
 
 
 def convert_xlsx_cell(cell,*,context):
@@ -264,8 +298,9 @@ def convert_xlsx_cell(cell,*,context):
     location=cell.get("r","")
     try: row,col=coordinates(location)
     except FormulaError as error: raise EngineError("INVALID_SPREADSHEET","Invalid cell reference") from error
-    require((row,col) not in context.seen,"INVALID_SPREADSHEET","Duplicate cell coordinates")
-    context.seen.add((row,col))
+    if context.seen is not None:
+        require((row,col) not in context.seen,"INVALID_SPREADSHEET","Duplicate cell coordinates")
+        context.seen.add((row,col))
 
     def skip(category,detail=""):
         report.add(category,"omitted",detail,sheet=sheet,cell=location)
@@ -371,26 +406,17 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         checkpoint(0,"Reading workbook")
         workbook=read_xml(archive,"xl/workbook.xml")
         ns=namespaces(workbook)
-        properties=workbook.find(f"{{{ns.main}}}workbookPr")
-        epoch=properties.get("date1904","0") if properties is not None else "0"
-        require(epoch in ("0","1","false","true"),"INVALID_SPREADSHEET","Invalid XLSX date1904 flag")
-        system="1904" if epoch in ("1","true") else "1900"
+        system=date_system(workbook,ns)
         report.append("ISO shorthand is normalized to native seconds; timezone offsets require explicit timezone_policy=utc, which stores UTC civil values and omits the original offset.")
         report.append(f"Date/time serials with supported formats use the {system} epoch; serial 60 in the 1900 system is rejected. Formula numeric literals are not epoch-shifted; native formulas use the 1900 system.")
         sheets=workbook.findall(f"{{{ns.main}}}sheets/{{{ns.main}}}sheet")
         require(0<len(sheets)<=64 and selected<=len(sheets),"INVALID_SPREADSHEET","Choose an existing sheet (at most 64)")
         relationships=read_xml(archive,"xl/_rels/workbook.xml.rels")
         mapping={item.get("Id"):item for item in relationships}
-        rel=mapping.get(sheets[selected-1].get(f"{{{ns.rel}}}id"))
-        require(rel is not None and rel.get("TargetMode")!="External" and rel.get("Type")==ns.rel+"/worksheet",
-                "INVALID_SPREADSHEET","Selected sheet must have a local worksheet relationship")
-        target=rel.get("Target","")
-        path=posixpath.normpath(target.lstrip("/") if target.startswith("/") else "xl/"+target)
-        require(path.startswith("xl/") and "\\" not in path,"INVALID_SPREADSHEET","Invalid worksheet target")
-        root=read_xml(archive,path)
+        root=read_xml(archive,worksheet_path(mapping,sheets[selected-1],ns))
         require(root.tag==f"{{{ns.main}}}worksheet","INVALID_SPREADSHEET","Invalid worksheet")
         shared=[]
-        shared_path=related_part(relationships,"sharedStrings",ns) or ("xl/sharedStrings.xml" if "xl/sharedStrings.xml" in archive.namelist() else None)
+        shared_path=shared_strings_path(archive,relationships,ns)
         if shared_path:
             table=read_xml(archive,shared_path)
             require(table.tag==f"{{{ns.main}}}sst","INVALID_SPREADSHEET","Shared strings part does not match the workbook's namespaces")
@@ -402,10 +428,8 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         advanced=[name for name in archive.namelist() if any(part in name.lower() for part in ("vba","externallink","drawing","chart","pivot","table","comment"))]
         if advanced: report.append(f"{len(advanced)} advanced package parts are omitted; no external resources are fetched.")
         from .xlsx_styles import XlsxStyles
-        style_path=related_part(relationships,"styles",ns)
-        require(style_path is None or style_path in archive.namelist(),"INVALID_SPREADSHEET","Missing related stylesheet")
         conversions=ConversionReport()
-        styles=XlsxStyles(archive,style_path or "xl/styles.xml",conversions,ns)
+        styles=XlsxStyles(archive,styles_path(archive,relationships,ns),conversions,ns)
         edits,issues=[],[]
         shift=(integer(request.get("row",1),1,1048576,"row")-1,integer(request.get("col",1),1,16384,"col")-1)
         sheet_label=sheets[selected-1].get("name","")
@@ -535,9 +559,9 @@ def fold_name(name):
     return name.translate(str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz"))
 
 
-def validate_sheet_names(names):
+def validate_sheet_names(names,limit=64):
     from .engine import Workbook
-    require(0<len(names)<=64,"LIMIT","Provide 1-64 sheets")
+    require(0<len(names)<=limit,"LIMIT",f"Provide 1-{limit} sheets")
     for name in names:
         Workbook.check_name(name)
         require(not any(ord(c) in (65534,65535) for c in name),"INVALID_NAME","Sheet names contain characters unavailable in spreadsheet XML")
