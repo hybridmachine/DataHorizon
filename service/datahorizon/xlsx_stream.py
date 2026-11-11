@@ -29,6 +29,7 @@ from .interchange import (MAX_EXPANDED, S, WHOLE_EXPORT_CACHES, SharedFormulas, 
                           worksheet_path, xlsx_text, xml)
 from .formula import address
 from .temporal import export_temporal_style
+from .xlsx_features import SheetFeatures, StringFeatures, relationship_kinds, workbook_features
 from .xlsx_styles import StyleTable, XlsxStyles, stylesheet
 
 # Qualified on November 11, 2026 on the reference Mac (docs/design/evidence/excel-fidelity-1-capacity.json): 1,000,000 cells
@@ -285,7 +286,7 @@ def _deferred_copy(cell):
     return copy, size
 
 
-def _read_shared_strings(archive, path, budget, ns, store, checkpoint):
+def _read_shared_strings(archive, path, budget, ns, store, checkpoint, features):
     count = depth = 0
     for event, item in read_part(archive, path, budget, record_depth=2):
         if event == "start":
@@ -297,12 +298,14 @@ def _read_shared_strings(archive, path, budget, ns, store, checkpoint):
             # Like the tree reader, every child of <sst> takes an index.
             require(count < LARGE_CELLS, "LIMIT", f"Shared strings exceed {LARGE_CELLS:,} entries")
             store.put(count, xlsx_text(item, ns))
+            features.string(item)
             count += 1
             if count % BATCH == 0: checkpoint(0, "Reading shared strings")
     return count
 
 
-def _read_sheet(archive, path, budget, context, sink, progress):
+def _read_sheet(archive, path, budget, context, sink, progress, features):
+    """Convert one worksheet's cells into the sink; every other element ending is passed to `features`."""
     ns = context.ns
     root, sheet_data, row, cell = (f"{{{ns.main}}}{tag}" for tag in ("worksheet", "sheetData", "row", "c"))
     shared = context.shared_formulas
@@ -324,7 +327,15 @@ def _read_sheet(archive, path, budget, context, sink, progress):
             tags.append(item.tag)
             continue
         tags.pop()
-        if item.tag != cell or tags[1:] != [sheet_data, row]: continue
+        depth = len(tags)
+        if depth < 2 or tags[1] != sheet_data:
+            features.end(tags, item)
+            continue
+        if depth == 2:
+            if item.tag == row: features.row(item)
+            continue
+        if item.tag != cell or depth != 3 or tags[2] != row: continue
+        features.cell(item)
         progress.cell()
         if shared is not None:
             shared.register(item)
@@ -375,12 +386,14 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: 
         relationships = _read_whole(archive, "xl/_rels/workbook.xml.rels", budget)
         mapping = {item.get("Id"): item for item in relationships}
         shared_path = shared_strings_path(archive, relationships, ns)
-        count = _read_shared_strings(archive, shared_path, budget, ns, sink.strings, checkpoint) if shared_path else 0
+        string_features = StringFeatures(ns)
+        count = _read_shared_strings(archive, shared_path, budget, ns, sink.strings, checkpoint, string_features) if shared_path else 0
         strings = _SpooledStrings(sink.strings, count)
         style_path = styles_path(archive, relationships, ns)
         if style_path in archive.namelist(): _admit_whole(archive, style_path, budget)
         styles = XlsxStyles(archive, style_path, ConversionReport(), ns)
         conversions = ConversionReport()
+        workbook_features(conversions, workbook, ns, archive.namelist(), string_features)
         progress = _Progress(checkpoint)
         for sheet, name in zip(sheets, names):
             checkpoint(progress.cells, "Reading sheet "+name)
@@ -391,8 +404,10 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: 
                                       shared_formulas=SharedFormulas(ns=ns) if selected_mode != "values" else None,
                                       timezone_policy=policy, ns=ns, seen=None)
             part = worksheet_path(mapping, sheet, ns)
+            features = SheetFeatures(ns, relationship_kinds(archive, part, budget))
             sink.sheet(name)
-            _read_sheet(archive, part, budget, context, sink, progress)
+            _read_sheet(archive, part, budget, context, sink, progress, features)
+            features.report(sheet_report, name)
             conversions.merge(sheet_report)
         return conversions
 

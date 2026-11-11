@@ -10,7 +10,8 @@ from datahorizon.client import LocalService
 from datahorizon.engine import EngineError
 from datahorizon.formula import coordinates
 from datahorizon.ods import convert_ods_cell, ods_export, ods_preview
-from ods_builder import workbook_bytes
+from ods_builder import NAMESPACES, workbook_bytes
+from datahorizon.ods import O
 
 
 def b64(data):
@@ -267,6 +268,125 @@ class OdsPackageTests(unittest.TestCase):
         self.assertEqual(found[(1, 2)]["display"], "#NAME?")
         self.assertEqual(found[(1, 3)]["display"], "2")
         self.assertEqual(found[(2, 1)]["source"], "oooc:=1+1")
+
+
+DRAW = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+CONFIG = "urn:oasis:names:tc:opendocument:xmlns:config:1.0"
+LAYOUT_STYLES = ('<style:style style:name="co1" style:family="table-column"><style:table-column-properties style:column-width="2.258cm"/></style:style>'
+                 '<style:style style:name="co2" style:family="table-column"><style:table-column-properties style:column-width="5cm"/></style:style>'
+                 '<style:style style:name="ro1" style:family="table-row"><style:table-row-properties style:row-height="0.452cm" style:use-optimal-row-height="true"/></style:style>'
+                 '<style:style style:name="ro2" style:family="table-row"><style:table-row-properties style:row-height="1cm" style:use-optimal-row-height="false"/></style:style>'
+                 '<style:style style:name="ta1" style:family="table"><style:table-properties table:display="true"/></style:style>'
+                 '<style:style style:name="ta2" style:family="table"><style:table-properties table:display="false"/></style:style>'
+                 '<style:style style:name="Mapped" style:family="table-cell"><style:map style:condition="cell-content()&gt;1" style:apply-style-name="Default"/></style:style>')
+FEATURE_TABLE = (
+    '<table:table table:name="Sheet1" table:style-name="ta1" table:protected="true">'
+    '<table:table-column table:style-name="co2"/><table:table-column table:style-name="co1" table:visibility="collapse" table:number-columns-repeated="2"/>'
+    '<table:table-column table:style-name="co1" table:number-columns-repeated="1021"/>'
+    '<table:table-row table:style-name="ro2" table:number-rows-repeated="2">'
+    '<table:table-cell table:number-columns-spanned="2" table:number-rows-spanned="1" office:value-type="float" office:value="1"/><table:covered-table-cell/>'
+    '<table:table-cell office:value-type="float" office:value="2" table:content-validation-name="val1"/></table:table-row>'
+    '<table:table-row-group><table:table-row table:visibility="collapse"><table:table-cell office:value-type="string"><text:p><text:a xlink:href="https://example.com/">site</text:a></text:p></table:table-cell>'
+    '<table:table-cell office:value-type="float" office:value="3"><office:annotation><text:p>note</text:p></office:annotation></table:table-cell></table:table-row></table:table-row-group>'
+    '<calcext:conditional-formats><calcext:conditional-format calcext:target-range-address="Sheet1.A1:Sheet1.A3"><calcext:condition calcext:apply-style-name="Default" calcext:value="&gt;1"/></calcext:conditional-format>'
+    '<calcext:conditional-format calcext:target-range-address="Sheet1.B1"><calcext:color-scale/></calcext:conditional-format></calcext:conditional-formats>'
+    '</table:table>')
+SPREADSHEET_BEFORE = ('<table:content-validations><table:content-validation table:name="val1" table:condition="of:cell-content-is-whole-number()"/>'
+                      '<table:content-validation table:name="unused" table:condition="of:cell-content-is-decimal-number()"/></table:content-validations>')
+SPREADSHEET_AFTER = ('<table:named-expressions><table:named-range table:name="Rate" table:base-cell-address="$Sheet1.$A$1" table:cell-range-address="$Sheet1.$A$1"/>'
+                     '<table:named-expression table:name="Two" table:base-cell-address="$Sheet1.$A$1" table:expression="of:=2"/></table:named-expressions>'
+                     '<table:database-ranges><table:database-range table:name="__Anonymous_Sheet_DB__0" table:target-range-address="Sheet1.A1:Sheet1.B3" table:display-filter-buttons="true"/>'
+                     '<table:database-range table:name="plain" table:target-range-address="Sheet1.A1:Sheet1.A2"/></table:database-ranges>')
+
+
+def feature_content(tables, *, before="", after="", spreadsheet_attributes="", styles=LAYOUT_STYLES):
+    namespaces = NAMESPACES + f' xmlns:draw="{DRAW}" xmlns:xlink="http://www.w3.org/1999/xlink"'
+    return (f'<office:document-content {namespaces}><office:automatic-styles>{styles}</office:automatic-styles><office:body>'
+            f'<office:spreadsheet{spreadsheet_attributes}>{before}{tables}{after}</office:spreadsheet></office:body></office:document-content>')
+
+
+def settings(*entries):
+    """settings.xml with per-sheet view entries: (sheet name, horizontal split mode, vertical split mode)."""
+    items = "".join(f'<config:config-item-map-entry config:name="{name}"><config:config-item config:name="HorizontalSplitMode" config:type="short">{h}</config:config-item>'
+                    f'<config:config-item config:name="VerticalSplitMode" config:type="short">{v}</config:config-item></config:config-item-map-entry>'
+                    for name, h, v in entries)
+    return (f'<office:document-settings xmlns:office="{O}" xmlns:config="{CONFIG}"><office:settings>'
+            '<config:config-item-set config:name="ooo:view-settings"><config:config-item-map-indexed config:name="Views"><config:config-item-map-entry>'
+            f'<config:config-item-map-named config:name="Tables">{items}</config:config-item-map-named>'
+            '</config:config-item-map-entry></config:config-item-map-indexed></config:config-item-set></office:settings></office:document-settings>')
+
+
+def feature_counts(result, category="sheet.feature"):
+    return {e["detail"]: e["count"] for e in result["report_entries"] if e["category"] == category}
+
+
+class OdsFeatureReportTests(unittest.TestCase):
+    def preview(self, data, **request):
+        return ods_preview({"file_base64": b64(data), "mode": "formulas", **request})
+
+    def book(self, **options):
+        content = feature_content(FEATURE_TABLE + '<table:table table:name="Hidden" table:style-name="ta2"/>',
+                                  before=SPREADSHEET_BEFORE, after=SPREADSHEET_AFTER, spreadsheet_attributes=' table:structure-protected="true"')
+        return workbook_bytes({}, content=content, **options)
+
+    def test_each_unimported_sheet_feature_is_reported_by_name(self):
+        result = self.preview(self.book())
+        self.assertEqual(feature_counts(result),
+                         {"merged_cells": 1, "column_widths": 1, "row_heights": 2, "hidden_rows_columns": 1+2, "outline": 1,
+                          "conditional_formatting": 2, "data_validation": 1, "hyperlinks": 1, "comments": 1,
+                          "auto_filter": 1, "sheet_protection": 1})
+        (merged,) = [e for e in result["report_entries"] if e["detail"] == "merged_cells"]
+        self.assertEqual(merged, {"category": "sheet.feature", "severity": "omitted", "detail": "merged_cells", "count": 1,
+                                  "samples": [{"sheet": "Sheet1", "cell": None}]})
+
+    def test_workbook_features_are_reported_once(self):
+        for scope in ("selection", "workbook"):
+            with self.subTest(scope=scope):
+                result = self.preview(self.book(), scope=scope)
+                self.assertEqual(feature_counts(result, "workbook.feature"),
+                                 {"defined_names": 2, "hidden_sheets": 1, "workbook_protection": 1})
+                (hidden,) = [e for e in result["report_entries"] if e["detail"] == "hidden_sheets"]
+                self.assertEqual(hidden["samples"], [{"sheet": "Hidden", "cell": None}])
+
+    def test_mapped_cell_styles_count_as_conditional_formatting(self):
+        rows = row(number(1, **{"table:style-name": "Mapped"}), number(2, **{"table:style-name": "Mapped"}))
+        content = feature_content(f'<table:table table:name="Sheet1">{rows}</table:table>')
+        self.assertEqual(feature_counts(self.preview(workbook_bytes({}, content=content))), {"conditional_formatting": 1})
+
+    def test_frozen_and_split_panes_come_from_the_settings(self):
+        content = feature_content('<table:table table:name="Sheet1"/><table:table table:name="Two"/><table:table table:name="Three"/>')
+        data = workbook_bytes({}, content=content, extra_parts={"settings.xml": settings(("Sheet1", 2, 0), ("Two", 1, 1), ("Three", 0, 0))})
+        result = self.preview(data, scope="workbook")
+        entries = {e["detail"]: e for e in result["report_entries"]}
+        self.assertEqual(entries["frozen_panes"]["samples"], [{"sheet": "Sheet1", "cell": None}])
+        self.assertEqual(entries["split_panes"]["samples"], [{"sheet": "Two", "cell": None}])
+        self.assertEqual(set(entries), {"frozen_panes", "split_panes"})
+
+    def test_a_spreadsheet_with_default_settings_reports_no_features(self):
+        table = ('<table:table table:name="Sheet1" table:style-name="ta1"><table:table-column table:style-name="co1" table:number-columns-repeated="1024" table:default-cell-style-name="Default"/>'
+                 f'<table:table-row table:style-name="ro1">{number(1)}</table:table-row>'
+                 '<table:table-row table:style-name="ro1" table:number-rows-repeated="1048575"><table:table-cell table:number-columns-repeated="1024"/></table:table-row>'
+                 '<office:forms form:automatic-focus="false" form:apply-design-mode="false" xmlns:form="urn:oasis:names:tc:opendocument:xmlns:form:1.0"/></table:table>')
+        content = feature_content(table, before='<table:calculation-settings table:automatic-find-labels="false"/>', after="<table:named-expressions/>")
+        data = workbook_bytes({}, content=content, extra_parts={"settings.xml": settings(("Sheet1", 0, 0))})
+        for scope in ("selection", "workbook"):
+            with self.subTest(scope=scope):
+                result = self.preview(data, scope=scope)
+                self.assertEqual([e for e in result["report_entries"] if e["category"].endswith(".feature")], [])
+        for name in ("fidelity.ods", "inputs.ods"):
+            with self.subTest(name=name):
+                result = self.preview((Path(__file__).parent / "fixtures" / name).read_bytes(), scope="workbook")
+                self.assertEqual([e for e in result["report_entries"] if e["category"].endswith(".feature")], [])
+
+    def test_drawings_scenarios_and_package_parts(self):
+        table = ('<table:table table:name="Sheet1"><table:scenario table:scenario-ranges="Sheet1.A1" table:is-active="true"/>'
+                 '<table:shapes><draw:frame draw:name="Chart 1"><draw:object xlink:href="./Object 1"/></draw:frame></table:shapes>'
+                 f'<table:table-row>{number(1)}</table:table-row></table:table>')
+        content = feature_content(table, after='<table:data-pilot-tables><table:data-pilot-table table:name="P" table:target-range-address="Sheet1.D1:Sheet1.E3"/></table:data-pilot-tables>')
+        data = workbook_bytes({}, content=content, extra_parts={"Object 1/content.xml": "<x/>", "Basic/Standard/Module1.xml": "<x/>"})
+        result = self.preview(data)
+        self.assertEqual(feature_counts(result), {"scenarios": 1, "drawings": 1})
+        self.assertEqual(feature_counts(result, "workbook.feature"), {"pivot_tables": 1, "embedded_objects": 1, "macros": 1})
 
 
 if __name__ == "__main__":

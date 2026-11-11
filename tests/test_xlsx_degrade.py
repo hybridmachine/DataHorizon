@@ -333,5 +333,169 @@ class CellDegradeTests(unittest.TestCase):
             convert_xlsx_cell(parse('r="B2"><v>1</v>'), context=context)
 
 
+REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+FEATURE_ROWS = '<row r="1"><c r="A1"><v>1</v></c></row>'
+FEATURE_SHEET_AFTER = (
+    '<mergeCells count="2"><mergeCell ref="A1:C1"/><mergeCell ref="A2:A3"/></mergeCells>'
+    '<conditionalFormatting sqref="A1:A3"><cfRule type="cellIs" priority="1" operator="greaterThan"><formula>1</formula></cfRule>'
+    '<cfRule type="cellIs" priority="2" operator="lessThan"><formula>0</formula></cfRule></conditionalFormatting>'
+    '<conditionalFormatting sqref="B1"><cfRule type="colorScale" priority="3"/></conditionalFormatting>'
+    '<dataValidations count="2"><dataValidation type="list" sqref="A2"><formula1>"a,b"</formula1></dataValidation>'
+    '<dataValidation type="whole" sqref="B2"><formula1>0</formula1></dataValidation></dataValidations>'
+    '<hyperlinks><hyperlink ref="A1" location="Sheet1!B2"/></hyperlinks>')
+FEATURE_SHEET_BEFORE = '<cols><col min="1" max="1" width="20" customWidth="1"/><col min="3" max="5" width="9"/></cols>'
+# What Excel and openpyxl write in a workbook where nothing was changed from its defaults.
+DEFAULT_WORKBOOK = ('<fileVersion appName="xl" lastEdited="7" lowestEdited="7" rupBuild="27328"/><workbookPr defaultThemeVersion="166925"/>'
+                    '<workbookProtection/><bookViews><workbookView xWindow="0" yWindow="0" windowWidth="28800" windowHeight="12300"/></bookViews>')
+DEFAULT_SHEET_BEFORE = ('<sheetPr><outlinePr summaryBelow="1" summaryRight="1"/><pageSetUpPr/></sheetPr><dimension ref="A1"/>'
+                        '<sheetViews><sheetView tabSelected="1" workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>'
+                        '<sheetFormatPr baseColWidth="8" defaultRowHeight="15"/>')
+DEFAULT_SHEET_AFTER = ('<sheetProtection sheet="0"/><printOptions gridLinesSet="1"/>'
+                       '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>'
+                       '<pageSetup paperSize="9" orientation="portrait" horizontalDpi="300" verticalDpi="300"/><headerFooter/>')
+
+
+def features(result, category="sheet.feature"):
+    return {e["detail"]: e for e in result["report_entries"] if e["category"] == category}
+
+
+def sheet_entry(detail, count, *sheets):
+    return {"category": "sheet.feature", "severity": "omitted", "detail": detail, "count": count,
+            "samples": [{"sheet": sheet, "cell": None} for sheet in sheets or ("Sheet1",)]}
+
+
+def default_book(sheets, *, workbook_after_sheets="", **options):
+    """A package whose workbook part starts with Excel's default elements before <sheets>."""
+    data = workbook_bytes(sheets, workbook_after_sheets=workbook_after_sheets + '<calcPr calcId="191029"/>', **options)
+    output = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as target:
+        for name in source.namelist():
+            payload = source.read(name)
+            if name == "xl/workbook.xml": payload = payload.replace(b"<sheets>", DEFAULT_WORKBOOK.encode() + b"<sheets>", 1)
+            target.writestr(name, payload)
+    return output.getvalue()
+
+
+class FeatureReportTests(unittest.TestCase):
+    def preview(self, data, **request):
+        return xlsx_preview({"file_base64": b64(data), "mode": "formulas", **request})
+
+    def test_each_unimported_worksheet_element_is_reported_by_name(self):
+        data = workbook_bytes({"Sheet1": FEATURE_ROWS}, sheet_before={"Sheet1": FEATURE_SHEET_BEFORE},
+                              sheet_after={"Sheet1": FEATURE_SHEET_AFTER})
+        found = features(self.preview(data))
+        self.assertEqual(found["merged_cells"], sheet_entry("merged_cells", 2))
+        self.assertEqual(found["conditional_formatting"], sheet_entry("conditional_formatting", 3))
+        self.assertEqual(found["data_validation"], sheet_entry("data_validation", 2))
+        self.assertEqual(found["hyperlinks"], sheet_entry("hyperlinks", 1))
+        # Columns, not <col> ranges: A, and C through E.
+        self.assertEqual(found["column_widths"], sheet_entry("column_widths", 4))
+        self.assertEqual(set(found), {"merged_cells", "conditional_formatting", "data_validation", "hyperlinks", "column_widths"})
+
+    def test_the_free_text_feature_line_is_replaced_by_entries(self):
+        data = workbook_bytes({"Sheet1": FEATURE_ROWS}, sheet_after={"Sheet1": FEATURE_SHEET_AFTER})
+        result = self.preview(data)
+        self.assertFalse(any(line.startswith("Worksheet features outside cell inputs") for line in result["report"]))
+        self.assertFalse(any("advanced package parts" in line for line in result["report"]))
+        self.assertIn("2 items: merged_cells (omitted); first at Sheet1", result["report"])
+        self.assertEqual(result["totals"]["omitted"], 2+3+2+1)
+
+    def test_a_workbook_with_default_settings_reports_no_features(self):
+        data = default_book({"Sheet1": FEATURE_ROWS}, workbook_after_sheets="<definedNames/>",
+                            sheet_before={"Sheet1": DEFAULT_SHEET_BEFORE}, sheet_after={"Sheet1": DEFAULT_SHEET_AFTER})
+        for scope in ("selection", "workbook"):
+            with self.subTest(scope=scope):
+                result = self.preview(data, scope=scope)
+                self.assertEqual([e for e in result["report_entries"] if e["category"].endswith(".feature")], [])
+        for name in ("fidelity.xlsx", "inputs.xlsx"):
+            with self.subTest(name=name):
+                result = self.preview((Path(__file__).parent / "fixtures" / name).read_bytes(), scope="workbook")
+                self.assertEqual([e for e in result["report_entries"] if e["category"].endswith(".feature")], [])
+
+    def test_layout_protection_filter_and_print_settings_are_counted(self):
+        before = ('<sheetPr><tabColor rgb="FFFF0000"/></sheetPr>'
+                  '<sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane xSplit="1" ySplit="2" topLeftCell="B3" state="frozen"/></sheetView></sheetViews>'
+                  '<sheetFormatPr defaultRowHeight="15" defaultColWidth="12"/>'
+                  '<cols><col min="2" max="4" width="9" hidden="1"/><col min="6" max="6" outlineLevel="1" style="3"/></cols>')
+        rows = ('<row r="1" ht="30" customHeight="1"><c r="A1"><v>1</v></c></row><row r="2" hidden="1"/>'
+                '<row r="3" ht="12"/><row r="4" outlineLevel="1" s="2" customFormat="1"/>')
+        after = ('<sheetProtection sheet="1" objects="1"/><autoFilter ref="A1:B4"/>'
+                 '<pageMargins left="1" right="1" top="1" bottom="1" header="0.5" footer="0.5"/>'
+                 '<pageSetup orientation="landscape"/><headerFooter><oddHeader>&amp;CReport</oddHeader></headerFooter>'
+                 '<rowBreaks count="1"><brk id="3" max="16383" man="1"/></rowBreaks>'
+                 f'<drawing r:id="rId1"/><tableParts count="2"><tablePart r:id="rId2"/><tablePart r:id="rId3"/></tableParts>')
+        data = workbook_bytes({"Sheet1": rows}, sheet_before={"Sheet1": before}, sheet_after={"Sheet1": after})
+        found = features(self.preview(data))
+        self.assertEqual({detail: entry["count"] for detail, entry in found.items()},
+                         {"tab_colour": 1, "frozen_panes": 1, "sheet_view": 1, "sheet_format_defaults": 1, "column_widths": 3,
+                          "hidden_rows_columns": 3+1, "outline": 1+1, "row_column_styles": 1+1, "row_heights": 2,
+                          "sheet_protection": 1, "auto_filter": 1, "page_setup": 1, "drawings": 1, "excel_tables": 2})
+
+    def test_cell_level_features_are_counted(self):
+        rows = ('<row r="1"><c r="A1" vm="1" t="e"><v>#VALUE!</v></c><c r="B1" ph="1" t="inlineStr"><is><t>x</t></is></c>'
+                '<c r="C1" t="inlineStr"><is><r><rPr><b/></rPr><t>bold</t></r><r><t> plain</t></r></is></c></row>')
+        found = features(self.preview(workbook_bytes({"Sheet1": rows})))
+        self.assertEqual({detail: entry["count"] for detail, entry in found.items()}, {"rich_values": 1, "phonetic": 1, "rich_text": 1})
+
+    def test_extension_list_features_are_named_and_others_are_extensions(self):
+        x14 = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
+        after = (f'<extLst><ext uri="{{05C60535-1F16-4fd2-B633-F4F36F0B64E0}}" xmlns:x14="{x14}"><x14:sparklineGroups>'
+                 '<x14:sparklineGroup><x14:sparklines><x14:sparkline/></x14:sparklines></x14:sparklineGroup>'
+                 '<x14:sparklineGroup/></x14:sparklineGroups></ext>'
+                 f'<ext uri="{{78C0D931-6437-407d-A8EE-F0AAD7539E65}}" xmlns:x14="{x14}"><x14:conditionalFormattings>'
+                 '<x14:conditionalFormatting><x14:cfRule type="dataBar"/></x14:conditionalFormatting></x14:conditionalFormattings></ext>'
+                 '<ext uri="{00000000-0000-0000-0000-000000000000}"><unknown/></ext></extLst>')
+        found = features(self.preview(workbook_bytes({"Sheet1": FEATURE_ROWS}, sheet_after={"Sheet1": after})))
+        self.assertEqual({detail: entry["count"] for detail, entry in found.items()},
+                         {"sparklines": 2, "conditional_formatting": 1, "extensions": 1})
+
+    def test_comments_are_found_through_the_sheet_relationships(self):
+        rels = (f'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                f'<Relationship Id="rId1" Type="{REL}/vmlDrawing" Target="../drawings/vmlDrawing1.vml"/>'
+                f'<Relationship Id="rId2" Type="{REL}/comments" Target="../comments1.xml"/></Relationships>')
+        data = workbook_bytes({"Sheet1": FEATURE_ROWS, "Plain": FEATURE_ROWS},
+                              sheet_after={"Sheet1": '<legacyDrawing r:id="rId1"/>', "Plain": '<legacyDrawing r:id="rId1"/>'},
+                              extra_parts={"xl/worksheets/_rels/sheet1.xml.rels": rels})
+        found = features(self.preview(data, scope="workbook"))
+        self.assertEqual(found["comments"], sheet_entry("comments", 1, "Sheet1"))
+        # A legacy drawing without comments holds form controls or shapes.
+        self.assertEqual(found["legacy_drawings"], sheet_entry("legacy_drawings", 1, "Plain"))
+
+    def test_workbook_features_and_package_parts_are_structured_entries(self):
+        names = ('<definedNames><definedName name="Rate">Sheet1!$A$1</definedName><definedName name="Two">2</definedName>'
+                 '<definedName name="_xlnm.Print_Area" localSheetId="0">Sheet1!$A$1:$B$2</definedName></definedNames>')
+        after_sheets = f'<externalReferences><externalReference r:id="rIdX"/></externalReferences>{names}<calcPr calcMode="manual" iterate="1"/>'
+        data = workbook_bytes({"Sheet1": FEATURE_ROWS, "Hidden": "", "Secret": ""}, workbook_after_sheets=after_sheets,
+                              extra_parts={"xl/charts/chart1.xml": "<c/>", "xl/charts/chart2.xml": "<c/>", "xl/vbaProject.bin": b"\0",
+                                           "xl/pivotTables/pivotTable1.xml": "<p/>", "customXml/item1.xml": "<x/>",
+                                           "customXml/itemProps1.xml": "<x/>", "xl/connections.xml": "<x/>"})
+        workbook = zipfile.ZipFile(io.BytesIO(data)).read("xl/workbook.xml").decode()
+        workbook = (workbook.replace('<sheet name="Hidden"', '<sheet state="hidden" name="Hidden"')
+                    .replace('<sheet name="Secret"', '<sheet state="veryHidden" name="Secret"')
+                    .replace("<sheets>", '<workbookProtection lockStructure="1"/><sheets>'))
+        output = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(output, "w") as target:
+            for name in source.namelist(): target.writestr(name, workbook if name == "xl/workbook.xml" else source.read(name))
+        for scope in ("selection", "workbook"):
+            with self.subTest(scope=scope):
+                found = features(self.preview(output.getvalue(), scope=scope), "workbook.feature")
+                self.assertEqual({detail: entry["count"] for detail, entry in found.items()},
+                                 {"defined_names": 3, "external_references": 1, "hidden_sheets": 2, "workbook_protection": 1,
+                                  "calculation_settings": 1, "charts": 2, "vba": 1, "pivot_tables": 1, "custom_xml": 1, "connections": 1})
+                self.assertEqual(found["hidden_sheets"]["samples"], [{"sheet": "Hidden", "cell": None}, {"sheet": "Secret", "cell": None}])
+                self.assertEqual(found["defined_names"]["samples"], [])
+
+    def test_workbook_scope_reports_each_sheet_once_and_workbook_features_once(self):
+        after = '<mergeCells count="1"><mergeCell ref="A1:B1"/></mergeCells>'
+        data = workbook_bytes({"One": FEATURE_ROWS, "Two": FEATURE_ROWS, "Three": ""}, sheet_after={"One": after, "Two": after},
+                              workbook_after_sheets='<definedNames><definedName name="X">1</definedName></definedNames>')
+        result = self.preview(data, scope="workbook")
+        self.assertEqual(features(result)["merged_cells"], sheet_entry("merged_cells", 2, "One", "Two"))
+        self.assertEqual(features(result, "workbook.feature")["defined_names"]["count"], 1)
+        # A selection reports only its own sheet's features.
+        selection = self.preview(data, sheet_index=2)
+        self.assertEqual(features(selection)["merged_cells"], sheet_entry("merged_cells", 1, "Two"))
+
+
 if __name__ == "__main__":
     unittest.main()

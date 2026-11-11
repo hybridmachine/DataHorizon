@@ -385,7 +385,7 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
     selected=integer(request.get("sheet_index",1),1,64,"sheet_index"); selected_mode=mode(request)
     require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
     report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct/inherited cell styles replace destination inputs/styles.",
-            "Other sheets, code, charts, comments, merged presentation, names, validation, conditional/default/row/column formatting, dimensions and advanced typography are omitted; code never activates.",
+            "Other sheets are omitted and code never activates. Sheet and workbook features that are not imported (merged cells, sizes, validation, comments, names, conditional formatting and others) are listed below.",
             "Percentage/currency retain numeric magnitude. Number/percentage styles with 0–15 decimal places map; explicit three-letter currency suffix styles map; other display formats are omitted. Supported dates/datetimes and sub-day time durations restore native ISO types. Formula syntax is translated canonically; formulas in the published native function tier without powers evaluate, and any other formula is kept, replaced or omitted as listed below."]
     if selected_mode=="values": report.append("Formula caches become literal values with unverified freshness; formulas without a usable cache are omitted.")
     if selected_mode=="mixed": report.append("Formulas DataHorizon can evaluate stay formulas; those it cannot become their cached values when a usable cache exists. Cache freshness cannot be verified.")
@@ -400,6 +400,15 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         roots=([read_xml(archive,"styles.xml")] if "styles.xml" in archive.namelist() else [])+[root]
         conversions=ConversionReport()
         styles=OdsStyles(roots,conversions)
+        from .ods_features import LayoutStyles, OdsSheetFeatures, OdsWorkbookFeatures, mapped_styles, pane_modes, scan_content, scan_table
+        layout=LayoutStyles()
+        for part in roots:
+            for item in part.iter(q(Y,"style")): layout.add(item)
+        workbook_features=OdsWorkbookFeatures(); scan_content(root,workbook_features)
+        # Workbook features are reported once: here for a selection, by prepare_workbook for a whole workbook.
+        wide=ConversionReport(); workbook_features.report(wide,layout,archive.namelist())
+        if sheet_names is None: conversions.merge(wide)
+        panes=pane_modes(read_xml(archive,"settings.xml") if "settings.xml" in archive.namelist() else None)
         report.append("ISO shorthand normalizes to native seconds; explicit timezone_policy=utc normalizes offset timestamps to UTC civil values and omits the original offset.")
         edits=[]; row=1; processed=0; staged_bytes=0
         shift=(integer(request.get("row",1),1,1048576,"row")-1,integer(request.get("col",1),1,16384,"col")-1)
@@ -432,13 +441,16 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
                 col+=count
             for offset in range(row_count if template else 0): edits.extend({**item,"row":row+offset} for item in template)
             row+=row_count
+        sheet_features=OdsSheetFeatures(layout,mapped_styles(styles.styles),panes.get(sheet_label))
+        scan_table(sheets[selected-1],sheet_features)
+        sheet_features.report(conversions,sheet_label,workbook_features.sheet_extra(sheet_label))
         report.extend(conversions.lines())
         result={"cells":edits,"stored_cells":len(edits),"can_import":bool(edits),"issues":[],"sheet":sheet_label,
                 "sheets":[s.get(q(T,"name"),"") for s in sheets],"report":report,"report_entries":conversions.entries(),
                 "totals":conversions.totals()}
         if result["can_import"]: result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","ODS preview exceeds 4 MiB")
-        if sheet_names is not None: result["_conversions"]=conversions
+        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=wide
         return result
 
 

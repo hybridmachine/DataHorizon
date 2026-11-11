@@ -47,7 +47,8 @@ class XlsxTests(unittest.TestCase):
         self.assertTrue(result["can_import"])
         self.assertEqual([(c["row"],c["col"],c["kind"],c["source"]) for c in result["cells"]],
             [(2,2,"text","00123"),(4,4,"text","=1+1"),(4,5,"boolean","TRUE"),(4,6,"number","7"),(4,7,"formula","=SUM(F4,$E$3)")])
-        self.assertIn("mergeCells"," ".join(result["report"]))
+        self.assertIn({"category":"sheet.feature","severity":"omitted","detail":"merged_cells","count":1,
+                       "samples":[{"sheet":"Inputs","cell":None}]},result["report_entries"])
 
     def test_malformed_cells_reject_the_file_and_unsupported_content_degrades_with_an_entry(self):
         for cell in ('<c r="A1"><f t="shared" si="1">A2</f><v>8</v></c>','<c r="XFE1"><v>8</v></c>','<c r="A1" t="s"><v>900</v></c>'):

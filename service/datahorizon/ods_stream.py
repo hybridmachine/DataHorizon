@@ -29,6 +29,8 @@ from .interchange import mode, validate_sheet_names, workbook_report, xml
 from .ods import (F, M, MIME, N, O, OF, STYLE_DEFINITION_TAGS, T, WORKBOOK_IMPORT_LINE, WHOLE_FORMULA_LINE, X, Y, OdsCellContext,
                   OdsStyles, OdsStyleTable, convert_ods_cell, export_lines as ods_export_lines, export_ods_cell, package_parts, q,
                   repeat, uses_modern_function)
+from .ods_features import (DRAW_PREFIX, SHEET_TAGS, WORKBOOK_TAGS, LayoutStyles, OdsSheetFeatures, OdsWorkbookFeatures,
+                           mapped_styles, pane_modes)
 from .temporal import export_temporal_style
 
 MAX_ROW, MAX_COL = 1_048_576, 16_384
@@ -90,25 +92,28 @@ class _StyleCollector:
 
 
 def _survey(archive, budget, checkpoint):
-    """First pass over content.xml: the sheet names in order, and every style definition (styles.xml first)."""
-    collector = _StyleCollector()
+    """First pass over content.xml: the sheet names in order, every style definition (styles.xml first), the column,
+    row and table styles, and the workbook-wide features."""
+    collector, layout, workbook = _StyleCollector(), LayoutStyles(), OdsWorkbookFeatures()
     if "styles.xml" in archive.namelist():
         root = xlsx_stream._read_whole(archive, "styles.xml", budget)
         for item in root.iter():
-            if item.tag in STYLE_DEFINITION_TAGS: collector.add(item)
+            if item.tag in STYLE_DEFINITION_TAGS: collector.add(item); layout.add(item)
     names, tags, elements = [], [], 0
     for event, item in xlsx_stream.read_part(archive, "content.xml", budget, record_tags=RECORDS):
         if event == "start":
             if not tags: require(item.tag == DOCUMENT, "INVALID_SPREADSHEET", "Invalid ODS content")
             tags.append(item.tag)
-            if item.tag == TABLE and tags == SHEET_PATH: names.append(item.get(q(T, "name"), ""))
+            if item.tag == TABLE and tags == SHEET_PATH:
+                names.append(item.get(q(T, "name"), "")); workbook.table(item)
             elements += 1
             if elements % ELEMENTS_PER_CHECKPOINT == 0: checkpoint(0, "Reading styles and sheets")
             continue
         tags.pop()
         # Wherever it appears, as the tree reader collects them.
-        if item.tag in STYLE_DEFINITION_TAGS: collector.add(item)
-    return names, collector.styles
+        if item.tag in STYLE_DEFINITION_TAGS: collector.add(item); layout.add(item)
+        elif item.tag in WORKBOOK_TAGS: workbook.end(item)
+    return names, collector.styles, layout, workbook
 
 
 class _SheetReader:
@@ -164,10 +169,12 @@ class _SheetReader:
         self.row += self.repeats
 
 
-def _read_sheets(archive, names, styles, base, sink, progress, conversions):
-    """Second pass over content.xml: convert every sheet's cells into the sink."""
+def _read_sheets(archive, names, styles, base, sink, progress, conversions, survey):
+    """Second pass over content.xml: convert every sheet's cells into the sink and report each sheet's features."""
+    layout, workbook, panes = survey
+    mapped = mapped_styles(styles.styles)
     tags, elements = [], 0
-    sheet = reader = None
+    sheet = reader = features = None
     row_depth = None
     index = 0
     budget = xlsx_stream.ByteBudget(xlsx_stream.LARGE_EXPANDED)  # the same bytes the first pass already bounded
@@ -185,20 +192,24 @@ def _read_sheets(archive, names, styles, base, sink, progress, conversions):
                 context = OdsCellContext(report=sheet, sheet=name, styles=styles, **base)
                 sink.sheet(name)
                 reader = _SheetReader(sink, context, progress)
+                features = OdsSheetFeatures(layout, mapped, panes.get(name))
             elif (item.tag == ROW and reader is not None and row_depth is None and len(tags) >= 5 and tags[:4] == SHEET_PATH
                   and all(tag in ROW_GROUPS for tag in tags[4:-1])):
                 row_depth = len(tags)
                 reader.start_row(item)
             continue
         tags.pop()
+        if features is not None and (item.tag in SHEET_TAGS or item.tag.startswith(DRAW_PREFIX)) and len(tags) >= 3:
+            features.end(tags[3:], item)
         if row_depth is not None:
             if len(tags) == row_depth and item.tag in (CELL, COVERED): reader.cell(item)
             elif len(tags) == row_depth-1:
                 reader.end_row(); row_depth = None
         elif item.tag == TABLE and tags == SHEET_PATH[:3] and reader is not None:
             reader.flush()
+            features.report(sheet, name, workbook.sheet_extra(name))
             conversions.merge(sheet)
-            reader = None
+            reader = features = None
     require(index == len(names), "INVALID_SPREADSHEET", "ODS content changed between reads")
 
 
@@ -218,12 +229,14 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink, checkpoint: Callab
     with xlsx_stream.open_package(path) as archive:
         checkpoint(0, "Reading workbook")
         _check_package(archive, budget)
-        names, styles = _survey(archive, budget, checkpoint)
+        names, styles, layout, workbook = _survey(archive, budget, checkpoint)
         names = validate_sheet_names(names, xlsx_stream.LARGE_SHEETS)
+        settings = xlsx_stream._read_whole(archive, "settings.xml", budget) if "settings.xml" in archive.namelist() else None
         progress = xlsx_stream._Progress(checkpoint)
         conversions = ConversionReport()
+        workbook.report(conversions, layout, archive.namelist())
         base = {"mode": selected_mode, "sheet_names": names, "timezone_policy": policy}
-        _read_sheets(archive, names, styles, base, sink, progress, conversions)
+        _read_sheets(archive, names, styles, base, sink, progress, conversions, (layout, workbook, pane_modes(settings)))
         return conversions
 
 

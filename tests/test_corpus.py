@@ -63,15 +63,28 @@ class CorpusTests(unittest.TestCase):
         expected = [gap for producer, gap in corpus_scorecard.REQUIRED_PRODUCERS if producer not in producers]
         self.assertEqual(self.scorecard["summary"]["gaps"], expected)
 
-    def test_known_unreported_matches_scorecard(self):
-        # Not asserted empty: a later task empties it by adding report entries and tightens this test.
+    def test_every_unsupported_feature_is_reported_in_every_mode(self):
+        # No listed feature of any file, in any mode or status, is dropped without its report entry.
         fresh = corpus_scorecard.known_unreported(self.scorecard["files"], self.provenance)
+        self.assertEqual(fresh, {mode: [] for mode in corpus_scorecard.MODES})
         self.assertEqual(self.scorecard["summary"]["known_unreported"], fresh)
         checked_in = json.loads(corpus_scorecard.DEFAULT_OUT.read_text(encoding="utf-8"))["summary"]
         self.assertEqual(checked_in["known_unreported"], fresh)
         self.assertEqual(checked_in["status_meaning"], corpus_scorecard.STATUS_MEANING)
-        for mode, items in fresh.items():
-            for item in items: self.assertTrue(item["features"], (mode, item))
+
+    def test_every_listed_feature_id_has_a_required_report(self):
+        ids = {feature for entry in self.provenance for feature in entry["unsupported_features"]}
+        self.assertEqual(ids - set(corpus_scorecard.FEATURE_REPORTS), set())
+        self.assertEqual(set(corpus_scorecard.FEATURE_REPORTS_VALUES_MODE) - set(corpus_scorecard.FEATURE_REPORTS), set())
+
+    def test_a_missing_required_entry_is_listed_whatever_the_status(self):
+        files = {"a.xlsx": {mode: {"status": "degraded", "entries": [{"category": "style.font", "severity": "omitted", "detail": "x", "count": 1}]}
+                            for mode in corpus_scorecard.MODES}}
+        provenance = [{"file": "a.xlsx", "unsupported_features": ["merged_cells", "array_formulas"]}]
+        result = corpus_scorecard.known_unreported(files, provenance)
+        self.assertEqual(result["formulas"], [{"file": "a.xlsx", "features": ["array_formulas", "merged_cells"]}])
+        # Values mode replaces every formula by its cache by request, so only the sheet feature is missing.
+        self.assertEqual(result["values"], [{"file": "a.xlsx", "features": ["merged_cells"]}])
 
     def test_readme_states_gaps_and_status_meaning(self):
         readme = (CORPUS / "README.md").read_text(encoding="utf-8")

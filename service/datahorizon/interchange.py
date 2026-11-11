@@ -398,7 +398,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
     selected_mode=mode(request)
     require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
     report=["Only the selected sheet's stored cells are imported; absent cells do not clear the destination.",
-            "Dimensions, other sheets and advanced features are omitted; unsupported styles are listed below.",
+            "Other sheets are omitted. Worksheet and workbook features that are not imported, and unsupported styles, are listed below; no external resources are fetched.",
             "Formulas recalculate with DataHorizon's declared compatibility tier; imported code is never activated."]
     if selected_mode=="values": report.append("Formula caches become literal values. Cache freshness cannot be verified; missing/error caches block import.")
     if selected_mode=="mixed": report.append("Formulas DataHorizon can evaluate stay formulas; those it cannot become their cached values when a usable cache exists. Cache freshness cannot be verified.")
@@ -415,20 +415,26 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         mapping={item.get("Id"):item for item in relationships}
         root=read_xml(archive,worksheet_path(mapping,sheets[selected-1],ns))
         require(root.tag==f"{{{ns.main}}}worksheet","INVALID_SPREADSHEET","Invalid worksheet")
+        from .xlsx_features import SheetFeatures, StringFeatures, relationship_kinds, scan_tree, workbook_features
+        from .xlsx_stream import ByteBudget
         shared=[]
+        strings=StringFeatures(ns)
         shared_path=shared_strings_path(archive,relationships,ns)
         if shared_path:
             table=read_xml(archive,shared_path)
             require(table.tag==f"{{{ns.main}}}sst","INVALID_SPREADSHEET","Shared strings part does not match the workbook's namespaces")
             for item in table:
                 shared.append(xlsx_text(item,ns))
+                strings.string(item)
                 require(len(shared)<=MAX_CELLS,"LIMIT","Shared strings exceed 10,000 entries")
-        features=sorted({item.tag.rsplit("}",1)[-1] for item in root if item.tag!=f"{{{ns.main}}}sheetData"})
-        report.append("Worksheet features outside cell inputs: "+", ".join(features[:40]))
-        advanced=[name for name in archive.namelist() if any(part in name.lower() for part in ("vba","externallink","drawing","chart","pivot","table","comment"))]
-        if advanced: report.append(f"{len(advanced)} advanced package parts are omitted; no external resources are fetched.")
         from .xlsx_styles import XlsxStyles
+        # Workbook features are reported once: here for a selection, by prepare_workbook for a whole workbook.
+        wide=ConversionReport()
+        workbook_features(wide,workbook,ns,archive.namelist(),strings)
         conversions=ConversionReport()
+        if sheet_names is None: conversions.merge(wide)
+        part=worksheet_path(mapping,sheets[selected-1],ns)
+        sheet_features=SheetFeatures(ns,relationship_kinds(archive,part,ByteBudget(MAX_EXPANDED)))
         styles=XlsxStyles(archive,styles_path(archive,relationships,ns),conversions,ns)
         edits,issues=[],[]
         shift=(integer(request.get("row",1),1,1048576,"row")-1,integer(request.get("col",1),1,16384,"col")-1)
@@ -446,6 +452,8 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
             require(count<=MAX_CELLS,"LIMIT","Import exceeds 10,000 stored cells")
             edit=convert_xlsx_cell(cell,context=context)
             if edit is not None: edits.append(edit)
+        scan_tree(root,sheet_features)
+        sheet_features.report(conversions,sheet_label)
         if shared_formulas and shared_formulas.groups: report.append("Shared formulas expand to explicit per-cell sources with relative/absolute reference translation; caches are discarded.")
         report.extend(STYLE_SCOPE_LINES)
         report.extend(conversions.lines())
@@ -455,7 +463,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Spreadsheet preview exceeds 4 MiB")
         if result["can_import"]:
             result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
-        if sheet_names is not None: result["_conversions"]=conversions
+        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=wide
         return result
 
 
@@ -626,6 +634,9 @@ def prepare_workbook(request,checkpoint,names,prepare):
     for index,name in enumerate(names,1):
         checkpoint(index-1,"Reading sheet "+name)
         part=prepare({**request,"scope":"selection","sheet_index":index},checkpoint,sheet_names=names)
+        # Every sheet's preparation reads the same workbook features; they are reported once, first.
+        wide=part.pop("_workbook")
+        if index==1: conversions.merge(wide)
         conversions.merge(part.pop("_conversions"))
         result["stored_cells"]+=part["stored_cells"]
         require(result["stored_cells"]<=MAX_CELLS,"LIMIT","Whole-workbook import exceeds 10,000 stored cells")

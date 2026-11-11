@@ -9,8 +9,18 @@ MAX_CATEGORY = 64
 MAX_SAMPLE_SHEET = 64
 MAX_SAMPLE_CELL = 32
 TRUNCATED_CATEGORY = "report.truncated"
+# A worksheet or workbook feature DataHorizon does not import; the detail is its feature id (see xlsx_features).
+SHEET_FEATURE = "sheet.feature"
+WORKBOOK_FEATURE = "workbook.feature"
+FEATURE_CATEGORIES = (SHEET_FEATURE, WORKBOOK_FEATURE)
 TRUNCATED_DETAIL = "further distinct entries were not itemized"
 _SEVERITY_RANK = {severity: rank for rank, severity in enumerate(SEVERITIES)}
+
+
+def place(sample):
+    """A sample as text: Sheet!A1, a whole sheet, or a bare cell."""
+    if sample.get("cell") is None: return sample.get("sheet") or "workbook"
+    return f"{sample['sheet']}!{sample['cell']}" if sample.get("sheet") else sample["cell"]
 
 
 class ConversionReport:
@@ -19,13 +29,18 @@ class ConversionReport:
         self._items = {}
         self._overflow = 0
 
-    def add(self, category, severity, detail="", *, sheet=None, cell=None, count=1):
+    def add(self, category, severity, detail="", *, sheet=None, cell=None, count=1, places=None):
+        """Record `count` items at one place: a cell, a whole sheet (cell None) or the workbook (both None).
+
+        `places` instead lists several (sheet, cell) places for the same items, such as the hidden sheets."""
         if severity not in _SEVERITY_RANK:
             raise ValueError(f"Unknown severity {severity!r}; expected one of {SEVERITIES}")
         if not isinstance(count, int) or count < 1:
             raise ValueError("count must be a positive integer")
-        samples = ([{"sheet": sheet[:MAX_SAMPLE_SHEET] if sheet is not None else None, "cell": cell[:MAX_SAMPLE_CELL]}]
-                   if cell is not None else [])
+        if places is None: places = [(sheet, cell)]
+        samples = [{"sheet": where[:MAX_SAMPLE_SHEET] if where is not None else None,
+                    "cell": at[:MAX_SAMPLE_CELL] if at is not None else None}
+                   for where, at in places if where is not None or at is not None]
         self._record((category[:MAX_CATEGORY], severity, detail[:MAX_DETAIL]), count, samples)
 
     def merge(self, other):
@@ -71,10 +86,8 @@ class ConversionReport:
 
     @staticmethod
     def _line(entry):
-        noun = "cell" if entry["count"] == 1 else "cells"
-        line = f"{entry['count']} {noun}: {entry['detail'] or entry['category']} ({entry['severity']})"
+        noun = "item" if entry["category"] in FEATURE_CATEGORIES else "cell"
+        line = f"{entry['count']} {noun}{'' if entry['count'] == 1 else 's'}: {entry['detail'] or entry['category']} ({entry['severity']})"
         if entry["samples"]:
-            first = entry["samples"][0]
-            place = f"{first['sheet']}!{first['cell']}" if first["sheet"] else first["cell"]
-            line += f"; first at {place}"
+            line += f"; first at {place(entry['samples'][0])}"
         return line

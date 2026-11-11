@@ -27,13 +27,21 @@ class ConversionReportTests(unittest.TestCase):
     def test_unknown_severity_is_a_programming_error(self):
         with self.assertRaises(ValueError): ConversionReport().add("x","lost")
 
-    def test_sample_needs_a_cell_and_sheet_may_be_missing(self):
+    def test_a_sample_without_a_cell_is_sheet_wide_and_without_both_is_workbook_wide(self):
         report=ConversionReport()
         report.add("a","omitted","d",sheet="S")
         report.add("a","omitted","d",cell="C3")
+        report.add("a","omitted","d")
         (entry,)=report.entries()
-        self.assertEqual(entry["count"],2)
-        self.assertEqual(entry["samples"],[{"sheet":None,"cell":"C3"}])
+        self.assertEqual(entry["count"],3)
+        self.assertEqual(entry["samples"],[{"sheet":"S","cell":None},{"sheet":None,"cell":"C3"}])
+
+    def test_places_give_one_entry_several_samples(self):
+        report=ConversionReport()
+        report.add("sheet.feature","omitted","hidden_sheets",count=2,places=[("A",None),("B",None)])
+        (entry,)=report.entries()
+        self.assertEqual((entry["count"],entry["samples"]),(2,[{"sheet":"A","cell":None},{"sheet":"B","cell":None}]))
+        self.assertEqual(report.lines(),["2 items: hidden_sheets (omitted); first at A"])
 
     def test_detail_is_truncated_and_distinguishes_entries(self):
         report=ConversionReport()

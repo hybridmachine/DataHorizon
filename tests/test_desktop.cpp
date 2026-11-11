@@ -3140,6 +3140,24 @@ private slots:
         QCOMPARE(QDir(temp.filePath("out")).entryList(QDir::Files|QDir::Hidden|QDir::NoDotAndDotDot),QStringList());
         QCOMPARE(opened.count(),1);
     }
+    void reportViewLabelsFeatureEntries() {
+        ConversionReportView view;
+        const QJsonObject merged{{"category","sheet.feature"},{"severity","omitted"},{"detail","merged_cells"},{"count",2},
+                                 {"samples",QJsonArray{QJsonObject{{"sheet","Sheet1"},{"cell",QJsonValue()}}}}};
+        const QJsonObject names{{"category","workbook.feature"},{"severity","omitted"},{"detail","defined_names"},{"count",3},{"samples",QJsonArray{}}};
+        const QJsonObject unknown{{"category","sheet.feature"},{"severity","omitted"},{"detail","future_feature"},{"count",1},{"samples",QJsonArray{}}};
+        view.setReport({{"report_entries",QJsonArray{merged,names,unknown}}});
+        auto *group=view.tree()->topLevelItem(0); QCOMPARE(group->text(0),QString("Left out")); QCOMPARE(group->childCount(),3);
+        auto *row=group->child(0);
+        QCOMPARE(row->text(0),QString("Sheet feature")); QCOMPARE(row->text(1),QString("Merged cells")); QCOMPARE(row->text(2),QString("2"));
+        QCOMPARE(row->data(1,Qt::UserRole).toString(),QString("merged_cells"));
+        QVERIFY(row->toolTip(1).contains("merged_cells"));
+        // A sample without a cell is the whole sheet.
+        QCOMPARE(row->childCount(),1); QCOMPARE(row->child(0)->text(0),QString("Sheet1"));
+        QCOMPARE(group->child(1)->text(0),QString("Workbook feature")); QCOMPARE(group->child(1)->text(1),QString("Defined names"));
+        // An id this build does not know shows as it is.
+        QCOMPARE(group->child(2)->text(1),QString("future_feature"));
+    }
     void reportViewShowsPlainTextForMarkupInSheetNames() {
         ConversionReportView view;
         QCOMPARE(view.objectName(),QString("conversionReport"));

@@ -46,15 +46,66 @@ def score_file(client, path, mode):
 
 
 STATUS_MEANING = ("clean means the importer produced no report entry for the file in that mode; it does not mean the file's "
-                  "features were preserved. degraded means at least one report entry; rejected means the import failed.")
+                  "features were preserved, only that none of them was reported as changed or left out. degraded means at least "
+                  "one report entry; rejected means the import failed. known_unreported lists, per mode and in every status, each "
+                  "listed unsupported feature of a file whose required report entry is missing: features dropped without a report.")
+
+# The report entry that shows each unsupported_features id was reported: any one of the (category, detail) pairs,
+# where a detail of None accepts any detail and a callable detail tests it. FEATURE_REPORTS_VALUES_MODE overrides an
+# id in values mode, where every formula is replaced by its cached value by request; None means no entry is needed.
+FEATURE_REPORTS = {
+    "merged_cells": (("sheet.feature", "merged_cells"),),
+    "column_widths": (("sheet.feature", "column_widths"),),
+    "row_heights": (("sheet.feature", "row_heights"),),
+    "hidden_rows_columns": (("sheet.feature", "hidden_rows_columns"),),
+    "frozen_panes": (("sheet.feature", "frozen_panes"),),
+    "conditional_formatting": (("sheet.feature", "conditional_formatting"),),
+    "data_validation": (("sheet.feature", "data_validation"),),
+    "hyperlinks": (("sheet.feature", "hyperlinks"),),
+    "comments": (("sheet.feature", "comments"),),
+    "excel_tables": (("sheet.feature", "excel_tables"),),
+    "defined_names": (("workbook.feature", "defined_names"), ("formula.name", None)),
+    "external_references": (("workbook.feature", "external_references"), ("formula.external_reference", None)),
+    "custom_number_formats": (("style.number_format", None),),
+    "named_styles": (("style.named_style", None),),
+    "theme_colours": (("style.font", lambda detail: "theme" in detail), ("style.fill", lambda detail: "theme" in detail)),
+    "error_values": (("cell.error_value", None),),
+    "array_formulas": (("formula.array", None),),
+    "data_tables": (("formula.data_table", None),),
+    "3d_references": (("formula.unsupported_reference", None),),
+}
+FEATURE_REPORTS_VALUES_MODE = {"array_formulas": None, "data_tables": None, "3d_references": None}
+
+
+def required_reports(feature, mode):
+    if mode == "values" and feature in FEATURE_REPORTS_VALUES_MODE: return FEATURE_REPORTS_VALUES_MODE[feature]
+    return FEATURE_REPORTS[feature]
+
+
+def reported(feature, mode, entries):
+    required = required_reports(feature, mode)
+    if required is None: return True
+    for category, detail in required:
+        for entry in entries:
+            if entry["category"] != category: continue
+            if detail is None or (callable(detail) and detail(entry["detail"])) or entry["detail"] == detail: return True
+    return False
 
 
 def known_unreported(files, provenance):
-    """Per mode, the files that import `clean` although their provenance lists features DataHorizon does not yet
-    import: those features are dropped without any report entry (the measure of silent loss)."""
+    """Per mode, each (file, feature) whose provenance lists a feature DataHorizon does not import and whose required
+    report entry (FEATURE_REPORTS) is absent, whatever the file's status: the measure of silent loss. A rejected file
+    reports nothing, so all of its listed features count."""
     listed = {entry["file"]: sorted(entry.get("unsupported_features", [])) for entry in provenance}
-    return {mode: [{"file": name, "features": listed[name]} for name in sorted(files)
-                   if files[name][mode]["status"] == "clean" and listed[name]] for mode in MODES}
+    result = {}
+    for mode in MODES:
+        missing = []
+        for name in sorted(files):
+            entries = files[name][mode].get("entries", [])
+            features = [feature for feature in listed[name] if not reported(feature, mode, entries)]
+            if features: missing.append({"file": name, "features": features})
+        result[mode] = missing
+    return result
 
 
 def summarize(files, provenance):

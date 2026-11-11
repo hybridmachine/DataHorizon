@@ -31,9 +31,10 @@ def manifest_document(entries=""):
             f'<manifest:file-entry manifest:full-path="/" manifest:media-type="{MIME}"/>{entries}</manifest:manifest>')
 
 
-def workbook_bytes(sheets, *, styles="", styles_xml=None, manifest=None, content=None, timestamp=None):
-    """`content` replaces the generated content.xml; styles_xml and manifest add those parts; timestamp (a 6-tuple)
-    fixes the ZIP entry times so the package is reproducible."""
+def workbook_bytes(sheets, *, styles="", styles_xml=None, manifest=None, content=None, timestamp=None, extra_parts=None):
+    """`content` replaces the generated content.xml; styles_xml and manifest add those parts; extra_parts maps further
+    part names (such as settings.xml) to their data; timestamp (a 6-tuple) fixes the ZIP entry times so the package
+    is reproducible."""
     output = io.BytesIO()
     def put(archive, name, data, compress):
         archive.writestr(zipfile.ZipInfo(name, timestamp) if timestamp else name, data, compress_type=compress)
@@ -42,4 +43,5 @@ def workbook_bytes(sheets, *, styles="", styles_xml=None, manifest=None, content
         put(archive, "content.xml", content if content is not None else content_xml(sheets, styles=styles), zipfile.ZIP_DEFLATED)
         if styles_xml is not None: put(archive, "styles.xml", styles_xml, zipfile.ZIP_DEFLATED)
         if manifest is not None: put(archive, "META-INF/manifest.xml", manifest, zipfile.ZIP_DEFLATED)
+        for name, data in (extra_parts or {}).items(): put(archive, name, data, zipfile.ZIP_DEFLATED)
     return output.getvalue()

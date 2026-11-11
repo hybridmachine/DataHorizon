@@ -429,13 +429,14 @@ def openapi():
     report_example=[{"category":"style.border","severity":"approximated","detail":"Border colors map to the native default color.","count":1,"samples":[{"sheet":"Sheet1","cell":"A1"}]}]
     totals_example={"converted":0,"approximated":1,"omitted":0,"unevaluable":0}
     schemas["ReportEntry"]={"type":"object","required":["category","severity","detail","count","samples"],"properties":{
-        "category":{"type":"string","description":"Stable dotted category, such as style.border or formula.function"},
+        "category":{"type":"string","description":"Stable dotted category, such as style.border or formula.unsupported_function. "
+                    "sheet.feature and workbook.feature mark a worksheet or workbook feature that is not imported; their detail is a stable feature id such as merged_cells or defined_names"},
         "severity":{"type":"string","enum":list(severities),"description":
             "converted: stored in another form (for example a formula replaced by its cached value, or an error value kept as text); "
             "approximated: kept with a close but not identical meaning; omitted: dropped; unevaluable: a formula kept that DataHorizon cannot calculate"},
-        "detail":{"type":"string"},"count":{"type":"integer","minimum":1,"description":"Cells (or items) this entry covers"},
-        "samples":{"type":"array","maxItems":100,"description":"First locations in reading order; a null sheet is workbook-wide",
-                   "items":{"type":"object","properties":{"sheet":{"type":"string","nullable":True},"cell":{"type":"string"}}}}},
+        "detail":{"type":"string"},"count":{"type":"integer","minimum":1,"description":"Cells (or, for a feature entry, items such as merged ranges, rules or columns) this entry covers"},
+        "samples":{"type":"array","maxItems":100,"description":"First locations in reading order; a null cell is sheet-wide and a null sheet is workbook-wide",
+                   "items":{"type":"object","properties":{"sheet":{"type":"string","nullable":True},"cell":{"type":"string","nullable":True}}}}},
         "description":"One merged line of a conversion report. Entries are ordered by severity (unevaluable, omitted, approximated, converted), then count; at most 200, the last of which may summarise the remainder.",
         "example":report_example[0]}
     schemas["ReportTotals"]={"type":"object","required":list(severities),"properties":{key:{"type":"integer","minimum":0} for key in severities},

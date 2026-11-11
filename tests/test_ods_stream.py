@@ -21,6 +21,7 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ods_builder import content_xml, manifest_document, styles_document, workbook_bytes
+from test_ods_degrade import FEATURE_TABLE, LAYOUT_STYLES, SPREADSHEET_AFTER, SPREADSHEET_BEFORE, feature_content, settings
 from xlsx_builder import workbook_bytes as xlsx_bytes
 
 from datahorizon import ods_stream
@@ -152,7 +153,7 @@ class CountingSink:
 
 
 def sorted_entries(entries):
-    return [{**e, 'samples': sorted(e['samples'], key=lambda s: (s['sheet'] or '', s['cell']))} for e in entries]
+    return [{**e, 'samples': sorted(e['samples'], key=lambda s: (s['sheet'] or '', s['cell'] or ''))} for e in entries]
 
 
 class StreamingReaderTests(unittest.TestCase):
@@ -227,6 +228,29 @@ class StreamingReaderTests(unittest.TestCase):
                         sink, report = self.stream(data, mode, timezone_policy=policy)
                         self.assertEqual(sink.sheets, [(s['name'], s['cells']) for s in tree['workbook_sheets']])
                         self.assertEqual(sorted_entries(report.entries()), sorted_entries(tree['report_entries']))
+
+    def test_feature_entries_agree_with_the_tree_reader(self):
+        content = feature_content(FEATURE_TABLE + FEATURE_TABLE.replace('table:name="Sheet1"', 'table:name="Two"')
+                                  + '<table:table table:name="Hidden" table:style-name="ta2"/>',
+                                  before=SPREADSHEET_BEFORE, after=SPREADSHEET_AFTER, spreadsheet_attributes=' table:structure-protected="true"')
+        data = workbook_bytes({}, content=content, extra_parts={"settings.xml": settings(("Two", 2, 2)), "Object 1/content.xml": "<x/>"})
+        for mode in MODES:
+            with self.subTest(mode=mode):
+                _, report = self.assert_agree(data, mode)
+                found = {(e['category'], e['detail']): e for e in report.entries() if e['category'].endswith('.feature')}
+                self.assertEqual(found[('sheet.feature', 'merged_cells')]['samples'], [{'sheet': 'Sheet1', 'cell': None}, {'sheet': 'Two', 'cell': None}])
+                self.assertEqual(found[('sheet.feature', 'frozen_panes')]['samples'], [{'sheet': 'Two', 'cell': None}])
+                self.assertEqual(found[('sheet.feature', 'auto_filter')]['samples'], [{'sheet': 'Sheet1', 'cell': None}])
+                for key in (('workbook.feature', 'defined_names'), ('workbook.feature', 'hidden_sheets'), ('workbook.feature', 'embedded_objects'),
+                            ('sheet.feature', 'comments'), ('sheet.feature', 'hyperlinks'), ('sheet.feature', 'conditional_formatting'),
+                            ('sheet.feature', 'column_widths'), ('sheet.feature', 'row_heights')):
+                    self.assertIn(key, found)
+
+    def test_layout_styles_after_the_body_still_agree(self):
+        late = feature_content(FEATURE_TABLE, styles="").replace(
+            '</office:body>', f'</office:body><office:automatic-styles>{LAYOUT_STYLES}</office:automatic-styles>')
+        _, report = self.assert_agree(workbook_bytes({}, content=late), 'formulas')
+        self.assertIn('row_heights', {e['detail'] for e in report.entries()})
 
     def test_style_definitions_after_the_body_still_agree(self):
         late = content_xml({'S': row(cell(1, style='late'))}).replace(

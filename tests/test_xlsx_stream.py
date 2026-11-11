@@ -15,6 +15,7 @@ from datahorizon.engine import EngineError, require
 from datahorizon.interchange import STRICT, TRANSITIONAL, workbook_report, xlsx_preview, xlsx_text
 from datahorizon.xlsx_stream import ByteBudget, open_package, read_part, read_workbook, scope_lines
 from xlsx_builder import workbook_bytes
+from test_xlsx_degrade import FEATURE_SHEET_AFTER, FEATURE_SHEET_BEFORE
 
 FIXTURE = Path(__file__).parent/"fixtures"/"fidelity.xlsx"
 CHUNK = 65536
@@ -270,6 +271,44 @@ class StreamingReaderTests(unittest.TestCase):
             self.assertEqual(strict.sheets, transitional.sheets)
             self.assertEqual(strict_report.entries(), transitional_report.entries())
             self.assert_agree(rich_package(True), mode)
+
+    def test_feature_entries_agree_with_the_tree_reader(self):
+        rels = ('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                f'<Relationship Id="rId1" Type="{TRANSITIONAL.rel}/comments" Target="../comments1.xml"/></Relationships>')
+        after = (FEATURE_SHEET_AFTER + '<legacyDrawing r:id="rId1"/><tableParts count="1"><tablePart r:id="rId2"/></tableParts>'
+                 '<extLst><ext uri="{x}"><x14:sparklineGroups xmlns:x14="urn:x14"><x14:sparklineGroup/></x14:sparklineGroups></ext></extLst>')
+        before = ('<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" state="frozen"/></sheetView></sheetViews>' + FEATURE_SHEET_BEFORE)
+        rows = ('<row r="1" ht="30" customHeight="1"><c r="A1" t="s"><v>0</v></c><c r="B1" vm="1"><v>2</v></c></row>'
+                '<row r="2" hidden="1"><c r="A2" t="inlineStr"><is><r><rPr><i/></rPr><t>x</t></r></is></c></row>')
+        names = '<definedNames><definedName name="N">Data!$A$1</definedName></definedNames>'
+        for strict in (False, True):
+            ns = STRICT if strict else TRANSITIONAL
+            data = workbook_bytes({"Data": rows, "Other": rows, "Blank": ""}, strict=strict, shared_strings=["s"],
+                                  sheet_before={"Data": before}, sheet_after={"Data": after, "Other": after},
+                                  workbook_after_sheets=names, extra_parts={"xl/worksheets/_rels/sheet1.xml.rels": rels,
+                                                                            "xl/charts/chart1.xml": "<c/>"})
+            for mode in ("mixed", "formulas", "values"):
+                with self.subTest(strict=strict, mode=mode):
+                    _, report = self.assert_agree(data, mode)
+                    found = {(e["category"], e["detail"]): e for e in report.entries() if e["category"].endswith(".feature")}
+                    self.assertEqual(found[("sheet.feature", "merged_cells")]["count"], 4)
+                    self.assertEqual(found[("sheet.feature", "merged_cells")]["samples"], [{"sheet": "Data", "cell": None}, {"sheet": "Other", "cell": None}])
+                    self.assertEqual(found[("sheet.feature", "comments")]["samples"], [{"sheet": "Data", "cell": None}])
+                    self.assertEqual(found[("sheet.feature", "legacy_drawings")]["samples"], [{"sheet": "Other", "cell": None}])
+                    for key in (("sheet.feature", "frozen_panes"), ("sheet.feature", "sparklines"), ("sheet.feature", "rich_values"),
+                                ("sheet.feature", "rich_text"), ("sheet.feature", "row_heights"), ("sheet.feature", "hidden_rows_columns"),
+                                ("workbook.feature", "defined_names"), ("workbook.feature", "charts")):
+                        self.assertIn(key, found)
+
+    def test_feature_relationships_are_read_as_a_stream(self):
+        # One relationship per hyperlink: more than the tree reader's whole-part node bound must not reject.
+        rels = ('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                + "".join(f'<Relationship Id="r{i}" Type="{TRANSITIONAL.rel}/hyperlink" Target="https://example.com/{i}" TargetMode="External"/>'
+                          for i in range(120_000)) + "</Relationships>")
+        data = workbook_bytes({"S": '<row r="1"><c r="A1"><v>1</v></c></row>'}, sheet_after={"S": '<hyperlinks><hyperlink ref="A1" r:id="r0"/></hyperlinks>'},
+                              extra_parts={"xl/worksheets/_rels/sheet1.xml.rels": rels})
+        _, report = self.stream(data)
+        self.assertEqual([(e["detail"], e["count"]) for e in report.entries()], [("hyperlinks", 1)])
 
     def test_scope_lines_are_the_workbook_scope_lines(self):
         self.assertEqual(scope_lines({"mode": "values"}), workbook_report())

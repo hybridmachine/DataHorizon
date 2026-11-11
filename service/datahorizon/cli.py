@@ -14,6 +14,7 @@ import unicodedata
 from urllib.parse import quote
 
 from .client import APIError, Client, LocalService, write_file
+from .conversion_report import place
 from .formula import FormulaError, coordinates
 
 
@@ -120,7 +121,7 @@ def report_text(review):
     rank = {severity: index for index, severity in enumerate(SEVERITY_ORDER)}
     for entry in sorted(entries, key=lambda item: rank.get(item["severity"], len(rank))):
         first = (entry.get("samples") or [None])[0]
-        where = "" if first is None else "; first at " + (f"{first['sheet']}!{first['cell']}" if first.get("sheet") else first.get("cell", "workbook"))
+        where = "" if first is None else "; first at " + place(first)
         lines.append(f"  {entry['severity']:<12} {entry['count']:>7}  {entry['category']}: {entry['detail']}{where}")
     if "sheets" in review:
         lines.append("Sheets:")
