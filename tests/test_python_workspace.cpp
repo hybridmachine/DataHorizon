@@ -153,6 +153,21 @@ QWidget *openNameManager(MainWindow &window) {
     return dialog;
 }
 
+// Records whether a widget's tooltip ever contained a text, even if it is
+// replaced again before the test looks.
+class TooltipWatch : public QObject {
+public:
+    TooltipWatch(QWidget *widget,QString text):m_widget(widget),m_text(std::move(text)){widget->installEventFilter(this);}
+    bool sawStale=false;
+protected:
+    bool eventFilter(QObject *object,QEvent *event) override {
+        if(object==m_widget && event->type()==QEvent::ToolTipChange && m_widget->toolTip().contains(m_text))sawStale=true;
+        return false;
+    }
+private:
+    QWidget *m_widget;QString m_text;
+};
+
 const QString kDraft=QStringLiteral("Draft · not saved to the workbook");
 const QString kSaved=QStringLiteral("Saved in workbook");
 
@@ -715,6 +730,76 @@ private slots:
         ModalDriver driver([](QWidget *modal){auto *box=qobject_cast<QMessageBox *>(modal);if(!box || box->objectName()!="deleteNameConfirm")return false;box->button(QMessageBox::Yes)->click();return true;});
         dialog->findChild<QPushButton *>("deleteNameButton")->click();QCOMPARE(driver.handled,1);
         QTRY_VERIFY_WITH_TIMEOUT(findName(window,"Spare").isEmpty(),10000);QCOMPARE(window.names().size(),1);
+    }
+
+    void staleNamesReadRefreshesAndReadsAgain() {
+        QTemporaryDir temp;const auto path=temp.filePath("stale-names.dhwb");StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,path));QVERIFY(saveName(window,"Total","Sheet1!D6"));
+        auto *dialog=openNameManager(window);QVERIFY(dialog);
+        // With the relational view shown the grid reads no cells, so the names
+        // read is the only request that can notice the competing change.
+        window.findChild<QAction *>("relationalWorkbenchAction")->trigger();
+        TooltipWatch summaryWatch(window.findChild<QLabel *>("selectionSummary"),"Stored data changed");
+        // Right after the next commit, while the post-commit refresh is already
+        // in flight, another process stores a name in the same file. The
+        // refreshed state the window accepts is then stale when it reads names.
+        bool competed=false;int exitCode=-1;
+        connect(&window,&MainWindow::operationReceipt,this,[&](QJsonObject receipt){
+            if(competed || receipt["outcome"]!="committed")return;competed=true;
+            QProcess cli;auto environment=QProcessEnvironment::systemEnvironment();environment.insert("PYTHONPATH",QString(DATAHORIZON_FIXTURES)+"/../../service");cli.setProcessEnvironment(environment);
+            cli.start("python3",{"-m","datahorizon.cli",path,"names","save"});cli.write(R"({"name":"Remote","reference":"Sheet1!C1"})");cli.closeWriteChannel();
+            if(cli.waitForFinished(30000))exitCode=cli.exitCode();});
+        window.submit({{"action","name_save"},{"name","Local"},{"reference","Sheet1!B1"}});
+        QTRY_VERIFY_WITH_TIMEOUT(competed,10000);QCOMPARE(exitCode,0);
+        // No manual refresh: the stale names reply refreshes the workbook and reads again.
+        QTRY_VERIFY_WITH_TIMEOUT(!findName(window,"Remote").isEmpty(),15000);
+        QVERIFY(!findName(window,"Local").isEmpty());QVERIFY(!findName(window,"Total").isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT(dialog->findChild<QPushButton *>("newNameButton")->isEnabled(),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(nameItem(dialog,"Remote"),5000);
+        // The names reply itself started the refresh: the selection summary
+        // (debounced 250 ms) never had to discover the stale state.
+        QTest::qWait(400);QVERIFY(!summaryWatch.sawStale);
+    }
+
+    void namesPendingReadAreNotUsed() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("pending.dhwb")));QVERIFY(saveName(window,"Total","Sheet1!D6"));
+        auto *grid=window.findChild<QTableView *>("grid");auto *address=window.findChild<QLineEdit *>("address");
+        // While the names read for a new state is pending, the address box shows
+        // plain addresses and name jumps wait.
+        bool checked=false;QString shown;
+        connect(&window,&MainWindow::workbookReady,this,[&]{
+            if(checked)return;checked=true;
+            grid->setFocus();grid->setCurrentIndex(window.model()->index(5,3));shown=address->text();
+            address->setText("total");address->setModified(true);emit address->returnPressed();});
+        QVERIFY(refreshWindow(window));
+        QVERIFY(checked);QCOMPARE(shown,QString("D6"));QVERIFY(issues(window).contains("Names are being read. Try again in a moment."));
+        QCOMPARE(grid->currentIndex(),window.model()->index(5,3));
+        grid->setFocus();grid->setCurrentIndex(window.model()->index(5,4));grid->setCurrentIndex(window.model()->index(5,3));
+        QTRY_COMPARE_WITH_TIMEOUT(address->text(),QString("Total"),5000);
+    }
+
+    void completionOnlyInsideStringsAndAfterCtx() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("contexts.dhwb")));
+        QVERIFY(saveName(window,"Total","Sheet1!D6"));
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));
+        auto *code=qobject_cast<CodeEditor *>(editor(workspace));auto *completer=code->findChild<QCompleter *>("codeCompleter");
+        workspace->activateWindow();code->setFocus();
+        QTRY_VERIFY_WITH_TIMEOUT(code->completionNames().contains("Total"),5000);
+        // Plain code: no popup, Return is a newline and Tab indents.
+        QTest::keyClicks(code,"to");QVERIFY(!completer->popup()->isVisible());
+        QTest::keyClick(code,Qt::Key_Return);QTest::keyClick(code,Qt::Key_Tab);QCOMPARE(code->toPlainText(),QString("to\n    "));
+        // Names inside a string literal; nothing after the string closes or in a comment.
+        QTest::keyClicks(code,"ctx.value(\"To");QTRY_VERIFY_WITH_TIMEOUT(completer->popup()->isVisible(),2000);QCOMPARE(completer->currentCompletion(),QString("Total"));
+        QTest::keyClick(code,Qt::Key_Escape);QTest::keyClicks(code,"\") # To");QVERIFY(!completer->popup()->isVisible());
+        QTest::keyClick(code,Qt::Key_Return);
+        // Context methods directly after ctx. only.
+        QTest::keyClicks(code,"ctx.va");QTRY_VERIFY_WITH_TIMEOUT(completer->popup()->isVisible(),2000);
+        QStringList offered;for(int row=0;completer->setCurrentRow(row);++row)offered.append(completer->currentCompletion());
+        QCOMPARE(offered,(QStringList{"value","values"}));
+        QTest::keyClick(code,Qt::Key_Escape);QTest::keyClicks(code," + other.va");QVERIFY(!completer->popup()->isVisible());
+        QCOMPARE(code->toPlainText(),QString("to\n    ctx.value(\"To\") # To\nctx.va + other.va"));
     }
 
     void completionOffersNames() {

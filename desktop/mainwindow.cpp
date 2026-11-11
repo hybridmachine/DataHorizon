@@ -299,7 +299,8 @@ void MainWindow::showNameManager() {
     if(!m_nameManager) {
         m_nameManager=new NameManagerDialog(this);connectNamesPanel(m_nameManager->panel());
         connect(m_nameManager->panel(),&NamesPanel::insertRequested,this,[this](const QString &name){
-            const auto found=nameByText(name);if(found.isEmpty() || m_busy || m_unknown || m_info.isEmpty())return;
+            if(m_busy || m_unknown || m_info.isEmpty())return;
+            const auto found=nameByText(name);if(found.isEmpty())return;
             if(m_relationalActive){issue(tr("Return to sheets before going to a name."));return;}
             if(m_model->projected()){issue("Clear the list view before navigating by source address.");return;}
             goToName(found);});
@@ -313,11 +314,17 @@ void MainWindow::showNameManager() {
 // from another workbook are never shown.
 void MainWindow::readNames(const QJsonObject &info) {
     if(info["id"].toString()!=m_namesHandle){clearNames();m_namesHandle=info["id"].toString();}
-    m_namesReady=false;updateNameControls();
+    m_namesReady=false;updateNameControls();updateAddress();
     const auto generation=++m_namesGeneration;
     m_client->request(base()+"/names",{{"expected_state",info["state"]}},[this,generation](QJsonObject result,QString error){
         if(generation!=m_namesGeneration)return;
-        if(!error.isEmpty()){if(result["code"]!="STALE_STATE"){m_namesReadFailed=true;nameMessage(tr("Names could not be read: %1. They are read again when the workbook refreshes.").arg(error));}return;}
+        // A stale reply means the workbook changed outside this window: refresh
+        // as other stale reads do, and the refreshed state reads names again.
+        // Each stale reply asks for at most one refresh.
+        if(!error.isEmpty()){
+            if(result["code"]=="STALE_STATE"){m_model->externalChange();return;}
+            m_namesReadFailed=true;nameMessage(tr("Names could not be read: %1. They are read again when the workbook refreshes.").arg(error));return;
+        }
         if(m_namesReadFailed){m_namesReadFailed=false;nameMessage({});}
         QList<QJsonObject> sorted;for(const auto &value:result["names"].toArray())sorted.append(value.toObject());
         std::stable_sort(sorted.begin(),sorted.end(),[](const QJsonObject &a,const QJsonObject &b){return a["name"].toString().compare(b["name"].toString(),Qt::CaseInsensitive)<0;});
@@ -379,7 +386,9 @@ QJsonObject MainWindow::nameByText(const QString &text) const {
 // The first name, in case-insensitive order, whose rectangle on the current
 // sheet is exactly the selection.
 QString MainWindow::selectionName() const {
-    if(m_names.isEmpty() || m_model->projected())return {};
+    // Rectangles from before a pending read can be stale (a structural edit
+    // moves them), so only names read for the current state are shown.
+    if(!m_namesReady || m_names.isEmpty() || m_model->projected())return {};
     const auto ranges=m_grid->selectionModel()->selection();if(ranges.size()!=1)return {};
     const auto &range=ranges.first();
     for(const auto &value:m_names) {
@@ -474,6 +483,7 @@ void MainWindow::submitName(QWidget *parent,const QJsonObject &target,QJsonObjec
 }
 
 void MainWindow::goToName(const QJsonObject &name) {
+    if(!m_namesReady){issue(tr("Names are being read. Try again in a moment."));return;}
     const auto label=name["name"].toString();
     if(name["broken"].toBool()){issue(tr("Name %1 no longer refers to any cells").arg(label));return;}
     const int r1=name["row1"].toInt(),c1=name["col1"].toInt(),r2=name["row2"].toInt(),c2=name["col2"].toInt();
@@ -946,6 +956,7 @@ void MainWindow::buildUi() {
         const auto text=m_address->text().trimmed();
         const auto match=QRegularExpression("^\\$?([A-Za-z]{1,3})\\$?([1-9][0-9]{0,6})(?::\\$?([A-Za-z]{1,3})\\$?([1-9][0-9]{0,6}))?$").match(text);
         if(!match.hasMatch()) {
+            if(!m_namesReady){issue(tr("Names are being read. Try again in a moment."));return;}
             const auto name=nameByText(text);
             if(!name.isEmpty()){goToName(name);return;}
             static const QRegularExpression identifier(QStringLiteral("^[A-Za-z_][A-Za-z0-9_]*$"));

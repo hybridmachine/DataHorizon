@@ -82,16 +82,40 @@ private:
         CodeEditor *m_editor;
     };
     void updateMargin(){setViewportMargins(lineNumberWidth(),0,0,0);}
-    // Offers completions for the identifier before the cursor once it has two
-    // or more characters: context methods after "ctx.", workbook names elsewhere.
+    // Where the text before the cursor on this line ends: in code, or inside a
+    // string literal (single or double quoted, backslash escapes) whose
+    // content so far is returned. A # outside a string starts a comment.
+    static bool openString(const QString &line,QString *content) {
+        QChar quote;int start=0;
+        for(int i=0;i<line.size();++i) {
+            const auto ch=line[i];
+            if(quote.isNull()) {
+                if(ch==u'#')return false;
+                if(ch==u'"' || ch==u'\''){quote=ch;start=i+1;}
+            } else if(ch==u'\\')++i;
+            else if(ch==quote)quote=QChar();
+        }
+        if(quote.isNull())return false;
+        *content=line.mid(start);return true;
+    }
+    // Offers completions once two or more identifier characters are typed, in
+    // the only places they are used: workbook names at the start of a string
+    // literal (ctx.value("To…), and context methods directly after "ctx.".
+    // Anywhere else no popup appears, so Return and Tab keep their meaning.
     void updateCompletion() {
         auto *popup=m_completer->popup();
         if(isReadOnly()){popup->hide();return;}
         const auto cursor=textCursor();const auto before=cursor.block().text().left(cursor.positionInBlock());
-        static const QRegularExpression word(QStringLiteral("([A-Za-z_][A-Za-z0-9_]*)$")),context(QStringLiteral("(?:^|[^A-Za-z0-9_.])ctx\\.$"));
-        const auto match=word.match(before);const auto prefix=match.hasMatch()?match.captured(1):QString();
-        if(prefix.size()<2){popup->hide();return;}
-        auto *model=context.match(before.left(before.size()-prefix.size())).hasMatch()?m_methods:m_names;
+        static const QRegularExpression word(QStringLiteral("([A-Za-z_][A-Za-z0-9_]*)$")),identifier(QStringLiteral("^[A-Za-z_][A-Za-z0-9_]*$")),
+            context(QStringLiteral("(?:^|[^A-Za-z0-9_.])ctx\\.$"));
+        QString prefix,content;QStringListModel *model=nullptr;
+        if(openString(before,&content)) {
+            if(identifier.match(content).hasMatch()){prefix=content;model=m_names;}
+        } else {
+            const auto match=word.match(before);
+            if(match.hasMatch() && context.match(before.left(before.size()-match.captured(1).size())).hasMatch()){prefix=match.captured(1);model=m_methods;}
+        }
+        if(!model || prefix.size()<2){popup->hide();return;}
         if(m_completer->model()!=model)m_completer->setModel(model);
         m_completer->setCompletionPrefix(prefix);
         if(m_completer->completionCount()==0 || (m_completer->completionCount()==1 && m_completer->currentCompletion()==prefix)){popup->hide();return;}
