@@ -68,7 +68,11 @@ public:
     // pickStillValid holds, and reports the end through pickFinished.
     void insertPickedReference(const QString &reference);
     bool pickStillValid() const;
+    // Ends either pick: the editor's, or the Events tab's single-shot scope
+    // pick (armed on scopePickRequested(true), filled by insertPickedScope).
     void pickFinished(const QString &problem = {});
+    void insertPickedScope(const QString &reference);
+    bool scopePickStillValid() const;
     // Review & approve: ownsService says whether the owning window started its
     // service; grant sends one exact activation key over its private channel
     // and returns false when nothing was sent.
@@ -90,6 +94,9 @@ signals:
     // A read found the workbook state stale; the owning window refreshes.
     void refreshRequested();
     void pickFromSheetRequested(bool on);
+    void scopePickRequested(bool on);
+    // Every catalog read for a workbook handle, shown or not.
+    void codeCatalogRead(QString handle,QJsonObject catalog);
     void issue(QString message);
     // Asks the owning window to cancel the run this workspace has in flight.
     void cancelRunRequested(QString operation);
@@ -105,7 +112,7 @@ private:
         QString workbookId;       // drafts never save into another workbook
         bool conflict=false;      // its own stored module changed since the base
     };
-    enum class Pending {None,Save,Rename,Delete,Run};
+    enum class Pending {None,Save,Rename,Delete,Run,Binding};
     struct Argument {
         QJsonObject parameter;
         QLineEdit *field;
@@ -155,6 +162,12 @@ private:
     void runMacro();
     void showRunReceipt(const QJsonObject &receipt);
     bool activateFrame(int outputLine);
+    void refreshBindings();
+    QString bindingBlockedReason() const;
+    QJsonObject bindingScopeRequest(QString *problem) const;
+    QString bindingText(const QJsonObject &binding) const;
+    void addBinding();
+    void removeBinding();
 
     RestClient *m_client;
     QJsonObject m_info,m_catalog;
@@ -203,4 +216,11 @@ private:
     QFormLayout *m_argumentsLayout;
     QPushButton *m_run,*m_cancelRun;
     QPlainTextEdit *m_output;
+    QJsonArray m_nameList;  // the owning window's names, empty until they are read
+    bool m_scopePicking=false;
+    QListWidget *m_bindings;
+    QComboBox *m_bindingEvent,*m_bindingFunction;
+    QLineEdit *m_bindingScope;
+    QCheckBox *m_bindingRequired;
+    QPushButton *m_scopePick,*m_addBinding,*m_removeBinding;
 };

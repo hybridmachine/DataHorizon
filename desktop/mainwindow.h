@@ -205,6 +205,7 @@ private:
     void changeSheet(int index);
     void changeStructure(bool columns, bool remove);
     void reportReferenceWarnings(const QJsonObject &receipt);
+    QString bindingRejection(const QJsonObject &result);
     void syncSource();
     void fitVisibleWrappedRows();
     void resizeSections(bool columns);
@@ -292,6 +293,11 @@ private:
     QJsonObject m_enterRequest, m_enterNavigation;
     QString m_draftSubmissionId;
     bool m_restoreDraft = false, m_draftNeedsReview = false;
+    // A rule's rejection of the edit whose draft is being restored: shown
+    // instead of the generic "draft restored" status.
+    QString m_bindingRejection;
+    // The workbook handle whose unapproved-rules notice was decided.
+    QString m_ruleNoticeHandle;
     QString m_pendingId;
     QString m_restartPath, m_recoveryRecord;
     quint64 m_clipboardGeneration = 0;

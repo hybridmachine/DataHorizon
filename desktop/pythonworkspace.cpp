@@ -136,7 +136,25 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     m_output->setToolTip(tr("Double-click or press Return on a traceback line in a workbook module to show it in the editor."));
     m_output->installEventFilter(this);m_output->viewport()->installEventFilter(this);outputLayout->addWidget(m_output);
     m_tabs->addTab(m_outputTab,tr("Output"));
-    auto *eventsTab=new QWidget;eventsTab->setObjectName("eventsTab");m_tabs->addTab(eventsTab,tr("Events"));
+    // Rules: a stored top-level function bound to edits in a scope. Rows and
+    // choices show workbook text, so they are plain text only.
+    auto *eventsTab=new QWidget;eventsTab->setObjectName("eventsTab");auto *eventsLayout=new QVBoxLayout(eventsTab);eventsLayout->setContentsMargins(4,4,4,4);
+    m_bindings=new QListWidget;m_bindings->setObjectName("bindingList");m_bindings->setAccessibleName(tr("Rules bound to edits"));m_bindings->setMinimumHeight(48);eventsLayout->addWidget(m_bindings,1);
+    auto *bindingRow=new QHBoxLayout;eventsLayout->addLayout(bindingRow);
+    m_bindingEvent=new QComboBox;m_bindingEvent->setObjectName("bindingEvent");m_bindingEvent->setAccessibleName(tr("Event"));
+    m_bindingEvent->addItem(tr("cells change"),QStringLiteral("cell_change"));m_bindingEvent->addItem(tr("table records change"),QStringLiteral("table_change"));bindingRow->addWidget(m_bindingEvent);
+    auto *inLabel=new QLabel(tr("in"));bindingRow->addWidget(inLabel);
+    m_bindingScope=new QLineEdit;m_bindingScope->setObjectName("bindingScope");m_bindingScope->setAccessibleName(tr("Scope"));inLabel->setBuddy(m_bindingScope);bindingRow->addWidget(m_bindingScope,1);
+    m_scopePick=new QPushButton(tr("Pick"));m_scopePick->setObjectName("bindingScopePickButton");m_scopePick->setCheckable(true);m_scopePick->setAccessibleName(tr("Pick the scope from the sheet"));bindingRow->addWidget(m_scopePick);
+    auto *callsLabel=new QLabel(tr("calls"));bindingRow->addWidget(callsLabel);
+    m_bindingFunction=new QComboBox;m_bindingFunction->setObjectName("bindingFunction");m_bindingFunction->setAccessibleName(tr("Function to call"));callsLabel->setBuddy(m_bindingFunction);
+    m_bindingFunction->setSizeAdjustPolicy(QComboBox::AdjustToContents);bindingRow->addWidget(m_bindingFunction);
+    m_bindingRequired=new QCheckBox(tr("Required"));m_bindingRequired->setObjectName("bindingRequired");m_bindingRequired->setChecked(true);
+    m_bindingRequired->setToolTip(tr("A required rule blocks edits in its scope while its code is not approved or cannot be loaded; an optional one is skipped with a notice."));bindingRow->addWidget(m_bindingRequired);
+    m_addBinding=new QPushButton(tr("Add rule"));m_addBinding->setObjectName("addBindingButton");bindingRow->addWidget(m_addBinding);
+    m_removeBinding=new QPushButton(tr("Remove rule"));m_removeBinding->setObjectName("removeBindingButton");bindingRow->addWidget(m_removeBinding);
+    plainLabels(*eventsTab);
+    m_tabs->addTab(eventsTab,tr("Events"));
     macroLabel->setTextFormat(Qt::PlainText);
 
     m_status=new QLabel;m_status->setObjectName("workspaceStatus");m_status->setAccessibleName(tr("Draft or saved state"));
@@ -157,8 +175,10 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     // Picking stays armed for several picks until Escape, a second press, or the
     // owning window ends it.
     m_pickEscape=new QShortcut(QKeySequence(Qt::Key_Escape),this,nullptr,nullptr,Qt::WindowShortcut);m_pickEscape->setEnabled(false);
-    connect(m_pickEscape,&QShortcut::activated,this,[this]{emit pickFromSheetRequested(false);});
+    connect(m_pickEscape,&QShortcut::activated,this,[this]{if(m_scopePicking)emit scopePickRequested(false);else emit pickFromSheetRequested(false);});
     connect(m_pick,&QAction::triggered,this,[this](bool on){
+        // Only one pick is armed at a time; ending the scope pick first leaves this one alone.
+        if(on && m_scopePicking)emit scopePickRequested(false);
         if(on){m_pickModule=m_current;showMessage(tr("Click a cell or drag a range in the workbook window to insert its reference. Esc or Pick from sheet again ends picking."));}
         emit pickFromSheetRequested(on);
         m_pickEscape->setEnabled(m_pick->isChecked());});
@@ -186,6 +206,20 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     connect(m_removeMacro,&QPushButton::clicked,this,&PythonWorkspace::removeMacro);
     connect(m_macroSelect,&QComboBox::currentIndexChanged,this,[this]{loadArguments();updateState();});
     connect(m_run,&QPushButton::clicked,this,&PythonWorkspace::runMacro);
+    connect(m_bindings,&QListWidget::currentRowChanged,this,[this]{updateState();});
+    connect(m_bindingEvent,&QComboBox::currentIndexChanged,this,[this]{
+        const bool table=m_bindingEvent->currentData().toString()==QLatin1String("table_change");
+        m_bindingScope->setPlaceholderText(table?tr("Table name"):tr("Name, 'Sheet'!A1:B2 or sheet name"));updateState();});
+    m_bindingScope->setPlaceholderText(tr("Name, 'Sheet'!A1:B2 or sheet name"));
+    connect(m_bindingFunction,&QComboBox::currentIndexChanged,this,[this]{updateState();});
+    connect(m_addBinding,&QPushButton::clicked,this,&PythonWorkspace::addBinding);
+    connect(m_removeBinding,&QPushButton::clicked,this,&PythonWorkspace::removeBinding);
+    connect(m_scopePick,&QPushButton::clicked,this,[this](bool on){
+        if(!on){emit scopePickRequested(false);return;}
+        if(m_pick->isChecked())emit pickFromSheetRequested(false);
+        m_scopePicking=true;m_scopePick->setChecked(true);m_pickEscape->setEnabled(true);
+        showMessage(tr("Click a cell or drag a range in the workbook window to use it as the rule's scope. Esc cancels."));
+        emit scopePickRequested(true);});
     connect(m_cancelRun,&QPushButton::clicked,this,[this]{
         if(m_pending!=Pending::Run || m_pendingOperation.isEmpty() || m_runUnknown || m_cancelRequested)return;
         m_cancelRequested=true;m_output->appendPlainText(tr("Cancellation requested. Waiting for the final outcome…"));
@@ -233,7 +267,7 @@ void PythonWorkspace::bind(const QJsonObject &info) {
         if(m_approvalInFlight){++m_approvalGeneration;approvalFailed(tr("Approval was not confirmed by the service. Review the code and try again."));}
     }
     m_info=info;
-    if(info.isEmpty()){++m_readGeneration;m_catalogReady=false;m_catalog={};refreshMacroSelect();updateState();return;}
+    if(info.isEmpty()){++m_readGeneration;m_catalogReady=false;m_catalog={};refreshMacroSelect();refreshBindings();updateState();return;}
     readCatalog();updateState();
 }
 
@@ -299,7 +333,9 @@ void PythonWorkspace::applyCatalog(const QJsonObject &catalog) {
     QSet<QString> referenced{current};for(const auto &draft:std::as_const(m_drafts))referenced.insert(draft.baseFingerprint);
     for(auto it=m_catalogs.begin();it!=m_catalogs.end();)it=referenced.contains(it.key())?std::next(it):m_catalogs.erase(it);
     refreshMacroSelect();
+    refreshBindings();
     refreshList();
+    emit codeCatalogRead(m_info["id"].toString(),catalog);
 }
 
 QString PythonWorkspace::describeChanges(const QJsonArray &before,const QJsonArray &after) const {
@@ -399,6 +435,16 @@ void PythonWorkspace::updateState() {
     m_pick->setEnabled(canEdit && selected);
     m_pick->setToolTip(!canEdit || !selected?reason:tr("Click a cell or drag a range in the workbook window to insert its reference at the cursor. Addresses in code are not updated when rows, columns or sheets change; names keep code stable."));
     if(m_pick->isChecked() && !pickStillValid())emit pickFromSheetRequested(false);
+    if(m_scopePicking && !scopePickStillValid())emit scopePickRequested(false);
+    const auto ruleReason=bindingBlockedReason();
+    const bool canAdd=ruleReason.isEmpty() && m_bindingFunction->currentIndex()>=0 && m_bindings->count()<16;
+    m_addBinding->setEnabled(canAdd);
+    m_addBinding->setToolTip(!ruleReason.isEmpty()?ruleReason:m_bindingFunction->count()==0?tr("Save a module with a top-level function first."):m_bindings->count()>=16?tr("A workbook holds at most 16 rules."):tr("Bind the chosen function to edits in this scope"));
+    m_removeBinding->setEnabled(ruleReason.isEmpty() && m_bindings->currentRow()>=0);
+    m_removeBinding->setToolTip(!ruleReason.isEmpty()?ruleReason:m_bindings->currentRow()<0?tr("Choose the rule to remove."):tr("Remove the chosen rule from the workbook"));
+    const bool cells=m_bindingEvent->currentData().toString()==QLatin1String("cell_change");
+    m_scopePick->setEnabled(m_scopePicking || (ruleReason.isEmpty() && cells));
+    m_scopePick->setToolTip(!ruleReason.isEmpty()?ruleReason:!cells?tr("Table rules are scoped by table name."):tr("Click a cell or drag a range in the workbook window to use it as the scope"));
     m_emptyHint->setVisible(m_modules->count()==0);
     const bool conflict=draft && m_drafts[m_current].conflict;
     m_conflict->setVisible(conflict);
@@ -503,9 +549,19 @@ bool PythonWorkspace::pickStillValid() const {
 }
 
 void PythonWorkspace::pickFinished(const QString &problem) {
+    if(m_scopePicking) {
+        m_scopePicking=false;m_scopePick->setChecked(false);m_pickEscape->setEnabled(false);
+        showMessage(problem.isEmpty()?QString():tr("Picking could not start: %1").arg(problem));
+        return;
+    }
     m_pick->setChecked(false);m_pickEscape->setEnabled(false);m_pickModule.clear();
     showMessage(problem.isEmpty()?QString():tr("Picking could not start: %1").arg(problem));
 }
+
+// The picked text is the scope itself: a name or a quoted, qualified address.
+void PythonWorkspace::insertPickedScope(const QString &reference){m_bindingScope->setText(reference);m_bindingScope->setFocus();}
+
+bool PythonWorkspace::scopePickStillValid() const{return m_scopePicking && bindingBlockedReason().isEmpty();}
 
 void PythonWorkspace::updateDraft(const QString &source,const QJsonArray &macros) {
     m_discardConfirmed=false;
@@ -635,7 +691,7 @@ bool PythonWorkspace::confirmHistory() {
 }
 
 void PythonWorkspace::setNames(const QJsonArray &names) {
-    m_names->setNames(names);
+    m_nameList=names;m_names->setNames(names);
     QStringList identifiers;for(const auto &value:names)identifiers.append(value.toObject()["name"].toString());
     m_editor->setCompletionNames(identifiers);
 }
@@ -712,7 +768,7 @@ void PythonWorkspace::operationReceipt(const QJsonObject &receipt) {
     if(m_pendingOperation.isEmpty() || receipt["operation_id"].toString()!=m_pendingOperation)return;
     if(m_pending==Pending::Run){showRunReceipt(receipt);return;}
     const auto outcome=receipt["outcome"].toString();const auto name=m_pendingName;const auto key=m_pendingKey;const auto kind=m_pending;
-    if(outcome=="unknown"){showMessage(tr("The outcome for %1 is unknown. Your draft is kept while the operation is reconciled.").arg(name));return;}
+    if(outcome=="unknown"){showMessage(kind==Pending::Binding?tr("The outcome of the rule change is unknown. It is being checked."):tr("The outcome for %1 is unknown. Your draft is kept while the operation is reconciled.").arg(name));return;}
     m_pending=Pending::None;m_pendingOperation.clear();
     if(outcome=="committed") {
         m_pendingKey.clear();
@@ -725,11 +781,18 @@ void PythonWorkspace::operationReceipt(const QJsonObject &receipt) {
             if(m_current==key && receipt["module_id"].isString())m_current=receipt["module_id"].toString();
             if(receipt["code_fingerprint"].isString()){m_rebaseFrom=m_pendingBase;m_rebaseTo=receipt["code_fingerprint"].toString();}
             showMessage(tr("Saved %1 in the workbook.").arg(name));
+        } else if(kind==Pending::Binding) {
+            showMessage(tr("Rules changed. Review & approve the code before it can run."));
         } else if(kind==Pending::Rename) {
             showMessage(tr("Renamed the module to %1.").arg(name));
         } else {
             m_drafts.remove(key);showMessage(tr("Deleted %1 from the workbook.").arg(name));
         }
+    } else if(kind==Pending::Binding) {
+        const auto code=receipt["code"].toString(),message=receipt["message"].toString();
+        showMessage(tr("The rule was not changed (%1): %2").arg(code,message));
+        emit issue(tr("Rule %1 was not changed (%2): %3").arg(name,code,message));
+        m_pendingKey.clear();if(code=="CODE_CHANGED" || code=="BINDING_NOT_FOUND")readCatalog();
     } else {
         const auto code=receipt["code"].toString(),message=receipt["message"].toString();
         const auto what=kind==Pending::Rename?tr("renamed"):kind==Pending::Delete?tr("deleted"):tr("saved");
@@ -1039,4 +1102,110 @@ bool PythonWorkspace::eventFilter(QObject *object,QEvent *event) {
         if((key==Qt::Key_Return || key==Qt::Key_Enter) && activateFrame(m_output->textCursor().blockNumber()))return true;
     }
     return QMainWindow::eventFilter(object,event);
+}
+
+// The Events tab: one row per stored rule, and the functions a rule can call.
+// Candidates come from a line scan of stored source ("def name(" at column 0);
+// nothing is imported or run, and the service makes the authoritative check.
+void PythonWorkspace::refreshBindings() {
+    const auto selected=m_bindings->currentItem()?m_bindings->currentItem()->data(Qt::UserRole).toString():QString();
+    {
+        QSignalBlocker blocker(m_bindings);m_bindings->clear();
+        for(const auto &value:m_catalog["bindings"].toArray()) {
+            const auto binding=value.toObject();
+            auto *item=new QListWidgetItem(bindingText(binding),m_bindings);item->setData(Qt::UserRole,binding["id"].toString());
+            item->setToolTip(binding["broken"].toBool()?tr("The cells this rule covered no longer exist. Remove it and add it again for the cells you want."):plainToolTip(item->text()));
+            if(binding["id"].toString()==selected)m_bindings->setCurrentItem(item);
+        }
+    }
+    const auto previous=m_bindingFunction->currentText();
+    {
+        QSignalBlocker blocker(m_bindingFunction);m_bindingFunction->clear();
+        static const QRegularExpression definition(QStringLiteral("^def ([A-Za-z_][A-Za-z0-9_]*)\\("),QRegularExpression::MultilineOption);
+        for(const auto &value:catalogModules()) {
+            const auto module=value.toObject();
+            for(auto match=definition.globalMatch(module["source"].toString());match.hasNext();) {
+                const auto function=match.next().captured(1);
+                m_bindingFunction->addItem(module["name"].toString()+QLatin1Char('.')+function);
+                const int row=m_bindingFunction->count()-1;
+                m_bindingFunction->setItemData(row,module["id"].toString(),Qt::UserRole);m_bindingFunction->setItemData(row,function,Qt::UserRole+1);
+            }
+        }
+        const int index=m_bindingFunction->findText(previous);
+        m_bindingFunction->setCurrentIndex(index>=0?index:m_bindingFunction->count()?0:-1);
+    }
+}
+
+// "<event> in <scope> → <module>.<function>", marked optional or broken.
+QString PythonWorkspace::bindingText(const QJsonObject &binding) const {
+    const auto scope=binding["scope"].toObject();const auto kind=scope["kind"].toString();
+    auto named=[](const QJsonArray &items,const QString &id){
+        for(const auto &value:items)if(value.toObject()["id"].toString()==id)return value.toObject()["name"].toString();
+        return QString();};
+    QString where;
+    if(kind=="range")where=binding["reference"].toString();
+    else if(kind=="name"){where=named(m_nameList,scope["name_id"].toString());if(where.isEmpty())where=binding["reference"].toString();}
+    else if(kind=="sheet")where=named(m_info["sheets"].toArray(),scope["sheet_id"].toString());
+    else if(kind=="table")where=named(m_info["tables"].toArray(),scope["table_id"].toString());
+    const bool broken=binding["broken"].toBool();if(broken && kind!="name")where.clear();
+    const auto event=binding["event"].toString()=="table_change"?tr("table records change"):tr("cells change");
+    const auto target=(binding["module"].isString()?binding["module"].toString():QStringLiteral("?"))+QLatin1Char('.')+binding["function"].toString();
+    auto text=where.isEmpty()?tr("%1 → %2").arg(event,target):tr("%1 in %2 → %3").arg(event,where,target);
+    if(!binding["required"].toBool())text+=tr(" (optional)");
+    if(broken)text+=tr(" · Broken: its cells no longer exist");
+    return text;
+}
+
+QString PythonWorkspace::bindingBlockedReason() const {
+    if(m_info.isEmpty())return tr("Open a workbook first.");
+    if(m_info["readonly"].toBool())return tr("Read-only workbook: reopen it for editing to change rules.");
+    if(m_locked || m_pending!=Pending::None || m_awaitingAdmission || m_approvalInFlight)return tr("Wait for the current operation to finish.");
+    if(!m_catalogReady)return tr("Reading the workbook's code…");
+    if(hasWorkbookDrafts())return tr("Save or discard your drafts before changing rules.");
+    return {};
+}
+
+// The request scope for the typed text: a name, then a qualified address,
+// then a sheet; a table name for table rules. Empty with *problem set when
+// the text is none of these.
+QJsonObject PythonWorkspace::bindingScopeRequest(QString *problem) const {
+    const auto text=m_bindingScope->text().trimmed();
+    auto find=[&text](const QJsonArray &items){
+        for(const auto &value:items)if(value.toObject()["name"].toString().compare(text,Qt::CaseInsensitive)==0)return value.toObject()["name"].toString();
+        return QString();};
+    if(m_bindingEvent->currentData().toString()==QLatin1String("table_change")) {
+        const auto table=text.isEmpty()?QString():find(m_info["tables"].toArray());
+        if(table.isEmpty()){*problem=tr("Enter the name of a table in this workbook.");return {};}
+        return {{"kind","table"},{"table",table}};
+    }
+    if(!text.isEmpty()) {
+        if(const auto name=find(m_nameList);!name.isEmpty())return {{"kind","name"},{"name",name}};
+        if(text.contains(QLatin1Char('!')))return {{"kind","range"},{"reference",text}};
+        if(const auto sheet=find(m_info["sheets"].toArray());!sheet.isEmpty())return {{"kind","sheet"},{"sheet",sheet}};
+    }
+    *problem=tr("Enter a name, a sheet-qualified range such as 'Supplies'!B2:B4, or a sheet name.");
+    return {};
+}
+
+void PythonWorkspace::addBinding() {
+    if(const auto reason=bindingBlockedReason();!reason.isEmpty()){showMessage(reason);return;}
+    const int row=m_bindingFunction->currentIndex();
+    if(row<0){showMessage(tr("Save a module with a top-level function first."));return;}
+    QString problem;const auto scope=bindingScopeRequest(&problem);
+    if(scope.isEmpty()){showMessage(problem);return;}
+    const auto module=m_bindingFunction->itemData(row,Qt::UserRole).toString(),function=m_bindingFunction->itemData(row,Qt::UserRole+1).toString();
+    const auto label=m_bindingFunction->itemText(row);
+    if(!confirmHistoryClear(this,m_info,tr("Changing a rule clears Undo history for this workbook. Continue?"),QStringLiteral("bindingHistory")) || !bindingBlockedReason().isEmpty())return;
+    startOperation({{"action","binding_save"},{"event",m_bindingEvent->currentData().toString()},{"scope",scope},{"module",module},{"function",function},
+        {"required",m_bindingRequired->isChecked()},{"fingerprint",fingerprint()},{"label","Add rule"}},Pending::Binding,{},label,fingerprint());
+}
+
+void PythonWorkspace::removeBinding() {
+    if(const auto reason=bindingBlockedReason();!reason.isEmpty()){showMessage(reason);return;}
+    auto *item=m_bindings->currentItem();if(!item)return;
+    const auto id=item->data(Qt::UserRole).toString();QString label;
+    for(const auto &value:m_catalog["bindings"].toArray())if(value.toObject()["id"].toString()==id)
+        label=value.toObject()["module"].toString()+QLatin1Char('.')+value.toObject()["function"].toString();
+    if(!confirmHistoryClear(this,m_info,tr("Changing a rule clears Undo history for this workbook. Continue?"),QStringLiteral("bindingHistory")) || !bindingBlockedReason().isEmpty())return;
+    startOperation({{"action","binding_delete"},{"binding_id",id},{"fingerprint",fingerprint()},{"label","Remove rule"}},Pending::Binding,{},label,fingerprint());
 }

@@ -13,6 +13,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFile>
+#include <QHash>
 #include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QJsonArray>
@@ -378,6 +379,85 @@ struct RunSetup {
     bool run(const QString &macro) {
         if(!chooseMacro(workspace,macro) || !QTest::qWaitFor([&]{return runButton(workspace)->isEnabled();},10000))return false;
         runButton(workspace)->click();return true;
+    }
+};
+
+// A module with two top-level functions; Helper.method is not top-level.
+const QString kRulesSource=QStringLiteral(
+    "def check_quantity(ctx, changes):\n"
+    "    for c in changes:\n"
+    "        value = ctx.value(c['sheet'], c['row'], c['col'])\n"
+    "        if isinstance(value, (int, float)) and value < 0:\n"
+    "            raise ValueError('Quantity cannot be negative')\n"
+    "\n\n"
+    "def note(ctx, changes):\n"
+    "    pass\n"
+    "\n\n"
+    "class Helper:\n"
+    "    def method(self):\n"
+    "        pass\n");
+const QString kRuleNotice=QStringLiteral("This workbook has rules that are not approved. Edits to the cells they cover are blocked until its Python code is approved (Tools ▸ Python workspace).");
+
+QListWidget *bindingList(PythonWorkspace *workspace){return workspace->findChild<QListWidget *>("bindingList");}
+QComboBox *bindingEvent(PythonWorkspace *workspace){return workspace->findChild<QComboBox *>("bindingEvent");}
+QLineEdit *bindingScope(PythonWorkspace *workspace){return workspace->findChild<QLineEdit *>("bindingScope");}
+QComboBox *bindingFunction(PythonWorkspace *workspace){return workspace->findChild<QComboBox *>("bindingFunction");}
+QCheckBox *bindingRequired(PythonWorkspace *workspace){return workspace->findChild<QCheckBox *>("bindingRequired");}
+QPushButton *addBindingButton(PythonWorkspace *workspace){return workspace->findChild<QPushButton *>("addBindingButton");}
+QPushButton *removeBindingButton(PythonWorkspace *workspace){return workspace->findChild<QPushButton *>("removeBindingButton");}
+QPushButton *scopePickButton(PythonWorkspace *workspace){return workspace->findChild<QPushButton *>("bindingScopePickButton");}
+QStringList bindingRows(PythonWorkspace *workspace) {
+    QStringList rows;auto *list=bindingList(workspace);if(!list)return rows;
+    for(int row=0;row<list->count();++row)rows.append(list->item(row)->text());
+    return rows;
+}
+
+// Fills the Events tab editor row and presses Add, answering the Undo-history
+// prompt; true once the re-read catalog lists one more rule.
+bool addRule(MainWindow &window,PythonWorkspace *workspace,const QString &scope,const QString &function,bool required=true,const QString &event="cells change") {
+    if(!bindingList(workspace))return false;
+    const int before=bindingList(workspace)->count();
+    bindingEvent(workspace)->setCurrentIndex(bindingEvent(workspace)->findText(event));
+    bindingFunction(workspace)->setCurrentIndex(bindingFunction(workspace)->findText(function));
+    bindingScope(workspace)->setText(scope);bindingRequired(workspace)->setChecked(required);
+    if(!QTest::qWaitFor([&]{return addBindingButton(workspace)->isEnabled();},10000))return false;
+    ModalDriver driver([](QWidget *modal){
+        auto *box=qobject_cast<QMessageBox *>(modal);if(!box || box->objectName()!="bindingHistoryPrompt")return false;
+        box->button(QMessageBox::Yes)->click();return true;});
+    addBindingButton(workspace)->click();
+    if(!QTest::qWaitFor([&]{return bindingList(workspace)->count()==before+1 && !workspace->fingerprint().isEmpty();},10000))return false;
+    return workspace->fingerprint()==readCode(window)["fingerprint"].toString();
+}
+
+bool showSheet(MainWindow &window,const QString &name) {
+    auto *tabs=window.findChild<QTabBar *>("sheets");
+    for(int index=0;index<tabs->count();++index)if(tabs->tabText(index)==name)tabs->setCurrentIndex(index);
+    return tabs->tabText(tabs->currentIndex())==name && QTest::qWaitFor([&]{return window.model()->sheet()==tabs->tabData(tabs->currentIndex()).toString();},5000);
+}
+
+// Types into the formula bar for one cell and presses Return, as a user does.
+bool typeIntoCell(MainWindow &window,int row,int col,const QString &text) {
+    auto *view=grid(window);auto *source=window.findChild<QLineEdit *>("source");
+    view->setCurrentIndex(window.model()->index(row,col));
+    if(!QTest::qWaitFor([&]{return source->isEnabled() && window.model()->sourceReady(view->currentIndex());},5000))return false;
+    source->setFocus();source->selectAll();QTest::keyClicks(source,text);QTest::keyClick(source,Qt::Key_Return);
+    return true;
+}
+
+// The Supplies workbook with names and a stored module "rules"; the
+// workspace shows its catalog.
+struct BindingSetup {
+    QTemporaryDir temp;StartupOptions options;QString path;
+    std::unique_ptr<MainWindow> window;PythonWorkspace *workspace=nullptr;
+    bool start(const QString &file,bool approve=false) {
+        options.automaticWorkbook=false;options.recoveryDirectory=temp.filePath("recovery");path=temp.filePath(file);
+        window=std::make_unique<MainWindow>(options);
+        if(!boot(*window,path) || !buildSupplies(*window) || !saveName(*window,"Quantities","'Supplies'!B2:B4"))return false;
+        workspace=openWorkspace(*window);if(!workspace)return false;
+        if(!apply(*window,{{"action","module_save"},{"name","rules"},{"source",kRulesSource},{"macros",QJsonArray{}},{"fingerprint",readCode(*window)["fingerprint"]}}))return false;
+        const auto stored=readCode(*window)["fingerprint"].toString();
+        if(!QTest::qWaitFor([&]{return workspace->fingerprint()==stored && bindingFunction(workspace) && bindingFunction(workspace)->count()==2;},10000))return false;
+        return !approve || approveCode(workspace);
     }
 };
 
@@ -1660,6 +1740,151 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(outputHeading(workspace).startsWith("Committed · returned 20.5"),10000);
         QTRY_COMPARE_WITH_TIMEOUT(cell(window,2,1),QString("6"),10000);
         QTRY_VERIFY_WITH_TIMEOUT(runButton(workspace)->isEnabled(),10000);QCOMPARE(proxy.macroRuns,1);
+    }
+
+    void bindRuleThenNegativeGridEditIsRejectedAndDraftKept() {
+        BindingSetup setup;QVERIFY(setup.start("rule.dhwb",true));auto &window=*setup.window;auto *workspace=setup.workspace;
+        QVERIFY(addRule(window,workspace,"'Supplies'!B2:B4","rules.check_quantity"));
+        QCOMPARE(bindingRows(workspace),QStringList{"cells change in 'Supplies'!B2:B4 → rules.check_quantity"});
+        QVERIFY(approveCode(workspace));
+        QSignalSpy finished(&window,&MainWindow::operationFinished);
+        QVERIFY(typeIntoCell(window,1,1,"-1"));
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(),1,15000);QVERIFY(!finished[0][0].toBool());
+        const QString rejected="Rejected by rules.check_quantity: ValueError: Quantity cannot be negative · nothing stored";
+        QTRY_COMPARE_WITH_TIMEOUT(mainStatus(window),rejected,10000);
+        QVERIFY2(issues(window).contains(rejected),qPrintable(issues(window)));
+        // The rejected draft stays in the editor for correction; nothing was stored.
+        auto *source=window.findChild<QLineEdit *>("source");
+        QCOMPARE(source->text(),QString("-1"));QVERIFY(source->isModified());QTRY_COMPARE_WITH_TIMEOUT(cell(window,1,1),QString("2"),10000);
+        QCOMPARE(grid(window)->currentIndex(),window.model()->index(1,1));
+        source->setFocus();source->selectAll();QTest::keyClicks(source,"5");QTest::keyClick(source,Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(),2,15000);QVERIFY(finished[1][0].toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(cell(window,1,1),QString("5"),10000);
+    }
+
+    void scopeAcceptsNameAndPickedRange() {
+        BindingSetup setup;QVERIFY(setup.start("scope.dhwb"));auto &window=*setup.window;auto *workspace=setup.workspace;
+        QStringList functions;for(int index=0;index<bindingFunction(workspace)->count();++index)functions.append(bindingFunction(workspace)->itemText(index));
+        QCOMPARE(functions,(QStringList{"rules.check_quantity","rules.note"}));
+        QStringList events;for(int index=0;index<bindingEvent(workspace)->count();++index)events.append(bindingEvent(workspace)->itemText(index));
+        QCOMPARE(events,(QStringList{"cells change","table records change"}));
+        QVERIFY(bindingRequired(workspace)->isChecked());
+        // A name, matched without regard to case.
+        QVERIFY(addRule(window,workspace,"quantities","rules.check_quantity"));
+        const auto first=readCode(window)["bindings"].toArray()[0].toObject();
+        QCOMPARE(first["scope"].toObject()["kind"].toString(),QString("name"));QVERIFY(first["required"].toBool());
+        QCOMPARE(bindingRows(workspace)[0],QString("cells change in Quantities → rules.check_quantity"));
+        // The pick button fills the scope with one picked range, then ends.
+        auto *pick=scopePickButton(workspace);QSignalSpy finished(&window,&MainWindow::externalPickFinished);
+        QTRY_VERIFY_WITH_TIMEOUT(pick->isEnabled(),5000);
+        pick->click();QVERIFY(pick->isChecked());QCOMPARE(mainStatus(window),kPicking);
+        dragCells(window,1,2,3,2);
+        QCOMPARE(bindingScope(workspace)->text(),QString("'Supplies'!C2:C4"));
+        QVERIFY(!pick->isChecked());QCOMPARE(finished.count(),1);QVERIFY(mainStatus(window)!=kPicking);
+        clickCell(window,0,0);QCOMPARE(bindingScope(workspace)->text(),QString("'Supplies'!C2:C4"));
+        QCOMPARE(editor(workspace)->toPlainText(),kRulesSource);
+        // A picked named range is entered as its name, without quotes.
+        pick->click();QVERIFY(pick->isChecked());dragCells(window,1,1,3,1);
+        QCOMPARE(bindingScope(workspace)->text(),QString("Quantities"));QVERIFY(!pick->isChecked());
+        // An optional rule for a qualified range, and one for a whole sheet.
+        QVERIFY(addRule(window,workspace,"'Supplies'!C2:C4","rules.note",false));
+        QVERIFY(addRule(window,workspace,"supplies","rules.note"));
+        // The catalog lists rules in stored order, which is not the order they were added.
+        QHash<QString,QJsonObject> byKind;for(const auto &value:readCode(window)["bindings"].toArray())byKind[value.toObject()["scope"].toObject()["kind"].toString()]=value.toObject();
+        QCOMPARE(byKind.size(),3);
+        QCOMPARE(byKind["range"]["function"].toString(),QString("note"));QVERIFY(!byKind["range"]["required"].toBool());
+        QCOMPARE(byKind["range"]["reference"].toString(),QString("'Supplies'!C2:C4"));
+        QCOMPARE(byKind["sheet"]["function"].toString(),QString("note"));QVERIFY(byKind["sheet"]["required"].toBool());
+        auto rows=bindingRows(workspace);rows.sort();
+        QCOMPARE(rows,(QStringList{"cells change in 'Supplies'!C2:C4 → rules.note (optional)","cells change in Quantities → rules.check_quantity","cells change in Supplies → rules.note"}));
+        // Text that is none of these is never sent.
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        bindingScope(workspace)->setText("Nowhere");addBindingButton(workspace)->click();
+        QCOMPARE(workspaceMessage(workspace),QString("Enter a name, a sheet-qualified range such as 'Supplies'!B2:B4, or a sheet name."));
+        QTest::qWait(200);QCOMPARE(admitted.count(),0);QCOMPARE(readCode(window)["bindings"].toArray().size(),3);
+    }
+
+    void addingBindingRequiresFreshApproval() {
+        BindingSetup setup;QVERIFY(setup.start("fresh.dhwb",true));auto &window=*setup.window;auto *workspace=setup.workspace;
+        QCOMPARE(approval(workspace),QString("Approved for this session"));
+        // Rules change only against saved code.
+        editor(workspace)->setPlainText(kRulesSource+"# draft\n");QCOMPARE(status(workspace),kDraft);
+        QVERIFY(!addBindingButton(workspace)->isEnabled());
+        QCOMPARE(addBindingButton(workspace)->toolTip(),QString("Save or discard your drafts before changing rules."));
+        editor(workspace)->setPlainText(kRulesSource);QCOMPARE(status(workspace),kSaved);
+        bindingFunction(workspace)->setCurrentIndex(bindingFunction(workspace)->findText("rules.check_quantity"));
+        bindingScope(workspace)->setText("'Supplies'!B2:B4");
+        QTRY_VERIFY_WITH_TIMEOUT(addBindingButton(workspace)->isEnabled(),5000);
+        // An edit gives the workbook Undo history; the prompt asks before it is
+        // cleared, and declining sends nothing.
+        QVERIFY(apply(window,{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",7},{"col",1},{"source","Pad"}}}}}));
+        QString prompt;bool decline=true;QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        ModalDriver driver([&](QWidget *modal){
+            auto *box=qobject_cast<QMessageBox *>(modal);if(!box || box->objectName()!="bindingHistoryPrompt")return false;
+            prompt=box->text();box->button(decline?QMessageBox::Cancel:QMessageBox::Yes)->click();return true;});
+        addBindingButton(workspace)->click();QCOMPARE(driver.handled,1);
+        QCOMPARE(prompt,QString("Changing a rule clears Undo history for this workbook. Continue?"));
+        QTest::qWait(200);QCOMPARE(admitted.count(),0);QCOMPARE(bindingList(workspace)->count(),0);
+        const auto approved=readCode(window)["fingerprint"].toString();
+        decline=false;addBindingButton(workspace)->click();QCOMPARE(driver.handled,2);
+        QTRY_COMPARE_WITH_TIMEOUT(bindingList(workspace)->count(),1,10000);
+        const auto code=readCode(window);QCOMPARE(workspace->fingerprint(),code["fingerprint"].toString());
+        QVERIFY(code["fingerprint"].toString()!=approved);QVERIFY(!code["approved"].toBool());
+        QCOMPARE(approval(workspace),QString("Not approved to run"));
+        QCOMPARE(workspaceMessage(workspace),QString("Rules changed. Review & approve the code before it can run."));
+        // Removing a rule goes the same way.
+        QVERIFY(!removeBindingButton(workspace)->isEnabled());
+        bindingList(workspace)->setCurrentRow(0);QTRY_VERIFY_WITH_TIMEOUT(removeBindingButton(workspace)->isEnabled(),5000);
+        removeBindingButton(workspace)->click();
+        QTRY_COMPARE_WITH_TIMEOUT(bindingList(workspace)->count(),0,10000);
+        QCOMPARE(readCode(window)["bindings"].toArray().size(),0);
+        QCOMPARE(workspaceMessage(workspace),QString("Rules changed. Review & approve the code before it can run."));
+    }
+
+    void unapprovedRequiredBindingBlocksOnlyItsScopeWithNotice() {
+        BindingSetup setup;QVERIFY(setup.start("blocked.dhwb"));
+        QVERIFY(addRule(*setup.window,setup.workspace,"'Supplies'!B2:B4","rules.check_quantity"));
+        // Adding a rule in this session is not the on-open notice.
+        QVERIFY(!issues(*setup.window).contains(kRuleNotice));
+        QVERIFY(setup.window->close());setup.window.reset();
+        MainWindow window(setup.options);QVERIFY(boot(window,setup.path,false));
+        QTRY_VERIFY_WITH_TIMEOUT(issues(window).contains(kRuleNotice),10000);
+        QCOMPARE(issues(window).count(kRuleNotice),1);
+        QVERIFY(!window.findChild<PythonWorkspace *>("pythonWorkspace")->isVisible());
+        QVERIFY(showSheet(window,"Supplies"));
+        // Outside the rule's scope edits are stored.
+        QVERIFY(apply(window,{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",1},{"source","Pad"}}}}}));
+        QTRY_COMPARE_WITH_TIMEOUT(cell(window,1,0),QString("Pad"),10000);
+        // Inside it they are rejected, naming the rule.
+        QSignalSpy finished(&window,&MainWindow::operationFinished);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",2},{"source","5"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(),1,15000);QVERIFY(!finished[0][0].toBool());
+        const QString rejected="Rejected by rules.check_quantity: its code is not approved · nothing stored";
+        QCOMPARE(mainStatus(window),rejected);QVERIFY2(issues(window).contains(rejected),qPrintable(issues(window)));
+        QCOMPARE(cell(window,1,1),QString("2"));
+        // Refreshing the same workbook does not repeat the notice.
+        QVERIFY(refreshWindow(window));QTest::qWait(300);
+        QCOMPARE(issues(window).count(kRuleNotice),1);
+    }
+
+    void optionalBindingSkipIsReportedInIssues() {
+        BindingSetup setup;QVERIFY(setup.start("optional.dhwb"));auto &window=*setup.window;auto *workspace=setup.workspace;
+        QVERIFY(addRule(window,workspace,"'Supplies'!B2:B4","rules.check_quantity",false));
+        QCOMPARE(bindingRows(workspace),QStringList{"cells change in 'Supplies'!B2:B4 → rules.check_quantity (optional)"});
+        // Unapproved and optional: skipped, and the edit is stored.
+        QVERIFY(apply(window,{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",2},{"source","-1"}}}}}));
+        QTRY_COMPARE_WITH_TIMEOUT(cell(window,1,1),QString("-1"),10000);
+        QVERIFY2(issues(window).contains("Rule skipped: check_quantity (its code is not approved)"),qPrintable(issues(window)));
+        QVERIFY(!issues(window).contains(kRuleNotice));
+    }
+
+    void brokenBindingIsLabelled() {
+        BindingSetup setup;QVERIFY(setup.start("broken.dhwb"));auto &window=*setup.window;auto *workspace=setup.workspace;
+        QVERIFY(addRule(window,workspace,"'Supplies'!B2:B4","rules.check_quantity"));
+        QVERIFY(apply(window,{{"action","columns_delete"},{"start",2},{"count",1}}));
+        QVERIFY2(issues(window).contains("Rules that no longer cover any cells: rules.check_quantity"),qPrintable(issues(window)));
+        QTRY_COMPARE_WITH_TIMEOUT(bindingRows(workspace),QStringList{"cells change → rules.check_quantity · Broken: its cells no longer exist"},10000);
+        QVERIFY(readCode(window)["bindings"].toArray()[0].toObject()["broken"].toBool());
     }
 };
 

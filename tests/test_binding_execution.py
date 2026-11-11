@@ -175,9 +175,10 @@ class BindingExecutionTests(unittest.TestCase):
         self.edit(3,2,'8',sheet='Stock');self.assertEqual(sorted(self.log()),['a','b'])
 
     def test_unapproved_required_binding_blocks_edits_in_scope_only(self):
-        self.bind('log_a',approve=False)
+        made=self.bind('log_a',approve=False)
         outcome=self.failure(lambda:self.edit(2,2,'5'))
         self.assertEqual(outcome['code'],'BINDING_NOT_APPROVED');self.assertEqual(outcome['http_status'],403);self.assertIn('supplies.log_a',outcome['message'])
+        self.assertEqual(outcome['binding'],dict(binding_id=made,module='supplies',function='log_a'))
         self.assertEqual(self.raw('Supplies',2,2)['source'],'2')
         receipt=self.edit(2,1,'Pad');self.assertEqual(receipt['outcome'],'committed');self.assertNotIn('binding_notices',receipt);self.assertIsNone(self.log())
 
@@ -194,6 +195,7 @@ class BindingExecutionTests(unittest.TestCase):
         self.approve()
         outcome=self.failure(lambda:self.edit(2,2,'5'))
         self.assertEqual(outcome['code'],'BINDING_UNAVAILABLE');self.assertEqual(outcome['http_status'],409);self.assertIn('supplies.log_a',outcome['message'])
+        self.assertEqual(outcome['binding'],dict(binding_id=required,module='supplies',function='log_a'))
         self.apply('binding_delete',binding_id=required,fingerprint=fingerprint(self.book.db));self.approve()
         receipt=self.edit(2,2,'5')
         self.assertEqual(receipt['binding_notices'],[dict(binding_id=optional,function='log_b',reason='BINDING_UNAVAILABLE')])

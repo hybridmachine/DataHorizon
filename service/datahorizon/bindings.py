@@ -200,9 +200,9 @@ def admit(book,calls,admission):
         if reason is None and not available(call['source'],call['function']):reason='BINDING_UNAVAILABLE'
         if reason is None:admitted.append(call);continue
         if item['required']:
-            prefix='Binding '+call['module_name']+'.'+call['function']+': '
-            if reason=='BINDING_NOT_APPROVED':raise EngineError(reason,prefix+'workbook code is not approved, so edits in its scope are blocked',403)
-            raise EngineError(reason,prefix+'the module no longer defines this top-level function',409)
+            prefix='Binding '+call['module_name']+'.'+call['function']+': ';named=dict(binding_id=item['id'],module=call['module_name'],function=call['function'])
+            if reason=='BINDING_NOT_APPROVED':raise EngineError(reason,prefix+'workbook code is not approved, so edits in its scope are blocked',403,binding=named)
+            raise EngineError(reason,prefix+'the module no longer defines this top-level function',409,binding=named)
         skip(book,admission,[(call,reason)])
     return admitted
 

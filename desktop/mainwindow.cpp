@@ -916,6 +916,21 @@ void MainWindow::buildUi() {
         if(!startExternalReferencePick({[this](const QString &text){m_workspace->insertPickedReference(text);},[this]{return m_workspace->pickStillValid();}},&problem))m_workspace->pickFinished(problem);
     });
     connect(this,&MainWindow::externalPickFinished,m_workspace,[this]{m_workspace->pickFinished();});
+    // The Events tab's scope pick fills the scope field once, then ends.
+    connect(m_workspace,&PythonWorkspace::scopePickRequested,this,[this](bool on){
+        if(!on){cancelExternalReferencePick();return;}
+        QString problem;
+        if(!startExternalReferencePick({[this](const QString &text){m_workspace->insertPickedScope(text);cancelExternalReferencePick();},[this]{return m_workspace->scopePickStillValid();}},&problem))m_workspace->pickFinished(problem);
+    });
+    // Once per opened handle: required rules that cannot run block edits in their scope.
+    connect(m_workspace,&PythonWorkspace::codeCatalogRead,this,[this](const QString &handle,const QJsonObject &catalog){
+        if(handle.isEmpty() || handle!=m_info["id"].toString() || handle==m_ruleNoticeHandle)return;
+        m_ruleNoticeHandle=handle;
+        if(catalog["approved"].toBool())return;
+        for(const auto &value:catalog["bindings"].toArray())if(value.toObject()["required"].toBool() && !value.toObject()["broken"].toBool()) {
+            issue(tr("This workbook has rules that are not approved. Edits to the cells they cover are blocked until its Python code is approved (Tools ▸ Python workspace)."));return;
+        }
+    });
     connect(this,&MainWindow::operationReceipt,this,[this](QJsonObject receipt){
         if(m_nameOperation.isEmpty() || receipt["operation_id"].toString()!=m_nameOperation)return;
         const auto outcome=receipt["outcome"].toString();
@@ -1670,7 +1685,7 @@ void MainWindow::refresh(const QString &selectSheet) {
 void MainWindow::submit(QJsonObject operation) {
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
     const auto action=operation["action"].toString();
-    if(m_relationalActive && !action.startsWith("module_") && !action.startsWith("name_") && action!="macro_run" && !(action.startsWith("table_") || action.startsWith("index_") || action.startsWith("relationship_") || action.startsWith("query_") || action=="undo" || action=="redo")) {
+    if(m_relationalActive && !action.startsWith("module_") && !action.startsWith("binding_") && !action.startsWith("name_") && action!="macro_run" && !(action.startsWith("table_") || action.startsWith("index_") || action.startsWith("relationship_") || action.startsWith("query_") || action=="undo" || action=="redo")) {
         issue(tr("Return to sheets before applying a sheet operation."));return;
     }
     const auto defaults=targetContext();
@@ -1706,7 +1721,9 @@ void MainWindow::submit(QJsonObject operation) {
                     if (result["code"]=="STALE_STATE") m_recoveredDraft["needs_review"]=true;
                 }
                 const bool stopped=m_options.url.isEmpty() && m_service.state()==QProcess::NotRunning;
-                setBusy(stopped, stopped ? "Service stopped • Edit rejected • Restart local service" : outcome == "rolled_back" ? "Rolled back • No cells changed" : "Rejected • No cells changed"); issue(error);
+                const auto rule=bindingRejection(result);
+                m_bindingRejection=restoreDraft?rule:QString();
+                setBusy(stopped, stopped ? "Service stopped • Edit rejected • Restart local service" : !rule.isEmpty() ? rule : outcome == "rolled_back" ? "Rolled back • No cells changed" : "Rejected • No cells changed"); issue(rule.isEmpty()?error:rule);
                 if (result["code"] == "STALE_STATE" || restoreDraft) refresh();
             } else {
                 m_unknown = true; setBusy(true, "Outcome unknown • Reconcile before editing");
@@ -1957,7 +1974,7 @@ void MainWindow::captureGridDraft(bool needsReview) {
 }
 
 void MainWindow::restoreRecoveredDraft() {
-    m_restoreDraft=false;
+    m_restoreDraft=false;const auto rule=std::exchange(m_bindingRejection,QString());
     const auto sheet=m_recoveredDraft["sheet"].toString();
     auto retainUnavailable=[this,sheet] {
         m_draftTarget={{"workbook",m_info["id"]},{"sheet",sheet},{"state",m_info["state"]},
@@ -1985,7 +2002,7 @@ void MainWindow::restoreRecoveredDraft() {
                    {"input_kind",m_recoveredDraft["input_kind"]}};
     m_source->setText(m_recoveredDraft["source"].toString()); m_source->setModified(true);
     m_draftNeedsReview=m_recoveredDraft["needs_review"].toBool();
-    m_status->setText(m_draftNeedsReview ? "Recovered draft • Review against reopened input before applying" : "Rejected edit • Draft restored for correction");
+    m_status->setText(m_draftNeedsReview ? "Recovered draft • Review against reopened input before applying" : !rule.isEmpty() ? rule : "Rejected edit • Draft restored for correction");
 }
 
 bool MainWindow::isRecoveryPath(QString path) {
@@ -2030,7 +2047,29 @@ void MainWindow::changeStructure(bool columns, bool remove) {
     submit(command);
 }
 
+// A rejection by a rule names the rule from the error's binding object, never
+// from its message; empty for any other rejection.
+QString MainWindow::bindingRejection(const QJsonObject &result) {
+    const auto code=result["code"].toString();const auto binding=result["binding"].toObject();
+    if(!(code=="BINDING_FAILED" || code=="BINDING_TIMEOUT" || code=="BINDING_NOT_APPROVED" || code=="BINDING_UNAVAILABLE") || !binding["module"].isString() || !binding["function"].isString())return {};
+    const auto rule=binding["module"].toString()+QLatin1Char('.')+binding["function"].toString();
+    QString reason;
+    if(code=="BINDING_NOT_APPROVED")reason=tr("its code is not approved");
+    else if(code=="BINDING_UNAVAILABLE")reason=tr("its code could not be loaded");
+    else {
+        reason=result["message"].toString();const auto prefix=QStringLiteral("Binding %1: ").arg(rule);
+        if(reason.startsWith(prefix))reason=reason.mid(prefix.size());
+    }
+    return tr("Rejected by %1: %2 · nothing stored").arg(rule,reason);
+}
+
 void MainWindow::reportReferenceWarnings(const QJsonObject &receipt) {
+    for(const auto &value:receipt["binding_notices"].toArray()) {
+        const auto notice=value.toObject();const auto reason=notice["reason"].toString();
+        issue(tr("Rule skipped: %1 (%2)").arg(notice["function"].toString(),reason=="BINDING_NOT_APPROVED"?tr("its code is not approved"):reason=="BINDING_UNAVAILABLE"?tr("its code could not be loaded"):reason));
+    }
+    QStringList rules;for(const auto &value:receipt["broken_bindings"].toArray())rules.append(value.toString());
+    if(!rules.isEmpty())issue(tr("Rules that no longer cover any cells: %1").arg(rules.join(", ")));
     QStringList broken;for(const auto &value:receipt["broken_names"].toArray())broken.append(value.toString());
     if(!broken.isEmpty())issue(tr("Names that no longer refer to any cells: %1").arg(broken.join(", ")));
     if (receipt["reference_warnings"].toInt()<=0) return;
