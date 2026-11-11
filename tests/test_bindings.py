@@ -94,14 +94,20 @@ class BindingTests(unittest.TestCase):
         self.assertEqual(receipt['broken_bindings'],['Rules.on_edit'])
         item=next(b for b in self.read()['bindings'] if b['scope']['kind']=='range')
         self.assertTrue(item['broken']);self.assertIsNone(item['reference']);self.assertIsNotNone(item['scope']['range_id']);self.assertEqual(item['scope']['sheet_id'],self.book.sheet('Supplies'))
+        fp=fingerprint(self.book.db);other=self.book.sheet('Other')
         receipt=self.apply('sheet_delete',sheet='Other');self.assertEqual(receipt['broken_bindings'],['Rules.on_edit'])
+        self.assertEqual(fingerprint(self.book.db),fp)
+        item=next(b for b in self.read()['bindings'] if b['scope']['kind']=='sheet')
+        self.assertTrue(item['broken']);self.assertEqual(item['scope']['sheet_id'],other)
         receipt=self.apply('sheet_add',name='Third');self.assertNotIn('broken_bindings',receipt)
         self.assertEqual(sum(b['broken'] for b in self.read()['bindings']),2)
 
     def test_range_scope_broken_when_sheet_deleted(self):
-        self.apply('sheet_add',name='Other');self.save(self.rng("'Other'!A1"))
+        self.apply('sheet_add',name='Other');self.save(self.rng("'Other'!A1"));fp=fingerprint(self.book.db);other=self.book.sheet('Other')
         receipt=self.apply('sheet_delete',sheet='Other');self.assertEqual(receipt['broken_bindings'],['Rules.on_edit'])
-        item=self.read()['bindings'][0];self.assertTrue(item['broken']);self.assertIsNone(item['scope']['sheet_id'])
+        self.assertEqual(fingerprint(self.book.db),fp)
+        item=self.read()['bindings'][0];self.assertTrue(item['broken']);self.assertIsNone(item['reference'])
+        self.assertEqual(item['scope']['sheet_id'],other);self.assertIsNone(item['scope']['row1'])
         self.assertNotIn('broken_bindings',self.apply('sheet_add',name='Z'))
 
     def test_table_scope(self):

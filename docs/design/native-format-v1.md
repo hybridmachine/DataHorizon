@@ -20,7 +20,9 @@ A `binding` payload has exactly `id` and `module_id` (canonical UUIDs), `event`
 `required` and `scope`. The scope is one of `{kind:"sheet", sheet_id}`,
 `{kind:"range", range_id, sheet_id, row1, col1, row2, col2}`,
 `{kind:"name", name_id}` for `cell_change`, or `{kind:"table", table_id}` for
-`table_change`. A broken range scope has null coordinates. A workbook holds at
+`table_change`. A broken range scope has null coordinates. A sheet or range
+scope whose sheet was deleted keeps that sheet's identity and is broken because
+the sheet no longer exists; readers also accept a null `sheet_id`. A workbook holds at
 most 16 bindings. The code fingerprint covers each binding without the range
 coordinates, so a range scope that moves with row/column changes does not need
 fresh approval; a workbook without bindings keeps its v5 fingerprint. Name and

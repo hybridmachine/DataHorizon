@@ -183,6 +183,14 @@ class BindingExecutionTests(unittest.TestCase):
         self.assertEqual(self.raw('Supplies',2,2)['source'],'2')
         receipt=self.edit(2,1,'Pad');self.assertEqual(receipt['outcome'],'committed');self.assertNotIn('binding_notices',receipt);self.assertIsNone(self.log())
 
+    def test_deleting_a_sheet_with_a_rule_keeps_approval_for_other_rules(self):
+        self.apply('sheet_add',name='Other')
+        self.bind('log_a',scope=dict(kind='sheet',sheet='Other'));self.bind('log_a',scope=dict(kind='range',reference="'Other'!A1:A2"),required=False);self.bind('log_a')
+        key=activation(self.book)['activation_key']
+        receipt=self.apply('sheet_delete',sheet='Other');self.assertEqual(receipt['broken_bindings'],['supplies.log_a','supplies.log_a'])
+        state=activation(self.book);self.assertEqual(state['activation_key'],key);self.assertTrue(state['approved'])
+        receipt=self.edit(2,2,'5');self.assertEqual(receipt['outcome'],'committed');self.assertNotIn('binding_notices',receipt);self.assertEqual(self.log(),'a')
+
     def test_unapproved_optional_binding_is_skipped_with_notice(self):
         skipped=self.bind('log_a',required=False,approve=False)
         receipt=self.apply('edit',sheet='Supplies',cells=[dict(row=2,col=2,source='5'),dict(row=3,col=2,source='6')])

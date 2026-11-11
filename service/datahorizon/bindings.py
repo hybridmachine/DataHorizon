@@ -243,12 +243,16 @@ def scoped_to_names(book,broken):
 
 
 def break_sheet(book,sheet_id):
-    """Break every sheet or range scope on a sheet that is being deleted."""
+    """Break every sheet or range scope on a sheet that is being deleted.
+
+    The scope keeps the deleted sheet's identity: it is part of the code fingerprint, so clearing it
+    would revoke approval for the whole workbook. A scope whose sheet no longer exists covers nothing
+    and is described as broken; a range scope also loses its coordinates, which are not fingerprinted.
+    """
     broken=[]
     for item in stored(book):
         scope=item['scope']
         if scope['kind'] not in ('sheet','range') or scope['sheet_id']!=sheet_id:continue
         broken.append(label(book.db,item))
-        scope=dict(scope,sheet_id=None,**({key:None for key in SPAN} if scope['kind']=='range' else {}))
-        relational.store(book,'binding',definition(dict(item,scope=scope)))
+        if scope['kind']=='range':relational.store(book,'binding',definition(dict(item,scope=dict(scope,**{key:None for key in SPAN}))))
     return sorted(broken)
