@@ -1635,7 +1635,7 @@ private slots:
     void outputTextCoversEveryHeading() {
         const QJsonObject committed{{"outcome","committed"},{"macro_result","done"},{"changed_cells",2},{"changed_records",3},
             {"binding_notices",QJsonArray{QJsonObject{{"binding_id","b1"},{"function","audit"},{"reason","BINDING_UNAVAILABLE"}}}}};
-        QCOMPARE(PythonWorkspace::runOutputText(committed),QString("Committed · returned \"done\" · 5 cells changed\nRule skipped: audit (BINDING_UNAVAILABLE)"));
+        QCOMPARE(PythonWorkspace::runOutputText(committed),QString("Committed · returned \"done\" · 5 cells changed\nRule skipped: audit (its code could not be loaded)"));
         QCOMPARE(PythonWorkspace::runOutputText({{"outcome","committed"},{"changed_cells",0}}).section('\n',0,0),QString("Committed · returned null · 0 cells changed"));
         for(const auto &code:{QString("MACRO_TIMEOUT"),QString("TIMEOUT")})
             QCOMPARE(PythonWorkspace::runOutputText({{"outcome","rolled_back"},{"code",code},{"message","Python macro exceeded its two-second budget"}}),QString("Timed out\nPython macro exceeded its two-second budget"));
@@ -1745,7 +1745,7 @@ private slots:
     void bindRuleThenNegativeGridEditIsRejectedAndDraftKept() {
         BindingSetup setup;QVERIFY(setup.start("rule.dhwb",true));auto &window=*setup.window;auto *workspace=setup.workspace;
         QVERIFY(addRule(window,workspace,"'Supplies'!B2:B4","rules.check_quantity"));
-        QCOMPARE(bindingRows(workspace),QStringList{"cells change in 'Supplies'!B2:B4 → rules.check_quantity"});
+        QCOMPARE(bindingRows(workspace),QStringList{"cells change in range 'Supplies'!B2:B4 → rules.check_quantity"});
         QVERIFY(approveCode(workspace));
         QSignalSpy finished(&window,&MainWindow::operationFinished);
         QVERIFY(typeIntoCell(window,1,1,"-1"));
@@ -1773,7 +1773,7 @@ private slots:
         QVERIFY(addRule(window,workspace,"quantities","rules.check_quantity"));
         const auto first=readCode(window)["bindings"].toArray()[0].toObject();
         QCOMPARE(first["scope"].toObject()["kind"].toString(),QString("name"));QVERIFY(first["required"].toBool());
-        QCOMPARE(bindingRows(workspace)[0],QString("cells change in Quantities → rules.check_quantity"));
+        QCOMPARE(bindingRows(workspace)[0],QString("cells change in name Quantities → rules.check_quantity"));
         // The pick button fills the scope with one picked range, then ends.
         auto *pick=scopePickButton(workspace);QSignalSpy finished(&window,&MainWindow::externalPickFinished);
         QTRY_VERIFY_WITH_TIMEOUT(pick->isEnabled(),5000);
@@ -1796,7 +1796,7 @@ private slots:
         QCOMPARE(byKind["range"]["reference"].toString(),QString("'Supplies'!C2:C4"));
         QCOMPARE(byKind["sheet"]["function"].toString(),QString("note"));QVERIFY(byKind["sheet"]["required"].toBool());
         auto rows=bindingRows(workspace);rows.sort();
-        QCOMPARE(rows,(QStringList{"cells change in 'Supplies'!C2:C4 → rules.note (optional)","cells change in Quantities → rules.check_quantity","cells change in Supplies → rules.note"}));
+        QCOMPARE(rows,(QStringList{"cells change in name Quantities → rules.check_quantity","cells change in range 'Supplies'!C2:C4 → rules.note (optional)","cells change in sheet Supplies → rules.note"}));
         // Text that is none of these is never sent.
         QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
         bindingScope(workspace)->setText("Nowhere");addBindingButton(workspace)->click();
@@ -1818,6 +1818,7 @@ private slots:
         // An edit gives the workbook Undo history; the prompt asks before it is
         // cleared, and declining sends nothing.
         QVERIFY(apply(window,{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",7},{"col",1},{"source","Pad"}}}}}));
+        QTRY_VERIFY_WITH_TIMEOUT(addBindingButton(workspace)->isEnabled(),5000);  // names are read again after the edit
         QString prompt;bool decline=true;QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
         ModalDriver driver([&](QWidget *modal){
             auto *box=qobject_cast<QMessageBox *>(modal);if(!box || box->objectName()!="bindingHistoryPrompt")return false;
@@ -1870,7 +1871,7 @@ private slots:
     void optionalBindingSkipIsReportedInIssues() {
         BindingSetup setup;QVERIFY(setup.start("optional.dhwb"));auto &window=*setup.window;auto *workspace=setup.workspace;
         QVERIFY(addRule(window,workspace,"'Supplies'!B2:B4","rules.check_quantity",false));
-        QCOMPARE(bindingRows(workspace),QStringList{"cells change in 'Supplies'!B2:B4 → rules.check_quantity (optional)"});
+        QCOMPARE(bindingRows(workspace),QStringList{"cells change in range 'Supplies'!B2:B4 → rules.check_quantity (optional)"});
         // Unapproved and optional: skipped, and the edit is stored.
         QVERIFY(apply(window,{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",2},{"col",2},{"source","-1"}}}}}));
         QTRY_COMPARE_WITH_TIMEOUT(cell(window,1,1),QString("-1"),10000);
@@ -1885,6 +1886,47 @@ private slots:
         QVERIFY2(issues(window).contains("Rules that no longer cover any cells: rules.check_quantity"),qPrintable(issues(window)));
         QTRY_COMPARE_WITH_TIMEOUT(bindingRows(workspace),QStringList{"cells change → rules.check_quantity · Broken: its cells no longer exist"},10000);
         QVERIFY(readCode(window)["bindings"].toArray()[0].toObject()["broken"].toBool());
+    }
+
+    void hostileRuleMessageIsShownLiterally() {
+        BindingSetup setup;QVERIFY(setup.start("hostile.dhwb"));auto &window=*setup.window;auto *workspace=setup.workspace;
+        QVERIFY(apply(window,{{"action","module_save"},{"name","hostile"},{"source","def reject(ctx, changes):\n    raise ValueError('<b>x</b>')\n"},{"macros",QJsonArray{}},{"fingerprint",readCode(window)["fingerprint"]}}));
+        QTRY_COMPARE_WITH_TIMEOUT(bindingFunction(workspace)->findText("hostile.reject")>=0,true,10000);
+        QVERIFY(addRule(window,workspace,"'Supplies'!B2:B4","hostile.reject"));
+        QVERIFY(approveCode(workspace));
+        QSignalSpy finished(&window,&MainWindow::operationFinished);
+        QVERIFY(typeIntoCell(window,1,1,"9"));
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(),1,15000);QVERIFY(!finished[0][0].toBool());
+        const QString rejected="Rejected by hostile.reject: ValueError: <b>x</b> · nothing stored";
+        auto *label=window.findChild<QLabel *>("storageStatus");
+        QTRY_COMPARE_WITH_TIMEOUT(label->text(),rejected,10000);QCOMPARE(label->textFormat(),Qt::PlainText);
+        for(const char *name:{"selectionSummary","listCriteriaSummary","formulaSyntaxCues"})QCOMPARE(window.findChild<QLabel *>(name)->textFormat(),Qt::PlainText);
+        QVERIFY(issues(window).contains(rejected));
+    }
+
+    void addIsRefusedWhileNamesArePending() {
+        BindingSetup setup;QVERIFY(setup.start("pending.dhwb"));auto &window=*setup.window;auto *workspace=setup.workspace;
+        bindingScope(workspace)->setText("Quantities");QTRY_VERIFY_WITH_TIMEOUT(addBindingButton(workspace)->isEnabled(),5000);
+        // Each refresh reads names again; until they arrive Add is off with a reason.
+        bool seen=false,enabled=true;QString tip;
+        auto connection=QObject::connect(&window,&MainWindow::workbookReady,&window,[&]{
+            if(seen)return;seen=true;enabled=addBindingButton(workspace)->isEnabled();tip=addBindingButton(workspace)->toolTip();});
+        QVERIFY(refreshWindow(window));QObject::disconnect(connection);
+        QVERIFY(seen);QVERIFY(!enabled);QCOMPARE(tip,QString("Names are being read. Try again in a moment."));
+        QTRY_VERIFY_WITH_TIMEOUT(addBindingButton(workspace)->isEnabled(),10000);
+        QVERIFY(addRule(window,workspace,"Quantities","rules.check_quantity"));
+        QCOMPARE(readCode(window)["bindings"].toArray()[0].toObject()["scope"].toObject()["kind"].toString(),QString("name"));
+    }
+
+    void nameAndSheetCollisionBindsTheName() {
+        BindingSetup setup;QVERIFY(setup.start("collision.dhwb"));auto &window=*setup.window;auto *workspace=setup.workspace;
+        QVERIFY(saveName(window,"Supplies","'Supplies'!B2:B4"));
+        QTRY_VERIFY_WITH_TIMEOUT(addBindingButton(workspace)->isEnabled(),10000);
+        QVERIFY(addRule(window,workspace,"supplies","rules.check_quantity"));
+        QCOMPARE(readCode(window)["bindings"].toArray()[0].toObject()["scope"].toObject()["kind"].toString(),QString("name"));
+        QCOMPARE(bindingRows(workspace),QStringList{"cells change in name Supplies → rules.check_quantity"});
+        QCOMPARE(bindingList(workspace)->item(0)->toolTip(),QString("<qt>'Supplies'!B2:B4</qt>"));
+        QVERIFY2(workspaceMessage(workspace).contains("Bound to the name Supplies. To bind the whole sheet, rename the name or use a range."),qPrintable(workspaceMessage(workspace)));
     }
 };
 

@@ -179,6 +179,7 @@ class BindingExecutionTests(unittest.TestCase):
         outcome=self.failure(lambda:self.edit(2,2,'5'))
         self.assertEqual(outcome['code'],'BINDING_NOT_APPROVED');self.assertEqual(outcome['http_status'],403);self.assertIn('supplies.log_a',outcome['message'])
         self.assertEqual(outcome['binding'],dict(binding_id=made,module='supplies',function='log_a'))
+        self.assertEqual(self.book.operation(outcome['operation_id'])['binding'],outcome['binding'])
         self.assertEqual(self.raw('Supplies',2,2)['source'],'2')
         receipt=self.edit(2,1,'Pad');self.assertEqual(receipt['outcome'],'committed');self.assertNotIn('binding_notices',receipt);self.assertIsNone(self.log())
 

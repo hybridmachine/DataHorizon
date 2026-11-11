@@ -63,6 +63,9 @@ public:
     // The Names page lists names and asks the owning window to change them.
     NamesPanel *namesPanel() const{return m_names;}
     void setNames(const QJsonArray &names);
+    // Whether the owning window has read names for the current workbook state;
+    // scope text is never resolved against names that are still being read.
+    void setNamesReady(bool ready){if(ready!=m_namesReady){m_namesReady=ready;updateState();}}
     // Picking from the sheet: the owning window arms it on
     // pickFromSheetRequested(true), inserts through insertPickedReference while
     // pickStillValid holds, and reports the end through pickFinished.
@@ -89,6 +92,8 @@ public:
     // The Output tab's text for a final run receipt; *tracebackLine is the
     // output line where the traceback starts, or -1 when there is none.
     static QString runOutputText(const QJsonObject &receipt,int *tracebackLine=nullptr);
+    // The text for a skipped rule's reason code, shared with the owning window.
+    static QString skippedReason(const QString &code);
 signals:
     void submitRequested(QJsonObject operation);
     // A read found the workbook state stale; the owning window refreshes.
@@ -217,7 +222,8 @@ private:
     QPushButton *m_run,*m_cancelRun;
     QPlainTextEdit *m_output;
     QJsonArray m_nameList;  // the owning window's names, empty until they are read
-    bool m_scopePicking=false;
+    bool m_scopePicking=false,m_namesReady=false;
+    QString m_bindingNotice;  // said after the pending rule change commits
     QListWidget *m_bindings;
     QComboBox *m_bindingEvent,*m_bindingFunction;
     QLineEdit *m_bindingScope;

@@ -358,6 +358,7 @@ void MainWindow::updateNameControls() {
     QString reason;const bool writable=nameWritable(&reason);
     if(m_nameManager)m_nameManager->panel()->setWritable(writable,reason);
     m_workspace->namesPanel()->setWritable(writable,reason);
+    m_workspace->setNamesReady(m_namesReady);
 }
 
 void MainWindow::nameMessage(const QString &text) {
@@ -770,8 +771,8 @@ void MainWindow::buildUi() {
     auto *otherPickButton=new QToolButton(central);otherPickButton->setDefaultAction(otherReference);otherPickButton->setText(tr("Other sheet…"));otherPickButton->setObjectName("pickOtherSheetReferenceButton");otherPickButton->setFocusPolicy(Qt::NoFocus);formula->addWidget(otherPickButton);
     connect(m_source,&QLineEdit::textEdited,this,[this]{++m_referenceGeneration;});
     connect(m_source,&QLineEdit::textEdited,this,&MainWindow::cancelFormatPainter);connect(m_address,&QLineEdit::textEdited,this,&MainWindow::cancelFormatPainter);connect(m_client,&RestClient::configured,this,&MainWindow::cancelFormatPainter);
-    m_formulaCues=new QLabel(central);m_formulaCues->setObjectName("formulaSyntaxCues");m_formulaCues->setAccessibleName(tr("Formula references and parentheses"));m_formulaCues->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);m_formulaCues->hide();layout->addWidget(m_formulaCues);dynamic_cast<FormulaLineEdit *>(m_source)->syntaxChanged=[this]{updateFormulaReferences();};
-    m_listSummary=new QLabel(central);m_listSummary->setObjectName("listCriteriaSummary");m_listSummary->setAccessibleName(tr("Active sort and filter criteria"));
+    m_formulaCues=new QLabel(central);m_formulaCues->setObjectName("formulaSyntaxCues");m_formulaCues->setAccessibleName(tr("Formula references and parentheses"));m_formulaCues->setTextFormat(Qt::PlainText);m_formulaCues->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);m_formulaCues->hide();layout->addWidget(m_formulaCues);dynamic_cast<FormulaLineEdit *>(m_source)->syntaxChanged=[this]{updateFormulaReferences();};
+    m_listSummary=new QLabel(central);m_listSummary->setObjectName("listCriteriaSummary");m_listSummary->setAccessibleName(tr("Active sort and filter criteria"));m_listSummary->setTextFormat(Qt::PlainText);
     m_listSummary->setMinimumWidth(0);m_listSummary->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);m_listSummary->hide();layout->addWidget(m_listSummary);
     connect(m_model,&QAbstractItemModel::modelReset,this,&MainWindow::updateListSummary);
     m_grid = new KeyboardGridView; m_grid->setObjectName("grid"); m_grid->setAccessibleName(tr("Spreadsheet")); m_grid->setModel(m_model);
@@ -940,9 +941,11 @@ void MainWindow::buildUi() {
     });
     connect(m_relational,&RelationalWorkbench::refreshRequested,this,[this]{refresh();});connect(m_relational,&RelationalWorkbench::sheetSelected,this,[this](const QString &id){showRelational(false);for(int i=0;i<m_tabs->count();++i)if(m_tabs->tabData(i).toString()==id){m_tabs->setCurrentIndex(i);break;}});
     m_status = new QLabel(tr("Starting local service…")); m_status->setAccessibleName(tr("Storage and calculation status"));
+    // Status text can carry service and workbook-code messages: never markup.
+    m_status->setTextFormat(Qt::PlainText);
     m_status->setObjectName("storageStatus");
     statusBar()->addWidget(m_status, 1);
-    m_summary=new QLabel(this);m_summary->setObjectName("selectionSummary");m_summary->setAccessibleName(tr("Selection summary"));
+    m_summary=new QLabel(this);m_summary->setObjectName("selectionSummary");m_summary->setAccessibleName(tr("Selection summary"));m_summary->setTextFormat(Qt::PlainText);
     m_summary->setMinimumWidth(0);m_summary->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
     statusBar()->addPermanentWidget(m_summary,1);
     m_summaryTimer=new QTimer(this);m_summaryTimer->setSingleShot(true);m_summaryTimer->setInterval(250);
@@ -1379,7 +1382,7 @@ void MainWindow::updateFormulaReferences() {
     for(auto *view:views)if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))if(delegate->activeEditor())line=delegate->activeEditor();
     const auto syntax=line?line->syntaxCues():FormulaSyntaxCues{};m_formulaReferences=syntax.references;QStringList references;
     for(int i=0;i<qMin(8,syntax.references.size());++i)references.append(syntax.references[i].source);QString text;if(!references.isEmpty())text=tr("References: %1").arg(references.join(" • "));if(syntax.references.size()>8)text+=tr(" • +%1 more").arg(syntax.references.size()-8);
-    if(!syntax.parentheses.isEmpty())text+=(text.isEmpty()?QString():QString(" • "))+syntax.parentheses;if(syntax.truncated)text+=tr(" • Visual cue limit reached (64 references / nesting 128)");m_formulaCues->setText(text.left(300));m_formulaCues->setToolTip(text);m_formulaCues->setVisible(!text.isEmpty());m_grid->setProperty("formulaReferenceCount",syntax.references.size());for(auto *view:views)view->viewport()->update();
+    if(!syntax.parentheses.isEmpty())text+=(text.isEmpty()?QString():QString(" • "))+syntax.parentheses;if(syntax.truncated)text+=tr(" • Visual cue limit reached (64 references / nesting 128)");m_formulaCues->setText(text.left(300));m_formulaCues->setToolTip(plainToolTip(text));m_formulaCues->setVisible(!text.isEmpty());m_grid->setProperty("formulaReferenceCount",syntax.references.size());for(auto *view:views)view->viewport()->update();
 }
 
 void MainWindow::startReferencePick() {
@@ -1677,7 +1680,7 @@ void MainWindow::refresh(const QString &selectSheet) {
     m_client->request(base(), {}, [this, selectSheet, workbook](QJsonObject info, QString error) {
         if (m_info["id"].toString()!=workbook) return;
         m_refreshing = false;
-        if (!error.isEmpty()) { m_refreshFailed=true;setBusy(true, "Refresh failed • Editing stopped"); issue(error); return; }
+        if (!error.isEmpty()) { m_refreshFailed=true;m_bindingRejection.clear();setBusy(true, "Refresh failed • Editing stopped"); issue(error); return; }
         acceptInfo(info, selectSheet);
     }, false);
 }
@@ -1685,7 +1688,7 @@ void MainWindow::refresh(const QString &selectSheet) {
 void MainWindow::submit(QJsonObject operation) {
     if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
     const auto action=operation["action"].toString();
-    if(m_relationalActive && !action.startsWith("module_") && !action.startsWith("binding_") && !action.startsWith("name_") && action!="macro_run" && !(action.startsWith("table_") || action.startsWith("index_") || action.startsWith("relationship_") || action.startsWith("query_") || action=="undo" || action=="redo")) {
+    if(m_relationalActive && !action.startsWith("module_") && action!="binding_save" && action!="binding_delete" && !action.startsWith("name_") && action!="macro_run" && !(action.startsWith("table_") || action.startsWith("index_") || action.startsWith("relationship_") || action.startsWith("query_") || action=="undo" || action=="redo")) {
         issue(tr("Return to sheets before applying a sheet operation."));return;
     }
     const auto defaults=targetContext();
@@ -2066,7 +2069,7 @@ QString MainWindow::bindingRejection(const QJsonObject &result) {
 void MainWindow::reportReferenceWarnings(const QJsonObject &receipt) {
     for(const auto &value:receipt["binding_notices"].toArray()) {
         const auto notice=value.toObject();const auto reason=notice["reason"].toString();
-        issue(tr("Rule skipped: %1 (%2)").arg(notice["function"].toString(),reason=="BINDING_NOT_APPROVED"?tr("its code is not approved"):reason=="BINDING_UNAVAILABLE"?tr("its code could not be loaded"):reason));
+        issue(tr("Rule skipped: %1 (%2)").arg(notice["function"].toString(),PythonWorkspace::skippedReason(reason)));
     }
     QStringList rules;for(const auto &value:receipt["broken_bindings"].toArray())rules.append(value.toString());
     if(!rules.isEmpty())issue(tr("Rules that no longer cover any cells: %1").arg(rules.join(", ")));
@@ -2800,7 +2803,7 @@ void MainWindow::updateListSummary() {
     }
     const auto range=tr("%1%2:%3%4").arg(SheetModel::columnName(spec["c1"].toInt())).arg(spec["r1"].toInt()).arg(SheetModel::columnName(spec["c2"].toInt())).arg(spec["r2"].toInt());
     const auto text=tr("List %1 • Header %2 • Sort %3 • Filters (AND): %4").arg(range,spec["header"].toBool()?tr("yes"):tr("no"),keys.isEmpty()?tr("source order"):keys.join(", "),filters.isEmpty()?tr("none"):filters.join("; "));
-    m_listSummary->setText(text);m_listSummary->setToolTip(text+tr("\nValues are previewed to 120 characters. Open Sort/filter to inspect or edit full criteria. Local hiding is separate from these source criteria."));
+    m_listSummary->setText(text);m_listSummary->setToolTip(QStringLiteral("<qt>%1</qt>").arg((text+tr("\nValues are previewed to 120 characters. Open Sort/filter to inspect or edit full criteria. Local hiding is separate from these source criteria.")).toHtmlEscaped().replace(QLatin1Char('\n'),QStringLiteral("<br>"))));
 }
 
 void MainWindow::showList(QJsonObject scope) {
@@ -2861,7 +2864,7 @@ void MainWindow::queueSummary() {
     }
     if(!key.isEmpty() && key==m_summaryKey)return;
     ++m_summaryGeneration;m_summaryTimer->stop();m_summaryKey=key;
-    if(key.isEmpty()) {m_summary->setText(tr("Summary unavailable"));m_summary->setToolTip(reason);return;}
+    if(key.isEmpty()) {m_summary->setText(tr("Summary unavailable"));m_summary->setToolTip(plainToolTip(reason));return;}
     m_summary->setText(tr("Summary…"));m_summary->setToolTip(tr("Reading stored selection; unsubmitted drafts are excluded."));m_summaryTimer->start();
 }
 
@@ -2877,7 +2880,7 @@ void MainWindow::requestSummary() {
             if(!m_summaryKey.isEmpty() && !m_busy && !m_unknown)m_summaryTimer->start();
             return;
         }
-        if(!error.isEmpty()) {m_summary->setText(tr("Summary unavailable"));m_summary->setToolTip(error);return;}
+        if(!error.isEmpty()) {m_summary->setText(tr("Summary unavailable"));m_summary->setToolTip(plainToolTip(error));return;}
         if(!result["state"].isString()) {
             m_summary->setText(tr("Summary unavailable"));m_summary->setToolTip(tr("Invalid selection summary response."));return;
         }
