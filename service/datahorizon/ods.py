@@ -503,7 +503,7 @@ def ods_export(snapshot,request):
             out=node(row_node,q(T,"table-cell"),**{q(T,"style-name"):style_ids[encoded(cell.get("style",{}))]})
             if cell["kind"]=="unmaintained" and selected_mode=="formulas":
                 # No cache: its value is the #REF! error, which ODS has no typed cell value for.
-                out.set(q(T,"formula"),"of:"+unmaintained_formula(cell,sheet["name"] if whole else None,conversions))
+                out.set(q(T,"formula"),"of:"+unmaintained_formula(cell,sheet["name"],conversions,whole))
             else: require(cell.get("calculation")=="current","CALCULATION_ERROR","ODS export requires error-free current values")
             if cell["kind"]=="formula" and selected_mode=="formulas": out.set(q(T,"formula"),native_to_ods(cell["source"],None if whole else sheet["range"],names if whole else None))
             value=cell.get("value")

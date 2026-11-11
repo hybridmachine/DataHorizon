@@ -28,14 +28,18 @@ the event contract of other generated reference rewrites. The receipt adds
 `unmaintained` (the first 100 `{sheet, cell}` locations after the operation)
 and `unmaintained_count` when any cell was marked.
 
-Clients cannot write the kind directly: an edit naming it is `INVALID_INPUT`,
-and operation-job staging does not accept it. Full paste of a copied
-`unmaintained` cell, fill and record paste copy it unchanged, without
-translation; values paste rejects its error. Editing the cell with any other
-kind clears the state. XLSX and ODS formula exports write the source unchanged
-as the cell formula (ODS with the `of:` prefix and no cached value) and report
-`formula.unmaintained` with severity `approximated`; values exports reject it
-like other formula errors. The row is inert: a direct SQLite edit can change its
+An edit request naming the kind is `INVALID_INPUT`, and operation-job staging
+does not accept it. Full paste and record paste preserve the kind a clipboard
+cell carries (the clipboard is client data), without translation; fill copies
+it unchanged; values paste rejects its error. Editing the cell with any other
+kind clears the state. `replace_all` on an `unmaintained` cell changes its
+source and keeps the kind. Whole-workbook XLSX and ODS formula exports write the
+source unchanged as the cell formula (ODS with the `of:` prefix and no cached
+value) and report `formula.unmaintained` with severity `approximated`; the
+source is written verbatim, without the sheet-identity-to-name conversion
+applied to `formula` cells. A selection export in formulas mode cannot check
+its references against the selection and is refused with `UNSUPPORTED_FORMULA`;
+values exports reject it like other formula errors. The row is inert: a direct SQLite edit can change its
 kind or source, and DataHorizon does not replay or repair it.
 
 ## Workbook names and bindings format v6

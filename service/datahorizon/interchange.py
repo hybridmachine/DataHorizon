@@ -140,9 +140,14 @@ def native_formula_to_xlsx(source,bounds=None,sheet_names=None):
 UNMAINTAINED_DETAIL="references were not maintained through a structural edit; the source is written unchanged"
 
 
-def unmaintained_formula(cell,sheet,report):
-    """Source text for an unmaintained cell, which no transform can read: write it as is and report the approximation."""
+def unmaintained_formula(cell,sheet,report,whole):
+    """Source text for an unmaintained cell, which no transform can read: write it as is and report the approximation.
+
+    A selection export cannot check its references against the selection, so it refuses the cell.
+    """
     source=cell["source"]
+    require(whole,"UNSUPPORTED_FORMULA",f"Formula at {address(cell['row'],cell['col'])} cannot be checked against the selection: "
+            "its references were not maintained through a structural edit. Export the whole workbook or choose values")
     require(not any((ord(c)<32 and c not in "\t\n\r") or ord(c) in (65534,65535) for c in source),
             "UNSUPPORTED_FORMULA","Formula contains characters unavailable in spreadsheet XML")
     report.add("formula.unmaintained","approximated",UNMAINTAINED_DETAIL,sheet=sheet,cell=address(cell["row"],cell["col"]))
@@ -464,7 +469,7 @@ def xlsx_export(snapshot,request):
                 current=cell["row"]; row=node(data,"row",r=str(current))
             out=node(row,"c",r=address(cell["row"],cell["col"]),s=str(style_ids[encoded(cell.get("style",{}))]))
             if cell["kind"]=="unmaintained" and selected_mode=="formulas":
-                node(out,"f",unmaintained_formula(cell,sheet["name"] if whole else None,conversions)[1:])
+                node(out,"f",unmaintained_formula(cell,sheet["name"],conversions,whole)[1:])
             elif cell["kind"]=="formula" and selected_mode=="formulas":
                 node(out,"f",native_formula_to_xlsx(cell["source"],None if whole else sheet["range"],names if whole else None)[1:])
             else:

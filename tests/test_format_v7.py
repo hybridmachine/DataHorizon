@@ -186,6 +186,17 @@ class FormatV7Tests(unittest.TestCase):
                 self.assertEqual((entry['severity'],entry['count'],entry['samples']),('approximated',1,[{'sheet':'Sheet1','cell':'B1'}]))
                 self.assertTrue(any('formula.unmaintained' in line or 'not maintained' in line for line in result['report']))
 
+    def test_selection_formula_export_refuses_unmaintained_cells(self):
+        book,_=self.marked_book();edit(book,'C1','7')
+        selection=book.read('Sheet1',{'r1':1,'c1':2,'r2':1,'c2':3},native=True)
+        for export in (xlsx_export,ods_export):
+            for mode,code in (('formulas','UNSUPPORTED_FORMULA'),('values','CALCULATION_ERROR')):
+                with self.subTest(export=export.__name__,mode=mode):
+                    with self.assertRaises(EngineError) as raised:export(selection,{'mode':mode})
+                    self.assertEqual(raised.exception.body['code'],code)
+                    if mode=='formulas':self.assertIn('Export the whole workbook or choose values',str(raised.exception))
+            self.assertIn('file_base64',export(book.read_workbook(),{'scope':'workbook','mode':'formulas'}))
+
     def test_rest_exposes_kind_versions_and_rejects_direct_kind(self):
         with LocalService() as client:
             capabilities=client.request('/v1/capabilities');api=client.request('/openapi.json')
