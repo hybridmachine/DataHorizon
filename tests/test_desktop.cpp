@@ -10,6 +10,8 @@
 #include "exportwriter.h"
 #include "clipboarddata.h"
 #include "relationalworkbench.h"
+#include "queryworkbench.h"
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QTreeWidget>
 #include "frozen_row_probe.h"
@@ -321,6 +323,23 @@ public:
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
+    void readonlySqlWorkbenchBindsParametersPagesResultsAndMarksChangesStale() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("query.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","table_create"},{"name","Data"},{"columns",QJsonArray{QJsonObject{{"name","Value"},{"type","integer"}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);QJsonArray rows;for(int i=0;i<300;++i)rows.append(QJsonObject{{"Value",i}});window.submit({{"action","table_insert"},{"table","Data"},{"rows",rows}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        window.findChild<QTabWidget *>("relationalPages")->setCurrentIndex(1);auto *sql=window.findChild<QPlainTextEdit *>("querySql");sql->setPlainText("SELECT Value, :label AS Label FROM Data WHERE Value >= :minimum ORDER BY Value DESC");auto *parameters=window.findChild<QTableWidget *>("queryParameters");window.findChild<QPushButton *>("addQueryParameter")->click();parameters->item(0,0)->setText("minimum");qobject_cast<QComboBox *>(parameters->cellWidget(0,1))->setCurrentText("integer");window.findChild<QPushButton *>("addQueryParameter")->click();parameters->item(1,0)->setText("label");
+        QTimer timer;timer.setInterval(10);connect(&timer,&QTimer::timeout,&window,[&]{auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());if(!dialog || dialog->objectName()!="queryParameterValues")return;auto *button=dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save);if(!button->isEnabled())return;dialog->findChild<QLineEdit *>("recordInput_0")->setText("40");dialog->findChild<QLineEdit *>("recordInput_1")->setText("=literal");button->click();});timer.start();window.findChild<QPushButton *>("runQuery")->click();timer.stop();
+        auto *grid=window.findChild<QTableWidget *>("queryResults");QTRY_VERIFY_WITH_TIMEOUT(grid->item(0,0) && grid->item(0,0)->text()=="299",10000);QCOMPARE(grid->item(0,1)->text(),QString("=literal"));QVERIFY(!(grid->model()->flags(grid->model()->index(0,0))&Qt::ItemIsEditable));
+        window.findChild<QPushButton *>("nextQueryPage")->click();QTRY_VERIFY_WITH_TIMEOUT(grid->item(0,0) && grid->item(0,0)->text()=="171",5000);window.findChild<QPushButton *>("previousQueryPage")->click();QTRY_VERIFY_WITH_TIMEOUT(grid->item(0,0) && grid->item(0,0)->text()=="299",5000);
+        grid->setRangeSelected(QTableWidgetSelectionRange(0,0,0,1),true);window.findChild<QPushButton *>("copyQueryValues")->click();QTRY_COMPARE_WITH_TIMEOUT(QApplication::clipboard()->text(),QString("299\t=literal"),5000);
+        QCOMPARE(window.findChild<QTableWidget *>("tableRecords")->rowCount(),0);QVERIFY(window.findChild<RelationalWorkbench *>()->cacheMetrics()["estimated_bytes"].toInteger()<16*1024*1024);
+        window.submit({{"action","table_update"},{"table","Data"},{"edits",QJsonArray{QJsonObject{{"row_id","1"},{"values",QJsonObject{{"Value",500}}}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);QTRY_COMPARE_WITH_TIMEOUT(grid->rowCount(),0,5000);QVERIFY(sql->toPlainText().contains(":minimum"));
+        timer.start();window.findChild<QPushButton *>("runQuery")->click();timer.stop();QTRY_VERIFY_WITH_TIMEOUT(grid->item(0,0) && grid->item(0,0)->text()=="500",10000);
+        parameters->setRowCount(0);sql->setPlainText("DELETE FROM Data");window.findChild<QPushButton *>("runQuery")->click();QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QLabel *>("queryStatus")->text().contains("accepts one read-only"),5000);QCOMPARE(grid->rowCount(),0);
+    }
+    void closingSqlWorkbenchCancelsPendingSnapshotAndReleasesItsJob() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("cancel-query.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.findChild<QAction *>("relationalWorkbenchAction")->trigger();window.findChild<QTabWidget *>("relationalPages")->setCurrentIndex(1);window.findChild<QPlainTextEdit *>("querySql")->setPlainText("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT sum(x) FROM n");window.findChild<QPushButton *>("runQuery")->click();QVERIFY(window.findChild<QueryWorkbench *>()->hasActiveJob());window.close();QTRY_VERIFY_WITH_TIMEOUT(!window.isVisible(),10000);QVERIFY(!window.findChild<QueryWorkbench *>()->hasActiveJob());
+    }
     void relationshipsAndOrphanRepairUseReviewedRestOperations() {
         QTemporaryDir temp;const auto path=temp.filePath("relations.dhwb");StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
         QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);

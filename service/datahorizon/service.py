@@ -34,6 +34,7 @@ from .functions import function_catalog
 CAPABILITIES = {
     "api_version": 1, "format_version": 4, "supported_format_versions": [1,2,3,4], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
     "structured_tables":True,"table_types":["text","integer","number","boolean","date","time","datetime"],
+    "readonly_sql":True,"query_jobs":True,"query_result_rows":100000,"query_result_values":1000000,"query_spool_bytes":64*1024*1024,
     "temporal_types": ["date","time","datetime"], "calculation_timezone": "UTC",
     "max_style_cells":MAX_CELLS, "max_summary_cells":MAX_CELLS, "max_viewport_cells": 4096, "max_clipboard_cells":MAX_CELLS, "max_request_bytes": 4 * 1024 * 1024,
     "formulas": ["arithmetic", "references", "concatenation", *sorted(SUPPORTED_FUNCTIONS)],
@@ -54,6 +55,11 @@ ROUTES = {
     "/v1/workbooks/{workbook}/tables/read":("post","Read a bounded state-checked record page"),
     "/v1/workbooks/{workbook}/relationships/inspect":("post","Inspect native relationships and bounded orphan locations"),
     "/v1/workbooks/{workbook}/relationships/repair-preview":("post","Review narrowly scoped orphan repairs on an explicit repair handle"),
+    "/v1/workbooks/{workbook}/queries/jobs":("post","Execute read-only SQL on a private snapshot with a bounded disk result spool"),
+    "/v1/workbooks/{workbook}/queries/jobs/{job}":("get","Query execution status; only complete current results are published"),
+    "/v1/workbooks/{workbook}/queries/jobs/{job}/page":("post","Read a bounded projected page of a completed frozen query"),
+    "/v1/workbooks/{workbook}/queries/jobs/{job}/cancel":("post","Cancel execution or discard its completed result"),
+    "/v1/workbooks/{workbook}/queries/jobs/{job}/release":("post","Release terminal query snapshot/result storage"),
     "/v1/workbooks/{workbook}/tables/schema-preview":("post","Review atomic schema conversion, constraints and explicit column loss"),
     "/v1/workbooks/{workbook}/tables/edit-preview":("post","Convert reviewed record inputs without writing or running change hooks"),
     "/v1/workbooks/{workbook}/operation-jobs":("post","Stage a reviewed edit/CSV or frozen find/list job; never starts writes"),
@@ -290,7 +296,7 @@ def openapi():
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "inspect":"TableCatalogRequest","repair-preview":"RelationshipRepairRequest","cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
@@ -356,6 +362,8 @@ class Service(ThreadingHTTPServer):
         self._path_locks, self._opening = {}, set()
         self._reserved_handles = 0
         self._stopping = False
+        from .query_storage import cleanup_terminated
+        cleanup_terminated()
         self.jobs = PreparationJobs()
         super().__init__(("127.0.0.1", port), RequestHandler)
 
@@ -563,6 +571,12 @@ class Service(ThreadingHTTPServer):
         if method=='POST' and suffix==['relationships','repair-preview']:
             from .relationships import preview_repair
             return preview_repair(book,body)
+        if method=='POST' and suffix==['queries','jobs']:return book.query_jobs().start(body)
+        if len(suffix) in (3,4) and suffix[:2]==['queries','jobs']:
+            action=suffix[3] if len(suffix)==4 else None
+            require(method=='GET' and action is None or method=='POST' and action in ('page','cancel','release'),'NOT_FOUND','Unknown query job resource',404)
+            jobs=book.query_jobs()
+            return jobs.page(suffix[2],body) if action=='page' else jobs.access(suffix[2],action)
         if method=='POST' and suffix==['records','copy']:
             from .record_operations import copy
             return copy(book,body)

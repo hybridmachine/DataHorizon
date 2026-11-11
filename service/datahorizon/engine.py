@@ -288,6 +288,7 @@ class Workbook:
         self.unverified_records=set()
         self._calculation_jobs=None
         self._operation_jobs=None
+        self._query_jobs=None
         self.cancel_event=None
         self._read_cancel_event=cancel_event
         self.epoch = str(uuid.uuid4())
@@ -344,6 +345,7 @@ class Workbook:
         _verify_destination(self.path,self.file_identity)
 
     def close(self):
+        if self._query_jobs is not None:self._query_jobs.close()
         if self._operation_jobs is not None:self._operation_jobs.close()
         if self._calculation_jobs is not None:self._calculation_jobs.close()
         with self.lock:self.db.close()
@@ -357,6 +359,13 @@ class Workbook:
             from .calculation_jobs import CalculationJobs
             self._calculation_jobs=CalculationJobs(self)
         return self._calculation_jobs
+
+    def query_jobs(self):
+        with self.lock:
+            if self._query_jobs is None:
+                from .query_jobs import QueryJobs
+                self._query_jobs=QueryJobs(self)
+            return self._query_jobs
 
     def operation_jobs(self):
         if self._operation_jobs is not None:return self._operation_jobs

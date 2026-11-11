@@ -285,6 +285,16 @@ class WorkbookClient:
         if action not in (None,'cancel','release'):raise ValueError('Unknown calculation action')
         return self.client.request(self.base+'/calculation/jobs/'+quote(job_id,safe='')+('/'+action if action else ''),{} if action else None)
 
+    def run_query(self,sql,*,parameters=None,values=None,job_id=None):
+        self._ensure_open()
+        return self.client.request(self.base+'/queries/jobs',dict(sql=sql,parameters=parameters or [],values=values or {},job_id=job_id or str(uuid.uuid4()),expected_state=self.state))
+
+    def query(self,job_id,action=None,**page):
+        self._ensure_open()
+        if action not in (None,'page','cancel','release'):raise ValueError('Unknown query action')
+        body=dict(expected_state=self.state,**page) if action=='page' else {} if action else None
+        return self.client.request(self.base+'/queries/jobs/'+quote(job_id,safe='')+('/'+action if action else ''),body)
+
     def trace(self,row,col,direction="precedents",sheet="Sheet1"):
         self._ensure_open()
         return self.client.request(self.base+"/trace",dict(sheet=sheet,row=row,col=col,direction=direction,expected_state=self.state))

@@ -1233,6 +1233,10 @@ void MainWindow::newBook() {
 void MainWindow::openBook(const QString &path, bool create, bool readonly,bool repair) {
     if(repair && m_refreshFailed && !m_unknown && m_pendingId.isEmpty())setBusy(false);
     if (m_busy || m_unknown) return;
+    if(m_queryClosing)return;
+    if(m_relational->hasQueryJob()){
+        m_queryClosing=true;m_relational->closeQuery([this,path,create,readonly,repair](QString error){m_queryClosing=false;if(!error.isEmpty()){issue(error);return;}openBook(path,create,readonly,repair);});return;
+    }
     if(m_relational->hasActiveEditor())return;
     if(!m_relational->retainedDraft().isEmpty()){
         if(QMessageBox::question(this,tr("Discard table draft?"),tr("Discard the retained table draft before opening another workbook?"))!=QMessageBox::Yes)return;
@@ -2623,6 +2627,10 @@ void MainWindow::findDialog(bool replace) {
 
 void MainWindow::closeEvent(QCloseEvent *event) {
     if(m_allowJobClose){event->accept();return;}
+    if(m_queryClosing){event->ignore();return;}
+    if(m_relational->hasQueryJob()){
+        event->ignore();m_queryClosing=true;m_relational->closeQuery([this](QString error){m_queryClosing=false;if(!error.isEmpty()){issue(tr("Query cleanup was not confirmed: %1").arg(error));return;}close();});return;
+    }
     if(m_jobClosing){event->ignore();return;}
     if(!m_activeOperationJob.isEmpty()){
         event->ignore();

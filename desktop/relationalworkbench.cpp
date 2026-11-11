@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "relationalworkbench.h"
 #include "recordinputdialog.h"
+#include "queryworkbench.h"
 #include <QApplication>
 #include <QClipboard>
 #include <QMimeData>
@@ -29,7 +30,9 @@
 
 RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWidget(parent),m_client(client) {
     setObjectName("relationalWorkbench");
-    auto *layout=new QVBoxLayout(this);auto *buttons=new QGridLayout;
+    auto *root=new QVBoxLayout(this);m_workbenchTabs=new QTabWidget;m_workbenchTabs->setObjectName("relationalPages");root->addWidget(m_workbenchTabs);
+    auto *tablePage=new QWidget;auto *layout=new QVBoxLayout(tablePage);m_workbenchTabs->addTab(tablePage,tr("Tables"));m_query=new QueryWorkbench(client);m_workbenchTabs->addTab(m_query,tr("Read-only SQL"));connect(m_query,&QueryWorkbench::issue,this,&RelationalWorkbench::issue);
+    auto *buttons=new QGridLayout;
     auto *sheets=new QPushButton(tr("Return to sheets"));sheets->setObjectName("returnToSheets");
     m_create=new QPushButton(tr("Create empty table…"));m_create->setObjectName("createTable");
     m_drop=new QPushButton(tr("Drop table…"));m_drop->setObjectName("dropTable");
@@ -90,6 +93,7 @@ RelationalWorkbench::RelationalWorkbench(RestClient *client,QWidget *parent):QWi
     connect(m_inspectRecord,&QPushButton::clicked,this,&RelationalWorkbench::reconcileRequested);
     connect(m_objects,&QTreeWidget::currentItemChanged,this,[this](QTreeWidgetItem *item){if(item)showTable(item->data(0,Qt::UserRole).toString());});
     connect(m_client,&RestClient::configured,this,[this]{++m_generation;m_info={};m_catalog={};m_objects->clear();m_schema->setRowCount(0);setLocked(true);});
+    connect(m_workbenchTabs,&QTabWidget::currentChanged,this,[this](int index){if(index==1){++m_readGeneration;m_page={};m_records->setRowCount(0);m_records->setColumnCount(0);m_query->resumeView();}else{m_query->suspendView();if(!m_table.isEmpty())loadRecords();}});
     setLocked(true);
 }
 
@@ -97,12 +101,13 @@ QString RelationalWorkbench::base()const{return "/v1/workbooks/"+m_info["id"].to
 
 void RelationalWorkbench::bind(const QJsonObject &info) {
     if(m_info["id"]!=info["id"]) {m_table.clear();m_catalog={};m_draftDefinition={};m_browse={};m_projection={};}
-    ++m_generation;++m_readGeneration;m_info=info;setLocked(info.isEmpty());
+    ++m_generation;++m_readGeneration;m_info=info;m_query->bind(info);setLocked(info.isEmpty());
     if(isVisible() && !info.isEmpty())refreshCatalog();
 }
 
 void RelationalWorkbench::setLocked(bool locked) {
     m_blocked=locked || m_info.isEmpty();m_locked=m_blocked || m_info.value("readonly").toBool() || m_info.value("repair").toBool();
+    m_query->setLocked(m_blocked);
     m_create->setEnabled(!m_locked);m_drop->setEnabled(!m_locked && !m_table.isEmpty());
     m_editSchema->setEnabled(!m_locked && !m_table.isEmpty());
     m_previous->setEnabled(!m_blocked && !m_previousPages.isEmpty());m_next->setEnabled(!m_blocked && !m_nextAfter.isEmpty());
@@ -122,7 +127,7 @@ void RelationalWorkbench::refreshCatalog() {
         if(generation!=m_generation)return;
         if(!error.isEmpty()){m_status->setText(error);emit issue(error);return;}
         if(result["state"]!=state){m_status->setText(tr("Catalog changed. Refresh the workbook."));return;}
-        m_catalog=result;m_objects->blockSignals(true);m_objects->clear();
+        m_catalog=result;m_query->setCatalog(result);m_objects->blockSignals(true);m_objects->clear();
         auto *tables=new QTreeWidgetItem(m_objects,{tr("Tables")});QTreeWidgetItem *selected=nullptr;
         for(const auto &entry:result["tables"].toArray()) {
             const auto table=entry.toObject();auto *item=new QTreeWidgetItem(tables,{table["name"].toString()});item->setData(0,Qt::UserRole,table["id"]);
@@ -147,7 +152,7 @@ void RelationalWorkbench::showTable(const QString &id) {
         }
     }
     setLocked(m_blocked);
-    if(!id.isEmpty())loadRecords();
+    if(!id.isEmpty() && m_workbenchTabs->currentIndex()==0)loadRecords();
 }
 
 void RelationalWorkbench::loadRecords(const QString &after) {
@@ -160,7 +165,7 @@ void RelationalWorkbench::loadRecords(const QString &after) {
         if(generation!=m_readGeneration || m_table!=table || state!=m_info["state"])return;
         if(!error.isEmpty()){m_status->setText(error);emit issue(error);return;}
         if(result["state"]!=state || result["table"]!=table){m_status->setText(tr("Table page changed; refresh the workbook."));return;}
-        const auto charge=3*(QJsonDocument(m_catalog).toJson(QJsonDocument::Compact).size()+QJsonDocument(result).toJson(QJsonDocument::Compact).size())+512*result["columns"].toArray().size()*result["records"].toArray().size()+256*m_schema->rowCount();
+        const auto charge=3*(QJsonDocument(m_catalog).toJson(QJsonDocument::Compact).size()+QJsonDocument(result).toJson(QJsonDocument::Compact).size())+512*result["columns"].toArray().size()*result["records"].toArray().size()+256*m_schema->rowCount()+m_query->cacheMetrics()["estimated_bytes"].toInteger();
         if(charge>16*1024*1024){m_page={};m_records->setRowCount(0);m_status->setText(tr("This page exceeds the desktop cache budget. Choose fewer displayed columns."));return;}
         m_page=result;m_after=after;m_nextAfter=result["next_cursor"].toString();
         const auto cols=result["columns"].toArray(),rows=result["records"].toArray();m_records->clear();m_records->setRowCount(rows.size());m_records->setColumnCount(cols.size());QStringList labels;
@@ -172,10 +177,12 @@ void RelationalWorkbench::loadRecords(const QString &after) {
     });
 }
 
-void RelationalWorkbench::suspend(){++m_generation;++m_readGeneration;m_catalog={};m_page={};m_objects->clear();m_schema->setRowCount(0);m_records->setRowCount(0);m_records->setColumnCount(0);m_previousPages.clear();}
+void RelationalWorkbench::suspend(){++m_generation;++m_readGeneration;m_catalog={};m_query->setCatalog({});m_query->suspendView();m_page={};m_objects->clear();m_schema->setRowCount(0);m_records->setRowCount(0);m_records->setColumnCount(0);m_previousPages.clear();}
+bool RelationalWorkbench::hasQueryJob()const{return m_query->hasActiveJob();}
+void RelationalWorkbench::closeQuery(std::function<void(QString)> completion){m_query->closeJob(std::move(completion));}
 QJsonObject RelationalWorkbench::cacheMetrics()const{
     const auto bytes=QJsonDocument(m_catalog).toJson(QJsonDocument::Compact).size()+QJsonDocument(m_page).toJson(QJsonDocument::Compact).size();
-    return {{"estimated_bytes",3*bytes+512*m_records->rowCount()*m_records->columnCount()+256*m_schema->rowCount()},{"budget_bytes",16*1024*1024},{"loaded_records",m_records->rowCount()},{"loaded_values",m_records->rowCount()*m_records->columnCount()}};
+    return {{"estimated_bytes",3*bytes+512*m_records->rowCount()*m_records->columnCount()+256*m_schema->rowCount()+m_query->cacheMetrics()["estimated_bytes"].toInteger()},{"budget_bytes",16*1024*1024},{"loaded_records",m_records->rowCount()},{"loaded_values",m_records->rowCount()*m_records->columnCount()+m_query->cacheMetrics()["loaded_values"].toInt()}};
 }
 
 void RelationalWorkbench::chooseColumns(){

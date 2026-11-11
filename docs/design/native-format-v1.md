@@ -232,3 +232,31 @@ recovery retains the unrelated original receipt as `not_admitted` sidecar eviden
 without inventing a native rollback receipt. Missing receipts still block work.
 This sidecar version does not change native schema versions 1–3; older services
 reject v2 sidecars rather than silently downgrading them.
+
+## Read-only SQL job tier
+
+Query jobs do not add native schema objects. SQL accepts one SELECT/CTE over
+registered user tables, named `:name` bindings and an explicit safe function
+allowlist. Private snapshot connections enforce query-only authorization and
+SQLite limits; reserved metadata, writes, DDL, transaction controls, attachments,
+extensions and indirect pragma access are denied. SQL aliases preserve labels
+and order, including duplicates; expression values retain SQLite scalar kinds.
+Integers beyond the JSON exact range use `{type:integer,value:decimal-string}`.
+BLOB, nonfinite and oversized Text results fail explicitly.
+
+Snapshots have five seconds; execution has sixty seconds. One query executes and
+four jobs are retained per workbook, with five-minute lazy expiry. Result storage
+is capped at 64 MiB, 100,000 rows, 1,000,000 values and 256 columns. Result labels
+are bounded to 1 KiB each / 64 KiB total; Text values to 64 KiB. Pages have the
+ordinary two-second / 4-MiB / 4,096-value bounds. Only complete current results
+are published. New generations or managed/direct source changes make old results
+stale. SQL ORDER BY controls order; otherwise order may differ across runs.
+The native snapshot and SQLite temporary work disk are separate from result-spool
+storage and are measured in final qualification. Table reads take no full copy.
+
+Close cancels/releases query work. A new service has no previous query handles
+and requires rerun; startup conservatively removes private directories only when
+an ownership marker matches and its service process is proven dead. Unknown or
+still-live owners are retained. The CLI `query run` reads all frozen ordinal pages
+before returning, rather than presenting the visible page as a complete result.
+Managed SQL mutations remain a later capture/behavior contract.
