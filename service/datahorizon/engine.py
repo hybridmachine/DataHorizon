@@ -768,6 +768,11 @@ class Workbook:
             else:
                 self.pending[key] = {"sheet": sheet, "row": row, "col": col, "before": original, "after": item}
 
+    def structural_put(self, key, item, origin=None):
+        """A write made by a structural rewrite. Bindings skip it unless its content came from an earlier edit in this operation."""
+        self.put(*key, item)
+        self.structural_marks[key] = (origin or key) not in self.structure_touched
+
     def apply_edit(self, sheet, edits, *, preserve_inputs=False):
         require(isinstance(edits, list) and 0 < len(edits) <= MAX_CELLS, "LIMIT", "Provide 1 to 10,000 edits")
         for edit in edits:
@@ -835,11 +840,9 @@ class Workbook:
         return catalog
 
     def run_hooks(self, operation):
-        from .bindings import admit,plan,stored
+        from .bindings import admit,plan,skip,stored
         if not self.handler and not stored(self):
             return
-        # Whole-row/column changes move cells; they are not cell-change events for bindings.
-        cell_events=self.operation_action not in ("rows_insert","rows_delete","columns_insert","columns_delete")
         admission={}
         for round_index in range(16):
             if not self.pending and not self.pending_tables:
@@ -856,10 +859,13 @@ class Workbook:
                     require(supports_event(self.handler,'on_table_change'),'UNSUPPORTED_HOOK_SCOPE','Required handler must explicitly define on_table_change(context,changes)')
                     require(len(encoded(table_batch).encode())<=8*1024*1024,'LIMIT','Table hook change images exceed 8 MiB')
                     invoke(self.handler,table_batch,operation,self.hook_dispatch,self.deadline,event='on_table_change')
-            calls=admit(self,plan(self,batch if cell_events else [],table_batch),admission)
+            # A handler may rewrite a structural record (same key, new content); only unchanged ones stay quiet.
+            quiet=self.structural_records if round_index==0 else {}
+            events=[change for change in batch if (key:=(change["sheet"],change["row"],change["col"])) not in quiet or quiet[key]!=change["after"]]
+            calls=admit(self,plan(self,events,table_batch),admission)
             if calls:
                 from .macro_runtime import invoke_bindings
-                invoke_bindings(calls,operation,self.hook_dispatch,self.deadline)
+                skip(self,admission,invoke_bindings(calls,operation,self.hook_dispatch,self.deadline))
         require(not self.pending and not self.pending_tables, "HOOK_RECURSION", "Required handler or bindings exceeded 16 change rounds")
 
     def operation(self, operation_id):
@@ -909,6 +915,7 @@ class Workbook:
                 self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
                 self.table_schema_keys=set();self.relational_before={}
                 self.macro_diagnostics=None;self.binding_notices=[]
+                self.structure_touched=set();self.structural_marks={};self.structural_records={}
                 self.operation_clock=utc_clock()
                 unverified_before=set(self.unverified_records)
                 self.change_bytes = 0
@@ -958,6 +965,8 @@ class Workbook:
                 record_context=records.capture(self)
                 self.relational_before={item['id']:item for item in relational.tables(self.db)}
                 before_catalog=self.structure_hook(operation,request,'before',None) if sheet_structural else None
+                # Cells edited so far (by a before-structure handler) are not structural content when moved.
+                self.structure_touched=set(self.changes)
                 reference_report = {}
                 sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
                 if kind=="macro_run":
@@ -1152,6 +1161,8 @@ class Workbook:
                     reference_report = self.delete_sheet(target)
                 else:
                     raise EngineError("UNSUPPORTED_OPERATION", f"Operation is not available: {kind}")
+                # Records produced only by a structural rewrite are not cell-change events for bindings.
+                self.structural_records={key:self.pending[key]['after'] for key,quiet in self.structural_marks.items() if quiet and key in self.pending}
                 if sheet_structural:self.structure_hook(operation,request,'after',before_catalog)
                 self.run_hooks(operation)
                 repaired_issues=None
@@ -1330,9 +1341,9 @@ class Workbook:
                         locations.append({"sheet":name,"row":row,"col":col})
             require(len(deleted)+len(formulas)<=MAX_CELLS,"LIMIT","Sheet deletion exceeds 10,000 affected cells")
             for key, item in formulas:
-                self.put(*key,item)
+                self.structural_put(key,item)
             for key in deleted:
-                self.put(*key,None)
+                self.structural_put(key,None)
             from .names import break_sheet
             broken_names = break_sheet(self,target)
             from .bindings import break_sheet as break_binding_sheet
@@ -1363,7 +1374,7 @@ class Workbook:
                 cells.append((row,col,item))
             self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (new_id,new_name,self.next_sheet_position()))
             for row, col, item in cells:
-                self.put(new_id,row,col,item)
+                self.structural_put((new_id,row,col),item,(target,row,col))
             if self.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=3:
                 self.db.execute("INSERT INTO dh_objects SELECT namespace,id,?,payload FROM dh_objects WHERE sheet_id=? AND namespace IN ('presentation','list')",(new_id,target))
                 require(self.db.execute('SELECT count(*)<=256 AND coalesce(sum(length(payload)),0)<=16777216 FROM dh_objects').fetchone()[0],'LIMIT','Native metadata exceeds its budget')
@@ -1388,7 +1399,7 @@ class Workbook:
                     typed(item)
                     formulas.append(((sheet,row,col),item))
             for key, item in formulas:
-                self.put(*key,item)
+                self.structural_put(key,item)
 
     def change_structure(self, request):
         """Bounded whole-row/column changes, including references on other sheets."""
@@ -1443,12 +1454,12 @@ class Workbook:
             affected = set(moved) | {dest for dest, _ in moved.values() if dest is not None} | set(formulas)
             require(len(affected)<=MAX_CELLS, "LIMIT", "Structure change exceeds 10,000 affected coordinates")
             for key in moved:
-                self.put(*key,None)
-            for destination, item in moved.values():
+                self.structural_put(key,None)
+            for key, (destination, item) in moved.items():
                 if destination is not None:
-                    self.put(*destination,item)
+                    self.structural_put(destination,item,key)
             for key, item in formulas.items():
-                self.put(*key,item)
+                self.structural_put(key,item)
             from .names import adjust_structure
             broken_names = adjust_structure(self,target,axis,start,count,delete)
             from .bindings import adjust_structure as adjust_bindings

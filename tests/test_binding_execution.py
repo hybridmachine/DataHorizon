@@ -50,6 +50,9 @@ def crash(ctx, changes):
     import os
     os._exit(3)
 
+def refuse(ctx, changes):
+    raise ValueError('binding was called')
+
 def spin(ctx, changes):
     while True:
         pass
@@ -60,6 +63,23 @@ def bump(ctx, changes):
 def run(ctx):
     ctx.set('Supplies!B2', -1)
     return 1
+'''
+
+FRAGILE='def on_edit(ctx, changes):\n    pass\n\ndef other(ctx, changes):\n    pass\n\nraise RuntimeError("broken at import")\n'
+
+HANDLER='''MODE = %r
+
+def _negative(ctx):
+    if ctx.value('Supplies!B2') != -1:
+        ctx.set('Supplies!B2', -1)
+
+def on_structure(ctx, event):
+    if event['phase'] == MODE:
+        _negative(ctx)
+
+def on_change(ctx, changes):
+    if MODE == 'change':
+        _negative(ctx)
 '''
 
 
@@ -82,8 +102,8 @@ class BindingExecutionTests(unittest.TestCase):
     def approve(self):
         self.book.approved_code=frozenset([activation(self.book)['activation_key']])
 
-    def bind(self,function,scope=None,event='cell_change',required=True,approve=True):
-        made=self.apply('binding_save',event=event,scope=scope or dict(kind='range',reference="'Supplies'!B2:B4"),module='supplies',function=function,required=required,fingerprint=fingerprint(self.book.db))
+    def bind(self,function,scope=None,event='cell_change',required=True,approve=True,module='supplies'):
+        made=self.apply('binding_save',event=event,scope=scope or dict(kind='range',reference="'Supplies'!B2:B4"),module=module,function=function,required=required,fingerprint=fingerprint(self.book.db))
         if approve:self.approve()
         return made['binding_id']
 
@@ -222,6 +242,60 @@ class BindingExecutionTests(unittest.TestCase):
         self.assertEqual(outcome['code'],'BINDING_FAILED');self.assertTrue(outcome['message'].startswith('Binding supplies.crash:'),outcome['message'])
         self.assertEqual(self.raw('Supplies',2,2)['source'],'2');self.assertEqual({p.pid for p in multiprocessing.active_children()},previous)
         self.assertFalse(any(t.name=='DataHorizonBindingBroker' for t in threading.enumerate()))
+
+    def handler(self,mode):
+        path=Path(self.temp.name)/('structure_%s.py'%mode);path.write_text(HANDLER%mode);self.book.handler=path
+
+    def test_handler_edit_during_row_insert_reaches_bindings(self):
+        self.bind('check_quantity')
+        for mode,start in (('before',1),('after',10),('change',5)):
+            with self.subTest(mode=mode):
+                self.handler(mode)
+                outcome=self.failure(lambda:self.apply('rows_insert',sheet='Supplies',start=start,count=1))
+                self.assertEqual(outcome['code'],'BINDING_FAILED');self.assertIn('supplies.check_quantity',outcome['message'])
+                self.assertEqual(self.raw('Supplies',2,2)['source'],'2');self.assertEqual(self.raw('Supplies',6,4)['source'],'=SUM(D2:D4)')
+        self.book.handler=None;self.assertEqual(self.apply('rows_insert',sheet='Supplies',start=5,count=1)['outcome'],'committed')
+
+    def test_sheet_structure_rewrites_do_not_call_bindings(self):
+        self.apply('edit',sheet='Supplies',cells=[dict(row=2,col=5,source='=Log!A1')])
+        self.bind('refuse',scope=dict(kind='sheet',sheet='Supplies'))
+        self.bind('log_a',scope=dict(kind='range',reference="'Supplies'!E2"))
+        # Approved: a binding that always raises is not called for the rewrite.
+        self.assertEqual(self.apply('sheet_rename',sheet='Log',name='Logbook')['outcome'],'committed')
+        self.assertIn('Logbook',self.raw('Supplies',2,5)['source']);self.assertIsNone(self.raw('Logbook',1,1))
+        self.assertEqual(self.apply('sheet_duplicate',sheet='Supplies',name='Copy')['outcome'],'committed')
+        # Unapproved required bindings do not block structural rewrites in their scope.
+        self.book.approved_code=frozenset()
+        self.assertEqual(self.apply('sheet_rename',sheet='Logbook',name='Log')['outcome'],'committed')
+        self.assertEqual(self.raw('Supplies',2,5)['source'],"='Log'!A1")
+        self.assertEqual(self.apply('sheet_delete',sheet='Log')['outcome'],'committed')
+        self.assertNotIn('Log',self.raw('Supplies',2,5)['source'])
+        self.assertEqual(self.failure(lambda:self.edit(2,5,'1'))['code'],'BINDING_NOT_APPROVED')
+
+    def test_handler_edit_during_sheet_rename_reaches_bindings(self):
+        self.bind('check_quantity');self.handler('after')
+        self.assertEqual(self.failure(lambda:self.apply('sheet_rename',sheet='Log',name='Logbook'))['code'],'BINDING_FAILED')
+        self.book.approved_code=frozenset()
+        self.assertEqual(self.failure(lambda:self.apply('sheet_rename',sheet='Log',name='Logbook'))['code'],'BINDING_NOT_APPROVED')
+        self.assertEqual(self.raw('Supplies',2,2)['source'],'2');self.assertIsNotNone(self.book.db.execute("SELECT 1 FROM sheets WHERE name='Log'").fetchone())
+
+    def install_fragile(self):
+        self.apply('module_save',name='fragile',source=FRAGILE,macros=[],fingerprint=fingerprint(self.book.db))
+
+    def test_optional_binding_whose_module_fails_to_load_is_skipped(self):
+        self.install_fragile()
+        skipped=self.bind('on_edit',module='fragile',required=False);self.bind('log_a')
+        receipt=self.edit(2,2,'5')
+        self.assertEqual(receipt['binding_notices'],[dict(binding_id=skipped,function='on_edit',reason='BINDING_UNAVAILABLE')])
+        self.assertEqual(self.raw('Supplies',2,2)['source'],'5');self.assertEqual(self.log(),'a')
+
+    def test_required_binding_whose_module_fails_to_load_rejects(self):
+        self.install_fragile()
+        self.bind('on_edit',module='fragile',required=False);self.bind('other',module='fragile')
+        outcome=self.failure(lambda:self.edit(2,2,'5'))
+        self.assertEqual(outcome['code'],'BINDING_UNAVAILABLE');self.assertEqual(outcome['http_status'],409)
+        self.assertIn('fragile.other',outcome['message']);self.assertIn('broken at import',outcome['message'])
+        self.assertEqual(self.raw('Supplies',2,2)['source'],'2')
 
     def test_seventeen_rounds_is_hook_recursion(self):
         self.bind('bump',scope=dict(kind='sheet',sheet='Log'))

@@ -203,9 +203,15 @@ def admit(book,calls,admission):
             prefix='Binding '+call['module_name']+'.'+call['function']+': '
             if reason=='BINDING_NOT_APPROVED':raise EngineError(reason,prefix+'workbook code is not approved, so edits in its scope are blocked',403)
             raise EngineError(reason,prefix+'the module no longer defines this top-level function',409)
-        admission['skipped'].add(item['id'])
-        book.binding_notices.append(dict(binding_id=item['id'],function=item['function'],reason=reason))
+        skip(book,admission,[(call,reason)])
     return admitted
+
+
+def skip(book,admission,skipped):
+    """Skip optional bindings for the rest of the operation with one notice each."""
+    for call,reason in skipped:
+        item=call['binding'];admission['skipped'].add(item['id'])
+        book.binding_notices.append(dict(binding_id=item['id'],function=item['function'],reason=reason))
 
 
 def adjust_structure(book,sheet_id,axis,start,count,delete):

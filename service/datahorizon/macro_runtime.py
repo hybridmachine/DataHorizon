@@ -143,17 +143,25 @@ def _binding_worker(pipe,calls,operation):
     watchdog=threading.Timer(2.5,lambda:os._exit(124));watchdog.daemon=True;watchdog.start()
     try:
         with redirect_stdout(output),redirect_stderr(output):
-            namespaces={}
+            namespaces={};load_errors={}
+            def summary(error):return tail(''.join(traceback.format_exception_only(type(error),error)).strip())
             for index,call in enumerate(calls):
                 # Name the binding before any of its code runs so a hang or crash is attributable.
                 _send(pipe,dict(starting=index))
-                try:
-                    name=call['module_name']
-                    if name not in namespaces:namespaces[name]=_load(call['source'],name,'__datahorizon_workbook_'+name+'__')
-                    namespaces[name][call['function']](BrokerContext(pipe,operation),call['changes'])
+                name=call['module_name']
+                if name not in namespaces and name not in load_errors:
+                    try:namespaces[name]=_load(call['source'],name,'__datahorizon_workbook_'+name+'__')
+                    except BaseException as error:load_errors[name]=(summary(error),tail(traceback.format_exc(limit=8)))
+                if name in load_errors:
+                    # Module code that fails at import never received a ctx, so it made no edits.
+                    error,trace=load_errors[name]
+                    if not call['required']:
+                        _send(pipe,dict(skipped=index,error=error));continue
+                    _send(pipe,dict(method='failed',code='BINDING_UNAVAILABLE',error=error,traceback=trace,logs=output.text))
+                    return
+                try:namespaces[name][call['function']](BrokerContext(pipe,operation),call['changes'])
                 except BaseException as error:
-                    summary=''.join(traceback.format_exception_only(type(error),error)).strip()
-                    _send(pipe,dict(method='failed',error=tail(summary),traceback=tail(traceback.format_exc(limit=8)),logs=output.text))
+                    _send(pipe,dict(method='failed',code='BINDING_FAILED',error=summary(error),traceback=tail(traceback.format_exc(limit=8)),logs=output.text))
                     return
             _send(pipe,dict(method='done'))
     finally:
@@ -161,10 +169,12 @@ def _binding_worker(pipe,calls,operation):
 
 
 def invoke_bindings(calls,operation,dispatch,deadline):
-    """Run one round of admitted binding calls, in order, in one spawned worker inside the parent transaction."""
+    """Run one round of admitted binding calls, in order, in one spawned worker inside the parent transaction.
+
+    Returns [(call, 'BINDING_UNAVAILABLE')] for optional calls skipped because their module failed to load."""
     from .engine import EngineError
     started=time.monotonic();deadline=min(deadline,started+2)
-    parent=child=process=pump=None;stop=threading.Event();running=[0]
+    parent=child=process=pump=None;stop=threading.Event();running=[0];skipped=[]
     incoming=queue.Queue(maxsize=1);replies=queue.Queue(maxsize=1)
     def failure(code,text,status=409,**details):
         call=calls[running[0]]
@@ -180,7 +190,7 @@ def invoke_bindings(calls,operation,dispatch,deadline):
             while not stop.is_set():
                 message=_receive(parent);offer(message)
                 if message.get('method') in ('done','failed'):return
-                if set(message)=={'starting'}:continue
+                if set(message) in ({'starting'},{'skipped','error'}):continue
                 while not stop.is_set():
                     try:reply=replies.get(timeout=.02);break
                     except queue.Empty:pass
@@ -189,7 +199,7 @@ def invoke_bindings(calls,operation,dispatch,deadline):
         except Exception as error:offer(error)
     try:
         context=multiprocessing.get_context('spawn');parent,child=context.Pipe()
-        payload=[{key:call[key] for key in ('module_name','source','function','changes')} for call in calls]
+        payload=[dict(required=call['binding']['required'],**{key:call[key] for key in ('module_name','source','function','changes')}) for call in calls]
         process=context.Process(target=_binding_worker,args=(child,payload,operation),daemon=True)
         process.start();child.close();pump=threading.Thread(target=broker,daemon=True,name='DataHorizonBindingBroker');pump.start()
         while True:
@@ -202,12 +212,17 @@ def invoke_bindings(calls,operation,dispatch,deadline):
                 index=message['starting']
                 if set(message)!={'starting'} or type(index) is not int or not running[0]<=index<len(calls):raise failure('BINDING_FAILED','invalid binding worker message')
                 running[0]=index;continue
+            if 'skipped' in message:
+                if set(message)!={'skipped','error'} or message['skipped']!=running[0] or calls[running[0]]['binding']['required'] or not isinstance(message['error'],str):raise failure('BINDING_FAILED','invalid binding worker message')
+                skipped.append((calls[running[0]],'BINDING_UNAVAILABLE'));continue
             method=message.pop('method',None)
             if method=='done':
                 if message or running[0]!=len(calls)-1:raise failure('BINDING_FAILED','invalid binding worker completion')
-                return
+                return skipped
             if method=='failed':
-                if set(message)!={'error','traceback','logs'} or not all(isinstance(value,str) for value in message.values()):raise failure('BINDING_FAILED','invalid binding worker failure')
+                if set(message)!={'code','error','traceback','logs'} or message['code'] not in ('BINDING_FAILED','BINDING_UNAVAILABLE') or not all(isinstance(value,str) for value in message.values()):raise failure('BINDING_FAILED','invalid binding worker failure')
+                if message['code']=='BINDING_UNAVAILABLE':
+                    raise failure('BINDING_UNAVAILABLE','the module failed to load: '+message['error'],traceback=message['traceback'],logs=message['logs'])
                 raise failure('BINDING_FAILED',message['error'],traceback=message['traceback'],logs=message['logs'])
             if method not in CONTEXT_METHODS:raise failure('BINDING_FAILED','unknown binding context method')
             try:result=dispatch(method,message)
