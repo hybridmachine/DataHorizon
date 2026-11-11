@@ -24,6 +24,7 @@ from .interchange import (MAX_EXPANDED, S, WHOLE_EXPORT_CACHES, SharedFormulas, 
                           date_system, export_cell, export_report, mode, namespaces, package_parts, read_xml,
                           shared_strings_path, styles_path, uses_future_prefix, validate_sheet_names, workbook_report,
                           worksheet_path, xlsx_text, xml)
+from .formula import address
 from .temporal import export_temporal_style
 from .xlsx_styles import StyleTable, XlsxStyles, stylesheet
 
@@ -388,11 +389,17 @@ EXPORT_FLUSH = 65536  # characters of worksheet XML gathered before a write to t
 _DECLARATION = b"<?xml version='1.0' encoding='utf-8'?>\n"  # as interchange.xml writes it
 FORMULA_DISPLAY_LINE = ("Formula results are not evaluated during a large export, so a formula whose result is a date or time "
                         "takes no calendar display: give such cells a date/time number format, or use the bounded export.")
+# Itemizes the cells FORMULA_DISPLAY_LINE is about: formulas without a number format, which the bounded export
+# would give a calendar display when their result is temporal.
+FORMULA_DISPLAY_CATEGORY = "formula.display_not_evaluated"
+FORMULA_DISPLAY_DETAIL = "result not evaluated; a date or time result takes no calendar display"
 
 
-def export_lines(native: dict, future_functions: bool) -> list[str]:
-    """The fixed report lines of a whole-workbook streamed export; the conversion report's lines follow them."""
-    return export_report(workbook_report()+[WHOLE_EXPORT_CACHES, FORMULA_DISPLAY_LINE], native, future_functions)
+def export_lines(native: dict, future_functions: bool, unevaluated_formulas: int) -> list[str]:
+    """The fixed report lines of a whole-workbook streamed export; the conversion report's lines follow them.
+    The formula-display line appears only when an unformatted formula was written."""
+    head = workbook_report()+[WHOLE_EXPORT_CACHES]+([FORMULA_DISPLAY_LINE] if unevaluated_formulas else [])
+    return export_report(head, native, future_functions)
 
 
 class _Expanded:
@@ -435,7 +442,12 @@ def _write_sheet(part, name, cells, context, expanded, progress):
         if cell["row"] != current:
             current = cell["row"]
             emit(f'<row r="{current}">')
-        if cell["kind"] == "formula" and not context["future"]: context["future"] = uses_future_prefix(cell["source"])
+        if cell["kind"] == "formula":
+            if not context["future"]: context["future"] = uses_future_prefix(cell["source"])
+            if cell.get("style", {}).get("format", "general") == "general":
+                context["report"].add(FORMULA_DISPLAY_CATEGORY, "approximated", FORMULA_DISPLAY_DETAIL,
+                                      sheet=name, cell=address(cell["row"], cell["col"]))
+                context["unevaluated"] += 1
         element = export_cell(cell, context["styles"].index(cell.get("style", {})), sheet=name, mode="formulas",
                               report=context["report"], whole=True, names=context["names"])
         emit(ET.tostring(element, encoding="unicode"))
@@ -465,14 +477,15 @@ def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Cal
     Approximations go to `report`. More than LARGE_CELLS cells, LARGE_SHEETS sheets, LARGE_EXPANDED uncompressed
     bytes or 1,024 distinct styles is LIMIT. On any failure the partial file is removed.
 
-    Returns {"bytes", "sha256", "sheets", "cells", "future_functions"}: the file's size and digest, the counts
-    written, and whether any formula uses an _xlfn identifier."""
+    Returns {"bytes", "sha256", "sheets", "cells", "future_functions", "unevaluated_formulas"}: the file's size and
+    digest, the counts written, whether any formula uses an _xlfn identifier, and how many formulas without a number
+    format were written (each itemized in `report` as FORMULA_DISPLAY_CATEGORY, approximated)."""
     path = Path(path)
     try:
         sheets = list(sheets)
         require(len(sheets) <= LARGE_SHEETS, "LIMIT", f"Whole-workbook export exceeds {LARGE_SHEETS} sheets")
         names = validate_sheet_names([name for name, _ in sheets], LARGE_SHEETS)
-        context = {"styles": StyleTable(), "report": report, "names": names, "future": False}
+        context = {"styles": StyleTable(), "report": report, "names": names, "future": False, "unevaluated": 0}
         expanded, progress = _Expanded(), _WriteProgress(checkpoint)
         flags = os.O_WRONLY|os.O_CREAT|os.O_TRUNC|getattr(os, "O_NOFOLLOW", 0)|getattr(os, "O_BINARY", 0)
         with open(os.open(path, flags, 0o600), "wb") as output:
@@ -492,7 +505,7 @@ def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Cal
                 digest.update(chunk); size += len(chunk)
                 checkpoint(progress.cells, "Checking export")
         return {"bytes": size, "sha256": digest.hexdigest(), "sheets": len(names), "cells": progress.cells,
-                "future_functions": context["future"]}
+                "future_functions": context["future"], "unevaluated_formulas": context["unevaluated"]}
     except BaseException:
         path.unlink(missing_ok=True)
         raise

@@ -841,12 +841,19 @@ class Service(ThreadingHTTPServer):
                     touched[0] = time.monotonic()
                     self.staging.touch("export",job_id)
             target = self.staging.path("export",job_id)
+            def reserve():
+                # The job's id is held by its export file, so a snapshot under that id is left over from a crash.
+                self.staging.release("snapshot",job_id)
+                return self.staging.new("snapshot",job_id)
             checkpoint(0,"Reading workbook")
-            with book.stream_workbook(self.staging.root) as stream:
-                report = ConversionReport()
-                written = write_workbook(target,stream,report,progress)
+            try:
+                with book.stream_workbook(reserve,checkpoint=progress) as stream:
+                    report = ConversionReport()
+                    written = write_workbook(target,stream,report,progress)
+            finally:
+                self.staging.release("snapshot",job_id)
             return {"export_id":job_id,"bytes":written["bytes"],"sha256":written["sha256"],"state":stream.state,
-                    "report":export_lines(stream.native,written["future_functions"])+report.lines(),
+                    "report":export_lines(stream.native,written["future_functions"],written["unevaluated_formulas"])+report.lines(),
                     "report_entries":report.entries(),"totals":report.totals()}
         return prepare
 

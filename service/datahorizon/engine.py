@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import tempfile
 import threading
@@ -31,6 +32,10 @@ MAX_HISTORY_BYTES = 16*1024*1024
 MAX_REVISION = 2**63-1
 MAX_SHEET_POSITION = 2**63-1
 SNAPSHOT_SECONDS = 5
+# Bounds of the private copy a streamed whole-workbook read takes (Workbook.stream_workbook).
+SNAPSHOT_BYTES = 2*1024**3     # largest native file copied
+SNAPSHOT_RESERVE = 256*1024**2  # free space left on the copy's filesystem
+SNAPSHOT_PAGES = 1024           # database pages copied between cancellation checks
 # workbook_import from a prepared stage: the service puts the stage file's path in this request field (a client
 # cannot), the operation may exceed MAX_CELLS, and it runs under STAGE_SECONDS loading STAGE_BATCH cells at a time.
 STAGE_PATH = "_stage_path"
@@ -835,30 +840,53 @@ class Workbook:
                 self.db.execute("ROLLBACK")
 
     @contextmanager
-    def stream_workbook(self, directory=None):
+    def stream_workbook(self, reserve=None, *, checkpoint=None):
         """Every sheet of one consistent workbook state, without the MAX_CELLS bound: a WorkbookStream yielding
         (sheet name, cells in row-major order) in display order.
 
-        The state is copied, under the workbook lock and inside one read transaction, to a private snapshot file
-        in `directory` (the system temporary directory when None); the cells are then read from that copy, so a
-        long read neither holds the workbook lock nor keeps a read transaction open on the workbook, which would
-        block its writers. The copy is deleted on exit. Cells are typed stored inputs as read_workbook returns
+        Under the workbook lock and inside one read transaction, the workbook is first checked against the export
+        bounds (at most LARGE_CELLS cells and LARGE_SHEETS sheets, at most SNAPSHOT_BYTES of native file: LIMIT),
+        and only then copied to a private snapshot file: `reserve()` returns a new empty private path for it (by
+        default one in the system temporary directory), whose filesystem must keep SNAPSHOT_RESERVE bytes free after
+        the copy (STORAGE_ERROR). The copy runs SNAPSHOT_PAGES pages at a time, calling checkpoint(0, phase) between
+        steps; an exception it raises (cancellation, deadline) stops the copy. The cells are then read from the copy,
+        so the long read neither holds the workbook lock nor keeps a read transaction open on the workbook, which
+        would block its writers. The copy is deleted on exit. Cells are typed stored inputs as read_workbook returns
         them, except that formulas are not evaluated: a formula or unmaintained cell has no value or calculation."""
-        from .xlsx_stream import LARGE_SHEETS
-        descriptor,name=tempfile.mkstemp(prefix="snapshot-",suffix=".dhwb",dir=directory)
-        os.close(descriptor)
-        snapshot=Path(name)
+        from .xlsx_stream import LARGE_CELLS, LARGE_SHEETS
+        checkpoint=checkpoint or (lambda completed,phase:None)
+        snapshot=None
         try:
+            # The lock is held for the whole copy: the copy's consistency rests on the read transaction of the
+            # shared connection, which another thread holding the lock could otherwise end or write through.
             with self.lock:
                 deadline=time.monotonic()+SNAPSHOT_SECONDS
                 self.refresh(deadline=deadline)
                 self.db.execute("BEGIN")
                 try:
                     self.refresh(deadline=deadline)
-                    state=self.state()
+                    with sql_deadline(self.db,deadline):
+                        cells=self.db.execute("SELECT count(*) FROM (SELECT 1 FROM cells LIMIT ?)",(LARGE_CELLS+1,)).fetchone()[0]
+                        require(cells<=LARGE_CELLS,"LIMIT",f"Whole-workbook export exceeds {LARGE_CELLS:,} stored cells")
+                        sheets=self.db.execute("SELECT count(*) FROM sheets").fetchone()[0]
+                        require(sheets<=LARGE_SHEETS,"LIMIT",f"Whole-workbook export exceeds {LARGE_SHEETS} sheets")
+                        size=self.db.execute("PRAGMA page_count").fetchone()[0]*self.db.execute("PRAGMA page_size").fetchone()[0]
+                        require(size<=SNAPSHOT_BYTES,"LIMIT",f"Whole-workbook export reads at most a {SNAPSHOT_BYTES//1024**2:,} MiB native file")
+                        state=self.state()
+                    if reserve is None:
+                        descriptor,name=tempfile.mkstemp(prefix="snapshot-",suffix=".dhwb")
+                        os.close(descriptor)
+                        snapshot=Path(name)
+                    else:
+                        snapshot=Path(reserve())
+                    require(size<=shutil.disk_usage(snapshot.parent).free-SNAPSHOT_RESERVE,"STORAGE_ERROR",
+                            f"Not enough free disk space to copy the workbook for export: {size:,} bytes are needed, "
+                            f"keeping {SNAPSHOT_RESERVE//1024**2} MiB free",409)
                     target=sqlite3.connect(snapshot)
-                    try: self.db.backup(target)
-                    finally: target.close()
+                    try:
+                        self.db.backup(target,pages=SNAPSHOT_PAGES,progress=lambda *_:checkpoint(0,"Copying workbook"),sleep=0.01)
+                    finally:
+                        target.close()
                 finally:
                     self.db.execute("ROLLBACK")
             db=sqlite3.connect(snapshot.as_uri()+"?mode=ro",uri=True,isolation_level=None,check_same_thread=False)
@@ -871,8 +899,9 @@ class Workbook:
             finally:
                 db.close()
         finally:
-            for path in (snapshot,snapshot.with_name(snapshot.name+"-journal")):
-                path.unlink(missing_ok=True)
+            if snapshot is not None:
+                for path in (snapshot,snapshot.with_name(snapshot.name+"-journal")):
+                    path.unlink(missing_ok=True)
 
     def plan_import(self,request):
         """Validate a workbook_import request before any change. Reviewed sheets come inline (at most 10,000 cells) or

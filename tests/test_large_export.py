@@ -12,15 +12,21 @@ from pathlib import Path
 import random
 import socket
 import struct
+import sys
 import tempfile
 import threading
 import time
 import tracemalloc
+try:
+    import resource
+except ImportError:
+    resource = None
 import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 import zipfile
 
+from datahorizon import engine as engine_module
 from datahorizon import service as service_module
 from datahorizon import xlsx_stream
 from datahorizon import xlsx_styles
@@ -28,6 +34,7 @@ from datahorizon.client import APIError
 from datahorizon.engine import EngineError
 from datahorizon.interchange import xlsx_preview
 from datahorizon.service import Service, openapi
+from datahorizon.staging import Staging
 from datahorizon.xlsx_stream import LARGE_CELLS
 
 try:
@@ -298,16 +305,20 @@ class LargeExportTests(unittest.TestCase):
     def test_formula_results_are_not_evaluated_for_display(self):
         # The one difference from the bounded export: it gives an unformatted formula with a temporal result a
         # calendar display, which needs evaluation; the large export does not evaluate and says so in its report.
-        self.edit([{'row': 1, 'col': 1, 'source': '2024-02-29', 'kind': 'date'}, {'row': 1, 'col': 2, 'source': '=A1'}])
+        self.edit([{'row': 1, 'col': 1, 'source': '2024-02-29', 'kind': 'date'}, {'row': 1, 'col': 2, 'source': '=A1'},
+                   {'row': 1, 'col': 3, 'source': '=A1', 'style': {'format': 'date_iso'}}])
         result = self.export()
         self.assertIn(xlsx_stream.FORMULA_DISPLAY_LINE, result['report'])
+        # Only the unformatted formula is itemized; a formatted one displays as its format says.
+        self.assertEqual([(e['category'], e['severity'], e['count'], e['samples']) for e in result['report_entries']],
+                         [(xlsx_stream.FORMULA_DISPLAY_CATEGORY, 'approximated', 1, [{'sheet': 'Sheet1', 'cell': 'B1'}])])
         bounded = base64.b64decode(self.call(f'/v1/workbooks/{self.book}/export/xlsx', {'scope': 'workbook'})['file_base64'])
         styles = []
         for data in (self.downloaded('export'), bounded):
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
                 root = ET.fromstring(archive.read('xl/worksheets/sheet1.xml'))
             styles.append({c.get('r'): c.get('s') for c in root.iter(MAIN+'c')})
-        self.assertEqual(styles, [{'A1': '1', 'B1': '0'}, {'A1': '1', 'B1': '1'}])
+        self.assertEqual(styles, [{'A1': '1', 'B1': '0', 'C1': '1'}, {'A1': '1', 'B1': '1', 'C1': '1'}])
 
     def test_sixty_thousand_cells_bounded_memory_identical_reimport_and_disconnect(self):
         rng = random.Random(15)
@@ -315,6 +326,10 @@ class LargeExportTests(unittest.TestCase):
             # Text kind: XLSX has no automatic kind, so automatic text would come back as text.
             self.edit([{'row': (n-1)//10+1, 'col': (n-1) % 10+1, 'source': '%032x' % rng.getrandbits(128), 'kind': 'text'}
                        for n in range(start, start+10_000)])
+        # ru_maxrss is a high-water mark (KiB on Linux, bytes on macOS), so its growth is a ceiling check: it cannot
+        # show memory the export used below an earlier peak, only that the process never grew past the bound.
+        scale = 1 if sys.platform == 'darwin' else 1024
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss*scale if resource is not None else None
         tracemalloc.start()
         try:
             result = self.export('big')
@@ -322,7 +337,10 @@ class LargeExportTests(unittest.TestCase):
         finally:
             tracemalloc.stop()
         self.assertLess(peak, 64*1024*1024)
+        if rss is not None:
+            self.assertLess(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss*scale-rss, 192*1024*1024)
         self.assertEqual(result['totals'], {'converted': 0, 'approximated': 0, 'omitted': 0, 'unevaluable': 0})
+        self.assertNotIn(xlsx_stream.FORMULA_DISPLAY_LINE, result['report'], 'no formulas, so no formula-display line')
         data = self.downloaded('big')
         target, summary = self.reimport(data, 'bigagain')
         self.assertEqual(summary['stored_cells'], 60_000)
@@ -479,6 +497,78 @@ class LargeExportTests(unittest.TestCase):
             self.assertEqual((job['status'], job['error']['code']), ('failed', 'LIMIT'), job)
             self.assertFalse(self.export_file(job_id).exists())
 
+    @contextmanager
+    def staged_kinds(self):
+        """Record every staging entry the service reserves."""
+        kinds, real = [], Staging.new
+        def new(staging, kind, identifier):
+            kinds.append(kind)
+            return real(staging, kind, identifier)
+        with patch.object(Staging, 'new', new):
+            yield kinds
+
+    def failed_before_copy(self, code):
+        with self.staged_kinds() as kinds:
+            self.start()
+            job = self.terminal('export')
+        self.assertEqual((job['status'], job['error']['code']), ('failed', code), job)
+        self.assertEqual(kinds, ['export'], 'no snapshot is reserved for a workbook that cannot be exported')
+        self.assertEqual(list(self.service.staging.root.iterdir()), [])
+        return job
+
+    def test_over_limit_workbook_fails_before_any_copy(self):
+        self.edit([{'row': n, 'col': 1, 'source': str(n)} for n in range(1, 7)])
+        with patch.object(xlsx_stream, 'LARGE_CELLS', 5):
+            self.assertIn('5 stored cells', self.failed_before_copy('LIMIT')['error']['message'])
+        self.call('/v1/jobs/export/release')
+        with patch.object(xlsx_stream, 'LARGE_SHEETS', 1):
+            self.operate({'action': 'sheet_add', 'name': 'Two'})
+            self.assertIn('1 sheets', self.failed_before_copy('LIMIT')['error']['message'])
+        self.call('/v1/jobs/export/release')
+        with patch.object(engine_module, 'SNAPSHOT_BYTES', 4096):
+            self.assertIn('native file', self.failed_before_copy('LIMIT')['error']['message'])
+
+    def test_too_little_free_space_fails_with_storage_error_and_leaves_nothing(self):
+        self.edit([{'row': 1, 'col': 1, 'source': 'x'}])
+        with patch.object(engine_module, 'SNAPSHOT_RESERVE', 1 << 62):
+            self.start()
+            job = self.terminal('export')
+        self.assertEqual((job['status'], job['error']['code']), ('failed', 'STORAGE_ERROR'), job)
+        self.assertIn('free disk space', job['error']['message'])
+        self.assertEqual(list(self.service.staging.root.iterdir()), [])
+
+    def test_cancel_during_the_copy_leaves_no_snapshot_or_export(self):
+        self.edit([{'row': n, 'col': 1, 'source': 'x'*100} for n in range(1, 200)])
+        engine = self.engine()
+        reached, proceed = threading.Event(), threading.Event()
+        real = engine.stream_workbook
+        def stream_workbook(reserve, *, checkpoint):
+            def gate(completed, phase):
+                if phase == 'Copying workbook' and not reached.is_set():
+                    reached.set()
+                    proceed.wait(30)
+                checkpoint(completed, phase)
+            return real(reserve, checkpoint=gate)
+        with patch.object(engine_module, 'SNAPSHOT_PAGES', 1), patch.object(engine, 'stream_workbook', stream_workbook):
+            self.start()
+            try:
+                self.assertTrue(reached.wait(30))
+                self.assertEqual(sorted(p.name for p in self.service.staging.root.iterdir() if not p.name.endswith('-journal')),
+                                 ['export-export.export', 'snapshot-export.snapshot'])
+                self.call('/v1/jobs/export/cancel')
+            finally:
+                proceed.set()
+            job = self.terminal('export')
+        self.assertEqual((job['status'], job['error']['code']), ('cancelled', 'CANCELLED'), job)
+        self.assertEqual(list(self.service.staging.root.iterdir()), [])
+        # The workbook is usable again at once: the lock was released when the copy stopped.
+        self.edit([{'row': 1, 'col': 2, 'source': 'after'}])
+
+    def test_completed_export_leaves_no_snapshot(self):
+        self.edit([{'row': 1, 'col': 1, 'source': 'x'}])
+        self.export()
+        self.assertEqual([p.name for p in self.service.staging.root.iterdir()], ['export-export.export'])
+
     def test_text_over_the_excel_cell_limit_fails_the_job_with_limit(self):
         self.edit([{'row': 1, 'col': 1, 'source': 'x'*32_768, 'kind': 'text'}])
         self.start()
@@ -493,10 +583,13 @@ class LargeExportTests(unittest.TestCase):
         receipt = self.operate({'action': 'move', 'sheet': 'Sheet1', 'r1': 5, 'c1': 1, 'r2': 5, 'c2': 1, 'row': 6, 'col': 1, 'cut_state': state})
         self.assertEqual(receipt['unmaintained'], [{'sheet': 'Sheet1', 'cell': 'B1'}])
         result = self.export()
-        self.assertEqual(result['report_entries'], [{'category': 'formula.unmaintained', 'severity': 'approximated',
-                                                      'detail': 'references were not maintained through a structural edit; the source is written unchanged',
-                                                      'count': 1, 'samples': [{'sheet': 'Sheet1', 'cell': 'B1'}]}])
-        self.assertEqual(result['totals'], {'converted': 0, 'approximated': 1, 'omitted': 0, 'unevaluable': 0})
+        self.assertEqual(result['report_entries'], [
+            {'category': xlsx_stream.FORMULA_DISPLAY_CATEGORY, 'severity': 'approximated', 'detail': xlsx_stream.FORMULA_DISPLAY_DETAIL,
+             'count': 1, 'samples': [{'sheet': 'Sheet1', 'cell': 'C1'}]},
+            {'category': 'formula.unmaintained', 'severity': 'approximated',
+             'detail': 'references were not maintained through a structural edit; the source is written unchanged',
+             'count': 1, 'samples': [{'sheet': 'Sheet1', 'cell': 'B1'}]}])
+        self.assertEqual(result['totals'], {'converted': 0, 'approximated': 2, 'omitted': 0, 'unevaluable': 0})
         self.assertTrue(any('_xlfn' in line for line in result['report']))
         self.assertIn('1 cell: references were not maintained through a structural edit; the source is written unchanged '
                       '(approximated); first at Sheet1!B1', result['report'])
