@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import tempfile
 import threading
 import time
 import uuid
@@ -343,6 +344,38 @@ def expected_schema(source=SCHEMA):
 
 EXPECTED_SCHEMA = expected_schema()
 EXPECTED_SCHEMA3 = expected_schema(SCHEMA+METADATA_SCHEMA)
+
+
+class WorkbookStream:
+    """One workbook state read from a private snapshot (see Workbook.stream_workbook). Iterating yields each sheet's
+    name and an iterator over its cells; `state` is the workbook state it holds and `native` the native catalog
+    (names, bindings, other omitted objects) for the export report."""
+
+    def __init__(self, db, state, catalog, native):
+        self.db, self.state, self.catalog, self.native = db, state, catalog, native
+        # Formulas store sheet identities; one search finds which of them a source mentions.
+        self._identities = re.compile("|".join(re.escape(identity) for identity, _ in catalog))
+
+    def __iter__(self):
+        for identity, name in self.catalog:
+            yield name, self._cells(identity, name)
+
+    def _cells(self, sheet, sheet_name):
+        rows = self.db.execute("SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? ORDER BY row,col", (sheet,))
+        for row, col, source, kind, style in rows:
+            item = typed({"source": source, "kind": kind, "style": json.loads(style)})
+            cell = {"row": row, "col": col, "source": source, "kind": item["kind"], "style": item["style"]}
+            if item["kind"] == "formula":
+                # Most formulas name no sheet; the rest are renamed exactly as read_workbook renames them.
+                for identity, name in (self.catalog if self._identities.search(source) else ()):
+                    if identity not in cell["source"]: continue
+                    try: cell["source"] = rename_sheet_references(cell["source"], identity, name)
+                    except FormulaError as error:
+                        raise EngineError("UNSUPPORTED_FORMULA", f"Cannot export formula at {sheet_name}!{address(row,col)}: {error}") from error
+            elif item["kind"] not in EVALUATED:
+                cell.update(value=item["value"], calculation="current")
+                if isinstance(item["value"], Temporal): cell["value_kind"] = item["value"].kind
+            yield cell
 
 
 class Workbook:
@@ -749,12 +782,13 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
-    def native_catalog(self, *, omissions=False):
+    def native_catalog(self, *, omissions=False, db=None):
         """Names and binding labels (and optionally other native objects) in the current read snapshot, for export reports."""
         from .relational import objects
         from .bindings import label as binding_label
-        found=list(objects(self.db))
-        result={'native_bindings':[binding_label(self.db,item) for kind,item in found if kind=='binding'],
+        db=self.db if db is None else db
+        found=list(objects(db))
+        result={'native_bindings':[binding_label(db,item) for kind,item in found if kind=='binding'],
                 'native_names':[item['name'] for kind,item in found if kind=='name']}
         if omissions:result['native_omissions']=[item['name'] for kind,item in found if kind not in ('name','binding')]
         return result
@@ -799,6 +833,46 @@ class Workbook:
                     return result
             finally:
                 self.db.execute("ROLLBACK")
+
+    @contextmanager
+    def stream_workbook(self, directory=None):
+        """Every sheet of one consistent workbook state, without the MAX_CELLS bound: a WorkbookStream yielding
+        (sheet name, cells in row-major order) in display order.
+
+        The state is copied, under the workbook lock and inside one read transaction, to a private snapshot file
+        in `directory` (the system temporary directory when None); the cells are then read from that copy, so a
+        long read neither holds the workbook lock nor keeps a read transaction open on the workbook, which would
+        block its writers. The copy is deleted on exit. Cells are typed stored inputs as read_workbook returns
+        them, except that formulas are not evaluated: a formula or unmaintained cell has no value or calculation."""
+        from .xlsx_stream import LARGE_SHEETS
+        descriptor,name=tempfile.mkstemp(prefix="snapshot-",suffix=".dhwb",dir=directory)
+        os.close(descriptor)
+        snapshot=Path(name)
+        try:
+            with self.lock:
+                deadline=time.monotonic()+SNAPSHOT_SECONDS
+                self.refresh(deadline=deadline)
+                self.db.execute("BEGIN")
+                try:
+                    self.refresh(deadline=deadline)
+                    state=self.state()
+                    target=sqlite3.connect(snapshot)
+                    try: self.db.backup(target)
+                    finally: target.close()
+                finally:
+                    self.db.execute("ROLLBACK")
+            db=sqlite3.connect(snapshot.as_uri()+"?mode=ro",uri=True,isolation_level=None,check_same_thread=False)
+            try:
+                db.execute("BEGIN")
+                catalog=list(db.execute("SELECT id,name FROM sheets ORDER BY position,id LIMIT ?",(LARGE_SHEETS+1,)))
+                from .interchange import validate_sheet_names
+                validate_sheet_names([name for _,name in catalog],LARGE_SHEETS)
+                yield WorkbookStream(db,state,catalog,self.native_catalog(omissions=True,db=db))
+            finally:
+                db.close()
+        finally:
+            for path in (snapshot,snapshot.with_name(snapshot.name+"-journal")):
+                path.unlink(missing_ok=True)
 
     def plan_import(self,request):
         """Validate a workbook_import request before any change. Reviewed sheets come inline (at most 10,000 cells) or

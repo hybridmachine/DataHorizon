@@ -44,7 +44,7 @@ class PreparationJobs:
                 require(len(self.entries) < self.capacity, "JOB_LIMIT", "Preparation job storage is full; release a completed job", 409)
                 require(not any(e["status"] == "running" for e in self.entries.values()),
                         "JOB_BUSY", "Another preparation job is running", 409)
-                entry = {"status":"running", "completed":0, "phase":"Queued", "fingerprint":fingerprint,
+                entry = {"status":"running", "completed":0, "phase":"Queued", "fingerprint":fingerprint, "kind":kind,
                          "cancel":threading.Event(), "finished":None,
                          "deadline":time.monotonic()+(self.seconds if seconds is None else seconds)}
                 if on_discard is not None: entry["on_discard"] = on_discard
@@ -132,6 +132,21 @@ class PreparationJobs:
                 return self._view(job_id, entry)
         finally:
             self._discard(*discarded)
+
+    def retain(self, job_id, kind):
+        """Return the result of a completed job of `kind` and restart its retention period, as a use of that result
+        does. A running, failed or cancelled job, one of another kind, or an unknown or expired one is JOB_NOT_FOUND."""
+        expired = []
+        try:
+            with self.lock:
+                expired = self._expire()
+                entry = self.entries.get(job_id)
+                require(entry is not None and entry["status"] == "completed" and entry["kind"] == kind, "JOB_NOT_FOUND",
+                        f"No completed {kind} job has that ID", 404)
+                entry["finished"] = time.monotonic()
+                return entry["result"]
+        finally:
+            self._discard(*expired)
 
     def consume(self, job_id):
         """The completed result was applied: forget the job without running on_discard, because the caller now

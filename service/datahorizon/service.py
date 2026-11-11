@@ -35,7 +35,8 @@ from .recovery import inspect_native
 from .list_export import export_list
 from .functions import function_catalog
 from .staging import IDENTIFIER, Staging
-from .xlsx_stream import LARGE_CELLS, LARGE_PACKAGE, read_workbook
+from .conversion_report import ConversionReport
+from .xlsx_stream import LARGE_CELLS, LARGE_EXPANDED, LARGE_PACKAGE, LARGE_SHEETS, export_lines, read_workbook, write_workbook
 
 CAPABILITIES = {
     "api_version": 1, "format_version": 7, "supported_format_versions": [1,2,3,4,5,6,7], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
@@ -66,6 +67,11 @@ CAPABILITIES.update(uploads=True,max_upload_bytes=LARGE_PACKAGE,max_import_cells
 LARGE_PREPARATION_SECONDS = 300
 PACKAGE_INPUTS = ("file_base64","upload_id","source_path")
 CAPABILITIES.update(import_source_path=True,large_preparation_job_seconds=LARGE_PREPARATION_SECONDS)
+MAX_DOWNLOADS, DOWNLOAD_SECONDS, DOWNLOAD_CHUNK = 2, 300, 64*1024
+EXPORT_JOB_SECONDS = 300
+EXPORT_JOB = "xlsx_export"  # the PreparationJobs kind of a large export
+XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+CAPABILITIES.update(export_jobs=True,max_export_cells=LARGE_CELLS,export_job_seconds=EXPORT_JOB_SECONDS,max_concurrent_downloads=MAX_DOWNLOADS)
 
 ROUTES = {
     "/v1/workbooks/{workbook}/code": ("post", "Inspect inert workbook modules and the exact service-local activation key"),
@@ -140,6 +146,9 @@ ROUTES = {
     "/v1/workbooks/{workbook}/export/csv": ("post", "Consistent values-only CSV export"),
     "/v1/uploads/{upload}": ("put", "Stream a raw spreadsheet package of 1 byte to 64 MiB into private staging; never parsed by this route"),
     "/v1/uploads/{upload}/release": ("post", "Delete a completed staged upload"),
+    "/v1/workbooks/{workbook}/export/xlsx/jobs": ("post", "Export the whole workbook, up to 1,000,000 cells, as XLSX formulas into private staging from one consistent state"),
+    "/v1/exports/{export}": ("get", "Stream a completed large XLSX export as a binary download"),
+    "/v1/exports/{export}/release": ("post", "Delete a large XLSX export and forget its job"),
 }
 
 
@@ -373,18 +382,44 @@ def openapi():
             "A malformed package ends the job failed with INVALID_SPREADSHEET, a limit with LIMIT, a cancel with CANCELLED; the stage is then deleted."}
     schemas["UploadReleased"]={"type":"object","required":["released","upload_id"],"additionalProperties":False,"properties":{"released":{"type":"boolean","enum":[True]},"upload_id":upload_id},
         "example":{"released":True,"upload_id":"example-upload"}}
+    export_id={"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"}
+    schemas["XlsxExportJobRequest"]={"type":"object","required":["job_id"],"additionalProperties":False,"properties":{
+        "job_id":{**export_id,"description":"Also names the export file, so at most 64 characters; the export_id equals it"},
+        "mode":{"type":"string","enum":["formulas"],"default":"formulas","description":
+            "Formulas are written without cached values and full recalculation on load is requested. values and mixed are UNSUPPORTED (400) here; "
+            "the bounded POST /v1/workbooks/{workbook}/export/xlsx route still exports values"}},
+        "description":(f"Starts a preparation-style job (status, cancel and release through /v1/jobs/{{job}}) that copies one consistent workbook state "
+            f"to a private snapshot, then writes every sheet into a private staging file cell by cell: at most {LARGE_CELLS:,} cells, {LARGE_SHEETS} sheets, "
+            f"{LARGE_EXPANDED//(1024*1024)} MiB uncompressed and 1,024 distinct styles, within {EXPORT_JOB_SECONDS} seconds, without holding the workbook while it writes. "
+            "Strings are written inline. Exceeding a limit, or text over Excel's 32,767-character cell limit, fails the job with LIMIT and deletes the partial file; "
+            "cancelling deletes it too. The job holds the file: releasing or cancelling the job, or its five-minute expiry after the last download, deletes it. "
+            "A retry with the same job_id and inputs from the same workbook returns the existing job; any other reuse is JOB_CONFLICT. "
+            "At most four exports are stored at once (JOB_LIMIT), and one preparation or export job runs at a time (JOB_BUSY)."),
+        "example":{"job_id":"example-xlsx-export","mode":"formulas"}}
+    entry={"type":"object","required":["category","severity","detail","count","samples"],"properties":{
+        "category":{"type":"string"},"severity":{"type":"string","enum":["converted","approximated","omitted","unevaluable"]},"detail":{"type":"string"},
+        "count":{"type":"integer","minimum":1},"samples":{"type":"array","maxItems":100,"items":{"type":"object","properties":{"sheet":{"type":"string","nullable":True},"cell":{"type":"string"}}}}}}
+    schemas["XlsxExportJobResult"]={"type":"object","required":["export_id","bytes","sha256","state","report","report_entries","totals"],"additionalProperties":False,"properties":{
+        "export_id":export_id,"bytes":{"type":"integer","minimum":1},"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"SHA-256 of the file GET /v1/exports/{export} returns"},
+        "state":{"type":"string","description":"The workbook state that was exported"},"report":{"type":"array","items":{"type":"string"}},
+        "report_entries":{"type":"array","maxItems":200,"items":entry},
+        "totals":{"type":"object","required":["converted","approximated","omitted","unevaluable"],"properties":{key:{"type":"integer","minimum":0} for key in ("converted","approximated","omitted","unevaluable")}}},
+        "description":"The result of a completed export job: what to download and the conversion report (approximated cells, such as unmaintained formulas written unchanged, are itemized)."}
+    schemas["ExportReleased"]={"type":"object","required":["released","export_id"],"additionalProperties":False,"properties":{"released":{"type":"boolean","enum":[True]},"export_id":export_id},
+        "example":{"released":True,"export_id":"example-xlsx-export"}}
     paths = {}
     for path, (method, summary) in ROUTES.items():
         parameters = [{"name": name, "in": "path", "required": True, "schema": {"type": "string"}}
-                      for name in ("workbook", "operation", "job", "upload") if "{" + name + "}" in path]
+                      for name in ("workbook", "operation", "job", "upload", "export") if "{" + name + "}" in path]
         for parameter in parameters:
             if parameter["name"]=="upload":parameter["schema"]=upload_id
+            if parameter["name"]=="export":parameter["schema"]=export_id
         operation = {"summary": summary, "parameters": parameters,
                      "responses": {"200": {"description": "JSON result"}, **{str(status):{"description":"Structured error; inspect outcome and operation_id before deciding whether a mutation finished"} for status in (400,401,403,404,408,409,413,500,503)},
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = "JobAction" if path.startswith("/v1/uploads/") else ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "XlsxPreparationRequest" if path=="/v1/import/xlsx/jobs" else "SpreadsheetPreparation" if path=="/v1/import/ods/jobs" else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = "JobAction" if path.startswith(("/v1/uploads/","/v1/exports/")) else "XlsxExportJobRequest" if path.endswith("/export/xlsx/jobs") else ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "XlsxPreparationRequest" if path=="/v1/import/xlsx/jobs" else "SpreadsheetPreparation" if path=="/v1/import/ods/jobs" else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "code":"CodeReadRequest","names":"NamesReadRequest","inspect":"TableCatalogRequest","repair-preview":"RelationshipRepairRequest","cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             if '/queries/' in path and path.endswith('/preview'):schema={'$ref':'#/components/schemas/QueryDefinitionRequest'}
@@ -415,6 +450,23 @@ def openapi():
             operation['responses']['200']['content']={'application/json':{'schema':{'$ref':'#/components/schemas/'+response}}}
         if path.startswith('/v1/uploads/'):
             operation['responses']['200']['content']={'application/json':{'schema':{'$ref':'#/components/schemas/'+('UploadReleased' if path.endswith('/release') else 'UploadReceipt')}}}
+        if path.startswith('/v1/exports/') and method=='post':
+            operation['description']="Deletes the export file and forgets its completed job. JOB_NOT_FOUND unless the export job has completed; JOB_CONFLICT while a download of it is in progress."
+            operation['responses']['200']['content']={'application/json':{'schema':{'$ref':'#/components/schemas/ExportReleased'}}}
+            operation['responses']['409']['description']='JOB_CONFLICT (a download is in progress)'
+        if path=='/v1/exports/{export}':
+            operation['description']=(f"Streams the file of a completed export job in 64-KiB chunks with Content-Length and Content-Disposition: attachment; filename=\"export.xlsx\". "
+                f"Origin and bearer-token checks apply as on every route. Downloading restarts the job's and the file's retention; it can be repeated until the export is released. "
+                f"At most {MAX_DOWNLOADS} downloads are in progress at once (DOWNLOAD_BUSY). A download stops after {DOWNLOAD_SECONDS} seconds; a client that stops reading loses the connection.")
+            operation['responses']['200']={'description':'The XLSX package','headers':{
+                'Content-Length':{'schema':{'type':'integer','minimum':1}},'Content-Disposition':{'schema':{'type':'string','enum':['attachment; filename="export.xlsx"']}}},
+                'content':{XLSX_TYPE:{'schema':{'type':'string','format':'binary'}}}}
+            operation['responses']['404']['description']='JOB_NOT_FOUND: no completed export job has that ID (including while it is still running, and after release)'
+            operation['responses']['409']['description']='DOWNLOAD_BUSY (two downloads in progress)'
+        if path.endswith('/export/xlsx/jobs'):
+            operation['responses']['200']['description']='The job view (job_id, status, completed, phase, and result or error); poll GET /v1/jobs/{job} until it is not running'
+            operation['responses']['400']['description']='INVALID_JOB, INVALID_ARGUMENT, or UNSUPPORTED for mode values or mixed'
+            operation['responses']['409']['description']='JOB_CONFLICT (job_id used for different inputs), JOB_BUSY (another job running) or JOB_LIMIT (four stored jobs or exports)'
         if method=='put':
             operation['description']=("Admission (origin, token, identifier, Content-Type, Content-Length, limits, capacity) completes before any body byte is read or file is created; "
                 "a rejected request closes the connection without reading its body. The body is read in 64-KiB chunks under one 300-second deadline from its first byte. "
@@ -478,6 +530,8 @@ class Service(ThreadingHTTPServer):
         # Uploads, import stages and exports; a supplied root lets tests inspect staged files.
         self.staging = Staging(staging_root)
         self._uploads, self._upload_lock = set(), threading.Lock()
+        # In-progress downloads per export id. Lock order: jobs.lock, the upload lock, the download lock, the staging lock.
+        self._downloads, self._download_lock = {}, threading.Lock()
         super().__init__(("127.0.0.1", port), RequestHandler)
 
     def process_request(self, request, client_address):
@@ -748,9 +802,97 @@ class Service(ThreadingHTTPServer):
                     stage.close()
         return prepare
 
+    def _start_export(self, book, body):
+        """A large XLSX export job; the export file is reserved under the job id and owned by the job."""
+        job_id = body.get("job_id")
+        require(isinstance(job_id,str) and IDENTIFIER.fullmatch(job_id),"INVALID_JOB",
+                "job_id must be 1-64 ASCII letters, digits, underscores or hyphens; it also names the export")
+        require(not set(body)-{"job_id","mode"},"INVALID_ARGUMENT","A large XLSX export takes only job_id and mode")
+        selected = body.get("mode","formulas")
+        require(selected in ("formulas","mixed","values"),"INVALID_ARGUMENT","mode must be formulas")
+        require(selected=="formulas","UNSUPPORTED","A large XLSX export writes formulas only; export values with the bounded "
+                "POST /v1/workbooks/{workbook}/export/xlsx route (at most 10,000 cells)")
+        # The workbook is an input: a retry must come from the same workbook to find its job.
+        request = {"job_id":job_id,"mode":"formulas","workbook":book.id,"path":str(book.path)}
+        # As in _prepare_xlsx, one lock orders the retry check, file reservation and job creation against expiry and release.
+        with self.jobs.lock:
+            try:
+                self.jobs.access(job_id)
+            except EngineError as error:
+                if error.body["code"] != "JOB_NOT_FOUND": raise
+            else:
+                return self.jobs.start(request,self._export_job(book,job_id),EXPORT_JOB,seconds=EXPORT_JOB_SECONDS)
+            self.staging.new("export",job_id)
+            try:
+                return self.jobs.start(request,self._export_job(book,job_id),EXPORT_JOB,seconds=EXPORT_JOB_SECONDS,
+                                       on_discard=lambda:self.staging.release("export",job_id))
+            except BaseException:
+                self.staging.release("export",job_id)
+                raise
+
+    def _export_job(self, book, job_id):
+        """The job body: snapshot the workbook, write the package into the reserved file and return its summary."""
+        def prepare(request, checkpoint):
+            touched = [time.monotonic()]
+            def progress(completed, phase):
+                checkpoint(completed, phase)
+                # Keep the file from expiring during a long export.
+                if time.monotonic()-touched[0] >= 10:
+                    touched[0] = time.monotonic()
+                    self.staging.touch("export",job_id)
+            target = self.staging.path("export",job_id)
+            checkpoint(0,"Reading workbook")
+            with book.stream_workbook(self.staging.root) as stream:
+                report = ConversionReport()
+                written = write_workbook(target,stream,report,progress)
+            return {"export_id":job_id,"bytes":written["bytes"],"sha256":written["sha256"],"state":stream.state,
+                    "report":export_lines(stream.native,written["future_functions"])+report.lines(),
+                    "report_entries":report.entries(),"totals":report.totals()}
+        return prepare
+
+    @contextmanager
+    def download_slot(self, identifier):
+        """Reserve one of MAX_DOWNLOADS in-progress downloads of a completed export; yield its open file and size.
+        The export's retention restarts."""
+        require(isinstance(identifier,str) and IDENTIFIER.fullmatch(identifier),"INVALID_JOB","Identifier needs 1–64 ASCII letters, digits, _ or -")
+        with self.jobs.lock:
+            result = self.jobs.retain(identifier,EXPORT_JOB)
+            with self._download_lock:
+                require(sum(self._downloads.values())<MAX_DOWNLOADS,"DOWNLOAD_BUSY",
+                        f"At most {MAX_DOWNLOADS} downloads can be in progress; retry when one finishes",409)
+                path = self.staging.path("export",identifier)
+                file = open(os.open(path,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_BINARY",0)),"rb")
+                try:
+                    size = os.fstat(file.fileno()).st_size
+                    require(size==result["bytes"],"STORAGE_ERROR","The export file no longer matches its job; release it and export again",409)
+                except BaseException:
+                    file.close()
+                    raise
+                self._downloads[identifier] = self._downloads.get(identifier,0)+1
+        try:
+            yield file,size
+        finally:
+            file.close()
+            with self._download_lock:
+                remaining = self._downloads.pop(identifier)-1
+                if remaining: self._downloads[identifier] = remaining
+
+    def _release_export(self, identifier):
+        require(IDENTIFIER.fullmatch(identifier),"INVALID_JOB","Identifier needs 1–64 ASCII letters, digits, _ or -")
+        with self.jobs.lock:
+            self.jobs.retain(identifier,EXPORT_JOB)
+            with self._download_lock:
+                require(identifier not in self._downloads,"JOB_CONFLICT","A download of this export is in progress; retry when it finishes",409)
+            # The job is forgotten without its discard callback, which this release replaces.
+            self.jobs.consume(identifier)
+            self.staging.release("export",identifier)
+        return {"released":True,"export_id":identifier}
+
     def dispatch(self, method, path, body):
         if method=="POST" and path.startswith("/v1/uploads/") and path.endswith("/release") and path.count("/")==4:
             return self._release_upload(unquote(path.split("/")[3]))
+        if method=="POST" and path.startswith("/v1/exports/") and path.endswith("/release") and path.count("/")==4:
+            return self._release_export(unquote(path.split("/")[3]))
         if method=='POST' and path=='/v1/convert/value':
             from .conversion import convert
             return convert(body)
@@ -974,6 +1116,8 @@ class Service(ThreadingHTTPServer):
                     error=EngineError("SNAPSHOT_FAILED",f"Native copy failed: {error}. Retain the source and preserve any destination for inspection",409)
                 error.body.update(destination=body["path"],copy_outcome="incomplete",destination_requires_inspection=True)
                 raise error
+        if method == "POST" and suffix == ["export","xlsx","jobs"]:
+            return self._start_export(book,body)
         if method == "POST" and suffix in (["export", "xlsx"],["export","ods"]):
             require("rows" not in body,"INVALID_ARGUMENT","Spreadsheet export requires a contiguous rectangle")
             whole=preparation_scope(body)=="workbook"
@@ -1088,6 +1232,33 @@ class RequestHandler(BaseHTTPRequestHandler):
                     remaining-=len(chunk)
         return {"upload_id":identifier,"bytes":length,"sha256":digest.hexdigest()}
 
+    def send_export(self, path):
+        """Stream a completed export's file. Errors before the headers are JSON responses; afterwards a failed or
+        abandoned transfer only closes the connection, and the file is always closed."""
+        identifier=unquote(path[len("/v1/exports/"):])
+        stem,_,action=identifier.rpartition("/")
+        require(not (action=="release" and IDENTIFIER.fullmatch(stem)),"METHOD_NOT_ALLOWED","Release an export with POST",405)
+        with self.server.download_slot(identifier) as (file,size):
+            deadline=time.monotonic()+DOWNLOAD_SECONDS
+            try:
+                self.connection.settimeout(30)
+                self.send_response(200)
+                self.send_header("Content-Type",XLSX_TYPE)
+                self.send_header("Content-Length",str(size))
+                self.send_header("Content-Disposition",'attachment; filename="export.xlsx"')
+                self.send_header("Cache-Control","no-store")
+                self.send_header("X-Content-Type-Options","nosniff")
+                self.send_header("X-Frame-Options","DENY")
+                self.end_headers()
+                while chunk:=file.read(DOWNLOAD_CHUNK):
+                    remaining=deadline-time.monotonic()
+                    if remaining<=0: raise TimeoutError("Download deadline exceeded")
+                    self.connection.settimeout(min(30,remaining))
+                    self.wfile.write(chunk)
+            except OSError:
+                # Disconnect, reset or timeout (all OSError): the response cannot be completed.
+                self.close_connection=True
+
     def run_request(self):
         try:
             # Reject browser cross-origin writes and DNS-rebinding Host headers.
@@ -1103,6 +1274,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                     "UNAUTHORIZED", "A valid local bearer token is required", 401)
             if self.command == "PUT":
                 return self.respond(200, self.receive_upload(path))
+            if self.command == "GET" and path.startswith("/v1/exports/"):
+                return self.send_export(path)
             body = {}
             if self.command == "POST":
                 length = int(self.headers.get("Content-Length", "0"))

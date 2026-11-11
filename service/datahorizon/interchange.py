@@ -467,49 +467,57 @@ def native_only_report(snapshot):
     return report
 
 
-def xlsx_export(snapshot,request):
-    selected_mode=mode(request)
-    require(selected_mode!="mixed","INVALID_ARGUMENT","mode mixed applies to import; export formulas or values")
-    report=["Selection only, at original source coordinates, from one consistent native state.",
-            "Native cell styles are mapped. Other sheets, code, queries, relationships, history, dimensions and view preferences are omitted.",
-            "Native NULL becomes an empty cell. Formula semantics follow the target application's compatibility; formula caches are omitted and recalculation is requested."]
-    whole="sheets" in snapshot
-    snapshots=export_temporal_styles(snapshot["sheets"] if whole else [{**snapshot,"name":"Sheet1"}])
-    names=validate_sheet_names([s["name"] for s in snapshots])
-    if whole: report=workbook_report()+["Formula caches are omitted; target recalculation is requested."]
-    if snapshot.get('native_omissions'):report.append('Native relational objects omitted from this sheet export: '+', '.join(snapshot['native_omissions']))
-    report.extend(native_only_report(snapshot))
-    report.append("Typed dates/times export as ISO XLSX date cells with native precision. Supported numeric date formats are interpreted as serials on import. Target readers may reduce subsecond precision; volatile functions recalculate using the target clock/timezone. Native civil arithmetic and pre-March-1900/typed comparisons may differ from target serial semantics; choose values to freeze results.")
-    if selected_mode=="formulas" and any(map_formula_functions(c["source"],FUTURE_PREFIX)!=c["source"] for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"):report.append("Known modern functions use their _xlfn identifiers; target function/version support is required. Choose values for older targets.")
-    from .xlsx_styles import export_styles
-    styles,style_ids=export_styles([c for s in snapshots for c in s["cells"]])
-    worksheets=[];conversions=ConversionReport()
-    for sheet in snapshots:
-        root=ET.Element("worksheet",xmlns=S)
-        data=node(root,"sheetData")
-        current=None
-        for cell in sheet["cells"]:
-            if cell["row"]!=current:
-                current=cell["row"]; row=node(data,"row",r=str(current))
-            out=node(row,"c",r=address(cell["row"],cell["col"]),s=str(style_ids[encoded(cell.get("style",{}))]))
-            if cell["kind"]=="unmaintained" and selected_mode=="formulas":
-                node(out,"f",unmaintained_formula(cell,sheet["name"],conversions,whole)[1:])
-            elif cell["kind"]=="formula" and selected_mode=="formulas":
-                node(out,"f",native_formula_to_xlsx(cell["source"],None if whole else sheet["range"],names if whole else None)[1:])
-            else:
-                require(cell.get("calculation")=="current","CALCULATION_ERROR","Values export requires current, error-free values")
-                value=cell.get("value")
-                temporal_kind=cell.get("value_kind",cell.get("kind"))
-                if isinstance(value,Temporal) or temporal_kind in ("date","time","datetime"):
-                    value=Temporal(str(value),value.kind if isinstance(value,Temporal) else temporal_kind)
-                    out.set("t","d");node(out,"v",str(value))
-                elif type(value) is bool: out.set("t","b"); node(out,"v","1" if value else "0")
-                elif type(value) in (int,float): node(out,"v",str(value))
-                elif value is not None:
-                    require(len(value.encode("utf-16-le"))//2<=32767,"LIMIT","XLSX text exceeds Excel's 32,767-character cell limit")
-                    out.set("t","inlineStr"); inline=node(out,"is")
-                    node(inline,"t",text_encode(value),**{"xml:space":"preserve"})
-        worksheets.append(root)
+WHOLE_EXPORT_CACHES="Formula caches are omitted; target recalculation is requested."
+TEMPORAL_EXPORT_LINE=("Typed dates/times export as ISO XLSX date cells with native precision. Supported numeric date formats are interpreted as serials on import. "
+                      "Target readers may reduce subsecond precision; volatile functions recalculate using the target clock/timezone. Native civil arithmetic and "
+                      "pre-March-1900/typed comparisons may differ from target serial semantics; choose values to freeze results.")
+FUTURE_FUNCTIONS_LINE="Known modern functions use their _xlfn identifiers; target function/version support is required. Choose values for older targets."
+
+
+def uses_future_prefix(source):
+    """Whether exporting this formula source writes an _xlfn identifier."""
+    return map_formula_functions(source,FUTURE_PREFIX)!=source
+
+
+def export_report(head,catalog,future_functions):
+    """The fixed report lines of an XLSX export after its scope lines `head`; the conversion report's lines follow them."""
+    report=list(head)
+    if catalog.get('native_omissions'):report.append('Native relational objects omitted from this sheet export: '+', '.join(catalog['native_omissions']))
+    report.extend(native_only_report(catalog))
+    report.append(TEMPORAL_EXPORT_LINE)
+    if future_functions:report.append(FUTURE_FUNCTIONS_LINE)
+    return report
+
+
+def export_cell(cell,style,*,sheet,mode,report,whole,bounds=None,names=None):
+    """The <c> element of one native cell at style index `style`. Both XLSX exporters write exactly this element.
+
+    `whole` is whole-workbook scope, where `names` are the exported sheet names; a selection checks references against `bounds`."""
+    out=ET.Element("c",r=address(cell["row"],cell["col"]),s=str(style))
+    if cell["kind"]=="unmaintained" and mode=="formulas":
+        node(out,"f",unmaintained_formula(cell,sheet,report,whole)[1:])
+    elif cell["kind"]=="formula" and mode=="formulas":
+        node(out,"f",native_formula_to_xlsx(cell["source"],None if whole else bounds,names if whole else None)[1:])
+    else:
+        require(cell.get("calculation")=="current","CALCULATION_ERROR","Values export requires current, error-free values")
+        value=cell.get("value")
+        temporal_kind=cell.get("value_kind",cell.get("kind"))
+        if isinstance(value,Temporal) or temporal_kind in ("date","time","datetime"):
+            value=Temporal(str(value),value.kind if isinstance(value,Temporal) else temporal_kind)
+            out.set("t","d");node(out,"v",str(value))
+        elif type(value) is bool: out.set("t","b"); node(out,"v","1" if value else "0")
+        elif type(value) in (int,float): node(out,"v",str(value))
+        elif value is not None:
+            require(len(value.encode("utf-16-le"))//2<=32767,"LIMIT","XLSX text exceeds Excel's 32,767-character cell limit")
+            out.set("t","inlineStr"); inline=node(out,"is")
+            node(inline,"t",text_encode(value),**{"xml:space":"preserve"})
+    return out
+
+
+def package_parts(names):
+    """The content types, package relationships, workbook and workbook relationships of an export of sheets `names`.
+
+    Worksheets are xl/worksheets/sheet<N>.xml and the stylesheet xl/styles.xml; the workbook requests full recalculation on load."""
     workbook=ET.Element("workbook",xmlns=S,**{"xmlns:r":R})
     sheets=node(workbook,"sheets")
     for index,name in enumerate(names,1): node(sheets,"sheet",name=name,sheetId=str(index),**{"r:id":"rId"+str(index)})
@@ -525,10 +533,36 @@ def xlsx_export(snapshot,request):
     node(types,"Override",PartName="/xl/workbook.xml",ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml")
     for index in range(1,len(names)+1): node(types,"Override",PartName=f"/xl/worksheets/sheet{index}.xml",ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml")
     node(types,"Override",PartName="/xl/styles.xml",ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml")
+    return [("[Content_Types].xml",types),("_rels/.rels",mainrels),("xl/workbook.xml",workbook),("xl/_rels/workbook.xml.rels",relationships)]
+
+
+def xlsx_export(snapshot,request):
+    selected_mode=mode(request)
+    require(selected_mode!="mixed","INVALID_ARGUMENT","mode mixed applies to import; export formulas or values")
+    head=["Selection only, at original source coordinates, from one consistent native state.",
+          "Native cell styles are mapped. Other sheets, code, queries, relationships, history, dimensions and view preferences are omitted.",
+          "Native NULL becomes an empty cell. Formula semantics follow the target application's compatibility; formula caches are omitted and recalculation is requested."]
+    whole="sheets" in snapshot
+    snapshots=export_temporal_styles(snapshot["sheets"] if whole else [{**snapshot,"name":"Sheet1"}])
+    names=validate_sheet_names([s["name"] for s in snapshots])
+    if whole: head=workbook_report()+[WHOLE_EXPORT_CACHES]
+    report=export_report(head,snapshot,selected_mode=="formulas" and any(uses_future_prefix(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"))
+    from .xlsx_styles import export_styles
+    styles,style_ids=export_styles([c for s in snapshots for c in s["cells"]])
+    worksheets=[];conversions=ConversionReport()
+    for sheet in snapshots:
+        root=ET.Element("worksheet",xmlns=S)
+        data=node(root,"sheetData")
+        current=None
+        for cell in sheet["cells"]:
+            if cell["row"]!=current:
+                current=cell["row"]; row=node(data,"row",r=str(current))
+            row.append(export_cell(cell,style_ids[encoded(cell.get("style",{}))],sheet=sheet["name"],mode=selected_mode,report=conversions,
+                                   whole=whole,bounds=sheet.get("range"),names=names))
+        worksheets.append(root)
     output=io.BytesIO()
     with zipfile.ZipFile(output,"w",compression=zipfile.ZIP_DEFLATED) as archive:
-        parts=[("[Content_Types].xml",types),("_rels/.rels",mainrels),("xl/workbook.xml",workbook),
-               ("xl/_rels/workbook.xml.rels",relationships),("xl/styles.xml",styles)]
+        parts=package_parts(names)+[("xl/styles.xml",styles)]
         parts.extend((f"xl/worksheets/sheet{index}.xml",part) for index,part in enumerate(worksheets,1))
         payload=[(name,xml(part)) for name,part in parts]
         require(sum(len(data) for _,data in payload)<=MAX_EXPANDED,"LIMIT","Expanded XLSX export exceeds 16 MiB")

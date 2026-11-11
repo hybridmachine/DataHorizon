@@ -108,14 +108,31 @@ class XlsxStyles:
         return result
 
 
+MAX_STYLES = 1024  # distinct native styles in one export, the empty style included
+
+
+class StyleTable:
+    """Cell style indexes in first-use order, index 0 being the empty style; a streaming writer fills it cell by cell."""
+    def __init__(self):
+        self.styles=[{}]; self.mapping={encoded({}):0}
+
+    def index(self, style):
+        key=encoded(style)
+        if key not in self.mapping:
+            require(len(self.styles)<MAX_STYLES,"LIMIT",f"XLSX export exceeds {MAX_STYLES:,} distinct native styles")
+            self.mapping[key]=len(self.styles); self.styles.append(style)
+        return self.mapping[key]
+
+
 def export_styles(cells):
+    table=StyleTable()
+    for cell in cells: table.index(cell.get("style",{}))
+    return stylesheet(table.styles),table.mapping
+
+
+def stylesheet(styles):
+    """The styles part for the table's styles, in index order."""
     import xml.etree.ElementTree as ET
-    styles=[{}]; mapping={encoded({}):0}
-    for cell in cells:
-        key=encoded(cell.get("style",{}))
-        if key not in mapping:
-            require(len(styles)<1024,"LIMIT","XLSX export exceeds 1,024 distinct native styles")
-            mapping[key]=len(styles); styles.append(cell["style"])
     root=ET.Element("styleSheet",xmlns=S)
     codes={}
     for style in styles:
@@ -156,4 +173,4 @@ def export_styles(cells):
         if style.get("wrap"): alignment["wrapText"]="1"
         if alignment: node(xf,"alignment",**alignment)
     names=node(root,"cellStyles",count="1"); node(names,"cellStyle",name="Normal",xfId="0",builtinId="0")
-    return root,mapping
+    return root

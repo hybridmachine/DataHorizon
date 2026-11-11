@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Whole-workbook XLSX reading as a stream: no sheet or shared-string table is held in memory.
+"""Whole-workbook XLSX reading and writing as streams: no sheet or shared-string table is held in memory.
 
 The tree reader in interchange parses each part whole and stays capped at 10,000 cells. This reader
 applies the same package and XML safety rules, converts every cell with the same convert_xlsx_cell, and
 hands prepared cells to a sink in bounded batches. Within the tree reader's limits both produce the same
 sheets, cells and report entries.
+
+The writer is the mirror of the bounded whole-workbook formulas export: every cell goes through the same
+interchange.export_cell, written to the archive as it is read.
 """
+import hashlib
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -16,10 +20,12 @@ from typing import BinaryIO, Callable, Iterator, Protocol
 
 from .conversion_report import ConversionReport
 from .engine import EngineError, require
-from .interchange import (MAX_EXPANDED, SharedFormulas, XlsxCellContext, convert_xlsx_cell, date_system, mode,
-                          namespaces, read_xml, shared_strings_path, styles_path, validate_sheet_names,
-                          workbook_report, worksheet_path, xlsx_text)
-from .xlsx_styles import XlsxStyles
+from .interchange import (MAX_EXPANDED, S, WHOLE_EXPORT_CACHES, SharedFormulas, XlsxCellContext, convert_xlsx_cell,
+                          date_system, export_cell, export_report, mode, namespaces, package_parts, read_xml,
+                          shared_strings_path, styles_path, uses_future_prefix, validate_sheet_names, workbook_report,
+                          worksheet_path, xlsx_text, xml)
+from .temporal import export_temporal_style
+from .xlsx_styles import StyleTable, XlsxStyles, stylesheet
 
 LARGE_CELLS = 1_000_000
 LARGE_EXPANDED = 256*1024*1024
@@ -374,3 +380,119 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: 
             _read_sheet(archive, part, budget, context, sink, progress)
             conversions.merge(sheet_report)
         return conversions
+
+
+# --- Writing ---------------------------------------------------------------------------------------------------
+
+EXPORT_FLUSH = 65536  # characters of worksheet XML gathered before a write to the archive
+_DECLARATION = b"<?xml version='1.0' encoding='utf-8'?>\n"  # as interchange.xml writes it
+FORMULA_DISPLAY_LINE = ("Formula results are not evaluated during a large export, so a formula whose result is a date or time "
+                        "takes no calendar display: give such cells a date/time number format, or use the bounded export.")
+
+
+def export_lines(native: dict, future_functions: bool) -> list[str]:
+    """The fixed report lines of a whole-workbook streamed export; the conversion report's lines follow them."""
+    return export_report(workbook_report()+[WHOLE_EXPORT_CACHES, FORMULA_DISPLAY_LINE], native, future_functions)
+
+
+class _Expanded:
+    """Uncompressed bytes written to the package."""
+    def __init__(self):
+        self.used = 0
+
+    def charge(self, size):
+        self.used += size
+        require(self.used <= LARGE_EXPANDED, "LIMIT", f"Expanded XLSX export exceeds {LARGE_EXPANDED//(1024*1024)} MiB")
+
+
+def _write_sheet(part, name, cells, context, expanded, progress):
+    """Write one worksheet part cell by cell; only a bounded buffer of XML text is held."""
+    pending, size = [], 0
+
+    def emit(text):
+        nonlocal size
+        pending.append(text)
+        size += len(text)
+        if size >= EXPORT_FLUSH: flush()
+
+    def flush():
+        nonlocal size
+        if not pending: return
+        data = "".join(pending).encode("utf-8")
+        pending.clear(); size = 0
+        expanded.charge(len(data))
+        part.write(data)
+
+    expanded.charge(len(_DECLARATION))
+    part.write(_DECLARATION)
+    emit(f'<worksheet xmlns="{S}">')
+    current = None
+    for cell in cells:
+        progress.cell(name)
+        cell = export_temporal_style(cell)
+        if current is None: emit("<sheetData>")
+        elif cell["row"] != current: emit("</row>")
+        if cell["row"] != current:
+            current = cell["row"]
+            emit(f'<row r="{current}">')
+        if cell["kind"] == "formula" and not context["future"]: context["future"] = uses_future_prefix(cell["source"])
+        element = export_cell(cell, context["styles"].index(cell.get("style", {})), sheet=name, mode="formulas",
+                              report=context["report"], whole=True, names=context["names"])
+        emit(ET.tostring(element, encoding="unicode"))
+    emit("<sheetData />" if current is None else "</row></sheetData>")
+    emit("</worksheet>")
+    flush()
+
+
+class _WriteProgress:
+    def __init__(self, checkpoint):
+        self.checkpoint = checkpoint
+        self.cells = 0
+
+    def cell(self, name):
+        self.cells += 1
+        require(self.cells <= LARGE_CELLS, "LIMIT", f"Whole-workbook export exceeds {LARGE_CELLS:,} stored cells")
+        if self.cells % BATCH == 0: self.checkpoint(self.cells, "Writing sheet "+name)
+
+
+def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Callable[[int, str], None]) -> dict:
+    """Write a whole workbook as an XLSX package at `path`, formulas without cached values, cell by cell.
+
+    `sheets` yields (sheet name, iterator of cells) as Workbook.stream_workbook does; only the pairs are taken up
+    front, and each sheet's cells are read as they are written. Each cell is written by interchange.export_cell,
+    exactly as the bounded whole-workbook formulas export writes it, with strings inline (no shared-string table).
+    Worksheets are written first and the stylesheet last, so style indexes follow first use as in that export.
+    Approximations go to `report`. More than LARGE_CELLS cells, LARGE_SHEETS sheets, LARGE_EXPANDED uncompressed
+    bytes or 1,024 distinct styles is LIMIT. On any failure the partial file is removed.
+
+    Returns {"bytes", "sha256", "sheets", "cells", "future_functions"}: the file's size and digest, the counts
+    written, and whether any formula uses an _xlfn identifier."""
+    path = Path(path)
+    try:
+        sheets = list(sheets)
+        require(len(sheets) <= LARGE_SHEETS, "LIMIT", f"Whole-workbook export exceeds {LARGE_SHEETS} sheets")
+        names = validate_sheet_names([name for name, _ in sheets], LARGE_SHEETS)
+        context = {"styles": StyleTable(), "report": report, "names": names, "future": False}
+        expanded, progress = _Expanded(), _WriteProgress(checkpoint)
+        flags = os.O_WRONLY|os.O_CREAT|os.O_TRUNC|getattr(os, "O_NOFOLLOW", 0)|getattr(os, "O_BINARY", 0)
+        with open(os.open(path, flags, 0o600), "wb") as output:
+            with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for index, (name, cells) in enumerate(sheets, 1):
+                    with archive.open(f"xl/worksheets/sheet{index}.xml", "w") as part:
+                        checkpoint(progress.cells, "Writing sheet "+name)
+                        _write_sheet(part, name, cells, context, expanded, progress)
+                checkpoint(progress.cells, "Writing workbook")
+                for part_name, root in package_parts(names)+[("xl/styles.xml", stylesheet(context["styles"].styles))]:
+                    data = xml(root)
+                    expanded.charge(len(data))
+                    archive.writestr(part_name, data)
+        digest, size = hashlib.sha256(), 0
+        with open(path, "rb") as written:
+            while chunk := written.read(1024*1024):
+                digest.update(chunk); size += len(chunk)
+                checkpoint(progress.cells, "Checking export")
+        return {"bytes": size, "sha256": digest.hexdigest(), "sheets": len(names), "cells": progress.cells,
+                "future_functions": context["future"]}
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
