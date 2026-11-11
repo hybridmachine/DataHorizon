@@ -79,6 +79,16 @@ def _worker(pipe, path, changes, operation, event='on_change'):
         def set(self, sheet, row, col, source, kind="auto"):
             return self.request("set", sheet=sheet, row=row, col=col, source=source, kind=kind)
 
+        def table_schema(self,table):return self.request('table_schema',table=table)
+
+        def table_get(self,table,row_id):return self.request('table_get',table=table,row_id=row_id)
+
+        def table_set(self,table,row_id,values):return self.request('table_set',table=table,row_id=row_id,values=values)
+
+        def table_insert(self,table,values):return self.request('table_insert',table=table,values=values)
+
+        def table_delete(self,table,row_id):return self.request('table_delete',table=table,row_id=row_id)
+
     logs=LogTail()
     # Also bound ordinary Python execution if the service is terminated before
     # its parent-side timeout can reap this worker. This is not a sandbox.
@@ -154,7 +164,7 @@ def invoke(path, changes, operation, dispatch, deadline, *, event='on_change'):
                 if set(message)!={'error'} or not isinstance(message['error'],str):
                     raise HookFailure("Invalid Python handler failure message")
                 raise HookFailure(message["error"])
-            if method not in ('get','value','set'):
+            if method not in ('get','value','set','table_schema','table_get','table_set','table_insert','table_delete'):
                 raise HookFailure("Unknown Python handler broker method")
             try:
                 replies.put({"result": dispatch(method, message)})

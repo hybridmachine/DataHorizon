@@ -16,7 +16,8 @@ public:
     void bind(const QJsonObject &info);
     void setLocked(bool locked);
     void refreshCatalog();
-    static bool editDefinition(QWidget *parent,QJsonObject &definition,const QString &title);
+    void selectTable(const QString &id){m_table=id;}
+    static bool editDefinition(QWidget *parent,QJsonObject &definition,const QString &title,bool fixedWidth=false);
 signals:
     void submitRequested(QJsonObject operation);
     void issue(QString message);
@@ -25,14 +26,21 @@ private:
     void createTable();
     void dropTable();
     void showTable(const QString &id);
+    void loadRecords(const QString &after = {});
     QString base()const;
     RestClient *m_client;
     QJsonObject m_info,m_catalog,m_draftDefinition;
     QString m_table;
     quint64 m_generation=0;
-    bool m_locked=true;
+    bool m_locked=true,m_blocked=true;
+    quint64 m_readGeneration=0;
+    QString m_nextAfter,m_after;
+    QStringList m_previousPages;
+    QJsonObject m_page;
     QTreeWidget *m_objects;
     QTableWidget *m_schema;
+    QTableWidget *m_records;
+    QPushButton *m_previous,*m_next;
     QLabel *m_status;
     QPushButton *m_create,*m_drop;
 };

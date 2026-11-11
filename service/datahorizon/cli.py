@@ -98,6 +98,8 @@ def main():
     table_create.add_argument('name')
     table_drop=commands.add_parser('table-drop',help='Drop an empty table through managed execution')
     table_drop.add_argument('table')
+    table_from=commands.add_parser('table-from-range',help='Preview a source selection from JSON stdin; --apply creates the reviewed value snapshot in this session')
+    table_from.add_argument('name');table_from.add_argument('--apply',action='store_true')
     commands.add_parser("inspect",help="Inspect a native file read-only without code activation or repair")
     read = commands.add_parser("read")
     read.add_argument("address")
@@ -147,6 +149,9 @@ def main():
                     elif args.command=='tables':result=book.tables()
                     elif args.command=='table-create':result=book.create_table(args.name,json.load(sys.stdin))
                     elif args.command=='table-drop':result=book.drop_table(args.table)
+                    elif args.command=='table-from-range':
+                        options=json.load(sys.stdin);review=book.preview_table(args.name,**options)
+                        result=book.promote_table(review) if args.apply else review
                     elif args.command == "read":
                         result = book.read(args.sheet, row, col, row, col)
                     elif args.command == "set":

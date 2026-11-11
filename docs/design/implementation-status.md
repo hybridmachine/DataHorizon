@@ -155,11 +155,16 @@ requested November 9, defines ten dependency-ordered tasks for the first M8
 relational tier. It covers native table storage/migration, selection conversion,
 types/constraints, managed record edits/history, bounded browsing/indexes,
 restrictive relationships, read-only SQL, saved query views and snapshot export.
-Tasks 1–2 now provide contract probes/Qt wireframes and native v4 empty-table
+Tasks 1–3 now provide contract probes/Qt wireframes and native v4 empty-table
 creation/catalog inspection/drop through the shared engine, REST, SDK/CLI and
 Qt workbench. Migration/hook rollback, direct SQLite insertion, native copy and
-exact schema protection have targeted tests. Populated tables and querying are
-the following tasks. Automated evidence and the owner's later manual GUI
+exact schema protection have targeted tests. Selection promotion now reviews
+headers/types/conversion, copies formula values using one clock shared with
+transactional hooks, retains the source sheet and opens bounded record pages.
+Generated table/cell writes share rollback, limits and supported data history.
+The full local run passes 225 Qt checks and 494 Python tests (19 optional skips).
+Public table editing/schema changes and querying are the following tasks.
+Automated evidence and the owner's later manual GUI
 walkthrough are tracked separately. Managed SQL mutations and
 the existing M1/M7/manual/platform/release gates retain their own requirements.
 

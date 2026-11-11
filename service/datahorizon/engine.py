@@ -280,6 +280,7 @@ class Workbook:
         self.readonly, self.handler = readonly, handler
         self.repair=boolean(repair,'repair')
         self.relational_issues=[]
+        self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
         self.lock = threading.RLock()
         self.undo, self.redo = [], []
         self.dependencies=DependencyIndex()
@@ -731,6 +732,8 @@ class Workbook:
         self.check_operation()
         if before == item:
             return
+        require(len(self.changes)-len(self.table_record_keys)+len(self.table_field_changes)+(key not in self.changes)<=MAX_CELLS,
+                'LIMIT','Operation including generated edits exceeds 10,000 scalar fields')
         if key not in self.changes:
             require(len(self.changes) < MAX_CELLS, "LIMIT", "Operation including Python edits exceeds 10,000 changed cells")
             self.changes[key] = [before, item]
@@ -785,6 +788,9 @@ class Workbook:
             self.put(sheet, row, col, item)
 
     def hook_dispatch(self,method,args):
+        if method.startswith('table_'):
+            from .relational_rows import dispatch
+            return dispatch(self,method,args)
         sheet=self.sheet(args['sheet']);row,col=args['row'],args['col'];integer(row,1,MAX_ROWS,'row');integer(col,1,MAX_COLS,'col')
         if method=='get':return self.raw(sheet,row,col)
         if method=='value':return self.calculator(clock=self.operation_clock,transactional=True).cell(sheet,row,col)
@@ -803,14 +809,21 @@ class Workbook:
     def run_hooks(self, operation):
         if not self.handler:
             return
-        for _ in range(16):
-            if not self.pending:
+        for round_index in range(16):
+            if not self.pending and not self.pending_tables:
                 return
             batch = [self.pending[key] for key in sorted(self.pending)]
+            table_batch=[{**self.pending_tables[key],"operation_id":operation,"origin":"managed","action":self.operation_action,"round":round_index+1} for key in sorted(self.pending_tables)]
             self.pending = {}
+            self.pending_tables={}
 
-            invoke(self.handler, batch, operation, self.hook_dispatch, self.deadline)
-        require(not self.pending, "HOOK_RECURSION", "Required handler exceeded 16 change rounds")
+            if batch:invoke(self.handler, batch, operation, self.hook_dispatch, self.deadline)
+            if table_batch:
+                from .hooks import supports_event
+                require(supports_event(self.handler,'on_table_change'),'UNSUPPORTED_HOOK_SCOPE','Required handler must explicitly define on_table_change(context,changes)')
+                require(len(encoded(table_batch).encode())<=8*1024*1024,'LIMIT','Table hook change images exceed 8 MiB')
+                invoke(self.handler,table_batch,operation,self.hook_dispatch,self.deadline,event='on_table_change')
+        require(not self.pending and not self.pending_tables, "HOOK_RECURSION", "Required handler exceeded 16 change rounds")
 
     def operation(self, operation_id):
         with self.lock:
@@ -856,6 +869,7 @@ class Workbook:
                 self.deadline = time.monotonic() + 5
                 self.refresh(deadline=self.deadline)
                 self.changes, self.pending = {}, {}
+                self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
                 self.operation_clock=utc_clock()
                 unverified_before=set(self.unverified_records)
                 self.change_bytes = 0
@@ -895,6 +909,7 @@ class Workbook:
                 require("label" not in request or isinstance(request["label"],str),"INVALID_ARGUMENT","Operation label must be text")
                 kind = request.get("action")
                 require(isinstance(kind,str),'INVALID_ARGUMENT','Operation action must be Text')
+                self.operation_action=kind
                 require(not self.relational_issues,'DATA_REPAIR_REQUIRED','Use the explicit restricted repair interface before ordinary mutations',409)
                 from . import relational
                 sheet_structural = isinstance(kind, str) and (kind.startswith("sheet_") or kind == "workbook_import" or kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"))
@@ -1044,10 +1059,17 @@ class Workbook:
                 elif kind in ("undo", "redo"):
                     stack = self.undo if kind == "undo" else self.redo
                     require(bool(stack), "NO_HISTORY", f"Nothing to {kind}")
-                    for key, (before, after) in stack[-1][1].items():
+                    entries=list(stack[-1][1].items())
+                    for key, (before, after) in (reversed(entries) if kind=='undo' else entries):
                         wanted, current = (before, after) if kind == "undo" else (after, before)
-                        require(self.raw(*key) == current, "HISTORY_CONFLICT", "Undo target changed", 409)
-                        self.put(*key, wanted)
+                        if key[0]=='table':
+                            from .relational_rows import raw as row_raw,put as row_put
+                            item=relational.table(self.db,key[1])
+                            require(row_raw(self,item,key[2])==current,'HISTORY_CONFLICT','Undo record changed',409)
+                            row_put(self,item,key[2],wanted)
+                        else:
+                            require(self.raw(*key) == current, "HISTORY_CONFLICT", "Undo target changed", 409)
+                            self.put(*key, wanted)
                 elif kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"):
                     reference_report = self.change_structure(request)
                 elif kind == "workbook_import":
@@ -1083,7 +1105,8 @@ class Workbook:
                 self.check_operation()
                 self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1]}
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
-                result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": len(self.changes)}
+                result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": sum(key[0]!='table' for key in self.changes),
+                          "changed_records":sum(key[0]=='table' for key in self.changes)}
                 result.update(reference_report)
                 self.db.execute("INSERT INTO operations VALUES(?,?,?)", (operation, fingerprint, encoded(result)))
                 self.check_operation()
@@ -1091,14 +1114,14 @@ class Workbook:
                 self.check_operation()
                 self.db.execute("COMMIT")
                 in_transaction = False
-                if structural:self.dependencies.clear()
+                if structural or self.table_record_keys:self.dependencies.clear()
                 else:self.dependencies.invalidate(self.changes)
                 if structural:
                     self.undo.clear()
                     self.redo.clear()
                 elif kind == "undo":
                     label, _, _ = self.undo.pop()
-                    reversed_changes = {key: [pair[1], pair[0]] for key, pair in self.changes.items()}
+                    reversed_changes = {key: [pair[1], pair[0]] for key, pair in reversed(list(self.changes.items()))}
                     self.redo.append((label, reversed_changes, self.history_cost(label,reversed_changes)))
                 elif kind == "redo":
                     label, _, _ = self.redo.pop()

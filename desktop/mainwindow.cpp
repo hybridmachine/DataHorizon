@@ -68,6 +68,7 @@
 #include "clipboarddata.h"
 #include "relationalworkbench.h"
 #include <QStackedWidget>
+#include <QTableWidget>
 #include <algorithm>
 
 namespace {
@@ -281,6 +282,47 @@ void MainWindow::showRelational(bool visible) {
     setBusy(m_busy);
 }
 
+void MainWindow::createTableFromSelection() {
+    if(m_busy || m_unknown || m_info.isEmpty() || m_info.value("readonly").toBool() || m_relationalActive)return;
+    if(m_model->projected()){issue(tr("Clear the list view before creating a table from source coordinates."));return;}
+    const auto range=selectedRange();if(range.isEmpty())return;
+    const auto target=targetContext(range);captureGridDraft(false);if(!resolveDraft() || !matchesTarget(target))return;
+    QDialog options(this);options.setObjectName("tableSelectionOptions");options.setWindowTitle(tr("Create table from selection"));
+    QFormLayout form(&options);QLineEdit name(m_tablePromotionDraft["name"].toString("NewTable"));name.setObjectName("selectionTableName");name.setMaxLength(64);
+    QCheckBox header(tr("First selected row contains column names"));header.setObjectName("selectionTableHeader");header.setChecked(true);
+    QComboBox conversion;conversion.setObjectName("selectionTableConversion");conversion.addItem(tr("Keep strict types"),"strict");conversion.addItem(tr("Convert using dot decimals and ISO dates"),"invariant");
+    form.addRow(tr("Table name"),&name);form.addRow(&header);form.addRow(tr("Value conversion"),&conversion);
+    QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);form.addRow(&buttons);
+    connect(&buttons,&QDialogButtonBox::accepted,&options,&QDialog::accept);connect(&buttons,&QDialogButtonBox::rejected,&options,&QDialog::reject);
+    if(m_info["format_version"].toInt()<4){auto *copy=buttons.addButton(tr("Save native copy…"),QDialogButtonBox::ActionRole);connect(copy,&QPushButton::clicked,&options,[this,&options]{options.reject();QTimer::singleShot(0,this,[this]{saveCopy(false);});});}
+    if(options.exec()!=QDialog::Accepted || !matchesTarget(target))return;
+    auto request=target;request.remove("workbook");request["name"]=name.text();request["header"]=header.isChecked();request["conversion_policy"]=conversion.currentData().toString();
+    if(m_tablePromotionDraft["columns"].toArray().size()==range["c2"].toInt()-range["c1"].toInt()+1)request["columns"]=m_tablePromotionDraft["columns"];
+    setBusy(true,tr("Preparing table values…"));
+    m_client->request(base()+"/tables/preview",request,[this,target,request](QJsonObject preview,QString error)mutable{
+        if(!error.isEmpty() || !matchesTarget(target)){setBusy(false);issue(error.isEmpty()?tr("Source selection changed. Review it again."):error);return;}
+        QJsonObject definition{{"name",request["name"]},{"columns",preview["columns"]}};
+        if(!RelationalWorkbench::editDefinition(this,definition,tr("Review table columns"),true) || !matchesTarget(target)){setBusy(false);return;}
+        m_tablePromotionDraft=definition;request["name"]=definition["name"];request["columns"]=definition["columns"];request["preview_clock"]=preview["preview_clock"];
+        m_client->request(base()+"/tables/preview",request,[this,target,request](QJsonObject result,QString failure){
+            if(!failure.isEmpty() || !matchesTarget(target)){setBusy(false);issue(failure.isEmpty()?tr("Table review is stale; prepare it again."):failure);return;}
+            QDialog review(this);review.setObjectName("tablePromotionReview");review.setWindowTitle(tr("Review independent table creation"));review.resize(700,450);QVBoxLayout layout(&review);
+            QLabel summary(tr("Create %1 with %2 records? Formula results become values. The source selection is retained; session Undo/Redo clears.").arg(request["name"].toString()).arg(result["record_count"].toInt()));summary.setWordWrap(true);layout.addWidget(&summary);
+            const auto cols=result["columns"].toArray(),rows=result["records_preview"].toArray();
+            QTableWidget values(rows.size(),cols.size());values.setObjectName("tablePromotionValues");values.setAccessibleName(tr("Reviewed table values preview"));values.setEditTriggers(QAbstractItemView::NoEditTriggers);
+            QStringList labels;for(const auto &col:cols)labels.append(col.toObject()["name"].toString());values.setHorizontalHeaderLabels(labels);
+            for(int r=0;r<rows.size();++r)for(int c=0;c<cols.size();++c){const auto value=rows[r].toObject()[cols[c].toObject()["id"].toString()];const auto text=value.isNull()?tr("NULL"):value.toVariant().toString();values.setItem(r,c,new QTableWidgetItem(text.left(256)+(text.size()>256?QString("…"):QString{})));}
+            layout.addWidget(&values,1);QStringList report;for(const auto &line:result["report"].toArray())report.append(line.toString());for(const auto &entry:result["issues"].toArray()){const auto item=entry.toObject();report.append(tr("Row %1, %2: %3").arg(item["row"].toInt()).arg(item["column"].toString(),item["message"].toString()));}
+            QLabel details(report.join('\n'));details.setWordWrap(true);layout.addWidget(&details);
+            QDialogButtonBox confirm(QDialogButtonBox::Apply|QDialogButtonBox::Cancel);confirm.button(QDialogButtonBox::Apply)->setEnabled(result["can_create"].toBool());layout.addWidget(&confirm);
+            connect(confirm.button(QDialogButtonBox::Apply),&QPushButton::clicked,&review,&QDialog::accept);connect(&confirm,&QDialogButtonBox::rejected,&review,&QDialog::reject);
+            const auto answer=review.exec();setBusy(false);
+            if(answer!=QDialog::Accepted || !result["can_create"].toBool() || !matchesTarget(target))return;
+            auto operation=request;operation["workbook"]=target["workbook"];operation["action"]="table_promote";operation["columns"]=result["columns"];operation["review_digest"]=result["review_digest"];operation["preview_clock"]=result["preview_clock"];submit(operation);
+        });
+    });
+}
+
 void MainWindow::buildUi() {
     auto *file = menuBar()->addMenu(tr("&File"));
     auto *edit = menuBar()->addMenu(tr("&Edit"));
@@ -299,6 +341,8 @@ void MainWindow::buildUi() {
     m_sheetMenus={edit,formatMenu,sheetMenu,dataMenu,view};
     auto *tables=dataMenu->addAction(tr("Tables and queries…"));tables->setObjectName("relationalWorkbenchAction");
     connect(tables,&QAction::triggered,this,[this]{showRelational(true);});
+    auto *promote=dataMenu->addAction(tr("Create table from selection…"));promote->setObjectName("tableFromSelectionAction");
+    connect(promote,&QAction::triggered,this,&MainWindow::createTableFromSelection);
     auto *functionHelp=help->addAction(tr("Formula functions…"));functionHelp->setObjectName("functionHelpAction");connect(functionHelp,&QAction::triggered,this,&MainWindow::showFunctionHelp);
     connect(m_client,&RestClient::configured,this,[this]{m_functionCatalog={};for(auto *line:findChildren<QLineEdit *>())if(auto *formula=dynamic_cast<FormulaLineEdit *>(line))formula->setCatalog({});});
     m_toolbar = addToolBar(tr("Workbook"));
@@ -1222,6 +1266,10 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     setWindowTitle(QFileInfo(info["path"].toString()).fileName() + " — DataHorizon development preview");
     syncSource();
     if (m_restoreDraft) restoreRecoveredDraft();
+    if(!m_relationalAfterWrite.isEmpty()) {
+        const bool open=m_relationalAfterWrite==info["id"].toString();m_relationalAfterWrite.clear();
+        if(open && !m_relationalActive)showRelational(true);
+    }
     if (!m_listSpec.isEmpty()) applyList(); else { applyEnterNavigation(); emit workbookReady(); }
     if (m_saveMode) QTimer::singleShot(0,this,[this]{save(m_saveMode==2);});
 }
@@ -1260,7 +1308,7 @@ void MainWindow::submit(QJsonObject operation) {
     operation["sheet"] = m_model->sheet();
     setBusy(true, "Submitting • " + m_pendingId);
     const auto operationId=m_pendingId;
-    m_client->request(base()+"/operations", operation, [this,operationId](QJsonObject result, QString error) {
+    m_client->request(base()+"/operations", operation, [this,operationId,action](QJsonObject result, QString error) {
         if (m_pendingId!=operationId) return;
         const bool invalidAcknowledgement = error.isEmpty() && !RestClient::validReceipt(result, m_pendingId, true);
         if (invalidAcknowledgement) error = "Invalid mutation acknowledgement; reconcile its operation ID";
@@ -1290,6 +1338,10 @@ void MainWindow::submit(QJsonObject operation) {
         if (m_enterNavigation["operation_id"].toString()==operationId) m_enterNavigation["ready"]=true;
         if (m_draftSubmissionId==operationId) clearRecoveredDraft();
         clearRecoveryRecord(); m_pendingId.clear(); m_unknown = false; m_info["state"] = result["state"];
+        if(action=="table_promote" || action=="table_create") {
+            m_relational->selectTable(result["table"].toObject()["id"].toString());m_relationalAfterWrite=m_info["id"].toString();
+            if(action=="table_promote")m_tablePromotionDraft={};
+        }
         reportReferenceWarnings(result);
         refresh(); emit operationFinished(true);
     });
@@ -1369,7 +1421,7 @@ void MainWindow::setBusy(bool busy, const QString &message) {
     if(m_busy){clearFindResults();++m_navigationGeneration;m_navigationExtending=false;}
     for(auto *action:m_navigationActions)action->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
     m_model->setBusy(m_busy); m_toolbar->setEnabled(!m_busy && !m_relationalActive); m_tabs->setEnabled(!m_busy);
-    if(m_relational)m_relational->setLocked(m_busy || m_unknown || m_info.value("readonly").toBool());
+    if(m_relational)m_relational->setLocked(m_busy || m_unknown);
     if(m_freezePanesAction)m_freezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
     if(m_unfreezePanesAction)m_unfreezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && (m_frozenRows>0 || m_frozenColumns>0));
     if(m_freezeColumnAction)m_freezeColumnAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenColumns.contains(0));

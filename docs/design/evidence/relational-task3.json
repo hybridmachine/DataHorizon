@@ -1,0 +1,30 @@
+{
+  "task": 3,
+  "source_commit": "40ed7798201fd50a66cd2f9f38679c3633b9817f",
+  "pull_request": "https://github.com/hybridmachine/DataHorizon/pull/117",
+  "automated_status": "passed",
+  "ctest": {
+    "command": "ctest --test-dir build --output-on-failure",
+    "suites_passed": 3,
+    "qt_checks_passed": 225,
+    "python_tests_run": 494,
+    "python_optional_skips": 19,
+    "elapsed_seconds": 177.97
+  },
+  "targeted": {
+    "promotion_engine_rest_sdk_cli_history_recursion_tests": 13,
+    "qt_workflows_passed": 2
+  },
+  "contracts": [
+    "Reviewed source-state/digest and one calculation clock shared with transactional hooks",
+    "Source inputs/formulas and Text identifiers retained",
+    "Table/cell generated writes roll back and participate in shared history",
+    "Bounded record pages and explicit table hook opt-in"
+  ],
+  "initial_run_findings": [
+    "Two inherited sheet-tab selectors were ambiguous after adding workbench tabs; selectors now name the sheets control",
+    "One background-calculation status assertion failed in the initial full run; targeted and final full reruns passed; diagnostic output was improved"
+  ],
+  "manual_gui_acceptance": "pending",
+  "release_qualified": false
+}
