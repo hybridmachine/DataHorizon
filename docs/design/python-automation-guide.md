@@ -1,9 +1,12 @@
 # Workbook Python automation guide
 
-Native v5 stores Python modules and explicit macro declarations. Stored code stays
-inert until an operator approves its exact workbook/code activation key and a
-client explicitly invokes a macro. The first tier supports REST, managed CLI and
-SDK; a Qt code editor and custom formula functions follow separately.
+Native v5 stores Python modules and explicit macro declarations; native v6 adds
+workbook names and event bindings. Stored code stays inert until an operator
+approves its exact workbook/code activation key and a client explicitly invokes
+a macro or a managed edit reaches a binding. This guide covers REST, the managed
+CLI and the SDK. The [Python workspace guide](python-workspace-guide.md) covers
+writing, approving, running and binding code from the desktop application.
+Custom formula functions follow separately.
 
 ## Run the example
 
@@ -78,6 +81,14 @@ handler to activate its validation and generated edit. The same CLI invocation:
 printf '%s' '{"delta":3}' | PYTHONPATH=service python3 -m datahorizon.cli --handler examples/automation_rules.py --approve-code '<activation key>' /tmp/Automation.dhwb macro MeasurementsCode adjust --fingerprint '<SHA256>' --operation-id '<retained UUID>'
 ```
 
+A service you start can also be approved while it runs: pass
+`LocalService(owner_channel=True)` and call `service.approve(activation_key)`
+(keep the service object; `with service as client` yields the client). The
+service reads `{"approve": key}` lines from its standard input only when started
+with `--owner-channel`; a later grant for the same workbook replaces the earlier
+one, start-up keys are kept, and changed code needs a new key. No HTTP request
+can grant approval.
+
 The service entry point accepts repeatable `--approve-code` options. Attached
 CLI clients use `--url` and `DATAHORIZON_TOKEN`; their operator configures grants
 when starting the service. A remote CLI cannot use `--approve-code` to change
@@ -99,7 +110,19 @@ the shared history alive between CLI commands. Closing the last service handle
 ends session history; durable operation receipts remain in the native file.
 Opening the workbook in a separate GUI-owned service starts a separate session.
 
-The broker context exposes `get/value/set`, `table_schema/table_get/table_set`,
+Cells are addressed either as `(sheet, row, col)` or by reference text:
+`ctx.get`/`ctx.value` take a reference, `ctx.set(ref, source)` writes one, and
+`ctx.values(ref)` returns the calculated values of a rectangle as a list of rows
+(blank cells are `None`, at most 4,096 cells). A reference is a sheet-qualified
+address such as `Supplies!B3`, `'Bob''s Sheet'!B2:B4`, or a defined name such as
+`Total`. `get`, `value` and `set` need a single cell. `set` accepts text, finite
+numbers and booleans. Shape, lookup, broken-name, limit and type errors abort
+the operation even if the code catches them; macros keep the specific code
+(for example `REFERENCE_SHAPE`) as `context_code` in the receipt. Address text
+inside code is not rewritten when rows, columns or sheets change; names follow
+those changes, so prefer a name for anything that must survive them.
+
+The broker context exposes `get/value/values/set`, `table_schema/table_get/table_set`,
 `table_insert/table_delete` and `operation_id`. Reads see staged writes. Table
 values use stable column IDs; schema inspection maps names to those IDs. Table
 insert returns its new decimal-string record ID. Context operations obey normal
@@ -136,6 +159,8 @@ describes the worker phase; the outer `outcome` determines whether data committe
 Approved Python runs with the service user's normal capabilities. A worker is
 not a secure sandbox. SQLite rollback covers context-mediated database edits;
 it cannot undo file/network effects. This tier provides short atomic database
-macros. Durable external-effect queues, package installation, automatic workbook
+macros and cell/table change bindings (see the
+[workspace guide](python-workspace-guide.md#rules-event-bindings)). Durable
+external-effect queues, package installation, workbook-open and structure
 events, multi-transaction macros and formula UDFs require separate contracts.
 Independent SQLite edits bypass hooks and never replay skipped events.

@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Native-plugin automation, separate from physical input/screen-reader acceptance.
 #include "mainwindow.h"
+#include "pythonworkspace.h"
 #include <QAccessible>
 #include <QApplication>
 #include <QAction>
+#include <QCheckBox>
+#include <QLabel>
+#include <QListWidget>
+#include <QMessageBox>
+#include <QTabBar>
+#include <QTabWidget>
 #include <QClipboard>
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -30,6 +37,7 @@
 #include <QTimer>
 #include <QUuid>
 #include <QTest>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 
@@ -39,13 +47,251 @@ template<class Test> static void waitFor(Test test,const char *message) {
     while(!test() && deadline.elapsed()<15000) QTest::qWait(5);
     require(test(),message);
 }
+
+// Answers the modal dialogs a step opens; handle() returns true when it acted.
+class ModalDriver {
+public:
+    explicit ModalDriver(std::function<bool(QWidget *)> handle):m_handle(std::move(handle)) {
+        m_timer.setInterval(10);
+        QObject::connect(&m_timer,&QTimer::timeout,[this]{if(auto *modal=QApplication::activeModalWidget())if(m_handle(modal))++handled;});
+        m_timer.start();
+    }
+    int handled=0;
+private:
+    std::function<bool(QWidget *)> m_handle;
+    QTimer m_timer;
+};
+
+// Clicking Yes on any "clears Undo history" confirmation, as a user who has
+// read it would.
+static bool acceptHistoryPrompt(QWidget *modal) {
+    auto *box=qobject_cast<QMessageBox *>(modal);
+    if(!box || !box->objectName().endsWith("HistoryPrompt"))return false;
+    box->button(QMessageBox::Yes)->click();return true;
+}
+
+// The storyboard session in the real workspace window, one linear scenario:
+// each step is recorded by name and the first failure stops the run.
+static QJsonObject pythonWorkspaceScenario(const QString &directory,const QString &screenshot) {
+    QJsonArray steps;QString current;QElapsedTimer total;total.start();
+    auto step=[&](const char *name,const std::function<void()> &body) {
+        current=QString::fromLatin1(name);QElapsedTimer clock;clock.start();
+        try{body();}catch(const std::exception &error){throw std::runtime_error(("pythonWorkspace step "+current+": "+error.what()).toStdString());}
+        steps.append(QJsonObject{{"step",current},{"passed",true},{"elapsed_ms",double(clock.elapsed())}});
+    };
+    StartupOptions options;options.automaticWorkbook=false;
+    options.viewStatePath=directory+"/workspace-views.ini";options.recoveryDirectory=directory+"/workspace-recovery";
+    MainWindow window(options);window.resize(820,620);
+    QSignalSpy ready(&window,&MainWindow::serviceReady),opened(&window,&MainWindow::workbookReady);
+    QSignalSpy finished(&window,&MainWindow::operationFinished);
+    window.show();window.raise();window.activateWindow();
+    PythonWorkspace *workspace=nullptr;QTableView *grid=nullptr;QPlainTextEdit *code=nullptr;
+    auto cell=[&](int row,int col){return window.model()->data(window.model()->index(row,col)).toString();};
+    auto apply=[&](const QJsonObject &operation,const char *message) {
+        const int before=int(finished.count()),views=int(opened.count());window.submit(operation);
+        waitFor([&]{return finished.count()==before+1 && opened.count()>views;},message);
+        require(finished.last()[0].toBool(),message);
+    };
+    auto select=[&](const QString &address) {
+        auto *box=window.findChild<QLineEdit *>("address");box->setFocus();box->selectAll();
+        QTest::keyClicks(box,address);QTest::keyClick(box,Qt::Key_Return);
+    };
+    auto typeLine=[&](const QString &text){QTest::keyClicks(code,text);QTest::keyClick(code,Qt::Key_Return);};
+    auto approval=[&]{return workspace->findChild<QLabel *>("workspaceApproval")->text();};
+    auto approve=[&] {
+        ModalDriver driver([](QWidget *modal){
+            auto *dialog=qobject_cast<QDialog *>(modal);if(!dialog || dialog->objectName()!="codeApprovalDialog")return false;
+            auto *button=dialog->findChild<QPushButton *>("approveButton");require(button && button->isEnabled(),"Approve button unavailable");
+            button->click();return true;});
+        auto *review=workspace->findChild<QAction *>("reviewApproveAction");
+        waitFor([&]{return review->isEnabled();},"Review & approve never became available");
+        review->trigger();
+        require(driver.handled==1,"Review & approve dialog did not appear");
+        waitFor([&]{return approval()=="Approved for this session";},"Approval was not confirmed by the service");
+    };
+    auto heading=[&]{return workspace->findChild<QPlainTextEdit *>("runOutput")->toPlainText().section('\n',0,0);};
+    auto run=[&](const QString &extra) {
+        auto *macro=workspace->findChild<QComboBox *>("macroSelect");const int index=macro->findText("supplies.restock_pens");
+        require(index>=0,"restock_pens is not offered to run");macro->setCurrentIndex(index);
+        auto *argument=workspace->findChild<QLineEdit *>("argument_extra");require(argument,"No field for argument extra");
+        argument->setFocus();argument->selectAll();QTest::keyClicks(argument,extra);
+        auto *button=workspace->findChild<QPushButton *>("runButton");
+        waitFor([&]{return button->isEnabled();},"Run never became available");
+        button->click();
+        waitFor([&]{return !heading().startsWith("Running") && !heading().isEmpty();},"Run produced no outcome");
+    };
+
+    step("start_service_and_open_supplies",[&] {
+        waitFor([&]{return ready.count()==1;},"Native service startup failed");
+        window.openBook(directory+"/Supplies.dhwb",true);
+        waitFor([&]{return opened.count()==1;},"Native open failed");
+        grid=window.findChild<QTableView *>("grid");require(grid,"Grid missing");
+        apply({{"action","sheet_add"},{"name","Supplies"}},"Supplies sheet was not added");
+        auto *tabs=window.findChild<QTabBar *>("sheets");
+        for(int index=0;index<tabs->count();++index)if(tabs->tabText(index)=="Supplies")tabs->setCurrentIndex(index);
+        waitFor([&]{return window.model()->sheet()==tabs->tabData(tabs->currentIndex()).toString();},"Supplies sheet not shown");
+        QJsonArray cells;
+        const QList<QStringList> rows{{"Item","Quantity","Unit price","Amount"},{"Notebook","2","3.50","=B2*C2"},{"Pen","4","1.25","=B3*C3"},{"Folder","3","2.00","=B4*C4"}};
+        for(int row=0;row<rows.size();++row)for(int col=0;col<4;++col) {
+            QJsonObject item{{"row",row+1},{"col",col+1},{"source",rows[row][col]}};
+            if(col==3 && row>0)item["style"]=QJsonObject{{"format","fixed2"}};
+            cells.append(item);
+        }
+        cells.append(QJsonObject{{"row",6},{"col",4},{"source","=SUM(D2:D4)"},{"style",QJsonObject{{"format","fixed2"}}}});
+        apply({{"action","edit"},{"cells",cells}},"Supplies data was not stored");
+        waitFor([&]{return cell(5,3)=="18.00";},"Supplies total is not 18.00");
+    });
+    step("open_workspace",[&] {
+        window.findChild<QAction *>("pythonWorkspaceAction")->trigger();
+        workspace=window.findChild<PythonWorkspace *>("pythonWorkspace");require(workspace,"Workspace window missing");
+        waitFor([&]{return workspace->isVisible() && !workspace->fingerprint().isEmpty();},"Workspace did not load the code catalog");
+        require(workspace->isWindow() && window.isVisible(),"Workspace is not a separate window beside the sheet");
+        workspace->move(window.frameGeometry().topRight()+QPoint(8,0));
+        code=workspace->findChild<QPlainTextEdit *>("codeEditor");require(code,"Code editor missing");
+    });
+    step("new_module",[&] {
+        ModalDriver driver([](QWidget *modal){
+            auto *input=qobject_cast<QInputDialog *>(modal);if(!input || input->objectName()!="newModuleName")return false;
+            input->setTextValue("supplies");input->accept();return true;});
+        auto *button=workspace->findChild<QPushButton *>("newModuleButton");
+        waitFor([&]{return button->isEnabled();},"New module unavailable");
+        button->click();require(driver.handled==1,"New module dialog did not appear");
+        waitFor([&]{return code->isEnabled() && !code->isReadOnly();},"New module is not editable");
+    });
+    step("type_module_and_pick_b3",[&] {
+        code->setFocus();
+        typeLine("def restock_pens(ctx, extra):");
+        QTest::keyClicks(code,"    quantity = ctx.value(");
+        auto *pick=workspace->findChild<QAction *>("pickFromSheetAction");
+        require(pick->isEnabled(),"Pick from sheet unavailable");pick->trigger();require(pick->isChecked(),"Picking did not arm");
+        QTest::mouseClick(grid->viewport(),Qt::LeftButton,{},grid->visualRect(window.model()->index(2,1)).center());
+        pick->trigger();require(!pick->isChecked(),"Picking did not end");
+        require(code->toPlainText().endsWith("ctx.value(\"'Supplies'!B3\""),"Picking did not insert the quoted address of B3");
+        require(cell(2,1)=="4" && finished.count()==2,"Picking changed stored data");
+        workspace->activateWindow();code->setFocus();
+        typeLine(") + extra");
+        for(const auto &line:QStringList{"    if quantity < 0:","        raise ValueError(\"Below zero\")","    ctx.set(\"PenQuantity\", quantity)","    return ctx.value(\"Total\")","","",
+                "def check_quantity(ctx, changes):","    for change in changes:","        if change[\"after\"] is None:","            continue",
+                "        value = ctx.value(change[\"sheet\"], change[\"row\"], change[\"col\"])","        if isinstance(value, (int, float)) and value < 0:","            raise ValueError(\"Below zero\")"})typeLine(line);
+        require(code->toPlainText().contains("    quantity = ctx.value(\"'Supplies'!B3\") + extra\n    if quantity < 0:\n"),"Typed module text mismatch");
+        require(workspace->findChild<QLabel *>("workspaceStatus")->text()=="Draft · not saved to the workbook","Typing did not make a draft");
+    });
+    step("declare_macro",[&] {
+        ModalDriver driver([](QWidget *modal){
+            if(modal->objectName()!="addMacroDialog")return false;
+            auto *panel=modal->findChild<QWidget *>("newMacroPanel");
+            panel->findChild<QLineEdit *>("macroName")->setText("restock_pens");panel->findChild<QPushButton *>("addArgumentButton")->click();
+            panel->findChild<QLineEdit *>("argumentName_0")->setText("extra");
+            auto *type=panel->findChild<QComboBox *>("argumentType_0");type->setCurrentIndex(type->findData("number"));
+            auto *result=panel->findChild<QComboBox *>("macroResultType");result->setCurrentIndex(result->findData("number"));
+            qobject_cast<QDialog *>(modal)->accept();return true;});
+        workspace->findChild<QPushButton *>("addMacroButton")->click();require(driver.handled==1,"Add macro dialog did not appear");
+        require(code->toPlainText().count("def restock_pens")==1,"Declaring the typed macro duplicated its function");
+    });
+    step("name_cells",[&] {
+        workspace->findChild<QAction *>("showNamesAction")->trigger();
+        auto *panel=workspace->findChild<QWidget *>("namesPanel");require(panel && panel->isVisible(),"Names panel not shown");
+        for(const auto &entry:QList<QPair<QString,QString>>{{"PenQuantity","B3"},{"Quantities","B2:B4"},{"Total","D6"}}) {
+            const QString name=entry.first,range=entry.second;const int before=int(window.names().size());
+            select(range);
+            auto *button=panel->findChild<QPushButton *>("newNameButton");
+            waitFor([&]{return button->isEnabled();},"New name unavailable");
+            ModalDriver driver([&name](QWidget *modal){
+                if(auto *input=qobject_cast<QInputDialog *>(modal);input && input->objectName()=="newNameInput"){input->setTextValue(name);input->accept();return true;}
+                return acceptHistoryPrompt(modal);});
+            button->click();
+            waitFor([&]{return window.names().size()==before+1;},"Name was not stored");
+        }
+        select("B3");waitFor([&]{return window.findChild<QLineEdit *>("address")->text()=="PenQuantity";},"Address box does not show the name");
+        workspace->findChild<QAction *>("showMacroAction")->trigger();
+    });
+    step("save_module",[&] {
+        ModalDriver driver(acceptHistoryPrompt);
+        workspace->findChild<QAction *>("saveModuleAction")->trigger();
+        waitFor([&]{return workspace->findChild<QLabel *>("workspaceStatus")->text()=="Saved in workbook" && !workspace->hasDrafts();},"Module was not saved");
+        require(approval()=="Not approved to run","Saved code is approved without review");
+    });
+    step("review_and_approve",[&]{approve();});
+    step("run_restock_pens",[&] {
+        run("2");
+        require(heading()=="Committed · returned 20.5 · 1 cells changed","Run did not commit 20.5");
+        waitFor([&]{return cell(2,1)=="6" && cell(5,3)=="20.50";},"Sheet did not show the macro's change");
+    });
+    step("undo_run",[&] {
+        QAction *undo=nullptr;
+        waitFor([&]{for(auto *action:window.findChildren<QAction *>())if(action->text()=="Undo Run supplies.restock_pens")undo=action;return undo && undo->isEnabled();},"Undo does not name the macro");
+        undo->trigger();
+        waitFor([&]{return cell(2,1)=="4" && cell(5,3)=="18.00";},"Undo did not restore the sheet");
+    });
+    step("failing_run_leaves_sheet",[&] {
+        run("-10");
+        const auto output=workspace->findChild<QPlainTextEdit *>("runOutput")->toPlainText();
+        require(heading()=="Rolled back" && output.contains("ValueError: Below zero"),"Failure was not reported as rolled back");
+        QTest::qWait(200);require(cell(2,1)=="4" && cell(5,3)=="18.00","Failed run changed the sheet");
+    });
+    step("bind_check_quantity",[&] {
+        auto *tabs=workspace->findChild<QTabWidget *>("workspaceTabs");tabs->setCurrentWidget(workspace->findChild<QWidget *>("eventsTab"));
+        auto *event=workspace->findChild<QComboBox *>("bindingEvent");event->setCurrentIndex(event->findText("cells change"));
+        auto *function=workspace->findChild<QComboBox *>("bindingFunction");
+        waitFor([&]{return function->findText("supplies.check_quantity")>=0;},"check_quantity is not offered");
+        function->setCurrentIndex(function->findText("supplies.check_quantity"));
+        auto *scope=workspace->findChild<QLineEdit *>("bindingScope");scope->setFocus();scope->selectAll();QTest::keyClicks(scope,"Quantities");
+        workspace->findChild<QCheckBox *>("bindingRequired")->setChecked(true);
+        auto *add=workspace->findChild<QPushButton *>("addBindingButton");
+        waitFor([&]{return add->isEnabled();},"Add rule unavailable");
+        auto *list=workspace->findChild<QListWidget *>("bindingList");const int before=list->count();
+        ModalDriver driver(acceptHistoryPrompt);add->click();
+        waitFor([&]{return list->count()==before+1;},"Rule was not stored");
+        waitFor([&]{return approval()=="Not approved to run";},"Adding a rule did not require fresh approval");
+        approve();
+    });
+    step("negative_edit_rejected",[&] {
+        auto *source=window.findChild<QLineEdit *>("source");
+        window.activateWindow();grid->setCurrentIndex(window.model()->index(1,1));
+        waitFor([&]{return source->isEnabled() && window.model()->sourceReady(grid->currentIndex());},"B2 never became editable");
+        const int before=int(finished.count());
+        source->setFocus();source->selectAll();QTest::keyClicks(source,"-1");QTest::keyClick(source,Qt::Key_Return);
+        waitFor([&]{return finished.count()==before+1;},"Edit produced no outcome");
+        require(!finished.last()[0].toBool(),"Negative quantity was stored");
+        const QString rejected="Rejected by supplies.check_quantity: ValueError: Below zero · nothing stored";
+        waitFor([&]{return window.findChild<QLabel *>("storageStatus")->text()==rejected;},"Rejection reason not shown");
+        require(source->text()=="-1" && source->isModified(),"Rejected draft was not kept");
+        waitFor([&]{return cell(1,1)=="2";},"Rejected edit changed B2");
+    });
+    require(workspace->grab().save(screenshot),"Workspace screenshot failed");
+    QJsonObject result{{"passed",true},{"steps",steps},{"elapsed_ms",double(total.elapsed())},
+        {"device_pixel_ratio",workspace->devicePixelRatioF()},{"main_window_active_at_end",window.isActiveWindow()},
+        {"workspace_screenshot",QFileInfo(screenshot).fileName()},{"final_status",window.findChild<QLabel *>("storageStatus")->text()}};
+    // Leave nothing for the close prompt: discard the rejected cell draft.
+    QTest::keyClick(window.findChild<QLineEdit *>("source"),Qt::Key_Escape);
+    return result;
+}
+
 int main(int argc,char **argv) {
     QApplication app(argc,argv);
     try {
-        require(argc==2,"Usage: native_acceptance output.json");
+        const bool onlyWorkspace=argc==3 && QByteArray(argv[2])=="pythonWorkspace";
+        require(argc==2 || onlyWorkspace,"Usage: native_acceptance output.json [pythonWorkspace]");
         const auto plugin=QApplication::platformName();
         require(plugin!="offscreen" && plugin!="minimal","Acceptance requires a native platform plugin");
         QTemporaryDir temp; require(temp.isValid(),"Cannot create fixture directory");
+        auto writeReport=[](const QString &path,const QJsonObject &report) {
+            QFile output(path); require(output.open(QIODevice::WriteOnly),"Cannot save native report");
+            const auto bytes=QJsonDocument(report).toJson(); require(output.write(bytes)==bytes.size(),"Native report truncated");
+        };
+        if(onlyWorkspace) {
+            // The storyboard scenario alone, without the general keyboard and dialog checks.
+            const QFileInfo reportFile(QString::fromLocal8Bit(argv[1]));
+            const auto pythonWorkspace=pythonWorkspaceScenario(temp.path(),reportFile.dir().filePath(reportFile.completeBaseName()+"-python-workspace.png"));
+            require(pythonWorkspace["device_pixel_ratio"].toDouble()>=qEnvironmentVariable("QT_SCALE_FACTOR","1").toDouble(),"Requested scale factor was not applied");
+            writeReport(reportFile.filePath(),QJsonObject{{"recorded_at_utc",QDateTime::currentDateTimeUtc().toString(Qt::ISODate)},
+                {"os",QSysInfo::prettyProductName()},{"qt",qVersion()},{"platform_plugin",plugin},
+                {"scale_request",qEnvironmentVariable("QT_SCALE_FACTOR","1")},{"scenario","pythonWorkspace"},{"pythonWorkspace",pythonWorkspace},
+                {"limitations",QJsonArray{"QTest widget events are synthetic; no physical input or compositor-latency qualification.",
+                    "Run alone, without the general keyboard, clipboard and dialog checks of the full acceptance run.",
+                    "No VoiceOver or spoken-output acceptance of the workspace window."}}});
+            return 0;
+        }
         StartupOptions options; options.automaticWorkbook=false;
         options.viewStatePath=temp.filePath("views.ini");
         MainWindow window(options); window.resize(820,620);
@@ -198,6 +444,7 @@ int main(int argc,char **argv) {
         const QFileInfo reportFile(QString::fromLocal8Bit(argv[1]));
         const auto screenshot=reportFile.dir().filePath(reportFile.completeBaseName()+".png");
         require(window.grab().save(screenshot),"Native screenshot failed");
+        const auto pythonWorkspace=pythonWorkspaceScenario(temp.path(),reportFile.dir().filePath(reportFile.completeBaseName()+"-python-workspace.png"));
         QJsonObject report{{"recorded_at_utc",QDateTime::currentDateTimeUtc().toString(Qt::ISODate)},
             {"os",QSysInfo::prettyProductName()},{"qt",qVersion()},{"platform_plugin",plugin},
             {"device_pixel_ratio",window.devicePixelRatioF()},{"scale_request",qEnvironmentVariable("QT_SCALE_FACTOR","1")},
@@ -207,15 +454,14 @@ int main(int argc,char **argv) {
             {"keyboard_range_tab_and_editor_cancel",true},{"cell_editor_accessible_address",true},
             {"qt_modal_escape_without_mutation",true},{"narrow_window_usable_grid",true},
             {"frozen_header_shared_cache_geometry",true},{"native_wrap_border_and_column_size",true},
-            {"native_hidden_gap_and_recovery_control",true},
+            {"native_hidden_gap_and_recovery_control",true},{"pythonWorkspace",pythonWorkspace},
             {"window_logical_width",window.width()},{"cell_logical_width",cell.width()},
             {"palette_base",grid->palette().color(QPalette::Base).name()},
             {"screenshot",QFileInfo(screenshot).fileName()},
             {"limitations",QJsonArray{"QTest widget events are synthetic; no physical input or compositor-latency qualification.",
                 "Bounded keyboard accessibility is not full screen-reader table navigation or spoken-output acceptance.",
                 "Native dialogs, multiple monitors and clean-machine installation remain separate acceptance."}}};
-        QFile output(reportFile.filePath()); require(output.open(QIODevice::WriteOnly),"Cannot save native report");
-        const auto bytes=QJsonDocument(report).toJson(); require(output.write(bytes)==bytes.size(),"Native report truncated");
+        writeReport(reportFile.filePath(),report);
         return 0;
     } catch(const std::exception &error) { qCritical("%s",error.what()); return 1; }
 }

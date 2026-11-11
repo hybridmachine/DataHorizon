@@ -32,7 +32,7 @@ def build_report(build, grid_path):
     tests = json.loads(result.stdout)['tests']
     budgets = {test['name']: int(next(p['value'] for p in test['properties'] if p['name']=='TIMEOUT'))
                for test in tests}
-    expected = {'desktop': 600,
+    expected = {'desktop': 600, 'python_workspace': 600,
                 'service': 600 if current['system']=='Windows' else 180}
     if current['system']=='Darwin':
         expected['development_bundle_signature']=30

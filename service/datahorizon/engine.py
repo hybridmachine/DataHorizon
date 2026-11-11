@@ -276,8 +276,8 @@ EXPECTED_SCHEMA3 = expected_schema(SCHEMA+METADATA_SCHEMA)
 class Workbook:
     def __init__(self, path, create=False, readonly=False, handler=None, *, cancel_event=None, repair=False, approved_code=()):
         create, readonly = boolean(create, "create"), boolean(readonly, "readonly")
-        from .workbook_code import approval_keys
-        self.approved_code=approval_keys(approved_code)
+        from .workbook_code import approval_store
+        self.approved_code=approval_store(approved_code)
         self.path = Path(path).expanduser().resolve()
         self.readonly, self.handler = readonly, handler
         self.repair=boolean(repair,'repair')
@@ -390,7 +390,7 @@ class Workbook:
             require(signature in (EXPECTED_SCHEMA,EXPECTED_SCHEMA3) or reserved==EXPECTED_SCHEMA3,
                     "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
             meta = db.execute("SELECT format_version,revision,workbook_id FROM dh_meta WHERE singleton=1").fetchall()
-            require(len(meta) == 1 and meta[0][0] in (1,2,3,4,5) and type(meta[0][1]) is int and meta[0][1] >= 0,
+            require(len(meta) == 1 and meta[0][0] in (1,2,3,4,5,6) and type(meta[0][1]) is int and meta[0][1] >= 0,
                     "FORMAT_VERSION", "Unsupported or invalid native format", 409)
             if meta[0][0]>=4:
                 from . import relational
@@ -511,7 +511,7 @@ class Workbook:
                 "SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? AND row=? AND col BETWEEN ? AND ? ORDER BY col",
                 (sheet,row,c1,c2))
 
-    def read(self, sheet, args, *, limit=4096):
+    def read(self, sheet, args, *, limit=4096, native=False):
         require(args.get('calculation','fresh') in ('fresh','cached'),'INVALID_ARGUMENT','calculation must be fresh or cached')
         preview=args.get("preview",False)
         require(type(preview) is bool, "INVALID_ARGUMENT", "preview must be boolean")
@@ -539,6 +539,7 @@ class Workbook:
                     sheet, calc = self.sheet(sheet), self.calculator()
                     cells = []
                     response = {"cells":cells, "state":self.state(), "sheet":sheet, "range":[r1,c1,r2,c2]}
+                    if native: response.update(self.native_catalog())
                     response_bytes = len(encoded(response).encode())
                     for row, col, source, kind, style in self.range_cells(sheet,rows,c1,c2,deadline):
                         require(time.monotonic()<=deadline,"TIMEOUT","Read exceeded its time budget")
@@ -673,6 +674,16 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
+    def native_catalog(self, *, omissions=False):
+        """Names and binding labels (and optionally other native objects) in the current read snapshot, for export reports."""
+        from .relational import objects
+        from .bindings import label as binding_label
+        found=list(objects(self.db))
+        result={'native_bindings':[binding_label(self.db,item) for kind,item in found if kind=='binding'],
+                'native_names':[item['name'] for kind,item in found if kind=='name']}
+        if omissions:result['native_omissions']=[item['name'] for kind,item in found if kind not in ('name','binding')]
+        return result
+
     def read_workbook(self):
         """One bounded read transaction, including every sheet and formula dependency."""
         from .interchange import validate_sheet_names
@@ -687,8 +698,7 @@ class Workbook:
                     validate_sheet_names([name for _,name in catalog])
                     rows=self.db.execute("SELECT sheet_id,row,col,source,kind,style FROM cells ORDER BY sheet_id,row,col LIMIT ?",(MAX_CELLS+1,))
                     result={"state":self.state(),"sheets":[{"name":name,"cells":[]} for _,name in catalog]}
-                    from .relational import objects
-                    result['native_omissions']=[item['name'] for _,item in objects(self.db)]
+                    result.update(self.native_catalog(omissions=True))
                     targets={key:result["sheets"][index]["cells"] for index,(key,_) in enumerate(catalog)}
                     calc=self.calculator(seconds=2); size=0
                     for count,(sheet,row,col,source,kind,style) in enumerate(rows,1):
@@ -718,7 +728,13 @@ class Workbook:
     def import_workbook(self,request):
         from .interchange import validate_sheet_names
         from .relational import objects
-        require(not objects(self.db),"DESTINATION_NOT_EMPTY","Whole-workbook import requires a destination without tables or saved queries")
+        present={kind for kind,_ in objects(self.db)}
+        if present:
+            labels=[label for kind,label in (("table","tables"),("query","saved queries"),("relationship","relationships"),("index","indexes"),
+                ("name","names"),("module","Python modules"),("binding","event bindings")) if kind in present]
+            labels+=sorted(kind for kind in present if kind not in ("table","query","relationship","index","name","module","binding"))
+            listed=labels[0] if len(labels)==1 else ", ".join(labels[:-1])+" or "+labels[-1]
+            raise EngineError("DESTINATION_NOT_EMPTY",f"Whole-workbook import requires a destination without {listed}; create a new workbook")
         require(self.db.execute("SELECT 1 FROM cells LIMIT 1").fetchone() is None,"DESTINATION_NOT_EMPTY","Whole-workbook import requires an empty destination; create a new workbook")
         sheets=request.get("sheets")
         require(isinstance(sheets,list) and all(isinstance(s,dict) for s in sheets),"INVALID_ARGUMENT","sheets must be an array of sheet objects")
@@ -766,6 +782,11 @@ class Workbook:
             else:
                 self.pending[key] = {"sheet": sheet, "row": row, "col": col, "before": original, "after": item}
 
+    def structural_put(self, key, item, origin=None):
+        """A write made by a structural rewrite. Bindings skip it unless its content came from an earlier edit in this operation."""
+        self.put(*key, item)
+        self.structural_marks[key] = (origin or key) not in self.structure_touched
+
     def apply_edit(self, sheet, edits, *, preserve_inputs=False):
         require(isinstance(edits, list) and 0 < len(edits) <= MAX_CELLS, "LIMIT", "Provide 1 to 10,000 edits")
         for edit in edits:
@@ -804,11 +825,24 @@ class Workbook:
         if method.startswith('table_'):
             from .relational_rows import dispatch
             return dispatch(self,method,args)
-        sheet=self.sheet(args['sheet']);row,col=args['row'],args['col'];integer(row,1,MAX_ROWS,'row');integer(col,1,MAX_COLS,'col')
+        from .references import resolve
+        if method=='values':
+            sheet,r1,c1,r2,c2=resolve(self,args['ref'],single=False);sheet=self.sheet(sheet)
+            calculator=self.calculator(clock=self.operation_clock,transactional=True)
+            return [[calculator.cell(sheet,row,col) for col in range(c1,c2+1)] for row in range(r1,r2+1)]
+        if 'ref' in args:
+            sheet,row,col,_,_=resolve(self,args['ref'],single=True);sheet=self.sheet(sheet)
+        else:
+            sheet=self.sheet(args['sheet']);row,col=args['row'],args['col'];integer(row,1,MAX_ROWS,'row');integer(col,1,MAX_COLS,'col')
         if method=='get':return self.raw(sheet,row,col)
         if method=='value':return self.calculator(clock=self.operation_clock,transactional=True).cell(sheet,row,col)
         require(method=='set','INVALID_HOOK','Unknown handler context method')
-        self.apply_edit(sheet,[{**args,'row':row,'col':col}])
+        source=args['source']
+        require(type(source) in (str,int,float,bool) and (type(source) is not float or math.isfinite(source)),'CONTEXT_TYPE','set accepts text, a finite number or a boolean')
+        if type(source) is bool:source='TRUE' if source else 'FALSE'
+        elif type(source) is int:source=str(source)
+        elif type(source) is float:source=interchange_text(source)
+        self.apply_edit(sheet,[dict(row=row,col=col,source=source,kind=args.get('kind','auto'))])
 
     def structure_hook(self,operation,request,phase,before):
         if not self.handler:return
@@ -820,23 +854,33 @@ class Workbook:
         return catalog
 
     def run_hooks(self, operation):
-        if not self.handler:
+        from .bindings import admit,plan,skip,stored
+        if not self.handler and not stored(self):
             return
+        admission={}
         for round_index in range(16):
             if not self.pending and not self.pending_tables:
                 return
-            batch = [self.pending[key] for key in sorted(self.pending)]
+            batch = [{**self.pending[key],"action":self.operation_action} for key in sorted(self.pending)]
             table_batch=[{**self.pending_tables[key],"operation_id":operation,"origin":"managed","action":self.operation_action,"round":round_index+1} for key in sorted(self.pending_tables,key=lambda key:(key[1],int(key[2])))]
             self.pending = {}
             self.pending_tables={}
 
-            if batch:invoke(self.handler, batch, operation, self.hook_dispatch, self.deadline)
-            if table_batch:
-                from .hooks import supports_event
-                require(supports_event(self.handler,'on_table_change'),'UNSUPPORTED_HOOK_SCOPE','Required handler must explicitly define on_table_change(context,changes)')
-                require(len(encoded(table_batch).encode())<=8*1024*1024,'LIMIT','Table hook change images exceed 8 MiB')
-                invoke(self.handler,table_batch,operation,self.hook_dispatch,self.deadline,event='on_table_change')
-        require(not self.pending and not self.pending_tables, "HOOK_RECURSION", "Required handler exceeded 16 change rounds")
+            if self.handler:
+                if batch:invoke(self.handler, batch, operation, self.hook_dispatch, self.deadline)
+                if table_batch:
+                    from .hooks import supports_event
+                    require(supports_event(self.handler,'on_table_change'),'UNSUPPORTED_HOOK_SCOPE','Required handler must explicitly define on_table_change(context,changes)')
+                    require(len(encoded(table_batch).encode())<=8*1024*1024,'LIMIT','Table hook change images exceed 8 MiB')
+                    invoke(self.handler,table_batch,operation,self.hook_dispatch,self.deadline,event='on_table_change')
+            # A handler may rewrite a structural record (same key, new content); only unchanged ones stay quiet.
+            quiet=self.structural_records if round_index==0 else {}
+            events=[change for change in batch if (key:=(change["sheet"],change["row"],change["col"])) not in quiet or quiet[key]!=change["after"]]
+            calls=admit(self,plan(self,events,table_batch),admission)
+            if calls:
+                from .macro_runtime import invoke_bindings
+                skip(self,admission,invoke_bindings(calls,operation,self.hook_dispatch,self.deadline))
+        require(not self.pending and not self.pending_tables, "HOOK_RECURSION", "Required handler or bindings exceeded 16 change rounds")
 
     def operation(self, operation_id):
         with self.lock:
@@ -884,7 +928,8 @@ class Workbook:
                 self.changes, self.pending = {}, {}
                 self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
                 self.table_schema_keys=set();self.relational_before={}
-                self.macro_diagnostics=None
+                self.macro_diagnostics=None;self.binding_notices=[]
+                self.structure_touched=set();self.structural_marks={};self.structural_records={}
                 self.operation_clock=utc_clock()
                 unverified_before=set(self.unverified_records)
                 self.change_bytes = 0
@@ -929,11 +974,13 @@ class Workbook:
                 require(not self.relational_issues or kind=='table_repair' and self.repair,'DATA_REPAIR_REQUIRED','Use the explicit restricted repair interface before ordinary mutations',409)
                 from . import relational
                 sheet_structural = isinstance(kind, str) and (kind.startswith("sheet_") or kind == "workbook_import" or kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"))
-                structural=sheet_structural or kind in relational.STRUCTURAL or kind in ("module_save","module_delete")
+                structural=sheet_structural or kind in relational.STRUCTURAL or kind in ("module_save","module_delete","name_save","name_delete","binding_save","binding_delete")
                 from . import records
                 record_context=records.capture(self)
                 self.relational_before={item['id']:item for item in relational.tables(self.db)}
                 before_catalog=self.structure_hook(operation,request,'before',None) if sheet_structural else None
+                # Cells edited so far (by a before-structure handler) are not structural content when moved.
+                self.structure_touched=set(self.changes)
                 reference_report = {}
                 sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
                 if kind=="macro_run":
@@ -942,6 +989,12 @@ class Workbook:
                 elif kind in ("module_save","module_delete"):
                     from .workbook_code import mutate as mutate_code
                     reference_report=mutate_code(self,request)
+                elif kind in ("binding_save","binding_delete"):
+                    from .bindings import mutate as mutate_binding
+                    reference_report=mutate_binding(self,request)
+                elif kind in ("name_save","name_delete"):
+                    from .names import mutate as mutate_name
+                    reference_report=mutate_name(self,request)
                 elif kind in relational.ACTIONS:
                     reference_report=relational.mutate(self,request)
                 elif kind=='list_edit':
@@ -1122,6 +1175,8 @@ class Workbook:
                     reference_report = self.delete_sheet(target)
                 else:
                     raise EngineError("UNSUPPORTED_OPERATION", f"Operation is not available: {kind}")
+                # Records produced only by a structural rewrite are not cell-change events for bindings.
+                self.structural_records={key:self.pending[key]['after'] for key,quiet in self.structural_marks.items() if quiet and key in self.pending}
                 if sheet_structural:self.structure_hook(operation,request,'after',before_catalog)
                 self.run_hooks(operation)
                 repaired_issues=None
@@ -1136,6 +1191,7 @@ class Workbook:
                 result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": sum(key[0]!='table' for key in self.changes),
                           "changed_records":sum(key[0]=='table' for key in self.changes)}
                 result.update(reference_report)
+                if self.binding_notices:result["binding_notices"]=self.binding_notices
                 self.db.execute("INSERT INTO operations VALUES(?,?,?)", (operation, fingerprint, encoded(result)))
                 self.check_operation()
                 self.verify_file()
@@ -1299,11 +1355,19 @@ class Workbook:
                         locations.append({"sheet":name,"row":row,"col":col})
             require(len(deleted)+len(formulas)<=MAX_CELLS,"LIMIT","Sheet deletion exceeds 10,000 affected cells")
             for key, item in formulas:
-                self.put(*key,item)
+                self.structural_put(key,item)
             for key in deleted:
-                self.put(*key,None)
+                self.structural_put(key,None)
+            from .names import break_sheet
+            broken_names = break_sheet(self,target)
+            from .bindings import break_sheet as break_binding_sheet
+            from .bindings import scoped_to_names
+            broken_bindings = sorted(break_binding_sheet(self,target)+scoped_to_names(self,broken_names))
             self.db.execute("DELETE FROM sheets WHERE id=?",(target,))
-        return {"reference_warnings":warnings,"reference_issues":locations}
+        result = {"reference_warnings":warnings,"reference_issues":locations}
+        if broken_names:result["broken_names"] = broken_names
+        if broken_bindings:result["broken_bindings"] = broken_bindings
+        return result
 
     def duplicate_sheet(self, target, new_name):
         old_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
@@ -1325,7 +1389,7 @@ class Workbook:
                 cells.append((row,col,item))
             self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (new_id,new_name,self.next_sheet_position()))
             for row, col, item in cells:
-                self.put(new_id,row,col,item)
+                self.structural_put((new_id,row,col),item,(target,row,col))
             if self.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=3:
                 self.db.execute("INSERT INTO dh_objects SELECT namespace,id,?,payload FROM dh_objects WHERE sheet_id=? AND namespace IN ('presentation','list')",(new_id,target))
                 require(self.db.execute('SELECT count(*)<=256 AND coalesce(sum(length(payload)),0)<=16777216 FROM dh_objects').fetchone()[0],'LIMIT','Native metadata exceeds its budget')
@@ -1350,7 +1414,7 @@ class Workbook:
                     typed(item)
                     formulas.append(((sheet,row,col),item))
             for key, item in formulas:
-                self.put(*key,item)
+                self.structural_put(key,item)
 
     def change_structure(self, request):
         """Bounded whole-row/column changes, including references on other sheets."""
@@ -1405,13 +1469,21 @@ class Workbook:
             affected = set(moved) | {dest for dest, _ in moved.values() if dest is not None} | set(formulas)
             require(len(affected)<=MAX_CELLS, "LIMIT", "Structure change exceeds 10,000 affected coordinates")
             for key in moved:
-                self.put(*key,None)
-            for destination, item in moved.values():
+                self.structural_put(key,None)
+            for key, (destination, item) in moved.items():
                 if destination is not None:
-                    self.put(*destination,item)
+                    self.structural_put(destination,item,key)
             for key, item in formulas.items():
-                self.put(*key,item)
-        return {"reference_warnings":warnings,"reference_issues":locations}
+                self.structural_put(key,item)
+            from .names import adjust_structure
+            broken_names = adjust_structure(self,target,axis,start,count,delete)
+            from .bindings import adjust_structure as adjust_bindings
+            from .bindings import scoped_to_names
+            broken_bindings = sorted(adjust_bindings(self,target,axis,start,count,delete)+scoped_to_names(self,broken_names))
+        result = {"reference_warnings":warnings,"reference_issues":locations}
+        if broken_names:result["broken_names"] = broken_names
+        if broken_bindings:result["broken_bindings"] = broken_bindings
+        return result
 
     @staticmethod
     def check_name(name):
@@ -1663,6 +1735,8 @@ class Workbook:
                     require(output_bytes <= 4*1024*1024, "LIMIT", "CSV response exceeds 4 MiB; export a smaller selection")
                     output.write(text)
                 result["csv"] = output.getvalue()
+                from .interchange import native_only_report
+                result["report"].extend(native_only_report(self.native_catalog()))
                 if temporal_entries:
                     result["temporal_schema"]=temporal_schema(result["csv"],temporal_entries)
                     result["report"].append("ISO date/time values require the companion temporal_schema to restore native kinds automatically; CSV alone is untyped.")

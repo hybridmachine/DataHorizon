@@ -70,12 +70,22 @@ def modules(db):
 
 
 def fingerprint(db):
-    return hashlib.sha256(encoded(modules(db)).encode()).hexdigest()
+    from .bindings import bindings,fingerprint_view
+    attached=bindings(db) if db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=6 else []
+    value=modules(db) if not attached else dict(modules=modules(db),bindings=[fingerprint_view(item) for item in attached])
+    return hashlib.sha256(encoded(value).encode()).hexdigest()
 
 
 def approval_keys(values):
     from .code_approval import validate_approvals
     try:return validate_approvals(values)
+    except ValueError as error:raise EngineError('INVALID_CODE_APPROVAL',str(error)) from error
+
+
+def approval_store(values):
+    from .code_approval import ApprovalStore
+    if isinstance(values,ApprovalStore):return values
+    try:return ApprovalStore(values)
     except ValueError as error:raise EngineError('INVALID_CODE_APPROVAL',str(error)) from error
 
 
@@ -106,7 +116,8 @@ def read(book,args):
             book.refresh();require(args.get('expected_state')==book.state(),'STALE_STATE','Refresh code before inspection',409)
             items=modules(book.db)
             if 'module' in args:items=[find(book.db,args['module'])]
-            return dict(state=book.state(),modules=items,**activation(book))
+            from .bindings import described
+            return dict(state=book.state(),modules=items,bindings=described(book.db) if book.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=6 else [],**activation(book))
         finally:book.db.execute('ROLLBACK')
 
 
@@ -116,6 +127,9 @@ def mutate(book,request):
     before=find(book.db,request['module']) if 'module' in request else None
     require(request['action']=='module_save' or before is not None,'MODULE_NOT_FOUND','Choose the module to delete',404)
     after=None
+    if request['action']=='module_delete':
+        from .bindings import stored
+        require(all(item['module_id']!=before['id'] for item in stored(book)),'MODULE_IN_USE','Delete the bindings that use this module first',409)
     if request['action']=='module_save':
         after=definition(dict(id=before['id'] if before else str(uuid.uuid4()),name=request.get('name'),source=request.get('source'),macros=request.get('macros',[])))
         require(all(item['id']==after['id'] or item['name']!=after['name'] for item in modules(book.db)),'DUPLICATE_MODULE','Module name already exists')
@@ -123,7 +137,7 @@ def mutate(book,request):
     def event(phase):
         if book.handler:invoke(book.handler,dict(phase=phase,action=request['action'],operation_id=request['operation_id'],before=before,after=after),request['operation_id'],book.hook_dispatch,book.deadline,event='on_code_structure')
     event('before')
-    relational.ensure(book);book.db.execute('UPDATE dh_meta SET format_version=5')
+    relational.ensure_version(book,5)
     if after:relational.store(book,'module',after)
     else:book.db.execute("DELETE FROM dh_relational WHERE kind='module' AND id=?",(before['id'],))
     modules(book.db);event('after')

@@ -125,6 +125,10 @@ def ensure(book):
         book.ensure_metadata();book.db.execute(SCHEMA);book.db.execute('UPDATE dh_meta SET format_version=4')
 
 
+def ensure_version(book,minimum):
+    ensure(book);book.db.execute('UPDATE dh_meta SET format_version=MAX(format_version,?)',(minimum,))
+
+
 def store(book,kind,item):
     ensure(book)
     payload=encoded(item)
@@ -136,9 +140,15 @@ def store(book,kind,item):
 def validate_schema(db,signature,base_schema):
     from .engine import expected_schema
     require(expected_schema(SCHEMA)[0] in signature,'FORMAT_VERSION','Native format v4 requires its matching relational catalog',409)
-    catalog=objects(db);registered=[];names=set()
+    catalog=objects(db);registered=[];names=set();version=db.execute('SELECT format_version FROM dh_meta').fetchone()[0]
     for kind,item in catalog:
-        require(kind in ('table','index','relationship','query') or kind=='module' and db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=5,'INVALID_FORMAT','Unsupported relational object kind',409)
+        require(kind in ('table','index','relationship','query') or kind=='module' and version>=5 or kind in ('name','binding') and version>=6,'INVALID_FORMAT','Unsupported relational object kind',409)
+        if kind=='name':
+            from .names import definition
+            definition(item)
+        if kind=='binding':
+            from .bindings import definition as binding_definition
+            binding_definition(item)
         if kind!='table':continue
         require(set(item)=={'id','name','columns'},'INVALID_FORMAT','Invalid table catalog fields',409)
         name(item['name']);columns(item['columns'],stored=True)
@@ -156,6 +166,8 @@ def validate_schema(db,signature,base_schema):
     require(signature==expected,'SCHEMA_CHANGED','Relational schema does not match its supported catalog; preserve the file for recovery',409)
     from .workbook_code import modules
     modules(db)
+    from .bindings import validate as validate_bindings
+    validate_bindings(db)
     from .query_views import validate as validate_queries
     validate_queries(db,registered,time.monotonic()+2)
     return registered
@@ -263,6 +275,9 @@ def mutate(book,request):
             rows.append((str(identity),raw(book,item,str(identity))))
         for identity,record_before in rows:capture(book,item,identity,record_before,None)
         book.db.execute('DROP TABLE '+quote(item['name']));book.db.execute("DELETE FROM dh_relational WHERE kind='table' AND id=?",(item['id'],));result={}
+        from .bindings import scoped
+        broken=scoped(book,'table',[item['id']])
+        if broken:result['broken_bindings']=broken
     else:raise EngineError('UNSUPPORTED_OPERATION','Unsupported table operation')
     structure_hook(book,request,'after',before)
     return result

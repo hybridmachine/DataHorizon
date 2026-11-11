@@ -1,0 +1,44 @@
+{
+  "sdk_module": "/Users/btabone/source/DataHorizon/build/python-workspace-final/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/__init__.py",
+  "format_version": 6,
+  "activation_key": "1f98a9ce-40f7-456c-b37b-6bb4dd71c131:d2d0825d3a1f677d18590abfa3463166717208d8b8fc8295c25b2109da55e0d7",
+  "fingerprint": "d2d0825d3a1f677d18590abfa3463166717208d8b8fc8295c25b2109da55e0d7",
+  "approved": true,
+  "total_before": 18.0,
+  "macro_result": 20.5,
+  "macro_logs": "Pen quantity is now 6.0\n",
+  "total_after_run": 20.5,
+  "pen_quantity_after_run": 6.0,
+  "total_after_undo": 18.0,
+  "pen_quantity_after_undo": 4.0,
+  "failed_run": {
+    "code": "MACRO_FAILED",
+    "outcome": "rolled_back",
+    "message": "Traceback (most recent call last):\n  File \"/Users/btabone/source/DataHorizon/build/python-workspace-final/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/macro_runtime.py\", line 48, in _worker\n    result=namespace[name](BrokerContext(pipe,operation),**arguments)\n  File \"<workbook:supplies>\", line 4, in restock_pens\n    raise ValueError(\"Below zero\")\nValueError: Below zero\n",
+    "macro": {
+      "elapsed_ms": 159.283,
+      "execution": "failed",
+      "fingerprint": "d2d0825d3a1f677d18590abfa3463166717208d8b8fc8295c25b2109da55e0d7",
+      "logs": "",
+      "module": "13f81556-1449-48c2-ac0f-7d16ccf91f2b",
+      "name": "restock_pens",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/btabone/source/DataHorizon/build/python-workspace-final/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/macro_runtime.py\", line 48, in _worker\n    result=namespace[name](BrokerContext(pipe,operation),**arguments)\n  File \"<workbook:supplies>\", line 4, in restock_pens\n    raise ValueError(\"Below zero\")\nValueError: Below zero\n"
+    }
+  },
+  "total_after_failure": 18.0,
+  "rejected_edit": {
+    "code": "BINDING_FAILED",
+    "outcome": "rolled_back",
+    "message": "Binding supplies.check_quantity: ValueError: Below zero",
+    "binding": {
+      "binding_id": "95da80d2-6474-410d-a82f-b6be5483da13",
+      "function": "check_quantity",
+      "logs": "",
+      "module": "supplies",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/btabone/source/DataHorizon/build/python-workspace-final/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/macro_runtime.py\", line 162, in _binding_worker\n    try:namespaces[name][call['function']](BrokerContext(pipe,operation),call['changes'])\n        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<workbook:supplies>\", line 16, in check_quantity\n    raise ValueError(\"Below zero\")\nValueError: Below zero\n"
+    }
+  },
+  "quantity_after_rejection": 2.0,
+  "accepted_edit_total": 21.5,
+  "final_state": "025f8603-a259-4b36-bf0c-2bfbec32019d:11"
+}

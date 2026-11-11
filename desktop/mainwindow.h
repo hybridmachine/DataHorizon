@@ -6,9 +6,12 @@
 #include <QMainWindow>
 #include "formulasyntax.h"
 #include <QProcess>
+#include <QHash>
 #include <QMap>
 #include <QJsonArray>
 #include <QPersistentModelIndex>
+#include <QItemSelection>
+#include <functional>
 
 class QTableView;
 class QLineEdit;
@@ -22,6 +25,15 @@ class QTimer;
 class QMenu;
 class QStackedWidget;
 class RelationalWorkbench;
+class PythonWorkspace;
+class NamesPanel;
+class NameManagerDialog;
+
+// A destination outside the formula bar for references picked in the grid.
+// insert receives the exact-match name, or the always-quoted qualified address
+// ('Supplies'!B3, 'Supplies'!B2:B4). stillValid is asked before each insertion;
+// false ends picking without inserting.
+struct ReferencePickTarget { std::function<void(const QString &)> insert; std::function<bool()> stillValid; };
 
 struct StartupOptions { QString url, token, handler, recoveryDirectory, initialWorkbook, viewStatePath; bool automaticWorkbook = true; };
 
@@ -46,20 +58,81 @@ public:
     void showList(QJsonObject scope);
     static bool isRecoveryPath(QString path);
     SheetModel *model() const { return m_model; }
+    // The workbook's names as last read for the current handle, sorted by
+    // case-insensitive identifier. Empty until the first read lands.
+    QJsonArray names() const { return m_names; }
+    // Arms picking for a target outside this window. It stays armed across
+    // picks until cancelled (Escape in either window, the caller, or a guard
+    // such as a busy window, a model reset or a reconfigured client); a sheet
+    // switch by the user keeps it. Returns false, with an issue, when picking
+    // cannot start. Starting it cancels a formula pick, and vice versa.
+    bool startExternalReferencePick(ReferencePickTarget target,QString *problem = nullptr);
+    void cancelExternalReferencePick();
+    // True when this window started its service; an attached window never
+    // approves code.
+    bool ownsService() const { return m_options.url.isEmpty(); }
+    // Sends one {"approve": key} line over the owned service's private
+    // standard input. False, with nothing written, when attached, when the
+    // process is not running, or when the key is malformed or names another
+    // workbook than the open one. The outcome is read back from /code.
+    bool grantCodeApproval(const QString &key);
+    // Requests cooperative cancellation of operation, which must be the one in
+    // flight; any other ID is refused. It is sent directly, not through submit,
+    // because the window is busy with that operation. While the service does
+    // not yet know the operation, the request is repeated every 100 ms until
+    // it is accepted, the operation finishes, or the handle changes. The final
+    // outcome still arrives as that operation's receipt.
+    void cancelPendingOperation(const QString &operation);
 signals:
+    // Emitted once when external picking ends; inserted is true when at least
+    // one reference was inserted while it was armed.
+    void externalPickFinished(bool inserted);
     void serviceReady();
     void workbookReady();
     void operationFinished(bool committed);
     void operationAdmitted(QString operationId);
     void operationReceipt(QJsonObject receipt);
+    void namesChanged();
 protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
     void showRelational(bool visible);
+    void showPythonWorkspace();
+    void showNameManager();
+    void readNames(const QJsonObject &info);
+    void clearNames();
+    void publishNames();
+    void updateNameControls();
+    bool nameWritable(QString *reason) const;
+    void nameMessage(const QString &text);
+    void connectNamesPanel(NamesPanel *panel);
+    QJsonObject nameById(const QString &id) const;
+    QJsonObject nameByText(const QString &text) const;
+    QString selectionName() const;
+    QString nameForRange(int r1,int c1,int r2,int c2) const;
+    QString qualifiedReference(int r1,int c1,int r2,int c2) const;
+    QString addressText(const QModelIndex &index) const;
+    void updateAddress();
+    bool selectionReference(QString *reference,QString *problem) const;
+    void createName(QWidget *parent);
+    void renameName(QWidget *parent,const QString &id);
+    void retargetName(QWidget *parent,const QString &id);
+    void deleteName(QWidget *parent,const QString &id);
+    void submitName(QWidget *parent,const QJsonObject &target,QJsonObject operation,const QString &success,const QString &failure);
+    void goToName(const QJsonObject &name);
+    void goToRange(int r1,int c1,int r2,int c2,int row,int col);
+    NameManagerDialog *m_nameManager=nullptr;
+    quint64 m_namesGeneration=0;
+    bool m_namesReady=false,m_namesReadFailed=false;
+    QString m_namesHandle,m_nameOperation,m_nameSuccess,m_nameFailure;
     RelationalWorkbench *m_relational=nullptr;
+    PythonWorkspace *m_workspace=nullptr;
     QStackedWidget *m_objectStack=nullptr;
     QList<QMenu *> m_sheetMenus;
+    // Edit, Format, Sheet and Data: their commands other than view-only ones
+    // are disabled while picking a reference for Python.
+    QList<QMenu *> m_editingMenus;
     QList<QAction *> m_sheetFileActions;
     bool m_relationalActive=false;
     bool m_refreshFailed=false;
@@ -82,6 +155,7 @@ private:
     void pickOtherSheetReference();
     void finishReferencePick(bool insert);
     bool referenceMouseEvent(QObject *object,QEvent *event);
+    void insertExternalReference(int r1,int c1,int r2,int c2);
     void loadFunctionCatalog();
     void showFunctionHelp();
     void traceFormula(const QString &direction);
@@ -135,6 +209,7 @@ private:
     void changeSheet(int index);
     void changeStructure(bool columns, bool remove);
     void reportReferenceWarnings(const QJsonObject &receipt);
+    QString bindingRejection(const QJsonObject &result);
     void syncSource();
     void fitVisibleWrappedRows();
     void resizeSections(bool columns);
@@ -188,6 +263,7 @@ private:
     bool m_painterPending=false,m_painterDragging=false;QPoint m_painterAnchor;
     QAction *m_undo = nullptr, *m_redo = nullptr;
     QJsonObject m_info,m_functionCatalog;
+    QJsonArray m_names;
     QLabel *m_formulaCues=nullptr;
     QList<FormulaReferenceCue> m_formulaReferences;
     QAction *m_pickReferenceAction = nullptr;
@@ -198,6 +274,18 @@ private:
     QString m_referenceText,m_referencePreview,m_referenceIssue;
     int m_referenceStart=0,m_referenceLength=0;
     QPoint m_referenceAnchor;
+    // External (Python) picking state; it shares the drag state above.
+    QAction *m_externalPickCancel = nullptr;
+    // Each editing action disabled for the pick, with the enabled state it
+    // returns to when picking ends.
+    QHash<QAction *,bool> m_pickSuspended;
+    QList<QAction *> pickBlockedActions() const;
+    void setEditingEnabled(QAction *action,bool enabled);
+    ReferencePickTarget m_externalTarget;
+    bool m_externalPicking=false,m_externalInserted=false,m_changingSheet=false;
+    QString m_externalWorkbook,m_externalSheet,m_externalStatus;
+    QPersistentModelIndex m_externalCurrent;
+    QItemSelection m_externalSelection;
     QJsonObject m_listSpec,m_namedViews;
     QJsonObject m_findScope;
     QList<QAction *> m_navigationActions;
@@ -214,6 +302,11 @@ private:
     QJsonObject m_enterRequest, m_enterNavigation;
     QString m_draftSubmissionId;
     bool m_restoreDraft = false, m_draftNeedsReview = false;
+    // A rule's rejection of the edit whose draft is being restored: shown
+    // instead of the generic "draft restored" status.
+    QString m_bindingRejection;
+    // The workbook handle whose unapproved-rules notice was decided.
+    QString m_ruleNoticeHandle;
     QString m_pendingId;
     QString m_restartPath, m_recoveryRecord;
     quint64 m_clipboardGeneration = 0;

@@ -60,9 +60,19 @@ sheet/table Undo/Redo. The executing service grants exact code fingerprints;
 permissions do not travel in workbook metadata. CSV/XLSX/ODS omit executable
 source and report native-only omissions. The
 [automation guide](python-automation-guide.md) specifies limits and the database
-rollback boundary for trusted Python. Qt code editing, custom worksheet
-functions, package installation and durable external-effect execution remain
-separate increments.
+rollback boundary for trusted Python. Custom worksheet functions, package
+installation and durable external-effect execution remain separate increments.
+
+Native v6 adds workbook names and event bindings; see the
+[workspace guide](python-workspace-guide.md). Both are native-only. Names
+resolve in Python, binding scopes and the address box, not in formulas. CSV
+carries neither. XLSX and ODS exports, at workbook or selection scope, omit them
+and list each name and binding in the report as a native-only omission; a
+selection CSV export's report lists them the same way. Table, query,
+declared-list and list-view value exports do not list them. XLSX/ODS import
+does not create names or bindings. Names that look like R1C1 references
+(`R1C1`, `R2`, `C3`) cannot be created, so a later formula or interchange
+mapping cannot confuse them with cell references.
 
 ## Formula surface
 

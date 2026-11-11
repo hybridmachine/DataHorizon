@@ -46,7 +46,8 @@ PR updates run one platform matrix plus the minimum-runtime matrix. Main pushes
 verify merged heads, manual dispatch remains available, and a newer run cancels
 the superseded run for the same ref. Branch-push duplicates are removed.
 
-Desktop whole-suite budgets are 600 seconds on all systems;
+Desktop and Python workspace whole-suite budgets are 600 seconds each on all
+systems;
 Python suites are 600 on Windows and 180 on macOS/Linux in CTest. The standalone
 minimum-runtime CI job has a ten-minute job ceiling. Operation, hook and HTTP
 deadlines remain separate and unchanged. Timings are evidence rather than

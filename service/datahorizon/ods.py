@@ -11,7 +11,7 @@ from .formula import Parser, split_ref
 from .borders import SIDES, border_edges, parse_ods_border, ODS_BORDERS
 from .formats import numeric_spec, simple_number_style
 from .temporal import Temporal, from_duration, to_duration, export_temporal_styles, import_temporal
-from .interchange import map_formula_functions, import_edits, local_formula, mode, node, package, read_xml, xml, preparation_scope, prepare_workbook, validate_sheet_names, workbook_report
+from .interchange import map_formula_functions, import_edits, local_formula, mode, native_only_report, node, package, read_xml, xml, preparation_scope, prepare_workbook, validate_sheet_names, workbook_report
 
 O="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
 T="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
@@ -323,6 +323,7 @@ def ods_export(snapshot,request):
     names=validate_sheet_names([s["name"] for s in snapshots])
     if whole: report=workbook_report()+["OpenFormula uses canonical named sheet references and current snapshot caches; sheet-relative movement semantics are not retained. NULL becomes empty."]
     if snapshot.get('native_omissions'):report.append('Native relational objects omitted from this sheet export: '+', '.join(snapshot['native_omissions']))
+    report.extend(native_only_report(snapshot))
     report.append("Native dates/datetimes use ISO office:date-value; times use nonnegative sub-day office:time-value durations. Date/time formats map to invariant calendar styles; default temporal displays become ISO styles. Unsupported durations/offsets reject import. Target volatile clocks and serial-date arithmetic/type coercions can differ; choose values to freeze native results.")
     if selected_mode=="formulas" and any(map_formula_functions(c["source"],{"CONCAT":"COM.MICROSOFT.CONCAT","XLOOKUP":"COM.MICROSOFT.XLOOKUP","TEXTJOIN":"COM.MICROSOFT.TEXTJOIN"})!=c["source"] for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"):report.append("Known modern functions use COM.MICROSOFT extension identifiers; target support is required. Choose values for other targets.")
     root=ET.Element(q(O,"document-content"),{q(O,"version"):"1.3","xmlns:of":OF})

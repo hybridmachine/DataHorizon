@@ -1,0 +1,88 @@
+{
+    "limitations": [
+        "QTest widget events are synthetic; no physical input or compositor-latency qualification.",
+        "Run alone, without the general keyboard, clipboard and dialog checks of the full acceptance run.",
+        "No VoiceOver or spoken-output acceptance of the workspace window."
+    ],
+    "os": "macOS Tahoe (26.6.2)",
+    "platform_plugin": "cocoa",
+    "pythonWorkspace": {
+        "device_pixel_ratio": 2,
+        "elapsed_ms": 2713,
+        "final_status": "Rejected by supplies.check_quantity: ValueError: Below zero · nothing stored",
+        "main_window_active_at_end": false,
+        "passed": true,
+        "steps": [
+            {
+                "elapsed_ms": 411,
+                "passed": true,
+                "step": "start_service_and_open_supplies"
+            },
+            {
+                "elapsed_ms": 13,
+                "passed": true,
+                "step": "open_workspace"
+            },
+            {
+                "elapsed_ms": 104,
+                "passed": true,
+                "step": "new_module"
+            },
+            {
+                "elapsed_ms": 33,
+                "passed": true,
+                "step": "type_module_and_pick_b3"
+            },
+            {
+                "elapsed_ms": 38,
+                "passed": true,
+                "step": "declare_macro"
+            },
+            {
+                "elapsed_ms": 343,
+                "passed": true,
+                "step": "name_cells"
+            },
+            {
+                "elapsed_ms": 43,
+                "passed": true,
+                "step": "save_module"
+            },
+            {
+                "elapsed_ms": 187,
+                "passed": true,
+                "step": "review_and_approve"
+            },
+            {
+                "elapsed_ms": 268,
+                "passed": true,
+                "step": "run_restock_pens"
+            },
+            {
+                "elapsed_ms": 198,
+                "passed": true,
+                "step": "undo_run"
+            },
+            {
+                "elapsed_ms": 330,
+                "passed": true,
+                "step": "failing_run_leaves_sheet"
+            },
+            {
+                "elapsed_ms": 325,
+                "passed": true,
+                "step": "bind_check_quantity"
+            },
+            {
+                "elapsed_ms": 183,
+                "passed": true,
+                "step": "negative_edit_rejected"
+            }
+        ],
+        "workspace_screenshot": "python-workspace-native-1-python-workspace.png"
+    },
+    "qt": "6.12.0",
+    "recorded_at_utc": "2026-11-11T07:21:25Z",
+    "scale_request": "1",
+    "scenario": "pythonWorkspace"
+}

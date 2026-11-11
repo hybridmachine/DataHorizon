@@ -1,4 +1,32 @@
-# Development native formats v1 through v5
+# Development native formats v1 through v6
+
+## Workbook names and bindings format v6
+
+v6 reuses v4's `dh_relational(kind,id,payload)` schema and adds the catalog
+kinds `name` and `binding`. A workbook enters v6 in the same transaction as the
+first use of either kind; module saves never lower an existing v6 version.
+v1-v5 readers reject v6, and a `name` or `binding` row in a file below v6 is
+rejected as `INVALID_FORMAT`.
+
+A `name` payload has exactly `id` (canonical UUID), `name`, `sheet_id`, `row1`,
+`col1`, `row2` and `col2`. The name is a case-insensitively unique identifier of
+at most 64 characters that is not a cell address, `TRUE`/`FALSE` or a function
+name. The target is held by sheet identity. A broken name has `row1` through
+`col2` set to null, and `sheet_id` null or the identity of a sheet whose cells
+it no longer covers. A workbook holds at most 256 names.
+
+A `binding` payload has exactly `id` and `module_id` (canonical UUIDs), `event`
+(`cell_change` or `table_change`), `function` (a top-level function name),
+`required` and `scope`. The scope is one of `{kind:"sheet", sheet_id}`,
+`{kind:"range", range_id, sheet_id, row1, col1, row2, col2}`,
+`{kind:"name", name_id}` for `cell_change`, or `{kind:"table", table_id}` for
+`table_change`. A broken range scope has null coordinates. A sheet or range
+scope whose sheet was deleted keeps that sheet's identity and is broken because
+the sheet no longer exists; readers also accept a null `sheet_id`. A workbook holds at
+most 16 bindings. The code fingerprint covers each binding without the range
+coordinates, so a range scope that moves with row/column changes does not need
+fresh approval; a workbook without bindings keeps its v5 fingerprint. Name and
+binding rows are inert: opening, reading and copying never import or run code.
 
 ## Workbook code format v5
 

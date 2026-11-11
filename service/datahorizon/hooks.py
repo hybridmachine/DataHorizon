@@ -3,6 +3,7 @@
 
 import multiprocessing
 import json
+import math
 import os
 import queue
 from contextlib import redirect_stderr, redirect_stdout
@@ -59,14 +60,34 @@ class BrokerContext:
             raise RuntimeError(response["error"])
         return response.get("result")
 
-    def get(self, sheet, row, col):
-        return self.request("get", sheet=sheet, row=row, col=col)
+    @staticmethod
+    def _target(args):
+        """One argument is a reference; three are (sheet, row, col)."""
+        if len(args)==1:return dict(ref=args[0])
+        if len(args)==3:return dict(sheet=args[0],row=args[1],col=args[2])
+        raise TypeError("expected a reference or (sheet, row, col)")
 
-    def value(self, sheet, row, col):
-        return self.request("value", sheet=sheet, row=row, col=col)
+    def get(self, *args):
+        return self.request("get", **self._target(args))
 
-    def set(self, sheet, row, col, source, kind="auto"):
-        return self.request("set", sheet=sheet, row=row, col=col, source=source, kind=kind)
+    def value(self, *args):
+        return self.request("value", **self._target(args))
+
+    def values(self, ref):
+        return self.request("values", ref=ref)
+
+    def set(self, *args, kind="auto"):
+        if len(args)==2:target,source=dict(ref=args[0]),args[1]
+        elif len(args)in(4,5):
+            # The legacy form also took the kind as a fifth positional argument.
+            target,source=self._target(args[:3]),args[3]
+            if len(args)==5:kind=args[4]
+        else:raise TypeError("expected (reference, source) or (sheet, row, col, source)")
+        # Types JSON cannot carry faithfully reach the service as a marker so the
+        # rejection is a broker error that aborts the operation.
+        if isinstance(source,float) and not math.isfinite(source) or not isinstance(source,(str,int,float)):
+            source={"unsupported":type(source).__name__}
+        return self.request("set", **target, source=source, kind=kind)
 
     def table_schema(self,table,phase='current'):return self.request('table_schema',table=table,phase=phase)
 
@@ -166,7 +187,7 @@ def invoke(path, changes, operation, dispatch, deadline, *, event='on_change'):
                 if set(message)!={'error'} or not isinstance(message['error'],str):
                     raise HookFailure("Invalid Python handler failure message")
                 raise HookFailure(message["error"])
-            if method not in ('get','value','set','table_schema','table_get','table_set','table_insert','table_delete'):
+            if method not in ('get','value','values','set','table_schema','table_get','table_set','table_insert','table_delete'):
                 raise HookFailure("Unknown Python handler broker method")
             try:
                 replies.put({"result": dispatch(method, message)})

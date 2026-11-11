@@ -32,8 +32,8 @@ from .list_export import export_list
 from .functions import function_catalog
 
 CAPABILITIES = {
-    "api_version": 1, "format_version": 5, "supported_format_versions": [1,2,3,4,5], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
-    "workbook_modules":True,"atomic_macros":True,"macro_worker_seconds":2,"macro_activation":"operator-approved workbook UUID:code SHA256",
+    "api_version": 1, "format_version": 6, "supported_format_versions": [1,2,3,4,5,6], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
+    "workbook_modules":True,"atomic_macros":True,"macro_worker_seconds":2,"macro_activation":"operator-approved workbook UUID:code SHA256; set at service start-up, never over HTTP",
     "structured_tables":True,"table_types":["text","integer","number","boolean","date","time","datetime"],
     "readonly_sql":True,"query_jobs":True,"query_result_rows":100000,"query_result_values":1000000,"query_spool_bytes":64*1024*1024,
     "temporal_types": ["date","time","datetime"], "calculation_timezone": "UTC",
@@ -51,9 +51,14 @@ CAPABILITIES['operations'].extend(['table_create','table_drop','table_promote','
 CAPABILITIES['operations'].extend(['relationship_create','relationship_drop','table_repair'])
 CAPABILITIES['operations'].extend(['query_save','query_rename','query_delete'])
 CAPABILITIES['operations'].extend(['module_save','module_delete','macro_run'])
+CAPABILITIES['operations'].extend(['name_save','name_delete'])
+CAPABILITIES.update(names=True,max_names=256)
+CAPABILITIES['operations'].extend(['binding_save','binding_delete'])
+CAPABILITIES.update(event_bindings=True,max_bindings=16,binding_events=['cell_change','table_change'])
 
 ROUTES = {
     "/v1/workbooks/{workbook}/code": ("post", "Inspect inert workbook modules and the exact service-local activation key"),
+    "/v1/workbooks/{workbook}/names": ("post", "Read the state-checked workbook name catalog"),
     "/v1/workbooks/{workbook}/tables":("post","Read the state-checked structured table catalog"),
     "/v1/workbooks/{workbook}/tables/preview":("post","Review selection values and types before independent table creation"),
     "/v1/workbooks/{workbook}/tables/read":("post","Read a bounded state-checked record page"),
@@ -240,13 +245,17 @@ def openapi():
     install_relational_schemas(schemas,actions)
     from .code_api import install as install_code_schemas
     install_code_schemas(schemas,actions)
+    from .names_api import install as install_names_schemas
+    install_names_schemas(schemas,actions)
+    from .bindings_api import install as install_binding_schemas
+    install_binding_schemas(schemas,actions)
     for action, (required, properties, example) in actions.items():
         schema_name = "".join(word.title() for word in action.split("_"))+"Operation"
         mapping[action] = "#/components/schemas/"+schema_name
         schemas[schema_name] = {"type":"object","required":["operation_id","expected_state","action",*required],
             "properties":{**common,"action":{"type":"string","enum":[action]},**properties},
             "example":{"operation_id":"generate-a-uuid","expected_state":"copy-from-workbook-info","action":action,**example}}
-        if action in ("module_save","module_delete","macro_run"):schemas[schema_name]["additionalProperties"]=False
+        if action in ("module_save","module_delete","macro_run","name_save","name_delete","binding_save","binding_delete"):schemas[schema_name]["additionalProperties"]=False
     schemas["OperationRequest"] = {"oneOf":[{"$ref":ref} for ref in mapping.values()],
         "discriminator":{"propertyName":"action","mapping":mapping},
         "description":"Atomic operations: at most 10,000 affected cells and a 4 MiB request. Range endpoints are inclusive and must be ordered. Copy fill uses the top-left input; series requires a numeric seed. Same-sheet Move retargets supported scalar/fully-contained range references into the cut rectangle; partially intersecting referenced ranges and unsupported syntax reject atomically. Sheet rename updates qualified name references while preserving stable UUID references, scanning at most 10,000 formulas/8 MiB. Sheet duplication preserves other-sheet references and retargets copied self-references, including UUIDs; it copies at most 10,000 stored cells/8 MiB. Sheet deletion replaces surviving name/UUID references and inherited ranges with permanent #REF! errors and reports affected locations; deleted and rewritten cells share the 10,000-cell limit. Unsupported syntax and required hooks reject reference-changing structure operations. Row/column changes retarget absolute and relative A1 references across sheets, expand/contract ranges and report newly broken references; required handlers, unsupported formula syntax and grid overflow reject atomically. Structure changes clear history. No managed SQL or chunked commits.",
@@ -308,7 +317,7 @@ def openapi():
                      "security": [{"localToken": []}]}
         if method == "post":
             name = ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
-                "code":"CodeReadRequest","inspect":"TableCatalogRequest","repair-preview":"RelationshipRepairRequest","cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
+                "code":"CodeReadRequest","names":"NamesReadRequest","inspect":"TableCatalogRequest","repair-preview":"RelationshipRepairRequest","cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             if '/queries/' in path and path.endswith('/preview'):schema={'$ref':'#/components/schemas/QueryDefinitionRequest'}
             if '/queries/' in path and path.endswith('/read'):schema={'$ref':'#/components/schemas/QueryReadRequest'}
@@ -319,6 +328,8 @@ def openapi():
             operation["responses"][status]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Error"}}}
         if path.endswith("/code"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/CodeCatalog"}}}
+        elif path.endswith("/names"):
+            operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/NameCatalog"}}}
         elif path=="/v1/functions":
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/FunctionCatalog"}}}
         elif path.endswith("/styles"):
@@ -366,13 +377,14 @@ out.textContent=r.status+'\\n'+JSON.stringify(await r.json(),null,2)}catch(e){ou
 class Service(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port=0, token=None, handler=None, *, max_requests=16, read_seconds=10, max_header_bytes=65536, approved_code=()):
+    def __init__(self, port=0, token=None, handler=None, *, max_requests=16, read_seconds=10, max_header_bytes=65536, approved_code=(), owner_channel=False):
         if type(max_requests) is not int or max_requests<1 or type(max_header_bytes) is not int or max_header_bytes<1:
             raise ValueError("Positive request and header limits required")
         if type(read_seconds) not in (int,float) or not math.isfinite(read_seconds) or read_seconds<=0:
             raise ValueError("Positive finite read deadline required")
-        from .workbook_code import approval_keys
-        self.approved_code=approval_keys(approved_code)
+        from .workbook_code import approval_store
+        self.approved_code=approval_store(approved_code)
+        self.owner_channel=bool(owner_channel)
         self._request_slots=threading.BoundedSemaphore(max_requests)
         self.read_seconds,self.max_header_bytes=read_seconds,max_header_bytes
         self.token, self.handler = token or secrets.token_urlsafe(32), handler
@@ -523,7 +535,8 @@ class Service(ThreadingHTTPServer):
         if method=="GET" and path=="/v1/functions":
             return function_catalog()
         if method == "GET" and path == "/v1/capabilities":
-            return CAPABILITIES
+            if not self.owner_channel:return CAPABILITIES
+            return dict(CAPABILITIES,macro_activation=CAPABILITIES['macro_activation']+', or by the owning process over its owner channel; never over HTTP')
         if method == "POST" and path == "/v1/open":
             return self._open(body)
         if method == "POST" and path == "/v1/recovery/inspect":
@@ -650,6 +663,9 @@ class Service(ThreadingHTTPServer):
             return {"closed":True}
         if method == "GET" and not suffix:
             return {**book.info(), "id": handle, "workbook_id": book.id}
+        if method == "POST" and suffix == ["names"]:
+            from .names import read as read_names
+            return read_names(book,body)
         if method == "POST" and suffix == ["code"]:
             from .workbook_code import read
             return read(book,body)
@@ -697,7 +713,7 @@ class Service(ThreadingHTTPServer):
         if method == "POST" and suffix in (["export", "xlsx"],["export","ods"]):
             require("rows" not in body,"INVALID_ARGUMENT","Spreadsheet export requires a contiguous rectangle")
             whole=preparation_scope(body)=="workbook"
-            snapshot=book.read_workbook() if whole else book.read(body.get("sheet","Sheet1"),{**body,"preview":False},limit=MAX_CELLS)
+            snapshot=book.read_workbook() if whole else book.read(body.get("sheet","Sheet1"),{**body,"preview":False},limit=MAX_CELLS,native=True)
             return (xlsx_export if suffix[1]=="xlsx" else ods_export)(snapshot,body)
         if method == "POST" and suffix == ["export", "csv"]:
             return book.csv_export(body.get("sheet", "Sheet1"), body)
@@ -815,15 +831,54 @@ class RequestHandler(BaseHTTPRequestHandler):
     do_POST = run_request
 
 
+def read_owner_channel(stream, store, limit=4096):
+    """Apply {"approve": key} lines read from an unbuffered stream.
+
+    Problems yield one short stderr line and never stop the service. Lines are split here
+    because a buffered reader's lock can abort interpreter shutdown while a daemon thread waits.
+    """
+    def warn(text):
+        try:print('owner channel: '+text,file=sys.stderr,flush=True)
+        except (OSError,ValueError):pass
+    def apply(line):
+        try:
+            message=json.loads(line.decode('utf-8'))
+            valid=isinstance(message,dict) and set(message)=={'approve'}
+        except (ValueError,UnicodeError):valid=False
+        if not valid:return warn('line ignored; expected {"approve": key}')
+        try:store.grant(message['approve'])
+        except ValueError:warn('approval rejected')
+    pending,skipping=bytearray(),False
+    while True:
+        try:chunk=stream.read(4096)
+        except (OSError,ValueError):return
+        if not chunk:
+            if pending and not skipping:apply(bytes(pending))
+            return
+        while chunk:
+            end=chunk.find(b'\n')
+            piece,chunk=(chunk,b'') if end<0 else (chunk[:end],chunk[end+1:])
+            if not skipping:
+                pending+=piece
+                if len(pending)>limit:skipping=True;pending.clear()
+            if end>=0:
+                if skipping:warn('line too long, ignored')
+                elif pending:apply(bytes(pending))
+                pending.clear();skipping=False
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--handler", type=Path, help="Explicitly activate a trusted service-side on_change Python file")
     parser.add_argument("--approve-code",action="append",default=[],help="Operator-approved workbook UUID:code SHA256 (repeatable; process-local)")
+    parser.add_argument("--owner-channel",action="store_true",help="Accept code approval lines from standard input (the owning parent process only)")
     args = parser.parse_args()
-    server = Service(args.port, handler=args.handler.resolve() if args.handler else None,approved_code=args.approve_code)
+    server = Service(args.port, handler=args.handler.resolve() if args.handler else None,approved_code=args.approve_code,owner_channel=args.owner_channel)
     # Only the launching parent receives this credential through its private pipe.
     print(encoded({"url": f"http://127.0.0.1:{server.server_port}", "token": server.token, "api_version": 1}), flush=True)
+    if args.owner_channel:
+        threading.Thread(target=read_owner_channel,args=(open(sys.stdin.fileno(),'rb',buffering=0,closefd=False),server.approved_code),daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

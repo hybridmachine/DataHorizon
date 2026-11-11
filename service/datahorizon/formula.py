@@ -200,6 +200,28 @@ def delete_sheet_references(source, local_sheet, target_sheet, *, target_id=None
     return "".join(out), len(edits)
 
 
+def adjust_interval(first, last, start, count, delete, maximum=None):
+    """Retarget an interval after inserting or deleting count members at start.
+
+    Contracts around deleted members and expands for insertions inside it;
+    return None when wholly deleted or moved off the grid. Preserve the
+    order of first and last.
+    """
+    end = start + count - 1
+    low, high = sorted((first, last))
+    if delete:
+        if start <= low and high <= end:
+            return None
+        low = low if low < start else max(low, end+1)-count
+        high = high-count if high > end else min(high, start-1)
+    else:
+        low += count if low >= start else 0
+        high += count if high >= start else 0
+    if not (1 <= low <= high <= (MAX_ROWS if maximum is None else maximum)):
+        return None
+    return (low, high) if first <= last else (high, low)
+
+
 def transform_structure(source, local_sheet, target_sheet, axis, start, count, delete=False, *, target_id=None):
     """Retarget A1 references after a whole-row/column edit; preserve token spelling.
 
@@ -218,20 +240,8 @@ def transform_structure(source, local_sheet, target_sheet, axis, start, count, d
         name, row, col = split_ref(ref)
         return name, row if axis == "row" else col
     maximum = MAX_ROWS if axis == "row" else MAX_COLS
-    end = start + count - 1
     def interval(first, last):
-        low, high = sorted((first, last))
-        if delete:
-            if start <= low and high <= end:
-                return None
-            low = low if low < start else max(low, end+1)-count
-            high = high-count if high > end else min(high, start-1)
-        else:
-            low += count if low >= start else 0
-            high += count if high >= start else 0
-        if not (1 <= low <= high <= maximum):
-            return None
-        return (low, high) if first <= last else (high, low)
+        return adjust_interval(first, last, start, count, delete, maximum)
     def render(ref, value):
         prefix, cell = ref.rsplit("!", 1) if "!" in ref else (None, ref)
         parts = ADDRESS.fullmatch(cell)

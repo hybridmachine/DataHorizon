@@ -1,0 +1,316 @@
+{
+  "task": 16,
+  "status": "passed_with_open_items",
+  "pull_request": null,
+  "branch": "claude/python-workspace (local; stacked on the unmerged relational and automation branches; no pull request, no hosted CI)",
+  "source": {
+    "application_source_commit": "3906905ce52a0e8988cb1649ff3af096dea0693d",
+    "harness_source_commit": "3906905ce52a0e8988cb1649ff3af096dea0693d plus the uncommitted Task 16 files hashed below, committed afterwards with the subject 'Qualify the Python workspace walkthrough and record evidence'",
+    "evidence_commit": "The commit that adds this file; its SHA is not known while writing it",
+    "task16_files_tested": {
+      "examples/supplies_workspace.py": {
+        "bytes": 5216,
+        "sha256": "f9e14c5ce7daffad6ed8efe9f25d26c5e2568aecba88a1da3cc1ede46cadceaf"
+      },
+      "tests/test_workspace_example.py": {
+        "bytes": 2239,
+        "sha256": "c5eeeb3393dc256b785c30e8db9b7dc1f8db49c132842340b1de6aa68d8b7538"
+      },
+      "tests/native_acceptance.cpp": {
+        "bytes": 33311,
+        "sha256": "3bc07f9593f4cca5bdfcbc0bc9148e9cdf478cd96980e93033e9a708ee1f2f4a"
+      }
+    },
+    "scope": "desktop/ and service/ are unchanged from the application source commit; Task 16 adds an example, a Python test, a native scenario and documentation"
+  },
+  "verification": {
+    "qt": {
+      "passed": 302,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 208.643,
+      "desktop": {
+        "passed": 232,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 152.927
+      },
+      "python_workspace": {
+        "passed": 70,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 55.716
+      },
+      "ctest_tests": 4,
+      "ctest_passed": 4,
+      "ctest_seconds": 300.47,
+      "command": "ctest --test-dir build --output-on-failure",
+      "platform": "QT_QPA_PLATFORM=offscreen inside the Qt test targets"
+    },
+    "python": {
+      "tests_run": 708,
+      "optional_skips": 22,
+      "failures": 0,
+      "errors": 0,
+      "seconds": 91.567,
+      "interpreter": "Python 3.14.6 (development host)",
+      "command": "PYTHONPATH=service python3 -m unittest discover -s tests",
+      "ctest_service_run": "The CTest service target ran the same 708 tests (22 skips) in 91.197 s"
+    },
+    "example_test": {
+      "tests_run": 1,
+      "failures": 0,
+      "seconds": 0.798,
+      "command": "PYTHONPATH=service python3 -m unittest discover -s tests -p test_workspace_example.py -v",
+      "red_before_example": "Failed with CalledProcessError (exit status 2: the example file did not exist)"
+    }
+  },
+  "native": {
+    "executable": "build/native_acceptance (development build of the application source commit plus the Task 16 harness)",
+    "platform_plugin": "cocoa",
+    "os": "macOS Tahoe (26.6.2)",
+    "qt": "6.12.0",
+    "scenario": "pythonWorkspace",
+    "command": "QT_SCALE_FACTOR=<1|2> build/native_acceptance <report>.json pythonWorkspace",
+    "runs": [
+      {
+        "scale_request": "1",
+        "device_pixel_ratio": 2,
+        "passed": true,
+        "steps_passed": 13,
+        "elapsed_ms": 2713,
+        "recorded_at_utc": "2026-11-11T07:21:25Z",
+        "report": "python-workspace/python-workspace-native-1.json",
+        "screenshot": "python-workspace/python-workspace-native-1-python-workspace.png"
+      },
+      {
+        "scale_request": "2",
+        "device_pixel_ratio": 4,
+        "passed": true,
+        "steps_passed": 13,
+        "elapsed_ms": 3254,
+        "recorded_at_utc": "2026-11-11T07:21:41Z",
+        "report": "python-workspace/python-workspace-native-2.json",
+        "screenshot": "python-workspace/python-workspace-native-2-python-workspace.png"
+      }
+    ],
+    "steps": [
+      "start_service_and_open_supplies",
+      "open_workspace",
+      "new_module",
+      "type_module_and_pick_b3",
+      "declare_macro",
+      "name_cells",
+      "save_module",
+      "review_and_approve",
+      "run_restock_pens",
+      "undo_run",
+      "failing_run_leaves_sheet",
+      "bind_check_quantity",
+      "negative_edit_rejected"
+    ],
+    "full_acceptance_run": {
+      "command": "QT_SCALE_FACTOR=<1|2> build/native_acceptance <report>.json",
+      "passed": false,
+      "observed": "Exited 1 at both scale requests with 'Job dialog did not acquire native window activation' (the existing operation-jobs dialog check, before the pythonWorkspace scenario is reached). The process could not take native window activation in this session; the workspace-only run does not require it and passed."
+    },
+    "notes": [
+      "QTest events are synthetic; this is not physical input.",
+      "The scenario drives the development build, not the installed application bundle."
+    ]
+  },
+  "package": {
+    "development_package": {
+      "commands": [
+        "cmake --install build --prefix build/package",
+        "python3 tests/package_smoke.py build/package"
+      ],
+      "install_passed": true,
+      "smoke_passed": true,
+      "smoke_output": "Relocated installed application: managed edit/calculation and missing-service rejection passed",
+      "bundled_runtime": false,
+      "note": "The main build directory is configured without DATAHORIZON_RUNTIME_ROOT, so this package uses the host Python."
+    },
+    "bundled_runtime_package": {
+      "commands": [
+        "cmake -S . -B build/python-workspace-final/build -DCMAKE_PREFIX_PATH=/Users/btabone/Qt/6.12.0/macos -DDATAHORIZON_RUNTIME_ROOT=build/runtime-macos-arm64 -DCMAKE_BUILD_TYPE=Debug",
+        "cmake --build build/python-workspace-final/build --parallel --target DataHorizon datahorizon_cli_launcher",
+        "cmake --install build/python-workspace-final/build --prefix build/python-workspace-final/Installed",
+        "python3 tests/package_smoke.py build/python-workspace-final/Installed",
+        "codesign --verify --deep --strict build/python-workspace-final/Installed/DataHorizon.app"
+      ],
+      "install_passed": true,
+      "smoke_passed": true,
+      "signature_verified": true,
+      "runtime": {
+        "python": "3.13.18",
+        "sqlite": "3.53.1",
+        "release": "20261026",
+        "install_only_sha256": "e5af2fde6a937a0e0c795a0c595c4efb70578d57463a2657c819992b9b9acbac"
+      },
+      "installed_service_matches_source": true,
+      "installed_service_python_files": 55,
+      "artifacts": {
+        "build/python-workspace-final/Installed/DataHorizon.app/Contents/MacOS/DataHorizon": {
+          "bytes": 5849664,
+          "sha256": "38b1f8fa49d65b103c7f1e1a5a7e2e1866ee1b733887041adf76b4d7923e0b63"
+        },
+        "build/python-workspace-final/Installed/DataHorizon.app/Contents/MacOS/datahorizon-cli": {
+          "bytes": 141120,
+          "sha256": "67cfdf5e7d80984d049c6a5de8d38ef31c9554fa0e3efcdf02deaa99015b3cda"
+        },
+        "build/python-workspace-final/Installed/DataHorizon.app/Contents/Resources/source.json": {
+          "bytes": 79,
+          "sha256": "535b227323e5e21b346103c5a8a71c3a897ae5780e43500bb1d78ce4ffbd3e90",
+          "content": "{\"source_commit\":\"3906905ce52a0e8988cb1649ff3af096dea0693d\",\"version\":\"0.1.0\"}"
+        }
+      }
+    }
+  },
+  "example": {
+    "script": "examples/supplies_workspace.py",
+    "development": {
+      "command": "PYTHONPATH=service python3 examples/supplies_workspace.py create|exercise <path>",
+      "passed": true
+    },
+    "installed_bundled_runtime": {
+      "interpreter": "build/python-workspace-final/Installed/DataHorizon.app/Contents/Resources/runtime/bin/python3 -I -B (isolated and dont_write_bytecode flags confirmed set)",
+      "sdk_module": "build/python-workspace-final/Installed/DataHorizon.app/Contents/Resources/service/datahorizon/__init__.py",
+      "command": "cd /private/tmp && env -u PYTHONPATH PATH=/usr/bin:/bin <runtime>/bin/python3 -I -B -c \"import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_path(sys.argv.pop(1),run_name='__main__')\" <installed service> examples/supplies_workspace.py create|exercise <path>",
+      "passed": true,
+      "seconds_create_and_exercise": 2.46,
+      "report": "python-workspace/installed-example.json",
+      "format_version": 6,
+      "approved_over_owner_channel": true,
+      "total_before": 18,
+      "macro_result": 20.5,
+      "total_after_run": 20.5,
+      "total_after_undo": 18,
+      "failed_run": {
+        "code": "MACRO_FAILED",
+        "outcome": "rolled_back",
+        "message_contains": "ValueError: Below zero"
+      },
+      "total_after_failure": 18,
+      "rejected_edit": {
+        "code": "BINDING_FAILED",
+        "outcome": "rolled_back",
+        "message": "Binding supplies.check_quantity: ValueError: Below zero"
+      },
+      "quantity_after_rejection": 2,
+      "accepted_edit_total": 21.5
+    }
+  },
+  "not_run": [
+    "Full native_acceptance run to completion: the pre-existing job-dialog window-activation check failed in this session at scale requests 1 and 2, so the general keyboard/clipboard/dialog checks did not complete; the pythonWorkspace scenario was run alone and passed at both scale requests.",
+    "The pythonWorkspace scenario's call inside the default full native_acceptance run has never executed: the full run fails earlier on the job-dialog window-activation check in this environment, so the scenario has only run on its own.",
+    "The storyboard session in the installed application bundle by a person, without a terminal (design section 12): not performed. The native scenario drives the development build with synthetic QTest input.",
+    "Physical keyboard/mouse input and VoiceOver acceptance of the workspace window.",
+    "The full Python suite on the installed bundled runtime (the previous batch's bundled_python run); only the example and package smoke ran on it.",
+    "Hosted CI: no pull request has been opened for this branch.",
+    "Windows and Linux builds and qualification; signing with a Developer ID and notarization; clean-machine installation."
+  ],
+  "findings": [
+    "Selection-scope XLSX/ODS export reports a generic omission sentence ('Other sheets, code, queries, relationships, history, dimensions and view preferences are omitted') that does not mention workbook names or event bindings; only workbook-scope XLSX/ODS export lists them by name as native-only omissions. Not changed in this task."
+  ],
+  "release_qualified": false,
+  "remaining_scope": [
+    "Names in formulas and XLSX/ODS interchange",
+    "Python custom worksheet functions",
+    "Package installation",
+    "Structure, workbook-open and code events for bindings",
+    "User-controllable binding order",
+    "Source/diff view in the approval dialog",
+    "Changed-cell highlighting after a run",
+    "Docking the workspace",
+    "Crash-persistent drafts",
+    "Main-window action shortcuts still active while picking",
+    "Debouncing the tables-view Cancel",
+    "Physical input, VoiceOver, Windows/Linux and release gates"
+  ],
+  "final_fix_wave": {
+    "date": "2026-11-11",
+    "code_commit": "e628c93 (HEAD before this evidence edit; contains all code, test and design-document changes of the fix wave)",
+    "evidence_commit": "The commit that edits this file; its SHA is not known while writing it",
+    "evidence_corrections": [
+      "Removed native.full_acceptance_run.attempts: the Task 16 report does not record a number of attempts.",
+      "Added to not_run that the pythonWorkspace scenario's call inside the default full native_acceptance run has never executed.",
+      "Re-hashed source.task16_files_tested against commit 0b09ee8 with git show | shasum -a 256 and git cat-file -s: all three bytes and SHA-256 values match; none changed."
+    ],
+    "resolves": [
+      "findings[0]: selection-scope XLSX/ODS reports now list names and bindings as native-only omissions; selection CSV export reports list them too",
+      "remaining_scope 'Main-window action shortcuts still active while picking': editing commands are disabled while Pick from sheet is armed"
+    ],
+    "verification": {
+      "python": {
+        "command": "PYTHONPATH=service python3 -m unittest discover -s tests",
+        "tests_run": 717,
+        "optional_skips": 23,
+        "failures": 0,
+        "errors": 0,
+        "seconds": 95.401,
+        "note": "Run on the working tree that became e628c93. Two ResourceWarning lines about unclosed SQLite connections also appear on 0b09ee8 (708 tests, 22 skips, 100.605 s)"
+      },
+      "optional_openapi_validators": {
+        "command": "PYTHONPATH=service build/review-validation-venv/bin/python -m unittest tests.test_names_clients tests.test_binding_clients tests.test_automation_openapi",
+        "tests_run": 17,
+        "failures": 0,
+        "seconds": 6.127
+      },
+      "build": {
+        "command": "cmake --build build --parallel",
+        "result": "succeeded"
+      },
+      "python_workspace_tests": {
+        "command": "QT_QPA_PLATFORM=offscreen DATAHORIZON_VIEW_STATE=$PWD/build/test-views.ini ./build/python_workspace_tests",
+        "runs": [
+          {
+            "passed": 72,
+            "failed": 0,
+            "ms": 60303
+          },
+          {
+            "passed": 72,
+            "failed": 0,
+            "ms": 60215
+          },
+          {
+            "passed": 72,
+            "failed": 0,
+            "ms": 60260
+          }
+        ]
+      },
+      "ctest": {
+        "command": "ctest --test-dir build --output-on-failure",
+        "tests": 4,
+        "passed": 4,
+        "seconds": 322.34,
+        "targets": {
+          "development_bundle_signature": 0.23,
+          "desktop": 165.49,
+          "python_workspace": 60.71,
+          "service": 95.91
+        },
+        "desktop_qt": {
+          "passed": 232,
+          "failed": 0
+        },
+        "python_workspace_qt": {
+          "passed": 72,
+          "failed": 0
+        },
+        "service_python": {
+          "tests_run": 717,
+          "optional_skips": 23,
+          "seconds": 95.682
+        },
+        "backgroundCalculationReportsSnapshotWithoutEdits": "passed (no flake in this run)"
+      }
+    },
+    "not_run": [
+      "Native acceptance (native_acceptance pythonWorkspace or the full run) was not re-run in the fix wave.",
+      "Package install and smoke were not re-run in the fix wave."
+    ]
+  }
+}
