@@ -115,6 +115,43 @@ class FormulaRefsTest(unittest.TestCase):
         self.assertEqual(len(scan("=Sheet1!Name+A1")), 1)
         self.assertEqual(len(scan("=\"x\"\"A1\"&B2")), 1)
 
+    def test_range_whose_second_endpoint_has_a_sheet(self):
+        for source in ("=A1:Sheet2!B2", "=SUM(A1:Sheet2!B2)"):
+            with self.subTest(source):
+                (r,) = scan(source)
+                self.assertIsInstance(r, RefRange)
+                self.assertEqual((r.first.row, r.first.col, r.first.sheet), (1, 1, None))
+                self.assertEqual((r.last.row, r.last.col, r.last.sheet), (2, 2, "Sheet2"))
+        self.assertEqual(rewrite("=A1:Sheet2!B2", lambda i: "X"), "=X")
+        self.assertEqual(rewrite("=SUM(A1:Sheet2!B2)", lambda i: "X"), "=SUM(X)")
+        (r,) = scan("=SUM(Q1:Q4!B2)")
+        self.assertIsInstance(r, RefRange)
+        self.assertEqual((r.first.row, r.first.col, r.first.sheet, r.last.sheet), (1, 17, None, "Q4"))
+        self.assertEqual(rewrite("=SUM(Q1:Q4!B2)", lambda i: "X"), "=SUM(X)")
+
+    def test_quoted_prefixes(self):
+        (r,) = scan("='Jan 1:Mar 3'!A1")
+        self.assertEqual((r.sheet, r.sheet_last, r.external), ("Jan 1", "Mar 3", False))
+        (r,) = scan("='It''s:B'!A1")
+        self.assertEqual((r.sheet, r.sheet_last), ("It's", "B"))
+        (r,) = scan("='C:\\p\\[Book.xlsx]Sheet1'!A1")
+        self.assertEqual((r.external, r.sheet, r.sheet_last), (True, "Sheet1", None))
+        (r,) = scan("='[Book.xlsx]Jan:Mar'!A1")
+        self.assertEqual((r.external, r.sheet, r.sheet_last), (True, "Jan", "Mar"))
+
+    def test_leading_zero_rows_and_unusual_names(self):
+        (r,) = scan("=A01")
+        self.assertEqual((r.row, r.col), (1, 1))
+        self.assertEqual(scan("=A0"), [])
+        for source in ("=\\nm+A1", "=a?b+A1"):
+            with self.subTest(source):
+                (r,) = scan(source)
+                self.assertEqual((r.row, r.col), (1, 1))
+
+    def test_rewrite_returns_source_when_not_tokenizable(self):
+        self.assertIsNone(scan('="open A1'))
+        self.assertEqual(rewrite('="open A1', lambda i: "X"), '="open A1')
+
 
 if __name__ == "__main__":
     unittest.main()

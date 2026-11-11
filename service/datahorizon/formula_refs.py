@@ -41,14 +41,14 @@ _PREFIX = re.compile(
     rf"(?:(?:'(?P<quoted>(?:[^']|'')+)'|(?P<first>{_NAME})(?::(?P<last>{_NAME}))?)!)?"
 )
 _AFTER = r"(?![\w.(\[])"
-_CELL = re.compile(rf"(\$?)([A-Za-z]{{1,3}})(\$?)([1-9][0-9]*){_AFTER}")
+_CELL = re.compile(rf"(\$?)([A-Za-z]{{1,3}})(\$?)([0-9]+){_AFTER}")
 _COLUMN = re.compile(rf"(\$?)([A-Za-z]{{1,3}}){_AFTER}")
 _ROW = re.compile(rf"(\$?)([1-9][0-9]*){_AFTER}")
 _COLON = re.compile(r"\s*:\s*")
 _SPACE = re.compile(r"\s+")
 _STRING = re.compile(r'"(?:[^"]|"")*"')
 _NUMBER = re.compile(r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
-_IDENTIFIER = re.compile(_NAME)
+_IDENTIFIER = re.compile(r"[^\W\d][\w.\\?]*|\\[\w.\\?]*")
 _OPERATORS = frozenset("+-*/^&=<>,;:%@#()")
 
 
@@ -92,22 +92,30 @@ def _skip_array(source, pos):
     return None
 
 
+def _is_cell(name):
+    match = _CELL.fullmatch(name)
+    return bool(match) and 1 <= int(match[4]) <= MAX_ROWS and _column_number(match[2]) <= MAX_COLS
+
+
 def _endpoint(source, pos):
     """Parse one prefixed cell, column or row endpoint at pos: (Ref, end) or None."""
     prefix = _PREFIX.match(source, pos)
     sheet = sheet_last = None
     external = bool(prefix["ext"])
-    if prefix["quoted"] is not None:
-        sheet = prefix["quoted"].replace("''", "'")
-        if not external:
-            inner = re.match(r"\[[^\]]*\]", sheet)
-            if inner:
-                external, sheet = True, sheet[inner.end():]
-    elif prefix["first"] is not None:
-        if prefix["last"] is not None and ADDRESS.fullmatch(prefix["first"]):
-            return None  # `A1:Sheet2!B2` is a range endpoint, not a 3D prefix
-        sheet, sheet_last = prefix["first"], prefix["last"]
     body = prefix.end()
+    if prefix["quoted"] is not None:
+        name = prefix["quoted"].replace("''", "'")
+        workbook = re.match(r"(?:.*[\\/])?\[[^\]]*\]", name)
+        if workbook:  # [Book] at the start or after a path; the sheet is what follows
+            external, name = True, name[workbook.end():]
+        sheet, _, sheet_last = name.partition(":")
+        sheet_last = sheet_last or None
+    elif prefix["first"] is not None:
+        if prefix["last"] is not None and _is_cell(prefix["first"]):
+            # Unquoted sheet names cannot look like cells: `A1:Sheet2!B2` is a range.
+            body = prefix.end("ext") if prefix["ext"] else pos
+        else:
+            sheet, sheet_last = prefix["first"], prefix["last"]
     for kind, pattern in (("cell", _CELL), ("column", _COLUMN), ("row", _ROW)):
         match = pattern.match(source, body)
         if not match:
@@ -121,7 +129,7 @@ def _endpoint(source, pos):
             col, abs_col = _column_number(match[2]), bool(match[1])
         else:
             row, abs_row = int(match[2]), bool(match[1])
-        if (col is not None and col > MAX_COLS) or (row is not None and row > MAX_ROWS):
+        if (col is not None and col > MAX_COLS) or (row is not None and not 1 <= row <= MAX_ROWS):
             continue
         return Ref(body, match.end(), pos, sheet, sheet_last, external, kind, row, col, abs_row, abs_col), match.end()
     return None
@@ -186,7 +194,11 @@ def scan(source):
 
 
 def rewrite(source, change: Callable):
-    """Replace each top-level reference with change(item), keeping the rest verbatim."""
+    """Replace each top-level reference with change(item), keeping the rest verbatim.
+
+    Returns source unchanged when scan(source) is None, so callers must call
+    scan first to tell "no references" from "not tokenizable".
+    """
     items = scan(source)
     if not items:
         return source
