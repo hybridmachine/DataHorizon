@@ -257,6 +257,58 @@ private slots:
         QCOMPARE(readCode(window)["modules"].toArray()[0].toObject()["source"].toString(),QString("pens = 3  # theirs\n"));
     }
 
+    void editingBeforePostSaveReadAttachesToSavedModule() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("gap.dhwb")));
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("pens = 1\n");
+        // Types at the two moments before the post-commit catalog read replies:
+        // inside the committed receipt, and when the refreshed workbook info has
+        // been accepted (the main window is no longer busy, but the workspace
+        // still holds the pre-save catalog).
+        bool committed=false,typed=false,refused=true;QString textAfter;
+        auto attempt=[&]{editor(workspace)->setFocus();QTest::keyClicks(editor(workspace),"x");
+            refused=refused && editor(workspace)->isReadOnly() && !workspace->hasDrafts();textAfter=editor(workspace)->toPlainText();};
+        connect(&window,&MainWindow::operationReceipt,workspace,[&](QJsonObject receipt){if(!committed && receipt["outcome"]=="committed"){committed=true;attempt();}});
+        connect(&window,&MainWindow::workbookReady,workspace,[&]{if(committed && !typed){typed=true;attempt();}});
+        save(workspace);QTRY_VERIFY_WITH_TIMEOUT(typed,10000);
+        QVERIFY(refused);QCOMPARE(textAfter,QString("pens = 1\n"));
+        const auto id=readCode(window)["modules"].toArray()[0].toObject()["id"].toString();
+        QTRY_VERIFY_WITH_TIMEOUT(!editor(workspace)->isReadOnly(),10000);
+        QCOMPARE(status(workspace),kSaved);QVERIFY(!workspace->hasDrafts());
+        QTest::keyClicks(editor(workspace),"y");QCOMPARE(status(workspace),kDraft);
+        save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
+        const auto modules=readCode(window)["modules"].toArray();QCOMPARE(modules.size(),1);
+        QCOMPARE(modules[0].toObject()["id"].toString(),id);QCOMPARE(modules[0].toObject()["name"].toString(),QString("supplies"));
+        QVERIFY(modules[0].toObject()["source"].toString().contains("y"));
+    }
+
+    void keepMineThenCancellingHistoryKeepsConflict() {
+        QTemporaryDir temp;const auto path=temp.filePath("conflict-history.dhwb");StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,path));
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("pens = 1\n");
+        save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
+        const auto id=readCode(window)["modules"].toArray()[0].toObject()["id"].toString();
+        editor(workspace)->setPlainText("pens = 2  # mine\n");
+        QVERIFY(competingSave(options,path,"supplies","pens = 3  # theirs\n",id));
+        QVERIFY(refreshWindow(window));
+        // Undo history makes Save ask the history question after the conflict choice.
+        QSignalSpy finished(&window,&MainWindow::operationFinished);QSignalSpy opened(&window,&MainWindow::workbookReady);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}}}}});
+        QTRY_VERIFY_WITH_TIMEOUT(finished.count()==1 && opened.count()>=1,10000);QVERIFY(finished[0][0].toBool());
+        auto *banner=workspace->findChild<QLabel *>("workspaceConflict");QTRY_VERIFY_WITH_TIMEOUT(banner->isVisible(),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(workspace->findChild<QAction *>("saveModuleAction")->isEnabled(),5000);
+        int histories=0;
+        ModalDriver driver([&](QWidget *modal){
+            if(clickButton(modal,"codeConflictDialog","conflictKeepMine"))return true;
+            auto *box=qobject_cast<QMessageBox *>(modal);if(!box || box->objectName()!="codeSaveHistoryPrompt")return false;
+            ++histories;box->button(QMessageBox::Cancel)->click();return true;});
+        save(workspace);QCOMPARE(histories,1);QCOMPARE(driver.handled,2);
+        QVERIFY(banner->isVisible());QVERIFY(workspace->hasDrafts());
+        QCOMPARE(readCode(window)["modules"].toArray()[0].toObject()["source"].toString(),QString("pens = 3  # theirs\n"));
+        // The conflict is still unresolved, so the next Save compares again.
+        save(workspace);QCOMPARE(driver.handled,4);QCOMPARE(histories,2);QVERIFY(banner->isVisible());
+    }
+
     void sameModuleConflictKeepMineReplaces() {
         QTemporaryDir temp;const auto path=temp.filePath("keep.dhwb");StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
         QVERIFY(boot(window,path));

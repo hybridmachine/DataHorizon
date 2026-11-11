@@ -161,7 +161,7 @@ void PythonWorkspace::readCatalog() {
     const auto generation=++m_readGeneration;
     m_client->request("/v1/workbooks/"+m_info["id"].toString()+"/code",{{"expected_state",m_info["state"]}},[this,generation](QJsonObject result,QString error){
         if(generation!=m_readGeneration)return;
-        if(!error.isEmpty()){m_reviewChanges=false;showMessage(tr("Could not read workbook code: %1").arg(error));return;}
+        if(!error.isEmpty()){m_reviewChanges=false;showMessage(tr("Could not read workbook code: %1. It is read again when the workbook refreshes.").arg(error));return;}
         applyCatalog(result);
     });
 }
@@ -469,8 +469,13 @@ void PythonWorkspace::save() {
     if(!editable() || !m_drafts.contains(m_current) || foreign(m_current))return;
     QString problem;
     if(!validName(m_drafts[m_current].name,&problem)){showMessage(problem);return;}
-    if(m_drafts[m_current].conflict && !resolveConflict())return;
-    if(!confirmHistory() || !m_drafts.contains(m_current))return;
+    const auto key=m_current;const Draft before=m_drafts[key];
+    if(before.conflict && !resolveConflict())return;
+    if(!confirmHistory() || !m_drafts.contains(m_current)) {
+        // Declining the history prompt leaves a conflicted draft unresolved.
+        if(before.conflict && m_drafts.contains(key))m_drafts[key]=before;
+        updateState();return;
+    }
     const auto draft=m_drafts[m_current];
     QJsonObject request{{"action","module_save"},{"name",draft.name},{"source",draft.source},{"macros",draft.macros},{"fingerprint",draft.baseFingerprint},{"label","Save Python module"}};
     if(!draft.moduleId.isEmpty())request["module"]=draft.moduleId;
@@ -498,6 +503,10 @@ void PythonWorkspace::operationReceipt(const QJsonObject &receipt) {
     m_pending=Pending::None;m_pendingOperation.clear();
     if(outcome=="committed") {
         m_pendingKey.clear();
+        // The shown catalog is now stale: editing stays off until the owning
+        // window's refresh binds the new state and the catalog is re-read
+        // (a failed read is retried on the next bind or refresh).
+        m_catalogReady=false;
         if(kind==Pending::Save) {
             m_drafts.remove(key);
             if(m_current==key && receipt["module_id"].isString())m_current=receipt["module_id"].toString();

@@ -2722,7 +2722,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         const auto workbook=m_info["id"].toString(), service=m_client->url();
         m_releasing=true; setBusy(true,"Closing workbook…"); event->ignore();
         m_client->request(base()+"/close",{},[this,workbook,service](QJsonObject,QString){
-            if (!m_releasing) return;
+            if (!m_releasing) { m_workspace->keepDrafts(); return; }
             m_releasing=false;
             if (m_info["id"].toString()!=workbook || m_client->url()!=service) { m_workspace->keepDrafts(); setBusy(false,"Current workbook remains open"); return; }
             m_released=true; close();
