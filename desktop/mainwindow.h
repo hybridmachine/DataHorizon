@@ -67,6 +67,14 @@ public:
     // cannot start. Starting it cancels a formula pick, and vice versa.
     bool startExternalReferencePick(ReferencePickTarget target,QString *problem = nullptr);
     void cancelExternalReferencePick();
+    // True when this window started its service; an attached window never
+    // approves code.
+    bool ownsService() const { return m_options.url.isEmpty(); }
+    // Sends one {"approve": key} line over the owned service's private
+    // standard input. False, with nothing written, when attached, when the
+    // process is not running, or when the key is malformed or names another
+    // workbook than the open one. The outcome is read back from /code.
+    bool grantCodeApproval(const QString &key);
 signals:
     // Emitted once when external picking ends; inserted is true when at least
     // one reference was inserted while it was armed.

@@ -50,7 +50,8 @@ target_sources(datahorizon_desktop PRIVATE desktop/tablerelationships.cpp)
 target_sources(datahorizon_desktop PRIVATE desktop/queryworkbench.cpp desktop/queryworkbench.h)
 target_sources(datahorizon_desktop PRIVATE desktop/querydefinitions.cpp desktop/relationalexport.h)
 target_sources(datahorizon_desktop PRIVATE desktop/pythonworkspace.cpp desktop/pythonworkspace.h
-    desktop/codeeditor.h desktop/pythonhighlighter.h desktop/macrodeclarationpanel.h desktop/namemanager.h)
+    desktop/codeeditor.h desktop/pythonhighlighter.h desktop/macrodeclarationpanel.h desktop/namemanager.h
+    desktop/codeapprovaldialog.h)
 target_link_libraries(datahorizon_desktop PUBLIC Qt6::Widgets Qt6::Network)
 target_include_directories(datahorizon_desktop PUBLIC desktop)
 target_compile_definitions(datahorizon_desktop PRIVATE

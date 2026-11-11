@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "pythonworkspace.h"
+#include "codeapprovaldialog.h"
 #include "codeeditor.h"
 #include "macrodeclarationpanel.h"
 #include "namemanager.h"
@@ -9,7 +10,9 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QDialog>
+#include <QDeadlineTimer>
 #include <QDialogButtonBox>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
@@ -25,6 +28,7 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QTimer>
 #include <QToolBar>
 #include <QUuid>
 #include <QVBoxLayout>
@@ -32,6 +36,7 @@
 namespace {
 const char *kNewPrefix="new:";
 QString draftStatus(){return QObject::tr("Draft · not saved to the workbook");}
+QString changedDuringReview(){return QObject::tr("The stored code changed while it was being reviewed. Review it again.");}
 }
 
 PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(owner,Qt::Window),m_client(client) {
@@ -40,6 +45,8 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     auto *toolbar=addToolBar(tr("Workspace"));toolbar->setObjectName("workspaceToolbar");toolbar->setMovable(false);
     m_save=toolbar->addAction(tr("Save"));m_save->setObjectName("saveModuleAction");m_save->setShortcut(QKeySequence::Save);m_save->setShortcutContext(Qt::WindowShortcut);
     connect(m_save,&QAction::triggered,this,&PythonWorkspace::save);
+    m_reviewApprove=toolbar->addAction(tr("Review && approve"));m_reviewApprove->setObjectName("reviewApproveAction");
+    connect(m_reviewApprove,&QAction::triggered,this,&PythonWorkspace::reviewApprove);
     toolbar->addSeparator();
     m_showMacro=toolbar->addAction(tr("Declaration"));m_showMacro->setObjectName("showMacroAction");m_showMacro->setCheckable(true);m_showMacro->setChecked(true);
     m_showMacro->setToolTip(tr("Show the selected macro's declaration"));
@@ -171,7 +178,10 @@ void PythonWorkspace::bind(const QJsonObject &info) {
     // belongs to the service process, so it is never carried across. An
     // operation still in flight on the old handle is reconciled by the owning
     // window before this point; nothing here may stay waiting for it.
-    if(info["id"]!=m_info["id"]){m_catalogReady=false;resetPending();}
+    if(info["id"]!=m_info["id"]) {
+        m_catalogReady=false;resetPending();
+        if(m_approvalInFlight){++m_approvalGeneration;approvalFailed(tr("Approval was not confirmed by the service. Review the code and try again."));}
+    }
     m_info=info;
     if(info.isEmpty()){++m_readGeneration;m_catalogReady=false;updateState();return;}
     readCatalog();updateState();
@@ -200,6 +210,11 @@ QJsonObject PythonWorkspace::baseModule(const Draft &draft) const {
 
 void PythonWorkspace::applyCatalog(const QJsonObject &catalog) {
     m_catalog=catalog;m_catalogReady=true;const auto current=catalog["fingerprint"].toString();m_catalogs[current]=catalogModules();
+    if(!m_staleReviewFingerprint.isEmpty()) {
+        // An approval was stopped by a stale read; the refreshed catalog says why.
+        showMessage(current!=m_staleReviewFingerprint?changedDuringReview():tr("The workbook changed while the code was being reviewed. Nothing was approved; review it again."));
+        m_staleReviewFingerprint.clear();
+    }
     if(!m_rebaseTo.isEmpty()) {
         // Our own save moved the fingerprint; other drafts reviewed against the
         // previous catalog are still reviewed against everything but that save.
@@ -340,6 +355,83 @@ void PythonWorkspace::updateState() {
         :tr("%1 changed in the workbook since your draft began. Save shows both versions before anything is replaced.").arg(m_drafts[m_current].name));
     m_status->setText(readonly?tr("Read-only workbook"):!selected?QString():draft?draftStatus():tr("Saved in workbook"));
     m_approval->setText(m_catalogReady && m_catalog["approved"].toBool()?tr("Approved for this session"):tr("Not approved to run"));
+    const auto approvalReason=approvalBlockedReason();
+    m_reviewApprove->setEnabled(approvalReason.isEmpty());
+    m_reviewApprove->setToolTip(!approvalReason.isEmpty()?approvalReason:tr("Review the stored code and approve it to run in this session"));
+}
+
+bool PythonWorkspace::hasWorkbookDrafts() const {
+    for(const auto &draft:m_drafts)if(draft.workbookId==m_workbookId)return true;
+    return false;
+}
+
+QString PythonWorkspace::approvalBlockedReason() const {
+    if(m_info.isEmpty())return tr("Open a workbook first.");
+    if(m_approvalInFlight)return tr("Waiting for the service to confirm approval…");
+    if(m_locked || m_pending!=Pending::None || m_awaitingAdmission)return tr("Wait for the current operation to finish.");
+    if(!m_catalogReady)return tr("Reading the workbook's code…");
+    if(catalogModules().isEmpty())return tr("This workbook has no stored Python modules to review.");
+    if(hasWorkbookDrafts())return tr("Save or discard your drafts before approving.");
+    return {};
+}
+
+void PythonWorkspace::serviceStopped() {
+    // Approval belonged to the stopped process; the next bind reads the
+    // catalog from the new one.
+    ++m_readGeneration;m_catalogReady=false;m_staleReviewFingerprint.clear();
+    if(m_approvalInFlight){++m_approvalGeneration;approvalFailed(tr("Approval was not confirmed by the service. Review the code and try again."));}
+    updateState();
+}
+
+// The dialog shows one catalog snapshot, and only that snapshot's key can be
+// sent: never a key from a catalog read later.
+void PythonWorkspace::reviewApprove() {
+    if(!approvalBlockedReason().isEmpty())return;
+    const auto shown=m_catalog;const auto workbook=m_workbookId;
+    const bool owned=m_ownsService && m_ownsService();
+    std::optional<QJsonObject> last;if(m_approvedCatalogs.contains(workbook))last=m_approvedCatalogs[workbook];
+    CodeApprovalDialog dialog(QFileInfo(m_info["path"].toString()).fileName(),shown,last,owned,this);
+    if(dialog.exec()!=QDialog::Accepted || !owned || shown["approved"].toBool())return;
+    if(m_workbookId!=workbook || shown["activation_key"].toString()!=workbook+":"+shown["fingerprint"].toString()){showMessage(changedDuringReview());readCatalog();return;}
+    confirmAndGrant(shown);
+}
+
+void PythonWorkspace::confirmAndGrant(const QJsonObject &shown) {
+    const auto generation=++m_approvalGeneration;const auto workbook=m_workbookId;
+    m_approvalInFlight=true;showMessage(tr("Checking that the stored code is unchanged…"));updateState();
+    m_client->request("/v1/workbooks/"+m_info["id"].toString()+"/code",{{"expected_state",m_info["state"]}},[this,shown,generation,workbook](QJsonObject result,QString error){
+        if(generation!=m_approvalGeneration)return;
+        if(!error.isEmpty()) {
+            m_approvalInFlight=false;updateState();
+            // The workbook changed outside this window: refresh, and the new
+            // catalog tells whether the reviewed code is still stored.
+            if(result["code"]=="STALE_STATE"){m_staleReviewFingerprint=shown["fingerprint"].toString();showMessage(tr("The workbook changed while the code was being reviewed…"));emit refreshRequested();return;}
+            approvalFailed(tr("Could not confirm the stored code: %1. Nothing was approved.").arg(error));return;
+        }
+        if(m_workbookId!=workbook || result["fingerprint"]!=shown["fingerprint"] || result["activation_key"]!=shown["activation_key"]) {
+            m_approvalInFlight=false;showMessage(changedDuringReview());readCatalog();updateState();return;
+        }
+        if(!m_grant || !m_grant(shown["activation_key"].toString())){approvalFailed(tr("Approval could not be sent to the local service. Nothing was approved."));return;}
+        showMessage(tr("Waiting for the service to confirm approval…"));
+        pollApproval(shown,generation,QDeadlineTimer(3000));
+    });
+}
+
+void PythonWorkspace::pollApproval(const QJsonObject &shown,quint64 generation,QDeadlineTimer deadline) {
+    m_client->request("/v1/workbooks/"+m_info["id"].toString()+"/code",{{"expected_state",m_info["state"]}},[this,shown,generation,deadline](QJsonObject result,QString error){
+        if(generation!=m_approvalGeneration)return;
+        if(error.isEmpty() && result["fingerprint"]==shown["fingerprint"] && result["approved"].toBool()) {
+            m_approvalInFlight=false;m_approvedCatalogs[m_workbookId]=shown;
+            ++m_readGeneration;applyCatalog(result);showMessage(tr("Approved this code for this session."));return;
+        }
+        if(error.isEmpty() && result["fingerprint"]!=shown["fingerprint"]){m_approvalInFlight=false;showMessage(changedDuringReview());++m_readGeneration;applyCatalog(result);return;}
+        if(deadline.hasExpired()){approvalFailed(tr("Approval was not confirmed by the service. Review the code and try again."));return;}
+        QTimer::singleShot(150,this,[this,shown,generation,deadline]{if(generation==m_approvalGeneration)pollApproval(shown,generation,deadline);});
+    });
+}
+
+void PythonWorkspace::approvalFailed(const QString &text) {
+    m_approvalInFlight=false;showMessage(text);emit issue(text);updateState();
 }
 
 void PythonWorkspace::showMessage(const QString &text){m_message->setText(text);}

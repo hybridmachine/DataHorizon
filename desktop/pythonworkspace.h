@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include "restclient.h"
+#include <QDeadlineTimer>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMainWindow>
 #include <QMap>
+#include <functional>
 
 class CodeEditor;
 class MacroDeclarationPanel;
@@ -59,8 +61,16 @@ public:
     void insertPickedReference(const QString &reference);
     bool pickStillValid() const;
     void pickFinished(const QString &problem = {});
+    // Review & approve: ownsService says whether the owning window started its
+    // service; grant sends one exact activation key over its private channel
+    // and returns false when nothing was sent.
+    void setApprovalOwner(std::function<bool()> ownsService,std::function<bool(const QString &key)> grant){m_ownsService=std::move(ownsService);m_grant=std::move(grant);}
+    // The service process stopped: its approvals are gone with it.
+    void serviceStopped();
 signals:
     void submitRequested(QJsonObject operation);
+    // A read found the workbook state stale; the owning window refreshes.
+    void refreshRequested();
     void pickFromSheetRequested(bool on);
     void issue(QString message);
 protected:
@@ -104,6 +114,12 @@ private:
     QJsonObject baseModule(const Draft &draft) const;
     Draft effective(const QString &key) const;
     QString describeChanges(const QJsonArray &before,const QJsonArray &after) const;
+    bool hasWorkbookDrafts() const;
+    QString approvalBlockedReason() const;
+    void reviewApprove();
+    void confirmAndGrant(const QJsonObject &shown);
+    void pollApproval(const QJsonObject &shown,quint64 generation,QDeadlineTimer deadline);
+    void approvalFailed(const QString &text);
     QJsonArray catalogModules() const{return m_catalog["modules"].toArray();}
 
     RestClient *m_client;
@@ -119,9 +135,17 @@ private:
     QString m_rebaseFrom,m_rebaseTo;
     quint64 m_readGeneration=0;
     QString m_viewStatePath;
+    std::function<bool()> m_ownsService;
+    std::function<bool(const QString &)> m_grant;
+    // The last catalog this workspace approved per workbook in this
+    // application session, only to show what changed since; never re-sent.
+    QHash<QString,QJsonObject> m_approvedCatalogs;
+    quint64 m_approvalGeneration=0;
+    bool m_approvalInFlight=false;
+    QString m_staleReviewFingerprint;  // a pre-approval read was stale; compared after the refresh
     inline static bool s_skipHistoryPrompt=false;
 
-    QAction *m_save,*m_showMacro,*m_showNames,*m_find,*m_pick;
+    QAction *m_save,*m_showMacro,*m_showNames,*m_find,*m_pick,*m_reviewApprove;
     QShortcut *m_pickEscape;
     QString m_pickModule;  // the module or draft that picking was armed for
     QListWidget *m_modules,*m_macros;

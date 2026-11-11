@@ -906,6 +906,9 @@ void MainWindow::buildUi() {
     m_workspace=new PythonWorkspace(m_client,this);
     connect(m_workspace,&PythonWorkspace::submitRequested,this,&MainWindow::submit);
     connect(m_workspace,&PythonWorkspace::issue,this,&MainWindow::issue);
+    // Approval is sent only over the owned service's private channel.
+    m_workspace->setApprovalOwner([this]{return ownsService();},[this](const QString &key){return grantCodeApproval(key);});
+    connect(m_workspace,&PythonWorkspace::refreshRequested,this,[this]{m_model->externalChange();});
     connect(this,&MainWindow::operationAdmitted,m_workspace,&PythonWorkspace::operationAdmitted);
     connect(this,&MainWindow::operationReceipt,m_workspace,&PythonWorkspace::operationReceipt);
     connectNamesPanel(m_workspace->namesPanel());
@@ -1542,6 +1545,7 @@ void MainWindow::startService() {
     connect(&m_service, &QProcess::errorOccurred, this, [this] { issue("Service startup failed: " + m_service.errorString()); });
     connect(&m_service, &QProcess::finished, this, [this](int, QProcess::ExitStatus) {
         if (m_shuttingDown) return;
+        m_workspace->serviceStopped();
         m_enterRequest={}; m_enterNavigation={};
         captureGridDraft();
         m_unknown = !m_pendingId.isEmpty(); setBusy(true, "Service stopped • Restart local service or close the window");
@@ -1549,9 +1553,19 @@ void MainWindow::startService() {
         issue(m_unknown ? "The local service exited. Operation outcome is unknown: "+m_pendingId
                         : "The local service exited. Restart it to reopen stored data; unsubmitted drafts are retained.");
     });
-    QStringList args{"-I", "-B", "-X", "utf8", paths.launcher};
+    // The owner channel is this process's private standard input: only this
+    // window can approve code for the service it started.
+    QStringList args{"-I", "-B", "-X", "utf8", paths.launcher, "--owner-channel"};
     if (!m_options.handler.isEmpty()) args << "--handler" << m_options.handler;
     m_service.start(paths.python, args);
+}
+
+bool MainWindow::grantCodeApproval(const QString &key) {
+    static const QRegularExpression valid(QStringLiteral("^[0-9a-f-]{36}:[0-9a-f]{64}$"));
+    if (!ownsService() || m_service.state() != QProcess::Running) return false;
+    if (!valid.match(key).hasMatch() || m_info.isEmpty() || key.section(':', 0, 0) != m_info["workbook_id"].toString()) return false;
+    const auto line = QJsonDocument(QJsonObject{{"approve", key}}).toJson(QJsonDocument::Compact) + '\n';
+    return m_service.write(line) == line.size();
 }
 
 void MainWindow::newBook() {

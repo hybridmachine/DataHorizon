@@ -6,6 +6,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QCompleter>
 #include <QDialog>
@@ -32,6 +33,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QUuid>
 #include <functional>
 #include <memory>
 
@@ -215,6 +217,72 @@ struct PickSetup {
         return pickAction(workspace)->isEnabled();
     }
 };
+
+QAction *reviewAction(PythonWorkspace *workspace){return workspace->findChild<QAction *>("reviewApproveAction");}
+QString approval(PythonWorkspace *workspace){return workspace->findChild<QLabel *>("workspaceApproval")->text();}
+QString workspaceMessage(PythonWorkspace *workspace){return workspace->findChild<QLabel *>("workspaceMessage")->text();}
+
+// What the Review & approve dialog showed, captured before it closed.
+struct Review {
+    QString title,changes,fingerprint,bindings,notice,key,warning,copied;
+    bool shown=false,hasApprove=false,approveEnabled=false,hasBindings=false,hasKey=false,hasCopy=false;
+};
+
+// Opens Review & approve and records the dialog. With approve it presses the
+// approve button (after beforeApprove runs while the dialog is still open);
+// otherwise it cancels.
+Review review(PythonWorkspace *workspace,bool approve,const std::function<void()> &beforeApprove={}) {
+    Review seen;
+    ModalDriver driver([&](QWidget *modal){
+        auto *dialog=qobject_cast<QDialog *>(modal);if(!dialog || dialog->objectName()!="codeApprovalDialog")return false;
+        seen.shown=true;seen.title=dialog->windowTitle();
+        auto text=[dialog](const char *name){auto *label=dialog->findChild<QLabel *>(name);return label?label->text():QString();};
+        seen.changes=text("approvalChanges");seen.fingerprint=text("approvalFingerprint");seen.notice=text("approvalNotice");seen.warning=text("approvalWarning");
+        seen.hasBindings=dialog->findChild<QLabel *>("approvalBindings")!=nullptr;seen.bindings=text("approvalBindings");
+        if(auto *key=dialog->findChild<QLineEdit *>("activationKeyField")){seen.hasKey=true;seen.key=key->text();}
+        if(auto *copy=dialog->findChild<QPushButton *>("copyActivationKeyButton")){seen.hasCopy=true;copy->click();seen.copied=QApplication::clipboard()->text();}
+        auto *button=dialog->findChild<QPushButton *>("approveButton");
+        seen.hasApprove=button!=nullptr;seen.approveEnabled=button && button->isEnabled();
+        if(approve && seen.approveEnabled){if(beforeApprove)beforeApprove();button->click();}
+        else dialog->reject();
+        return true;});
+    if(auto *action=reviewAction(workspace))action->trigger();
+    return seen;
+}
+
+// Approves through the dialog and waits for the service to confirm it.
+bool approveCode(PythonWorkspace *workspace) {
+    const auto seen=review(workspace,true);
+    return seen.approveEnabled && QTest::qWaitFor([&]{return approval(workspace)=="Approved for this session";},10000);
+}
+
+// Edits the stored module's source directly in the workbook file, as an
+// external SQLite tool would; no DataHorizon behavior runs.
+bool editModuleDirectly(const QString &path,const QString &source) {
+    QProcess direct;
+    direct.start(qEnvironmentVariable("DATAHORIZON_PYTHON","python3"),{"-c",
+        "import json,sqlite3,sys\n"
+        "db=sqlite3.connect(sys.argv[1],isolation_level=None)\n"
+        "value=json.loads(db.execute(\"SELECT payload FROM dh_relational WHERE kind='module'\").fetchone()[0])\n"
+        "value['source']=sys.argv[2]\n"
+        "db.execute(\"UPDATE dh_relational SET payload=? WHERE kind='module'\",(json.dumps(value),))\n"
+        "db.close()\n",path,source});
+    return direct.waitForFinished(10000) && direct.exitStatus()==QProcess::NormalExit && direct.exitCode()==0;
+}
+
+// Captures the url and token an owned service announces, so a second window
+// can attach to it.
+void observeOwnedServiceStartup(MainWindow &owner,QJsonObject &service) {
+    auto *process=owner.findChild<QProcess *>("ownedService");
+    QObject::connect(process,&QProcess::readyReadStandardOutput,process,[process,&service,bytes=QByteArray{}]() mutable {
+        if(!service.isEmpty())return;
+        bytes+=process->peek(process->bytesAvailable());
+        const auto newline=bytes.indexOf('\n');
+        if(newline>=0)service=QJsonDocument::fromJson(bytes.left(newline)).object();
+    });
+}
+
+const QString kApprovalWarning=QStringLiteral("Approved code runs with your own account's access to files and the network. It is not sandboxed, and undo cannot reverse effects outside the workbook.");
 
 const QString kPicking=QStringLiteral("Picking a reference for Python · Esc to cancel");
 const QString kDraft=QStringLiteral("Draft · not saved to the workbook");
@@ -637,6 +705,7 @@ private slots:
         auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("pens = 1\n");
         save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
         QTRY_COMPARE_WITH_TIMEOUT(workspace->fingerprint(),readCode(window)["fingerprint"].toString(),5000);
+        QVERIFY(approveCode(workspace));QVERIFY(readCode(window)["approved"].toBool());
         const QString typed="pens = 1\nmarkers = 2\n";editor(workspace)->setPlainText(typed);QCOMPARE(status(workspace),kDraft);
         const auto before=workspace->fingerprint();
         QSignalSpy ready(&window,&MainWindow::serviceReady);QSignalSpy opened(&window,&MainWindow::workbookReady);
@@ -649,8 +718,120 @@ private slots:
         QCOMPARE(workspace->fingerprint(),before);
         QCOMPARE(editor(workspace)->toPlainText(),typed);QCOMPARE(status(workspace),kDraft);QVERIFY(workspace->hasDrafts());
         QCOMPARE(workspace->findChild<QLabel *>("workspaceApproval")->text(),QString("Not approved to run"));
+        // The same stored code is no longer approved by the new service process.
+        QVERIFY(!readCode(window)["approved"].toBool());
         save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
         QCOMPARE(readCode(window)["modules"].toArray()[0].toObject()["source"].toString(),typed);
+        QCOMPARE(approval(workspace),QString("Not approved to run"));
+    }
+
+    void approveMakesCodeRunnable() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("approve.dhwb")));
+        QVERIFY(window.ownsService());
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("def check(ctx, event):\n    pass\n");
+        save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace->fingerprint(),readCode(window)["fingerprint"].toString(),5000);
+        auto code=readCode(window);QSignalSpy finished(&window,&MainWindow::operationFinished);
+        window.submit({{"action","binding_save"},{"event","cell_change"},{"scope",QJsonObject{{"kind","range"},{"reference","Sheet1!A1:B2"}}},{"module","supplies"},{"function","check"},{"required",false},{"fingerprint",code["fingerprint"]}});
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(),1,10000);QVERIFY2(finished[0][0].toBool(),qPrintable(issues(window)));
+        code=readCode(window);QTRY_COMPARE_WITH_TIMEOUT(workspace->fingerprint(),code["fingerprint"].toString(),10000);
+        QCOMPARE(approval(workspace),QString("Not approved to run"));QVERIFY(!code["approved"].toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(reviewAction(workspace)->isEnabled(),5000);
+        QCOMPARE(reviewAction(workspace)->iconText(),QString("Review & approve"));
+        // The channel refuses keys that are malformed or name another workbook, without writing.
+        QVERIFY(!window.grantCodeApproval("not-a-key"));
+        QVERIFY(!window.grantCodeApproval(QUuid::createUuid().toString(QUuid::WithoutBraces)+":"+code["fingerprint"].toString()));
+        QVERIFY(!window.grantCodeApproval(code["activation_key"].toString().toUpper()));
+        QVERIFY(!readCode(window)["approved"].toBool());
+        const auto seen=review(workspace,true);
+        QVERIFY(seen.shown);QCOMPARE(seen.title,QString("Approve Python code for approve.dhwb?"));
+        QCOMPARE(seen.fingerprint,code["fingerprint"].toString());QCOMPARE(seen.warning,kApprovalWarning);
+        QVERIFY2(seen.changes.contains("supplies") && seen.changes.contains("Nothing has been approved in this session."),qPrintable(seen.changes));
+        QVERIFY(seen.hasBindings);QVERIFY2(seen.bindings.contains("check") && seen.bindings.contains("'Sheet1'!A1:B2"),qPrintable(seen.bindings));
+        QVERIFY(seen.hasApprove);QVERIFY(!seen.hasKey);
+        QTRY_COMPARE_WITH_TIMEOUT(approval(workspace),QString("Approved for this session"),10000);
+        QVERIFY(readCode(window)["approved"].toBool());
+        QVERIFY2(!issues(window).contains(code["activation_key"].toString()),"the key is never logged");
+        // Reviewing approved code shows it without offering to approve again.
+        const auto again=review(workspace,false);
+        QVERIFY(again.shown);QCOMPARE(again.notice,QString("This code is already approved for this session."));QVERIFY(!again.approveEnabled);
+    }
+
+    void editAfterApprovalReturnsToNotApproved() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("reapprove.dhwb")));
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("pens = 1\n");
+        save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(reviewAction(workspace)->isEnabled(),5000);
+        QVERIFY(approveCode(workspace));
+        QVERIFY(createModule(workspace,"orders"));editor(workspace)->setPlainText("orders = 1\n");
+        save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(approval(workspace),QString("Not approved to run"),10000);
+        QVERIFY(!readCode(window)["approved"].toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(reviewAction(workspace)->isEnabled(),5000);
+        const auto seen=review(workspace,false);
+        QVERIFY(seen.shown);QVERIFY2(seen.changes.contains("orders"),qPrintable(seen.changes));
+        QVERIFY2(!seen.changes.contains("supplies"),qPrintable(seen.changes));
+        QVERIFY(!seen.changes.contains("Nothing has been approved"));QVERIFY(seen.approveEnabled);QVERIFY(!seen.hasBindings);
+        QVERIFY(approveCode(workspace));QVERIFY(readCode(window)["approved"].toBool());
+    }
+
+    void changedCodeDuringReviewIsRefused() {
+        QTemporaryDir temp;const auto path=temp.filePath("review.dhwb");StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,path));
+        auto *workspace=openWorkspace(window);QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("pens = 1\n");
+        save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace->fingerprint(),readCode(window)["fingerprint"].toString(),5000);
+        const auto shown=workspace->fingerprint();QTRY_VERIFY_WITH_TIMEOUT(reviewAction(workspace)->isEnabled(),5000);
+        bool edited=false;
+        const auto seen=review(workspace,true,[&]{edited=editModuleDirectly(path,"pens = 2\n");});
+        QVERIFY(seen.shown);QVERIFY(edited);QCOMPARE(seen.fingerprint,shown);
+        QTRY_COMPARE_WITH_TIMEOUT(workspaceMessage(workspace),QString("The stored code changed while it was being reviewed. Review it again."),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(!workspace->fingerprint().isEmpty() && workspace->fingerprint()!=shown,10000);
+        QCOMPARE(approval(workspace),QString("Not approved to run"));QVERIFY(!readCode(window)["approved"].toBool());
+        // Restoring the reviewed code proves its key was never sent.
+        QVERIFY(editModuleDirectly(path,"pens = 1\n"));QVERIFY(refreshWindow(window));
+        QTRY_COMPARE_WITH_TIMEOUT(workspace->fingerprint(),shown,10000);
+        QVERIFY(!readCode(window)["approved"].toBool());QCOMPARE(approval(workspace),QString("Not approved to run"));
+    }
+
+    void attachedServiceShowsKeyAndCannotApprove() {
+        QTemporaryDir temp;QJsonObject service;StartupOptions ownerOptions;ownerOptions.automaticWorkbook=false;
+        MainWindow owner(ownerOptions);observeOwnedServiceStartup(owner,service);
+        const auto path=temp.filePath("attached.dhwb");QVERIFY(boot(owner,path));QVERIFY(!service["token"].toString().isEmpty());
+        auto *ownerWorkspace=openWorkspace(owner);QVERIFY(createModule(ownerWorkspace,"supplies"));editor(ownerWorkspace)->setPlainText("pens = 1\n");
+        save(ownerWorkspace);QTRY_COMPARE_WITH_TIMEOUT(status(ownerWorkspace),kSaved,10000);
+        StartupOptions options;options.automaticWorkbook=false;options.url=service["url"].toString();options.token=service["token"].toString();options.recoveryDirectory=temp.filePath("recovery");
+        MainWindow window(options);QVERIFY(boot(window,path,false));
+        QVERIFY(!window.ownsService());
+        auto *workspace=openWorkspace(window);QTRY_VERIFY_WITH_TIMEOUT(reviewAction(workspace)->isEnabled(),5000);
+        const auto code=readCode(window);const auto key=code["activation_key"].toString();QVERIFY(!key.isEmpty());
+        QVERIFY(!window.grantCodeApproval(key));
+        const auto seen=review(workspace,true);
+        QVERIFY(seen.shown);QVERIFY(!seen.hasApprove);QVERIFY(seen.hasKey);QCOMPARE(seen.key,key);
+        QCOMPARE(seen.notice,QString("This service was started separately. Its operator approves code by starting it with --approve-code %1.").arg(key));
+        QVERIFY(seen.hasCopy);QCOMPARE(seen.copied,key);QCOMPARE(seen.fingerprint,code["fingerprint"].toString());
+        QTest::qWait(300);
+        QVERIFY(!readCode(window)["approved"].toBool());QCOMPARE(approval(workspace),QString("Not approved to run"));
+    }
+
+    void approveDisabledWithDrafts() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);
+        QVERIFY(boot(window,temp.filePath("drafts.dhwb")));
+        auto *workspace=openWorkspace(window);
+        QVERIFY(!reviewAction(workspace)->isEnabled());
+        QVERIFY(createModule(workspace,"supplies"));editor(workspace)->setPlainText("pens = 1\n");
+        QVERIFY(!reviewAction(workspace)->isEnabled());
+        save(workspace);QTRY_COMPARE_WITH_TIMEOUT(status(workspace),kSaved,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(reviewAction(workspace)->isEnabled(),5000);
+        editor(workspace)->setPlainText("pens = 2\n");QCOMPARE(status(workspace),kDraft);
+        QVERIFY(!reviewAction(workspace)->isEnabled());
+        QCOMPARE(reviewAction(workspace)->toolTip(),QString("Save or discard your drafts before approving."));
+        const auto seen=review(workspace,true);QVERIFY(!seen.shown);
+        QVERIFY(!readCode(window)["approved"].toBool());
+        editor(workspace)->setPlainText("pens = 1\n");QVERIFY(!workspace->hasDrafts());
+        QVERIFY(reviewAction(workspace)->isEnabled());
     }
 
     void addressBoxShowsAndJumpsToName() {
