@@ -274,10 +274,12 @@ EXPECTED_SCHEMA3 = expected_schema(SCHEMA+METADATA_SCHEMA)
 
 
 class Workbook:
-    def __init__(self, path, create=False, readonly=False, handler=None, *, cancel_event=None):
+    def __init__(self, path, create=False, readonly=False, handler=None, *, cancel_event=None, repair=False):
         create, readonly = boolean(create, "create"), boolean(readonly, "readonly")
         self.path = Path(path).expanduser().resolve()
         self.readonly, self.handler = readonly, handler
+        self.repair=boolean(repair,'repair')
+        self.relational_issues=[]
         self.lock = threading.RLock()
         self.undo, self.redo = [], []
         self.dependencies=DependencyIndex()
@@ -371,13 +373,19 @@ class Workbook:
         deadline = getattr(self,"_opening_deadline",time.monotonic()+5) if deadline is None else deadline
         with sql_deadline(db,deadline,cancel_event=self._read_cancel_event):
             signature=schema_signature(db)
-            require(signature in (EXPECTED_SCHEMA,EXPECTED_SCHEMA3),
+            reserved=[row for row in signature if row[1] in {entry[1] for entry in EXPECTED_SCHEMA3}]
+            require(signature in (EXPECTED_SCHEMA,EXPECTED_SCHEMA3) or reserved==EXPECTED_SCHEMA3,
                     "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
             meta = db.execute("SELECT format_version,revision,workbook_id FROM dh_meta WHERE singleton=1").fetchall()
-            require(len(meta) == 1 and meta[0][0] in (1,2,3) and type(meta[0][1]) is int and meta[0][1] >= 0,
+            require(len(meta) == 1 and meta[0][0] in (1,2,3,4) and type(meta[0][1]) is int and meta[0][1] >= 0,
                     "FORMAT_VERSION", "Unsupported or invalid native format", 409)
-            require(signature == (EXPECTED_SCHEMA3 if meta[0][0]==3 else EXPECTED_SCHEMA),"FORMAT_VERSION","Native schema/version mismatch",409)
-            if meta[0][0]==3:
+            if meta[0][0]==4:
+                from . import relational
+                registered=relational.validate_schema(db,signature,SCHEMA+METADATA_SCHEMA)
+                self.relational_issues=relational.validate_data(db,registered,deadline,repair=self.repair)
+            else:
+                require(signature == (EXPECTED_SCHEMA3 if meta[0][0]==3 else EXPECTED_SCHEMA),"FORMAT_VERSION","Native schema/version mismatch",409)
+            if meta[0][0]>=3:
                 from .metadata import validate
                 record_count=record_cells=0
                 for count,(namespace,identifier,payload) in enumerate(db.execute("SELECT namespace,id,substr(payload,1,1048577) FROM dh_objects"),1):
@@ -423,7 +431,7 @@ class Workbook:
                 require(sheet_valid,"INVALID_FORMAT","Native workbook contains orphaned cell references",409)
                 require(meta[0][0]>=2,"FORMAT_VERSION","Temporal inputs require native format 2",409)
                 typed({"source":source,"kind":kind,"style":{}})
-            if meta[0][0]==3:
+            if meta[0][0]>=3:
                 require(db.execute("PRAGMA foreign_key_check(dh_objects)").fetchone() is None,
                         "INVALID_FORMAT","Native metadata contains orphaned sheet references",409)
 
@@ -449,7 +457,10 @@ class Workbook:
     def info(self):
         with self.lock:
             self.refresh()
+            from .relational import tables
             return {"id": self.id, "path": str(self.path), "state": self.state(), "readonly": self.readonly,
+                    "tables":[dict(id=item['id'],name=item['name']) for item in tables(self.db)],"queries":[],
+                    "repair":self.repair,"relational_issues":self.relational_issues,
                     "sheets": [{"id": s, "name": n} for s, n in self.db.execute("SELECT id,name FROM sheets ORDER BY position,id")],
                     "undo": self.undo[-1][0] if self.undo else None, "redo": self.redo[-1][0] if self.redo else None,
                     "storage": "stored", "calculation": "evaluated_on_read", "format_version": self.db.execute("SELECT format_version FROM dh_meta").fetchone()[0]}
@@ -662,6 +673,8 @@ class Workbook:
                     validate_sheet_names([name for _,name in catalog])
                     rows=self.db.execute("SELECT sheet_id,row,col,source,kind,style FROM cells ORDER BY sheet_id,row,col LIMIT ?",(MAX_CELLS+1,))
                     result={"state":self.state(),"sheets":[{"name":name,"cells":[]} for _,name in catalog]}
+                    from .relational import objects
+                    result['native_omissions']=[item['name'] for _,item in objects(self.db)]
                     targets={key:result["sheets"][index]["cells"] for index,(key,_) in enumerate(catalog)}
                     calc=self.calculator(seconds=2); size=0
                     for count,(sheet,row,col,source,kind,style) in enumerate(rows,1):
@@ -690,6 +703,8 @@ class Workbook:
 
     def import_workbook(self,request):
         from .interchange import validate_sheet_names
+        from .relational import objects
+        require(not objects(self.db),"DESTINATION_NOT_EMPTY","Whole-workbook import requires a destination without tables or saved queries")
         require(self.db.execute("SELECT 1 FROM cells LIMIT 1").fetchone() is None,"DESTINATION_NOT_EMPTY","Whole-workbook import requires an empty destination; create a new workbook")
         sheets=request.get("sheets")
         require(isinstance(sheets,list) and all(isinstance(s,dict) for s in sheets),"INVALID_ARGUMENT","sheets must be an array of sheet objects")
@@ -879,13 +894,19 @@ class Workbook:
                     raise EngineError("INVALID_ARGUMENT","Request text must be valid Unicode") from error
                 require("label" not in request or isinstance(request["label"],str),"INVALID_ARGUMENT","Operation label must be text")
                 kind = request.get("action")
-                structural = isinstance(kind, str) and (kind.startswith("sheet_") or kind == "workbook_import" or kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"))
+                require(isinstance(kind,str),'INVALID_ARGUMENT','Operation action must be Text')
+                require(not self.relational_issues,'DATA_REPAIR_REQUIRED','Use the explicit restricted repair interface before ordinary mutations',409)
+                from . import relational
+                sheet_structural = isinstance(kind, str) and (kind.startswith("sheet_") or kind == "workbook_import" or kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"))
+                structural=sheet_structural or kind in relational.STRUCTURAL
                 from . import records
                 record_context=records.capture(self)
-                before_catalog=self.structure_hook(operation,request,'before',None) if structural else None
+                before_catalog=self.structure_hook(operation,request,'before',None) if sheet_structural else None
                 reference_report = {}
                 sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
-                if kind=='list_edit':
+                if kind in relational.ACTIONS:
+                    reference_report=relational.mutate(self,request)
+                elif kind=='list_edit':
                     from .record_operations import edit
                     edit(self,request)
                 elif kind in ('list_declare','list_reconcile','list_forget'):
@@ -1056,7 +1077,7 @@ class Workbook:
                     reference_report = self.delete_sheet(target)
                 else:
                     raise EngineError("UNSUPPORTED_OPERATION", f"Operation is not available: {kind}")
-                if structural:self.structure_hook(operation,request,'after',before_catalog)
+                if sheet_structural:self.structure_hook(operation,request,'after',before_catalog)
                 self.run_hooks(operation)
                 records.finish(self,request,record_context)
                 self.check_operation()

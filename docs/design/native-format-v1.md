@@ -1,4 +1,25 @@
-# Development native formats v1, v2 and v3
+# Development native formats v1 through v4
+
+## Structured table format v4
+
+The first managed table creation upgrades v1/v2/v3 transactionally to v4. It adds
+workbook-level `dh_relational(kind,id,payload)` metadata, independent of sheets,
+plus catalog-registered ordinary SQLite user tables. Each table has stable table
+and column UUIDs and `_dh_row_id INTEGER PRIMARY KEY AUTOINCREMENT` identity.
+Independent SQLite inserts obtain identities without Python callbacks. API row
+identities use decimal strings. Native copy/reopen validates the supported table
+DDL against its catalog and streams type validation within the opening budget.
+Unknown tables/triggers/schema changes remain rejected.
+
+The implemented first tier creates/inspects/drops empty tables through shared
+managed operations, REST, CLI/SDK and Data → Tables and queries. Required handlers
+must explicitly define `on_table_structure(context,event)`; hook failure rolls
+back table DDL, metadata upgrades and generated cell edits together. Whole-workbook
+imports reject relational destinations; sheet XLSX/ODS exports name omitted
+relational objects. Data/schema editing, relationships and query work follow in
+the [relational plan](relational-workbench-plan.md).
+
+The sections below describe the earlier formats and their retained behavior.
 
 New files use 8-KiB SQLite pages to keep common 1-KiB Text cells inline. Existing
 files retain their page size; page geometry does not change the logical schema or
@@ -69,7 +90,7 @@ rotate the state token and discard session Undo/Redo. Formula values are derived
 within read snapshots rather than persisted, so reopening never trusts an old
 calculation cache. There is no replay of historical changes.
 
-Only the exact shared v1/v2 physical schema is accepted. Additional tables, schema edits, triggers,
+For v1–v3, only the exact corresponding physical schema is accepted. Additional tables, schema edits, triggers,
 metadata changes or newer versions require reopening a compatible file; the
 preview does not attempt repair. User tables and managed SQL are later work.
 Validation requires workbook/sheet UUIDs, valid sheet names, distinct nonnegative

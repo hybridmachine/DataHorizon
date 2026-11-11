@@ -19,6 +19,9 @@ class QToolBar;
 class QPushButton;
 class FrozenPanes;
 class QTimer;
+class QMenu;
+class QStackedWidget;
+class RelationalWorkbench;
 
 struct StartupOptions { QString url, token, handler, recoveryDirectory, initialWorkbook, viewStatePath; bool automaticWorkbook = true; };
 
@@ -51,6 +54,12 @@ protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
+    void showRelational(bool visible);
+    RelationalWorkbench *m_relational=nullptr;
+    QStackedWidget *m_objectStack=nullptr;
+    QList<QMenu *> m_sheetMenus;
+    QList<QAction *> m_sheetFileActions;
+    bool m_relationalActive=false;
     quint64 m_calculationGeneration=0;
     QString m_activeOperationJob;
     bool m_jobClosing=false,m_allowJobClose=false;

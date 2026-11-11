@@ -44,6 +44,7 @@ add_library(datahorizon_desktop STATIC
     desktop/restclient.cpp desktop/restclient.h desktop/servicepaths.cpp desktop/servicepaths.h
     desktop/sheetmodel.cpp desktop/sheetmodel.h desktop/viewportcalculations.h
     desktop/mainwindow.cpp desktop/mainwindow.h desktop/frozentoprow.h)
+target_sources(datahorizon_desktop PRIVATE desktop/relationalworkbench.cpp desktop/relationalworkbench.h)
 target_link_libraries(datahorizon_desktop PUBLIC Qt6::Widgets Qt6::Network)
 target_include_directories(datahorizon_desktop PUBLIC desktop)
 target_compile_definitions(datahorizon_desktop PRIVATE

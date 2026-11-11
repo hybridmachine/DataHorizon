@@ -178,6 +178,16 @@ class WorkbookClient:
     def declare_list(self,identifier,sheet='Sheet1',**spec):
         return self.apply('list_declare',sheet,id=identifier,spec=spec)
 
+    def tables(self):
+        self._ensure_open()
+        return self.client.request(self.base+'/tables',dict(expected_state=self.state))
+
+    def create_table(self,name,columns):
+        return self.apply('table_create',name=name,columns=columns)
+
+    def drop_table(self,table):
+        return self.apply('table_drop',table=table)
+
     def records(self,identifier,sheet='Sheet1',**criteria):
         self._ensure_open()
         return self.client.request(self.base+'/records/read',dict(id=identifier,sheet=sheet,expected_state=self.state,**criteria))

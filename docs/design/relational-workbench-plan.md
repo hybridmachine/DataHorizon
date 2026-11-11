@@ -1,10 +1,10 @@
 # Structured tables and query workbench implementation plan
 
-Status: planned first M8 increment, requested November 9, 2026. This plan
+Status: first M8 increment in implementation, requested November 9, 2026. This plan
 defines ten implementation tasks for structured tables, relationships and a
 read-only SQL workbench. It builds on the existing managed execution engine,
 declared-list records and job infrastructure. Implementation evidence is recorded
-as work lands; this document does not mark the features implemented.
+as work lands in the completion ledger; later tasks retain their planned status.
 
 The intended result is a workbook containing Customers and Orders tables: users
 can create them from sheet selections, enforce keys and a relationship, edit
@@ -572,8 +572,8 @@ separate contracts.
 
 | Task | Implementation | Automated evidence | Owner GUI acceptance |
 | --- | --- | --- | --- |
-| 1 | Planned | Pending | Wireframes supplied before feature code |
-| 2 | Planned | Pending | Pending |
+| 1 | Contracts, [Qt wireframes](relational-workbench-wireframes.md) and SQLite probes implemented; [PR 115](https://github.com/hybridmachine/DataHorizon/pull/115) | [Five isolated SQLite contract probes pass](evidence/relational-task1.json) | Wireframes supplied before feature code; physical acceptance later |
+| 2 | Native v4 empty-table storage, managed hooks, catalog, SDK/CLI and Qt shell implemented; [PR 116](https://github.com/hybridmachine/DataHorizon/pull/116) | [224 Qt checks, 481 Python tests (19 optional skips), bundle-signature and installed smoke pass](evidence/relational-task2.json) | Pending |
 | 3 | Planned | Pending | Pending |
 | 4 | Planned | Pending | Pending |
 | 5 | Planned | Pending | Pending |

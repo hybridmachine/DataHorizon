@@ -32,7 +32,8 @@ from .list_export import export_list
 from .functions import function_catalog
 
 CAPABILITIES = {
-    "api_version": 1, "format_version": 3, "supported_format_versions": [1,2,3], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
+    "api_version": 1, "format_version": 4, "supported_format_versions": [1,2,3,4], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
+    "structured_tables":True,"table_types":["text","integer","number","boolean","date","time","datetime"],
     "temporal_types": ["date","time","datetime"], "calculation_timezone": "UTC",
     "max_style_cells":MAX_CELLS, "max_summary_cells":MAX_CELLS, "max_viewport_cells": 4096, "max_clipboard_cells":MAX_CELLS, "max_request_bytes": 4 * 1024 * 1024,
     "formulas": ["arithmetic", "references", "concatenation", *sorted(SUPPORTED_FUNCTIONS)],
@@ -44,7 +45,10 @@ CAPABILITIES = {
     "max_concurrent_requests":16, "max_header_bytes":65536, "request_read_timeout_seconds":10,
 }
 
+CAPABILITIES['operations'].extend(['table_create','table_drop'])
+
 ROUTES = {
+    "/v1/workbooks/{workbook}/tables":("post","Read the state-checked structured table catalog"),
     "/v1/workbooks/{workbook}/operation-jobs":("post","Stage a reviewed edit/CSV or frozen find/list job; never starts writes"),
     "/v1/workbooks/{workbook}/operation-jobs/{job}":("get","Inspect durable job status and batch receipts"),
     "/v1/workbooks/{workbook}/operation-jobs/{job}/append":("post","Append up to 1,000 explicitly typed edits"),
@@ -210,6 +214,8 @@ def openapi():
         actions[action]=(['id']+list(extra),{'sheet':sheet,'id':{'type':'string'},**extra},example)
     for action in ('metadata_set','metadata_delete'):
         actions[action]=(['namespace','id']+(['payload'] if action=='metadata_set' else []),{'sheet':sheet,'namespace':{'type':'string','enum':['presentation','list']},'id':{'type':'string','minLength':1,'maxLength':64},'payload':{'type':'object'}},{'namespace':'presentation','id':'view',**({'payload':{'frozen_rows':1}} if action=='metadata_set' else {})})
+    from .relational_api import install as install_relational_schemas
+    install_relational_schemas(schemas,actions)
     for action, (required, properties, example) in actions.items():
         schema_name = "".join(word.title() for word in action.split("_"))+"Operation"
         mapping[action] = "#/components/schemas/"+schema_name
@@ -276,7 +282,7 @@ def openapi():
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             operation["requestBody"] = {"required": True, "content": {"application/json": {"schema": schema}}}
@@ -525,6 +531,9 @@ class Service(ThreadingHTTPServer):
                 if action=='release':return jobs.release(identifier)
             raise EngineError('NOT_FOUND','Unknown operation job action',404)
 
+        if method=='POST' and suffix==['tables']:
+            from .relational import catalog
+            return catalog(book,body)
         if method=='POST' and suffix==['records','copy']:
             from .record_operations import copy
             return copy(book,body)

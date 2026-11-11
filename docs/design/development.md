@@ -120,6 +120,18 @@ types, Cut restrictions and omitted/error-value guards remain in force.
 
 ## Everyday use
 
+Data → Tables and queries opens the initial structured-table workbench. Create
+an empty table with named typed columns, inspect its schema, drop an empty table,
+or return to sheets. The first table write upgrades native storage to v4;
+File → Save a copy can preserve a version for older readers before upgrading.
+Table creation/drop run required `on_table_structure` hooks. A sheet-only handler
+must explicitly opt in before these operations are allowed.
+
+Managed CLI commands `tables`, `table-create NAME` (a column-definition JSON array
+on stdin) and `table-drop NAME` use the same REST engine. SDK callers use
+`book.tables()`, `create_table(name, columns)` and `drop_table(name)`. Populated
+table editing and SQL querying remain later tasks in the current implementation.
+
 New creates a recoverable untitled native workbook. Submitted edits store
 automatically. Save a copy creates a consistent snapshot at a new path. First
 Save on an untitled file switches to the permanent copy; the recovery source

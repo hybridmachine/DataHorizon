@@ -36,11 +36,15 @@ def _receive(pipe):
 
 
 def supports_structure(path):
+    return supports_event(path,'on_structure')
+
+
+def supports_event(path,event):
     """Explicit top-level opt-in without executing the trusted module in service."""
     try:
         with Path(path).open('rb') as source:data=source.read(1024*1024+1)
         if len(data)>1024*1024:return False
-        return any(isinstance(node,ast.FunctionDef) and node.name=='on_structure' for node in ast.parse(data).body)
+        return any(isinstance(node,ast.FunctionDef) and node.name==event for node in ast.parse(data).body)
     except (OSError,SyntaxError,ValueError):return False
 
 
