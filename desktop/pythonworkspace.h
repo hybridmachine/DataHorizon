@@ -12,24 +12,32 @@
 class CodeEditor;
 class MacroDeclarationPanel;
 class NamesPanel;
+class QCheckBox;
+class QComboBox;
+class QFormLayout;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QPlainTextEdit;
 class QPushButton;
 class QShortcut;
 class QStackedWidget;
+class QTabWidget;
 
 // Separate top-level window for workbook Python. It reads the code catalog
 // through REST and routes every write through submitRequested to the owning
 // window's managed operation path; it never calls /operations itself.
 // Editor contents are local drafts until Save. Nothing here imports or runs
-// workbook code.
+// workbook code: Run asks the service to run approved, stored code through the
+// same managed operation path, and the Output tab shows its receipt.
 class PythonWorkspace : public QMainWindow {
     Q_OBJECT
 public:
     explicit PythonWorkspace(RestClient *client,QWidget *owner);
     void bind(const QJsonObject &info);
-    void setLocked(bool locked);
+    // Locked while the owning window is busy or an earlier operation's
+    // outcome is unknown; unknown says which, so Run can explain itself.
+    void setLocked(bool locked,bool unknown=false);
     // Save/Discard/Cancel for unsaved drafts. False means the caller stays
     // open: Cancel, or Save started (its outcome arrives as a receipt).
     // True after Discard only records the decision: the caller applies it with
@@ -67,14 +75,20 @@ public:
     void setApprovalOwner(std::function<bool()> ownsService,std::function<bool(const QString &key)> grant){m_ownsService=std::move(ownsService);m_grant=std::move(grant);}
     // The service process stopped: its approvals are gone with it.
     void serviceStopped();
+    // Checks one macro argument against its declared scalar type the way the
+    // service does. Returns the problem, or an empty string with *value set.
+    static QString argumentValue(const QJsonObject &parameter,const QString &text,QJsonValue *value);
 signals:
     void submitRequested(QJsonObject operation);
     // A read found the workbook state stale; the owning window refreshes.
     void refreshRequested();
     void pickFromSheetRequested(bool on);
     void issue(QString message);
+    // Asks the owning window to cancel the run this workspace has in flight.
+    void cancelRunRequested();
 protected:
     void closeEvent(QCloseEvent *event) override;
+    bool eventFilter(QObject *object,QEvent *event) override;
 private:
     struct Draft {
         QString moduleId;  // empty for a module not yet stored
@@ -84,7 +98,12 @@ private:
         QString workbookId;       // drafts never save into another workbook
         bool conflict=false;      // its own stored module changed since the base
     };
-    enum class Pending {None,Save,Rename,Delete};
+    enum class Pending {None,Save,Rename,Delete,Run};
+    struct Argument {
+        QJsonObject parameter;
+        QLineEdit *field;
+        QCheckBox *null;  // only for a nullable parameter
+    };
     void readCatalog();
     void applyCatalog(const QJsonObject &catalog);
     void refreshList();
@@ -121,6 +140,14 @@ private:
     void pollApproval(const QJsonObject &shown,quint64 generation,QDeadlineTimer deadline,QString refreshedFor);
     void approvalFailed(const QString &text);
     QJsonArray catalogModules() const{return m_catalog["modules"].toArray();}
+    void refreshMacroSelect();
+    void loadArguments();
+    void updateRunState();
+    QString runBlockedReason() const;
+    QJsonObject selectedMacro() const;
+    void runMacro();
+    void showRunReceipt(const QJsonObject &receipt);
+    bool activateFrame(const QString &line);
 
     RestClient *m_client;
     QJsonObject m_info,m_catalog;
@@ -142,6 +169,10 @@ private:
     QHash<QString,QJsonObject> m_approvedCatalogs;
     quint64 m_approvalGeneration=0;
     bool m_approvalInFlight=false;
+    bool m_unknown=false;           // the owning window has an unresolved outcome
+    bool m_runUnknown=false,m_cancelRequested=false;
+    QJsonObject m_argumentsFor;     // the macro whose fields are shown
+    QList<Argument> m_arguments;
     QString m_staleReviewFingerprint;  // a pre-approval read was stale; compared after the refresh
     inline static bool s_skipHistoryPrompt=false;
 
@@ -158,4 +189,10 @@ private:
     QWidget *m_macroPage,*m_namesPage;
     MacroDeclarationPanel *m_panel;
     NamesPanel *m_names;
+    QTabWidget *m_tabs;
+    QWidget *m_outputTab,*m_argumentsBox;
+    QComboBox *m_macroSelect;
+    QFormLayout *m_argumentsLayout;
+    QPushButton *m_run,*m_cancelRun;
+    QPlainTextEdit *m_output;
 };

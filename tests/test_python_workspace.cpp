@@ -24,13 +24,18 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QProcess>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QStackedWidget>
 #include <QTabBar>
+#include <QTabWidget>
 #include <QTableView>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTextDocument>
 #include <QTest>
@@ -291,6 +296,132 @@ const QString kApprovalWarning=QStringLiteral("Approved code runs with your own 
 const QString kPicking=QStringLiteral("Picking a reference for Python · Esc to cancel");
 const QString kDraft=QStringLiteral("Draft · not saved to the workbook");
 const QString kSaved=QStringLiteral("Saved in workbook");
+
+// The Supplies sheet: Item/Quantity/Unit price/Amount with three rows, a
+// two-decimal total in D6, and names PenQuantity (B3) and Total (D6).
+bool buildSupplies(MainWindow &window) {
+    if(!showNewSheet(window,"Supplies"))return false;
+    QJsonArray cells;
+    const QList<QStringList> rows{{"Item","Quantity","Unit price","Amount"},{"Notebook","2","3.50","=B2*C2"},{"Pen","4","1.25","=B3*C3"},{"Folder","3","2.00","=B4*C4"}};
+    for(int row=0;row<rows.size();++row)for(int col=0;col<4;++col) {
+        QJsonObject cell{{"row",row+1},{"col",col+1},{"source",rows[row][col]}};
+        if(col==3 && row>0)cell["style"]=QJsonObject{{"format","fixed2"}};
+        cells.append(cell);
+    }
+    cells.append(QJsonObject{{"row",6},{"col",4},{"source","=SUM(D2:D4)"},{"style",QJsonObject{{"format","fixed2"}}}});
+    return apply(window,{{"action","edit"},{"cells",cells}}) && saveName(window,"PenQuantity","'Supplies'!B3") && saveName(window,"Total","'Supplies'!D6");
+}
+
+// Line 5 raises when the pen count would drop below zero.
+const QString kSuppliesSource=QStringLiteral(
+    "def restock_pens(ctx, extra):\n"
+    "    pens = ctx.value(\"PenQuantity\")\n"
+    "    print(\"checked pens\", pens)\n"
+    "    if pens + extra < 0:\n"
+    "        raise ValueError(\"not enough pens\")\n"
+    "    ctx.set(\"PenQuantity\", pens + extra)\n"
+    "    return ctx.value(\"Total\")\n"
+    "\n\n"
+    "def spin(ctx):\n"
+    "    while True:\n"
+    "        pass\n"
+    "\n\n"
+    "def shape(ctx):\n"
+    "    return ctx.value(\"'Supplies'!B2:B4\")\n");
+
+QJsonArray suppliesMacros() {
+    return {QJsonObject{{"name","restock_pens"},{"parameters",QJsonArray{QJsonObject{{"name","extra"},{"type","integer"},{"nullable",false},{"default",2}}}},{"result",QJsonObject{{"type","number"},{"nullable",false}}}},
+            QJsonObject{{"name","spin"},{"parameters",QJsonArray{}},{"result",QJsonObject{{"type","number"},{"nullable",true}}}},
+            QJsonObject{{"name","shape"},{"parameters",QJsonArray{}},{"result",QJsonObject{{"type","number"},{"nullable",true}}}}};
+}
+
+QComboBox *macroSelect(PythonWorkspace *workspace){return workspace->findChild<QComboBox *>("macroSelect");}
+QPushButton *runButton(PythonWorkspace *workspace){return workspace->findChild<QPushButton *>("runButton");}
+QPushButton *cancelRunButton(PythonWorkspace *workspace){return workspace->findChild<QPushButton *>("cancelRunButton");}
+QPlainTextEdit *runOutput(PythonWorkspace *workspace){return workspace->findChild<QPlainTextEdit *>("runOutput");}
+QLineEdit *argumentField(PythonWorkspace *workspace,const QString &name){return workspace->findChild<QLineEdit *>("argument_"+name);}
+QString outputHeading(PythonWorkspace *workspace){return runOutput(workspace)->toPlainText().section('\n',0,0);}
+bool chooseMacro(PythonWorkspace *workspace,const QString &text) {
+    auto *select=macroSelect(workspace);const int index=select->findText(text);
+    if(index<0)return false;select->setCurrentIndex(index);return true;
+}
+// The 1-based editor lines that carry a mark.
+QList<int> markedLines(PythonWorkspace *workspace) {
+    QList<int> lines;for(const auto &mark:editor(workspace)->extraSelections())lines.append(mark.cursor.blockNumber()+1);
+    return lines;
+}
+QString cell(MainWindow &window,int row,int col){return window.model()->data(window.model()->index(row,col)).toString();}
+
+// A workbook window with the Supplies sheet and an approved module holding
+// restock_pens and spin. The owned service's url and token are captured.
+struct RunSetup {
+    QTemporaryDir temp;StartupOptions options;QJsonObject service;
+    std::unique_ptr<MainWindow> window;PythonWorkspace *workspace=nullptr;
+    bool start(const QString &file,bool approve=true) {
+        options.automaticWorkbook=false;options.recoveryDirectory=temp.filePath("recovery");window=std::make_unique<MainWindow>(options);
+        observeOwnedServiceStartup(*window,service);
+        if(!boot(*window,temp.filePath(file)) || !buildSupplies(*window))return false;
+        workspace=openWorkspace(*window);if(!workspace)return false;
+        if(!apply(*window,{{"action","module_save"},{"name","supplies"},{"source",kSuppliesSource},{"macros",suppliesMacros()},{"fingerprint",readCode(*window)["fingerprint"]}}))return false;
+        const auto stored=readCode(*window)["fingerprint"].toString();
+        if(!QTest::qWaitFor([&]{return workspace->fingerprint()==stored && reviewAction(workspace)->isEnabled();},10000))return false;
+        return !approve || approveCode(workspace);
+    }
+    bool run(const QString &macro) {
+        if(!chooseMacro(workspace,macro) || !QTest::qWaitFor([&]{return runButton(workspace)->isEnabled();},10000))return false;
+        runButton(workspace)->click();return true;
+    }
+};
+
+// Forwards every request to the real service, but can drop the reply of the
+// next macro run after the service has handled it, and can hold receipt
+// lookups (reconciliation) until released.
+class DroppingProxy : public QTcpServer {
+public:
+    bool dropNextRun=true,holdLookups=true;
+    int macroRuns=0;
+    explicit DroppingProxy(const QJsonObject &service):m_upstream(this) {
+        m_upstream.configure(service["url"].toString(),service["token"].toString());
+        connect(this,&QTcpServer::newConnection,this,[this]{
+            auto *socket=nextPendingConnection();connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
+            connect(socket,&QTcpSocket::readyRead,socket,[this,socket]{
+                const auto request=socket->property("request").toByteArray()+socket->readAll();socket->setProperty("request",request);
+                const auto end=request.indexOf("\r\n\r\n");if(end<0 || socket->property("handled").toBool())return;
+                const auto length=QRegularExpression("Content-Length: (\\d+)",QRegularExpression::CaseInsensitiveOption).match(QString::fromLatin1(request.left(end))).captured(1).toInt();
+                if(request.size()<end+4+length)return;
+                socket->setProperty("handled",true);
+                const auto path=QString::fromLatin1(request.left(request.indexOf("\r\n")).split(' ').at(1));
+                const bool post=request.startsWith("POST ");const auto body=QJsonDocument::fromJson(request.mid(end+4)).object();
+                const bool run=post && path.endsWith("/operations") && body["action"]=="macro_run";
+                if(run)++macroRuns;
+                const bool drop=run && dropNextRun;if(drop)dropNextRun=false;
+                const bool lookup=!post && path.contains("/operations/");
+                const QPointer<QTcpSocket> guarded=socket;
+                m_upstream.request(path,body,[this,guarded,drop,lookup](QJsonObject result,QString error){
+                    if(!guarded)return;
+                    // The service handled the run; the client only learns that it failed to hear back.
+                    if(drop){send(guarded,{{"code","UNAVAILABLE"},{"message","The reply was lost"}},"lost");return;}
+                    if(lookup && holdLookups){m_held.append({guarded,result,error});return;}
+                    send(guarded,result,error);
+                },post);
+            });
+        });
+    }
+    int heldLookups() const{return int(m_held.size());}
+    void releaseLookups() {
+        holdLookups=false;const auto held=m_held;m_held.clear();
+        for(const auto &reply:held)if(reply.socket)send(reply.socket,reply.result,reply.error);
+    }
+private:
+    struct Held{QPointer<QTcpSocket> socket;QJsonObject result;QString error;};
+    static void send(QTcpSocket *socket,const QJsonObject &result,const QString &error) {
+        const auto body=QJsonDocument(error.isEmpty() || !result.isEmpty()?result:QJsonObject{{"code","UNAVAILABLE"},{"message",error}}).toJson(QJsonDocument::Compact);
+        socket->write(QByteArray("HTTP/1.1 ")+(error.isEmpty()?"200 OK":"409 Conflict")+"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(body.size())+"\r\n\r\n"+body);
+        socket->disconnectFromHost();
+    }
+    RestClient m_upstream;
+    QList<Held> m_held;
+};
 
 }
 
@@ -1284,6 +1415,163 @@ private slots:
         formulaPick->trigger();QVERIFY(formulaPick->isChecked());clickCell(window,1,1);
         QCOMPARE(source->text(),QString("=A1+B2"));QCOMPARE(editor(workspace)->toPlainText(),QString("x = \"'Supplies'!B1\"\n"));
         QTest::keyClick(source,Qt::Key_Escape);
+    }
+
+    void runUpdatesSheetAndReportsResult() {
+        RunSetup setup;QVERIFY(setup.start("run.dhwb"));auto &window=*setup.window;auto *workspace=setup.workspace;
+        auto *tabs=workspace->findChild<QTabWidget *>("workspaceTabs");QVERIFY(tabs);
+        QCOMPARE(tabs->count(),3);QCOMPARE(tabs->tabText(0),QString("Run"));QCOMPARE(tabs->tabText(1),QString("Output"));QCOMPARE(tabs->tabText(2),QString("Events"));
+        QCOMPARE(tabs->widget(2)->objectName(),QString("eventsTab"));
+        QStringList listed;for(int index=0;index<macroSelect(workspace)->count();++index)listed.append(macroSelect(workspace)->itemText(index));
+        QCOMPARE(listed,(QStringList{"supplies.restock_pens","supplies.spin","supplies.shape"}));
+        QVERIFY(chooseMacro(workspace,"supplies.restock_pens"));
+        QVERIFY(argumentField(workspace,"extra"));QCOMPARE(argumentField(workspace,"extra")->text(),QString("2"));
+        QVERIFY(!workspace->findChild<QCheckBox *>("argument_extra_null"));
+        QCOMPARE(cell(window,2,1),QString("4"));QTRY_COMPARE_WITH_TIMEOUT(cell(window,5,3),QString("18.00"),5000);
+        QVERIFY(setup.run("supplies.restock_pens"));
+        QCOMPARE(tabs->tabText(tabs->currentIndex()),QString("Output"));
+        QCOMPARE(outputHeading(workspace),QString("Running supplies.restock_pens…"));
+        QVERIFY(cancelRunButton(workspace)->isEnabled());QVERIFY(!runButton(workspace)->isEnabled());
+        QTRY_VERIFY_WITH_TIMEOUT(outputHeading(workspace).startsWith("Committed"),15000);
+        const auto output=runOutput(workspace)->toPlainText();
+        QCOMPARE(outputHeading(workspace),QString("Committed · returned 20.5 · 1 cells changed"));
+        QVERIFY2(output.contains("Log:\nchecked pens 4.0"),qPrintable(output));QVERIFY(!output.contains("Traceback:"));
+        QVERIFY(runOutput(workspace)->isReadOnly());QVERIFY(!cancelRunButton(workspace)->isEnabled());
+        QTRY_COMPARE_WITH_TIMEOUT(cell(window,2,1),QString("6"),10000);QTRY_COMPARE_WITH_TIMEOUT(cell(window,5,3),QString("20.50"),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(runButton(workspace)->isEnabled(),10000);
+    }
+
+    void undoReversesWholeMacroFromMainWindow() {
+        RunSetup setup;QVERIFY(setup.start("undo.dhwb"));auto &window=*setup.window;auto *workspace=setup.workspace;
+        QVERIFY(setup.run("supplies.restock_pens"));
+        QTRY_VERIFY_WITH_TIMEOUT(outputHeading(workspace).startsWith("Committed"),15000);
+        QTRY_COMPARE_WITH_TIMEOUT(cell(window,2,1),QString("6"),10000);
+        QAction *undo=nullptr;
+        QTRY_VERIFY_WITH_TIMEOUT([&]{for(auto *action:window.findChildren<QAction *>())if(action->text()=="Undo Run supplies.restock_pens")undo=action;return undo!=nullptr;}(),10000);
+        QVERIFY(undo->isEnabled());undo->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(cell(window,2,1),QString("4"),10000);QTRY_COMPARE_WITH_TIMEOUT(cell(window,5,3),QString("18.00"),10000);
+    }
+
+    void failureMarksLineAndLeavesSheet() {
+        RunSetup setup;QVERIFY(setup.start("failure.dhwb"));auto &window=*setup.window;auto *workspace=setup.workspace;
+        QVERIFY(chooseMacro(workspace,"supplies.restock_pens"));argumentField(workspace,"extra")->setText("-10");
+        QVERIFY(setup.run("supplies.restock_pens"));
+        QTRY_VERIFY_WITH_TIMEOUT(!outputHeading(workspace).startsWith("Running"),15000);
+        const auto output=runOutput(workspace)->toPlainText();
+        QVERIFY2(outputHeading(workspace)=="Rolled back",qPrintable(output));
+        QVERIFY2(output.contains("\nValueError: not enough pens\n"),qPrintable(output));
+        QVERIFY2(output.contains("Log:\nchecked pens 4.0"),qPrintable(output));
+        QVERIFY2(output.contains("Traceback:\n") && output.contains("File \"<workbook:supplies>\", line 5, in restock_pens"),qPrintable(output));
+        QCOMPARE(markedLines(workspace),QList<int>{5});
+        QTest::qWait(200);QCOMPARE(cell(window,2,1),QString("4"));QTRY_COMPARE_WITH_TIMEOUT(cell(window,5,3),QString("18.00"),5000);
+        // Return on a workbook frame, or double-clicking it, moves the editor there.
+        auto *out=runOutput(workspace);auto *code=workspace->findChild<CodeEditor *>("codeEditor");
+        code->clearMarks();code->moveCursor(QTextCursor::Start);
+        auto frame=out->document()->find("<workbook:supplies>");QVERIFY(!frame.isNull());
+        out->setTextCursor(frame);out->setFocus();QTest::keyClick(out,Qt::Key_Return);
+        QCOMPARE(markedLines(workspace),QList<int>{5});QCOMPARE(code->textCursor().blockNumber(),4);
+        code->clearMarks();code->moveCursor(QTextCursor::Start);
+        QTest::mouseDClick(out->viewport(),Qt::LeftButton,{},out->cursorRect(frame).center());
+        QCOMPARE(markedLines(workspace),QList<int>{5});QCOMPARE(code->textCursor().blockNumber(),4);
+        // A service frame is not a workbook line.
+        code->clearMarks();
+        auto service=out->document()->find("macro_runtime.py");QVERIFY(!service.isNull());
+        out->setTextCursor(service);QTest::keyClick(out,Qt::Key_Return);QVERIFY(markedLines(workspace).isEmpty());
+        // Editing the module clears the marks.
+        out->setTextCursor(frame);QTest::keyClick(out,Qt::Key_Return);QCOMPARE(markedLines(workspace),QList<int>{5});
+        code->moveCursor(QTextCursor::End);code->insertPlainText("\n");QVERIFY(markedLines(workspace).isEmpty());
+    }
+
+    void contextErrorShowsSpecificCode() {
+        RunSetup setup;QVERIFY(setup.start("context.dhwb"));auto *workspace=setup.workspace;
+        QVERIFY(setup.run("supplies.shape"));
+        QTRY_VERIFY_WITH_TIMEOUT(!outputHeading(workspace).startsWith("Running"),15000);
+        const auto output=runOutput(workspace)->toPlainText();
+        QVERIFY2(outputHeading(workspace)=="Rolled back",qPrintable(output));
+        QVERIFY2(output.contains("\nContext error: REFERENCE_SHAPE"),qPrintable(output));
+        QTRY_VERIFY_WITH_TIMEOUT(runButton(workspace)->isEnabled(),10000);
+    }
+
+    void cancelStopsSpinningMacro() {
+        RunSetup setup;QVERIFY(setup.start("cancel.dhwb"));auto *workspace=setup.workspace;
+        QVERIFY(setup.run("supplies.spin"));
+        QVERIFY(cancelRunButton(workspace)->isEnabled());
+        // Let the request reach the service before cancelling it.
+        QTest::qWait(400);QCOMPARE(outputHeading(workspace),QString("Running supplies.spin…"));
+        cancelRunButton(workspace)->click();
+        QTRY_VERIFY_WITH_TIMEOUT(!outputHeading(workspace).startsWith("Running"),10000);
+        QVERIFY2(outputHeading(workspace)=="Cancelled",qPrintable(runOutput(workspace)->toPlainText()));
+        QVERIFY(!cancelRunButton(workspace)->isEnabled());
+        QTRY_VERIFY_WITH_TIMEOUT(runButton(workspace)->isEnabled(),10000);
+    }
+
+    void badArgumentIsNotSent() {
+        RunSetup setup;QVERIFY(setup.start("arguments.dhwb"));auto &window=*setup.window;auto *workspace=setup.workspace;
+        QVERIFY(chooseMacro(workspace,"supplies.restock_pens"));QTRY_VERIFY_WITH_TIMEOUT(runButton(workspace)->isEnabled(),10000);
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto *field=argumentField(workspace,"extra");field->setText("two");runButton(workspace)->click();
+        QCOMPARE(admitted.count(),0);QVERIFY(field->property("invalid").toBool());
+        QCOMPARE(workspaceMessage(workspace),QString("extra needs a whole number."));
+        QVERIFY(runOutput(workspace)->toPlainText().isEmpty());
+        field->setText("3");QVERIFY(!field->property("invalid").toBool());
+        QCOMPARE(cell(window,2,1),QString("4"));
+        // Every declared scalar kind is checked the way the service checks it.
+        auto check=[](const QString &type,const QString &text,QJsonValue *value=nullptr){QJsonValue ignored;return PythonWorkspace::argumentValue({{"name","x"},{"type",type}},text,value?value:&ignored);};
+        QJsonValue value;
+        QVERIFY(check("integer","-12",&value).isEmpty());QCOMPARE(value.toInteger(),-12);
+        QVERIFY(!check("integer","1.5").isEmpty());QVERIFY(!check("integer","9007199254740992").isEmpty());
+        QVERIFY(check("number","1.5",&value).isEmpty());QCOMPARE(value.toDouble(),1.5);
+        QVERIFY(!check("number","nan").isEmpty());QVERIFY(!check("number","1e400").isEmpty());QVERIFY(!check("number","").isEmpty());
+        QVERIFY(check("boolean","true",&value).isEmpty());QCOMPARE(value,QJsonValue(true));QVERIFY(check("boolean","false",&value).isEmpty());QCOMPARE(value,QJsonValue(false));
+        QVERIFY(!check("boolean","yes").isEmpty());
+        QVERIFY(check("date","2026-11-10",&value).isEmpty());QCOMPARE(value.toString(),QString("2026-11-10"));
+        QVERIFY(!check("date","11/10/2026").isEmpty());QVERIFY(!check("date","2026-02-30").isEmpty());
+        QVERIFY(check("time","12:30:00.25",&value).isEmpty());QCOMPARE(value.toString(),QString("12:30:00.25"));QVERIFY(!check("time","24:00:00").isEmpty());QVERIFY(!check("time","12:30").isEmpty());
+        QVERIFY(check("datetime","2026-11-10T12:30:00",&value).isEmpty());QVERIFY(!check("datetime","2026-11-10 12:30:00").isEmpty());QVERIFY(!check("datetime","2026-11-10T12:30:00Z").isEmpty());
+        QVERIFY(check("text","",&value).isEmpty());QCOMPARE(value,QJsonValue(QString()));
+        QVERIFY(!check("text",QString(65537,'x')).isEmpty());
+    }
+
+    void runDisabledUntilApprovedWithReason() {
+        RunSetup setup;QVERIFY(setup.start("reasons.dhwb",false));auto &window=*setup.window;auto *workspace=setup.workspace;
+        QVERIFY(!runButton(workspace)->isEnabled());QCOMPARE(runButton(workspace)->toolTip(),QString("Approve the code before running (Review & approve)."));
+        editor(workspace)->setPlainText(kSuppliesSource+"\n# draft\n");QCOMPARE(status(workspace),kDraft);
+        QVERIFY(!runButton(workspace)->isEnabled());QCOMPARE(runButton(workspace)->toolTip(),QString("Save or discard your drafts before running."));
+        ModalDriver discard([](QWidget *modal){
+            auto *box=qobject_cast<QMessageBox *>(modal);if(!box || box->objectName()!="discardModuleDraft")return false;
+            box->button(QMessageBox::Discard)->click();return true;});
+        workspace->findChild<QPushButton *>("discardDraftButton")->click();QCOMPARE(discard.handled,1);QVERIFY(!workspace->hasDrafts());
+        QCOMPARE(runButton(workspace)->toolTip(),QString("Approve the code before running (Review & approve)."));
+        QVERIFY(approveCode(workspace));
+        QTRY_VERIFY_WITH_TIMEOUT(runButton(workspace)->isEnabled(),5000);
+        // A read-only window on the same file cannot run, whatever its approval.
+        StartupOptions options;options.automaticWorkbook=false;MainWindow reader(options);
+        QVERIFY(boot(reader,setup.temp.filePath("reasons.dhwb"),false,true));
+        auto *readOnly=openWorkspace(reader);QVERIFY(readOnly);QTRY_COMPARE_WITH_TIMEOUT(macroSelect(readOnly)->count(),3,5000);
+        QVERIFY(!runButton(readOnly)->isEnabled());QCOMPARE(runButton(readOnly)->toolTip(),QString("This workbook is read-only."));
+        // With no module there is nothing to run.
+        QTemporaryDir temp;StartupOptions emptyOptions;emptyOptions.automaticWorkbook=false;MainWindow empty(emptyOptions);
+        QVERIFY(boot(empty,temp.filePath("empty.dhwb")));auto *none=openWorkspace(empty);QVERIFY(none);
+        QCOMPARE(macroSelect(none)->count(),0);QVERIFY(!runButton(none)->isEnabled());QCOMPARE(runButton(none)->toolTip(),QString("No macro is declared in this workbook."));
+        Q_UNUSED(window);
+    }
+
+    void unknownOutcomeBlocksFurtherRuns() {
+        RunSetup setup;QVERIFY(setup.start("unknown-run.dhwb"));auto &window=*setup.window;auto *workspace=setup.workspace;
+        QVERIFY(!setup.service["url"].toString().isEmpty());
+        DroppingProxy proxy(setup.service);QVERIFY(proxy.listen(QHostAddress::LocalHost,0));
+        window.findChild<RestClient *>()->configure("http://127.0.0.1:"+QString::number(proxy.serverPort()),"proxy");
+        QVERIFY(setup.run("supplies.restock_pens"));
+        QTRY_COMPARE_WITH_TIMEOUT(outputHeading(workspace),QString("Outcome unknown"),15000);
+        QVERIFY(runOutput(workspace)->toPlainText().contains("The service did not confirm the result. It is being checked; do not run again until it is resolved."));
+        QTRY_VERIFY_WITH_TIMEOUT(proxy.heldLookups()>=1,5000);
+        QVERIFY(!runButton(workspace)->isEnabled());QVERIFY(!cancelRunButton(workspace)->isEnabled());
+        QCOMPARE(runButton(workspace)->toolTip(),QString("An earlier operation has an unknown outcome. Resolve it first."));
+        runButton(workspace)->click();QTest::qWait(200);QCOMPARE(proxy.macroRuns,1);
+        proxy.releaseLookups();
+        QTRY_VERIFY_WITH_TIMEOUT(outputHeading(workspace).startsWith("Committed · returned 20.5"),10000);
+        QTRY_COMPARE_WITH_TIMEOUT(cell(window,2,1),QString("6"),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(runButton(workspace)->isEnabled(),10000);QCOMPARE(proxy.macroRuns,1);
     }
 };
 

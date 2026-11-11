@@ -75,6 +75,10 @@ public:
     // process is not running, or when the key is malformed or names another
     // workbook than the open one. The outcome is read back from /code.
     bool grantCodeApproval(const QString &key);
+    // Requests cooperative cancellation of the operation in flight. It is sent
+    // directly, not through submit, because the window is busy with that
+    // operation; its final outcome still arrives as that operation's receipt.
+    void cancelPendingOperation();
 signals:
     // Emitted once when external picking ends; inserted is true when at least
     // one reference was inserted while it was armed.

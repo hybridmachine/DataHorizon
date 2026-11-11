@@ -9,12 +9,17 @@
 #include <QActionGroup>
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QDialog>
 #include <QDeadlineTimer>
 #include <QDialogButtonBox>
+#include <QDate>
 #include <QFileInfo>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QJsonDocument>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -28,15 +33,29 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QTabWidget>
+#include <QTime>
 #include <QTimer>
 #include <QToolBar>
 #include <QUuid>
 #include <QVBoxLayout>
+#include <cmath>
 
 namespace {
 const char *kNewPrefix="new:";
 QString draftStatus(){return QObject::tr("Draft · not saved to the workbook");}
 QString changedDuringReview(){return QObject::tr("The stored code changed while it was being reviewed. Review it again.");}
+// A traceback frame in a stored module, as the macro runtime names its file.
+const QRegularExpression &workbookFrame() {
+    static const QRegularExpression frame(QStringLiteral("File \"<workbook:([A-Za-z][A-Za-z0-9_]{0,63})>\", line (\\d+)"));
+    return frame;
+}
+// A scalar as the service's JSON text: 20.5, true, "text" or null.
+QString scalarText(const QJsonValue &value) {
+    if(value.isNull() || value.isUndefined())return QStringLiteral("null");
+    const auto text=QString::fromUtf8(QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact));
+    return text.mid(1,text.size()-2);
+}
 }
 
 PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(owner,Qt::Window),m_client(client) {
@@ -57,7 +76,8 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     auto *sideGroup=new QActionGroup(this);sideGroup->setExclusionPolicy(QActionGroup::ExclusionPolicy::ExclusiveOptional);sideGroup->addAction(m_showMacro);sideGroup->addAction(m_showNames);
     m_find=new QAction(tr("Find…"),this);m_find->setObjectName("findAction");m_find->setShortcut(QKeySequence::Find);m_find->setShortcutContext(Qt::WindowShortcut);addAction(m_find);
 
-    auto *splitter=new QSplitter(Qt::Horizontal);splitter->setObjectName("workspaceSplitter");setCentralWidget(splitter);
+    auto *vertical=new QSplitter(Qt::Vertical);vertical->setObjectName("workspaceVerticalSplitter");setCentralWidget(vertical);
+    auto *splitter=new QSplitter(Qt::Horizontal);splitter->setObjectName("workspaceSplitter");vertical->addWidget(splitter);
 
     auto *modulesColumn=new QWidget;auto *modulesLayout=new QVBoxLayout(modulesColumn);modulesLayout->setContentsMargins(4,4,4,4);
     modulesLayout->addWidget(new QLabel(tr("Modules")));
@@ -97,6 +117,32 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     m_names=new NamesPanel;namesLayout->addWidget(m_names,1);
     m_side->addWidget(m_namesPage);splitter->addWidget(m_side);
     splitter->setStretchFactor(0,1);splitter->setStretchFactor(1,4);splitter->setStretchFactor(2,2);
+
+    // Run, Output and Events share the bottom of the window.
+    m_tabs=new QTabWidget;m_tabs->setObjectName("workspaceTabs");vertical->addWidget(m_tabs);
+    vertical->setStretchFactor(0,3);vertical->setStretchFactor(1,1);
+    auto *runTab=new QWidget;runTab->setObjectName("runTab");auto *runLayout=new QVBoxLayout(runTab);runLayout->setContentsMargins(4,4,4,4);
+    auto *macroRow=new QHBoxLayout;runLayout->addLayout(macroRow);
+    auto *macroLabel=new QLabel(tr("Macro"));macroRow->addWidget(macroLabel);
+    m_macroSelect=new QComboBox;m_macroSelect->setObjectName("macroSelect");m_macroSelect->setAccessibleName(tr("Macro to run"));macroLabel->setBuddy(m_macroSelect);
+    m_macroSelect->setSizeAdjustPolicy(QComboBox::AdjustToContents);macroRow->addWidget(m_macroSelect);macroRow->addStretch(1);
+    m_argumentsBox=new QWidget;m_argumentsBox->setObjectName("runArguments");m_argumentsLayout=new QFormLayout(m_argumentsBox);m_argumentsLayout->setContentsMargins(0,0,0,0);
+    runLayout->addWidget(m_argumentsBox);
+    auto *runButtons=new QHBoxLayout;runLayout->addLayout(runButtons);
+    m_run=new QPushButton(tr("Run"));m_run->setObjectName("runButton");runButtons->addWidget(m_run);
+    m_cancelRun=new QPushButton(tr("Cancel run"));m_cancelRun->setObjectName("cancelRunButton");m_cancelRun->setToolTip(tr("Ask the service to stop this run. Nothing is stored unless it already finished."));
+    runButtons->addWidget(m_cancelRun);runButtons->addStretch(1);runLayout->addStretch(1);
+    m_tabs->addTab(runTab,tr("Run"));
+    m_outputTab=new QWidget;m_outputTab->setObjectName("outputTab");auto *outputLayout=new QVBoxLayout(m_outputTab);outputLayout->setContentsMargins(4,4,4,4);
+    // Plain text only: everything here comes from the service or workbook code.
+    m_output=new QPlainTextEdit;m_output->setObjectName("runOutput");m_output->setAccessibleName(tr("Run outcome, log and traceback"));m_output->setReadOnly(true);
+    m_output->setTextInteractionFlags(Qt::TextSelectableByMouse|Qt::TextSelectableByKeyboard);m_output->setLineWrapMode(QPlainTextEdit::NoWrap);
+    m_output->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    m_output->setToolTip(tr("Double-click or press Return on a traceback line in a workbook module to show it in the editor."));
+    m_output->installEventFilter(this);m_output->viewport()->installEventFilter(this);outputLayout->addWidget(m_output);
+    m_tabs->addTab(m_outputTab,tr("Output"));
+    auto *eventsTab=new QWidget;eventsTab->setObjectName("eventsTab");m_tabs->addTab(eventsTab,tr("Events"));
+    macroLabel->setTextFormat(Qt::PlainText);
 
     m_status=new QLabel;m_status->setObjectName("workspaceStatus");m_status->setAccessibleName(tr("Draft or saved state"));
     m_approval=new QLabel;m_approval->setObjectName("workspaceApproval");m_approval->setAccessibleName(tr("Approval state"));
@@ -143,6 +189,12 @@ PythonWorkspace::PythonWorkspace(RestClient *client,QWidget *owner):QMainWindow(
     connect(m_discard,&QPushButton::clicked,this,&PythonWorkspace::discardDraft);
     connect(m_addMacro,&QPushButton::clicked,this,&PythonWorkspace::addMacro);
     connect(m_removeMacro,&QPushButton::clicked,this,&PythonWorkspace::removeMacro);
+    connect(m_macroSelect,&QComboBox::currentIndexChanged,this,[this]{loadArguments();updateState();});
+    connect(m_run,&QPushButton::clicked,this,&PythonWorkspace::runMacro);
+    connect(m_cancelRun,&QPushButton::clicked,this,[this]{
+        if(m_pending!=Pending::Run || m_pendingOperation.isEmpty() || m_runUnknown || m_cancelRequested)return;
+        m_cancelRequested=true;m_output->appendPlainText(tr("Cancellation requested. Waiting for the final outcome…"));
+        emit cancelRunRequested();updateState();});
     updateState();
 }
 
@@ -184,16 +236,17 @@ void PythonWorkspace::bind(const QJsonObject &info) {
         if(m_approvalInFlight){++m_approvalGeneration;approvalFailed(tr("Approval was not confirmed by the service. Review the code and try again."));}
     }
     m_info=info;
-    if(info.isEmpty()){++m_readGeneration;m_catalogReady=false;updateState();return;}
+    if(info.isEmpty()){++m_readGeneration;m_catalogReady=false;m_catalog={};refreshMacroSelect();updateState();return;}
     readCatalog();updateState();
 }
 
 void PythonWorkspace::resetPending() {
     m_pending=Pending::None;m_pendingOperation.clear();m_pendingKey.clear();m_pendingName.clear();m_pendingBase.clear();
+    m_runUnknown=false;m_cancelRequested=false;
     m_awaitingAdmission=false;m_reviewChanges=false;m_rebaseFrom.clear();m_rebaseTo.clear();
 }
 
-void PythonWorkspace::setLocked(bool locked){m_locked=locked;updateState();}
+void PythonWorkspace::setLocked(bool locked,bool unknown){m_locked=locked;m_unknown=unknown;updateState();}
 
 void PythonWorkspace::readCatalog() {
     const auto generation=++m_readGeneration;
@@ -248,6 +301,7 @@ void PythonWorkspace::applyCatalog(const QJsonObject &catalog) {
     }
     QSet<QString> referenced{current};for(const auto &draft:std::as_const(m_drafts))referenced.insert(draft.baseFingerprint);
     for(auto it=m_catalogs.begin();it!=m_catalogs.end();)it=referenced.contains(it.key())?std::next(it):m_catalogs.erase(it);
+    refreshMacroSelect();
     refreshList();
 }
 
@@ -359,6 +413,7 @@ void PythonWorkspace::updateState() {
     const auto approvalReason=approvalBlockedReason();
     m_reviewApprove->setEnabled(approvalReason.isEmpty());
     m_reviewApprove->setToolTip(!approvalReason.isEmpty()?approvalReason:tr("Review the stored code and approve it to run in this session"));
+    updateRunState();
 }
 
 bool PythonWorkspace::hasWorkbookDrafts() const {
@@ -658,6 +713,7 @@ void PythonWorkspace::operationAdmitted(const QString &operation) {
 
 void PythonWorkspace::operationReceipt(const QJsonObject &receipt) {
     if(m_pendingOperation.isEmpty() || receipt["operation_id"].toString()!=m_pendingOperation)return;
+    if(m_pending==Pending::Run){showRunReceipt(receipt);return;}
     const auto outcome=receipt["outcome"].toString();const auto name=m_pendingName;const auto key=m_pendingKey;const auto kind=m_pending;
     if(outcome=="unknown"){showMessage(tr("The outcome for %1 is unknown. Your draft is kept while the operation is reconciled.").arg(name));return;}
     m_pending=Pending::None;m_pendingOperation.clear();
@@ -722,4 +778,225 @@ void PythonWorkspace::findNext() {
         auto cursor=m_editor->textCursor();cursor.movePosition(QTextCursor::Start);m_editor->setTextCursor(cursor);
         if(!m_editor->find(text)){showMessage(tr("No match for %1.").arg(text));return;}
     }
+}
+
+// The Run tab lists every stored macro as <module>.<macro>. Drafts are not
+// runnable, so only the catalog is listed.
+void PythonWorkspace::refreshMacroSelect() {
+    const auto previous=m_macroSelect->currentText();
+    {
+        QSignalBlocker blocker(m_macroSelect);m_macroSelect->clear();
+        for(const auto &value:catalogModules()) {
+            const auto module=value.toObject();
+            for(const auto &macro:module["macros"].toArray()) {
+                m_macroSelect->addItem(module["name"].toString()+QLatin1Char('.')+macro.toObject()["name"].toString());
+                const int row=m_macroSelect->count()-1;
+                m_macroSelect->setItemData(row,module["id"].toString(),Qt::UserRole);m_macroSelect->setItemData(row,macro.toObject()["name"].toString(),Qt::UserRole+1);
+            }
+        }
+        const int index=m_macroSelect->findText(previous);
+        m_macroSelect->setCurrentIndex(index>=0?index:m_macroSelect->count()?0:-1);
+    }
+    loadArguments();
+}
+
+QJsonObject PythonWorkspace::selectedMacro() const {
+    const int row=m_macroSelect->currentIndex();if(row<0)return {};
+    const auto id=m_macroSelect->itemData(row,Qt::UserRole).toString(),name=m_macroSelect->itemData(row,Qt::UserRole+1).toString();
+    for(const auto &value:storedModule(id)["macros"].toArray())if(value.toObject()["name"].toString()==name)
+        return {{"module",id},{"module_name",storedModule(id)["name"]},{"declaration",value}};
+    return {};
+}
+
+// One field per declared parameter, pre-filled with its default. Fields keep
+// what was typed while the same declaration stays selected.
+void PythonWorkspace::loadArguments() {
+    const auto selected=selectedMacro();
+    if(selected==m_argumentsFor)return;
+    m_argumentsFor=selected;m_arguments.clear();
+    while(m_argumentsLayout->rowCount())m_argumentsLayout->removeRow(0);
+    for(const auto &value:selected["declaration"].toObject()["parameters"].toArray()) {
+        const auto parameter=value.toObject();const auto name=parameter["name"].toString();
+        auto *row=new QWidget;auto *layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);
+        auto *field=new QLineEdit;field->setObjectName("argument_"+name);field->setAccessibleName(tr("Argument %1").arg(name));layout->addWidget(field,1);
+        const auto type=parameter["type"].toString();
+        if(type=="boolean")field->setPlaceholderText(tr("true or false"));
+        else if(type=="date")field->setPlaceholderText(tr("YYYY-MM-DD"));
+        else if(type=="time")field->setPlaceholderText(tr("HH:MM:SS"));
+        else if(type=="datetime")field->setPlaceholderText(tr("YYYY-MM-DDTHH:MM:SS"));
+        QCheckBox *null=nullptr;
+        if(parameter["nullable"].toBool()) {
+            null=new QCheckBox(tr("null"));null->setObjectName("argument_"+name+"_null");null->setAccessibleName(tr("%1 is null").arg(name));layout->addWidget(null);
+            connect(null,&QCheckBox::toggled,field,[field](bool on){field->setEnabled(!on);});
+        }
+        if(parameter.contains("default")) {
+            const auto fallback=parameter["default"];
+            if(fallback.isNull()){if(null)null->setChecked(true);}
+            else field->setText(fallback.isString()?fallback.toString():scalarText(fallback));
+        }
+        connect(field,&QLineEdit::textChanged,field,[field]{
+            if(!field->property("invalid").toBool())return;
+            field->setProperty("invalid",false);field->setStyleSheet({});field->setToolTip({});});
+        auto *label=new QLabel(tr("%1 (%2)").arg(name,type));label->setTextFormat(Qt::PlainText);label->setBuddy(field);
+        m_argumentsLayout->addRow(label,row);
+        m_arguments.append({parameter,field,null});
+    }
+}
+
+QString PythonWorkspace::argumentValue(const QJsonObject &parameter,const QString &text,QJsonValue *value) {
+    const auto name=parameter["name"].toString(),type=parameter["type"].toString();
+    static const QRegularExpression integer(QStringLiteral("^[+-]?[0-9]+$")),
+        date(QStringLiteral("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")),time(QStringLiteral("^[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$"));
+    auto validDate=[](const QString &part){return date.match(part).hasMatch() && QDate::fromString(part,Qt::ISODate).isValid();};
+    auto validTime=[](const QString &part){
+        if(!time.match(part).hasMatch())return false;
+        return part.left(2).toInt()<=23 && part.mid(3,2).toInt()<=59 && part.mid(6,2).toInt()<=59;};
+    if(type=="text") {
+        if(text.toUtf8().size()>65536)return tr("%1 is longer than 64 KiB.").arg(name);
+        *value=text;return {};
+    }
+    if(type=="integer") {
+        bool ok=false;const auto number=text.toLongLong(&ok);
+        constexpr qint64 limit=(qint64(1)<<53)-1;
+        if(!integer.match(text).hasMatch() || !ok || number>limit || number< -limit)return tr("%1 needs a whole number.").arg(name);
+        *value=number;return {};
+    }
+    if(type=="number") {
+        bool ok=false;const auto number=text.toDouble(&ok);
+        if(!ok || !std::isfinite(number))return tr("%1 needs a finite number.").arg(name);
+        *value=number;return {};
+    }
+    if(type=="boolean") {
+        if(text!="true" && text!="false")return tr("%1 needs true or false.").arg(name);
+        *value=text=="true";return {};
+    }
+    if(type=="date") {
+        if(!validDate(text))return tr("%1 needs an ISO date such as 2026-11-10.").arg(name);
+        *value=text;return {};
+    }
+    if(type=="time") {
+        if(!validTime(text))return tr("%1 needs an ISO time such as 13:30:00.").arg(name);
+        *value=text;return {};
+    }
+    if(type=="datetime") {
+        if(text.size()<19 || text[10]!=u'T' || !validDate(text.left(10)) || !validTime(text.mid(11)))return tr("%1 needs an ISO date and time such as 2026-11-10T13:30:00.").arg(name);
+        *value=text;return {};
+    }
+    return tr("%1 has a type this window does not know: %2.").arg(name,type);
+}
+
+// The first condition that keeps Run disabled, or empty when it may run.
+QString PythonWorkspace::runBlockedReason() const {
+    if(m_info.isEmpty())return tr("Open a workbook first.");
+    if(m_unknown || m_runUnknown)return tr("An earlier operation has an unknown outcome. Resolve it first.");
+    if(m_info["readonly"].toBool())return tr("This workbook is read-only.");
+    if(!m_catalogReady)return tr("Reading the workbook's code…");
+    if(hasWorkbookDrafts())return tr("Save or discard your drafts before running.");
+    if(m_macroSelect->count()==0)return tr("No macro is declared in this workbook.");
+    if(!m_catalog["approved"].toBool())return tr("Approve the code before running (Review & approve).");
+    if(m_locked || m_pending!=Pending::None || m_awaitingAdmission || m_approvalInFlight)return tr("Wait for the current operation to finish.");
+    if(selectedMacro().isEmpty())return tr("Choose a macro to run.");
+    return {};
+}
+
+void PythonWorkspace::updateRunState() {
+    const auto reason=runBlockedReason();
+    m_run->setEnabled(reason.isEmpty());
+    m_run->setToolTip(reason.isEmpty()?plainToolTip(tr("Run %1").arg(m_macroSelect->currentText())):reason);
+    const bool running=m_pending==Pending::Run;
+    m_cancelRun->setEnabled(running && !m_pendingOperation.isEmpty() && !m_runUnknown && !m_cancelRequested);
+    // The shown arguments are the ones the run was sent with.
+    m_macroSelect->setEnabled(!running && m_macroSelect->count()>0);m_argumentsBox->setEnabled(!running);
+}
+
+void PythonWorkspace::runMacro() {
+    if(!runBlockedReason().isEmpty())return;
+    const auto selected=selectedMacro();const auto id=selected["module"].toString(),macro=selected["declaration"].toObject()["name"].toString();
+    QJsonObject arguments;QLineEdit *first=nullptr;QString problem;
+    for(const auto &argument:std::as_const(m_arguments)) {
+        const auto name=argument.parameter["name"].toString();
+        if(argument.null && argument.null->isChecked()){arguments[name]=QJsonValue::Null;continue;}
+        QJsonValue value;const auto issue=argumentValue(argument.parameter,argument.field->text(),&value);
+        if(issue.isEmpty()){arguments[name]=value;continue;}
+        argument.field->setProperty("invalid",true);argument.field->setStyleSheet(QStringLiteral("QLineEdit{border:2px solid #c62828;}"));argument.field->setToolTip(plainToolTip(issue));
+        if(!first){first=argument.field;problem=issue;}
+    }
+    if(first){showMessage(problem);first->setFocus();return;}
+    const auto label=selected["module_name"].toString()+QLatin1Char('.')+macro;
+    m_editor->clearMarks();m_cancelRequested=false;
+    m_output->setPlainText(tr("Running %1…").arg(label));m_tabs->setCurrentWidget(m_outputTab);
+    startOperation({{"action","macro_run"},{"module",id},{"macro",macro},{"fingerprint",fingerprint()},{"arguments",arguments},{"label","Run "+label}},Pending::Run,id,label,fingerprint());
+    if(m_pending!=Pending::Run){m_output->setPlainText(tr("The run did not start. Wait for the current operation to finish, then try again."));return;}
+    showMessage(tr("Running %1…").arg(label));
+}
+
+// Outcome first, then the failure, log tail, traceback and skipped rules.
+void PythonWorkspace::showRunReceipt(const QJsonObject &receipt) {
+    const auto outcome=receipt["outcome"].toString();const auto label=m_pendingName;
+    if(outcome=="unknown") {
+        // Never re-sent: the owning window reconciles this operation ID and the
+        // final receipt arrives here.
+        m_runUnknown=true;
+        m_output->setPlainText(tr("Outcome unknown")+QLatin1Char('\n')+tr("The service did not confirm the result. It is being checked; do not run again until it is resolved."));
+        showMessage(tr("The outcome of %1 is unknown. It is being checked.").arg(label));updateState();return;
+    }
+    m_pending=Pending::None;m_pendingOperation.clear();m_pendingKey.clear();m_runUnknown=false;m_cancelRequested=false;
+    const auto macro=receipt["macro"].toObject();const auto code=receipt["code"].toString();
+    QStringList lines;QString traceback=macro["traceback"].toString();
+    if(outcome=="committed") {
+        const auto changed=receipt["changed_cells"].toInteger()+receipt["changed_records"].toInteger();
+        lines<<tr("Committed · returned %1 · %2 cells changed").arg(scalarText(receipt["macro_result"]),QString::number(changed));
+        showMessage(tr("Ran %1.").arg(label));
+    } else {
+        lines<<(code=="CANCELLED"?tr("Cancelled"):code=="TIMEOUT" || code=="MACRO_TIMEOUT"?tr("Timed out"):tr("Rolled back"));
+        auto message=receipt["message"].toString();
+        // A Python failure's message is its traceback; show only its last line here.
+        if(!traceback.isEmpty() && message.trimmed()==traceback.trimmed())message=traceback.trimmed().section(QLatin1Char('\n'),-1);
+        if(!message.isEmpty())lines<<message;
+        if(macro["context_code"].isString())lines<<tr("Context error: %1").arg(macro["context_code"].toString());
+        showMessage(tr("%1 did not change the workbook (%2).").arg(label,code));
+    }
+    const auto logs=macro["logs"].toString();
+    if(!logs.isEmpty())lines<<tr("Log:")<<(logs.endsWith(QLatin1Char('\n'))?logs.chopped(1):logs);
+    if(!traceback.isEmpty())lines<<tr("Traceback:")<<(traceback.endsWith(QLatin1Char('\n'))?traceback.chopped(1):traceback);
+    for(const auto &value:receipt["binding_notices"].toArray())
+        lines<<tr("Rule skipped: %1 (%2)").arg(value.toObject()["function"].toString(),value.toObject()["reason"].toString());
+    m_output->setPlainText(lines.join(QLatin1Char('\n')));
+    if(outcome!="committed" && !traceback.isEmpty()) {
+        // Mark the innermost workbook frame when its module is the one shown.
+        QString module;int line=0;
+        for(auto it=workbookFrame().globalMatch(traceback);it.hasNext();){const auto match=it.next();module=match.captured(1);line=match.captured(2).toInt();}
+        if(line>0 && !foreign(m_current) && effective(m_current).name==module && !storedModule(m_current).isEmpty())m_editor->markLine(line,true);
+    }
+    // The catalog this run was checked against is out of date: read it again so
+    // the approval and Run state reflect the service.
+    if(code=="CODE_CHANGED" || code=="CODE_NOT_APPROVED")readCatalog();
+    updateState();
+}
+
+// Shows a traceback frame's line in its stored module; false when the line is
+// not a workbook frame.
+bool PythonWorkspace::activateFrame(const QString &text) {
+    const auto match=workbookFrame().match(text);if(!match.hasMatch())return false;
+    const auto name=match.captured(1);const int line=match.captured(2).toInt();
+    QString key;for(const auto &value:catalogModules())if(value.toObject()["name"].toString()==name)key=value.toObject()["id"].toString();
+    if(key.isEmpty()){showMessage(tr("%1 is no longer stored in this workbook.").arg(name));return true;}
+    if(key!=m_current)for(int row=0;row<m_modules->count();++row)if(m_modules->item(row)->data(Qt::UserRole).toString()==key)m_modules->setCurrentRow(row);
+    if(m_current!=key)return true;
+    const auto block=m_editor->document()->findBlockByNumber(line-1);if(!block.isValid())return true;
+    m_editor->clearMarks();m_editor->markLine(line,true);
+    m_editor->setTextCursor(QTextCursor(block));m_editor->centerCursor();m_editor->setFocus();
+    return true;
+}
+
+bool PythonWorkspace::eventFilter(QObject *object,QEvent *event) {
+    if(object==m_output->viewport() && event->type()==QEvent::MouseButtonDblClick) {
+        const auto position=static_cast<QMouseEvent *>(event)->position().toPoint();
+        if(activateFrame(m_output->cursorForPosition(position).block().text()))return true;
+    }
+    if(object==m_output && event->type()==QEvent::KeyPress) {
+        const int key=static_cast<QKeyEvent *>(event)->key();
+        if((key==Qt::Key_Return || key==Qt::Key_Enter) && activateFrame(m_output->textCursor().block().text()))return true;
+    }
+    return QMainWindow::eventFilter(object,event);
 }

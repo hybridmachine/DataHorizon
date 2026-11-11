@@ -896,10 +896,7 @@ void MainWindow::buildUi() {
     connect(this,&MainWindow::operationAdmitted,m_relational,&RelationalWorkbench::operationAdmitted);
     connect(this,&MainWindow::operationReceipt,m_relational,&RelationalWorkbench::operationReceipt);
     connect(m_relational,&RelationalWorkbench::reconcileRequested,this,&MainWindow::reconcile);
-    connect(m_relational,&RelationalWorkbench::cancelOperationRequested,this,[this]{
-        if(m_pendingId.isEmpty())return;const auto operation=m_pendingId;
-        m_client->request(base()+"/operations/"+QString::fromLatin1(QUrl::toPercentEncoding(operation))+"/cancel",{},[this,operation](QJsonObject,QString error){issue(error.isEmpty()?tr("Cancellation requested for %1. Wait for its final receipt.").arg(operation):error);});
-    });
+    connect(m_relational,&RelationalWorkbench::cancelOperationRequested,this,&MainWindow::cancelPendingOperation);
     connect(m_relational,&RelationalWorkbench::issue,this,&MainWindow::issue);
     connect(m_relational,&RelationalWorkbench::busyRequested,this,[this](bool busy){setBusy(busy);});
     connect(m_relational,&RelationalWorkbench::sheetsRequested,this,[this]{showRelational(false);});
@@ -911,6 +908,7 @@ void MainWindow::buildUi() {
     connect(m_workspace,&PythonWorkspace::refreshRequested,this,[this]{m_model->externalChange();});
     connect(this,&MainWindow::operationAdmitted,m_workspace,&PythonWorkspace::operationAdmitted);
     connect(this,&MainWindow::operationReceipt,m_workspace,&PythonWorkspace::operationReceipt);
+    connect(m_workspace,&PythonWorkspace::cancelRunRequested,this,&MainWindow::cancelPendingOperation);
     connectNamesPanel(m_workspace->namesPanel());
     connect(m_workspace,&PythonWorkspace::pickFromSheetRequested,this,[this](bool on){
         if(!on){cancelExternalReferencePick();return;}
@@ -1730,6 +1728,12 @@ void MainWindow::submit(QJsonObject operation) {
     });
 }
 
+void MainWindow::cancelPendingOperation() {
+    if(m_pendingId.isEmpty())return;
+    const auto operation=m_pendingId;
+    m_client->request(base()+"/operations/"+QString::fromLatin1(QUrl::toPercentEncoding(operation))+"/cancel",{},[this,operation](QJsonObject,QString error){issue(error.isEmpty()?tr("Cancellation requested for %1. Wait for its final receipt.").arg(operation):error);});
+}
+
 void MainWindow::reconcile() {
     if (m_pendingId.isEmpty()) return;
     const auto operationId=m_pendingId;
@@ -1806,7 +1810,7 @@ void MainWindow::setBusy(bool busy, const QString &message) {
     for(auto *action:m_navigationActions)action->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
     m_model->setBusy(m_busy); m_toolbar->setEnabled(!m_busy && !m_relationalActive); m_tabs->setEnabled(!m_busy);
     if(m_relational)m_relational->setLocked(m_busy || m_unknown);
-    if(m_workspace)m_workspace->setLocked(m_busy || m_unknown);
+    if(m_workspace)m_workspace->setLocked(m_busy || m_unknown,m_unknown);
     if(m_workspace)updateNameControls();
     if(m_freezePanesAction)m_freezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
     if(m_unfreezePanesAction)m_unfreezePanesAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && (m_frozenRows>0 || m_frozenColumns>0));
