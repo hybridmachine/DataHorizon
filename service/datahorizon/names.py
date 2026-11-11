@@ -4,7 +4,7 @@ import re
 import uuid
 from .engine import EngineError,require,valid_uuid
 from . import relational
-from .formula import ADDRESS,FormulaError,split_ref,column_name
+from .formula import MAX_ROWS,MAX_COLS,adjust_interval,ADDRESS,FormulaError,split_ref,column_name
 from .functions import FUNCTIONS
 from .hooks import invoke,supports_event
 
@@ -24,9 +24,10 @@ def definition(value):
     require(isinstance(value,dict) and set(value)==FIELDS,'INVALID_FORMAT','Invalid stored name fields',409)
     require(valid_uuid(value['id']) and str(uuid.UUID(value['id']))==value['id'],'INVALID_FORMAT','Stored name identity must be a canonical UUID',409)
     require(valid_name(value['name']),'INVALID_FORMAT','Invalid stored name identifier',409)
-    broken=value['sheet_id'] is None
+    broken=value['sheet_id'] is None or value['row1'] is None
     if broken:
         require(all(value[key] is None for key in SPAN),'INVALID_FORMAT','A broken name has no coordinates',409)
+        require(value['sheet_id'] is None or valid_uuid(value['sheet_id']),'INVALID_FORMAT','Invalid stored name target',409)
     else:
         require(valid_uuid(value['sheet_id']) and all(type(value[key]) is int for key in SPAN),'INVALID_FORMAT','Invalid stored name target',409)
         from .formula import MAX_ROWS,MAX_COLS
@@ -59,8 +60,8 @@ def describe(db,item):
     if item['sheet_id'] is not None:
         row=db.execute('SELECT name FROM sheets WHERE id=?',(item['sheet_id'],)).fetchone()
         sheet=row[0] if row else None
-    result=dict(item,sheet=sheet,reference=None,broken=sheet is None)
-    if sheet is not None:
+    result=dict(item,sheet=sheet,reference=None,broken=sheet is None or item['row1'] is None)
+    if not result['broken']:
         first=column_name(item['col1'])+str(item['row1']);last=column_name(item['col2'])+str(item['row2'])
         result['reference']=quote_sheet(sheet)+'!'+(first if first==last else first+':'+last)
     return result
@@ -111,7 +112,7 @@ def mutate(book,request):
         if 'reference' in request:target=parse_reference(book,request['reference'])
         else:
             require(before is not None,'REFERENCE_INVALID','A new name requires a reference')
-            require(before['sheet_id'] is not None,'NAME_BROKEN','A broken name needs a new reference',409)
+            require(before['row1'] is not None,'NAME_BROKEN','A broken name needs a new reference',409)
             target={key:before[key] for key in ('sheet_id',*SPAN)}
         require(all(item['id']==(before or {}).get('id') or item['name'].lower()!=request['name'].lower() for item in current),'NAME_DUPLICATE','A name with that identifier already exists',409)
         require(before is not None or len(current)<MAX_NAMES,'NAME_LIMIT','A workbook holds at most 256 names',409)
@@ -127,3 +128,28 @@ def mutate(book,request):
     else:book.db.execute("DELETE FROM dh_relational WHERE kind='name' AND id=?",(before['id'],))
     names(book.db);event('after')
     return dict(name_id=(after or before)['id'])
+
+
+def adjust_structure(book,sheet_id,axis,start,count,delete):
+    """Move, expand, contract or break stored names after a whole-row/column edit."""
+    if book.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]<6:return []
+    keys=('row1','row2') if axis=='row' else ('col1','col2');broken=[]
+    for item in names(book.db):
+        if item['sheet_id']!=sheet_id or item['row1'] is None:continue
+        moved=adjust_interval(item[keys[0]],item[keys[1]],start,count,delete,MAX_ROWS if axis=='row' else MAX_COLS)
+        if moved is None:
+            item=dict(item,row1=None,col1=None,row2=None,col2=None);broken.append(item['name'])
+        else:item=dict(item,**{keys[0]:moved[0],keys[1]:moved[1]})
+        relational.store(book,'name',definition(item))
+    return sorted(broken)
+
+
+def break_sheet(book,sheet_id):
+    """Break every name that targets a sheet that is being deleted."""
+    if book.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]<6:return []
+    broken=[]
+    for item in names(book.db):
+        if item['sheet_id']!=sheet_id:continue
+        if item['row1'] is not None:broken.append(item['name'])
+        relational.store(book,'name',definition(dict(item,sheet_id=None,row1=None,col1=None,row2=None,col2=None)))
+    return sorted(broken)

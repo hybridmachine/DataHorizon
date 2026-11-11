@@ -1305,8 +1305,12 @@ class Workbook:
                 self.put(*key,item)
             for key in deleted:
                 self.put(*key,None)
+            from .names import break_sheet
+            broken_names = break_sheet(self,target)
             self.db.execute("DELETE FROM sheets WHERE id=?",(target,))
-        return {"reference_warnings":warnings,"reference_issues":locations}
+        result = {"reference_warnings":warnings,"reference_issues":locations}
+        if broken_names:result["broken_names"] = broken_names
+        return result
 
     def duplicate_sheet(self, target, new_name):
         old_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
@@ -1414,7 +1418,11 @@ class Workbook:
                     self.put(*destination,item)
             for key, item in formulas.items():
                 self.put(*key,item)
-        return {"reference_warnings":warnings,"reference_issues":locations}
+            from .names import adjust_structure
+            broken_names = adjust_structure(self,target,axis,start,count,delete)
+        result = {"reference_warnings":warnings,"reference_issues":locations}
+        if broken_names:result["broken_names"] = broken_names
+        return result
 
     @staticmethod
     def check_name(name):
