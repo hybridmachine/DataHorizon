@@ -835,23 +835,32 @@ class Workbook:
         return catalog
 
     def run_hooks(self, operation):
-        if not self.handler:
+        from .bindings import admit,plan,stored
+        if not self.handler and not stored(self):
             return
+        # Whole-row/column changes move cells; they are not cell-change events for bindings.
+        cell_events=self.operation_action not in ("rows_insert","rows_delete","columns_insert","columns_delete")
+        admission={}
         for round_index in range(16):
             if not self.pending and not self.pending_tables:
                 return
-            batch = [self.pending[key] for key in sorted(self.pending)]
+            batch = [{**self.pending[key],"action":self.operation_action} for key in sorted(self.pending)]
             table_batch=[{**self.pending_tables[key],"operation_id":operation,"origin":"managed","action":self.operation_action,"round":round_index+1} for key in sorted(self.pending_tables,key=lambda key:(key[1],int(key[2])))]
             self.pending = {}
             self.pending_tables={}
 
-            if batch:invoke(self.handler, batch, operation, self.hook_dispatch, self.deadline)
-            if table_batch:
-                from .hooks import supports_event
-                require(supports_event(self.handler,'on_table_change'),'UNSUPPORTED_HOOK_SCOPE','Required handler must explicitly define on_table_change(context,changes)')
-                require(len(encoded(table_batch).encode())<=8*1024*1024,'LIMIT','Table hook change images exceed 8 MiB')
-                invoke(self.handler,table_batch,operation,self.hook_dispatch,self.deadline,event='on_table_change')
-        require(not self.pending and not self.pending_tables, "HOOK_RECURSION", "Required handler exceeded 16 change rounds")
+            if self.handler:
+                if batch:invoke(self.handler, batch, operation, self.hook_dispatch, self.deadline)
+                if table_batch:
+                    from .hooks import supports_event
+                    require(supports_event(self.handler,'on_table_change'),'UNSUPPORTED_HOOK_SCOPE','Required handler must explicitly define on_table_change(context,changes)')
+                    require(len(encoded(table_batch).encode())<=8*1024*1024,'LIMIT','Table hook change images exceed 8 MiB')
+                    invoke(self.handler,table_batch,operation,self.hook_dispatch,self.deadline,event='on_table_change')
+            calls=admit(self,plan(self,batch if cell_events else [],table_batch),admission)
+            if calls:
+                from .macro_runtime import invoke_bindings
+                invoke_bindings(calls,operation,self.hook_dispatch,self.deadline)
+        require(not self.pending and not self.pending_tables, "HOOK_RECURSION", "Required handler or bindings exceeded 16 change rounds")
 
     def operation(self, operation_id):
         with self.lock:
@@ -899,7 +908,7 @@ class Workbook:
                 self.changes, self.pending = {}, {}
                 self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
                 self.table_schema_keys=set();self.relational_before={}
-                self.macro_diagnostics=None
+                self.macro_diagnostics=None;self.binding_notices=[]
                 self.operation_clock=utc_clock()
                 unverified_before=set(self.unverified_records)
                 self.change_bytes = 0
@@ -1157,6 +1166,7 @@ class Workbook:
                 result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": sum(key[0]!='table' for key in self.changes),
                           "changed_records":sum(key[0]=='table' for key in self.changes)}
                 result.update(reference_report)
+                if self.binding_notices:result["binding_notices"]=self.binding_notices
                 self.db.execute("INSERT INTO operations VALUES(?,?,?)", (operation, fingerprint, encoded(result)))
                 self.check_operation()
                 self.verify_file()

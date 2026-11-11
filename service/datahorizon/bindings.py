@@ -155,6 +155,59 @@ def stored(book):
     return bindings(book.db)
 
 
+def _inside(change,sheet_id,area):
+    return change['sheet']==sheet_id and area['row1'] is not None and area['row1']<=change['row']<=area['row2'] and area['col1']<=change['col']<=area['col2']
+
+
+def plan(book,cell_batch,table_batch):
+    """Calls for this round, in stored order, each with the records inside its current scope."""
+    items=stored(book)
+    if not items or not (cell_batch or table_batch):return []
+    from .workbook_code import modules
+    known={item['id']:item for item in modules(book.db)};calls=[]
+    for item in items:
+        scope=item['scope'];kind=scope['kind']
+        if kind=='table':changes=[change for change in table_batch if change['table']==scope['table_id']]
+        elif kind=='sheet':changes=[change for change in cell_batch if scope['sheet_id'] is not None and change['sheet']==scope['sheet_id']]
+        elif kind=='range':changes=[change for change in cell_batch if _inside(change,scope['sheet_id'],scope)]
+        else:
+            name=find_name(book.db,scope['name_id'])
+            changes=[change for change in cell_batch if name is not None and _inside(change,name['sheet_id'],name)]
+        if changes:
+            module=known[item['module_id']]
+            calls.append(dict(binding=item,module_name=module['name'],source=module['source'],function=item['function'],changes=changes))
+    return calls
+
+
+def available(source,function):
+    """Static check without executing workbook code: it compiles and defines the top-level function."""
+    try:tree=ast.parse(source);compile(tree,'<workbook>','exec',dont_inherit=True)
+    except (SyntaxError,ValueError,RecursionError):return False
+    return any(isinstance(node,ast.FunctionDef) and node.name==function for node in tree.body)
+
+
+def admit(book,calls,admission):
+    """Drop skipped optional calls and reject required ones that cannot run; approval is read once per operation."""
+    if not calls:return calls
+    if 'approved' not in admission:
+        from .workbook_code import activation
+        admission.update(approved=activation(book)['approved'],skipped=set())
+    admitted=[]
+    for call in calls:
+        item=call['binding']
+        if item['id'] in admission['skipped']:continue
+        reason=None if admission['approved'] else 'BINDING_NOT_APPROVED'
+        if reason is None and not available(call['source'],call['function']):reason='BINDING_UNAVAILABLE'
+        if reason is None:admitted.append(call);continue
+        if item['required']:
+            prefix='Binding '+call['module_name']+'.'+call['function']+': '
+            if reason=='BINDING_NOT_APPROVED':raise EngineError(reason,prefix+'workbook code is not approved, so edits in its scope are blocked',403)
+            raise EngineError(reason,prefix+'the module no longer defines this top-level function',409)
+        admission['skipped'].add(item['id'])
+        book.binding_notices.append(dict(binding_id=item['id'],function=item['function'],reason=reason))
+    return admitted
+
+
 def adjust_structure(book,sheet_id,axis,start,count,delete):
     """Move, expand, contract or break range scopes after a whole-row/column edit."""
     keys=('row1','row2') if axis=='row' else ('col1','col2');broken=[]
