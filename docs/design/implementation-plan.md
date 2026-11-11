@@ -323,6 +323,12 @@ performance work until release or claim unmeasured unlimited scale.
 
 ## 13. M8 - Expand the product after the everyday foundation
 
+The [structured tables and query workbench implementation plan](relational-workbench-plan.md)
+defines the proposed first relational batch, with ten dependency-ordered tasks,
+explicit native-format/hook/query contracts, automated verification and a later
+owner-run GUI walkthrough. It does not enable arbitrary managed SQL mutations
+or close the remaining foundation/platform qualification gates.
+
 Keep these as separate, dependency-driven increments with additional wireframes:
 
 - **Relational work:** define sheet/table/view mapping and range promotion, typed

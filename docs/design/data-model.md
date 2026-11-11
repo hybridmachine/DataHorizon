@@ -5,7 +5,11 @@ implementation experiments before they become stable contracts.
 
 The experimental sparse-cell implementation is now described in
 [native format v1](native-format-v1.md) and [compatibility tier 0](compatibility-v0.md).
-Tables, relational views and persistent record identity remain later work.
+Declared freeform lists now have bounded persistent record UUIDs under the
+[implemented list contract](m3-m5-next-ten.md). Structured SQLite tables and
+relational views are planned in the
+[structured tables and query workbench batch](relational-workbench-plan.md);
+their identities remain separate from list UUIDs and positional A1 references.
 
 ## Workbook objects
 
