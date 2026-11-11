@@ -28,6 +28,10 @@ class NameStructureTests(unittest.TestCase):
     def version(self):
         return self.book.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]
 
+    @staticmethod
+    def by_name(catalog,name):
+        return next(item for item in catalog['names'] if item['name']==name)
+
     def test_rectangles_match_independent_enumeration(self):
         # Tag every named cell, move the tags the way the grid moves cells, take bounds.
         def expected(rect,axis,start,count,delete):
@@ -43,7 +47,6 @@ class NameStructureTests(unittest.TestCase):
             if not tags:return None
             rows=[t[0] for t in tags];cols=[t[1] for t in tags]
             return (min(rows),min(cols),max(rows),max(cols))
-        from datahorizon.names import adjust_structure
         cases=0
         for axis in ('row','col'):
             for delete in (False,True):
@@ -85,7 +88,7 @@ class NameStructureTests(unittest.TestCase):
         self.assertFalse(by['Other']['broken'])
         self.assertEqual(self.apply('rows_delete',sheet='Supplies',start=9,count=1).get('broken_names'),None)
         reopened=Workbook(self.path)
-        try:self.assertTrue(read(reopened,dict(expected_state=reopened.state()))['names'][0]['broken'])
+        try:self.assertTrue(self.by_name(read(reopened,dict(expected_state=reopened.state())),'Quantities')['broken'])
         finally:reopened.close()
 
     def test_sheet_delete_breaks_rename_keeps_duplicate_does_not_copy(self):
