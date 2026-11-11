@@ -15,9 +15,11 @@
     "fixes": [
       "Charge broker calculation/read work to the same two-second macro deadline",
       "Make the hook fixture permit restoration during Undo while retaining required-hook execution"
-    ]
+    ],
+    "type": "Implementation self-review"
   },
   "task": 3,
   "source_commit": "90f83ed60b02f81485f25b79a38ab4dd5f8af0cf",
-  "release_qualified": false
+  "release_qualified": false,
+  "pull_request": "https://github.com/hybridmachine/DataHorizon/pull/127"
 }

@@ -1,0 +1,20 @@
+test_byte_limit_counts_utf8_and_blob_before_retaining_event (test_native_capture.NativeCaptureTests.test_byte_limit_counts_utf8_and_blob_before_retaining_event) ... ok
+test_callback_exception_with_empty_message_cannot_commit_uncaptured_changes (test_native_capture.NativeCaptureTests.test_callback_exception_with_empty_message_cannot_commit_uncaptured_changes) ... ok
+test_callback_rollback_requires_explicit_driver_discard (test_native_capture.NativeCaptureTests.test_callback_rollback_requires_explicit_driver_discard) ... ok
+test_constraint_policies_roll_back_prior_and_partial_statements (test_native_capture.NativeCaptureTests.test_constraint_policies_roll_back_prior_and_partial_statements) ... ok
+test_deferred_foreign_key_commit_failure_discards_images (test_native_capture.NativeCaptureTests.test_deferred_foreign_key_commit_failure_discards_images) ... ok
+test_explicit_rollback_clears_attempted_images (test_native_capture.NativeCaptureTests.test_explicit_rollback_clears_attempted_images) ... ok
+test_independent_stdlib_connection_runs_without_callback (test_native_capture.NativeCaptureTests.test_independent_stdlib_connection_runs_without_callback) ... ok
+test_instruction_cancellation_rolls_back_and_recovers (test_native_capture.NativeCaptureTests.test_instruction_cancellation_rolls_back_and_recovers) ... ok
+test_large_returning_statement_stops_at_small_event_cap (test_native_capture.NativeCaptureTests.test_large_returning_statement_stops_at_small_event_cap) ... ok
+test_outer_ignore_and_replace_cannot_suppress_capture_failure (test_native_capture.NativeCaptureTests.test_outer_ignore_and_replace_cannot_suppress_capture_failure) ... ok
+test_row_limit_counts_cascades_and_allows_exact_limit_after_failure (test_native_capture.NativeCaptureTests.test_row_limit_counts_cascades_and_allows_exact_limit_after_failure) ... ok
+test_statement_matrix_replays_typed_images (test_native_capture.NativeCaptureTests.test_statement_matrix_replays_typed_images) ... ok
+test_transaction_schema_private_state_and_multi_statement_entries_fail (test_native_capture.NativeCaptureTests.test_transaction_schema_private_state_and_multi_statement_entries_fail) ... ok
+test_user_trigger_cannot_write_reserved_state (test_native_capture.NativeCaptureTests.test_user_trigger_cannot_write_reserved_state) ... ok
+test_without_rowid_replacement_sees_delete_without_recursive_triggers (test_native_capture.NativeCaptureTests.test_without_rowid_replacement_sees_delete_without_recursive_triggers) ... ok
+
+----------------------------------------------------------------------
+Ran 15 tests in 0.410s
+
+OK

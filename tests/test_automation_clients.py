@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import copy
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -67,7 +68,9 @@ class AutomationClientTests(unittest.TestCase):
                 try:
                     deadline=time.monotonic()+1.5
                     while time.monotonic()<deadline:
-                        cancelled=client.request(book.base+'/operations/'+operation+'/cancel',{})
+                        command=[sys.executable,'-m','datahorizon.cli','--url',client.url,str(path),'cancel-operation',operation,'--handle',book.info['id']]
+                        cancelled_run=subprocess.run(command,env={**os.environ,'DATAHORIZON_TOKEN':client.token},capture_output=True,text=True,check=True,timeout=2)
+                        cancelled=json.loads(cancelled_run.stdout)
                         if cancelled['cancel_requested']:break
                         time.sleep(.01)
                     self.assertTrue(cancelled['cancel_requested']);thread.join(timeout=3);self.assertFalse(thread.is_alive())

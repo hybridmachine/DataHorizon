@@ -3,15 +3,18 @@
 from contextlib import redirect_stdout,redirect_stderr
 import multiprocessing
 import os
+import linecache
 import queue
+import sys
 import threading
 import time
 import traceback
+import types
 from .hooks import BrokerContext,HookFailure,_receive,_send
 
 
 def tail(text,maximum=8192):
-    return text.encode('utf-8',errors='replace')[-maximum:].decode('utf-8',errors='ignore')
+    return text[-maximum:].encode('utf-8',errors='replace')[-maximum:].decode('utf-8',errors='ignore')
 
 
 class MacroFailure(Exception):
@@ -30,7 +33,11 @@ def _worker(pipe,source,module_name,name,arguments,operation):
     try:
         with redirect_stdout(Output()),redirect_stderr(Output()):
             try:
-                namespace=dict(__name__='__datahorizon_workbook__',__file__='<workbook:'+module_name+'>')
+                loaded=types.ModuleType('__datahorizon_workbook__')
+                loaded.__file__='<workbook:'+module_name+'>'
+                sys.modules[loaded.__name__]=loaded
+                namespace=loaded.__dict__
+                linecache.cache[loaded.__file__]=(len(source),None,source.splitlines(True),loaded.__file__)
                 exec(compile(source,namespace['__file__'],'exec',dont_inherit=True),namespace)
                 result=namespace[name](BrokerContext(pipe,operation),**arguments)
             except BaseException:

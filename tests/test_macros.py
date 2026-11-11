@@ -2,6 +2,8 @@
 from contextlib import closing
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
 import unittest
 import uuid
 from datahorizon.engine import Workbook,EngineError
@@ -71,6 +73,39 @@ class MacroTests(unittest.TestCase):
         handler=Path(self.temp.name)/'reject.py';handler.write_text("def on_change(ctx,changes):raise ValueError('required rejection')\n");self.book.handler=handler
         with self.assertRaises(EngineError) as error:self.run_macro()
         self.assertEqual(error.exception.body['code'],'HOOK_FAILED');self.assertIsNone(self.cell());self.assertNotIn('macro_result',error.exception.body)
+
+    def test_table_insert_delete_schema_and_staged_read_share_history(self):
+        self.install("def run(ctx):\n    schema=ctx.table_schema('Data')\n    key=schema['columns'][0]['id']\n    inserted=ctx.table_insert('Data',{'Value':3})['row_id']\n    assert ctx.table_get('Data',inserted)['values'][key]==3\n    ctx.table_delete('Data','2')\n    return 3\n")
+        self.assertEqual(self.run_macro()['changed_records'],2)
+        self.assertEqual(list(self.book.db.execute('SELECT Value FROM Data ORDER BY Value')),[(1,),(3,)])
+        self.apply('undo');self.assertEqual(list(self.book.db.execute('SELECT Value FROM Data ORDER BY Value')),[(1,),(2,)])
+        self.apply('redo');self.assertEqual(list(self.book.db.execute('SELECT Value FROM Data ORDER BY Value')),[(1,),(3,)])
+
+    def test_required_hook_recursion_rolls_back_the_whole_macro(self):
+        self.install("def run(ctx):\n    ctx.set('Sheet1',1,1,'a')\n    return 1\n")
+        handler=Path(self.temp.name)/'cycle.py';handler.write_text("def on_change(ctx,changes):\n    ctx.set('Sheet1',1,1,'a' if ctx.value('Sheet1',1,1)=='b' else 'b')\n");self.book.handler=handler
+        with self.assertRaises(EngineError) as error:self.run_macro()
+        self.assertEqual(error.exception.body['code'],'HOOK_RECURSION');self.assertIsNone(self.cell())
+
+    def test_scalar_null_boolean_and_iso_kinds_are_explicit(self):
+        parameters=[dict(name='day',type='date'),dict(name='at',type='time'),dict(name='stamp',type='datetime'),dict(name='text',type='text',nullable=True,default=None),dict(name='flag',type='boolean',default=True)]
+        self.install("def run(ctx,day,at,stamp,text,flag):\n    assert day=='2026-11-10' and at=='12:30:00' and stamp=='2026-11-10T12:30:00'\n    assert text is None\n    return flag\n",parameters=parameters,result=dict(type='boolean'))
+        arguments=dict(day='2026-11-10',at='12:30:00',stamp='2026-11-10T12:30:00')
+        self.assertIs(self.run_macro(arguments=arguments)['macro_result'],True)
+        with self.assertRaises(EngineError) as error:self.run_macro(arguments={**arguments,'day':'11/10/2026'})
+        self.assertEqual(error.exception.body['code'],'MACRO_ARGUMENT')
+
+    def test_process_exit_after_commit_preserves_result_without_code_reactivation(self):
+        self.install("def run(ctx):\n    ctx.set('Sheet1',1,1,'committed')\n    return 42\n")
+        operation=str(uuid.uuid4());service=str(Path(__file__).resolve().parents[1]/'service');key=activation(self.book)['activation_key']
+        script="import sys,os;sys.path.insert(0,"+repr(service)+");from datahorizon.engine import Workbook;from datahorizon.workbook_code import fingerprint;book=Workbook("+repr(str(self.book.path))+",approved_code=["+repr(key)+"]);book.mutate(dict(action='macro_run',module='Example',macro='run',operation_id="+repr(operation)+",expected_state=book.state(),fingerprint=fingerprint(book.db)));os._exit(74)"
+        child=subprocess.run([sys.executable,'-I','-B','-c',script],capture_output=True,text=True,timeout=10)
+        self.assertEqual(child.returncode,74,child.stderr);self.assertEqual(self.book.operation(operation)['macro_result'],42)
+        self.book.refresh();self.assertEqual(self.cell()['source'],'committed')
+
+    def test_module_globals_support_standard_library_with_postponed_annotations(self):
+        self.install("from __future__ import annotations\nfrom dataclasses import dataclass\n@dataclass\nclass Reading:\n    value: int\ndef run(ctx):\n    return Reading(17).value\n")
+        self.assertEqual(self.run_macro()['macro_result'],17)
 
 
 if __name__=='__main__':unittest.main()

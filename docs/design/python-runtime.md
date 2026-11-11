@@ -4,12 +4,20 @@ Status: agreed role for user code and managed/direct boundary; proposed event
 names, lifecycle, and runtime API. Examples describe future behavior, not an
 implemented API.
 
-The development service now supports an explicitly operator-activated trusted
-`on_change` file in a spawned worker. Its get/value/set broker joins the parent
-transaction, enforces time/round budgets, and fails closed. See
-[initial contracts](initial-contracts.md) and [development guide](development.md).
-Other event families, portable workbook modules, macros, custom functions,
-follow-up jobs and remote code activation remain unimplemented.
+The implemented development tier stores native v5 workbook modules with explicit
+typed macro declarations and runs short atomic macros only after exact
+service-local operator activation. Sheet/table reads and edits use a spawned
+worker and the parent transaction broker. Required externally activated
+`on_change`, `on_structure`, `on_table_structure`, `on_table_change` and
+`on_code_structure` handlers participate in managed behavior. Failures remain
+visible and roll back applicable database changes.
+
+See the [automation implementation plan](python-automation-plan.md) and
+[runnable guide](python-automation-guide.md) for the implemented API, activation,
+bounds and examples. The additional event lifecycle below remains proposed.
+Automatic workbook event bindings, a Qt code editor, custom formula functions,
+package environments, durable follow-up work and remote code activation are
+separate increments. Source inspection/open never executes workbook modules.
 
 ## Programming surfaces
 

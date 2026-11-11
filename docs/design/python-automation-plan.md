@@ -142,9 +142,9 @@ GUI/editor, VoiceOver, Windows/Linux and existing release gates remain open.
 
 | Increment | PR | Implementation and review | Evidence |
 | --- | --- | --- | --- |
-| 1 | Pending | Planned | Pending |
-| 2 | Pending | Planned | Pending |
-| 3 | Pending | Planned | Pending |
-| 4 | Pending | Planned | Pending |
-| 5 | Pending | Planned | Pending |
-| 6 | Pending | Planned | Pending |
+| 1 | [PR 125](https://github.com/hybridmachine/DataHorizon/pull/125) | Native v5 module storage, migrations, static declarations, required code hooks and inert reads/copies; implementation self-review performed | [Verification and review](evidence/python-automation-task1.json) |
+| 2 | [PR 126](https://github.com/hybridmachine/DataHorizon/pull/126) | Exact immutable service-local operator grants and source-change refusal; implementation self-review performed | [Verification and review](evidence/python-automation-task2.json) |
+| 3 | [PR 127](https://github.com/hybridmachine/DataHorizon/pull/127) | Atomic brokered mixed-data macros, required hooks, history and durable results; implementation self-review performed | [Verification and review](evidence/python-automation-task3.json) |
+| 4 | [PR 128](https://github.com/hybridmachine/DataHorizon/pull/128) | Bounded UTF-8 diagnostics, worker crashes/timeouts/cancellation and no partial commits; implementation self-review performed | [Verification and review](evidence/python-automation-task4.json) |
+| 5 | [PR 129](https://github.com/hybridmachine/DataHorizon/pull/129) | REST/OpenAPI/capabilities, CLI/SDK, live cancellation and unknown-response reconciliation; implementation self-review performed | [Verification and review](evidence/python-automation-task5.json) |
+| 6 | [PR 130](https://github.com/hybridmachine/DataHorizon/pull/130) | Runnable examples, final review fixes, full suites and installed qualification; implementation self-review performed | [Verification and review](evidence/python-automation-task6.json) |

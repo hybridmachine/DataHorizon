@@ -1,0 +1,6 @@
+{
+  "application_source_commit": "a58cf9b92a1acdfc6fcb91844b1ab90f043493c7",
+  "harness_source_commit": "a58cf9b92a1acdfc6fcb91844b1ab90f043493c7",
+  "candidate_sha256": "958642b7362a4cacc9819ce0119a7f075a82e7c68d05337452a9551c55a1f082",
+  "scope": "Git-normalized paths/blobs under desktop/service/tests/cmake/tools/packaging/examples plus CMakeLists COPYING LICENSES; excludes docs/build/cache"
+}

@@ -20,8 +20,14 @@ class MacroLifecycleTests(unittest.TestCase):
                 source=preamble+"\ndef run(ctx):\n    ctx.set('Sheet1',1,1,'staged')\n"+''.join('    '+line+'\n' for line in body.splitlines())
                 book.mutate(operation('module_save',name='Example',source=source,macros=[dict(name='run',result=dict(type=result_type))],fingerprint=fingerprint(book.db)))
                 book.approved_code=frozenset([activation(book)['activation_key']]);request=operation('macro_run',module='Example',macro='run',fingerprint=fingerprint(book.db))
-                event=threading.Event();timer=None
-                if cancel:timer=threading.Timer(.3,event.set);timer.start()
+                event=threading.Event();timer=None;dispatch=book.hook_dispatch
+                def after_staging(method,args):
+                    nonlocal timer
+                    result=dispatch(method,args)
+                    if cancel and method=='set' and timer is None:
+                        timer=threading.Timer(.05,event.set);timer.start()
+                    return result
+                book.hook_dispatch=after_staging
                 start=time.monotonic()
                 try:
                     try:result=book.mutate(request,cancel_event=event)
@@ -74,6 +80,11 @@ class MacroLifecycleTests(unittest.TestCase):
         with patch('datahorizon.macro_runtime.multiprocessing.get_context',side_effect=RuntimeError('cannot spawn')):
             result,_=self.execute('return 1')
         self.assertEqual(result['code'],'MACRO_WORKER_FAILED');self.assertEqual(result['outcome'],'rolled_back')
+
+    def test_large_print_capture_does_not_duplicate_the_whole_write(self):
+        result,_=self.execute("import tracemalloc\npayload='x'*2000000\ntracemalloc.start()\nprint(payload)\npeak=tracemalloc.get_traced_memory()[1]\ntracemalloc.stop()\nreturn peak<200000",result_type='boolean')
+        self.assertIs(result['macro_result'],True,result)
+        self.assertLessEqual(len(result['macro']['logs'].encode()),8192)
 
 
 if __name__=='__main__':unittest.main()

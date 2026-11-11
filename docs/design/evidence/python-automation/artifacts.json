@@ -1,0 +1,39 @@
+{
+  "inventory_entries": 1947,
+  "inventory_verified": true,
+  "relocated_inventory_matches_archive": true,
+  "installed_service_matches_source": true,
+  "installed_service_files": 50,
+  "archive_manifest_source_head": "a58cf9b92a1acdfc6fcb91844b1ab90f043493c7",
+  "archive_manifest_source_dirty": false,
+  "artifacts": {
+    "build/python-automation-final/Installed/DataHorizon.app/Contents/MacOS/DataHorizon": {
+      "bytes": 4883856,
+      "sha256": "d5da1580e5646c171de9ca9b9af809f8d1fc2e01ad1b6689d9e677a101e447b4"
+    },
+    "build/python-automation-final/Installed/DataHorizon.app/Contents/Resources/source.json": {
+      "bytes": 79,
+      "sha256": "b3e1f12a550660ab2452cd8171643b083a0bc1806c6c1439dfd8cda2530f3b32"
+    },
+    "build/python-automation-final/DataHorizon-python-a58cf9b-macos-arm64.tar.gz": {
+      "bytes": 51993720,
+      "sha256": "d79369608849cb65c923bd9a4c9e199629c9f4015a8b7a07f68e3b7a72460b3a"
+    },
+    "build/python-automation-final/Automation.dhwb": {
+      "bytes": 98304,
+      "sha256": "e2f781bcbef69b5d798b170d55616365f7eb666989a6d6827adc2a6165c1c0f6"
+    },
+    "examples/automation_module.py": {
+      "bytes": 635,
+      "sha256": "95a8d972f3b9a3a0b83778e8450d1b638eaefe8189a3187a86ab52d3cc01e479"
+    },
+    "examples/automation_rules.py": {
+      "bytes": 745,
+      "sha256": "26356b699538e50e8b983417f36194128b460603f27c9684c1c3b6ef1acf1a67"
+    },
+    "examples/python_automation.py": {
+      "bytes": 3386,
+      "sha256": "e7b7dfc909afcde7911927945c943dc4ba55eb0d9f7b2276ee902c29068836d2"
+    }
+  }
+}

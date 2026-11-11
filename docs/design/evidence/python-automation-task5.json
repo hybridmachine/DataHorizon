@@ -20,9 +20,11 @@
       "Publish native v5 and all automation capabilities",
       "Check cancellation before starting Python and preserve cancellation/timeout from broker work",
       "Keep approval-dependent API examples in a separately approved service fixture"
-    ]
+    ],
+    "type": "Implementation self-review"
   },
   "task": 5,
   "source_commit": "ee88e87d9eb65acf1e89504c06f5cd610e02673f",
-  "release_qualified": false
+  "release_qualified": false,
+  "pull_request": "https://github.com/hybridmachine/DataHorizon/pull/129"
 }
