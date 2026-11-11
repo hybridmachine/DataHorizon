@@ -3,12 +3,14 @@
 
 import argparse
 from contextlib import contextmanager
+import hashlib
 import hmac
 from http.client import LineTooLong
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
 import math
+import os
 from pathlib import Path
 import secrets
 import socket
@@ -30,6 +32,8 @@ from .ods import ods_preview, ods_export
 from .recovery import inspect_native
 from .list_export import export_list
 from .functions import function_catalog
+from .staging import IDENTIFIER, Staging
+from .xlsx_stream import LARGE_CELLS, LARGE_PACKAGE
 
 CAPABILITIES = {
     "api_version": 1, "format_version": 7, "supported_format_versions": [1,2,3,4,5,6,7], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
@@ -55,6 +59,8 @@ CAPABILITIES['operations'].extend(['name_save','name_delete'])
 CAPABILITIES.update(names=True,max_names=256)
 CAPABILITIES['operations'].extend(['binding_save','binding_delete'])
 CAPABILITIES.update(event_bindings=True,max_bindings=16,binding_events=['cell_change','table_change'])
+MAX_UPLOADS, UPLOAD_SECONDS, UPLOAD_CHUNK = 2, 300, 64*1024
+CAPABILITIES.update(uploads=True,max_upload_bytes=LARGE_PACKAGE,max_import_cells=LARGE_CELLS,max_concurrent_uploads=MAX_UPLOADS)
 
 ROUTES = {
     "/v1/workbooks/{workbook}/code": ("post", "Inspect inert workbook modules and the exact service-local activation key"),
@@ -127,6 +133,8 @@ ROUTES = {
     "/v1/workbooks/{workbook}/snapshot": ("post", "Exclusive consistent native copy"),
     "/v1/workbooks/{workbook}/close": ("post", "Release this client handle; other client handles remain valid"),
     "/v1/workbooks/{workbook}/export/csv": ("post", "Consistent values-only CSV export"),
+    "/v1/uploads/{upload}": ("put", "Stream a raw spreadsheet package of 1 byte to 64 MiB into private staging; never parsed by this route"),
+    "/v1/uploads/{upload}/release": ("post", "Delete a completed staged upload"),
 }
 
 
@@ -309,16 +317,26 @@ def openapi():
     schemas['SpreadsheetPreparation']['properties']['timezone_policy']={'type':'string','enum':['reject','utc'],'default':'reject'}
     from .job_api import install as install_job_schemas,request_schema as job_request_schema
     install_job_schemas(schemas)
+    upload_id={"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"}
+    upload_example=b"PK example bytes"
+    schemas["UploadReceipt"]={"type":"object","required":["upload_id","bytes","sha256"],"additionalProperties":False,"properties":{
+        "upload_id":upload_id,"bytes":{"type":"integer","minimum":1,"maximum":LARGE_PACKAGE},"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"SHA-256 of the received bytes, computed while copying"}},
+        "description":"The complete body is staged in a private 0600 file, retained for 15 minutes after last use. The bytes are not parsed, executed or echoed; later import requests name the upload_id. At most four stored and two in-progress uploads.",
+        "example":{"upload_id":"example-upload","bytes":len(upload_example),"sha256":hashlib.sha256(upload_example).hexdigest()}}
+    schemas["UploadReleased"]={"type":"object","required":["released","upload_id"],"additionalProperties":False,"properties":{"released":{"type":"boolean","enum":[True]},"upload_id":upload_id},
+        "example":{"released":True,"upload_id":"example-upload"}}
     paths = {}
     for path, (method, summary) in ROUTES.items():
         parameters = [{"name": name, "in": "path", "required": True, "schema": {"type": "string"}}
-                      for name in ("workbook", "operation", "job") if "{" + name + "}" in path]
+                      for name in ("workbook", "operation", "job", "upload") if "{" + name + "}" in path]
+        for parameter in parameters:
+            if parameter["name"]=="upload":parameter["schema"]=upload_id
         operation = {"summary": summary, "parameters": parameters,
                      "responses": {"200": {"description": "JSON result"}, **{str(status):{"description":"Structured error; inspect outcome and operation_id before deciding whether a mutation finished"} for status in (400,401,403,404,408,409,413,500,503)},
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+            name = "JobAction" if path.startswith("/v1/uploads/") else ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "SpreadsheetPreparation" if path in ("/v1/import/xlsx/jobs","/v1/import/ods/jobs") else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
                 "code":"CodeReadRequest","names":"NamesReadRequest","inspect":"TableCatalogRequest","repair-preview":"RelationshipRepairRequest","cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             if '/queries/' in path and path.endswith('/preview'):schema={'$ref':'#/components/schemas/QueryDefinitionRequest'}
@@ -347,6 +365,17 @@ def openapi():
         if '/operation-jobs' in path:
             response='JobReleased' if path.endswith('/release') else 'OperationJobStatus'
             operation['responses']['200']['content']={'application/json':{'schema':{'$ref':'#/components/schemas/'+response}}}
+        if path.startswith('/v1/uploads/'):
+            operation['responses']['200']['content']={'application/json':{'schema':{'$ref':'#/components/schemas/'+('UploadReleased' if path.endswith('/release') else 'UploadReceipt')}}}
+        if method=='put':
+            operation['description']=("Admission (origin, token, identifier, Content-Type, Content-Length, limits, capacity) completes before any body byte is read or file is created; "
+                "a rejected request closes the connection without reading its body. The body is read in 64-KiB chunks under one 300-second deadline from its first byte. "
+                "A short body, disconnect or timeout deletes the partial file. Re-uploading an existing upload_id is JOB_CONFLICT; release it first.")
+            operation['requestBody']={'required':True,'content':{'application/octet-stream':{'schema':{'type':'string','format':'binary','minLength':1,'maxLength':LARGE_PACKAGE},'example':upload_example.decode()}}}
+            operation['responses']['408']['content']={'application/json':{'schema':{'$ref':'#/components/schemas/Error'}}}
+            operation['responses']['409']['description']='JOB_CONFLICT (upload_id exists), JOB_LIMIT (four stored uploads) or UPLOAD_BUSY (two uploads in progress)'
+            operation['responses']['411']={'description':'LENGTH_REQUIRED: a decimal Content-Length is required; chunked transfer encoding is refused','content':{'application/json':{'schema':{'$ref':'#/components/schemas/Error'}}}}
+            operation['responses']['415']={'description':'UNSUPPORTED_MEDIA_TYPE: Content-Type must be application/octet-stream','content':{'application/json':{'schema':{'$ref':'#/components/schemas/Error'}}}}
         paths[path] = {method: operation}
     return {"openapi": "3.0.3", "info": {"title": "DataHorizon local development API", "version": "0.1.0"},
             "paths": paths, "components": {"schemas":schemas,"securitySchemes": {"localToken": {"type": "http", "scheme": "bearer"}}}}
@@ -379,7 +408,7 @@ out.textContent=r.status+'\\n'+JSON.stringify(await r.json(),null,2)}catch(e){ou
 class Service(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port=0, token=None, handler=None, *, max_requests=16, read_seconds=10, max_header_bytes=65536, approved_code=(), owner_channel=False):
+    def __init__(self, port=0, token=None, handler=None, *, max_requests=16, read_seconds=10, max_header_bytes=65536, approved_code=(), owner_channel=False, staging_root=None):
         if type(max_requests) is not int or max_requests<1 or type(max_header_bytes) is not int or max_header_bytes<1:
             raise ValueError("Positive request and header limits required")
         if type(read_seconds) not in (int,float) or not math.isfinite(read_seconds) or read_seconds<=0:
@@ -398,6 +427,9 @@ class Service(ThreadingHTTPServer):
         from .query_storage import cleanup_terminated
         cleanup_terminated()
         self.jobs = PreparationJobs()
+        # Uploads, import stages and exports; a supplied root lets tests inspect staged files.
+        self.staging = Staging(staging_root)
+        self._uploads, self._upload_lock = set(), threading.Lock()
         super().__init__(("127.0.0.1", port), RequestHandler)
 
     def process_request(self, request, client_address):
@@ -454,6 +486,7 @@ class Service(ThreadingHTTPServer):
     def server_close(self):
         super().server_close()
         self.jobs.close()
+        self.staging.close()
         with self.registry_lock:
             self._stopping = True
             books = set(self.workbooks.values())
@@ -530,7 +563,33 @@ class Service(ThreadingHTTPServer):
                         if fresh:
                             self._opening.discard(path)
 
+    @contextmanager
+    def upload_slot(self, identifier):
+        """Reserve an in-progress upload and its staging file; release the file unless the body completes."""
+        with self._upload_lock:
+            require(len(self._uploads)<MAX_UPLOADS,"UPLOAD_BUSY",f"At most {MAX_UPLOADS} uploads can be in progress; retry when one finishes",409)
+            target=self.staging.new("upload",identifier)
+            self._uploads.add(identifier)
+        try:
+            yield target
+        except BaseException:
+            self.staging.release("upload",identifier)
+            raise
+        finally:
+            with self._upload_lock:
+                self._uploads.discard(identifier)
+
+    def _release_upload(self, identifier):
+        with self._upload_lock:
+            require(IDENTIFIER.fullmatch(identifier),"INVALID_JOB","Identifier needs 1–64 ASCII letters, digits, _ or -")
+            require(identifier not in self._uploads,"JOB_CONFLICT","The upload is still in progress",409)
+            self.staging.path("upload",identifier)
+            self.staging.release("upload",identifier)
+        return {"released":True,"upload_id":identifier}
+
     def dispatch(self, method, path, body):
+        if method=="POST" and path.startswith("/v1/uploads/") and path.endswith("/release") and path.count("/")==4:
+            return self._release_upload(unquote(path.split("/")[3]))
         if method=='POST' and path=='/v1/convert/value':
             from .conversion import convert
             return convert(body)
@@ -793,6 +852,39 @@ class RequestHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
             pass  # The durable receipt remains available after a lost response.
 
+    def receive_upload(self, path):
+        """Admit, then copy exactly Content-Length untrusted bytes to a staging file without interpreting them."""
+        self.close_connection=True  # A rejected body is never read, so the connection cannot be reused.
+        require(path.startswith("/v1/uploads/"),"NOT_FOUND","Unknown API resource",404)
+        identifier=unquote(path[len("/v1/uploads/"):])
+        stem,_,action=identifier.rpartition("/")
+        require(not (action=="release" and IDENTIFIER.fullmatch(stem)),"METHOD_NOT_ALLOWED","Release an upload with POST",405)
+        require(IDENTIFIER.fullmatch(identifier),"INVALID_JOB","Identifier needs 1–64 ASCII letters, digits, _ or -")
+        require(self.headers.get_content_type()=="application/octet-stream","UNSUPPORTED_MEDIA_TYPE","Content-Type must be application/octet-stream",415)
+        lengths=self.headers.get_all("Content-Length") or []
+        require("Transfer-Encoding" not in self.headers and len(lengths)==1 and lengths[0].strip().isascii() and lengths[0].strip().isdigit(),
+                "LENGTH_REQUIRED","A decimal Content-Length is required; chunked transfer encoding is not accepted",411)
+        length=int(lengths[0])
+        require(0<length<=LARGE_PACKAGE,"REQUEST_LIMIT",f"Upload must be 1 byte to {LARGE_PACKAGE//(1024*1024)} MiB",413)
+        with self.server.upload_slot(identifier) as target:
+            # One total body deadline replaces the header read budget from here on.
+            self.rfile.raw.deadline=time.monotonic()+UPLOAD_SECONDS
+            digest,remaining=hashlib.sha256(),length
+            descriptor=os.open(target,os.O_WRONLY|os.O_TRUNC|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_BINARY",0))
+            with open(descriptor,"wb") as output:
+                while remaining:
+                    try:
+                        chunk=self.rfile.read(min(UPLOAD_CHUNK,remaining))
+                    except TimeoutError as error:
+                        raise EngineError("REQUEST_TIMEOUT","Upload read deadline exceeded; the partial upload was deleted",408) from error
+                    except ConnectionError as error:
+                        raise EngineError("INVALID_UPLOAD","Connection lost before the body completed; the partial upload was deleted") from error
+                    require(chunk,"INVALID_UPLOAD","Body ended before its Content-Length; the partial upload was deleted")
+                    digest.update(chunk)
+                    output.write(chunk)
+                    remaining-=len(chunk)
+        return {"upload_id":identifier,"bytes":length,"sha256":digest.hexdigest()}
+
     def run_request(self):
         try:
             # Reject browser cross-origin writes and DNS-rebinding Host headers.
@@ -806,6 +898,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return self.respond(200, EXPLORER if path == "/docs" else openapi(), "text/html" if path == "/docs" else "application/json")
             require(hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + self.server.token),
                     "UNAUTHORIZED", "A valid local bearer token is required", 401)
+            if self.command == "PUT":
+                return self.respond(200, self.receive_upload(path))
             body = {}
             if self.command == "POST":
                 length = int(self.headers.get("Content-Length", "0"))
@@ -831,6 +925,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     do_GET = run_request
     do_POST = run_request
+    do_PUT = run_request
 
 
 def read_owner_channel(stream, store, limit=4096):

@@ -137,6 +137,17 @@ class HttpLimitsTests(unittest.TestCase):
             # must not discard those prefetched body bytes.
             self.assertEqual(client.request('/v1/import/csv/preview',{'csv':'A,B\n1,2'})['rows'],[['A','B'],['1','2']])
 
+    def test_json_post_keeps_its_four_mib_limit_beside_uploads(self):
+        with running() as (server,client):
+            self.assertTrue(client.request('/v1/capabilities')['uploads'])
+            wait_for_capacity(server)
+            with socket.create_connection(server.server_address) as peer:
+                peer.sendall((f'POST /v1/import/csv/preview HTTP/1.0\r\nHost: localhost\r\nAuthorization: Bearer {server.token}\r\n'
+                              f'Content-Type: application/json\r\nContent-Length: {5*1024*1024}\r\n\r\n').encode()+b'{"csv":"')
+                raw=response(peer)
+            self.assertIn(b'413',raw.split(b'\r\n')[0])
+            self.assertEqual(json.loads(raw.split(b'\r\n\r\n')[1])['code'],'REQUEST_LIMIT')
+
     def test_thread_start_failure_returns_slot(self):
         with Service(max_requests=1) as server:
             with patch('threading.Thread.start',side_effect=RuntimeError('Cannot start handler')):
