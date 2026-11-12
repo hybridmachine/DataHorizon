@@ -100,6 +100,12 @@ LABEL_PX = 12.0
 TITLE_PX = 14.0
 ROW = LABEL_PX * 1.5
 MAX_CANVAS = 16_384
+MIN_WIDTH, MIN_HEIGHT = 64, 48
+# Below these sizes a decoration is dropped rather than drawn over the plot.
+TITLE_MIN_HEIGHT = 120
+LEGEND_RIGHT_MIN_WIDTH = 240
+LEGEND_BOTTOM_MIN_HEIGHT = 160
+AXIS_TITLE_MIN = (240, 160)
 CARTESIAN = ("column", "bar", "line", "area", "scatter")
 # Placeholder palette for the experiment; not a product decision.
 PALETTE = ("#3b6fb6", "#d9822b", "#4f9d69", "#b8475f", "#7b61a8", "#8a8f98", "#c2a633", "#2f9aa0")
@@ -157,6 +163,16 @@ class _Svg:
             f'<text x="{_num(x)}" y="{_num(y)}" font-family="sans-serif" font-size="{_num(size)}" '
             f'text-anchor="{anchor}" fill="{_TEXT}"{turn}>{_xml(text)}</text>')
 
+    def row_label(self, row, x, y, text, anchor="middle"):
+        """A label on a horizontal row; skipped if it would overlap ``row`` or leave the canvas."""
+        width = self.width_of(text)
+        lo = x - width / 2 if anchor == "middle" else x
+        hi = lo + width
+        if lo < 0 or hi > self.width or any(lo < other_hi + 4 and hi > other_lo - 4 for other_lo, other_hi in row):
+            return
+        row.append((lo, hi))
+        self.text(x, y, text, anchor=anchor)
+
     def width_of(self, text, size=LABEL_PX):
         return estimate_text_width(text, size, self.metrics)
 
@@ -178,9 +194,10 @@ class _Svg:
 
 
 def _validate(resolved, width, height) -> dict:
-    for size in (width, height):
-        if isinstance(size, bool) or not isinstance(size, int) or not 0 < size <= MAX_CANVAS:
-            raise ChartRenderError("INVALID_SIZE", f"canvas size must be 1..{MAX_CANVAS} pixels")
+    for size, least in ((width, MIN_WIDTH), (height, MIN_HEIGHT)):
+        if isinstance(size, bool) or not isinstance(size, int) or not least <= size <= MAX_CANVAS:
+            raise ChartRenderError(
+                "INVALID_SIZE", f"canvas must be {MIN_WIDTH}x{MIN_HEIGHT} to {MAX_CANVAS}x{MAX_CANVAS} pixels")
     if not isinstance(resolved, dict):
         raise ChartRenderError("INVALID_SPEC", "resolved chart must be an object")
     kind = resolved.get("type")
@@ -259,6 +276,11 @@ def _scale(ticks, start_px, end_px):
     return lambda value: start_px + (value - lo) / span * (end_px - start_px)
 
 
+def _check_range(lo, hi):
+    if not (math.isfinite(lo) and math.isfinite(hi) and math.isfinite(hi - lo)):
+        raise ChartRenderError("VALUE_RANGE", "values span a range too large to plot")
+
+
 def _axis_ticks(lo, hi, forced_min, forced_max):
     if forced_min is not None:
         lo = forced_min
@@ -268,7 +290,7 @@ def _axis_ticks(lo, hi, forced_min, forced_max):
 
 
 def _title(svg, chart):
-    if chart["title"] is None:
+    if chart["title"] is None or svg.height < TITLE_MIN_HEIGHT:
         return MARGIN
     text = svg.fit(chart["title"], svg.width - 2 * MARGIN, TITLE_PX)
     svg.text(svg.width / 2, MARGIN + TITLE_PX, text, TITLE_PX, "middle")
@@ -310,6 +332,7 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
     if kind in ("line", "scatter"):
         ends = [span[1] for row in spans for span in row if span is not None]
     lo, hi = (min(ends), max(ends)) if ends else (0.0, 0.0)
+    _check_range(lo, hi)
     if kind in ("column", "bar", "area"):
         lo, hi = min(lo, 0.0), max(hi, 0.0)
     ticks = _axis_ticks(lo, hi, chart["value_min"], chart["value_max"])
@@ -318,9 +341,13 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
     x_ticks = x_labels = None
     if scatter:
         xs = [x for item in series for x in (item["x"] or []) if x is not None]
+        if xs:
+            _check_range(min(xs), max(xs))
         x_ticks = nice_ticks(min(xs), max(xs)) if xs else [0, 1]
         x_labels = [format_tick(tick) for tick in x_ticks]
 
+    if svg.width < AXIS_TITLE_MIN[0] or svg.height < AXIS_TITLE_MIN[1]:
+        chart = {**chart, "value_title": None, "category_title": None}
     left = MARGIN + (ROW if (chart["category_title"] if horizontal else chart["value_title"]) else 0)
     bottom = bottom_edge - MARGIN - ROW - (ROW if (chart["value_title"] if horizontal else chart["category_title"]) else 0)
     label_room = 0.0
@@ -329,7 +356,8 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
         left += label_room + 6
         right -= svg.width_of(tick_labels[-1]) / 2
     else:
-        left += max(svg.width_of(text) for text in tick_labels) + 6
+        label_room = min(max(svg.width_of(text) for text in tick_labels), svg.width * 0.4)
+        left += label_room + 6
         if scatter:
             right -= svg.width_of(x_labels[-1]) / 2
     right = max(right, left + 1)
@@ -339,19 +367,25 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
     # value axis: gridlines and tick labels
     if horizontal:
         to_px = _scale(ticks, left, right)
+        row = []
         for tick, text in zip(ticks, tick_labels):
             svg.line(to_px(tick), top, to_px(tick), bottom, _GRID)
-            svg.text(to_px(tick), bottom + LABEL_PX + 3, text, anchor="middle")
+            svg.row_label(row, to_px(tick), bottom + LABEL_PX + 3, text)
     else:
         to_px = _scale(ticks, bottom, top)
+        last = None
         for tick, text in zip(ticks, tick_labels):
-            svg.line(left, to_px(tick), right, to_px(tick), _GRID)
-            svg.text(left - 6, to_px(tick) + LABEL_PX / 3, text, anchor="end")
+            y = to_px(tick)
+            svg.line(left, y, right, y, _GRID)
+            if last is None or last - y >= LABEL_PX + 2:  # thin labels that would stack
+                svg.text(left - 6, y + LABEL_PX / 3, svg.fit(text, label_room), anchor="end")
+                last = y
     if scatter:
         x_px = _scale(x_ticks, left, right)
+        row = []
         for tick, text in zip(x_ticks, x_labels):
             svg.line(x_px(tick), top, x_px(tick), bottom, _GRID)
-            svg.text(x_px(tick), bottom + LABEL_PX + 3, text, anchor="middle")
+            svg.row_label(row, x_px(tick), bottom + LABEL_PX + 3, text)
 
     # axis titles
     across_title, along_title = (chart["category_title"], chart["value_title"]) if horizontal else (chart["value_title"], chart["category_title"])
@@ -369,6 +403,11 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
             _category_labels(svg, labels, left, slot, bottom + LABEL_PX + 3, True, 0.0)
 
     stacked = chart["grouping"] == "stacked"
+    low, high = ticks[0], ticks[-1]
+
+    def clamp(value):
+        return min(max(value, low), high)
+
     for number, (item, row) in enumerate(zip(series, spans)):
         colour = PALETTE[number % len(PALETTE)]
         if kind in ("column", "bar"):
@@ -378,7 +417,10 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
             for index, span in enumerate(row):
                 if span is None:
                     continue
-                a, b = sorted((to_px(span[0]), to_px(span[1])))
+                start, end = clamp(span[0]), clamp(span[1])
+                if start == end and span[0] != span[1]:
+                    continue  # wholly outside a forced axis range
+                a, b = sorted((to_px(start), to_px(end)))
                 along = origin + index * slot + offset
                 box = (a, along, b - a, thickness) if horizontal else (along, a, thickness, b - a)
                 svg.rect(*box, colour)
@@ -387,19 +429,19 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
             xs = item["x"] or []
             for index, span in enumerate(row):
                 x = xs[index] if index < len(xs) else None
-                if span is None or x is None:
+                if span is None or x is None or not low <= span[1] <= high:
                     continue
                 svg.circle(x_px(x), to_px(span[1]), 3, colour)
                 svg.point_mark(number, index, x_px(x), to_px(span[1]))
         else:  # line and area: one path segment per run of points without a gap
             runs, run = [], []
             for index, span in enumerate(row):
-                if span is None:
+                if span is None or (kind == "line" and not low <= span[1] <= high):
                     if run:
                         runs.append(run)
                     run = []
                 else:
-                    run.append((left + (index + 0.5) * slot, to_px(span[1]), to_px(span[0]), index))
+                    run.append((left + (index + 0.5) * slot, to_px(clamp(span[1])), to_px(clamp(span[0])), index))
             if run:
                 runs.append(run)
             for run in runs:
@@ -427,6 +469,10 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
 def _legend(svg, entries, position, top, right, bottom_edge):
     """Draw the legend and return the (right, bottom_edge) left for the plot."""
     if position == "none" or not entries:
+        return right, bottom_edge
+    if position == "right" and svg.width < LEGEND_RIGHT_MIN_WIDTH:
+        return right, bottom_edge
+    if position == "bottom" and svg.height < LEGEND_BOTTOM_MIN_HEIGHT:
         return right, bottom_edge
     swatch, gap = 10.0, 6.0
     if position == "right":
@@ -470,6 +516,7 @@ def _pie_values(chart) -> list[float | None]:
 
 def _render_pie(svg, values, top, right, bottom_edge):
     total = sum(value for value in values if value)
+    _check_range(0.0, total)
     cx = (MARGIN + right) / 2
     cy = (top + bottom_edge - MARGIN) / 2
     radius = max(min(right - MARGIN, bottom_edge - MARGIN - top) / 2 - 4, 1.0)

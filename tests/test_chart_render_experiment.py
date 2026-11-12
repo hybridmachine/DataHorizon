@@ -196,5 +196,121 @@ class Evaluate(unittest.TestCase):
         self.assertEqual(bench.evaluate(m), {"route": "fallback_qcustomplot", "failed": ["all_valid"]})
 
 
+def text_extent(el, size_px):
+    width = cr.estimate_text_width(el.text or "", size_px)
+    x = float(el.get("x"))
+    anchor = el.get("text-anchor")
+    if anchor == "middle":
+        return x - width / 2, x + width / 2
+    return (x - width, x) if anchor == "end" else (x, x + width)
+
+
+def outside_canvas(svg, width, height):
+    """Shapes and unrotated text that reach outside the canvas."""
+    bad = []
+    for el in ET.fromstring(svg).iter():
+        tag = el.tag.split("}")[-1]
+        get = lambda name: float(el.get(name))
+        if tag == "rect":
+            box = (get("x"), get("y"), get("x") + get("width"), get("y") + get("height"))
+        elif tag == "line":
+            box = (min(get("x1"), get("x2")), min(get("y1"), get("y2")), max(get("x1"), get("x2")), max(get("y1"), get("y2")))
+        elif tag == "circle":
+            box = (get("cx"), get("cy"), get("cx"), get("cy"))
+        elif tag == "text" and el.get("transform") is None:
+            lo, hi = text_extent(el, get("font-size"))
+            box = (lo, get("y") - get("font-size"), hi, get("y"))
+        else:
+            continue
+        if box[0] < -0.01 or box[1] < -0.01 or box[2] > width + 0.01 or box[3] > height + 0.01:
+            bad.append((tag, box))
+    return bad
+
+
+def overlapping_labels(svg):
+    """Pairs of unrotated labels on one text row whose estimated extents overlap."""
+    rows = {}
+    for el in ET.fromstring(svg).iter():
+        if el.tag.endswith("text") and el.get("transform") is None:
+            rows.setdefault(el.get("y"), []).append(text_extent(el, float(el.get("font-size"))))
+    return [(a, b) for row in rows.values() for a, b in zip(sorted(row), sorted(row)[1:]) if a[1] > b[0] + 0.01]
+
+
+def every_type():
+    for name in ["column_clustered", "column_stacked", "bar_clustered", "bar_stacked",
+                 "line", "area_stacked", "scatter", "pie"]:
+        yield name, load(name)
+
+
+class ReviewFixes(unittest.TestCase):
+    def test_forced_axis_range_keeps_shapes_inside_the_plot(self):
+        for type_, grouping, expected in [("column", "clustered", [2]), ("bar", "clustered", [2]),
+                                          ("area", "clustered", [0, 1, 2]), ("line", None, []), ("scatter", None, [])]:
+            spec = one([1.0, 2.0, 300.0], type_=type_, grouping=grouping)
+            spec["axes"]["value"].update(min=10, max=20)
+            if type_ == "scatter":
+                spec["categories"], spec["series"][0]["x"] = None, [1.0, 2.0, 3.0]
+            out = cr.render(spec, 800, 500)
+            self.assertEqual(outside_canvas(out["svg"], 800, 500), [], type_)
+            self.assertEqual([m["point"] for m in out["marks"]], expected, type_)
+            for m in out["marks"]:
+                self.assertLess(m["h"], 500, type_)
+                self.assertLess(m["w"], 800, type_)
+
+    def test_overflowing_values_are_refused_with_a_code(self):
+        specs = [one([1e308, -1e308], type_=t, grouping=g)
+                 for t, g in [("column", "clustered"), ("bar", "clustered"), ("line", None), ("area", "clustered")]]
+        stacked = one([1e308], grouping="stacked")
+        stacked["series"].append({"name": "t", "values": [1e308], "x": None})
+        scatter = one([1.0, 2.0], type_="scatter", grouping=None)
+        scatter["categories"], scatter["series"][0]["x"] = None, [1e308, -1e308]
+        specs += [stacked, scatter, one([1e308, 1e308, 5.0], type_="pie", grouping=None)]
+        for spec in specs:
+            with self.assertRaises(cr.ChartRenderError) as caught:
+                cr.render(spec, 800, 500)
+            self.assertEqual(caught.exception.code, "VALUE_RANGE", spec["type"])
+
+    def test_small_canvases_stay_inside_or_are_refused(self):
+        for name, spec in every_type():
+            spec["axes"]["value"]["title"] = "Units sold"
+            spec["axes"]["category"]["title"] = "Month"
+            for legend in ("right", "bottom"):
+                spec["legend"]["position"] = legend
+                for width, height in [(64, 48), (120, 90), (200, 150), (300, 200)]:
+                    out = cr.render(spec, width, height)
+                    self.assertEqual(outside_canvas(out["svg"], width, height), [], (name, legend, width, height))
+        for width, height in [(63, 48), (64, 47), (20, 20), (1, 1)]:
+            with self.assertRaises(cr.ChartRenderError) as caught:
+                cr.render(load("column_clustered"), width, height)
+            self.assertEqual(caught.exception.code, "INVALID_SIZE")
+
+    def test_value_tick_labels_never_overlap(self):
+        for name, spec in every_type():
+            for item in spec["series"]:
+                item["values"] = [None if v is None else v * 1e6 for v in item["values"]]
+                if item["x"] is not None:
+                    item["x"] = [x * 1e6 for x in item["x"]]
+            for width, height in [(200, 150), (300, 200), (800, 500)]:
+                svg = cr.render(spec, width, height)["svg"]
+                self.assertEqual(overlapping_labels(svg), [], (name, width, height))
+                self.assertEqual(outside_canvas(svg, width, height), [], (name, width, height))
+
+    def test_many_long_labels_never_overlap_or_leave_the_canvas(self):
+        for type_, grouping in [("column", "clustered"), ("bar", "stacked"), ("line", None), ("area", "stacked")]:
+            spec = one([1.0] * 500, type_=type_, grouping=grouping, cats=["x" * 80 for _ in range(500)])
+            for width, height in [(800, 500), (300, 200)]:
+                svg = cr.render(spec, width, height)["svg"]
+                self.assertEqual(overlapping_labels(svg), [], (type_, width))
+                self.assertEqual(outside_canvas(svg, width, height), [], (type_, width))
+
+    def test_text_failures_are_listed_beside_other_failures(self):
+        m = good()
+        m["qt_ms_10k"]["pie"] = 400.0
+        m["text"]["max_under"] = 1.2
+        m["text_with_table"] = {"max_under": 1.2, "median_over": 1.0}
+        self.assertEqual(bench.evaluate(m), {"route": "fallback_qcustomplot",
+                                             "failed": ["qt_ms_10k.pie", "text", "text_with_table"]})
+
+
 if __name__ == "__main__":
     unittest.main()

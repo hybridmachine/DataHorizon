@@ -41,14 +41,17 @@ def evaluate(measurements: dict) -> dict:
               for kind, value in measurements[key].items() if value > limit]
     if not measurements["all_valid"]:
         failed.append("all_valid")
-    if failed:
-        return {"route": "fallback_qcustomplot", "failed": failed}
-    if _text_ok(measurements["text"]):
-        return {"route": "service_svg", "failed": []}
+    hard = bool(failed)
     table = measurements.get("text_with_table")
-    if table is not None and _text_ok(table):
-        return {"route": "service_svg_with_metrics_table", "failed": ["text"]}
-    return {"route": "fallback_qcustomplot", "failed": ["text"] + ([] if table is None else ["text_with_table"])}
+    text_ok = _text_ok(measurements["text"])
+    table_ok = table is not None and _text_ok(table)
+    if not text_ok:
+        failed.append("text")
+        if table is not None and not table_ok:
+            failed.append("text_with_table")
+    if hard or not (text_ok or table_ok):
+        return {"route": "fallback_qcustomplot", "failed": failed}
+    return {"route": "service_svg" if text_ok else "service_svg_with_metrics_table", "failed": failed}
 
 
 def _large(kind: str) -> dict:

@@ -20,12 +20,12 @@
   },
   "measurements": {
     "render_ms_10k": {
-      "column": 33.083562506362796,
-      "bar": 32.50368742737919,
-      "line": 24.250646005384624,
-      "area": 29.705728986300528,
-      "pie": 45.105603989213705,
-      "scatter": 23.037770413793623
+      "column": 36.25466616358608,
+      "bar": 35.337021108716726,
+      "line": 26.932541513815522,
+      "area": 31.7403330700472,
+      "pie": 45.76266638468951,
+      "scatter": 24.489916511811316
     },
     "svg_bytes_10k": {
       "column": 722346,
@@ -36,20 +36,20 @@
       "scatter": 536576
     },
     "qt_ms_10k": {
-      "column": 60.531354500000006,
-      "bar": 54.432500000000005,
-      "line": 95.65145849999999,
-      "area": 115.634042,
-      "pie": 384.588896,
-      "scatter": 30.6316665
+      "column": 61.991792,
+      "bar": 55.7578545,
+      "line": 97.182625,
+      "area": 118.0681875,
+      "pie": 393.2223125,
+      "scatter": 31.3339365
     },
     "total_ms_12": {
-      "column": 0.9329995411069989,
-      "bar": 0.8173330891504884,
-      "line": 1.16139591446203,
-      "area": 1.3282085485628843,
-      "pie": 0.5929165031484365,
-      "scatter": 0.8059580925554037
+      "column": 0.9637080536196827,
+      "bar": 0.861875505015254,
+      "line": 1.2513539201648831,
+      "area": 1.3837708435474037,
+      "pie": 0.6102084320177436,
+      "scatter": 0.8472710116548539
     },
     "all_valid": true,
     "text": {
@@ -66,141 +66,142 @@
   "charts": [
     {
       "file": "area_10k.svg",
-      "load_ms": 3.2305835,
-      "paint_ms": 112.4034585,
+      "load_ms": 3.296438,
+      "paint_ms": 114.7717495,
       "valid": true
     },
     {
       "file": "area_stacked.svg",
-      "load_ms": 0.1958125,
-      "paint_ms": 0.954021,
+      "load_ms": 0.204646,
+      "paint_ms": 0.987771,
       "valid": true
     },
     {
       "file": "area_stacked_400.svg",
-      "load_ms": 0.158937,
-      "paint_ms": 0.4352085,
+      "load_ms": 0.16522900000000001,
+      "paint_ms": 0.450417,
       "valid": true
     },
     {
       "file": "bar_10k.svg",
-      "load_ms": 47.158521,
-      "paint_ms": 7.273979000000001,
+      "load_ms": 48.362042,
+      "paint_ms": 7.3958125,
       "valid": true
     },
     {
       "file": "bar_clustered.svg",
-      "load_ms": 0.32664550000000003,
-      "paint_ms": 0.3227295,
+      "load_ms": 0.333917,
+      "paint_ms": 0.32977049999999997,
       "valid": true
     },
     {
       "file": "bar_clustered_400.svg",
-      "load_ms": 0.331292,
-      "paint_ms": 0.270042,
+      "load_ms": 0.338271,
+      "paint_ms": 0.274375,
       "valid": true
     },
     {
       "file": "bar_stacked.svg",
-      "load_ms": 0.333333,
-      "paint_ms": 0.3278125,
+      "load_ms": 0.34025,
+      "paint_ms": 0.3381875,
       "valid": true
     },
     {
       "file": "bar_stacked_400.svg",
-      "load_ms": 0.327333,
-      "paint_ms": 0.2729165,
+      "load_ms": 0.3402085,
+      "paint_ms": 0.28060450000000003,
       "valid": true
     },
     {
       "file": "column_10k.svg",
-      "load_ms": 46.851375000000004,
-      "paint_ms": 13.6799795,
+      "load_ms": 47.9802505,
+      "paint_ms": 14.0115415,
       "valid": true
     },
     {
       "file": "column_clustered.svg",
-      "load_ms": 0.3248745,
-      "paint_ms": 0.4309585,
+      "load_ms": 0.331875,
+      "paint_ms": 0.439187,
       "valid": true
     },
     {
       "file": "column_clustered_400.svg",
-      "load_ms": 0.279375,
-      "paint_ms": 0.24954199999999999,
+      "load_ms": 0.29018750000000004,
+      "paint_ms": 0.256792,
       "valid": true
     },
     {
       "file": "column_stacked.svg",
-      "load_ms": 0.322854,
-      "paint_ms": 0.3928335,
+      "load_ms": 0.338125,
+      "paint_ms": 0.41837500000000005,
       "valid": true
     },
     {
       "file": "column_stacked_400.svg",
-      "load_ms": 0.2861045,
-      "paint_ms": 0.2431665,
+      "load_ms": 0.29900000000000004,
+      "paint_ms": 0.2568955,
       "valid": true
     },
     {
       "file": "line.svg",
-      "load_ms": 0.1931875,
-      "paint_ms": 0.8172295,
+      "load_ms": 0.207833,
+      "paint_ms": 0.8703125,
       "valid": true
     },
     {
       "file": "line_10k.svg",
-      "load_ms": 1.3124795,
-      "paint_ms": 94.338979,
+      "load_ms": 1.3298125,
+      "paint_ms": 95.8528125,
       "valid": true
     },
     {
       "file": "line_400.svg",
-      "load_ms": 0.155625,
-      "paint_ms": 0.39125,
+      "load_ms": 0.163687,
+      "paint_ms": 0.41079200000000005,
       "valid": true
     },
     {
       "file": "pie.svg",
-      "load_ms": 0.1003335,
-      "paint_ms": 0.42956249999999996,
+      "load_ms": 0.10389599999999999,
+      "paint_ms": 0.441167,
       "valid": true
     },
     {
       "file": "pie_10k.svg",
-      "load_ms": 33.9530415,
-      "paint_ms": 350.6358545,
+      "load_ms": 34.5642085,
+      "paint_ms": 358.658104,
       "valid": true
     },
     {
       "file": "pie_400.svg",
-      "load_ms": 0.099875,
-      "paint_ms": 0.2083125,
+      "load_ms": 0.1037295,
+      "paint_ms": 0.2163335,
       "valid": true
     },
     {
       "file": "scatter.svg",
-      "load_ms": 0.226625,
-      "paint_ms": 0.41475,
+      "load_ms": 0.2351665,
+      "paint_ms": 0.4292505,
       "valid": true
     },
     {
       "file": "scatter_10k.svg",
-      "load_ms": 16.7556665,
-      "paint_ms": 13.876000000000001,
+      "load_ms": 17.2476455,
+      "paint_ms": 14.086291,
       "valid": true
     },
     {
       "file": "scatter_400.svg",
-      "load_ms": 0.2273755,
-      "paint_ms": 0.3177295,
+      "load_ms": 0.24043799999999999,
+      "paint_ms": 0.338729,
       "valid": true
     }
   ],
   "result": {
     "route": "fallback_qcustomplot",
     "failed": [
-      "qt_ms_10k.pie"
+      "qt_ms_10k.pie",
+      "text"
     ]
   }
 }

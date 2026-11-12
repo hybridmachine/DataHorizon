@@ -13,7 +13,7 @@ The [charts design](charts-design.md) is approved and its stage 1
 standard-library SVG chart renderer, an optional Qt SVG probe and a benchmark.
 No chart feature exists in the service or the desktop.
 
-The plan's thresholds were not all met. Qt takes 385 ms to load and paint a pie
+The plan's thresholds were not all met. Qt takes 393 ms to load and paint a pie
 of 10,000 slices (limit 150 ms); every other type passes at 10,000 points. Text
 widths pass with a metrics table when the viewer's font is the measured one or
 narrower, and overflow by up to 18% under a wide substitute font. By the plan's
