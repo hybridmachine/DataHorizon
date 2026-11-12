@@ -343,7 +343,7 @@ FEATURE_SHEET_AFTER = (
     '<dataValidations count="2"><dataValidation type="list" sqref="A2"><formula1>"a,b"</formula1></dataValidation>'
     '<dataValidation type="whole" sqref="B2"><formula1>0</formula1></dataValidation></dataValidations>'
     '<hyperlinks><hyperlink ref="A1" location="Sheet1!B2"/></hyperlinks>')
-FEATURE_SHEET_BEFORE = '<cols><col min="1" max="1" width="20" customWidth="1"/><col min="3" max="5" width="9"/></cols>'
+FEATURE_SHEET_BEFORE = '<cols><col min="1" max="1" width="20" customWidth="1"/><col min="3" max="5" width="9" customWidth="1"/></cols>'
 # What Excel and openpyxl write in a workbook where nothing was changed from its defaults.
 DEFAULT_WORKBOOK = ('<fileVersion appName="xl" lastEdited="7" lowestEdited="7" rupBuild="27328"/><workbookPr defaultThemeVersion="166925"/>'
                     '<workbookProtection/><bookViews><workbookView xWindow="0" yWindow="0" windowWidth="28800" windowHeight="12300"/></bookViews>')
@@ -415,7 +415,7 @@ class FeatureReportTests(unittest.TestCase):
     def test_layout_protection_filter_and_print_settings_are_counted(self):
         before = ('<sheetPr><tabColor rgb="FFFF0000"/></sheetPr>'
                   '<sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane xSplit="1" ySplit="2" topLeftCell="B3" state="frozen"/></sheetView></sheetViews>'
-                  '<sheetFormatPr defaultRowHeight="15" defaultColWidth="12"/>'
+                  '<sheetFormatPr defaultRowHeight="20" customHeight="1" defaultColWidth="12"/>'
                   '<cols><col min="2" max="4" width="9" hidden="1"/><col min="6" max="6" outlineLevel="1" style="3"/></cols>')
         rows = ('<row r="1" ht="30" customHeight="1"><c r="A1"><v>1</v></c></row><row r="2" hidden="1"/>'
                 '<row r="3" ht="12"/><row r="4" outlineLevel="1" s="2" customFormat="1"/>')
@@ -428,7 +428,8 @@ class FeatureReportTests(unittest.TestCase):
         found = features(self.preview(data))
         self.assertEqual({detail: entry["count"] for detail, entry in found.items()},
                          {"tab_colour": 1, "frozen_panes": 1, "sheet_view": 1, "sheet_format_defaults": 1, "column_widths": 3,
-                          "hidden_rows_columns": 3+1, "outline": 1+1, "row_column_styles": 1+1, "row_heights": 2,
+                          # Row 3's height is not custom (no customHeight), so only row 1 counts.
+                          "hidden_rows_columns": 3+1, "outline": 1+1, "row_column_styles": 1+1, "row_heights": 1,
                           "sheet_protection": 1, "auto_filter": 1, "page_setup": 1, "drawings": 1, "excel_tables": 2})
 
     def test_cell_level_features_are_counted(self):
@@ -496,6 +497,185 @@ class FeatureReportTests(unittest.TestCase):
         selection = self.preview(data, sheet_index=2)
         self.assertEqual(features(selection)["merged_cells"], sheet_entry("merged_cells", 1, "Two"))
 
+
+
+# A hand-built approximation of what LibreOffice Calc writes for an untouched sheet (from its documented output,
+# not a LibreOffice-saved file): explicit but non-custom row heights and column widths, its own default margins,
+# page setup and header/footer, and its reference-syntax workbook extension.
+LIBREOFFICE_WORKBOOK = ('<fileVersion appName="Calc"/><workbookPr backupFile="false" showObjects="all" date1904="false"/>'
+                        '<workbookProtection/><bookViews><workbookView showHorizontalScroll="true" showVerticalScroll="true" '
+                        'showSheetTabs="true" xWindow="0" yWindow="0" windowWidth="16384" windowHeight="8192" tabRatio="500" '
+                        'firstSheet="0" activeTab="0"/></bookViews>')
+LIBREOFFICE_AFTER_SHEETS = ('<calcPr iterateCount="100" refMode="A1" iterate="false" iterateDelta="0.001"/>'
+                            '<extLst><ext xmlns:loext="http://schemas.libreoffice.org/" uri="{7626C862-2A13-11E5-B345-FEFF819CDC9F}">'
+                            '<loext:extCalcPr stringRefSyntax="CalcA1"/></ext></extLst>')
+LIBREOFFICE_BEFORE = ('<sheetPr filterMode="false"><pageSetUpPr fitToPage="false"/></sheetPr><dimension ref="A1:B2"/>'
+                      '<sheetViews><sheetView showFormulas="false" showGridLines="true" showRowColHeaders="true" showZeros="true" '
+                      'rightToLeft="false" tabSelected="true" showOutlineSymbols="true" defaultGridColor="true" view="normal" '
+                      'topLeftCell="A1" colorId="64" zoomScale="100" zoomScaleNormal="100" zoomScalePageLayoutView="100" workbookViewId="0">'
+                      '<selection pane="topLeft" activeCell="A1" activeCellId="0" sqref="A1"/></sheetView></sheetViews>'
+                      '<sheetFormatPr defaultColWidth="11.53515625" defaultRowHeight="12.8" zeroHeight="false" outlineLevelRow="0" outlineLevelCol="0"/>'
+                      '<cols><col collapsed="false" customWidth="false" hidden="false" outlineLevel="0" max="1024" min="1" style="0" width="11.52"/></cols>')
+LIBREOFFICE_ROWS = ('<row r="1" customFormat="false" ht="12.8" hidden="false" customHeight="false" outlineLevel="0" collapsed="false">'
+                    '<c r="A1"><v>1</v></c><c r="B1"><v>2</v></c></row>'
+                    '<row r="2" customFormat="false" ht="12.8" hidden="false" customHeight="false" outlineLevel="0" collapsed="false">'
+                    '<c r="A2"><v>3</v></c></row>')
+LIBREOFFICE_AFTER = ('<printOptions headings="false" gridLines="false" gridLinesSet="true" horizontalCentered="false" verticalCentered="false"/>'
+                     '<pageMargins left="0.7875" right="0.7875" top="1.05277777777778" bottom="1.05277777777778" header="0.7875" footer="0.7875"/>'
+                     '<pageSetup paperSize="9" scale="100" fitToWidth="1" fitToHeight="1" pageOrder="downThenOver" orientation="portrait" '
+                     'blackAndWhite="false" draft="false" cellComments="none" firstPageNumber="1" useFirstPageNumber="true" '
+                     'horizontalDpi="300" verticalDpi="300" copies="1"/>'
+                     '<headerFooter differentFirst="false" differentOddEven="false">'
+                     '<oddHeader>&amp;C&amp;&quot;Times New Roman,Regular&quot;&amp;12&amp;A</oddHeader>'
+                     '<oddFooter>&amp;C&amp;&quot;Times New Roman,Regular&quot;&amp;12Page &amp;P</oddFooter></headerFooter>')
+
+
+def prefixed_book(prefix, sheets, **options):
+    """A package whose workbook part has `prefix` before <sheets>."""
+    data = workbook_bytes(sheets, **options)
+    output = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as target:
+        for name in source.namelist():
+            payload = source.read(name)
+            if name == "xl/workbook.xml": payload = payload.replace(b"<sheets>", prefix.encode() + b"<sheets>", 1)
+            target.writestr(name, payload)
+    return output.getvalue()
+
+
+def libreoffice_book(rows=LIBREOFFICE_ROWS, before=LIBREOFFICE_BEFORE, after=LIBREOFFICE_AFTER):
+    return prefixed_book(LIBREOFFICE_WORKBOOK, {"Sheet1": rows, "Sheet2": rows}, workbook_after_sheets=LIBREOFFICE_AFTER_SHEETS,
+                         sheet_before={"Sheet1": before, "Sheet2": before}, sheet_after={"Sheet1": after, "Sheet2": after})
+
+
+SHEET_TYPES = {"chart": "chartsheet", "dialog": "dialogsheet",
+               "macro": "http://schemas.microsoft.com/office/2006/relationships/xlMacrosheet"}
+
+
+def book_with_sheet_kinds(kinds, data_rows=FEATURE_ROWS):
+    """A worksheet "Data" (unless data_rows is None) followed by one sheet of each kind in `kinds`."""
+    extra, rels, parts = "", [], {}
+    for index, kind in enumerate(kinds, 1):
+        kind_type = SHEET_TYPES[kind]
+        relation_type = kind_type if kind_type.startswith("http") else f"{REL}/{kind_type}"
+        extra += f'<sheet name="{kind.title()}{index}" sheetId="{10+index}" r:id="rIdK{index}"/>'
+        rels.append(f'<Relationship Id="rIdK{index}" Type="{relation_type}" Target="other/sheet{index}.xml"/>')
+        parts[f"xl/other/sheet{index}.xml"] = f'<{kind}sheet xmlns="{S}"/>'
+    sheets = {"Data": data_rows} if data_rows is not None else {}
+    data = workbook_bytes(sheets or {"Placeholder": ""}, extra_sheets=extra, workbook_rels=rels, extra_parts=parts)
+    if data_rows is None:
+        # Drop the placeholder worksheet so the package has only the other sheets.
+        output = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(output, "w") as target:
+            for name in source.namelist():
+                payload = source.read(name)
+                if name == "xl/workbook.xml": payload = payload.replace(b'<sheet name="Placeholder" sheetId="1" r:id="rId1"/>', b"")
+                target.writestr(name, payload)
+        data = output.getvalue()
+    return data
+
+
+class ApplicationDefaultTests(unittest.TestCase):
+    def preview(self, data, **request):
+        return xlsx_preview({"file_base64": b64(data), "mode": "formulas", **request})
+
+    def test_a_libreoffice_style_default_sheet_reports_no_features(self):
+        for scope in ("selection", "workbook"):
+            with self.subTest(scope=scope):
+                result = self.preview(libreoffice_book(), scope=scope)
+                self.assertEqual([e for e in result["report_entries"] if e["category"].endswith(".feature")], [])
+
+    def test_explicit_custom_sizes_still_report(self):
+        rows = LIBREOFFICE_ROWS.replace('ht="12.8" hidden="false" customHeight="false"', 'ht="30" hidden="false" customHeight="true"', 1)
+        before = LIBREOFFICE_BEFORE.replace(
+            '<cols>', '<cols><col customWidth="true" max="1" min="1" width="30"/>').replace('max="1024" min="1"', 'max="1024" min="2"')
+        after = LIBREOFFICE_AFTER.replace("12Page &amp;P", "12Confidential")
+        found = features(self.preview(libreoffice_book(rows, before, after)))
+        self.assertEqual({detail: entry["count"] for detail, entry in found.items()},
+                         {"row_heights": 1, "column_widths": 1, "page_setup": 1})
+
+    def test_a_width_that_differs_from_the_default_counts_without_custom_width(self):
+        before = ('<sheetFormatPr defaultColWidth="10" defaultRowHeight="15"/>'
+                  '<cols><col min="1" max="2" width="10"/><col min="3" max="3" width="25" bestFit="1"/></cols>')
+        found = features(self.preview(workbook_bytes({"Sheet1": FEATURE_ROWS}, sheet_before={"Sheet1": before})))
+        self.assertEqual(found["column_widths"]["count"], 1)
+
+    def test_an_x14_twin_of_a_data_bar_counts_once(self):
+        x14 = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"
+        after = ('<conditionalFormatting sqref="A1:A3"><cfRule type="dataBar" priority="1"><dataBar><cfvo type="min"/><cfvo type="max"/>'
+                 '<color rgb="FF638EC6"/></dataBar><extLst><ext uri="{B025F937-C7B1-47D3-B67F-A62EFF666E3E}" xmlns:x14="' + x14 + '">'
+                 '<x14:id>{1A2B}</x14:id></ext></extLst></cfRule></conditionalFormatting>'
+                 '<extLst><ext uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}" xmlns:x14="' + x14 + '"><x14:conditionalFormattings>'
+                 '<x14:conditionalFormatting><x14:cfRule type="dataBar" id="{1A2B}"/></x14:conditionalFormatting>'
+                 '<x14:conditionalFormatting><x14:cfRule type="iconSet" id="{3C4D}"/></x14:conditionalFormatting>'
+                 '</x14:conditionalFormattings></ext></extLst>')
+        found = features(self.preview(workbook_bytes({"Sheet1": FEATURE_ROWS}, sheet_after={"Sheet1": after})))
+        # The data bar and its twin are one rule; the icon set lives only in the extension.
+        self.assertEqual({detail: entry["count"] for detail, entry in found.items()}, {"conditional_formatting": 2})
+
+    def test_comments_are_counted_in_the_comments_part(self):
+        rels = (f'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                f'<Relationship Id="rId2" Type="{REL}/comments" Target="../comments1.xml"/></Relationships>')
+        comments = (f'<comments xmlns="{S}"><authors><author>A</author></authors><commentList>'
+                    + "".join(f'<comment ref="A{i}" authorId="0"><text><t>c{i}</t></text></comment>' for i in range(1, 4))
+                    + "</commentList></comments>")
+        with_part = workbook_bytes({"Sheet1": FEATURE_ROWS}, extra_parts={"xl/worksheets/_rels/sheet1.xml.rels": rels, "xl/comments1.xml": comments})
+        without = workbook_bytes({"Sheet1": FEATURE_ROWS}, extra_parts={"xl/worksheets/_rels/sheet1.xml.rels": rels})
+        self.assertEqual(features(self.preview(with_part))["comments"]["count"], 3)
+        self.assertEqual(features(self.preview(without))["comments"]["count"], 1)
+
+    def test_an_unusual_sheet_relationship_part_never_rejects_valid_cells(self):
+        def with_rels(payload):
+            return workbook_bytes({"Sheet1": FEATURE_ROWS}, extra_parts={"xl/worksheets/_rels/sheet1.xml.rels": payload})
+        self.assertEqual(features(self.preview(with_rels(b""))), {})
+        latin = '<?xml version="1.0" encoding="ISO-8859-1"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>'
+        for payload in (latin.encode("latin-1"), b"<Relationships"):
+            with self.subTest(payload=payload[:40]):
+                result = self.preview(with_rels(payload))
+                self.assertTrue(result["can_import"])
+                self.assertEqual(features(result)["relationships_unreadable"]["count"], 1)
+        with self.assertRaises(EngineError) as raised:
+            self.preview(with_rels(b'<!DOCTYPE x [<!ENTITY a "b">]><Relationships/>'))
+        self.assertEqual(raised.exception.body["code"], "INVALID_SPREADSHEET")
+
+
+class OtherSheetKindTests(unittest.TestCase):
+    def preview(self, data, **request):
+        return xlsx_preview({"file_base64": b64(data), "mode": "formulas", **request})
+
+    def test_chart_dialog_and_macro_sheets_are_reported_and_not_imported(self):
+        rows = '<row r="1"><c r="A1"><v>1</v></c><c r="B1"><f>\'Chart1\'!A1+A1</f><v>1</v></c></row>'
+        data = book_with_sheet_kinds(["chart", "dialog", "macro"], rows)
+        result = self.preview(data, scope="workbook")
+        self.assertEqual([sheet["name"] for sheet in result["workbook_sheets"]], ["Data"])
+        self.assertTrue(result["can_import"])
+        wide = features(result, "workbook.feature")
+        self.assertEqual({detail: (entry["count"], entry["samples"]) for detail, entry in wide.items()},
+                         {"chart_sheets": (1, [{"sheet": "Chart1", "cell": None}]),
+                          "dialog_sheets": (1, [{"sheet": "Dialog2", "cell": None}]),
+                          "macro_sheets": (1, [{"sheet": "Macro3", "cell": None}])})
+        # A formula that refers to a sheet that is not imported is a reference to a missing sheet.
+        self.assertIn("formula.missing_sheet", {e["category"] for e in result["report_entries"]})
+
+    def test_selection_of_a_worksheet_reports_the_other_kinds_and_choosing_one_is_an_argument_error(self):
+        data = book_with_sheet_kinds(["chart"])
+        selection = self.preview(data, sheet_index=1)
+        self.assertEqual(features(selection, "workbook.feature")["chart_sheets"]["count"], 1)
+        with self.assertRaises(EngineError) as raised:
+            self.preview(data, sheet_index=2)
+        self.assertEqual(raised.exception.body["code"], "INVALID_ARGUMENT")
+        self.assertIn("'Chart1' is a chart sheet", raised.exception.body["message"])
+
+    def test_a_workbook_of_only_chart_sheets_prepares_nothing_to_apply(self):
+        result = self.preview(book_with_sheet_kinds(["chart", "chart"], None), scope="workbook")
+        self.assertEqual((result["workbook_sheets"], result["can_import"]), ([], False))
+        self.assertEqual(features(result, "workbook.feature")["chart_sheets"]["count"], 2)
+        self.assertTrue(result["issues"])
+
+    def test_the_corpus_chart_sheet_workbook_imports_its_worksheet(self):
+        data = (Path(__file__).parent / "fixtures" / "corpus" / "chart-sheet.xlsx").read_bytes()
+        result = self.preview(data, scope="workbook")
+        self.assertEqual([sheet["name"] for sheet in result["workbook_sheets"]], ["Data"])
+        self.assertEqual(features(result, "workbook.feature")["chart_sheets"]["samples"], [{"sheet": "Sales chart", "cell": None}])
 
 if __name__ == "__main__":
     unittest.main()

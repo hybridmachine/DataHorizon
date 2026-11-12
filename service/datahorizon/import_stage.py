@@ -239,7 +239,9 @@ class ImportStage(StageReader):
             self._strings.flush()
             summary = {"scope": "workbook", "stage_id": self.stage_id(), "stage_digest": None, "sheets": [],
                        "stored_cells": self._count, "report": (scope_lines({}) if scope is None else list(scope))+report.lines(),
-                       "report_entries": report.entries(), "totals": report.totals(), "sample": [], "can_import": True}
+                       "report_entries": report.entries(), "totals": report.totals(), "sample": [],
+                       # A package with no worksheets (only chart, dialog or macro sheets) stages nothing to apply.
+                       "can_import": bool(self.sheets())}
             clash = set(extra) & set(summary)
             if clash: raise ValueError(f"extra must not override summary keys: {sorted(clash)}")
             require(len(encoded(extra).encode()) <= MAX_EXTRA, "LIMIT", "Import summary extras exceed 64 KiB")

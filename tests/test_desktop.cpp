@@ -3155,6 +3155,11 @@ private slots:
         // A sample without a cell is the whole sheet.
         QCOMPARE(row->childCount(),1); QCOMPARE(row->child(0)->text(0),QString("Sheet1"));
         QCOMPARE(group->child(1)->text(0),QString("Workbook feature")); QCOMPARE(group->child(1)->text(1),QString("Defined names"));
+        view.setReport({{"report_entries",QJsonArray{QJsonObject{{"category","workbook.feature"},{"severity","omitted"},{"detail","chart_sheets"},{"count",1},
+                                                              {"samples",QJsonArray{QJsonObject{{"sheet","Chart1"},{"cell",QJsonValue()}}}}}}}});
+        QCOMPARE(view.tree()->topLevelItem(0)->child(0)->text(1),QString("Chart sheets"));
+        QCOMPARE(view.tree()->topLevelItem(0)->child(0)->child(0)->text(0),QString("Chart1"));
+        view.setReport({{"report_entries",QJsonArray{merged,names,unknown}}}); group=view.tree()->topLevelItem(0);
         // An id this build does not know shows as it is.
         QCOMPARE(group->child(2)->text(1),QString("future_feature"));
     }

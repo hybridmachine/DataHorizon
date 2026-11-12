@@ -61,6 +61,80 @@
         }
       }
     },
+    "tests/fixtures/corpus/chart-sheet.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "chart_sheets",
+            "severity": "omitted"
+          },
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "charts",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 8,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "chart_sheets",
+            "severity": "omitted"
+          },
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "charts",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 8,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "chart_sheets",
+            "severity": "omitted"
+          },
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "charts",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 8,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      }
+    },
     "tests/fixtures/corpus/conditional-formatting.xlsx": {
       "formulas": {
         "entries": [
@@ -1539,7 +1613,7 @@
         "style.font": 5,
         "style.named_style": 1,
         "style.number_format": 5,
-        "workbook.feature": 2
+        "workbook.feature": 4
       },
       "mixed": {
         "cell.error_value": 1,
@@ -1556,7 +1630,7 @@
         "style.font": 5,
         "style.named_style": 1,
         "style.number_format": 5,
-        "workbook.feature": 2
+        "workbook.feature": 4
       },
       "values": {
         "cell.error_value": 1,
@@ -1566,10 +1640,10 @@
         "style.font": 5,
         "style.named_style": 1,
         "style.number_format": 5,
-        "workbook.feature": 2
+        "workbook.feature": 4
       }
     },
-    "files": 23,
+    "files": 24,
     "gaps": [
       "no Excel-saved files",
       "no LibreOffice-saved files"
@@ -1587,15 +1661,15 @@
     "status_by_mode": {
       "formulas": {
         "clean": 2,
-        "degraded": 21
+        "degraded": 22
       },
       "mixed": {
         "clean": 2,
-        "degraded": 21
+        "degraded": 22
       },
       "values": {
         "clean": 3,
-        "degraded": 20
+        "degraded": 21
       }
     },
     "status_meaning": "clean means the importer produced no report entry for the file in that mode; it does not mean the file's features were preserved, only that none of them was reported as changed or left out. degraded means at least one report entry; rejected means the import failed. known_unreported lists, per mode and in every status, each listed unsupported feature of a file whose required report entry is missing: features dropped without a report."

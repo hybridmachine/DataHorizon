@@ -95,7 +95,8 @@ class OdsSheetFeatures:
         tag = item.tag
         if tag == CELL or tag == COVERED:
             if tag == CELL:
-                if _repeats(item, "number-columns-spanned") > 1 or _repeats(item, "number-rows-spanned") > 1: self.add("merged_cells")
+                if _repeats(item, "number-columns-spanned") > 1 or _repeats(item, "number-rows-spanned") > 1:
+                    self.add("merged_cells", _repeats(item, "number-columns-repeated"))
                 validation = item.get(q(T, "content-validation-name"))
                 if validation: self.validations.add(validation)
                 style = item.get(q(T, "style-name"))
@@ -213,6 +214,21 @@ def scan_content(root, features):
     for table in root.findall(f'{q(O, "body")}/{q(O, "spreadsheet")}/{TABLE}'): features.table(table)
     for item in root.iter():
         if item.tag in WORKBOOK_TAGS: features.end(item)
+
+
+def read_panes(archive, read):
+    """(pane modes, readable) from settings.xml, parsed by `read(archive, name)`. settings.xml holds only view
+    state, so a part that cannot be read never rejects the package: pane detection is skipped and reported."""
+    from .engine import EngineError
+    if "settings.xml" not in archive.namelist(): return {}, True
+    try: return pane_modes(read(archive, "settings.xml")), True
+    except EngineError as error:
+        if error.body["code"] == "LIMIT" and "Expanded" in error.body["message"]: raise
+        return {}, False
+
+
+def report_unreadable_settings(report, readable):
+    if not readable: report.add(WORKBOOK_FEATURE, "omitted", "view_settings_unreadable")
 
 
 def pane_modes(settings):

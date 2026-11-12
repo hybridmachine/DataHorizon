@@ -15,7 +15,8 @@ from datahorizon.engine import EngineError, require
 from datahorizon.interchange import STRICT, TRANSITIONAL, workbook_report, xlsx_preview, xlsx_text
 from datahorizon.xlsx_stream import ByteBudget, open_package, read_part, read_workbook, scope_lines
 from xlsx_builder import workbook_bytes
-from test_xlsx_degrade import FEATURE_SHEET_AFTER, FEATURE_SHEET_BEFORE
+from test_xlsx_degrade import (FEATURE_SHEET_AFTER, FEATURE_SHEET_BEFORE, LIBREOFFICE_ROWS, book_with_sheet_kinds,
+                               libreoffice_book)
 
 FIXTURE = Path(__file__).parent/"fixtures"/"fidelity.xlsx"
 CHUNK = 65536
@@ -309,6 +310,52 @@ class StreamingReaderTests(unittest.TestCase):
                               extra_parts={"xl/worksheets/_rels/sheet1.xml.rels": rels})
         _, report = self.stream(data)
         self.assertEqual([(e["detail"], e["count"]) for e in report.entries()], [("hyperlinks", 1)])
+
+    def test_application_defaults_and_custom_sizes_agree(self):
+        rows = LIBREOFFICE_ROWS.replace('customHeight="false"', 'customHeight="true"', 1)
+        for data, expected in ((libreoffice_book(), set()), (libreoffice_book(rows=rows), {"row_heights"})):
+            for mode in ("mixed", "values"):
+                with self.subTest(expected=expected, mode=mode):
+                    _, report = self.assert_agree(data, mode)
+                    self.assertEqual({e["detail"] for e in report.entries() if e["category"].endswith(".feature")}, expected)
+
+    def test_other_sheet_kinds_agree_and_are_not_imported(self):
+        rows = '<row r="1"><c r="A1"><v>1</v></c><c r="B1"><f>\'Chart1\'!A1+A1</f><v>1</v></c></row>'
+        for data, sheets in ((book_with_sheet_kinds(["chart", "dialog", "macro"], rows), ["Data"]),
+                             (book_with_sheet_kinds(["chart"], None), []),
+                             ((Path(__file__).parent/"fixtures"/"corpus"/"chart-sheet.xlsx").read_bytes(), ["Data"])):
+            for mode in ("mixed", "formulas"):
+                with self.subTest(sheets=sheets, mode=mode):
+                    sink, report = self.assert_agree(data, mode)
+                    self.assertEqual([name for name, _ in sink.sheets], sheets)
+                    self.assertIn("chart_sheets", {e["detail"] for e in report.entries()})
+
+    def test_a_stage_without_worksheets_cannot_be_applied(self):
+        from datahorizon.conversion_report import ConversionReport
+        from datahorizon.import_stage import ImportStage
+        path = Path(self.directory.name)/"empty.stage"
+        path.touch()
+        stage = ImportStage(path)
+        try: summary = stage.finish(ConversionReport(), {})
+        finally: stage.close()
+        self.assertEqual((summary["sheets"], summary["can_import"]), ([], False))
+
+    def test_unusual_sheet_relationships_and_comment_counts_agree(self):
+        rels = ('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                f'<Relationship Id="rId2" Type="{TRANSITIONAL.rel}/comments" Target="../comments1.xml"/></Relationships>')
+        comments = (f'<comments xmlns="{TRANSITIONAL.main}"><commentList>'
+                    + "".join(f'<comment ref="A{i}" authorId="0"><text><t>c</t></text></comment>' for i in range(1, 6)) + "</commentList></comments>")
+        row = '<row r="1"><c r="A1"><v>1</v></c></row>'
+        cases = {b"": None, b"<Relationships": "relationships_unreadable",
+                 '<?xml version="1.0" encoding="ISO-8859-1"?><Relationships/>'.encode("latin-1"): "relationships_unreadable",
+                 rels.encode(): "comments"}
+        for payload, detail in cases.items():
+            with self.subTest(payload=payload[:30]):
+                data = workbook_bytes({"S": row}, extra_parts={"xl/worksheets/_rels/sheet1.xml.rels": payload, "xl/comments1.xml": comments})
+                _, report = self.assert_agree(data)
+                self.assertEqual([(e["detail"], e["count"]) for e in report.entries()], [] if detail is None else [(detail, 5 if detail == "comments" else 1)])
+        doctype = workbook_bytes({"S": row}, extra_parts={"xl/worksheets/_rels/sheet1.xml.rels": b'<!DOCTYPE r><Relationships/>'})
+        self.assert_both_reject(doctype, "INVALID_SPREADSHEET")
 
     def test_scope_lines_are_the_workbook_scope_lines(self):
         self.assertEqual(scope_lines({"mode": "values"}), workbook_report())

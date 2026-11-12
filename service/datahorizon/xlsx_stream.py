@@ -29,7 +29,7 @@ from .interchange import (MAX_EXPANDED, S, WHOLE_EXPORT_CACHES, SharedFormulas, 
                           worksheet_path, xlsx_text, xml)
 from .formula import address
 from .temporal import export_temporal_style
-from .xlsx_features import SheetFeatures, StringFeatures, relationship_kinds, workbook_features
+from .xlsx_features import SheetFeatures, StringFeatures, relationship_summary, sheet_kinds, workbook_features
 from .xlsx_styles import StyleTable, XlsxStyles, stylesheet
 
 # Qualified on November 11, 2026 on the reference Mac (docs/design/evidence/excel-fidelity-1-capacity.json): 1,000,000 cells
@@ -380,11 +380,16 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: 
         checkpoint(0, "Reading workbook")
         workbook = _read_whole(archive, "xl/workbook.xml", budget)
         ns = namespaces(workbook)
-        sheets = workbook.findall(f"{{{ns.main}}}sheets/{{{ns.main}}}sheet")
-        names = validate_sheet_names([s.get("name", "") for s in sheets], LARGE_SHEETS)
+        every = workbook.findall(f"{{{ns.main}}}sheets/{{{ns.main}}}sheet")
         system = date_system(workbook, ns)
         relationships = _read_whole(archive, "xl/_rels/workbook.xml.rels", budget)
         mapping = {item.get("Id"): item for item in relationships}
+        # Chart, dialog and macro sheets are not imported; they are reported with the workbook's features.
+        kinds = sheet_kinds(every, mapping, ns)
+        sheets = [sheet for sheet, kind in zip(every, kinds) if kind is None]
+        skipped = [(sheet.get("name", ""), kind) for sheet, kind in zip(every, kinds) if kind is not None]
+        names = [s.get("name", "") for s in sheets]
+        if names or not skipped: names = validate_sheet_names(names, LARGE_SHEETS)
         shared_path = shared_strings_path(archive, relationships, ns)
         string_features = StringFeatures(ns)
         count = _read_shared_strings(archive, shared_path, budget, ns, sink.strings, checkpoint, string_features) if shared_path else 0
@@ -393,7 +398,7 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: 
         if style_path in archive.namelist(): _admit_whole(archive, style_path, budget)
         styles = XlsxStyles(archive, style_path, ConversionReport(), ns)
         conversions = ConversionReport()
-        workbook_features(conversions, workbook, ns, archive.namelist(), string_features)
+        workbook_features(conversions, workbook, ns, archive.namelist(), string_features, skipped)
         progress = _Progress(checkpoint)
         for sheet, name in zip(sheets, names):
             checkpoint(progress.cells, "Reading sheet "+name)
@@ -404,7 +409,7 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: 
                                       shared_formulas=SharedFormulas(ns=ns) if selected_mode != "values" else None,
                                       timezone_policy=policy, ns=ns, seen=None)
             part = worksheet_path(mapping, sheet, ns)
-            features = SheetFeatures(ns, relationship_kinds(archive, part, budget))
+            features = SheetFeatures(ns, relationship_summary(archive, part, budget))
             sink.sheet(name)
             _read_sheet(archive, part, budget, context, sink, progress, features)
             features.report(sheet_report, name)

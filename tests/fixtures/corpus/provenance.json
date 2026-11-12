@@ -337,6 +337,23 @@
   },
   {
     "exercises": [
+      "chart sheet beside a worksheet",
+      "drawing and chart parts"
+    ],
+    "file": "tests/fixtures/corpus/chart-sheet.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "4c8a78fb77a45fb8157a954793b5f7186021253d78bf6f6ac09148b162f94534",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "chart_sheets"
+    ]
+  },
+  {
+    "exercises": [
       "merged cells"
     ],
     "file": "tests/fixtures/corpus/merged-cells.ods",

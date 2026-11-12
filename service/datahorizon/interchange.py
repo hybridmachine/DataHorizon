@@ -393,6 +393,51 @@ def convert_xlsx_cell(cell,*,context):
     return {"row":row,"col":col,**item}
 
 
+@dataclass
+class XlsxBook:
+    """The workbook-wide parts of a bounded XLSX package: the workbook, its relationships, every <sheet> with its
+    kind (None for a worksheet, else the feature id of a sheet kind that is not imported), the shared strings and
+    the workbook.feature report."""
+    workbook: object
+    ns: Namespaces
+    relationships: object
+    mapping: dict
+    sheets: list
+    kinds: list
+    shared: list
+    report: ConversionReport
+
+    def worksheets(self):
+        """(1-based sheet index, name) of each worksheet, in workbook order."""
+        return [(index,sheet.get("name","")) for index,(sheet,kind) in enumerate(zip(self.sheets,self.kinds),1) if kind is None]
+
+    def skipped(self):
+        return [(sheet.get("name",""),kind) for sheet,kind in zip(self.sheets,self.kinds) if kind is not None]
+
+
+def read_book(archive):
+    from .xlsx_features import StringFeatures, sheet_kinds, workbook_features
+    workbook=read_xml(archive,"xl/workbook.xml")
+    ns=namespaces(workbook)
+    sheets=workbook.findall(f"{{{ns.main}}}sheets/{{{ns.main}}}sheet")
+    relationships=read_xml(archive,"xl/_rels/workbook.xml.rels")
+    mapping={item.get("Id"):item for item in relationships}
+    kinds=sheet_kinds(sheets,mapping,ns)
+    shared=[]
+    strings=StringFeatures(ns)
+    shared_path=shared_strings_path(archive,relationships,ns)
+    if shared_path:
+        table=read_xml(archive,shared_path)
+        require(table.tag==f"{{{ns.main}}}sst","INVALID_SPREADSHEET","Shared strings part does not match the workbook's namespaces")
+        for item in table:
+            shared.append(xlsx_text(item,ns))
+            strings.string(item)
+            require(len(shared)<=MAX_CELLS,"LIMIT","Shared strings exceed 10,000 entries")
+    book=XlsxBook(workbook,ns,relationships,mapping,sheets,kinds,shared,ConversionReport())
+    workbook_features(book.report,workbook,ns,archive.namelist(),strings,book.skipped())
+    return book
+
+
 def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None):
     selected=integer(request.get("sheet_index",1),1,64,"sheet_index")
     selected_mode=mode(request)
@@ -404,37 +449,26 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
     if selected_mode=="mixed": report.append("Formulas DataHorizon can evaluate stay formulas; those it cannot become their cached values when a usable cache exists. Cache freshness cannot be verified.")
     with package(request) as archive:
         checkpoint(0,"Reading workbook")
-        workbook=read_xml(archive,"xl/workbook.xml")
-        ns=namespaces(workbook)
+        book=read_book(archive)
+        workbook,ns,relationships,mapping,sheets,shared=book.workbook,book.ns,book.relationships,book.mapping,book.sheets,book.shared
         system=date_system(workbook,ns)
         report.append("ISO shorthand is normalized to native seconds; timezone offsets require explicit timezone_policy=utc, which stores UTC civil values and omits the original offset.")
         report.append(f"Date/time serials with supported formats use the {system} epoch; serial 60 in the 1900 system is rejected. Formula numeric literals are not epoch-shifted; native formulas use the 1900 system.")
-        sheets=workbook.findall(f"{{{ns.main}}}sheets/{{{ns.main}}}sheet")
         require(0<len(sheets)<=64 and selected<=len(sheets),"INVALID_SPREADSHEET","Choose an existing sheet (at most 64)")
-        relationships=read_xml(archive,"xl/_rels/workbook.xml.rels")
-        mapping={item.get("Id"):item for item in relationships}
+        from .xlsx_features import KIND_NAMES
+        kind=book.kinds[selected-1]
+        require(kind is None,"INVALID_ARGUMENT",f"Sheet {sheets[selected-1].get('name','')!r} is {KIND_NAMES.get(kind)} and cannot be imported; choose a worksheet")
         root=read_xml(archive,worksheet_path(mapping,sheets[selected-1],ns))
         require(root.tag==f"{{{ns.main}}}worksheet","INVALID_SPREADSHEET","Invalid worksheet")
-        from .xlsx_features import SheetFeatures, StringFeatures, relationship_kinds, scan_tree, workbook_features
+        from .xlsx_features import SheetFeatures, relationship_summary, scan_tree
         from .xlsx_stream import ByteBudget
-        shared=[]
-        strings=StringFeatures(ns)
-        shared_path=shared_strings_path(archive,relationships,ns)
-        if shared_path:
-            table=read_xml(archive,shared_path)
-            require(table.tag==f"{{{ns.main}}}sst","INVALID_SPREADSHEET","Shared strings part does not match the workbook's namespaces")
-            for item in table:
-                shared.append(xlsx_text(item,ns))
-                strings.string(item)
-                require(len(shared)<=MAX_CELLS,"LIMIT","Shared strings exceed 10,000 entries")
         from .xlsx_styles import XlsxStyles
         # Workbook features are reported once: here for a selection, by prepare_workbook for a whole workbook.
-        wide=ConversionReport()
-        workbook_features(wide,workbook,ns,archive.namelist(),strings)
+        wide=book.report
         conversions=ConversionReport()
         if sheet_names is None: conversions.merge(wide)
         part=worksheet_path(mapping,sheets[selected-1],ns)
-        sheet_features=SheetFeatures(ns,relationship_kinds(archive,part,ByteBudget(MAX_EXPANDED)))
+        sheet_features=SheetFeatures(ns,relationship_summary(archive,part,ByteBudget(MAX_EXPANDED)))
         styles=XlsxStyles(archive,styles_path(archive,relationships,ns),conversions,ns)
         edits,issues=[],[]
         shift=(integer(request.get("row",1),1,1048576,"row")-1,integer(request.get("col",1),1,16384,"col")-1)
@@ -624,7 +658,9 @@ def preparation_scope(request):
     return value
 
 
-def prepare_workbook(request,checkpoint,names,prepare):
+def prepare_workbook(request,checkpoint,names,prepare,indexes=None):
+    """`indexes` are the sheet_index of each name (by default 1, 2, ...): a package's sheets that are not imported
+    (XLSX chart, dialog and macro sheets) take no name but keep their place in the index."""
     validate_sheet_names(names)
     require(request.get("row",1)==1 and request.get("col",1)==1,"INVALID_ARGUMENT","Whole-workbook import uses original coordinates")
     require(names,"INVALID_SPREADSHEET","Workbook has no sheets")
@@ -633,7 +669,7 @@ def prepare_workbook(request,checkpoint,names,prepare):
     size=0
     for index,name in enumerate(names,1):
         checkpoint(index-1,"Reading sheet "+name)
-        part=prepare({**request,"scope":"selection","sheet_index":index},checkpoint,sheet_names=names)
+        part=prepare({**request,"scope":"selection","sheet_index":indexes[index-1] if indexes else index},checkpoint,sheet_names=names)
         # Every sheet's preparation reads the same workbook features; they are reported once, first.
         wide=part.pop("_workbook")
         if index==1: conversions.merge(wide)
@@ -654,7 +690,12 @@ def prepare_workbook(request,checkpoint,names,prepare):
 def xlsx_preview(request,checkpoint=lambda completed,phase:None):
     if preparation_scope(request)!="workbook": return _xlsx_preview(request,checkpoint)
     with package(request) as archive:
-        root=read_xml(archive,"xl/workbook.xml")
-        ns=namespaces(root)
-        names=[s.get("name","") for s in root.findall(f"{{{ns.main}}}sheets/{{{ns.main}}}sheet")]
-    return prepare_workbook(request,checkpoint,names,_xlsx_preview)
+        book=read_book(archive)
+    worksheets=book.worksheets()
+    if book.sheets and not worksheets:
+        # Only chart, dialog or macro sheets: nothing to import. As for any workbook without sheets, Apply is refused.
+        result={"scope":"workbook","workbook_sheets":[],"stored_cells":0,"can_import":False,
+                "issues":["The workbook has no worksheets; its other sheets are not imported"],
+                "report":workbook_report()+book.report.lines(),"report_entries":book.report.entries(),"totals":book.report.totals()}
+        return result
+    return prepare_workbook(request,checkpoint,[name for _,name in worksheets],_xlsx_preview,[index for index,_ in worksheets])

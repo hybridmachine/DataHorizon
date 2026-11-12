@@ -460,7 +460,7 @@ def openapi():
         "sample":{"type":"array","description":"The first 100 stored cells of each sheet, row-major, with resolved styles; long sources are truncated and flagged",
                   "items":{"type":"object","required":["sheet","cells"],"properties":{"sheet":{"type":"string"},"cells":{"type":"array","maxItems":100,"items":{"type":"object","properties":{
                       "row":row,"col":col,"source":{"type":"string"},"kind":{"type":"string"},"style":{"$ref":"#/components/schemas/Style"},"truncated":{"type":"boolean"}}}}}}},
-        "can_import":{"type":"boolean","description":"True for every completed stage: unsupported content is itemized in the report instead of blocking"},
+        "can_import":{"type":"boolean","description":"True for every completed stage with at least one worksheet: unsupported content is itemized in the report instead of blocking. False only when the package has no worksheets (for example only chart sheets); such a stage cannot be applied"},
         "format":{"type":"string","enum":list(LARGE_FORMATS)},"mode":{"type":"string","enum":["formulas","mixed","values"]},
         "source":{"type":"object","required":["kind"],"properties":{"kind":{"type":"string","enum":["upload","path"]},"upload_id":upload_id,
             "sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"An upload's SHA-256 as read by the preparation"},

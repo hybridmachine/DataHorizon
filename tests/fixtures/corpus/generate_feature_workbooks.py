@@ -248,6 +248,35 @@ def external_and_3d_references():
                 overrides={"/xl/externalLinks/externalLink1.xml": "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml"})
 
 
+def chart_sheet():
+    """One worksheet and one chart sheet (with its drawing and a minimal chart), as Excel lays them out."""
+    cells = rows([s("A1", "Month"), s("B1", "Sales")], [s("A2", "Jan"), n("B2", 10)], [s("A3", "Feb"), n("B3", 14)],
+                 [s("A4", "Total"), f("B4", "SUM(B2:B3)", 24)])
+    drawing_ns = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+    chart_ns = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+    chartsheet = (f'<chartsheet xmlns="{MAIN}" xmlns:r="{RELS}"><sheetPr/><sheetViews><sheetView workbookViewId="0"/></sheetViews>'
+                  '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/><drawing r:id="rId1"/></chartsheet>')
+    drawing = (f'<xdr:wsDr xmlns:xdr="{drawing_ns}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+               '<xdr:absoluteAnchor><xdr:pos x="0" y="0"/><xdr:ext cx="8670000" cy="6300000"/><xdr:graphicFrame macro="">'
+               '<xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Chart 1"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>'
+               '<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="' + chart_ns + '">'
+               f'<c:chart xmlns:c="{chart_ns}" xmlns:r="{RELS}" r:id="rId1"/></a:graphicData></a:graphic></xdr:graphicFrame>'
+               '<xdr:clientData/></xdr:absoluteAnchor></xdr:wsDr>')
+    chart = (f'<c:chartSpace xmlns:c="{chart_ns}"><c:chart><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/>'
+             '<c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:val><c:numRef><c:f>Data!$B$2:$B$3</c:f>'
+             '</c:numRef></c:val></c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart></c:plotArea></c:chart></c:chartSpace>')
+    parts = {"xl/chartsheets/sheet1.xml": chartsheet,
+             "xl/chartsheets/_rels/sheet1.xml.rels": sheet_rels(f'<Relationship Id="rId1" Type="{RELS}/drawing" Target="../drawings/drawing1.xml"/>'),
+             "xl/drawings/drawing1.xml": drawing,
+             "xl/drawings/_rels/drawing1.xml.rels": sheet_rels(f'<Relationship Id="rId1" Type="{RELS}/chart" Target="../charts/chart1.xml"/>'),
+             "xl/charts/chart1.xml": chart}
+    data = book({"Data": cells}, parts=parts, extra_sheets='<sheet name="Sales chart" sheetId="2" r:id="rIdChart"/>', workbook_rels=[f'<Relationship Id="rIdChart" Type="{RELS}/chartsheet" Target="chartsheets/sheet1.xml"/>'],
+                overrides={"/xl/chartsheets/sheet1.xml": "application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml",
+                           "/xl/drawings/drawing1.xml": "application/vnd.openxmlformats-officedocument.drawing+xml",
+                           "/xl/charts/chart1.xml": "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"})
+    return data
+
+
 def ods_cell(value, style=""):
     return f'<table:table-cell office:value-type="float" office:value="{value}"{style}/>'
 
@@ -286,7 +315,7 @@ FILES = {
     "hyperlink-comment.xlsx": hyperlink_and_comment, "defined-names.xlsx": defined_names,
     "array-data-table.xlsx": array_and_data_table, "excel-table.xlsx": excel_table, "theme-colours.xlsx": theme_colours,
     "strict-namespace.xlsx": strict_namespace, "shared-formulas.xlsx": shared_formulas, "error-cells.xlsx": error_cells,
-    "external-3d-references.xlsx": external_and_3d_references,
+    "external-3d-references.xlsx": external_and_3d_references, "chart-sheet.xlsx": chart_sheet,
     "merged-cells.ods": ods_merged, "number-format.ods": ods_number_format, "data-validation.ods": ods_validation}
 
 

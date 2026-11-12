@@ -89,7 +89,9 @@ public:
             {"vba",QT_TR_NOOP("VBA macros")},{"custom_xml",QT_TR_NOOP("Custom XML data")},{"connections",QT_TR_NOOP("Data connections")},
             {"query_tables",QT_TR_NOOP("Query tables")},{"embedded_objects",QT_TR_NOOP("Embedded objects")},
             {"document_properties",QT_TR_NOOP("Custom document properties")},{"tracked_changes",QT_TR_NOOP("Tracked changes")},
-            {"label_ranges",QT_TR_NOOP("Label ranges")},{"macros",QT_TR_NOOP("Macros")}};
+            {"label_ranges",QT_TR_NOOP("Label ranges")},{"macros",QT_TR_NOOP("Macros")},
+            {"chart_sheets",QT_TR_NOOP("Chart sheets")},{"dialog_sheets",QT_TR_NOOP("Dialog sheets")},{"macro_sheets",QT_TR_NOOP("Macro sheets")},
+            {"view_settings_unreadable",QT_TR_NOOP("Unreadable view settings")},{"relationships_unreadable",QT_TR_NOOP("Unreadable sheet relationships")}};
         const auto found=labels.constFind(feature);
         return found==labels.constEnd()?feature:tr(found.value());
     }

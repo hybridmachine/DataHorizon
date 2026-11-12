@@ -400,15 +400,20 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         roots=([read_xml(archive,"styles.xml")] if "styles.xml" in archive.namelist() else [])+[root]
         conversions=ConversionReport()
         styles=OdsStyles(roots,conversions)
-        from .ods_features import LayoutStyles, OdsSheetFeatures, OdsWorkbookFeatures, mapped_styles, pane_modes, scan_content, scan_table
+        from .ods_features import LayoutStyles, OdsSheetFeatures, OdsWorkbookFeatures, mapped_styles, read_panes, report_unreadable_settings, scan_content, scan_table
         layout=LayoutStyles()
         for part in roots:
             for item in part.iter(q(Y,"style")): layout.add(item)
         workbook_features=OdsWorkbookFeatures(); scan_content(root,workbook_features)
         # Workbook features are reported once: here for a selection, by prepare_workbook for a whole workbook.
-        wide=ConversionReport(); workbook_features.report(wide,layout,archive.namelist())
+        from .xlsx_stream import _check_declaration
+        def read_settings(archive,name):
+            # As the streaming reader reads it: only UTF-8 declarations, so both readers agree on what is unreadable.
+            with archive.open(name) as stream: _check_declaration(stream.read(65536))
+            return read_xml(archive,name)
+        panes,readable=read_panes(archive,read_settings)
+        wide=ConversionReport(); workbook_features.report(wide,layout,archive.namelist()); report_unreadable_settings(wide,readable)
         if sheet_names is None: conversions.merge(wide)
-        panes=pane_modes(read_xml(archive,"settings.xml") if "settings.xml" in archive.namelist() else None)
         report.append("ISO shorthand normalizes to native seconds; explicit timezone_policy=utc normalizes offset timestamps to UTC civil values and omits the original offset.")
         edits=[]; row=1; processed=0; staged_bytes=0
         shift=(integer(request.get("row",1),1,1048576,"row")-1,integer(request.get("col",1),1,16384,"col")-1)

@@ -16,17 +16,18 @@ def _escape(text):
 
 
 def workbook_bytes(sheets, *, strict=False, styles_xml=None, shared_strings=None, extra_parts=None,
-                   sheet_before=None, sheet_after=None, workbook_after_sheets="", workbook_rels=(), timestamp=None):
+                   sheet_before=None, sheet_after=None, workbook_after_sheets="", workbook_rels=(), timestamp=None,
+                   extra_sheets=""):
     """Optional parameters (all off by default, so existing callers get the same package):
     sheet_before / sheet_after map a sheet name to XML placed before / after its <sheetData> (view, columns,
     merge cells, rules, hyperlinks...); workbook_after_sheets is XML after <sheets> (external references, defined
-    names); workbook_rels are extra Relationship elements; timestamp is a fixed ZIP entry time (a 6-tuple) that
+    names); extra_sheets is raw <sheet> XML appended inside <sheets> (chart sheets); workbook_rels are extra Relationship elements; timestamp is a fixed ZIP entry time (a 6-tuple) that
     makes the package byte-for-byte reproducible."""
     ns = STRICT if strict else TRANSITIONAL
     names = list(sheets)
     workbook = (f'<workbook xmlns="{ns["main"]}" xmlns:r="{ns["rel"]}"><sheets>'
                 + "".join(f'<sheet name="{_escape(n).replace(chr(34), "&quot;")}" sheetId="{i}" r:id="rId{i}"/>'
-                          for i, n in enumerate(names, 1)) + "</sheets>" + workbook_after_sheets + "</workbook>")
+                          for i, n in enumerate(names, 1)) + extra_sheets + "</sheets>" + workbook_after_sheets + "</workbook>")
     rels = [f'<Relationship Id="rId{i}" Type="{ns["rel"]}/worksheet" Target="worksheets/sheet{i}.xml"/>'
             for i in range(1, len(names) + 1)]
     parts = {"xl/workbook.xml": workbook}

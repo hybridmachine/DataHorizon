@@ -30,7 +30,7 @@ from .ods import (F, M, MIME, N, O, OF, STYLE_DEFINITION_TAGS, T, WORKBOOK_IMPOR
                   OdsStyles, OdsStyleTable, convert_ods_cell, export_lines as ods_export_lines, export_ods_cell, package_parts, q,
                   repeat, uses_modern_function)
 from .ods_features import (DRAW_PREFIX, SHEET_TAGS, WORKBOOK_TAGS, LayoutStyles, OdsSheetFeatures, OdsWorkbookFeatures,
-                           mapped_styles, pane_modes)
+                           mapped_styles, read_panes, report_unreadable_settings)
 from .temporal import export_temporal_style
 
 MAX_ROW, MAX_COL = 1_048_576, 16_384
@@ -231,12 +231,13 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink, checkpoint: Callab
         _check_package(archive, budget)
         names, styles, layout, workbook = _survey(archive, budget, checkpoint)
         names = validate_sheet_names(names, xlsx_stream.LARGE_SHEETS)
-        settings = xlsx_stream._read_whole(archive, "settings.xml", budget) if "settings.xml" in archive.namelist() else None
+        panes, readable = read_panes(archive, lambda archive, name: xlsx_stream._read_whole(archive, name, budget))
         progress = xlsx_stream._Progress(checkpoint)
         conversions = ConversionReport()
         workbook.report(conversions, layout, archive.namelist())
+        report_unreadable_settings(conversions, readable)
         base = {"mode": selected_mode, "sheet_names": names, "timezone_policy": policy}
-        _read_sheets(archive, names, styles, base, sink, progress, conversions, (layout, workbook, pane_modes(settings)))
+        _read_sheets(archive, names, styles, base, sink, progress, conversions, (layout, workbook, panes))
         return conversions
 
 

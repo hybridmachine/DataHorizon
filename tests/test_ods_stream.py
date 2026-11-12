@@ -246,6 +246,15 @@ class StreamingReaderTests(unittest.TestCase):
                             ('sheet.feature', 'column_widths'), ('sheet.feature', 'row_heights')):
                     self.assertIn(key, found)
 
+    def test_unreadable_settings_and_repeated_spans_agree(self):
+        rows = ('<table:table-row><table:table-cell table:number-columns-spanned="2" table:number-columns-repeated="3" '
+                'office:value-type="float" office:value="1"/></table:table-row>')
+        content = feature_content(f'<table:table table:name="Sheet1">{rows}</table:table>')
+        for payload in (b"", b'<!DOCTYPE x><a/>', b"<broken"):
+            with self.subTest(payload=payload):
+                _, report = self.assert_agree(workbook_bytes({}, content=content, extra_parts={"settings.xml": payload}), 'formulas')
+                self.assertEqual({(e['detail'], e['count']) for e in report.entries()}, {('view_settings_unreadable', 1), ('merged_cells', 3)})
+
     def test_layout_styles_after_the_body_still_agree(self):
         late = feature_content(FEATURE_TABLE, styles="").replace(
             '</office:body>', f'</office:body><office:automatic-styles>{LAYOUT_STYLES}</office:automatic-styles>')

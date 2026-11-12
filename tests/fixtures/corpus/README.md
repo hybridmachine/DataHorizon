@@ -10,12 +10,12 @@ against. `provenance.json` lists every corpus file; `tests/corpus_scorecard.py` 
 | Group | Files | Producer |
 | --- | --- | --- |
 | Existing fixtures (referenced in place, not copied) | `tests/fixtures/{fidelity,inputs,markup,unsupported}.xlsx`, `tests/fixtures/{fidelity,inputs}.ods` | openpyxl 3.1.5 / odfpy 1.4.1 |
-| Hand-built feature workbooks | the 14 `.xlsx` and 3 `.ods` files in this directory | `generate_feature_workbooks.py` (DataHorizon test generator, standard library) |
+| Hand-built feature workbooks | the 15 `.xlsx` and 3 `.ods` files in this directory | `generate_feature_workbooks.py` (DataHorizon test generator, standard library) |
 
 The feature workbooks each exercise one feature area (merged cells, widths/heights/hidden/frozen, custom number
 formats, conditional formatting, data validation, hyperlink and comment, defined names, array and data-table
 formulas, an Excel table, theme/indexed colours with a named style, the strict namespace, shared formulas, error
-values, 3D and external references; ODS: merged cells, number style, validation). **They are hand-built
+values, 3D and external references, a chart sheet beside a worksheet; ODS: merged cells, number style, validation). **They are hand-built
 approximations** of what Excel or LibreOffice would write, kept minimal where the exact form was uncertain
 (for example the theme holds only a colour scheme and the comment drawing is a bare VML note). They await
 replacement by application-saved files and are labelled `hand_built: true`. Their producer is the generator,

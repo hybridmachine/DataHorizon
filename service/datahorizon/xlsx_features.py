@@ -24,12 +24,19 @@ SHEET_FEATURES = (
     "excel_tables", "auto_filter", "sort_state", "sheet_protection", "protected_ranges", "scenarios",
     "data_consolidation", "page_setup", "drawings", "legacy_drawings", "background_image", "ole_objects",
     "form_controls", "sparklines", "slicers", "cell_watches", "ignored_errors", "smart_tags", "custom_properties",
-    "web_publish", "extensions")
+    "web_publish", "extensions", "relationships_unreadable")
 WORKBOOK_FEATURES = (
-    "defined_names", "external_references", "hidden_sheets", "workbook_protection", "file_sharing",
+    "chart_sheets", "dialog_sheets", "macro_sheets", "defined_names", "external_references", "hidden_sheets", "workbook_protection", "file_sharing",
     "calculation_settings", "custom_views", "rich_text", "phonetic", "function_groups", "smart_tags", "web_publish",
     "slicers", "data_model", "extensions", "charts", "pivot_tables", "vba", "custom_xml", "connections",
     "query_tables", "embedded_objects", "document_properties")
+# Sheets of a workbook that are not worksheets, by the last segment of their relationship type. They are not
+# imported: each is reported (workbook.feature, with the sheet as sample) and no native sheet is created for it.
+SHEET_KINDS = {"chartsheet": "chart_sheets", "dialogsheet": "dialog_sheets", "xlMacrosheet": "macro_sheets",
+               "xlIntlMacrosheet": "macro_sheets"}
+KIND_NAMES = {"chart_sheets": "a chart sheet", "dialog_sheets": "a dialog sheet", "macro_sheets": "a macro sheet"}
+# Header and footer texts LibreOffice writes into every sheet (font codes &"..." and sizes &NN removed first).
+STOCK_HEADER_FOOTER = {"&C&A", "&CPage &P", "&C&P", "&CPage &P of &N"}
 
 # Advanced package parts, one workbook entry per id counting the matching parts. Drawings, tables, comments and
 # external links are reported where a sheet or the workbook refers to them, not here.
@@ -41,8 +48,10 @@ PACKAGE_PARTS = tuple((feature, re.compile(pattern, re.IGNORECASE)) for feature,
     ("data_model", r"xl/model/[^/]+"), ("document_properties", r"docProps/custom\.xml")))
 
 TRUE = ("1", "true")
-# Margins Excel (first) and older Excel/openpyxl (second) write by default: left, right, top, bottom, header, footer.
-DEFAULT_MARGINS = ((0.7, 0.7, 0.75, 0.75, 0.3, 0.3), (0.75, 0.75, 1.0, 1.0, 0.5, 0.5))
+WIDTH_TOLERANCE = 0.1  # characters
+# Margins Excel, older Excel/openpyxl and LibreOffice write by default: left, right, top, bottom, header, footer.
+DEFAULT_MARGINS = ((0.7, 0.7, 0.75, 0.75, 0.3, 0.3), (0.75, 0.75, 1.0, 1.0, 0.5, 0.5),
+                   (0.7875, 0.7875, 1.05277777777778, 1.05277777777778, 0.7875, 0.7875))
 MARGINS = ("left", "right", "top", "bottom", "header", "footer")
 # sheetView attributes with their defaults; any other value is view state worth naming (sheet_view).
 VIEW_DEFAULTS = {"showGridLines": TRUE, "showRowColHeaders": TRUE, "showZeros": TRUE, "rightToLeft": ("0", "false"),
@@ -52,7 +61,7 @@ VIEW_DEFAULTS = {"showGridLines": TRUE, "showRowColHeaders": TRUE, "showZeros": 
 # reported because every package carries the default of its locale and printer.
 PAGE_DEFAULTS = {"orientation": ("default", "portrait"), "scale": ("100",), "pageOrder": ("downThenOver",),
                  "blackAndWhite": ("0", "false"), "draft": ("0", "false"), "cellComments": ("none",),
-                 "errors": ("displayed",), "useFirstPageNumber": ("0", "false"), "copies": ("1",)}
+                 "errors": ("displayed",), "copies": ("1",), "fitToWidth": ("1",), "fitToHeight": ("1",)}
 # Children of <worksheet> reported as a whole when present, unless a rule below decides.
 SHEET_ELEMENTS = {"autoFilter": "auto_filter", "sortState": "sort_state", "dataConsolidate": "data_consolidation",
                   "customProperties": "custom_properties", "smartTags": "smart_tags", "drawing": "drawings",
@@ -74,8 +83,8 @@ SHEET_ITEMS = {("mergeCells", "mergeCell"): "merged_cells", ("conditionalFormatt
 EXTENSION_ITEMS = {"sparklineGroup": "sparklines", "cfRule": "conditional_formatting", "dataValidation": "data_validation",
                    "slicer": "slicers", "timelineRef": "slicers", "protectedRange": "protected_ranges",
                    "ignoredError": "ignored_errors"}
-# Workbook <extLst> children that hold no workbook content (Excel writes them in every workbook).
-WORKBOOK_EXTENSION_SILENT = {"workbookPr", "calcFeatures"}
+# Workbook <extLst> children that hold no workbook content (Excel and LibreOffice write them in every workbook).
+WORKBOOK_EXTENSION_SILENT = {"workbookPr", "calcFeatures", "extCalcPr"}  # extCalcPr: LibreOffice's reference syntax
 WORKBOOK_EXTENSION_ITEMS = {"slicerCache": "slicers", "timelineCacheRef": "slicers", "dataModel": "data_model",
                             "pivotCache": "pivot_tables"}
 
@@ -98,12 +107,16 @@ def _span(col):
 
 class SheetFeatures:
     """Counts the unimported features of one worksheet as its elements end, then reports them."""
-    def __init__(self, ns, relationship_kinds=frozenset()):
+    def __init__(self, ns, relationships=None):
+        """`relationships` is what relationship_summary returns for the sheet part."""
         self.main = "{" + ns.main + "}"
         self.counts = {}
-        self.kinds = relationship_kinds
+        self.relationships = relationships or Relationships()
         self.legacy_drawing = False
         self._found_in_extension = False
+        self.default_width = None
+        self.widths = []          # (columns, width or None, custom) of each <col>
+        self._conditional_ids = set()  # x14 ids that base conditional rules point to
 
     def add(self, feature, count=1):
         if count > 0: self.counts[feature] = self.counts.get(feature, 0) + count
@@ -112,7 +125,7 @@ class SheetFeatures:
         """A <row> of <sheetData>."""
         attrib = item.attrib
         if not attrib: return
-        if "ht" in attrib or attrib.get("customHeight") in TRUE: self.add("row_heights")
+        if attrib.get("customHeight") in TRUE: self.add("row_heights")
         if attrib.get("hidden") in TRUE: self.add("hidden_rows_columns")
         if attrib.get("outlineLevel", "0") not in ("", "0") or attrib.get("collapsed") in TRUE: self.add("outline")
         if attrib.get("customFormat") in TRUE: self.add("row_column_styles")
@@ -144,11 +157,17 @@ class SheetFeatures:
             elif top == "controls" and name == "control": self.add("form_controls")
             elif top == "extLst":
                 feature = EXTENSION_ITEMS.get(name)
-                if feature is not None:
+                if feature == "conditional_formatting" and item.get("id") in self._conditional_ids:
+                    # The x14 twin of a rule already counted in <conditionalFormatting> (Excel writes one per data bar).
+                    self._found_in_extension = True
+                elif feature is not None:
                     self.add(feature); self._found_in_extension = True
                 elif depth == 2 and name == "ext":
                     if not self._found_in_extension: self.add("extensions")
                     self._found_in_extension = False
+            return
+        if top == "conditionalFormatting" and name == "id" and item.text:
+            self._conditional_ids.add(item.text.strip())
             return
         if depth == 2:
             feature = SHEET_ITEMS.get((top, name))
@@ -161,13 +180,13 @@ class SheetFeatures:
             elif top == "sheetViews" and name == "sheetView":
                 if any(item.get(key) is not None and item.get(key) not in values for key, values in VIEW_DEFAULTS.items()):
                     self.add("sheet_view")
-            elif top == "headerFooter" and (item.text or "").strip(): self.counts["page_setup"] = 1
+            elif top == "headerFooter" and not stock_header_footer(item.text): self.counts["page_setup"] = 1
         elif depth == 3 and top == "sheetViews" and name == "pane":
             self.add("frozen_panes" if item.get("state") in ("frozen", "frozenSplit") else "split_panes")
 
     def _col(self, item):
         columns = _span(item)
-        if "width" in item.attrib: self.add("column_widths", columns)
+        if "width" in item.attrib: self.widths.append((columns, _number(item.get("width"), None), item.get("customWidth") in TRUE))
         if item.get("hidden") in TRUE: self.add("hidden_rows_columns", columns)
         if item.get("outlineLevel", "0") not in ("", "0") or item.get("collapsed") in TRUE: self.add("outline", columns)
         if item.get("style", "0") not in ("", "0"): self.add("row_column_styles", columns)
@@ -181,10 +200,10 @@ class SheetFeatures:
             if name == "legacyDrawing": self.legacy_drawing = True
             return
         if name == "sheetFormatPr":
-            attrib = item.attrib
-            if ("defaultColWidth" in attrib or attrib.get("baseColWidth", "8") != "8"
-                    or any(attrib.get(key) in TRUE for key in ("customHeight", "zeroHeight", "thickTop", "thickBottom"))):
-                self.add("sheet_format_defaults")
+            # Only an explicit default row height or rows hidden by default change the layout in a way worth
+            # naming; producers write their own default widths and heights into every file (increment 2 owns sizes).
+            self.default_width = _number(item.get("defaultColWidth"), None)
+            if any(item.get(key) in TRUE for key in ("customHeight", "zeroHeight")): self.add("sheet_format_defaults")
         elif name == "sheetProtection":
             if item.get("sheet") in TRUE: self.add("sheet_protection")
         elif name == "printOptions":
@@ -192,10 +211,12 @@ class SheetFeatures:
                 self.counts["page_setup"] = 1
         elif name == "pageMargins":
             values = tuple(_number(item.get(key), -1.0) for key in MARGINS)
-            if not any(all(abs(a - b) < 1e-9 for a, b in zip(values, default)) for default in DEFAULT_MARGINS):
+            if not any(all(abs(a - b) < 1e-4 for a, b in zip(values, default)) for default in DEFAULT_MARGINS):
                 self.counts["page_setup"] = 1
         elif name == "pageSetup":
-            if any(item.get(key) is not None and item.get(key) not in values for key, values in PAGE_DEFAULTS.items()):
+            # A first page number of 1 is the default even when LibreOffice marks it as used.
+            numbered = item.get("useFirstPageNumber") in TRUE and item.get("firstPageNumber", "1") != "1"
+            if numbered or any(item.get(key) is not None and item.get(key) not in values for key, values in PAGE_DEFAULTS.items()):
                 self.counts["page_setup"] = 1
         elif name in SHEET_ELEMENTS:
             feature = SHEET_ELEMENTS[name]
@@ -204,10 +225,25 @@ class SheetFeatures:
         else:
             self.add("extensions")
 
+    def _column_widths(self):
+        """Columns whose width is custom or differs from the default: the sheet's default column width, or else the
+        width most columns share (producers such as LibreOffice write a width for every column)."""
+        default = self.default_width
+        if default is None:
+            shares = {}
+            for columns, width, _ in self.widths: shares[width] = shares.get(width, 0) + columns
+            default = max(shares, key=shares.get) if shares else None
+        # Within a tenth of a character of the default is the default: LibreOffice writes a default width of
+        # 11.53515625 with columns of 11.52, a difference no grid shows.
+        return sum(columns for columns, width, custom in self.widths
+                   if custom or width is None or default is None or abs(width - default) > WIDTH_TOLERANCE)
+
     def report(self, report, sheet):
         """Add one omitted entry per feature found, in SHEET_FEATURES order."""
-        if "comments" in self.kinds or "threadedComment" in self.kinds: self.add("comments")
+        self.add("column_widths", self._column_widths())
+        if self.relationships.comments: self.add("comments", self.relationships.comments)
         elif self.legacy_drawing: self.add("legacy_drawings")
+        if self.relationships.unreadable: self.add("relationships_unreadable")
         for feature in SHEET_FEATURES:
             if feature in self.counts: report.add(SHEET_FEATURE, "omitted", feature, sheet=sheet, count=self.counts[feature])
 
@@ -247,19 +283,81 @@ def relationships_path(part):
     return posixpath.join(posixpath.dirname(part), "_rels", posixpath.basename(part) + ".rels")
 
 
-def relationship_kinds(archive, part, budget):
-    """The last segments of the relationship types a worksheet part declares (for example "comments").
+def stock_header_footer(text):
+    """Whether a header or footer text is empty or one LibreOffice writes into every sheet."""
+    text = re.sub(r'&"[^"]*"|&[0-9]+', "", (text or "").strip())
+    return not text or text in STOCK_HEADER_FOOTER
 
-    Read as a stream (a sheet can declare one relationship per hyperlink) under the package byte budget; a part
-    without relationships declares none."""
+
+class Relationships:
+    """What the report needs from a worksheet's relationships: how many comments the sheet holds (0 for none) and
+    whether its relationship part could not be read."""
+    def __init__(self, comments=0, unreadable=False):
+        self.comments, self.unreadable = comments, unreadable
+
+
+def _forbidden(archive, path):
+    """Whether a part contains a DTD or entity declaration (read in chunks)."""
+    from .xlsx_stream import CHUNK, _FORBIDDEN, _OVERLAP
+    tail = b""
+    with archive.open(path) as stream:
+        while chunk := stream.read(CHUNK):
+            window = (tail + chunk).upper()
+            if any(marker in window for marker in _FORBIDDEN): return True
+            tail = window[-_OVERLAP:]
+    return False
+
+
+def _count(archive, path, budget, tag):
+    """The number of `tag` elements in a part (streamed, bounded); 1 when the part cannot be read."""
+    from .engine import EngineError
+    from .xlsx_stream import read_part
+    try:
+        return max(1, sum(1 for event, item in read_part(archive, path, budget, record_depth=3)
+                          if event == "end" and local(item.tag) == tag))
+    except EngineError as error:
+        if error.body["code"] == "LIMIT" and "Expanded" in error.body["message"]: raise
+        return 1
+
+
+def relationship_summary(archive, part, budget):
+    """The sheet's comment count and whether its relationship part was unreadable, read as streams under the
+    package byte budget (a sheet can declare one relationship per hyperlink).
+
+    An absent or empty relationship part declares nothing. One with a DTD or entity rejects the package; any other
+    unreadable one is reported (relationships_unreadable) instead of rejecting a file whose cells are valid."""
+    from .engine import EngineError, require
     from .xlsx_stream import read_part
     path = relationships_path(part)
-    if path not in archive.namelist(): return frozenset()
-    kinds = set()
-    for event, item in read_part(archive, path, budget, record_depth=2):
-        if event == "end" and local(item.tag) == "Relationship":
-            kinds.add(item.get("Type", "").rstrip("/").rsplit("/", 1)[-1])
-    return frozenset(kinds)
+    names = archive.namelist()
+    if path not in names or archive.getinfo(path).file_size == 0: return Relationships()
+    targets = {}
+    try:
+        for event, item in read_part(archive, path, budget, record_depth=2):
+            if event == "end" and local(item.tag) == "Relationship" and item.get("TargetMode") != "External":
+                kind = item.get("Type", "").rstrip("/").rsplit("/", 1)[-1]
+                target = item.get("Target", "")
+                resolved = posixpath.normpath(target.lstrip("/") if target.startswith("/") else posixpath.join(posixpath.dirname(part), target))
+                targets.setdefault(kind, resolved)
+    except EngineError as error:
+        if error.body["code"] == "LIMIT" and "Expanded" in error.body["message"]: raise
+        require(not _forbidden(archive, path), "INVALID_SPREADSHEET", "UTF-8 XML without DTDs or entities is required")
+        return Relationships(unreadable=True)
+    for kind, tag in (("comments", "comment"), ("threadedComment", "threadedComment")):
+        if kind in targets:
+            return Relationships(_count(archive, targets[kind], budget, tag) if targets[kind] in names else 1)
+    return Relationships()
+
+
+def sheet_kinds(sheets, mapping, ns):
+    """For each workbook <sheet>, None for a worksheet (or an unknown relationship, which the readers reject) or the
+    feature id of a sheet kind that is not imported."""
+    kinds = []
+    for sheet in sheets:
+        relationship = mapping.get(sheet.get(f"{{{ns.rel}}}id"))
+        kind = relationship.get("Type", "").rstrip("/").rsplit("/", 1)[-1] if relationship is not None else ""
+        kinds.append(SHEET_KINDS.get(kind))
+    return kinds
 
 
 class StringFeatures:
@@ -273,10 +371,16 @@ class StringFeatures:
         if phonetic(item, self.main): self.phonetic += 1
 
 
-def workbook_features(report, workbook, ns, package_names, strings=None):
-    """Add the omitted workbook.feature entries of a parsed <workbook>, its package parts and its shared strings."""
+def workbook_features(report, workbook, ns, package_names, strings=None, skipped=()):
+    """Add the omitted workbook.feature entries of a parsed <workbook>, its package parts and its shared strings.
+
+    `skipped` lists (sheet name, feature id) for the sheets that are not worksheets."""
     main = "{" + ns.main + "}"
     counts, samples = {}, {}
+    for name, feature in skipped:
+        counts[feature] = counts.get(feature, 0) + 1
+        samples.setdefault(feature, []).append(name)
+    skipped_names = {name for name, _ in skipped}
 
     def add(feature, count=1):
         if count > 0: counts[feature] = counts.get(feature, 0) + count
@@ -287,7 +391,8 @@ def workbook_features(report, workbook, ns, package_names, strings=None):
         if name == "definedNames": add("defined_names", sum(1 for item in child if item.tag == main + "definedName"))
         elif name == "externalReferences": add("external_references", sum(1 for item in child if item.tag == main + "externalReference"))
         elif name == "sheets":
-            hidden = [item.get("name", "") for item in child if item.tag == main + "sheet" and item.get("state") in ("hidden", "veryHidden")]
+            hidden = [item.get("name", "") for item in child if item.tag == main + "sheet" and item.get("state") in ("hidden", "veryHidden")
+                      and item.get("name", "") not in skipped_names]
             if hidden: add("hidden_sheets", len(hidden)); samples["hidden_sheets"] = hidden
         elif name == "workbookProtection":
             if any(child.get(key) in TRUE for key in ("lockStructure", "lockWindows", "lockRevision")): add("workbook_protection")

@@ -389,5 +389,20 @@ class OdsFeatureReportTests(unittest.TestCase):
         self.assertEqual(feature_counts(result, "workbook.feature"), {"pivot_tables": 1, "embedded_objects": 1, "macros": 1})
 
 
+    def test_a_repeated_spanning_cell_counts_each_repeat(self):
+        rows = row('<table:table-cell table:number-columns-spanned="2" table:number-columns-repeated="3" office:value-type="float" office:value="1"/>')
+        content = feature_content(f'<table:table table:name="Sheet1">{rows}</table:table>')
+        self.assertEqual(feature_counts(self.preview(workbook_bytes({}, content=content)))["merged_cells"], 3)
+
+    def test_unreadable_view_settings_skip_pane_detection_and_never_reject(self):
+        content = feature_content('<table:table table:name="Sheet1"><table:table-row><table:table-cell office:value-type="float" office:value="1"/></table:table-row></table:table>')
+        for payload in (b"", b'<!DOCTYPE x><office:document-settings/>', '<?xml version="1.0" encoding="ISO-8859-1"?><a/>'.encode("latin-1"), b"<broken"):
+            for scope in ("selection", "workbook"):
+                with self.subTest(payload=payload[:20], scope=scope):
+                    result = self.preview(workbook_bytes({}, content=content, extra_parts={"settings.xml": payload}), scope=scope)
+                    self.assertTrue(result["can_import"])
+                    self.assertEqual(feature_counts(result, "workbook.feature"), {"view_settings_unreadable": 1})
+
+
 if __name__ == "__main__":
     unittest.main()
