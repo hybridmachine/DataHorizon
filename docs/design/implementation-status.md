@@ -115,7 +115,10 @@ Whole-workbook XLSX/ODS now preserve supported cross-sheet formulas, sheet names
 order and empty sheets. Import replaces an empty destination in one managed
 operation; activated handlers must explicitly opt into the transactional structural
 event contract. XLSX shared formulas and explicit ODS cell-style parent chains have
-bounded expansion/resolution and independent producer/consumer fixtures. Read-only
+bounded expansion/resolution and independent producer/consumer fixtures. Shared
+formulas expand only stored members, so an extent may span the grid; the
+streaming reader bounds the groups open at once (65,536 per sheet), not the
+sheet total. Read-only
 recovery inspection reports bounded input/style/formula-syntax issues without
 running code or repairs. The [preceding workbook batch](workbook-next-five.md) records scope,
 local qualification/archive tooling and remaining platform/distribution gates.

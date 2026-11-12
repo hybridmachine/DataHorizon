@@ -42,7 +42,7 @@ LARGE_SHEETS = 255
 LARGE_PARTS = 4096
 DEFERRED_MEMBERS = 10_000  # shared-formula members met before their master, per sheet
 DEFERRED_BYTES = 16*1024*1024  # text kept for those members, per sheet
-SHARED_GROUPS = 65_536  # shared-formula masters kept, per sheet
+SHARED_GROUPS = 65_536  # shared-formula groups open at once (extent not yet passed), per sheet
 SHARED_BYTES = 16*1024*1024  # master source text kept for them, per sheet
 BATCH = 1000
 CHUNK = 65536
@@ -342,8 +342,10 @@ def _read_sheet(archive, path, budget, context, sink, progress, features):
         if shared is not None:
             shared.register(item)
             formula = item.find(f"{{{ns.main}}}f")
-            if formula is not None and formula.get("t") == "shared" and formula.get("si", "") not in shared.groups:
+            key = None if formula is None or formula.get("t") != "shared" else formula.get("si", "")
+            if key is not None and key not in shared.groups and not shared.gone(key):
                 # Resolved once the sheet's masters are known; a group still without one rejects the file there.
+                # Its group, once registered, is kept to the end of the sheet.
                 require(len(deferred) < DEFERRED_MEMBERS, "LIMIT",
                         f"More than {DEFERRED_MEMBERS:,} shared formula members precede their master in one sheet")
                 kept, size = _deferred_copy(item)
@@ -351,6 +353,7 @@ def _read_sheet(archive, path, budget, context, sink, progress, features):
                 require(deferred_bytes <= DEFERRED_BYTES, "LIMIT",
                         f"Shared formula members preceding their master hold more than {DEFERRED_BYTES//(1024*1024)} MiB of text in one sheet")
                 deferred.append(kept)
+                shared.pinned.add(key)
                 progress.step(flush, "Reading cells")
                 continue
         emit(item)

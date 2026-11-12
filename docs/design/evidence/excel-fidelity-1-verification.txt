@@ -85,3 +85,31 @@ Code commits verified: d76827b ("Bound the feature scanner and export every stor
    (127 not empty), 8,184 at the end (133 not empty); 447 came from this pass's own runs before the shutdown fix.
 
 Not verified here: Windows (signal delivery, sweep), Linux, ODS capacity after the bounded scanner.
+
+
+Shared-formula extent and group-count fix — verification
+Date: 2026-11-11
+Branch: claude/excel-fidelity-1f (local; not pushed). Base cf7a257. Same host and toolchain as above.
+Change: a shared-formula extent may be any rectangle of the grid that holds its master (the 10,000-cell extent cap is
+  removed from both readers; a master outside its extent is INVALID_SPREADSHEET, formerly LIMIT); the streaming reader
+  bounds the groups open at once (65,536 and 16 MiB of master text per sheet), releasing groups whose extents the rows
+  have passed, instead of the sheet total.
+
+1. Python suite
+   Command: PYTHONPATH=service python3 -m unittest discover -s tests
+   Result:  Ran 1176 tests in 311.227 s — OK (skipped=26) (baseline at cf7a257: 1168 tests; +7 in test_xlsx_stream.py,
+            +2 and -1 in test_feature_bounds.py; one sample of test_fidelity.py changed from a full-grid extent, now
+            accepted, to a master outside its extent).
+
+2. Corpus scorecard and generator
+   Commands: PYTHONPATH=service python3 tests/corpus_scorecard.py --check
+             python3 tests/fixtures/corpus/generate_feature_workbooks.py --check
+   Result:   both exit 0.
+
+3. Bounded scanners (fresh process, streamed ZIP)
+   69,632 one-row shared-formula groups (65,536 + 4,096; every 16th row also stores a member) import with every formula
+   correct (SHA-256 of all imported row, column and source): 12.2 s, 42.6 MB traced, 86.5-93.7 MB RSS growth over two runs.
+   300,000 groups whose extents all run to row 1,048,576 reject with LIMIT ("... whose extents are open at once"):
+   8.4-9.2 s, 29.8 MB traced, 63.7-85.0 MB RSS growth.
+
+Not verified here: CTest and the desktop build (no C++ or CMake change), Windows, Linux.

@@ -34,11 +34,11 @@ class FidelityTests(unittest.TestCase):
             '<c r="C3"><f t="shared" si="4"/></c>',
             '<c r="C2"><f t="shared" si="4" ref="C2">A1</f></c><c r="C3"><f t="shared" si="4"/></c>',
             '<c r="C2"><f t="shared" si="4" ref="C2:C3">A1</f></c><c r="C3"><f t="shared" si="4" ref="C2:C3">A2</f></c>',
-            '<c r="C2"><f t="shared" si="4" ref="A1:XFD1048576">A1</f></c>']
+            '<c r="C2"><f t="shared" si="4" ref="A1:B1048576">A1</f></c>']
         for sample in samples:
             with self.subTest(sample=sample):
                 with self.assertRaises(EngineError) as failure: preview(fixture('<c r="A1"><v>7</v></c>'+sample))
-                self.assertIn(failure.exception.body["code"],("INVALID_SPREADSHEET","LIMIT"))
+                self.assertEqual(failure.exception.body["code"],"INVALID_SPREADSHEET")
 
     def test_ods_inherits_parent_properties_and_child_resets(self):
         styles='''<style:style style:name="Parent" style:family="table-cell"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/><style:table-cell-properties fo:background-color="#12ab34" fo:wrap-option="wrap" fo:border="0.75pt solid #000000"/></style:style>

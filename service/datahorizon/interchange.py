@@ -2,6 +2,7 @@
 """Bounded spreadsheet packages; no extraction, external resolution or code activation."""
 import base64
 import binascii
+import heapq
 import io
 import posixpath
 import re
@@ -259,13 +260,34 @@ def xlsx_text(item,ns=TRANSITIONAL):
 class SharedFormulas:
     """Expand only stored shared members, never a group's potentially empty rectangle.
 
-    Per group only the master's origin, extent and source are kept; a streaming reader registers masters as it meets them
-    and passes `limit` (groups) and `budget` (UTF-8 bytes of master source kept) to bound what one sheet holds: LIMIT beyond."""
+    Per group only the master's origin, extent and source are kept, so an extent may be any rectangle of the grid that
+    holds its master. A streaming reader registers masters as it meets them and passes `limit` (groups) and `budget`
+    (UTF-8 bytes of master source kept) to bound the groups one sheet holds open at once. When a new master would exceed
+    either, the groups whose extent ends above the highest master row met so far are released first; only groups still
+    open beyond the bounds are LIMIT. Every file Excel writes stores rows in ascending order, so no later member lies
+    inside a released group: one that names it fails as it did while the group was kept (`ended` remembers released
+    keys), and one met in an earlier row than the release, which only out-of-order rows produce, is LIMIT. A group in
+    `pinned` (members met before its master) is kept to the end of the sheet. Below the bounds nothing is released."""
     def __init__(self,cells=(),ns=TRANSITIONAL,*,limit=None,budget=None):
         self.ns=ns
         self.groups={}
         self.limit,self.budget,self.kept=limit,budget,0
+        self.ends,self.pinned,self.ended,self.high,self.released=[],set(),None,0,0
         for cell in cells: self.register(cell)
+
+    def gone(self,key):
+        """Whether the group `key` was released (keys are compared as numbers once released)."""
+        if self.ended is None or re.fullmatch(r"[0-9]{1,8}",key) is None: return False
+        index=int(key)
+        return bool(self.ended[index>>3]>>(index&7)&1)
+
+    def release(self):
+        while self.ends and self.ends[0][0]<self.high:
+            key=heapq.heappop(self.ends)[1]
+            self.kept-=len(self.groups.pop(key)[3].encode("utf-8","surrogatepass"))
+            if self.ended is None: self.ended=bytearray(10**8//8)
+            index=int(key); self.ended[index>>3]|=1<<(index&7)
+            self.released=self.high
 
     def register(self,cell):
         """Record the group of a shared master; any other cell is ignored."""
@@ -273,19 +295,22 @@ class SharedFormulas:
         if formula is None or formula.get("t")!="shared" or not formula.text: return
         key=formula.get("si","")
         require(re.fullmatch(r"[0-9]{1,8}",key) is not None,"INVALID_SPREADSHEET","Invalid shared formula group")
-        require(key not in self.groups,"INVALID_SPREADSHEET","Duplicate shared formula master")
+        require(key not in self.groups and not self.gone(key),"INVALID_SPREADSHEET","Duplicate shared formula master")
         ends=formula.get("ref","").split(":")
         require(1<=len(ends)<=2,"INVALID_SPREADSHEET","Invalid shared formula extent")
         try:
             r1,c1=coordinates(ends[0]); r2,c2=coordinates(ends[-1]); row,col=coordinates(cell.get("r",""))
         except FormulaError as error: raise EngineError("INVALID_SPREADSHEET","Invalid shared formula coordinates") from error
-        require(r1<=row<=r2 and c1<=col<=c2 and (r2-r1+1)*(c2-c1+1)<=MAX_CELLS,
-                "LIMIT","Shared formula extent must contain its master and at most 10,000 cells")
+        require(r1<=row<=r2 and c1<=col<=c2,"INVALID_SPREADSHEET","Shared formula extent must contain its master")
         source="="+formula.text
         if self.limit is not None:
-            self.kept+=len(source.encode("utf-8","surrogatepass"))
+            size=len(source.encode("utf-8","surrogatepass"))
+            self.high=max(self.high,row)
+            if len(self.groups)>=self.limit or self.kept+size>self.budget: self.release()
+            self.kept+=size
             require(len(self.groups)<self.limit and self.kept<=self.budget,"LIMIT",
-                    f"One sheet holds more than {self.limit:,} shared formula groups or {self.budget//(1024*1024)} MiB of shared formula text")
+                    f"One sheet holds more than {self.limit:,} shared formula groups or {self.budget//(1024*1024)} MiB of shared formula text whose extents are open at once")
+            if key not in self.pinned: heapq.heappush(self.ends,(r2,key))
         self.groups[key]=(row,col,(r1,c1,r2,c2),source)
 
     def source(self,cell,formula):
@@ -294,9 +319,13 @@ class SharedFormulas:
         if kind=="normal": return "="+(formula.text or "")
         require(kind=="shared","INVALID_SPREADSHEET","Unknown formula type")
         key=formula.get("si","")
+        row,col=coordinates(cell.get("r",""))
+        if key not in self.groups and self.gone(key):
+            require(row>=self.released,"LIMIT",f"Shared formula member at row {row:,} arrives after row {self.released:,}, where groups whose extents had "
+                    f"ended were released to keep at most {self.limit:,} open at once; a sheet with more must store its rows in ascending row order")
+            raise EngineError("INVALID_SPREADSHEET","Shared formula member lies outside its master extent")
         require(key in self.groups,"INVALID_SPREADSHEET","Shared formula has no master")
         origin_row,origin_col,(r1,c1,r2,c2),source=self.groups[key]
-        row,col=coordinates(cell.get("r",""))
         require(r1<=row<=r2 and c1<=col<=c2,"INVALID_SPREADSHEET","Shared formula member lies outside its master extent")
         require(formula.text or "ref" not in formula.attrib,"INVALID_SPREADSHEET","Only the shared master may declare an extent")
         return translate(source,row-origin_row,col-origin_col)

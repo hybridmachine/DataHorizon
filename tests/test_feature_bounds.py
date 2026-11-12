@@ -4,6 +4,7 @@
 Each crafted package is written as a stream into the ZIP (never built whole in memory) and read by the streaming
 reader in a fresh process, which reports the outcome, the peak traced allocation and its resident-memory growth.
 An input beyond a bound is either rejected with LIMIT or imported with a saturated ("at least") count."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -34,7 +35,7 @@ SECONDS = 20
 
 # Runs one streaming reader on argv[2] (format argv[1]) and prints its outcome and memory as JSON.
 PROBE = r"""
-import json, sys, time, tracemalloc
+import hashlib, json, sys, time, tracemalloc
 try:
     import resource
 except ImportError:
@@ -53,8 +54,11 @@ class Strings:
 
 class Sink:
     strings = Strings()
+    digest = hashlib.sha256() if sys.argv[3:] == ["digest"] else None
     def sheet(self, name): pass
-    def cells(self, batch): pass
+    def cells(self, batch):
+        if self.digest is not None:
+            for cell in batch: self.digest.update(f"{cell['row']},{cell['col']},{cell['source']}\n".encode())
 
 sink = Sink()
 reader = xlsx_stream.read_workbook if sys.argv[1] == "xlsx" else ods_stream.read_workbook
@@ -64,6 +68,7 @@ tracemalloc.start()
 try:
     report = reader(sys.argv[2], {"mode": "formulas"}, sink, lambda completed, phase: None)
     outcome = {"entries": report.entries()}
+    if sink.digest is not None: outcome["digest"] = sink.digest.hexdigest()
 except EngineError as error:
     outcome = {"error": error.body}
 peak = tracemalloc.get_traced_memory()[1]
@@ -74,9 +79,10 @@ print(json.dumps(outcome))
 """
 
 
-def probe(fmt, path):
+def probe(fmt, path, *extra):
+    """`extra` ["digest"]: the outcome also carries the SHA-256 of every imported "row,col,source\\n" in arrival order."""
     environment = {**os.environ, "PYTHONPATH": str(TESTS.parent/"service")}
-    done = subprocess.run([sys.executable, "-c", PROBE, fmt, str(path)], capture_output=True, text=True, env=environment, timeout=120)
+    done = subprocess.run([sys.executable, "-c", PROBE, fmt, str(path), *extra], capture_output=True, text=True, env=environment, timeout=120)
     if done.returncode: raise AssertionError(done.stderr)
     return json.loads(done.stdout)
 
@@ -149,8 +155,8 @@ class BoundedScannerTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
         self.temp = Path(temp.name)
 
-    def measured(self, fmt, path):
-        result = probe(fmt, path)
+    def measured(self, fmt, path, *extra):
+        result = probe(fmt, path, *extra)
         self.assertLess(result["peak"], TRACED_LIMIT, result)
         if result["rss_growth"] is not None: self.assertLess(result["rss_growth"], RSS_LIMIT, result)
         self.assertLess(result["seconds"], SECONDS, result)
@@ -227,15 +233,34 @@ class BoundedScannerTests(unittest.TestCase):
         write_xlsx(path, worksheet(cells='<row r="1"><c r="A1"><v>1</v></c></row>'), sheet_rels=rels)
         self.assertNotIn("error", self.measured("xlsx", path))
 
-    def test_shared_formula_groups_are_bounded_per_sheet(self):
-        count = xlsx_stream.SHARED_GROUPS+1
+    def test_more_shared_formula_groups_than_the_live_bound_import_when_their_extents_end(self):
+        # A ledger built by copying formula rows: one group per row, 4,096 more than the live-group bound. Every 16th
+        # row also stores the group's member (fewer cells keep the traced run within SECONDS).
+        count = xlsx_stream.SHARED_GROUPS+4096
+        member = lambda row: row % 16 == 0 or row == count
         def cells(write):
-            for index in range(count):
-                row = index+1
-                write(f'<row r="{row}"><c r="A{row}"><f t="shared" si="{index}" ref="A{row}:B{row}">C{row}</f></c></row>')
+            for row in range(1, count+1):
+                write(f'<row r="{row}"><c r="A{row}"><f t="shared" si="{row}" ref="A{row}:B{row}">C{row}*$D$1</f></c>'
+                      + (f'<c r="B{row}"><f t="shared" si="{row}"/></c>' if member(row) else "") + "</row>")
+        path = self.temp/"ledger.xlsx"
+        write_xlsx(path, worksheet(cells=cells))
+        result = self.measured("xlsx", path, "digest")
+        self.assertNotIn("error", result)
+        expected = hashlib.sha256()
+        for row in range(1, count+1):
+            expected.update(f"{row},1,=C{row}*$D$1\n".encode())
+            if member(row): expected.update(f"{row},2,=D{row}*$D$1\n".encode())
+        self.assertEqual(result["digest"], expected.hexdigest())
+
+    def test_shared_formula_groups_open_at_once_are_bounded_per_sheet(self):
+        # Hostile: 300,000 groups whose extents all run to the last row; none can be released.
+        def cells(write):
+            for row in range(1, 300_001):
+                write(f'<row r="{row}"><c r="A{row}"><f t="shared" si="{row}" ref="A{row}:A1048576">C{row}</f></c></row>')
         path = self.temp/"shared.xlsx"
         write_xlsx(path, worksheet(cells=cells))
-        self.limited("xlsx", path, "shared formula")
+        result = self.limited("xlsx", path, f"more than {xlsx_stream.SHARED_GROUPS:,} shared formula groups")
+        self.assertIn("open at once", result["error"]["message"])
 
     def test_more_workbook_sheets_than_package_parts_are_rejected(self):
         sheets = "".join(f'<sheet name="C{index}" sheetId="{index}" r:id="rChart"/>' for index in range(1, xlsx_stream.LARGE_PARTS+2))

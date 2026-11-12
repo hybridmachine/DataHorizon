@@ -359,7 +359,7 @@ ODS validation names in a sheet). Section 5.2 of the
 | --- | --- | --- |
 | Scope | Selection (one sheet at an offset, or one rectangle) and whole workbook | Whole workbook only |
 | Transport | base64 in a JSON body of at most 4 MiB | `PUT /v1/uploads/{upload}` raw body (or `source_path` on the same machine), staged preparation job, `GET /v1/exports/{export}` download |
-| Limits | 10,000 stored cells, 64 worksheets for a whole workbook (chart, dialog and macro sheets do not count; a selection can name any worksheet), 3 MiB package, 16 MiB expanded, 128 parts, 100,000 XML nodes per part | 1,000,000 stored cells, 255 worksheets, 48 MiB package, 256 MiB expanded, 4,096 parts, 1 MiB of XML per cell or record, 300 s per phase, 2 concurrent uploads and downloads, 1,024 distinct styles per export |
+| Limits | 10,000 stored cells, 64 worksheets for a whole workbook (chart, dialog and macro sheets do not count; a selection can name any worksheet), 3 MiB package, 16 MiB expanded, 128 parts, 100,000 XML nodes per part | 1,000,000 stored cells, 255 worksheets, 48 MiB package, 256 MiB expanded, 4,096 parts, 1 MiB of XML per cell or record, 65,536 shared-formula groups open at once per sheet, 300 s per phase, 2 concurrent uploads and downloads, 1,024 distinct styles per export |
 | Review | Every prepared cell | The report and a bounded sample; cells are staged on disk |
 | Apply | One managed edit (selection) or one atomic `workbook_import` | One atomic `workbook_import` from the stage |
 
@@ -405,7 +405,8 @@ activates. Keep the native or source file for features outside this tier.
 
 The [formula/style fidelity increment](workbook-next-five.md#formula-and-style-fidelity)
 adds bounded XLSX shared-formula expansion and explicit ODS parent-cell-style
-inheritance. Unsupported arrays, data tables and default styles are kept or
+inheritance. Only stored shared-formula members expand, so a group's extent may
+be any rectangle of the grid that holds its master. Unsupported arrays, data tables and default styles are kept or
 reported as above (they no longer block); this does not widen the calculation function tier.
 
 

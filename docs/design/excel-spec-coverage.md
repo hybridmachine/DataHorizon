@@ -129,7 +129,7 @@ by this check (listed at the end of plan section 14).
 | Attribute or type | Holds | Status | Report entry | Owner |
 | --- | --- | --- | --- | --- |
 | `t="normal"` | Ordinary formula | imported; unevaluable formulas kept and reported, or replaced by the cache in mixed mode | `formula.unsupported_function`, `formula.name`, `formula.missing_sheet`, `formula.external_reference`, `formula.unsupported_reference`, `formula.syntax` | 8 |
-| `t="shared"`, `si`, `ref` | Shared formula group | expanded per stored member; a broken group rejects | — | — |
+| `t="shared"`, `si`, `ref` | Shared formula group | expanded per stored member, any extent in the grid; a broken group rejects; large path keeps 65,536 groups open at once per sheet | — | — |
 | `t="array"`, `ref`, `aca` | Legacy array formula | kept as unevaluable or replaced by caches | `formula.array` | 8b |
 | `t="dataTable"`, `dt2D`, `dtr`, `r1`, `r2`, `del1`, `del2` | What-if data table | caches used or omitted | `formula.data_table` | **Call** NG (what-if tools) |
 | `ca` | Recalculate flag | no content (DataHorizon recalculates); invalid value rejects | — | — |

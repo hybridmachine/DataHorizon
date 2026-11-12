@@ -407,6 +407,95 @@ class StreamingReaderTests(unittest.TestCase):
                   "B": '<row r="2"><c r="A2"><f t="shared" si="0"/></c></row>'}
         self.assert_both_reject(workbook_bytes(sheets), "INVALID_SPREADSHEET")
 
+    def test_a_fill_down_longer_than_ten_thousand_rows_imports_on_both_paths(self):
+        # One group of 40,000 cells (A2:B20001) with a few stored members far from its master.
+        rows = ('<row r="1"><c r="C1"><v>3</v></c></row>'
+                '<row r="2"><c r="A2"><f t="shared" ref="A2:B20001" si="0">C2*2+$C$1</f><v>0</v></c></row>'
+                '<row r="3"><c r="A3"><f t="shared" si="0"/><v>0</v></c></row>'
+                '<row r="20000"><c r="B20000"><f t="shared" si="0"/><v>0</v></c></row>'
+                '<row r="20001"><c r="A20001"><f t="shared" si="0"/><v>0</v></c><c r="B20001"><f t="shared" si="0"/><v>0</v></c></row>')
+        expected = {(1, 3): "3", (2, 1): "=C2*2+$C$1", (3, 1): "=C3*2+$C$1", (20000, 2): "=D20000*2+$C$1",
+                    (20001, 1): "=C20001*2+$C$1", (20001, 2): "=D20001*2+$C$1"}
+        data = workbook_bytes({"S": rows})
+        for mode in ("formulas", "mixed"):
+            with self.subTest(mode=mode):
+                sink, report = self.assert_agree(data, mode)
+                self.assertEqual({(c["row"], c["col"]): c["source"] for c in sink.sheets[0][1]}, expected)
+                self.assertEqual(report.entries(), [])
+                single = xlsx_preview({"file_base64": b64(data), "mode": mode})
+                self.assertEqual({(c["row"], c["col"]): c["source"] for c in single["cells"]}, expected)
+
+    def test_a_shared_extent_may_span_the_grid_but_must_hold_its_master(self):
+        whole = ('<row r="1"><c r="A1"><f t="shared" ref="A1:XFD1048576" si="0">B1+1</f></c></row>'
+                 '<row r="1048576"><c r="XFC1048576"><f t="shared" si="0"/></c></row>')
+        sink, _ = self.assert_agree(workbook_bytes({"S": whole}), "formulas")
+        self.assertEqual([c["source"] for c in sink.sheets[0][1]], ["=B1+1", "=XFD1048576+1"])
+        for ref in ("B1:B9", "A2:A9", "A1:XFE1", "A1:A1048577"):
+            with self.subTest(ref=ref):
+                broken = f'<row r="1"><c r="A1"><f t="shared" ref="{ref}" si="0">1</f></c></row>'
+                self.assert_both_reject(workbook_bytes({"S": broken}), "INVALID_SPREADSHEET", "formulas")
+
+    # Shared-formula groups whose extent has ended are released when the live bounds would be exceeded.
+    LEDGER = ('<row r="1"><c r="A1"><f t="shared" ref="A1:B1" si="1">C1+1</f></c><c r="B1"><f t="shared" si="1"/></c>'
+              '<c r="E1"><f t="shared" ref="E1:E6" si="900">C1</f></c></row>'
+              + "".join(f'<row r="{r}"><c r="A{r}"><f t="shared" ref="A{r}:B{r}" si="{r}">C{r}+1</f></c>'
+                        f'<c r="B{r}"><f t="shared" si="{r}"/></c><c r="E{r}"><f t="shared" si="900"/></c></row>' for r in range(2, 7)))
+
+    def test_ended_shared_groups_are_released_so_only_live_groups_count(self):
+        sink, _ = self.assert_agree(workbook_bytes({"S": self.LEDGER}), "formulas")
+        expected = sink.sheets
+        self.assertEqual({(c["row"], c["col"]): c["source"] for c in expected[0][1] if c["row"] == 6},
+                         {(6, 1): "=C6+1", (6, 2): "=D6+1", (6, 5): "=C6"})
+        # "=C1" (3 bytes) stays live beside one "=Cn+1" (5 bytes); a third group or 9 bytes would be over.
+        for groups, budget in ((2, 16*1024*1024), (65536, 8)):
+            with self.subTest(groups=groups, budget=budget), mock.patch.object(xlsx_stream, "SHARED_GROUPS", groups), \
+                    mock.patch.object(xlsx_stream, "SHARED_BYTES", budget):
+                self.assertEqual(self.stream(workbook_bytes({"S": self.LEDGER}), "formulas")[0].sheets, expected)
+        for groups, budget in ((1, 16*1024*1024), (65536, 7)):
+            with self.subTest(groups=groups, budget=budget), mock.patch.object(xlsx_stream, "SHARED_GROUPS", groups), \
+                    mock.patch.object(xlsx_stream, "SHARED_BYTES", budget):
+                error = self.rejects("LIMIT", self.stream, workbook_bytes({"S": self.LEDGER}), "formulas")
+                self.assertIn("open at once", error.body["message"])
+
+    def test_groups_whose_extents_never_end_stay_bounded(self):
+        rows = "".join(f'<row r="{r}"><c r="A{r}"><f t="shared" ref="A{r}:A1048576" si="{r}">1</f></c></row>' for r in range(1, 5))
+        self.assertEqual(len(self.stream(workbook_bytes({"S": rows}), "formulas")[0].sheets[0][1]), 4)
+        with mock.patch.object(xlsx_stream, "SHARED_GROUPS", 3):
+            error = self.rejects("LIMIT", self.stream, workbook_bytes({"S": rows}), "formulas")
+        self.assertEqual(error.body["message"], "One sheet holds more than 3 shared formula groups or 16 MiB of shared "
+                                                "formula text whose extents are open at once")
+
+    def test_a_member_of_a_released_group_fails_as_it_did_while_kept(self):
+        late = self.LEDGER+'<row r="7"><c r="B7"><f t="shared" si="2"/></c></row>'
+        again = self.LEDGER+'<row r="7"><c r="A7"><f t="shared" ref="A7:B7" si="2">1</f></c></row>'
+        for sheet, message in ((late, "Shared formula member lies outside its master extent"),
+                               (again, "Duplicate shared formula master")):
+            kept = self.rejects("INVALID_SPREADSHEET", self.stream, workbook_bytes({"S": sheet}), "formulas")
+            self.assertEqual(kept.body["message"], message)
+            with mock.patch.object(xlsx_stream, "SHARED_GROUPS", 2):
+                released = self.rejects("INVALID_SPREADSHEET", self.stream, workbook_bytes({"S": sheet}), "formulas")
+            self.assertEqual(released.body["message"], message)
+
+    def test_rows_out_of_order_after_a_release_are_limit(self):
+        # Excel always writes rows in ascending order; the readers do not require it while every group is kept.
+        sheet = self.LEDGER.replace('<c r="B1"><f t="shared" si="1"/></c>', "")+'<row r="1"><c r="B1"><f t="shared" si="1"/></c></row>'
+        sink, _ = self.assert_agree(workbook_bytes({"S": sheet}), "formulas")
+        self.assertIn({"row": 1, "col": 2, "source": "=D1+1"}, [{k: c[k] for k in ("row", "col", "source")} for c in sink.sheets[0][1]])
+        with mock.patch.object(xlsx_stream, "SHARED_GROUPS", 2):
+            error = self.rejects("LIMIT", self.stream, workbook_bytes({"S": sheet}), "formulas")
+        self.assertIn("ascending row order", error.body["message"])
+
+    def test_a_group_with_members_before_its_master_is_kept_to_the_end_of_its_sheet(self):
+        sheet = ('<row r="1"><c r="B1"><f t="shared" si="0"/></c></row>'
+                 '<row r="2"><c r="A2"><f t="shared" ref="A1:B2" si="0">C2</f></c></row>'
+                 + "".join(f'<row r="{r}"><c r="A{r}"><f t="shared" ref="A{r}" si="{r}">C{r}</f></c></row>' for r in range(3, 7)))
+        expected = self.stream(workbook_bytes({"S": sheet}), "formulas")[0].sheets
+        self.assertIn("=D1", [c["source"] for c in expected[0][1]])
+        with mock.patch.object(xlsx_stream, "SHARED_GROUPS", 2):
+            self.assertEqual(self.stream(workbook_bytes({"S": sheet}), "formulas")[0].sheets, expected)
+        with mock.patch.object(xlsx_stream, "SHARED_GROUPS", 1):
+            self.rejects("LIMIT", self.stream, workbook_bytes({"S": sheet}), "formulas")
+
     def test_deferred_members_are_bounded(self):
         members = "".join(f'<row r="{r}"><c r="A{r}"><f t="shared" si="0"/></c></row>' for r in range(1, 4))
         sheet = members+'<row r="9"><c r="A9"><f t="shared" ref="A1:A9" si="0">1</f></c></row>'

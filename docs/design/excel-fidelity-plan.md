@@ -316,8 +316,12 @@ constant. **Call**: interchange gets its own path and limits.
   A sheet relationship part keeps only its comment targets. The XLSX streaming
   reader admits at most 4,096 `<sheet>` elements (`LARGE_PARTS`) and counts only
   worksheets toward 255 before it keeps their names, and keeps at most 65,536
-  shared-formula groups and 16 MiB of their master text per sheet
-  (`SHARED_GROUPS`, `SHARED_BYTES`), `LIMIT` beyond. The ODS survey keeps at
+  shared-formula groups open at once and 16 MiB of their master text per sheet
+  (`SHARED_GROUPS`, `SHARED_BYTES`): a group is released once the rows have
+  passed the end of its extent, and only groups still open beyond the bounds
+  are `LIMIT`. A shared-formula extent may be any rectangle of the grid that
+  holds its master; only stored members are expanded, so its size costs nothing
+  and the path's cell limit applies to the cells stored. The ODS survey keeps at
   most 255 sheet names (checked before each is kept) with 1 MiB of names and
   table styles, 65,536 column, row and table styles inside the 16-MiB style
   budget (`ods_features.MAX_LAYOUT_STYLES`, `LIMIT`), and auto-filtered ranges
@@ -950,8 +954,30 @@ items; all were fixed in one pass.
   every crafted input stays under 64 MiB traced and 192 MiB RSS growth and
   finishes within 20 s, among them 2,000,000 `<col>` elements (rejected) and
   500,000 distinct validation names (imported with a saturated count). Cost if
-  wrong: a valid sheet with more than 65,536 shared-formula groups or 65,536 ODS
-  layout styles is refused with `LIMIT`; a saturated count understates.
+  wrong: a valid sheet with more than 65,536 shared-formula groups open at once
+  (extents overlapping the same rows) or 65,536 ODS layout styles is refused
+  with `LIMIT`; a saturated count understates.
+- **Shared-formula extents and group counts.** Both readers rejected a
+  shared-formula extent over 10,000 cells (a cap added with shared-formula
+  expansion, mirroring the bounded path's `MAX_CELLS`, though no code ever
+  iterated an extent), so an ordinary fill-down longer than 10,000 rows did
+  not import in `formulas` or `mixed` mode; and the streaming reader counted
+  every group of a sheet against `SHARED_GROUPS`, so a ledger with one group per
+  row failed at row 65,537. An extent may now be any rectangle of the grid that
+  holds its master. The streaming reader releases a group once a new master
+  would exceed `SHARED_GROUPS` or `SHARED_BYTES` and the rows have passed the
+  end of its extent; below the bounds nothing is released, so such files read
+  exactly as before. Released keys are remembered in a 12.5-MB bitmap (keys
+  are at most 8 digits), so a later member of a released group fails as before
+  ("lies outside its master extent") and a reused key is still a duplicate
+  master. A group with members stored before its master is kept to the end of
+  the sheet. Neither reader requires ascending rows; every file Excel writes
+  has them. Cost if wrong: a sheet over the bounds whose rows are out of order
+  and that names a released group in an earlier row is `LIMIT` (the message
+  says rows must ascend), where a reader keeping every group would import it.
+  `tests/test_feature_bounds.py` imports 69,632 one-row groups correctly at
+  about 43 MB traced, and rejects 300,000 groups that all run to the last row
+  with `LIMIT` at about 30 MB traced.
 - **Export after a `formulas` import.** Whole-workbook export passed through only
   formulas whose sole problem was an unsupported function, so one `=Net*TaxRate`
   blocked every export route of a workbook imported in `formulas` mode. Section
