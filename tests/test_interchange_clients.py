@@ -332,6 +332,24 @@ class CliTests(unittest.TestCase):
             self.assertFalse({'\x9b', '\u202e', '\x7f'} & set(text))
         self.assertEqual(json.loads(conflict.stderr)['conflicts'], [name])
 
+    def test_report_json_never_replaces_the_workbook_source_or_destination(self):
+        self.run_cli('import-spreadsheet', str(FIXTURES/'fidelity.xlsx'), '--yes')
+        native = self.book.read_bytes()
+        source = self.temp/'source.xlsx'; source.write_bytes((FIXTURES/'fidelity.xlsx').read_bytes())
+        out = self.temp/'out.xlsx'; link = self.temp/'link.json'; os.symlink(self.book, link)
+        cases = [(('export-spreadsheet', str(out), '--report-json', str(self.book), '--overwrite'), 'native workbook'),
+                 (('export-spreadsheet', str(out), '--report-json', str(link), '--overwrite'), 'native workbook'),
+                 (('export-spreadsheet', str(out), '--report-json', str(self.temp/'.'/'out.xlsx'), '--overwrite'), 'export destination'),
+                 (('import-spreadsheet', str(source), '--add-sheets', '--yes', '--report-json', str(source), '--overwrite'), 'import source'),
+                 (('import-spreadsheet', str(source), '--add-sheets', '--yes', '--report-json', str(self.book), '--overwrite'), 'native workbook')]
+        for args, label in cases:
+            with self.subTest(args=args):
+                run = self.run_cli(*args)
+                self.assertEqual(run.returncode, 1, run.stdout); self.assertIn(label, json.loads(run.stderr)['message'])
+                self.assertEqual(self.book.read_bytes(), native); self.assertFalse(out.exists())
+                self.assertEqual(source.read_bytes(), (FIXTURES/'fidelity.xlsx').read_bytes())
+        self.assertEqual(len(self.sheets()), len(set(self.sheets())))  # Refused before any import.
+
     def test_report_json_is_published_atomically_and_never_silently_replaced(self):
         report = self.temp/'report.json'; report.write_text('keep')
         refused = self.run_cli('import-spreadsheet', str(FIXTURES/'fidelity.xlsx'), '--report-json', str(report), '--yes')

@@ -69,6 +69,22 @@ class XlsxDegradeTests(unittest.TestCase):
                 self.assertEqual(cell(result, "B1"), {"source": "=IFS(1,2)", "kind": "formula"})
                 self.assertEqual(result["totals"]["unevaluable"], 1)
 
+    def test_an_empty_cache_element_is_not_a_cached_value(self):
+        # A writer that never calculated (openpyxl) leaves <v/> or <v></v> on a formula cell.
+        for cache in ("<v/>", "<v></v>", "<v> </v>"):
+            with self.subTest(cache=cache):
+                sheet = f'<row r="1"><c r="B1"><f>IFS(1,2)</f>{cache}</c><c r="C1"><f>1+1</f>{cache}</c></row>'
+                result = preview(sheet, mode="mixed")
+                self.assertEqual(cell(result, "B1"), {"source": "=IFS(1,2)", "kind": "formula"})
+                self.assertEqual(cell(result, "C1")["source"], "=1+1")
+                self.assertEqual((result["totals"]["unevaluable"], result["totals"]["converted"]), (1, 0))
+                result = preview(sheet, mode="values")
+                self.assertEqual(result["cells"], [])
+                self.assertIn(entry("cell.missing_cache", "omitted", "", "B1", "C1"), result["report_entries"])
+        # An empty string result is a real cache.
+        result = preview('<row r="1"><c r="B1" t="str"><f>IFS(1,"")</f><v></v></c></row>', mode="mixed")
+        self.assertEqual(cell(result, "B1"), {"source": "", "kind": "text"})
+
     def test_values_mode_uses_every_cache(self):
         result = preview(SHEET, mode="values")
         self.assertEqual(cell(result, "B1"), {"source": "big", "kind": "text"})

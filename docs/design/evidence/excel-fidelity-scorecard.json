@@ -1319,24 +1319,24 @@
       "values": {
         "entries": [
           {
-            "category": "style.border",
-            "count": 16,
-            "detail": "Border colors map to the native default color.",
-            "severity": "approximated"
+            "category": "cell.missing_cache",
+            "count": 17,
+            "detail": "",
+            "severity": "omitted"
           },
           {
             "category": "style.font",
-            "count": 33,
+            "count": 32,
             "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
             "severity": "omitted"
           }
         ],
         "status": "degraded",
-        "stored_cells": 49,
+        "stored_cells": 32,
         "totals": {
-          "approximated": 16,
+          "approximated": 0,
           "converted": 0,
-          "omitted": 33,
+          "omitted": 49,
           "unevaluable": 0
         }
       }
@@ -1449,10 +1449,10 @@
       "values": {
         "entries": [
           {
-            "category": "style.border",
+            "category": "cell.missing_cache",
             "count": 1,
-            "detail": "Border colors map to the native default color.",
-            "severity": "approximated"
+            "detail": "",
+            "severity": "omitted"
           },
           {
             "category": "style.font",
@@ -1462,11 +1462,11 @@
           }
         ],
         "status": "degraded",
-        "stored_cells": 3,
+        "stored_cells": 2,
         "totals": {
-          "approximated": 1,
+          "approximated": 0,
           "converted": 0,
-          "omitted": 2,
+          "omitted": 3,
           "unevaluable": 0
         }
       }
@@ -1558,7 +1558,7 @@
             "category": "formula.unsupported_function",
             "count": 1,
             "detail": "INFO",
-            "severity": "converted"
+            "severity": "unevaluable"
           },
           {
             "category": "style.font",
@@ -1571,22 +1571,28 @@
         "stored_cells": 2,
         "totals": {
           "approximated": 0,
-          "converted": 1,
+          "converted": 0,
           "omitted": 2,
-          "unevaluable": 0
+          "unevaluable": 1
         }
       },
       "values": {
         "entries": [
           {
+            "category": "cell.missing_cache",
+            "count": 1,
+            "detail": "",
+            "severity": "omitted"
+          },
+          {
             "category": "style.font",
-            "count": 2,
+            "count": 1,
             "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
             "severity": "omitted"
           }
         ],
         "status": "degraded",
-        "stored_cells": 2,
+        "stored_cells": 1,
         "totals": {
           "approximated": 0,
           "converted": 0,
@@ -1634,8 +1640,9 @@
       },
       "values": {
         "cell.error_value": 1,
+        "cell.missing_cache": 3,
         "sheet.feature": 12,
-        "style.border": 4,
+        "style.border": 2,
         "style.fill": 1,
         "style.font": 5,
         "style.named_style": 1,

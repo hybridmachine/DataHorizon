@@ -516,6 +516,10 @@ def _scanned_structure(source, matches, axis, start, count, delete):
             new = None if min(shifted) > maximum else [min(value, maximum) for value in shifted]
         else:
             new = adjust_interval(old[0], old[-1], start, count, delete, maximum)
+        if (new is None or any(before != after for before, after in zip(old, new))) and any(sheet_last is not None for _ref, _sheet, sheet_last, _external in endpoints):
+            # One rectangle stands for every sheet of the span, and only the edited sheet's cells moved:
+            # no rewrite keeps pointing at the same cells on all of them.
+            raise Unmaintainable("A structural edit on one sheet of a 3D reference cannot be followed")
         if new is None:
             broken += 1
             return "#REF!"

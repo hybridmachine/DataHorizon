@@ -1062,6 +1062,12 @@ and de-duplicated; items already fixed are not listed.
   ignored instead of rejected. The tree reader still accepts non-UTF-8 XML
   declarations; a ZIP that lies about its sizes surfaces as
   `INVALID_SPREADSHEET`, not `LIMIT`.
+- A row or column edit on one sheet of a 3D span that would move the referenced
+  cells marks the formula `unmaintained` (listed in the receipt): one rectangle
+  stands for every sheet of the span and only the edited sheet's cells moved.
+  An edit that leaves those cells in place changes nothing. An XLSX formula
+  cell whose `<v>` is empty has no cached value (only a `t="str"` result may be
+  empty): `mixed` keeps the formula and `values` reports `cell.missing_cache`.
 - Deleting an end sheet of a 3D span gives `#REF!` where Excel shrinks the span;
   a reversed whole range such as `XFD:A` clamps; `=IFS([1]!MyName,A1)` cannot be
   scanned. Any formula on an edited sheet that cannot be scanned is marked

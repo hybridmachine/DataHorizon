@@ -371,7 +371,9 @@ def convert_xlsx_cell(cell,*,context):
     formula=cell.find(f"{{{context.ns.main}}}f")
     value=cell.findtext(f"{{{context.ns.main}}}v")
     kind=cell.get("t","n")
-    cached=value is not None and kind!="e"
+    # A usable cached result: an empty <v/> (as a writer leaves for a formula it never calculated) is one only for a
+    # string result, where it is the empty string.
+    cached=value is not None and kind!="e" and (kind=="str" or value.strip()!="")
     noted=[]
     item=None
     if formula is not None:
@@ -401,7 +403,7 @@ def convert_xlsx_cell(cell,*,context):
                     skip("formula.untranslatable"); return None
             item={"source":native,"kind":"formula"}
     if item is None:
-        if mode_=="values" and formula is not None and value is None and kind!="inlineStr":
+        if mode_=="values" and formula is not None and not cached and kind not in ("inlineStr","e"):
             skip("cell.missing_cache"); return None
         try:
             if kind=="e":

@@ -207,7 +207,9 @@ to answer exits 2 and imports nothing (a declined prompt exits 1). Text from the
 file or the service is printed with control, format and bidi characters escaped.
 `--report-json` is written atomically and refuses an existing file unless
 `--overwrite` is given (for `export-spreadsheet`, `--overwrite` covers both the
-destination and the report). Published files take ordinary permissions, or the
+destination and the report). A report path that names the native workbook, the
+import source or the export destination is refused before any work, with or
+without `--overwrite`. Published files take ordinary permissions, or the
 replaced file's permissions:
 
 ```sh

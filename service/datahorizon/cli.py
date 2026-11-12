@@ -136,8 +136,25 @@ def write_report(path, review, keys, overwrite):
     write_file(path, data.encode("utf-8"), overwrite=overwrite)
 
 
-def check_report_path(path, overwrite):
-    if path and os.path.lexists(Path(path).expanduser()) and not overwrite:
+def same_file(left, right):
+    left, right = Path(left).expanduser(), Path(right).expanduser()
+    try:
+        if os.path.samefile(left, right): return True
+    except OSError:
+        pass
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return False
+
+
+def check_report_path(path, overwrite, **protected):
+    """Refuse a report path that exists (without overwrite) or that names one of the command's own files."""
+    if not path: return
+    for label, other in protected.items():
+        if other and same_file(path, other):
+            raise ValueError(f"--report-json must not name the {label.replace('_', ' ')} ({other})")
+    if os.path.lexists(Path(path).expanduser()) and not overwrite:
         raise FileExistsError(f"Report destination {path} exists; pass --overwrite to replace it")
 
 
@@ -170,7 +187,7 @@ def confirm(question):
 
 def import_spreadsheet(client, book, args):
     """Prepare, show the report, confirm and apply. The prepared job is cancelled and released unless the import commits."""
-    check_report_path(args.report_json, args.overwrite)
+    check_report_path(args.report_json, args.overwrite, native_workbook=args.file, import_source=args.source)
     summary = client.prepare_spreadsheet_file(args.source, mode=args.mode, local=args.local, timezone_policy=args.timezone_policy,
                                               progress=show_progress("Preparing"))
     job, receipt = summary["stage_id"], None
@@ -399,7 +416,7 @@ def main():
                             time.sleep(.05);result=book.operation_job(result['job_id'])
                     elif args.command=='import-spreadsheet':output,result=import_spreadsheet(client,book,args)
                     elif args.command=='export-spreadsheet':
-                        check_report_path(args.report_json,args.overwrite)
+                        check_report_path(args.report_json,args.overwrite,native_workbook=args.file,export_destination=args.destination)
                         written=book.export_spreadsheet_file(args.destination,overwrite=args.overwrite,progress=show_progress('Exporting'))
                         print(report_text(written),flush=True)
                         if args.report_json:write_report(args.report_json,written,('path','bytes','sha256','state','report','scope_lines','report_entries','totals'),args.overwrite)

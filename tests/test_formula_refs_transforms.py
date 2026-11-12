@@ -76,15 +76,21 @@ class StructureFallbackTests(unittest.TestCase):
     def test_three_dimensional_references_by_display_position(self):
         source = "=SUM(Jan:Mar!B2)"
         order = ["Jan", "Feb", "Mar", "Apr"]
-        self.assertEqual(transform_structure(source, "Sheet1", "Feb", "row", 1, 1, sheet_order=order)[0], "=SUM(Jan:Mar!B3)")
+        # An edit on one sheet of the span moves that sheet's cells only; one rectangle cannot follow them.
+        for args, extra in ((("Feb", "row", 1, 1), dict(sheet_order=order)), (("feb", "row", 1, 1), dict(sheet_order=order)),
+                            (("Jan", "row", 1, 1), {}), (("Mar", "row", 1, 1), {}), (("Feb", "row", 2, 1, True), dict(sheet_order=order))):
+            with self.subTest(args=args), self.assertRaises(Unmaintainable):
+                transform_structure(source, "Sheet1", *args, **extra)
+        with self.assertRaises(Unmaintainable):
+            transform_structure("=SUM(Mar:Jan!B2)", "Sheet1", "feb", "row", 1, 1, sheet_order=order)
+        with self.assertRaises(Unmaintainable):
+            transform_structure("='Jan 1:Mar 3'!A1:B2", "Sheet1", "Mar 3", "col", 1, 1)
+        # An edit that leaves the referenced cells where they are changes nothing.
+        self.assertEqual(transform_structure(source, "Sheet1", "Feb", "row", 3, 1, sheet_order=order)[0], source)
+        self.assertEqual(transform_structure(source, "Sheet1", "Feb", "col", 3, 1, sheet_order=order)[0], source)
         self.assertEqual(transform_structure(source, "Sheet1", "Apr", "row", 1, 1, sheet_order=order)[0], source)
-        self.assertEqual(transform_structure("=SUM(Mar:Jan!B2)", "Sheet1", "feb", "row", 1, 1, sheet_order=order)[0],
-                         "=SUM(Mar:Jan!B3)")
         # Without the order only the named endpoints are known to lie in the span.
         self.assertEqual(transform_structure(source, "Sheet1", "Feb", "row", 1, 1)[0], source)
-        self.assertEqual(transform_structure(source, "Sheet1", "Jan", "row", 1, 1)[0], "=SUM(Jan:Mar!B3)")
-        self.assertEqual(transform_structure(source, "Sheet1", "Mar", "row", 1, 1)[0], "=SUM(Jan:Mar!B3)")
-        self.assertEqual(transform_structure("='Jan 1:Mar 3'!A1:B2", "Sheet1", "Mar 3", "col", 1, 1)[0], "='Jan 1:Mar 3'!B1:C2")
 
     def test_opaque_text_is_untouched(self):
         out, broken = transform_structure(MIXED, "Sheet1", "Sheet1", "row", 1, 1)
@@ -234,16 +240,19 @@ class EngineSheetOrderTests(unittest.TestCase):
         return self.book.mutate({"action": action, "sheet": "Sheet1", "operation_id": str(uuid.uuid4()),
                                  "expected_state": self.book.info()["state"], **args})
 
-    def test_row_insert_on_an_inner_sheet_adjusts_a_3d_reference(self):
+    def test_row_insert_on_an_inner_sheet_marks_a_3d_reference_unmaintained(self):
         for name in ("Jan", "Feb", "Mar", "Apr"):
             self.apply("sheet_add", name=name)
         self.apply("edit", cells=[{"row": 1, "col": 1, "source": "=SUM(Jan:Mar!B2)"},
                                   {"row": 2, "col": 1, "source": "=SUM(B:C)"}])
         self.apply("rows_insert", sheet="Apr", start=1)
-        self.apply("rows_insert", sheet="Feb", start=1)
+        receipt = self.apply("rows_insert", sheet="Feb", start=5)  # Below the referenced row: nothing to follow.
+        self.assertFalse(receipt.get("unmaintained_count"))
+        receipt = self.apply("rows_insert", sheet="Feb", start=1)
+        self.assertEqual((receipt["unmaintained"], receipt["unmaintained_count"]), ([{"sheet": "Sheet1", "cell": "A1"}], 1))
         self.apply("columns_insert", start=1)
-        sources = [c["source"] for c in self.book.read("Sheet1", {"r2": 2, "c2": 2})["cells"]]
-        self.assertEqual(sources, ["=SUM(Jan:Mar!B3)", "=SUM(C:D)"])
+        cells = self.book.read("Sheet1", {"r2": 2, "c2": 2})["cells"]
+        self.assertEqual([(c["source"], c["kind"]) for c in cells], [("=SUM(Jan:Mar!B2)", "unmaintained"), ("=SUM(C:D)", "formula")])
 
 
 if __name__ == "__main__":
