@@ -166,6 +166,31 @@ def native_formula_to_xlsx(source,bounds=None,sheet_names=None):
 
 
 UNMAINTAINED_DETAIL="references were not maintained through a structural edit; the source is written unchanged"
+# Whole-workbook export writes every stored formula. One entry per formula_admission category counts those
+# DataHorizon cannot evaluate; one counts those whose references cannot even be read (the target judges them).
+EXPORT_UNEVALUABLE_DETAIL="written as stored; DataHorizon cannot evaluate it"
+EXPORT_UNTOKENIZABLE_DETAIL="written as stored; its references cannot be read, so the target application judges it"
+
+
+def whole_formula_to_xlsx(cell,sheet,report,names):
+    """The <f> text of a formula cell at whole-workbook scope, where `names` are the exported sheet names.
+
+    A formula the calculator can evaluate is checked and written as native_formula_to_xlsx writes it. Any other is
+    written as stored, with _xlfn. prefixes: counted as unevaluable under its formula_admission category when the
+    reference scanner reads it, else as an approximated formula.syntax entry. Only characters spreadsheet XML cannot
+    hold refuse the export, as for unmaintained cells."""
+    from .formula_refs import scan
+    source=cell["source"]
+    require(not any((ord(c)<32 and c not in "\t\n\r") or ord(c) in (65534,65535) for c in source),
+            "UNSUPPORTED_FORMULA","Formula contains characters unavailable in spreadsheet XML")
+    problem=formula_status(source,names)
+    if problem is None:
+        try: return native_formula_to_xlsx(source,None,names)
+        except EngineError: problem=("formula.syntax","")
+    where={"sheet":sheet,"cell":address(cell["row"],cell["col"])}
+    if scan(source) is None: report.add("formula.syntax","approximated",EXPORT_UNTOKENIZABLE_DETAIL,**where)
+    else: report.add(problem[0],"unevaluable",EXPORT_UNEVALUABLE_DETAIL,**where)
+    return map_formula_functions(source,FUTURE_PREFIX)
 
 
 def unmaintained_formula(cell,sheet,report,whole):
@@ -231,10 +256,12 @@ def xlsx_text(item,ns=TRANSITIONAL):
 class SharedFormulas:
     """Expand only stored shared members, never a group's potentially empty rectangle.
 
-    Per group only the master's origin, extent and source are kept; a streaming reader registers masters as it meets them."""
-    def __init__(self,cells=(),ns=TRANSITIONAL):
+    Per group only the master's origin, extent and source are kept; a streaming reader registers masters as it meets them
+    and passes `limit` (groups) and `budget` (UTF-8 bytes of master source kept) to bound what one sheet holds: LIMIT beyond."""
+    def __init__(self,cells=(),ns=TRANSITIONAL,*,limit=None,budget=None):
         self.ns=ns
         self.groups={}
+        self.limit,self.budget,self.kept=limit,budget,0
         for cell in cells: self.register(cell)
 
     def register(self,cell):
@@ -252,6 +279,10 @@ class SharedFormulas:
         require(r1<=row<=r2 and c1<=col<=c2 and (r2-r1+1)*(c2-c1+1)<=MAX_CELLS,
                 "LIMIT","Shared formula extent must contain its master and at most 10,000 cells")
         source="="+formula.text
+        if self.limit is not None:
+            self.kept+=len(source.encode("utf-8","surrogatepass"))
+            require(len(self.groups)<self.limit and self.kept<=self.budget,"LIMIT",
+                    f"One sheet holds more than {self.limit:,} shared formula groups or {self.budget//(1024*1024)} MiB of shared formula text")
         self.groups[key]=(row,col,(r1,c1,r2,c2),source)
 
     def source(self,cell,formula):
@@ -531,15 +562,27 @@ def export_report(head,catalog,future_functions):
     return report
 
 
+def blocked_values(snapshots,whole):
+    """Refuse a values export when a cell has no current, error-free value, naming the first 100 such cells."""
+    blocked=[(f"{sheet['name']}!" if whole else "")+address(cell["row"],cell["col"])
+             for sheet in snapshots for cell in sheet["cells"] if cell.get("calculation")!="current"]
+    if blocked:
+        shown=", ".join(blocked[:100])+(f" and {len(blocked)-100:,} more" if len(blocked)>100 else "")
+        raise EngineError("CALCULATION_ERROR",f"Values export requires current, error-free values; {len(blocked):,} "
+                          f"cell{'' if len(blocked)==1 else 's'} have none: {shown}. Correct them or export formulas",
+                          cells=blocked[:100],blocked_count=len(blocked))
+
+
 def export_cell(cell,style,*,sheet,mode,report,whole,bounds=None,names=None):
     """The <c> element of one native cell at style index `style`. Both XLSX exporters write exactly this element.
 
-    `whole` is whole-workbook scope, where `names` are the exported sheet names; a selection checks references against `bounds`."""
+    `whole` is whole-workbook scope, where `names` are the exported sheet names and every stored formula is written
+    (whole_formula_to_xlsx); a selection checks references against `bounds`."""
     out=ET.Element("c",r=address(cell["row"],cell["col"]),s=str(style))
     if cell["kind"]=="unmaintained" and mode=="formulas":
         node(out,"f",unmaintained_formula(cell,sheet,report,whole)[1:])
     elif cell["kind"]=="formula" and mode=="formulas":
-        node(out,"f",native_formula_to_xlsx(cell["source"],None if whole else bounds,names if whole else None)[1:])
+        node(out,"f",(whole_formula_to_xlsx(cell,sheet,report,names) if whole else native_formula_to_xlsx(cell["source"],bounds))[1:])
     else:
         require(cell.get("calculation")=="current","CALCULATION_ERROR","Values export requires current, error-free values")
         value=cell.get("value")
@@ -587,6 +630,7 @@ def xlsx_export(snapshot,request):
     whole="sheets" in snapshot
     snapshots=export_temporal_styles(snapshot["sheets"] if whole else [{**snapshot,"name":"Sheet1"}])
     names=validate_sheet_names([s["name"] for s in snapshots])
+    if selected_mode=="values": blocked_values(snapshots,whole)
     if whole: head=workbook_report()+[WHOLE_EXPORT_CACHES]
     report=export_report(head,snapshot,selected_mode=="formulas" and any(uses_future_prefix(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"))
     from .xlsx_styles import export_styles

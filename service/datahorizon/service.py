@@ -435,6 +435,8 @@ def openapi():
             "converted: stored in another form (for example a formula replaced by its cached value, or an error value kept as text); "
             "approximated: kept with a close but not identical meaning; omitted: dropped; unevaluable: a formula kept that DataHorizon cannot calculate"},
         "detail":{"type":"string"},"count":{"type":"integer","minimum":1,"description":"Cells (or, for a feature entry, items such as merged ranges, rules or columns) this entry covers"},
+        "at_least":{"type":"boolean","enum":[True],"description":"Present only when the count saturated at a scanner bound (for example more distinct validation names than "
+                    "are tracked): the entry covers at least count items. Absent otherwise"},
         "samples":{"type":"array","maxItems":100,"description":"First locations in reading order; a null cell is sheet-wide and a null sheet is workbook-wide",
                    "items":{"type":"object","properties":{"sheet":{"type":"string","nullable":True},"cell":{"type":"string","nullable":True}}}}},
         "description":"One merged line of a conversion report. Entries are ordered by severity (unevaluable, omitted, approximated, converted), then count; at most 200, the last of which may summarise the remainder.",
@@ -498,10 +500,16 @@ def openapi():
         "example":{"job_id":"example-xlsx-export","status":"running","completed":0,"phase":"Queued"}}
     schemas["SpreadsheetExportResult"]={"type":"object","required":["file_base64","report","state"],"properties":{
         "file_base64":{"type":"string","format":"byte"},"report":lines,"report_entries":{"type":"array","maxItems":200,"items":entry},"state":{"type":"string"}},
-        "description":"A bounded XLSX or ODS export: the package and its conversion report from one consistent state.",
+        "description":"A bounded XLSX or ODS export: the package and its conversion report from one consistent state. At whole-workbook scope in formulas mode "
+                       "every stored formula is written: XLSX writes one DataHorizon cannot evaluate as stored and counts it (unevaluable, by formula category; "
+                       "formula.syntax approximated when its references cannot be read); ODS writes one that does not translate to OpenFormula as its current value "
+                       "(formula.unsupported_syntax converted) or as an empty cell (omitted). Selection scope stays strict. values mode needs every cell current and "
+                       "error-free, else CALCULATION_ERROR names the first 100 blocking cells (cells, blocked_count).",
         "example":{"file_base64":"UEsDBA==","report":[],"report_entries":[],"state":"copy-from-workbook-info"}}
     schemas["Receipt"]["properties"]["imported"]={"type":"object","required":["sheets","cells"],"properties":{"sheets":{"type":"integer","minimum":0},"cells":{"type":"integer","minimum":0}},
         "description":"workbook_import only: sheets and stored cells imported"}
+    schemas["Error"]["properties"]["cells"]={"type":"array","maxItems":100,"items":{"type":"string"},"description":"CALCULATION_ERROR of a values export only: the first blocking cells, as Sheet!A1 (whole workbook) or A1 (selection)"}
+    schemas["Error"]["properties"]["blocked_count"]={"type":"integer","minimum":1,"description":"CALCULATION_ERROR of a values export only: every cell without a current, error-free value"}
     schemas["Error"]["properties"]["conflicts"]={"type":"array","items":{"type":"string"},"description":"SHEET_NAME_CONFLICT only: imported sheet names that already exist"}
     schemas["ExportReleased"]={"type":"object","required":["released","export_id"],"additionalProperties":False,"properties":{"released":{"type":"boolean","enum":[True]},"export_id":export_id},
         "example":{"released":True,"export_id":"example-xlsx-export"}}

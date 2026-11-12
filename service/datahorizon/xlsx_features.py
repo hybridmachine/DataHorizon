@@ -10,11 +10,17 @@ docs/design/excel-spec-coverage.md lists each element and the id it produces.
 Both readers feed the same scanner: the tree reader walks each parsed sheet in document order, and the streaming
 reader passes each element as its end event streams past, so neither holds a sheet for this. The scanner only
 reads the element that has just ended and the tags of its ancestors, never its (possibly released) children.
+
+Nothing the scanners keep grows with the file beyond a named bound: column widths are kept as a count per distinct
+width, distinct identifiers in a DistinctCount that saturates (the entry then reads "at least" its count), and item
+counts no valid sheet can reach (more <col> elements than columns, more rows than the grid, more merged ranges,
+hyperlinks or validation rules than LARGE_CELLS) reject the file with LIMIT.
 """
 import posixpath
 import re
 
-from .conversion_report import SHEET_FEATURE, WORKBOOK_FEATURE
+from .conversion_report import MAX_SAMPLES, SHEET_FEATURE, WORKBOOK_FEATURE
+from .engine import require
 
 # Report order of the per-sheet ids; an id seen nowhere in a sheet produces no entry.
 SHEET_FEATURES = (
@@ -49,6 +55,15 @@ PACKAGE_PARTS = tuple((feature, re.compile(pattern, re.IGNORECASE)) for feature,
 
 TRUE = ("1", "true")
 WIDTH_TOLERANCE = 0.1  # characters
+# Structural bounds of a worksheet: Excel's grid, and xlsx_stream.LARGE_CELLS (a test keeps them equal) for the items
+# a sheet can hold at most one per cell. Beyond any of them the package is not a valid sheet: LIMIT.
+MAX_COLUMN_ELEMENTS = 16_384
+MAX_ROW_ELEMENTS = 1_048_576
+MAX_FEATURE_ITEMS = 1_000_000
+COUNTED_ITEMS = {"merged_cells": "merged ranges", "hyperlinks": "hyperlinks", "data_validation": "validation rules"}
+# A DistinctCount keeps at most this many identifiers and this much of their text, then saturates.
+MAX_DISTINCT = 65_536
+DISTINCT_BYTES = 4*1024*1024
 # Margins Excel, older Excel/openpyxl and LibreOffice write by default: left, right, top, bottom, header, footer.
 DEFAULT_MARGINS = ((0.7, 0.7, 0.75, 0.75, 0.3, 0.3), (0.75, 0.75, 1.0, 1.0, 0.5, 0.5),
                    (0.7875, 0.7875, 1.05277777777778, 1.05277777777778, 0.7875, 0.7875))
@@ -93,6 +108,30 @@ def local(tag):
     return tag.rsplit("}", 1)[-1]
 
 
+class DistinctCount:
+    """The number of distinct identifiers seen, keeping at most MAX_DISTINCT of them and DISTINCT_BYTES of their text.
+
+    Once either bound is reached, a new identifier is no longer kept and the count `saturated`: it is then a lower
+    bound, and membership of an identifier that was not kept is unknown (`known` answers False for it)."""
+    def __init__(self, limit=MAX_DISTINCT, budget=DISTINCT_BYTES):
+        self.limit, self.budget = limit, budget
+        self.kept, self.bytes, self.saturated = set(), 0, False
+
+    def add(self, key):
+        if key in self.kept: return
+        size = len(key.encode("utf-8", "surrogatepass"))
+        if len(self.kept) >= self.limit or self.bytes+size > self.budget:
+            self.saturated = True
+            return
+        self.kept.add(key); self.bytes += size
+
+    def known(self, key):
+        return key in self.kept
+
+    def __len__(self):
+        return len(self.kept)
+
+
 def _number(value, default=0.0):
     try: return float(value)
     except (TypeError, ValueError): return default
@@ -115,14 +154,23 @@ class SheetFeatures:
         self.legacy_drawing = False
         self._found_in_extension = False
         self.default_width = None
-        self.widths = []          # (columns, width or None, custom) of each <col>
-        self._conditional_ids = set()  # x14 ids that base conditional rules point to
+        self.rows = self.columns = 0  # <row> and <col> elements seen
+        # Columns of <col> elements by width (None: no readable width): all of them, and those without customWidth.
+        self.width_shares, self.plain_widths = {}, {}
+        self.custom_width_columns = 0
+        self._conditional_ids = DistinctCount()  # x14 ids that base conditional rules point to
+        self.saturated = set()  # features whose count is a lower bound
 
     def add(self, feature, count=1):
-        if count > 0: self.counts[feature] = self.counts.get(feature, 0) + count
+        if count > 0:
+            self.counts[feature] = total = self.counts.get(feature, 0) + count
+            if feature in COUNTED_ITEMS:
+                require(total <= MAX_FEATURE_ITEMS, "LIMIT", f"A sheet holds more than {MAX_FEATURE_ITEMS:,} {COUNTED_ITEMS[feature]}")
 
     def row(self, item):
         """A <row> of <sheetData>."""
+        self.rows += 1
+        require(self.rows <= MAX_ROW_ELEMENTS, "LIMIT", f"A worksheet holds more than {MAX_ROW_ELEMENTS:,} rows")
         attrib = item.attrib
         if not attrib: return
         if attrib.get("customHeight") in TRUE: self.add("row_heights")
@@ -157,9 +205,12 @@ class SheetFeatures:
             elif top == "controls" and name == "control": self.add("form_controls")
             elif top == "extLst":
                 feature = EXTENSION_ITEMS.get(name)
-                if feature == "conditional_formatting" and item.get("id") in self._conditional_ids:
+                if feature == "conditional_formatting" and self._conditional_ids.known(item.get("id") or ""):
                     # The x14 twin of a rule already counted in <conditionalFormatting> (Excel writes one per data bar).
                     self._found_in_extension = True
+                elif feature == "conditional_formatting" and self._conditional_ids.saturated:
+                    # It may be the twin of a rule whose id was not kept: not counted again, so the count is a lower bound.
+                    self.saturated.add(feature); self._found_in_extension = True
                 elif feature is not None:
                     self.add(feature); self._found_in_extension = True
                 elif depth == 2 and name == "ext":
@@ -185,8 +236,15 @@ class SheetFeatures:
             self.add("frozen_panes" if item.get("state") in ("frozen", "frozenSplit") else "split_panes")
 
     def _col(self, item):
+        self.columns += 1
+        require(self.columns <= MAX_COLUMN_ELEMENTS, "LIMIT", f"A worksheet holds more than {MAX_COLUMN_ELEMENTS:,} <col> elements")
         columns = _span(item)
-        if "width" in item.attrib: self.widths.append((columns, _number(item.get("width"), None), item.get("customWidth") in TRUE))
+        if "width" in item.attrib:
+            # At most MAX_COLUMN_ELEMENTS distinct widths, one per element.
+            width = _number(item.get("width"), None)
+            self.width_shares[width] = self.width_shares.get(width, 0) + columns
+            if item.get("customWidth") in TRUE: self.custom_width_columns += columns
+            else: self.plain_widths[width] = self.plain_widths.get(width, 0) + columns
         if item.get("hidden") in TRUE: self.add("hidden_rows_columns", columns)
         if item.get("outlineLevel", "0") not in ("", "0") or item.get("collapsed") in TRUE: self.add("outline", columns)
         if item.get("style", "0") not in ("", "0"): self.add("row_column_styles", columns)
@@ -230,13 +288,12 @@ class SheetFeatures:
         width most columns share (producers such as LibreOffice write a width for every column)."""
         default = self.default_width
         if default is None:
-            shares = {}
-            for columns, width, _ in self.widths: shares[width] = shares.get(width, 0) + columns
+            shares = self.width_shares
             default = max(shares, key=shares.get) if shares else None
         # Within a tenth of a character of the default is the default: LibreOffice writes a default width of
         # 11.53515625 with columns of 11.52, a difference no grid shows.
-        return sum(columns for columns, width, custom in self.widths
-                   if custom or width is None or default is None or abs(width - default) > WIDTH_TOLERANCE)
+        return self.custom_width_columns+sum(columns for width, columns in self.plain_widths.items()
+                                             if width is None or default is None or abs(width - default) > WIDTH_TOLERANCE)
 
     def report(self, report, sheet):
         """Add one omitted entry per feature found, in SHEET_FEATURES order."""
@@ -245,7 +302,8 @@ class SheetFeatures:
         elif self.legacy_drawing: self.add("legacy_drawings")
         if self.relationships.unreadable: self.add("relationships_unreadable")
         for feature in SHEET_FEATURES:
-            if feature in self.counts: report.add(SHEET_FEATURE, "omitted", feature, sheet=sheet, count=self.counts[feature])
+            if feature in self.counts:
+                report.add(SHEET_FEATURE, "omitted", feature, sheet=sheet, count=self.counts[feature], at_least=feature in self.saturated)
 
 
 def rich(item, main):
@@ -320,6 +378,9 @@ def _count(archive, path, budget, tag):
         return 1
 
 
+COMMENT_KINDS = {"comments": "comment", "threadedComment": "threadedComment"}  # relationship kind -> counted tag
+
+
 def relationship_summary(archive, part, budget):
     """The sheet's comment count and whether its relationship part was unreadable, read as streams under the
     package byte budget (a sheet can declare one relationship per hyperlink).
@@ -331,19 +392,19 @@ def relationship_summary(archive, part, budget):
     path = relationships_path(part)
     names = archive.namelist()
     if path not in names or archive.getinfo(path).file_size == 0: return Relationships()
-    targets = {}
+    targets = {}  # only the kinds read below, so it never grows with the part
     try:
         for event, item in read_part(archive, path, budget, record_depth=2):
             if event == "end" and local(item.tag) == "Relationship" and item.get("TargetMode") != "External":
                 kind = item.get("Type", "").rstrip("/").rsplit("/", 1)[-1]
+                if kind not in COMMENT_KINDS or kind in targets: continue
                 target = item.get("Target", "")
-                resolved = posixpath.normpath(target.lstrip("/") if target.startswith("/") else posixpath.join(posixpath.dirname(part), target))
-                targets.setdefault(kind, resolved)
+                targets[kind] = posixpath.normpath(target.lstrip("/") if target.startswith("/") else posixpath.join(posixpath.dirname(part), target))
     except EngineError as error:
         if error.body["code"] == "LIMIT" and "Expanded" in error.body["message"]: raise
         require(not _forbidden(archive, path), "INVALID_SPREADSHEET", "UTF-8 XML without DTDs or entities is required")
         return Relationships(unreadable=True)
-    for kind, tag in (("comments", "comment"), ("threadedComment", "threadedComment")):
+    for kind, tag in COMMENT_KINDS.items():
         if kind in targets:
             return Relationships(_count(archive, targets[kind], budget, tag) if targets[kind] in names else 1)
     return Relationships()
@@ -374,12 +435,13 @@ class StringFeatures:
 def workbook_features(report, workbook, ns, package_names, strings=None, skipped=()):
     """Add the omitted workbook.feature entries of a parsed <workbook>, its package parts and its shared strings.
 
-    `skipped` lists (sheet name, feature id) for the sheets that are not worksheets."""
+    `skipped` lists (sheet name, feature id) for the sheets that are not worksheets. Samples stop at MAX_SAMPLES."""
     main = "{" + ns.main + "}"
     counts, samples = {}, {}
     for name, feature in skipped:
         counts[feature] = counts.get(feature, 0) + 1
-        samples.setdefault(feature, []).append(name)
+        kept = samples.setdefault(feature, [])
+        if len(kept) < MAX_SAMPLES: kept.append(name)
     skipped_names = {name for name, _ in skipped}
 
     def add(feature, count=1):
@@ -393,7 +455,7 @@ def workbook_features(report, workbook, ns, package_names, strings=None, skipped
         elif name == "sheets":
             hidden = [item.get("name", "") for item in child if item.tag == main + "sheet" and item.get("state") in ("hidden", "veryHidden")
                       and item.get("name", "") not in skipped_names]
-            if hidden: add("hidden_sheets", len(hidden)); samples["hidden_sheets"] = hidden
+            if hidden: add("hidden_sheets", len(hidden)); samples["hidden_sheets"] = hidden[:MAX_SAMPLES]
         elif name == "workbookProtection":
             if any(child.get(key) in TRUE for key in ("lockStructure", "lockWindows", "lockRevision")): add("workbook_protection")
         elif name == "fileSharing":

@@ -10,12 +10,22 @@ its ancestors.
 Frozen and split panes are read from settings.xml (view settings, not content). Column widths are reported for the
 columns whose width differs from the sheet's most common column width: LibreOffice writes a width for every column,
 so only a departure from the width most columns share is a setting worth naming.
+
+As in xlsx_features, nothing kept grows with the file beyond a named bound: layout styles stop at MAX_LAYOUT_STYLES
+(LIMIT), distinct validation names saturate in a DistinctCount, auto-filtered ranges are kept per sheet for at most
+LARGE_SHEETS short names, and merged or hyperlinked items beyond LARGE_CELLS reject the file with LIMIT.
 """
 import re
 
 from .conversion_report import SHEET_FEATURE, WORKBOOK_FEATURE
+from .engine import require
 from .ods import O, T, X, Y, q
-from .xlsx_features import SHEET_FEATURES
+from .xlsx_features import COUNTED_ITEMS, MAX_DISTINCT, MAX_FEATURE_ITEMS, SHEET_FEATURES, DistinctCount
+from .xlsx_stream import LARGE_SHEETS
+
+MAX_LAYOUT_STYLES = 65_536  # column, row and table styles kept by name
+MAX_SHEET_NAME = 31  # characters, as Workbook.check_name allows: a longer name names no sheet
+TABLE_STYLE_BYTES = 1024*1024  # style names of the sheets, kept to tell hidden sheets
 
 CALCEXT = "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0"
 DRAW = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
@@ -51,10 +61,16 @@ class LayoutStyles:
     """Column, row and table styles by name: the column width, the custom row height and whether a table is shown."""
     def __init__(self):
         self.widths, self.heights, self.hidden_tables = {}, set(), set()
+        self.names = set()  # every layout style name kept, for the MAX_LAYOUT_STYLES bound
 
     def add(self, item):
-        if item.tag != q(Y, "style"): return
+        """Keep a column, row or table style; return whether `item` is one."""
+        if item.tag != q(Y, "style"): return False
         family, name = item.get(q(Y, "family")), item.get(q(Y, "name"))
+        if family not in ("table-column", "table-row", "table"): return False
+        if (family, name) not in self.names:
+            require(len(self.names) < MAX_LAYOUT_STYLES, "LIMIT", f"ODS layout styles exceed {MAX_LAYOUT_STYLES:,} definitions")
+            self.names.add((family, name))
         if family == "table-column":
             props = item.find(q(Y, "table-column-properties"))
             self.widths[name] = props.get(q(Y, "column-width")) if props is not None else None
@@ -67,6 +83,7 @@ class LayoutStyles:
             props = item.find(q(Y, "table-properties"))
             if props is not None and props.get(q(T, "display")) == "false": self.hidden_tables.add(name)
             else: self.hidden_tables.discard(name)
+        return True
 
 
 def mapped_styles(cell_styles):
@@ -83,12 +100,15 @@ class OdsSheetFeatures:
     """Counts the unimported features of one table:table as its elements end, then reports them."""
     def __init__(self, layout, mapped=frozenset(), pane=None):
         self.layout, self.mapped, self.pane = layout, mapped, pane
-        self.counts, self.widths = {}, {}
-        self.validations, self.mapped_used = set(), set()
+        self.counts, self.widths = {}, {}  # widths: by layout width, so at most MAX_LAYOUT_STYLES+1 keys
+        self.validations, self.mapped_used = DistinctCount(), set()
         self.rich_cell = False
 
     def add(self, feature, count=1):
-        if count > 0: self.counts[feature] = self.counts.get(feature, 0) + count
+        if count > 0:
+            self.counts[feature] = total = self.counts.get(feature, 0) + count
+            if feature in COUNTED_ITEMS:
+                require(total <= MAX_FEATURE_ITEMS, "LIMIT", f"A sheet holds more than {MAX_FEATURE_ITEMS:,} {COUNTED_ITEMS[feature]}")
 
     def end(self, ancestors, item):
         """An element of the table that has ended; `ancestors` are the tags from the table:table down to its parent."""
@@ -135,8 +155,10 @@ class OdsSheetFeatures:
         if "conditional_formatting" not in self.counts: self.add("conditional_formatting", len(self.mapped_used))
         if self.pane: self.add(self.pane)
         for feature, count in extra: self.add(feature, count)
+        saturated = {"data_validation"} if self.validations.saturated else set()
         for feature in SHEET_FEATURES:
-            if feature in self.counts: report.add(SHEET_FEATURE, "omitted", feature, sheet=sheet, count=self.counts[feature])
+            if feature in self.counts:
+                report.add(SHEET_FEATURE, "omitted", feature, sheet=sheet, count=self.counts[feature], at_least=feature in saturated)
 
 
 def scan_table(table, features):
@@ -161,14 +183,21 @@ class OdsWorkbookFeatures:
     """Workbook-wide features of content.xml, read from elements in WORKBOOK_TAGS as they end, plus package parts."""
     def __init__(self):
         self.counts = {}
-        self.filters = {}  # sheet name (or None) -> auto-filtered database ranges
-        self.tables = []   # (name, style) of each sheet
+        # Sheet name -> auto-filtered database ranges, for at most LARGE_SHEETS names a sheet could have; ranges whose
+        # sheet cannot be named, or beyond those names, are counted in `stray` and reported for the workbook.
+        self.filters, self.stray = {}, 0
+        self.tables = []   # (name, style) of each sheet, at most LARGE_SHEETS
+        self.table_bytes = 0
 
     def add(self, feature, count=1):
         if count > 0: self.counts[feature] = self.counts.get(feature, 0) + count
 
     def table(self, item):
-        self.tables.append((item.get(q(T, "name"), ""), item.get(q(T, "style-name"))))
+        require(len(self.tables) < LARGE_SHEETS, "LIMIT", f"Provide 1-{LARGE_SHEETS} sheets")
+        name, style = item.get(q(T, "name"), ""), item.get(q(T, "style-name"))
+        self.table_bytes += len(name)+len(style or "")
+        require(self.table_bytes <= TABLE_STYLE_BYTES, "LIMIT", f"ODS sheet names and styles exceed {TABLE_STYLE_BYTES//(1024*1024)} MiB")
+        self.tables.append((name, style))
 
     def end(self, item):
         tag = item.tag
@@ -176,7 +205,9 @@ class OdsWorkbookFeatures:
         elif tag == DATABASE_RANGE:
             if item.get(q(T, "display-filter-buttons")) == "true" or item.find(FILTER) is not None:
                 sheet = _range_sheet(item.get(q(T, "target-range-address")))
-                self.filters[sheet] = self.filters.get(sheet, 0) + 1
+                if sheet in self.filters: self.filters[sheet] += 1
+                elif sheet is not None and len(sheet) <= MAX_SHEET_NAME and len(self.filters) < LARGE_SHEETS: self.filters[sheet] = 1
+                else: self.stray += 1
         elif tag in (q(T, "dde-link"), q(T, "table-source")): self.add("external_references")
         elif tag == q(O, "spreadsheet"):
             if item.get(q(T, "structure-protected")) == "true": self.add("workbook_protection")
@@ -205,7 +236,7 @@ class OdsWorkbookFeatures:
                            places=[(name, None) for name in hidden] if feature == "hidden_sheets" else None)
         names = {name for name, _ in self.tables}
         # A filtered range whose sheet cannot be named is reported for the workbook.
-        stray = sum(count for sheet, count in self.filters.items() if sheet not in names)
+        stray = self.stray+sum(count for sheet, count in self.filters.items() if sheet not in names)
         if stray: report.add(SHEET_FEATURE, "omitted", "auto_filter", count=stray)
 
 

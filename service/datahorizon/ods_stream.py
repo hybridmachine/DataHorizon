@@ -26,7 +26,7 @@ from .conversion_report import ConversionReport
 from .engine import EngineError, require
 from .formula import address
 from .interchange import mode, validate_sheet_names, workbook_report, xml
-from .ods import (F, M, MIME, N, O, OF, STYLE_DEFINITION_TAGS, T, WORKBOOK_IMPORT_LINE, WHOLE_FORMULA_LINE, X, Y, OdsCellContext,
+from .ods import (CACHE_CATEGORY, CACHE_DETAIL, F, M, MIME, N, O, OF, STYLE_DEFINITION_TAGS, T, WORKBOOK_IMPORT_LINE, WHOLE_FORMULA_LINE, X, Y, OdsCellContext,
                   OdsStyles, OdsStyleTable, convert_ods_cell, export_lines as ods_export_lines, export_ods_cell, package_parts, q,
                   repeat, uses_modern_function)
 from .ods_features import (DRAW_PREFIX, SHEET_TAGS, WORKBOOK_TAGS, LayoutStyles, OdsSheetFeatures, OdsWorkbookFeatures,
@@ -35,7 +35,7 @@ from .temporal import export_temporal_style
 
 MAX_ROW, MAX_COL = 1_048_576, 16_384
 MAX_STYLE_DEFINITIONS = 65_536  # cell styles, data styles and font faces kept for conversion
-STYLE_BYTES = 16*1024*1024  # text of the style definitions kept, measured as in xlsx_stream._deferred_copy
+STYLE_BYTES = 16*1024*1024  # text of the style and layout-style definitions kept, measured as in xlsx_stream._deferred_copy
 STYLE_OVERHEAD = 64  # bytes charged per kept element besides its text
 REPEATED_ROW_BYTES = 16*1024*1024  # stored input held to repeat one row, measured likewise
 ELEMENTS_PER_CHECKPOINT = 10_000
@@ -78,13 +78,16 @@ def _size(item):
 
 
 class _StyleCollector:
-    """OdsStyles fed one definition at a time, within MAX_STYLE_DEFINITIONS and STYLE_BYTES."""
+    """OdsStyles and LayoutStyles fed one definition at a time, within MAX_STYLE_DEFINITIONS (cell and data styles and
+    font faces), ods_features.MAX_LAYOUT_STYLES (column, row and table styles) and STYLE_BYTES (both)."""
     def __init__(self):
         self.styles = OdsStyles([])
+        self.layout = LayoutStyles()
         self.bytes = 0
 
     def add(self, item):
-        if not self.styles.add(item): return
+        kept = self.styles.add(item)
+        if not (self.layout.add(item) or kept): return
         self.bytes += _size(item)
         require(self.styles.definitions() <= MAX_STYLE_DEFINITIONS, "LIMIT",
                 f"ODS styles exceed {MAX_STYLE_DEFINITIONS:,} definitions")
@@ -94,24 +97,26 @@ class _StyleCollector:
 def _survey(archive, budget, checkpoint):
     """First pass over content.xml: the sheet names in order, every style definition (styles.xml first), the column,
     row and table styles, and the workbook-wide features."""
-    collector, layout, workbook = _StyleCollector(), LayoutStyles(), OdsWorkbookFeatures()
+    collector, workbook = _StyleCollector(), OdsWorkbookFeatures()
+    layout = collector.layout
     if "styles.xml" in archive.namelist():
         root = xlsx_stream._read_whole(archive, "styles.xml", budget)
         for item in root.iter():
-            if item.tag in STYLE_DEFINITION_TAGS: collector.add(item); layout.add(item)
+            if item.tag in STYLE_DEFINITION_TAGS: collector.add(item)
     names, tags, elements = [], [], 0
     for event, item in xlsx_stream.read_part(archive, "content.xml", budget, record_tags=RECORDS):
         if event == "start":
             if not tags: require(item.tag == DOCUMENT, "INVALID_SPREADSHEET", "Invalid ODS content")
             tags.append(item.tag)
             if item.tag == TABLE and tags == SHEET_PATH:
-                names.append(item.get(q(T, "name"), "")); workbook.table(item)
+                # Bounded by the sheet limit (and the names' length) before the name is kept.
+                workbook.table(item); names.append(item.get(q(T, "name"), ""))
             elements += 1
             if elements % ELEMENTS_PER_CHECKPOINT == 0: checkpoint(0, "Reading styles and sheets")
             continue
         tags.pop()
         # Wherever it appears, as the tree reader collects them.
-        if item.tag in STYLE_DEFINITION_TAGS: collector.add(item); layout.add(item)
+        if item.tag in STYLE_DEFINITION_TAGS: collector.add(item)
         elif item.tag in WORKBOOK_TAGS: workbook.end(item)
     return names, collector.styles, layout, workbook
 
@@ -243,8 +248,6 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink, checkpoint: Callab
 
 # --- Writing ---------------------------------------------------------------------------------------------------
 
-CACHE_CATEGORY = "formula.cache_omitted"
-CACHE_DETAIL = "result not evaluated; written without a cached value, so the target must recalculate it"
 FORMULA_LINE = ("OpenFormula uses canonical named sheet references; formula results are not evaluated during a large export, so "
                 "formulas carry no cached values and the target must recalculate them. Sheet-relative movement semantics are not retained. NULL becomes empty.")
 _ROOT = (f'<office:document-content xmlns:office="{O}" xmlns:style="{Y}" xmlns:text="{X}" xmlns:table="{T}" '
@@ -302,7 +305,11 @@ def _write_table(out, name, cells, context, progress):
             out.emit("<table:table-row>"); previous_row = row; previous_col = 0
         if col-previous_col > 1: out.emit(f'<table:table-cell table:number-columns-repeated="{col-previous_col-1}" />')
         previous_col = col
-        if cell["kind"] == "formula":
+        element, _ = export_ods_cell(cell, context["styles"].name(cell.get("style", {})), sheet=name, mode="formulas",
+                                     report=context["report"], whole=True, names=context["names"], caches=False)
+        # A formula that does not translate is written empty (reported by export_ods_cell), so only a written
+        # formula counts and lacks a cache.
+        if cell["kind"] == "formula" and q(T, "formula") in element.attrib:
             context["formulas"] += 1
             context["modern"] = context["modern"] or uses_modern_function(cell["source"])
             where = {"sheet": name, "cell": address(row, col)}
@@ -310,8 +317,6 @@ def _write_table(out, name, cells, context, progress):
             if cell.get("style", {}).get("format", "general") == "general":
                 context["report"].add(xlsx_stream.FORMULA_DISPLAY_CATEGORY, "approximated", xlsx_stream.FORMULA_DISPLAY_DETAIL, **where)
                 context["unevaluated"] += 1
-        element, _ = export_ods_cell(cell, context["styles"].name(cell.get("style", {})), sheet=name, mode="formulas",
-                                     report=context["report"], whole=True, names=context["names"], caches=False)
         out.emit(_markup(element))
     out.emit(opening if previous_row == 0 else "</table:table-row></table:table>")
 

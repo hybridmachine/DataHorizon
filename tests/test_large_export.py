@@ -32,7 +32,7 @@ from datahorizon import xlsx_stream
 from datahorizon import xlsx_styles
 from datahorizon.client import APIError
 from datahorizon.engine import EngineError
-from datahorizon.interchange import xlsx_preview
+from datahorizon.interchange import EXPORT_UNEVALUABLE_DETAIL, xlsx_preview
 from datahorizon.service import Service, openapi
 from datahorizon.staging import Staging
 from datahorizon.xlsx_stream import LARGE_CELLS
@@ -583,13 +583,16 @@ class LargeExportTests(unittest.TestCase):
         receipt = self.operate({'action': 'move', 'sheet': 'Sheet1', 'r1': 5, 'c1': 1, 'r2': 5, 'c2': 1, 'row': 6, 'col': 1, 'cut_state': state})
         self.assertEqual(receipt['unmaintained'], [{'sheet': 'Sheet1', 'cell': 'B1'}])
         result = self.export()
+        # The IFS formula is written, and counted as one DataHorizon cannot evaluate.
         self.assertEqual(result['report_entries'], [
+            {'category': 'formula.unsupported_function', 'severity': 'unevaluable', 'detail': EXPORT_UNEVALUABLE_DETAIL,
+             'count': 1, 'samples': [{'sheet': 'Sheet1', 'cell': 'C1'}]},
             {'category': xlsx_stream.FORMULA_DISPLAY_CATEGORY, 'severity': 'approximated', 'detail': xlsx_stream.FORMULA_DISPLAY_DETAIL,
              'count': 1, 'samples': [{'sheet': 'Sheet1', 'cell': 'C1'}]},
             {'category': 'formula.unmaintained', 'severity': 'approximated',
              'detail': 'references were not maintained through a structural edit; the source is written unchanged',
              'count': 1, 'samples': [{'sheet': 'Sheet1', 'cell': 'B1'}]}])
-        self.assertEqual(result['totals'], {'converted': 0, 'approximated': 2, 'omitted': 0, 'unevaluable': 0})
+        self.assertEqual(result['totals'], {'converted': 0, 'approximated': 2, 'omitted': 0, 'unevaluable': 1})
         self.assertTrue(any('_xlfn' in line for line in result['report']))
         self.assertIn('1 cell: references were not maintained through a structural edit; the source is written unchanged '
                       '(approximated); first at Sheet1!B1', result['report'])

@@ -372,11 +372,11 @@ class WorkbookStream:
             cell = {"row": row, "col": col, "source": source, "kind": item["kind"], "style": item["style"]}
             if item["kind"] == "formula":
                 # Most formulas name no sheet; the rest are renamed exactly as read_workbook renames them.
+                # A source no transform can read keeps the identity as stored; the exporter reports it as untokenizable.
                 for identity, name in (self.catalog if self._identities.search(source) else ()):
                     if identity not in cell["source"]: continue
                     try: cell["source"] = rename_sheet_references(cell["source"], identity, name)
-                    except FormulaError as error:
-                        raise EngineError("UNSUPPORTED_FORMULA", f"Cannot export formula at {sheet_name}!{address(row,col)}: {error}") from error
+                    except FormulaError: pass
             elif item["kind"] not in EVALUATED:
                 cell.update(value=item["value"], calculation="current")
                 if isinstance(item["value"], Temporal): cell["value_kind"] = item["value"].kind
@@ -827,11 +827,11 @@ class Workbook:
                         except FormulaError as error:
                             cell.update(value=None,calculation="error",error=str(error))
                         if item["kind"]=="formula":
+                            # As in WorkbookStream: a source no transform can read keeps the identity as stored.
                             for identity,name in catalog:
                                 if identity in cell["source"]:
                                     try: cell["source"]=rename_sheet_references(cell["source"],identity,name)
-                                    except FormulaError as error:
-                                        raise EngineError("UNSUPPORTED_FORMULA",f"Cannot export formula at {sheet}!{address(row,col)}: {error}") from error
+                                    except FormulaError: pass
                         size+=len(encoded(cell).encode())
                         require(size<=4*1024*1024,"READ_LIMIT","Workbook snapshot exceeds 4 MiB")
                         targets[sheet].append(cell)

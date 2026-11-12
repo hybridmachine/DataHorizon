@@ -14,6 +14,7 @@ FIELDS = {"file", "sha256", "producer", "producer_version", "saved_on", "exercis
 sys.path.insert(0, str(CORPUS))
 import corpus_scorecard  # noqa: E402
 import generate_feature_workbooks  # noqa: E402
+from test_export_unevaluable import ServiceCase, formula_sources  # noqa: E402
 
 
 class CorpusTests(unittest.TestCase):
@@ -99,6 +100,26 @@ class CorpusTests(unittest.TestCase):
                 self.assertEqual((CORPUS / name).read_bytes(), build())
         generated = {f"tests/fixtures/corpus/{name}" for name in generate_feature_workbooks.FILES}
         self.assertEqual(generated, {e["file"] for e in self.provenance if e["file"].startswith("tests/fixtures/corpus/")})
+
+
+class CorpusExportTests(ServiceCase):
+    def test_every_file_imported_with_formulas_exports_whole_and_reimports_with_its_formulas(self):
+        # The corpus-wide form of test_export_unevaluable: no stored formula blocks a whole-workbook export.
+        import base64
+        for path in sorted(CORPUS.glob("*.xlsx"))+sorted(CORPUS.glob("*.ods")):
+            with self.subTest(file=path.name):
+                book = self.imported(path, path.name)
+                try:
+                    original = formula_sources(self.engine(book))
+                    for fmt in ("xlsx", "ods"):
+                        result = book.export_spreadsheet(fmt, scope="workbook", mode="formulas")
+                        if fmt == "ods": continue
+                        exported = self.temp/(path.name+"-export.xlsx")
+                        exported.write_bytes(base64.b64decode(result["file_base64"]))
+                        # Written formulas come back with the same sources (an ODS file's sources are native already).
+                        self.assertEqual(self.reimported(exported, path.name+"-again"), original)
+                finally:
+                    book.close()
 
 
 if __name__ == "__main__":

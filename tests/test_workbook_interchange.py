@@ -127,7 +127,11 @@ class WorkbookInterchangeTests(unittest.TestCase):
 
     def test_missing_sheet_reference_is_itemized_and_values_mode_is_explicit(self):
         snapshot={"state":"s","sheets":[{"name":"One","cells":[{"row":1,"col":1,"kind":"formula","source":"=Missing!A1","value":7,"calculation":"current","style":{}}]}]}
-        with self.assertRaises(EngineError): xlsx_export(snapshot,{})
+        # A whole-workbook formulas export writes it as stored and counts it as one DataHorizon cannot evaluate.
+        written=xlsx_export(snapshot,{})
+        self.assertEqual([(e["category"],e["severity"],e["count"]) for e in written["report_entries"]],[("formula.missing_sheet","unevaluable",1)])
+        result=xlsx_preview({"file_base64":written["file_base64"],"scope":"workbook"})
+        self.assertEqual(result["workbook_sheets"][0]["cells"][0]["source"],"=Missing!A1")
         data=xlsx_export(snapshot,{"mode":"values"})
         result=xlsx_preview({"file_base64":data["file_base64"],"scope":"workbook"})
         self.assertEqual(result["workbook_sheets"][0]["cells"][0]["kind"],"number")

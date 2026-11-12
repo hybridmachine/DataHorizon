@@ -42,6 +42,8 @@ LARGE_SHEETS = 255
 LARGE_PARTS = 4096
 DEFERRED_MEMBERS = 10_000  # shared-formula members met before their master, per sheet
 DEFERRED_BYTES = 16*1024*1024  # text kept for those members, per sheet
+SHARED_GROUPS = 65_536  # shared-formula masters kept, per sheet
+SHARED_BYTES = 16*1024*1024  # master source text kept for them, per sheet
 BATCH = 1000
 CHUNK = 65536
 SLICE = 4096  # bytes fed to the parser between bound checks
@@ -381,11 +383,15 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: 
         workbook = _read_whole(archive, "xl/workbook.xml", budget)
         ns = namespaces(workbook)
         every = workbook.findall(f"{{{ns.main}}}sheets/{{{ns.main}}}sheet")
+        # A package cannot hold more sheets than parts; only worksheets count toward the sheet limit, checked before
+        # their names are kept.
+        require(len(every) <= LARGE_PARTS, "LIMIT", f"Workbook declares more than {LARGE_PARTS:,} sheets")
         system = date_system(workbook, ns)
         relationships = _read_whole(archive, "xl/_rels/workbook.xml.rels", budget)
         mapping = {item.get("Id"): item for item in relationships}
         # Chart, dialog and macro sheets are not imported; they are reported with the workbook's features.
         kinds = sheet_kinds(every, mapping, ns)
+        require(kinds.count(None) <= LARGE_SHEETS, "LIMIT", f"Provide 1-{LARGE_SHEETS} sheets")
         sheets = [sheet for sheet, kind in zip(every, kinds) if kind is None]
         skipped = [(sheet.get("name", ""), kind) for sheet, kind in zip(every, kinds) if kind is not None]
         names = [s.get("name", "") for s in sheets]
@@ -406,7 +412,7 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: 
             sheet_report = styles.report = ConversionReport()
             context = XlsxCellContext(mode=selected_mode, shared_strings=strings, styles=styles, date_system=system,
                                       sheet_names=names, sheet=name, report=sheet_report,
-                                      shared_formulas=SharedFormulas(ns=ns) if selected_mode != "values" else None,
+                                      shared_formulas=SharedFormulas(ns=ns, limit=SHARED_GROUPS, budget=SHARED_BYTES) if selected_mode != "values" else None,
                                       timezone_policy=policy, ns=ns, seen=None)
             part = worksheet_path(mapping, sheet, ns)
             features = SheetFeatures(ns, relationship_summary(archive, part, budget))

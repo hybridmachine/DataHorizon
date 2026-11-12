@@ -14,7 +14,7 @@ from .formats import numeric_spec, simple_number_style
 from .temporal import Temporal, from_duration, to_duration, export_temporal_styles, import_temporal
 from .conversion_report import ConversionReport
 from .formula_admission import status as formula_status
-from .interchange import MAX_SOURCE_BYTES, map_formula_functions, import_edits, local_formula, mode, native_only_report, node, package, read_xml, xml, preparation_scope, prepare_workbook, unmaintained_formula, validate_sheet_names, workbook_report
+from .interchange import blocked_values, MAX_SOURCE_BYTES, map_formula_functions, import_edits, local_formula, mode, native_only_report, node, package, read_xml, xml, preparation_scope, prepare_workbook, unmaintained_formula, validate_sheet_names, workbook_report
 
 O="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
 T="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
@@ -536,21 +536,50 @@ class OdsStyleTable:
         return name
 
 
+# Whole-workbook ODS export writes a formula native_to_ods cannot translate as its value, or as an empty cell: an
+# XLSX-dialect source is not OpenFormula. A translated formula without a current value is written without a cache.
+UNTRANSLATED_FORMULA="formula.unsupported_syntax"
+UNTRANSLATED_DETAIL_VALUE="formula not representable in OpenFormula; its current value is written instead"
+UNTRANSLATED_DETAIL_EMPTY="formula not representable in OpenFormula and without an error-free current value; the cell is written empty"
+CACHE_CATEGORY="formula.cache_omitted"
+CACHE_DETAIL="result not evaluated; written without a cached value, so the target must recalculate it"
+CACHE_ERROR_DETAIL="no error-free current result; written without a cached value, so the target must recalculate it"
+
+
 def export_ods_cell(cell,style_name,*,sheet,mode,report,whole,bounds=None,names=None,caches=True):
     """The table:table-cell element of one native cell with style `style_name`, and how many whitespace elements
     its text holds. Both ODS exporters write exactly this element.
 
     `whole` is whole-workbook scope, where `names` are the exported sheet names; a selection checks references against
     `bounds`. With caches, every cell needs a current value, which a formula carries as its cached result; without,
-    a formula is written with no cached value (its result was not evaluated)."""
+    a formula is written with no cached value (its result was not evaluated). At whole-workbook scope a formula that
+    does not translate to OpenFormula is written as its current value, or empty without one (UNTRANSLATED_FORMULA),
+    and a translated formula without a current value is written without a cache (CACHE_CATEGORY)."""
     out=ET.Element(q(T,"table-cell"),{q(T,"style-name"):style_name}); text_nodes=0
+    value=cell.get("value")
+    current=cell.get("calculation")=="current"
     if cell["kind"]=="unmaintained" and mode=="formulas":
         # No cache: its value is the #REF! error, which ODS has no typed cell value for.
         out.set(q(T,"formula"),"of:"+unmaintained_formula(cell,sheet,report,whole))
-    elif caches or not (cell["kind"]=="formula" and mode=="formulas"):
-        require(cell.get("calculation")=="current","CALCULATION_ERROR","ODS export requires error-free current values")
-    if cell["kind"]=="formula" and mode=="formulas": out.set(q(T,"formula"),native_to_ods(cell["source"],None if whole else bounds,names if whole else None))
-    value=cell.get("value")
+    elif cell["kind"]=="formula" and mode=="formulas":
+        try: formula=native_to_ods(cell["source"],None if whole else bounds,names if whole else None)
+        except EngineError:
+            if not whole: raise
+            formula=None
+        where={"sheet":sheet,"cell":address(cell["row"],cell["col"])}
+        if formula is None:
+            if caches and current: report.add(UNTRANSLATED_FORMULA,"converted",UNTRANSLATED_DETAIL_VALUE,**where)
+            else:
+                report.add(UNTRANSLATED_FORMULA,"omitted",UNTRANSLATED_DETAIL_EMPTY,**where)
+                value=None
+        else:
+            out.set(q(T,"formula"),formula)
+            if caches and not current:
+                require(whole,"CALCULATION_ERROR","ODS export requires error-free current values")
+                report.add(CACHE_CATEGORY,"approximated",CACHE_ERROR_DETAIL,**where)
+                value=None
+    else:
+        require(current,"CALCULATION_ERROR","ODS export requires error-free current values")
     temporal_kind=cell.get("value_kind",cell.get("kind"))
     if isinstance(value,Temporal) or temporal_kind in ("date","time","datetime"):
         value=Temporal(str(value),value.kind if isinstance(value,Temporal) else temporal_kind)
@@ -598,6 +627,7 @@ def ods_export(snapshot,request):
     whole="sheets" in snapshot
     snapshots=export_temporal_styles(snapshot["sheets"] if whole else [{**snapshot,"name":"Sheet1"}])
     names=validate_sheet_names([s["name"] for s in snapshots])
+    if selected_mode=="values": blocked_values(snapshots,whole)
     if whole: head=workbook_report()+[WHOLE_FORMULA_LINE]
     report=export_lines(head,snapshot,selected_mode=="formulas" and any(uses_modern_function(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"))
     root=ET.Element(q(O,"document-content"),{q(O,"version"):"1.3","xmlns:of":OF})
