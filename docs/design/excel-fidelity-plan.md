@@ -317,9 +317,9 @@ constant. **Call**: interchange gets its own path and limits.
   reader admits at most 4,096 `<sheet>` elements (`LARGE_PARTS`) and counts only
   worksheets toward 255 before it keeps their names, and keeps at most 65,536
   shared-formula groups open at once and 16 MiB of their master text per sheet
-  (`SHARED_GROUPS`, `SHARED_BYTES`): a group is released once the rows have
-  passed the end of its extent, and only groups still open beyond the bounds
-  are `LIMIT`. A shared-formula extent may be any rectangle of the grid that
+  (`SHARED_GROUPS`, `SHARED_BYTES`): when a new master would exceed either bound, every
+  group whose extent ends above the highest master row seen is released, and
+  only groups still open beyond the bounds are `LIMIT`. A shared-formula extent may be any rectangle of the grid that
   holds its master; only stored members are expanded, so its size costs nothing
   and the path's cell limit applies to the cells stored. The ODS survey keeps at
   most 255 sheet names (checked before each is kept) with 1 MiB of names and
