@@ -70,7 +70,8 @@ Code commits verified: d76827b ("Bound the feature scanner and export every stor
 5. Bounded scanners
    Command: PYTHONPATH=service python3 -m unittest discover -s tests -p test_feature_bounds.py
    Result:  17 tests OK. Every crafted input (streamed into its ZIP, read in a fresh process) stays under 64 MiB traced
-            and 192 MiB RSS growth and finishes within 20 s: 2,000,000 <col> elements reject with LIMIT in 0.18 s
+            and 192 MiB RSS growth and finished within 20 s on this machine (the test's runaway guard is 60 s, since a
+            hosted CI runner took 21.9 s and 23.4 s for the two largest inputs): 2,000,000 <col> elements reject with LIMIT in 0.18 s
             (0.65 MB traced); 500,000 distinct ODS validation names import with an at-least count in 10.6 s (5.6 MB
             traced, 10.5 MB RSS growth). Per-input figures: excel-fidelity-1-final-fixes.json.
 

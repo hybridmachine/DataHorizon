@@ -31,7 +31,9 @@ REL = xlsx_builder.TRANSITIONAL["rel"]
 PKG = xlsx_builder.TRANSITIONAL["pkg"]
 TRACED_LIMIT = 64*1024*1024
 RSS_LIMIT = 192*1024*1024
-SECONDS = 20
+# A runaway guard, not a performance figure: the two largest inputs take 10-12 s traced on the measuring machine
+# and about twice that on a hosted CI runner.
+SECONDS = 60
 
 # Runs one streaming reader on argv[2] (format argv[1]) and prints its outcome and memory as JSON.
 PROBE = r"""

@@ -952,7 +952,8 @@ items; all were fixed in one pass.
   are counted per distinct width, impossible counts are `LIMIT`, report-only
   distinct counts saturate with `at_least`. In `tests/test_feature_bounds.py`
   every crafted input stays under 64 MiB traced and 192 MiB RSS growth and
-  finishes within 20 s, among them 2,000,000 `<col>` elements (rejected) and
+  finishes within 20 s on the measuring machine (the test's guard is 60 s, as
+  a hosted CI runner is about twice as slow), among them 2,000,000 `<col>` elements (rejected) and
   500,000 distinct validation names (imported with a saturated count). Cost if
   wrong: a valid sheet with more than 65,536 shared-formula groups open at once
   (extents overlapping the same rows) or 65,536 ODS layout styles is refused
