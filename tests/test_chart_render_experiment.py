@@ -7,6 +7,7 @@ import pathlib
 import unittest
 import xml.etree.ElementTree as ET
 
+import chart_render_benchmark as bench
 import chart_render_experiment as cr
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "charts"
@@ -155,6 +156,44 @@ class PieAndLegend(unittest.TestCase):
             s["name"] = "n" * 200
         marks = cr.render(spec, 800, 500)["marks"]
         self.assertGreater(max(m["x"] + m["w"] for m in marks), 400)
+
+
+TYPES = ["column", "bar", "line", "area", "pie", "scatter"]
+
+
+def good():
+    return {"render_ms_10k": {t: 100.0 for t in TYPES}, "svg_bytes_10k": {t: 1_000_000 for t in TYPES},
+            "qt_ms_10k": {t: 50.0 for t in TYPES}, "total_ms_12": {t: 10.0 for t in TYPES},
+            "all_valid": True, "text": {"max_under": 1.0, "median_over": 1.2}, "text_with_table": None}
+
+
+class Evaluate(unittest.TestCase):
+    def test_all_within_thresholds(self):
+        self.assertEqual(bench.evaluate(good()), {"route": "service_svg", "failed": []})
+
+    def test_text_failure_rescued_by_table(self):
+        m = good()
+        m["text"]["max_under"] = 1.2
+        m["text_with_table"] = {"max_under": 1.01, "median_over": 1.05}
+        self.assertEqual(bench.evaluate(m)["route"], "service_svg_with_metrics_table")
+
+    def test_text_failure_not_rescued(self):
+        m = good()
+        m["text"]["median_over"] = 1.5
+        m["text_with_table"] = {"max_under": 1.2, "median_over": 1.05}
+        self.assertEqual(bench.evaluate(m)["route"], "fallback_qcustomplot")
+
+    def test_speed_or_validity_failure_is_fallback(self):
+        for key, value in [("render_ms_10k", 251.0), ("qt_ms_10k", 151.0),
+                           ("svg_bytes_10k", 4 * 1024 * 1024 + 1), ("total_ms_12", 50.1)]:
+            m = good()
+            m[key]["line"] = value
+            out = bench.evaluate(m)
+            self.assertEqual(out["route"], "fallback_qcustomplot")
+            self.assertEqual(out["failed"], [f"{key}.line"])
+        m = good()
+        m["all_valid"] = False
+        self.assertEqual(bench.evaluate(m), {"route": "fallback_qcustomplot", "failed": ["all_valid"]})
 
 
 if __name__ == "__main__":

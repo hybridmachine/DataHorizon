@@ -131,7 +131,9 @@ int selfTest()
 
 int emitMetrics(const QString &family, const QString &path)
 {
-    const double pixels = 1000;
+    // Measured at label size: system fonts track differently at display sizes,
+    // so a table taken at 1000 px misstates 12 px text by up to 19%.
+    const double pixels = 12;
     QJsonObject advances;
     auto add = [&](int from, int to) {
         for (int code = from; code <= to; ++code) {

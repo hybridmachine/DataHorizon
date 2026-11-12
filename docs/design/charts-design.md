@@ -244,6 +244,13 @@ data and computes scales and ticks, and the desktop paints with QCustomPlot,
 with the service SVG kept for headless use. The specification, storage and REST
 resources in this document do not change in either outcome.
 
+**Outcome, November 11, 2026.** The [experiment](chart-render-experiment.md) ran
+on the reference Mac and did not meet every threshold: a 10,000-slice pie is too
+slow in Qt, and text overflows its estimate under a wide substitute font. Its
+result document proposes a lower point limit for pies and a bundled font in
+place of the fallback. Until the owner rules on that, the rendering route is
+not confirmed.
+
 ## 7. Storage
 
 **Call**: charts are a new kind in the existing `dh_objects` catalog
@@ -328,7 +335,7 @@ interchange never carry charts.
 
 | Stage | Delivers | Done when |
 | --- | --- | --- |
-| 1. Renderer experiment | Section 6 measurements and a written result | The evidence confirms the service SVG route or triggers the fallback |
+| 1. Renderer experiment | Section 6 measurements and a written result | The evidence confirms the service SVG route or triggers the fallback. Run November 11, 2026: thresholds not all met; owner decision pending ([result](chart-render-experiment.md)) |
 | 2. Engine and interfaces | Storage, specification validation, resolve, render, reference maintenance, staleness, REST/CLI/SDK, history | A script creates, changes and renders all six chart types with no desktop; structural edits and undo are verified |
 | 3. Desktop and Python | Wireframes, Insert Chart, floating charts, edit panel, object browser entry, context operations | The wireframe session is completed in the installed application |
 | 4. Interchange | XLSX and ODS chart export, then import, with reports | A round trip keeps every supported chart and reports the rest |

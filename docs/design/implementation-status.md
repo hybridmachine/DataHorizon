@@ -4,6 +4,27 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## Charts stage 1 renderer experiment — November 11, 2026
+
+The [charts design](charts-design.md) is approved and its stage 1
+[experiment](chart-render-experiment.md) has run on local branch
+`claude/charts-stage-1` (not pushed), following the
+[stage 1 plan](charts-stage-1-plan.md). It is isolated test code: a
+standard-library SVG chart renderer, an optional Qt SVG probe and a benchmark.
+No chart feature exists in the service or the desktop.
+
+The plan's thresholds were not all met. Qt takes 385 ms to load and paint a pie
+of 10,000 slices (limit 150 ms); every other type passes at 10,000 points. Text
+widths pass with a metrics table when the viewer's font is the measured one or
+narrower, and overflow by up to 18% under a wide substitute font. By the plan's
+rule the result is the QCustomPlot fallback; the result document explains why
+the author recommends a pie point limit and a bundled font instead. Open: that
+owner decision, and any measurement on Windows or Linux.
+
+Evidence: [measurements](evidence/chart-render-experiment.json),
+[wide-font run](evidence/chart-render-experiment-verdana.json) and
+[rendered charts](evidence/chart-render/).
+
 ## Excel fidelity increment 1 — November 11, 2026
 
 Increment 1 of the [Excel fidelity programme](excel-fidelity-plan.md) is built

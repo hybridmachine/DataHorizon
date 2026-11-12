@@ -351,7 +351,7 @@ Expected: build error or FAIL until the program exists.
 
 - [ ] **Step 4: Implement the probe**
 
-Use `QGuiApplication`, `QSvgRenderer`, `QImage` (ARGB32 premultiplied, white fill, the SVG's own size) and `QElapsedTimer`. `load_ms` and `paint_ms` are each the median of 20 runs. Text widths use `QFontMetricsF::horizontalAdvance` with a pixel-sized `QFont` of family `sans-serif` resolved by Qt (record the resolved family as `default_font`) and of `--font` when given. `--emit-metrics` measures each character at 1000 px and divides by 1000.
+Use `QGuiApplication`, `QSvgRenderer`, `QImage` (ARGB32 premultiplied, white fill, the SVG's own size) and `QElapsedTimer`. `load_ms` and `paint_ms` are each the median of 20 runs. Text widths use `QFontMetricsF::horizontalAdvance` with a pixel-sized `QFont` of family `sans-serif` resolved by Qt (record the resolved family as `default_font`) and of `--font` when given. `--emit-metrics` measures each character at 1000 px and divides by 1000. (As built: measured at 12 px. A table taken at 1000 px misstated 12 px text by up to 19% on the macOS system font; see the [result](chart-render-experiment.md).)
 
 - [ ] **Step 5: Run to verify pass**
 
