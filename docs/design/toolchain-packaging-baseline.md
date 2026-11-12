@@ -46,9 +46,10 @@ PR updates run one platform matrix plus the minimum-runtime matrix. Main pushes
 verify merged heads, manual dispatch remains available, and a newer run cancels
 the superseded run for the same ref. Branch-push duplicates are removed.
 
-Desktop and Python workspace whole-suite budgets are 600 seconds each on all
-systems;
-Python suites are 600 on Windows and 180 on macOS/Linux in CTest. The standalone
+Desktop, Python workspace and Python service whole-suite budgets are 600
+seconds each on all systems in CTest. The service budget on macOS/Linux was 180
+until the Excel fidelity increment 1 suites took it to about 290 seconds locally
+and 375 seconds on the hosted macOS runner. The standalone
 minimum-runtime CI job has a ten-minute job ceiling. Operation, hook and HTTP
 deadlines remain separate and unchanged. Timings are evidence rather than
 variable-host performance gates.
