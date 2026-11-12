@@ -9,11 +9,12 @@ it. It describes the standard in our own words; read the standard for the
 definitions.
 
 **Clause numbers.** Rows marked with a clause were checked against Microsoft's
-Open XML SDK reference pages for `worksheet`, `workbook`, `c`, `f`, `styleSheet`,
-`xf` and `legacyDrawing`, which cite ISO/IEC 29500-1 (the same SpreadsheetML
+Open XML SDK reference pages for `worksheet`, `workbook`, `c`, `f`, `styleSheet`
+and `xf`, which cite ISO/IEC 29500-1 (the same SpreadsheetML
 subclause numbering as ECMA-376 Part 1 section 18). A clause in *italics* (or marked *unverified*)
 was written from knowledge and not checked against a source; the fifth-edition text
-itself was not consulted.
+itself was not consulted. (The SDK page for `legacyDrawing` was read too, but it
+gives only its parents' subclauses, so its own row stays unverified.)
 
 **Status today** (after increment 1):
 
@@ -42,9 +43,9 @@ by this check (listed at the end of plan section 14).
 | `sheetPr` | §18.3.1.82 | Tab colour, outline summary positions, fit-to-page flag, code name | reported (tab colour, fit to page); no content otherwise | `sheet.feature` `tab_colour`, `page_setup` | 2 (tab colour); NG print setup |
 | `dimension` | §18.3.1.35 | The used range, derived from the cells | no content | — | — |
 | `sheetViews` / `sheetView` / `pane` / `selection` | §18.3.1.88 | Window view: gridlines, zoom, right-to-left, frozen or split panes, selection | reported when a pane or non-default view state is present; selection is no content | `frozen_panes`, `split_panes`, `sheet_view` | 2 (frozen panes); **Call** NG (split panes, zoom, gridlines, right-to-left) |
-| `sheetFormatPr` | §18.3.1.81 | Default row height and column width, zero-height rows | reported when non-default | `sheet_format_defaults` | 2 |
-| `cols` / `col` | §18.3.1.17 | Column widths, hidden columns, outline level, column default style | reported per column | `column_widths`, `hidden_rows_columns`, `outline`, `row_column_styles` | 2 (sizes, hidden, outline as hidden); 3 (default style) |
-| `sheetData` / `row` | §18.3.1.80, §18.3.1.73 | Rows and cells; row height, hidden, outline level, row default style | cells imported; row attributes reported per row | `row_heights`, `hidden_rows_columns`, `outline`, `row_column_styles` | 2, 3 |
+| `sheetFormatPr` | §18.3.1.81 | Default row height and column width, zero-height rows | the default column width is used to judge column widths; reported only when the default row height is marked custom or rows are hidden by default | `sheet_format_defaults` | 2 |
+| `cols` / `col` | §18.3.1.17 | Column widths, hidden columns, outline level, column default style | reported per column: a width only when marked custom or more than 0.1 character from the default width (from `sheetFormatPr`, else the most common width) | `column_widths`, `hidden_rows_columns`, `outline`, `row_column_styles` | 2 (sizes, hidden, outline as hidden); 3 (default style) |
+| `sheetData` / `row` | §18.3.1.80, §18.3.1.73 | Rows and cells; row height, hidden, outline level, row default style | cells imported; row attributes reported per row (a height only when marked custom) | `row_heights`, `hidden_rows_columns`, `outline`, `row_column_styles` | 2, 3 |
 | `sheetCalcPr` | §18.3.1.79 | Full recalculation on load | no content (DataHorizon recalculates) | — | — |
 | `sheetProtection` | §18.3.1.85 | Sheet protection flags and password hash | reported when protection is on | `sheet_protection` | NG protection |
 | `protectedRanges` | §18.3.1.72 | Ranges editable under protection | reported | `protected_ranges` | NG protection |
@@ -59,9 +60,9 @@ by this check (listed at the end of plan section 14).
 | `dataValidations` / `dataValidation` | §18.3.1.33 | Validation rules | reported per rule | `data_validation` | 6 |
 | `hyperlinks` / `hyperlink` | §18.3.1.48 | Links on cells | reported per link | `hyperlinks` | 5 |
 | `printOptions` | §18.3.1.70 | Print gridlines, headings, centring | reported when any is on | `page_setup` | NG print setup |
-| `pageMargins` | §18.3.1.62 | Page margins | reported unless Excel's or the older default margins | `page_setup` | NG print setup |
+| `pageMargins` | §18.3.1.62 | Page margins | reported unless Excel's, the older Excel/openpyxl or LibreOffice's default margins | `page_setup` | NG print setup |
 | `pageSetup` | §18.3.1.63 | Orientation, scale, fit, paper | reported for print choices; paper size and resolution are no content | `page_setup` | NG print setup |
-| `headerFooter` | §18.3.1.46 | Headers and footers | reported when any has text | `page_setup` | NG print setup |
+| `headerFooter` | §18.3.1.46 | Headers and footers | reported when a text goes beyond the stock LibreOffice texts (sheet name, page number) | `page_setup` | NG print setup |
 | `rowBreaks`, `colBreaks` | §18.3.1.74, §18.3.1.14 | Manual page breaks | reported | `page_setup` | NG print setup |
 | `customProperties` | §18.3.1.23 | Custom sheet properties | reported | `custom_properties` | **Call** NG |
 | `cellWatches` | §18.3.1.9 | Watch window entries | reported | `cell_watches` | **Call** NG (view state) |
@@ -76,7 +77,7 @@ by this check (listed at the end of plan section 14).
 | `controls` | §18.3.1.21 | Embedded ActiveX and form controls | reported per control | `form_controls` | NG (code-bearing) |
 | `webPublishItems` | §18.3.1.98 | Web publishing items | reported | `web_publish` | **Call** NG (deprecated feature) |
 | `tableParts` / `tablePart` | §18.3.1.95 | Excel tables on the sheet (`xl/tables`) | reported per table | `excel_tables` | 8a |
-| `extLst` | §18.2.10 | Later-version data: x14 sparklines, conditional formats, validations, slicers | named items reported per item; any other extension reported once | `sparklines`, `conditional_formatting`, `data_validation`, `slicers`, `protected_ranges`, `ignored_errors`, `extensions` | 7, 6 (x14 rules); NG (sparklines, slicers) |
+| `extLst` | §18.2.10 | Later-version data: x14 sparklines, conditional formats, validations, slicers | named items reported per item (an x14 twin of a rule already counted is not counted again); any other extension reported once | `sparklines`, `conditional_formatting`, `data_validation`, `slicers`, `protected_ranges`, `ignored_errors`, `extensions` | 7, 6 (x14 rules); NG (sparklines, slicers) |
 | foreign elements (`mc:AlternateContent`) | Part 3 | Markup-compatibility wrappers, usually around controls | reported | `extensions` | NG |
 
 ## Workbook (`workbook`), children in schema order
@@ -168,9 +169,10 @@ by this check (listed at the end of plan section 14).
 | Part | Holds | Status | Report entry | Owner |
 | --- | --- | --- | --- | --- |
 | Tables (`xl/tables/*`) | Excel table definitions | reported through `tableParts`; structured references kept as unevaluable formulas | `excel_tables`; `formula.syntax` | 8a |
-| Comments (`xl/comments*`) and threaded comments | Notes and threads | reported per sheet through the sheet's relationships (count: sheets with comments) | `comments` | 5 |
+| Comments (`xl/comments*`) and threaded comments | Notes and threads | reported per sheet through the sheet's relationships, counting the comments in the part (1 when it is missing or unreadable) | `comments` | 5 |
+| Sheet relationship parts (`xl/worksheets/_rels/*.rels`) | Links from a sheet to its comments, drawings, tables, hyperlink targets | read as a stream for the report; absent or empty declares nothing; unreadable is reported; a DTD or entity rejects | `relationships_unreadable` | — |
 | Drawings and charts (`xl/drawings/*`, `xl/charts/*`, `xl/media/*`) | Shapes, pictures, charts | drawings reported per sheet; charts reported per part | `drawings`, `workbook.feature` `charts` | NG charts, drawings, images |
-| Chart sheets, dialog sheets, macro sheets | Sheets that are not worksheets | **rejected**: a `sheet` whose relationship is not a worksheet rejects the package (known limitation, plan section 15) | — | **Call** 2 (report and skip) |
+| Chart sheets, dialog sheets, macro sheets | Sheets that are not worksheets | reported, one entry per kind with the sheets as samples; no native sheet is created; choosing one at selection scope is `INVALID_ARGUMENT` | `workbook.feature` `chart_sheets`, `dialog_sheets`, `macro_sheets` | **Call** NG (charts, macro sheets) |
 | Pivot tables and caches (`xl/pivotTables/*`, `xl/pivotCache/*`) | Pivot tables | reported per pivot table part | `pivot_tables` | NG pivot tables |
 | External links (`xl/externalLinks/*`) | Linked workbooks and their cached values | reported per `externalReference` | `external_references` | NG external links |
 | Defined-name scopes (`localSheetId`) | Sheet-scoped names | counted with the names | `defined_names` | 8a |
@@ -206,7 +208,10 @@ linked sheets (`external_references`), tables whose style hides them
 (`hidden_sheets`), structure protection (`workbook_protection`), iteration and
 precision-as-shown (`calculation_settings`), tracked changes, label ranges,
 consolidation, data pilot tables (`pivot_tables`), embedded objects and Basic
-macros (`macros`). Frozen and split panes are read from `settings.xml`. Not
+macros (`macros`). Frozen and split panes are read from `settings.xml`; an
+unreadable `settings.xml` skips that detection and is reported
+(`view_settings_unreadable`). A spanning cell repeated across columns counts once
+per repeat. Not
 detected in ODS: sheet tab colour and page styles (master pages with headers
 and footers), because LibreOffice writes view and page defaults in every file
 and telling a chosen value from its default needs a reference to the producing

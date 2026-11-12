@@ -1,13 +1,14 @@
 Excel fidelity increment 1 — final verification (Task 21)
 Date: 2026-11-11
-Code commit verified: baf59f80c6dad3ebf68a417334d1ac6d0f2d00b5 ("Report every unimported worksheet and workbook feature")
+Code commit verified: c6e1e66 (fix round 1, "Stop reporting application defaults, import around chart sheets and count features exactly"),
+  on top of baf59f8 ("Report every unimported worksheet and workbook feature"). First run (before fix round 1): 1107 tests OK at baf59f8.
 Branch: claude/excel-fidelity-1e (local; not pushed)
 Host: Apple M1 MacBook Air (MacBookAir10,1), 8 GB, macOS 26.6.2 arm64; Python 3.14.6; SQLite 3.53.4; CMake 4.4.2; Qt 6.12.0
 Working tree at the run: the code commit above plus uncommitted design documents only (no service, test or desktop source changed).
 
 1. Python suite
    Command: PYTHONPATH=service python3 -m unittest discover -s tests
-   Result:  Ran 1107 tests in 171.965 s — OK (skipped=26, optional bindings/validators/consumers)
+   Result:  Ran 1124 tests in 171.229 s — OK (skipped=26, optional bindings/validators/consumers)
             Baseline before Task 21: 1085 tests OK. The two pre-existing ResourceWarnings from names_api.py appear as before.
 
 2. Build
@@ -16,19 +17,19 @@ Working tree at the run: the code commit above plus uncommitted design documents
 
 3. Full CTest
    Command: ctest --test-dir build --output-on-failure
-   Result:  100% tests passed out of 4 (development_bundle_signature 0.22 s; desktop 189.22 s, 252 Qt checks passed,
-            0 failed; python_workspace 65.29 s; service 171.86 s). Total 426.59 s.
+   Result:  100% tests passed out of 4 (development_bundle_signature 0.22 s; desktop 188.08 s, 252 Qt checks passed,
+            0 failed; python_workspace 65.17 s; service 171.43 s). Total 424.91 s.
 
 4. Corpus scorecard
    Command: PYTHONPATH=service python3 tests/corpus_scorecard.py --check
    Result:  exit 0 (checked-in docs/design/evidence/excel-fidelity-scorecard.json equals a fresh run)
-            23 files; no file rejected in any mode; summary.known_unreported is empty in formulas, mixed and values mode.
-            Status by mode: formulas 2 clean / 21 degraded; mixed 2 / 21; values 3 / 20.
+            24 files (chart-sheet.xlsx added); no file rejected in any mode; summary.known_unreported is empty in
+            formulas, mixed and values mode. Status by mode: formulas 2 clean / 22 degraded; mixed 2 / 22; values 3 / 21.
             summary.gaps: "no Excel-saved files", "no LibreOffice-saved files" (open on the owner).
 
 5. Feature workbook generator
    Command: python3 tests/fixtures/corpus/generate_feature_workbooks.py --check
-   Result:  exit 0 (the 17 hand-built workbooks are byte-identical to the generator's output)
+   Result:  exit 0 (the 18 hand-built workbooks are byte-identical to the generator's output)
 
 6. Scanner overhead (informal, in isolation)
    SheetFeatures.cell/row over 1,000,000 cells and 1,000 rows: 0.132 s. The end-to-end capacity runs of

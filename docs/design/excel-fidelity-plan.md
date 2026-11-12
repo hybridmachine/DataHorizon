@@ -143,7 +143,7 @@ imported is reported (`sheet.feature`, `workbook.feature`, `style.*`,
 | Phonetic guides (`rPh`, `ph`) | Reported | 5, with rich text **Call** |
 | Rich values in cells (`vm`: pictures in cells, data types) | Cached value imported; reported | — (non-goal: images, data types) **Call** |
 | Ignored-error flags, smart tags, web publishing, custom sheet and document properties | Reported | — (non-goal) **Call** |
-| Chart sheets, dialog sheets, macro sheets | Reject the package (section 15) | 2: report and skip them **Call** |
+| Chart sheets, dialog sheets, macro sheets | Left out and reported (`workbook.feature` `chart_sheets`, `dialog_sheets`, `macro_sheets`; increment 1) | — (non-goal: charts, macro sheets) **Call** |
 | Document core properties (author, dates) | Not reported | Owner decision (section 14) **Call** |
 
 ## 4. The ten increments
@@ -269,8 +269,12 @@ constant. **Call**: interchange gets its own path and limits.
   rounded up to 16 MiB), 255 sheets, 300 seconds per upload, preparation,
   apply, export job and download, at most 1 MiB of XML per cell or shared
   string, a native file of at most 2 GiB for an export snapshot, 2 concurrent
-  uploads and 2 concurrent downloads, and 1,024 distinct styles per export.
-  Progress and cooperative cancellation run throughout.
+  uploads and 2 concurrent downloads, 1,024 distinct styles per export and
+  65,536 distinct styles per import stage (`import_stage.MAX_STYLES`, `LIMIT`).
+  The conversion report keeps at most 200 entries with 100 samples each, a
+  sample's sheet name cut to 64 and its cell to 32 characters, so a full report
+  can reach about 2.4 MiB before the stage summary trims samples to stay under
+  1 MiB. Progress and cooperative cancellation run throughout.
 
   What was not qualified: ODS at 1,000,000 cells with the standard mix could
   not be produced. DataHorizon's ODS export writes each text twice and every
@@ -413,7 +417,7 @@ through `1e`; verification in
 | The scorecard is checked in | Met; `known_unreported` is empty in every mode, so no listed feature is dropped without a report entry | [scorecard](evidence/excel-fidelity-scorecard.json), [corpus README](../../tests/fixtures/corpus/README.md) |
 | The measured limits replace the targets in 5.2 | Met | [capacity evidence](evidence/excel-fidelity-1-capacity.json), section 5.2 |
 | A 1,000,000-cell generated workbook imports, reopens and exports within recorded time and memory | Met for XLSX; ODS at 1,000,000 cells only within the 256-MiB expanded limit (5.2) | [capacity evidence](evidence/excel-fidelity-1-capacity.json) |
-| The corpus holds workbooks saved by real Excel and by LibreOffice (5.6) | **Not met.** The corpus is 6 openpyxl/odfpy fixtures and 17 hand-built approximations; no Excel-saved file has been supplied (section 14, item 1) and LibreOffice is not installed on the reference machine. Open on the owner: supply files or waive in writing here | [corpus README](../../tests/fixtures/corpus/README.md), scorecard `summary.gaps` |
+| The corpus holds workbooks saved by real Excel and by LibreOffice (5.6) | **Not met.** The corpus is 6 openpyxl/odfpy fixtures and 18 hand-built approximations; no Excel-saved file has been supplied (section 14, item 1) and LibreOffice is not installed on the reference machine. Open on the owner: supply files or waive in writing here | [corpus README](../../tests/fixtures/corpus/README.md), scorecard `summary.gaps` |
 | The clause-by-clause check of section 3 | Met; additions are marked **Call** in section 3 and listed in section 14 | [coverage table](excel-spec-coverage.md) |
 
 Increment 1 is therefore complete except for the application-saved corpus. The
@@ -712,8 +716,8 @@ for every function DataHorizon claims.
    - Rich values in cells (pictures in cells, data types), ignored-error flags,
      smart tags, web publishing and custom sheet and document properties are a
      non-goal.
-   - Chart sheets, dialog sheets and macro sheets: increment 2 should report and
-     skip them instead of rejecting the package (section 15).
+   - Chart sheets, dialog sheets and macro sheets are left out and reported; no
+     native sheet is created for them (charts and macro sheets are non-goals).
    - Document core properties (author, created and modified dates) are not
      reported because every file has them. Decide whether they should be kept,
      reported or ignored.
@@ -753,17 +757,43 @@ it turns out wrong. Task numbers refer to the
 - Every worksheet and workbook feature that is not imported produces one
   `omitted` entry per feature (`sheet.feature` or `workbook.feature`, detail the
   feature id, count of items, the sheets as samples with no cell); features in
-  their default form produce nothing (Task 21). Cost if wrong: a feature whose
-  default the scanner misjudges is either noise in every file or, if judged
-  default wrongly, silent; the default-file tests and the corpus guard both
+  their default form produce nothing (Task 21). The defaults recognised are
+  those of Excel, older Excel and openpyxl, and LibreOffice (as hand-built from
+  its documented output): page margins, page setup print choices, stock
+  LibreOffice header and footer texts, view settings, a row height only when
+  marked custom, a column width only when marked custom or more than a tenth of
+  a character from the sheet's default width (or, without one, the width most
+  columns share), and the default row height only when marked custom or zero.
+  Cost if wrong: a default the scanner misjudges is either noise in every such
+  file or, if judged default wrongly, silent; the default-file tests guard both
   directions only for the forms they contain.
 - In `values` mode the scorecard requires no entry for formula-only features
   (arrays, data tables, 3D references): that mode replaces every formula by its
   cache by request and says so. Cost if wrong: the array-ness of a formula lost
   in values mode is not itemized.
-- Comments are counted per sheet that has a comments part, not per comment, so
-  the reader does not have to open the comments part. Cost if wrong: the count
-  understates; the entry is still present.
+- Comments are counted in the sheet's comments part (or threaded-comments part),
+  streamed under the package byte budget; a missing or unreadable part counts 1.
+  Cost if wrong: a damaged comments part understates the count; the entry is
+  still present.
+- Chart, dialog and macro sheets are not imported: each is one `omitted` entry
+  (`workbook.feature`, `chart_sheets`, `dialog_sheets` or `macro_sheets`, the
+  sheet as sample), no native sheet is created, and formulas that refer to one
+  are references to a missing sheet (`formula.missing_sheet`). They are found by
+  the relationship type of the workbook's `<sheet>`. Choosing one at selection
+  scope is `INVALID_ARGUMENT`. A package with no worksheets at all prepares with
+  nothing to apply (`can_import` false, as Apply of a workbook without sheets is
+  refused). Cost if wrong: a sheet of an unusual kind declared with a worksheet
+  relationship still rejects as an invalid worksheet.
+- An x14 conditional-format rule that is the twin of a rule already in
+  `<conditionalFormatting>` (Excel writes one per data bar) is not counted again.
+  Cost if wrong: none for loss; a count could be one low if a twin's id is reused.
+- Auxiliary parts read only for the report never reject a valid file: an absent
+  or empty sheet relationship part declares nothing, any other unreadable one is
+  reported (`relationships_unreadable`), and an unreadable ODS `settings.xml`
+  skips pane detection and is reported (`view_settings_unreadable`). A DTD or
+  entity in a sheet relationship part still rejects (an attack shape, not an
+  unusual file). Cost if wrong: comments of a sheet with damaged relationships
+  are reported only as unreadable relationships.
 - An XLSX drawing is reported on the sheet that holds it (`drawings`); charts,
   pivot tables, VBA, custom XML and the other advanced parts are reported once
   for the workbook from the package part names. Cost if wrong: none for loss;
@@ -772,6 +802,10 @@ it turns out wrong. Task numbers refer to the
   sheet's most common column width, because LibreOffice writes a width for every
   column. Cost if wrong: a sheet whose columns are all widened by the same amount
   reports nothing for them.
+- The feature scanner landed after the capacity measurements of 5.2, which
+  were not repeated. In isolation it costs about 0.13 s per 1,000,000 cells on
+  the reference Mac (against a 30.9-s slowest phase). Cost if wrong: the
+  qualified sizes are slightly optimistic.
 
 ### Formulas and references
 
@@ -788,6 +822,9 @@ it turns out wrong. Task numbers refer to the
   Cost if wrong: clients read a different key.
 - Operation-job staging does not accept the `unmaintained` kind; clients cannot
   author it. Cost if wrong: staged jobs cannot carry such cells.
+- `has_sheet_reference` was left unchanged in Task 8, since no service caller
+  needed it changed; Task 9 then replaced the conservative block that used it.
+  Cost if wrong: Task 9 had to touch it (it did).
 
 ### Large import and export
 
@@ -844,20 +881,14 @@ it turns out wrong. Task numbers refer to the
 Defects and gaps found while building increment 1 and left for later, grouped
 and de-duplicated; items already fixed are not listed.
 
-- **Chart sheets and other non-worksheet sheets reject the package** at
-  whole-workbook scope (`INVALID_SPREADSHEET`, "Selected sheet must have a local
-  worksheet relationship"); a selection of a worksheet still imports. Found by
-  the coverage check; this is valid content and should be reported and skipped
-  (assigned to increment 2 in section 3).
 - Document core properties and a cell's own `extLst` are not reported
   (section 14); ODS sheet tab colours and page styles are not detected.
-- The feature scanner adds per-row and per-cell checks to both readers. The
-  large-path capacity measurements of 5.2 were taken before it and were not
-  re-run. In isolation the per-cell checks cost about 0.13 s per 1,000,000 cells
-  on the reference Mac (against a 30.9-s slowest phase); the end-to-end effect
-  is unmeasured.
-- Sheet relationship parts and ODS `settings.xml` are now read for the report,
-  so a malformed one rejects a package that used to import.
+- The large-path capacity was not re-measured after the feature scanner was
+  added (see the ruling above); the end-to-end effect is unmeasured.
+- Default detection is heuristic and covers only the producers named in the
+  rulings (Excel, older Excel and openpyxl, LibreOffice as hand-built); files
+  from other producers, or real LibreOffice-saved files that differ from the
+  hand-built approximation, may show noise or miss a setting.
 - The `theme_colours` scorecard check accepts the general font and fill
   messages, which mention theme colours among other causes.
 - The `_xlfn` future-function table was written from knowledge, not checked

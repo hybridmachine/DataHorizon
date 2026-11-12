@@ -260,8 +260,13 @@ current contract; the earlier stages are recorded in the
 [interchange](interchange-next-five.md) and [workbook](workbook-next-five.md)
 documents.
 
-**Degrade, never block.** A valid package always imports. A cell or feature
-DataHorizon does not support is kept in another form, approximated or left out,
+**Degrade, never block.** A valid package always prepares. Sheets DataHorizon
+cannot hold (chart, dialog and macro sheets) are left out, each reported as
+`workbook.feature` `chart_sheets`, `dialog_sheets` or `macro_sheets` with the
+sheet as sample; formulas referring to one are references to a missing sheet.
+Choosing such a sheet at selection scope is `INVALID_ARGUMENT`, and a package
+with no worksheets at all prepares with nothing to apply (`can_import` false).
+A cell or feature DataHorizon does not support is kept in another form, approximated or left out,
 and each such item is itemized in the conversion report before Apply. Only a
 malformed or unsafe package rejects: bad ZIP or XML, DTDs or entities, non-UTF-8
 parts, encryption, broken relationships, duplicate cells, broken shared-formula
@@ -289,7 +294,10 @@ report entry.
 samples (`{sheet, cell}`; a sample without a cell stands for a whole sheet,
 one without a sheet for the workbook). At most 200 entries; totals per severity
 count every item. The tree reader (bounded path) and the streaming reader
-(large path) produce the same entries.
+(large path) produce the same entries with the same counts; only the order of
+samples (and of entries that tie when sorted) can differ, for shared-formula
+members stored before their master, which the streaming reader converts at the
+end of their sheet.
 
 | Category | Meaning |
 | --- | --- |
@@ -302,7 +310,12 @@ count every item. The tree reader (bounded path) and the streaming reader
 
 The [specification coverage table](excel-spec-coverage.md) lists every
 SpreadsheetML element with the entry it produces. Features in their default form
-(Excel's default margins, a view without panes, `dimension`) produce no entry.
+(Excel's, openpyxl's and LibreOffice's default margins, page setup and header
+and footer, a view without panes, row heights and column widths that are not
+custom, `dimension`) produce no entry. Auxiliary parts read only for the report
+never reject a valid file: an unreadable sheet relationship part or ODS
+`settings.xml` is reported instead (`relationships_unreadable`,
+`view_settings_unreadable`); one with a DTD or entity still rejects.
 
 **Two paths.**
 

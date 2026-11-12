@@ -27,7 +27,7 @@ Evidence: [verification](evidence/excel-fidelity-1-verification.txt),
 [task 21](evidence/excel-fidelity-1-task21.json) records. Open: the corpus has no
 Excel-saved or LibreOffice-saved workbook (hand-built approximations only), so
 the increment's corpus criterion is not met; the rulings and known limitations,
-including chart sheets rejecting a whole-workbook import, are in
+and the default-detection heuristics, are in
 [section 15 of the plan](excel-fidelity-plan.md#15-increment-1-as-built-rulings-and-known-limitations).
 
 ## November 8 review remediation
