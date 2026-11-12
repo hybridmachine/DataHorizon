@@ -150,14 +150,13 @@ def to_duration(value):
 
 def export_temporal_styles(snapshots):
     """Give unformatted temporal values/formulas a portable calendar display."""
-    result=[]
-    for sheet in snapshots:
-        cells=[]
-        for original in sheet["cells"]:
-            cell=dict(original);value=cell.get("value")
-            kind=value.kind if isinstance(value,Temporal) else cell.get("value_kind",cell.get("kind"))
-            if kind in KINDS and cell.get("style",{}).get("format","general")=="general":
-                cell["style"]={**cell.get("style",{}),"format":{"date":"date_iso","time":"time24","datetime":"datetime_iso"}[kind]}
-            cells.append(cell)
-        result.append({**sheet,"cells":cells})
-    return result
+    return [{**sheet,"cells":[export_temporal_style(cell) for cell in sheet["cells"]]} for sheet in snapshots]
+
+
+def export_temporal_style(original):
+    """One cell of export_temporal_styles: a copy, with a calendar display when its value is temporal and unformatted."""
+    cell=dict(original);value=cell.get("value")
+    kind=value.kind if isinstance(value,Temporal) else cell.get("value_kind",cell.get("kind"))
+    if kind in KINDS and cell.get("style",{}).get("format","general")=="general":
+        cell["style"]={**cell.get("style",{}),"format":{"date":"date_iso","time":"time24","datetime":"datetime_iso"}[kind]}
+    return cell

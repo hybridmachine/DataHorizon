@@ -1,0 +1,1995 @@
+{
+  "description": "Task 19 capacity qualification of the large XLSX/ODS interchange path. 'runs' holds the unmodified output of tests/qualify_large_interchange.py for the standard content mix (all sizes and formats) and for a supplementary 1,000,000-cell run with --long-text-share 0; 'decision' applies the qualification rule across both.",
+  "date": "2026-11-11",
+  "host": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu_count": 8,
+    "cpu": "Apple M1",
+    "memory_bytes": 8589934592,
+    "model": "MacBookAir10,1"
+  },
+  "python": "3.14.6",
+  "sqlite": "3.53.4",
+  "commit": "8a3d6d01ced1d6888da9e2e8404df1668328d064",
+  "commands": [
+    "python3 tests/qualify_large_interchange.py --output <standard>.json",
+    "python3 tests/qualify_large_interchange.py --sizes 1000000 --long-text-share 0 --output <lean>.json"
+  ],
+  "runs": {
+    "standard_mix": {
+      "recorded_at_utc": "2026-11-11T22:58:09.674005+00:00",
+      "host": {
+        "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+        "machine": "arm64",
+        "cpu_count": 8,
+        "cpu": "Apple M1",
+        "memory_bytes": 8589934592,
+        "model": "MacBookAir10,1"
+      },
+      "python": "3.14.6",
+      "python_executable": "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "sqlite": "3.53.4",
+      "commit": "8a3d6d01ced1d6888da9e2e8404df1668328d064",
+      "uncommitted_paths": [
+        "?? tests/fixtures/generate_large_xlsx.py",
+        "?? tests/qualify_large_interchange.py"
+      ],
+      "limits_in_force": {
+        "LARGE_CELLS": 1000000,
+        "LARGE_EXPANDED": 268435456,
+        "LARGE_PACKAGE": 67108864,
+        "LARGE_SHEETS": 255,
+        "MAX_RECORD_BYTES": 1048576,
+        "SNAPSHOT_BYTES": 2147483648,
+        "MAX_EXPORT_STYLES": 1024,
+        "MAX_UPLOADS": 2,
+        "MAX_DOWNLOADS": 2,
+        "LARGE_PREPARATION_SECONDS": 300,
+        "EXPORT_JOB_SECONDS": 300,
+        "UPLOAD_SECONDS": 300,
+        "DOWNLOAD_SECONDS": 300,
+        "MAX_CELLS": 10000,
+        "opening_budget_seconds": 5
+      },
+      "generator": {
+        "sheets": 3,
+        "formula_share": 0.05,
+        "strings": "shared"
+      },
+      "sizes": [
+        100000,
+        500000,
+        1000000
+      ],
+      "formats": [
+        "xlsx",
+        "ods"
+      ],
+      "sample_interval_seconds": 0.05,
+      "limitations": [
+        "Host-specific: one machine, its disk and an uncontrolled (warm) OS file cache; not OS-cold.",
+        "Peak RSS is the service child's resident memory sampled every 50 ms plus its ru_maxrss at exit; the driver is excluded.",
+        "Phase seconds for jobs include the SDK's polling interval (at most 0.5 s).",
+        "One generated content mix; other workbook shapes (more long text, more formulas, more styles) can cost more."
+      ],
+      "cases": [
+        {
+          "cells": 100000,
+          "format": "xlsx",
+          "phases": [
+            {
+              "name": "upload",
+              "service": "import",
+              "peak_rss_bytes": 46563328,
+              "samples": 2,
+              "seconds": 0.007
+            },
+            {
+              "name": "prepare",
+              "service": "import",
+              "peak_rss_bytes": 78184448,
+              "samples": 57,
+              "seconds": 3.237
+            },
+            {
+              "name": "create_workbook",
+              "service": "import",
+              "peak_rss_bytes": 77774848,
+              "samples": 2,
+              "seconds": 0.02
+            },
+            {
+              "name": "apply",
+              "service": "import",
+              "peak_rss_bytes": 92962816,
+              "samples": 16,
+              "seconds": 0.791
+            },
+            {
+              "name": "close",
+              "service": "import",
+              "peak_rss_bytes": 91914240,
+              "samples": 2,
+              "seconds": 0.001
+            },
+            {
+              "name": "open",
+              "service": "reopen",
+              "peak_rss_bytes": 46727168,
+              "samples": 3,
+              "seconds": 0.065
+            },
+            {
+              "name": "first_viewport",
+              "service": "reopen",
+              "peak_rss_bytes": 47218688,
+              "samples": 2,
+              "seconds": 0.011
+            },
+            {
+              "name": "export",
+              "service": "reopen",
+              "peak_rss_bytes": 51871744,
+              "samples": 48,
+              "seconds": 2.745
+            },
+            {
+              "name": "download",
+              "service": "reopen",
+              "peak_rss_bytes": 51904512,
+              "samples": 3,
+              "seconds": 0.006
+            }
+          ],
+          "services": [
+            {
+              "role": "import",
+              "baseline_rss_bytes": 46481408,
+              "ru_maxrss_at_exit_bytes": 92995584,
+              "staging_file_peaks_bytes": {
+                "upload": 2283212,
+                "stage": 22458368
+              }
+            },
+            {
+              "role": "reopen",
+              "baseline_rss_bytes": 46170112,
+              "ru_maxrss_at_exit_bytes": 51953664,
+              "staging_file_peaks_bytes": {
+                "snapshot": 26034176,
+                "export": 2774187
+              }
+            }
+          ],
+          "files": {
+            "stage_bytes": 22458368,
+            "native_bytes": 26034176,
+            "snapshot_bytes": 26034176,
+            "export": {
+              "package_bytes": 2774187,
+              "expanded_bytes": 10409293
+            }
+          },
+          "counts": {
+            "prepared": 100000,
+            "imported": 100000,
+            "sheets": 3,
+            "first_viewport_cells": 512
+          },
+          "source": {
+            "cells": 100000,
+            "sheets": 3,
+            "columns": 20,
+            "strings": "shared",
+            "seed": 20261111,
+            "formula_share": 0.05,
+            "kinds": {
+              "number": 61992,
+              "short": 23962,
+              "long": 4605,
+              "date": 4714,
+              "formula": 4727,
+              "unsupported_formula": 933
+            },
+            "cell_formats": 331,
+            "package_bytes": 2283212,
+            "expanded_bytes": 8997679,
+            "generate_seconds": 0.501
+          },
+          "report_totals": {
+            "approximated": 34435,
+            "converted": 933,
+            "omitted": 0,
+            "unevaluable": 0
+          }
+        },
+        {
+          "cells": 100000,
+          "format": "ods",
+          "phases": [
+            {
+              "name": "upload",
+              "service": "import",
+              "peak_rss_bytes": 46366720,
+              "samples": 2,
+              "seconds": 0.012
+            },
+            {
+              "name": "prepare",
+              "service": "import",
+              "peak_rss_bytes": 77922304,
+              "samples": 109,
+              "seconds": 6.345
+            },
+            {
+              "name": "create_workbook",
+              "service": "import",
+              "peak_rss_bytes": 75202560,
+              "samples": 3,
+              "seconds": 0.019
+            },
+            {
+              "name": "apply",
+              "service": "import",
+              "peak_rss_bytes": 92831744,
+              "samples": 15,
+              "seconds": 0.798
+            },
+            {
+              "name": "close",
+              "service": "import",
+              "peak_rss_bytes": 92815360,
+              "samples": 2,
+              "seconds": 0.001
+            },
+            {
+              "name": "open",
+              "service": "reopen",
+              "peak_rss_bytes": 49889280,
+              "samples": 3,
+              "seconds": 0.073
+            },
+            {
+              "name": "first_viewport",
+              "service": "reopen",
+              "peak_rss_bytes": 50446336,
+              "samples": 2,
+              "seconds": 0.012
+            },
+            {
+              "name": "export",
+              "service": "reopen",
+              "peak_rss_bytes": 61128704,
+              "samples": 101,
+              "seconds": 5.846
+            },
+            {
+              "name": "download",
+              "service": "reopen",
+              "peak_rss_bytes": 61243392,
+              "samples": 2,
+              "seconds": 0.021
+            }
+          ],
+          "services": [
+            {
+              "role": "import",
+              "baseline_rss_bytes": 46301184,
+              "ru_maxrss_at_exit_bytes": 92848128,
+              "staging_file_peaks_bytes": {
+                "upload": 6112870,
+                "stage": 16457728
+              }
+            },
+            {
+              "role": "reopen",
+              "baseline_rss_bytes": 46710784,
+              "ru_maxrss_at_exit_bytes": 61292544,
+              "staging_file_peaks_bytes": {
+                "snapshot": 26157056,
+                "part": 39874330,
+                "export": 6112870
+              }
+            }
+          ],
+          "files": {
+            "stage_bytes": 16457728,
+            "native_bytes": 26157056,
+            "snapshot_bytes": 26157056,
+            "export": {
+              "package_bytes": 6112870,
+              "expanded_bytes": 39992524
+            }
+          },
+          "counts": {
+            "prepared": 100000,
+            "imported": 100000,
+            "sheets": 3,
+            "first_viewport_cells": 512
+          },
+          "source": {
+            "origin": "DataHorizon ODS export of the imported generated XLSX workbook",
+            "setup_seconds": 6.044,
+            "package_bytes": 6112870,
+            "expanded_bytes": 39992524
+          },
+          "report_totals": {
+            "approximated": 34435,
+            "converted": 0,
+            "omitted": 0,
+            "unevaluable": 0
+          }
+        },
+        {
+          "cells": 500000,
+          "format": "xlsx",
+          "phases": [
+            {
+              "name": "upload",
+              "service": "import",
+              "peak_rss_bytes": 46465024,
+              "samples": 2,
+              "seconds": 0.017
+            },
+            {
+              "name": "prepare",
+              "service": "import",
+              "peak_rss_bytes": 78233600,
+              "samples": 265,
+              "seconds": 15.489
+            },
+            {
+              "name": "create_workbook",
+              "service": "import",
+              "peak_rss_bytes": 77545472,
+              "samples": 2,
+              "seconds": 0.016
+            },
+            {
+              "name": "apply",
+              "service": "import",
+              "peak_rss_bytes": 92848128,
+              "samples": 67,
+              "seconds": 3.856
+            },
+            {
+              "name": "close",
+              "service": "import",
+              "peak_rss_bytes": 83623936,
+              "samples": 2,
+              "seconds": 0.001
+            },
+            {
+              "name": "open",
+              "service": "reopen",
+              "peak_rss_bytes": 49643520,
+              "samples": 7,
+              "seconds": 0.308
+            },
+            {
+              "name": "first_viewport",
+              "service": "reopen",
+              "peak_rss_bytes": 50233344,
+              "samples": 2,
+              "seconds": 0.011
+            },
+            {
+              "name": "export",
+              "service": "reopen",
+              "peak_rss_bytes": 60850176,
+              "samples": 238,
+              "seconds": 13.918
+            },
+            {
+              "name": "download",
+              "service": "reopen",
+              "peak_rss_bytes": 61145088,
+              "samples": 2,
+              "seconds": 0.035
+            }
+          ],
+          "services": [
+            {
+              "role": "import",
+              "baseline_rss_bytes": 46399488,
+              "ru_maxrss_at_exit_bytes": 92848128,
+              "staging_file_peaks_bytes": {
+                "upload": 11556529,
+                "stage": 114524160
+              }
+            },
+            {
+              "role": "reopen",
+              "baseline_rss_bytes": 46448640,
+              "ru_maxrss_at_exit_bytes": 61194240,
+              "staging_file_peaks_bytes": {
+                "snapshot": 132235264,
+                "export": 14043525
+              }
+            }
+          ],
+          "files": {
+            "stage_bytes": 114524160,
+            "native_bytes": 132235264,
+            "snapshot_bytes": 132235264,
+            "export": {
+              "package_bytes": 14043525,
+              "expanded_bytes": 52300367
+            }
+          },
+          "counts": {
+            "prepared": 500000,
+            "imported": 500000,
+            "sheets": 3,
+            "first_viewport_cells": 512
+          },
+          "source": {
+            "cells": 500000,
+            "sheets": 3,
+            "columns": 20,
+            "strings": "shared",
+            "seed": 20261111,
+            "formula_share": 0.05,
+            "kinds": {
+              "number": 310416,
+              "short": 118821,
+              "long": 23473,
+              "date": 23762,
+              "formula": 23528,
+              "unsupported_formula": 4749
+            },
+            "cell_formats": 331,
+            "package_bytes": 11556529,
+            "expanded_bytes": 45541657,
+            "generate_seconds": 2.553
+          },
+          "report_totals": {
+            "approximated": 172494,
+            "converted": 4749,
+            "omitted": 0,
+            "unevaluable": 0
+          }
+        },
+        {
+          "cells": 500000,
+          "format": "ods",
+          "phases": [
+            {
+              "name": "upload",
+              "service": "import",
+              "peak_rss_bytes": 46563328,
+              "samples": 2,
+              "seconds": 0.053
+            },
+            {
+              "name": "prepare",
+              "service": "import",
+              "peak_rss_bytes": 78348288,
+              "samples": 548,
+              "seconds": 31.919
+            },
+            {
+              "name": "create_workbook",
+              "service": "import",
+              "peak_rss_bytes": 76529664,
+              "samples": 2,
+              "seconds": 0.018
+            },
+            {
+              "name": "apply",
+              "service": "import",
+              "peak_rss_bytes": 92913664,
+              "samples": 68,
+              "seconds": 3.911
+            },
+            {
+              "name": "close",
+              "service": "import",
+              "peak_rss_bytes": 92897280,
+              "samples": 2,
+              "seconds": 0.001
+            },
+            {
+              "name": "open",
+              "service": "reopen",
+              "peak_rss_bytes": 49643520,
+              "samples": 7,
+              "seconds": 0.313
+            },
+            {
+              "name": "first_viewport",
+              "service": "reopen",
+              "peak_rss_bytes": 50085888,
+              "samples": 2,
+              "seconds": 0.016
+            },
+            {
+              "name": "export",
+              "service": "reopen",
+              "peak_rss_bytes": 60702720,
+              "samples": 477,
+              "seconds": 27.886
+            },
+            {
+              "name": "download",
+              "service": "reopen",
+              "peak_rss_bytes": 43630592,
+              "samples": 3,
+              "seconds": 0.08
+            }
+          ],
+          "services": [
+            {
+              "role": "import",
+              "baseline_rss_bytes": 46481408,
+              "ru_maxrss_at_exit_bytes": 92930048,
+              "staging_file_peaks_bytes": {
+                "upload": 31153327,
+                "stage": 83525632
+              }
+            },
+            {
+              "role": "reopen",
+              "baseline_rss_bytes": 46415872,
+              "ru_maxrss_at_exit_bytes": 60735488,
+              "staging_file_peaks_bytes": {
+                "snapshot": 131923968,
+                "part": 202956383,
+                "export": 31153327
+              }
+            }
+          ],
+          "files": {
+            "stage_bytes": 83525632,
+            "native_bytes": 131923968,
+            "snapshot_bytes": 131923968,
+            "export": {
+              "package_bytes": 31153327,
+              "expanded_bytes": 203074577
+            }
+          },
+          "counts": {
+            "prepared": 500000,
+            "imported": 500000,
+            "sheets": 3,
+            "first_viewport_cells": 512
+          },
+          "source": {
+            "origin": "DataHorizon ODS export of the imported generated XLSX workbook",
+            "setup_seconds": 27.846,
+            "package_bytes": 31153327,
+            "expanded_bytes": 203074577
+          },
+          "report_totals": {
+            "approximated": 172494,
+            "converted": 0,
+            "omitted": 0,
+            "unevaluable": 0
+          }
+        },
+        {
+          "cells": 1000000,
+          "format": "xlsx",
+          "phases": [
+            {
+              "name": "upload",
+              "service": "import",
+              "peak_rss_bytes": 46383104,
+              "samples": 2,
+              "seconds": 0.034
+            },
+            {
+              "name": "prepare",
+              "service": "import",
+              "peak_rss_bytes": 78348288,
+              "samples": 530,
+              "seconds": 30.907
+            },
+            {
+              "name": "create_workbook",
+              "service": "import",
+              "peak_rss_bytes": 78594048,
+              "samples": 2,
+              "seconds": 0.019
+            },
+            {
+              "name": "apply",
+              "service": "import",
+              "peak_rss_bytes": 93011968,
+              "samples": 138,
+              "seconds": 7.96
+            },
+            {
+              "name": "close",
+              "service": "import",
+              "peak_rss_bytes": 92979200,
+              "samples": 2,
+              "seconds": 0.001
+            },
+            {
+              "name": "open",
+              "service": "reopen",
+              "peak_rss_bytes": 46989312,
+              "samples": 15,
+              "seconds": 0.781
+            },
+            {
+              "name": "first_viewport",
+              "service": "reopen",
+              "peak_rss_bytes": 47595520,
+              "samples": 2,
+              "seconds": 0.011
+            },
+            {
+              "name": "export",
+              "service": "reopen",
+              "peak_rss_bytes": 52346880,
+              "samples": 475,
+              "seconds": 27.751
+            },
+            {
+              "name": "download",
+              "service": "reopen",
+              "peak_rss_bytes": 52363264,
+              "samples": 3,
+              "seconds": 0.06
+            },
+            {
+              "name": "reimport_upload",
+              "service": "reopen",
+              "peak_rss_bytes": 52346880,
+              "samples": 4,
+              "seconds": 0.112
+            },
+            {
+              "name": "reimport_prepare",
+              "service": "reopen",
+              "peak_rss_bytes": 81674240,
+              "samples": 513,
+              "seconds": 30.021
+            },
+            {
+              "name": "reimport_create_workbook",
+              "service": "reopen",
+              "peak_rss_bytes": 78790656,
+              "samples": 2,
+              "seconds": 0.008
+            },
+            {
+              "name": "reimport_apply",
+              "service": "reopen",
+              "peak_rss_bytes": 82657280,
+              "samples": 127,
+              "seconds": 7.376
+            }
+          ],
+          "services": [
+            {
+              "role": "import",
+              "baseline_rss_bytes": 46317568,
+              "ru_maxrss_at_exit_bytes": 93044736,
+              "staging_file_peaks_bytes": {
+                "upload": 23185126,
+                "stage": 229519360
+              }
+            },
+            {
+              "role": "reopen",
+              "baseline_rss_bytes": 46465024,
+              "ru_maxrss_at_exit_bytes": 82657280,
+              "staging_file_peaks_bytes": {
+                "snapshot": 262078464,
+                "export": 28183927,
+                "upload": 28183927,
+                "stage": 167124992
+              }
+            }
+          ],
+          "files": {
+            "stage_bytes": 229519360,
+            "native_bytes": 262078464,
+            "snapshot_bytes": 262078464,
+            "export": {
+              "package_bytes": 28183927,
+              "expanded_bytes": 105157126
+            },
+            "reimport_stage_bytes": 167124992
+          },
+          "counts": {
+            "prepared": 1000000,
+            "imported": 1000000,
+            "sheets": 3,
+            "first_viewport_cells": 512,
+            "reimported": 1000000,
+            "reimport_matches": true
+          },
+          "source": {
+            "cells": 1000000,
+            "sheets": 3,
+            "columns": 20,
+            "strings": "shared",
+            "seed": 20261111,
+            "formula_share": 0.05,
+            "kinds": {
+              "number": 620642,
+              "short": 237474,
+              "long": 47244,
+              "date": 47427,
+              "formula": 47213,
+              "unsupported_formula": 9569
+            },
+            "cell_formats": 331,
+            "package_bytes": 23185126,
+            "expanded_bytes": 91727399,
+            "generate_seconds": 5.206
+          },
+          "report_totals": {
+            "approximated": 345621,
+            "converted": 9569,
+            "omitted": 0,
+            "unevaluable": 0
+          }
+        },
+        {
+          "cells": 1000000,
+          "format": "ods",
+          "phases": [],
+          "services": [],
+          "files": {},
+          "counts": {},
+          "error": {
+            "type": "APIError",
+            "message": "Expanded ODS export exceeds 256 MiB",
+            "body": {
+              "code": "LIMIT",
+              "message": "Expanded ODS export exceeds 256 MiB",
+              "outcome": "rejected",
+              "job_id": "782b94462cc54dc6adbf9febd0e9451e"
+            },
+            "during": "ODS source: DataHorizon ODS export of the imported XLSX workbook"
+          }
+        }
+      ],
+      "decision": {
+        "rule": "A size qualifies for a format when every phase finishes within 300 s, the service's peak RSS stays under 268,435,456 bytes in every phase (sampled every 50 ms) and at exit (ru_maxrss), the reopened file opens and serves its first viewport within the 5-second opening budget, and every generated cell is imported (and re-imported, where measured).",
+        "cases": [
+          {
+            "cells": 100000,
+            "format": "xlsx",
+            "qualifies": true,
+            "checks": {
+              "completed": true,
+              "time": true,
+              "sampled_memory": true,
+              "exit_memory": true,
+              "reopen": true,
+              "counts": true
+            },
+            "slowest_phase": {
+              "name": "prepare",
+              "seconds": 3.237
+            },
+            "peak_service_rss_bytes": 92995584,
+            "arithmetic": [
+              "slowest phase prepare 3.237 s <= 300 s",
+              "largest sampled service RSS 92,962,816 B in apply < 268,435,456 B",
+              "largest service ru_maxrss at exit 92,995,584 B < 268,435,456 B",
+              "open 0.065 s + first viewport 0.011 s = 0.076 s <= 5 s opening budget",
+              "imported 100000 of 100000 cells"
+            ]
+          },
+          {
+            "cells": 100000,
+            "format": "ods",
+            "qualifies": true,
+            "checks": {
+              "completed": true,
+              "time": true,
+              "sampled_memory": true,
+              "exit_memory": true,
+              "reopen": true,
+              "counts": true
+            },
+            "slowest_phase": {
+              "name": "prepare",
+              "seconds": 6.345
+            },
+            "peak_service_rss_bytes": 92848128,
+            "arithmetic": [
+              "slowest phase prepare 6.345 s <= 300 s",
+              "largest sampled service RSS 92,831,744 B in apply < 268,435,456 B",
+              "largest service ru_maxrss at exit 92,848,128 B < 268,435,456 B",
+              "open 0.073 s + first viewport 0.012 s = 0.085 s <= 5 s opening budget",
+              "imported 100000 of 100000 cells"
+            ]
+          },
+          {
+            "cells": 500000,
+            "format": "xlsx",
+            "qualifies": true,
+            "checks": {
+              "completed": true,
+              "time": true,
+              "sampled_memory": true,
+              "exit_memory": true,
+              "reopen": true,
+              "counts": true
+            },
+            "slowest_phase": {
+              "name": "prepare",
+              "seconds": 15.489
+            },
+            "peak_service_rss_bytes": 92848128,
+            "arithmetic": [
+              "slowest phase prepare 15.489 s <= 300 s",
+              "largest sampled service RSS 92,848,128 B in apply < 268,435,456 B",
+              "largest service ru_maxrss at exit 92,848,128 B < 268,435,456 B",
+              "open 0.308 s + first viewport 0.011 s = 0.319 s <= 5 s opening budget",
+              "imported 500000 of 500000 cells"
+            ]
+          },
+          {
+            "cells": 500000,
+            "format": "ods",
+            "qualifies": true,
+            "checks": {
+              "completed": true,
+              "time": true,
+              "sampled_memory": true,
+              "exit_memory": true,
+              "reopen": true,
+              "counts": true
+            },
+            "slowest_phase": {
+              "name": "prepare",
+              "seconds": 31.919
+            },
+            "peak_service_rss_bytes": 92930048,
+            "arithmetic": [
+              "slowest phase prepare 31.919 s <= 300 s",
+              "largest sampled service RSS 92,913,664 B in apply < 268,435,456 B",
+              "largest service ru_maxrss at exit 92,930,048 B < 268,435,456 B",
+              "open 0.313 s + first viewport 0.016 s = 0.329 s <= 5 s opening budget",
+              "imported 500000 of 500000 cells"
+            ]
+          },
+          {
+            "cells": 1000000,
+            "format": "xlsx",
+            "qualifies": true,
+            "checks": {
+              "completed": true,
+              "time": true,
+              "sampled_memory": true,
+              "exit_memory": true,
+              "reopen": true,
+              "counts": true
+            },
+            "slowest_phase": {
+              "name": "prepare",
+              "seconds": 30.907
+            },
+            "peak_service_rss_bytes": 93044736,
+            "arithmetic": [
+              "slowest phase prepare 30.907 s <= 300 s",
+              "largest sampled service RSS 93,011,968 B in apply < 268,435,456 B",
+              "largest service ru_maxrss at exit 93,044,736 B < 268,435,456 B",
+              "open 0.781 s + first viewport 0.011 s = 0.792 s <= 5 s opening budget",
+              "imported 1000000 of 1000000 cells; re-imported 1000000"
+            ]
+          },
+          {
+            "cells": 1000000,
+            "format": "ods",
+            "qualifies": false,
+            "checks": {
+              "completed": false,
+              "time": false,
+              "sampled_memory": false,
+              "exit_memory": false,
+              "reopen": false,
+              "counts": false
+            },
+            "slowest_phase": null,
+            "peak_service_rss_bytes": 0,
+            "arithmetic": [
+              "imported None of 1000000 cells"
+            ]
+          }
+        ],
+        "formats": {
+          "xlsx": {
+            "measured": [
+              100000,
+              500000,
+              1000000
+            ],
+            "qualified": [
+              100000,
+              500000,
+              1000000
+            ],
+            "not_qualified": [],
+            "largest_qualifying_cells": 1000000
+          },
+          "ods": {
+            "measured": [
+              100000,
+              500000,
+              1000000
+            ],
+            "qualified": [
+              100000,
+              500000
+            ],
+            "not_qualified": [
+              1000000
+            ],
+            "largest_qualifying_cells": 500000
+          }
+        },
+        "largest_qualifying_cells_all_formats": 500000,
+        "measured_at_that_size": {
+          "max_package_bytes": 31153327,
+          "max_expanded_bytes": 203074577
+        }
+      }
+    },
+    "without_long_text": {
+      "recorded_at_utc": "2026-11-11T23:03:34.576159+00:00",
+      "host": {
+        "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+        "machine": "arm64",
+        "cpu_count": 8,
+        "cpu": "Apple M1",
+        "memory_bytes": 8589934592,
+        "model": "MacBookAir10,1"
+      },
+      "python": "3.14.6",
+      "python_executable": "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "sqlite": "3.53.4",
+      "commit": "8a3d6d01ced1d6888da9e2e8404df1668328d064",
+      "uncommitted_paths": [
+        "?? tests/fixtures/generate_large_xlsx.py",
+        "?? tests/qualify_large_interchange.py",
+        "?? tests/test_capacity_qualification.py"
+      ],
+      "limits_in_force": {
+        "LARGE_CELLS": 1000000,
+        "LARGE_EXPANDED": 268435456,
+        "LARGE_PACKAGE": 67108864,
+        "LARGE_SHEETS": 255,
+        "MAX_RECORD_BYTES": 1048576,
+        "SNAPSHOT_BYTES": 2147483648,
+        "MAX_EXPORT_STYLES": 1024,
+        "MAX_UPLOADS": 2,
+        "MAX_DOWNLOADS": 2,
+        "LARGE_PREPARATION_SECONDS": 300,
+        "EXPORT_JOB_SECONDS": 300,
+        "UPLOAD_SECONDS": 300,
+        "DOWNLOAD_SECONDS": 300,
+        "MAX_CELLS": 10000,
+        "opening_budget_seconds": 5
+      },
+      "generator": {
+        "sheets": 3,
+        "formula_share": 0.05,
+        "long_text_share": 0.0,
+        "strings": "shared"
+      },
+      "sizes": [
+        1000000
+      ],
+      "formats": [
+        "xlsx",
+        "ods"
+      ],
+      "sample_interval_seconds": 0.05,
+      "limitations": [
+        "Host-specific: one machine, its disk and an uncontrolled (warm) OS file cache; not OS-cold.",
+        "Peak RSS is the service child's resident memory sampled every 50 ms plus its ru_maxrss at exit; the driver is excluded.",
+        "Phase seconds for jobs include the SDK's polling interval (at most 0.5 s).",
+        "One generated content mix; other workbook shapes (more long text, more formulas, more styles) can cost more."
+      ],
+      "cases": [
+        {
+          "cells": 1000000,
+          "format": "xlsx",
+          "phases": [
+            {
+              "name": "upload",
+              "service": "import",
+              "peak_rss_bytes": 46219264,
+              "samples": 2,
+              "seconds": 0.018
+            },
+            {
+              "name": "prepare",
+              "service": "import",
+              "peak_rss_bytes": 76627968,
+              "samples": 477,
+              "seconds": 27.943
+            },
+            {
+              "name": "create_workbook",
+              "service": "import",
+              "peak_rss_bytes": 76873728,
+              "samples": 2,
+              "seconds": 0.01
+            },
+            {
+              "name": "apply",
+              "service": "import",
+              "peak_rss_bytes": 84082688,
+              "samples": 120,
+              "seconds": 6.87
+            },
+            {
+              "name": "close",
+              "service": "import",
+              "peak_rss_bytes": 84049920,
+              "samples": 2,
+              "seconds": 0.001
+            },
+            {
+              "name": "open",
+              "service": "reopen",
+              "peak_rss_bytes": 49709056,
+              "samples": 12,
+              "seconds": 0.638
+            },
+            {
+              "name": "first_viewport",
+              "service": "reopen",
+              "peak_rss_bytes": 50282496,
+              "samples": 3,
+              "seconds": 0.01
+            },
+            {
+              "name": "export",
+              "service": "reopen",
+              "peak_rss_bytes": 60702720,
+              "samples": 377,
+              "seconds": 22.095
+            },
+            {
+              "name": "download",
+              "service": "reopen",
+              "peak_rss_bytes": 60751872,
+              "samples": 3,
+              "seconds": 0.03
+            },
+            {
+              "name": "reimport_upload",
+              "service": "reopen",
+              "peak_rss_bytes": 60751872,
+              "samples": 2,
+              "seconds": 0.025
+            },
+            {
+              "name": "reimport_prepare",
+              "service": "reopen",
+              "peak_rss_bytes": 88735744,
+              "samples": 479,
+              "seconds": 27.976
+            },
+            {
+              "name": "reimport_create_workbook",
+              "service": "reopen",
+              "peak_rss_bytes": 87883776,
+              "samples": 2,
+              "seconds": 0.009
+            },
+            {
+              "name": "reimport_apply",
+              "service": "reopen",
+              "peak_rss_bytes": 100073472,
+              "samples": 116,
+              "seconds": 6.752
+            }
+          ],
+          "services": [
+            {
+              "role": "import",
+              "baseline_rss_bytes": 46170112,
+              "ru_maxrss_at_exit_bytes": 84082688,
+              "staging_file_peaks_bytes": {
+                "upload": 8773499,
+                "stage": 31420416
+              }
+            },
+            {
+              "role": "reopen",
+              "baseline_rss_bytes": 46514176,
+              "ru_maxrss_at_exit_bytes": 100073472,
+              "staging_file_peaks_bytes": {
+                "snapshot": 187064320,
+                "export": 10300494,
+                "upload": 10300494,
+                "stage": 32026624
+              }
+            }
+          ],
+          "files": {
+            "stage_bytes": 31420416,
+            "native_bytes": 187064320,
+            "snapshot_bytes": 187064320,
+            "export": {
+              "package_bytes": 10300494,
+              "expanded_bytes": 51485777
+            },
+            "reimport_stage_bytes": 32026624
+          },
+          "counts": {
+            "prepared": 1000000,
+            "imported": 1000000,
+            "sheets": 3,
+            "first_viewport_cells": 512,
+            "reimported": 1000000,
+            "reimport_matches": true
+          },
+          "source": {
+            "cells": 1000000,
+            "sheets": 3,
+            "columns": 20,
+            "strings": "shared",
+            "seed": 20261111,
+            "formula_share": 0.05,
+            "long_text_share": 0.0,
+            "kinds": {
+              "number": 667702,
+              "short": 238039,
+              "long": 0,
+              "date": 47175,
+              "formula": 47084,
+              "unsupported_formula": 9500
+            },
+            "cell_formats": 331,
+            "package_bytes": 8773499,
+            "expanded_bytes": 38801037,
+            "generate_seconds": 2.278
+          },
+          "report_totals": {
+            "approximated": 346372,
+            "converted": 9500,
+            "omitted": 0,
+            "unevaluable": 0
+          }
+        },
+        {
+          "cells": 1000000,
+          "format": "ods",
+          "phases": [
+            {
+              "name": "upload",
+              "service": "import",
+              "peak_rss_bytes": 46497792,
+              "samples": 2,
+              "seconds": 0.02
+            },
+            {
+              "name": "prepare",
+              "service": "import",
+              "peak_rss_bytes": 77774848,
+              "samples": 602,
+              "seconds": 35.281
+            },
+            {
+              "name": "create_workbook",
+              "service": "import",
+              "peak_rss_bytes": 76185600,
+              "samples": 2,
+              "seconds": 0.02
+            },
+            {
+              "name": "apply",
+              "service": "import",
+              "peak_rss_bytes": 91684864,
+              "samples": 117,
+              "seconds": 6.805
+            },
+            {
+              "name": "close",
+              "service": "import",
+              "peak_rss_bytes": 91652096,
+              "samples": 2,
+              "seconds": 0.001
+            },
+            {
+              "name": "open",
+              "service": "reopen",
+              "peak_rss_bytes": 49676288,
+              "samples": 12,
+              "seconds": 0.644
+            },
+            {
+              "name": "first_viewport",
+              "service": "reopen",
+              "peak_rss_bytes": 50216960,
+              "samples": 3,
+              "seconds": 0.011
+            },
+            {
+              "name": "export",
+              "service": "reopen",
+              "peak_rss_bytes": 60555264,
+              "samples": 448,
+              "seconds": 26.225
+            },
+            {
+              "name": "download",
+              "service": "reopen",
+              "peak_rss_bytes": 53641216,
+              "samples": 3,
+              "seconds": 0.029
+            },
+            {
+              "name": "reimport_upload",
+              "service": "reopen",
+              "peak_rss_bytes": 53723136,
+              "samples": 2,
+              "seconds": 0.025
+            },
+            {
+              "name": "reimport_prepare",
+              "service": "reopen",
+              "peak_rss_bytes": 83427328,
+              "samples": 603,
+              "seconds": 35.33
+            },
+            {
+              "name": "reimport_create_workbook",
+              "service": "reopen",
+              "peak_rss_bytes": 83509248,
+              "samples": 2,
+              "seconds": 0.008
+            },
+            {
+              "name": "reimport_apply",
+              "service": "reopen",
+              "peak_rss_bytes": 100335616,
+              "samples": 115,
+              "seconds": 6.681
+            }
+          ],
+          "services": [
+            {
+              "role": "import",
+              "baseline_rss_bytes": 46415872,
+              "ru_maxrss_at_exit_bytes": 91684864,
+              "staging_file_peaks_bytes": {
+                "upload": 10364017,
+                "stage": 32194560
+              }
+            },
+            {
+              "role": "reopen",
+              "baseline_rss_bytes": 46481408,
+              "ru_maxrss_at_exit_bytes": 100335616,
+              "staging_file_peaks_bytes": {
+                "snapshot": 187695104,
+                "part": 111933565,
+                "export": 10364017,
+                "upload": 10364017,
+                "stage": 32194560
+              }
+            }
+          ],
+          "files": {
+            "stage_bytes": 32194560,
+            "native_bytes": 187695104,
+            "snapshot_bytes": 187695104,
+            "export": {
+              "package_bytes": 10364017,
+              "expanded_bytes": 112051747
+            },
+            "reimport_stage_bytes": 32194560
+          },
+          "counts": {
+            "prepared": 1000000,
+            "imported": 1000000,
+            "sheets": 3,
+            "first_viewport_cells": 512,
+            "reimported": 1000000,
+            "reimport_matches": true
+          },
+          "source": {
+            "origin": "DataHorizon ODS export of the imported generated XLSX workbook",
+            "setup_seconds": 26.999,
+            "package_bytes": 10364017,
+            "expanded_bytes": 112051747
+          },
+          "report_totals": {
+            "approximated": 346372,
+            "converted": 0,
+            "omitted": 0,
+            "unevaluable": 0
+          }
+        }
+      ],
+      "decision": {
+        "rule": "A size qualifies for a format when every phase finishes within 300 s, the service's peak RSS stays under 268,435,456 bytes in every phase (sampled every 50 ms) and at exit (ru_maxrss), the reopened file opens and serves its first viewport within the 5-second opening budget, and every generated cell is imported (and re-imported, where measured).",
+        "cases": [
+          {
+            "cells": 1000000,
+            "format": "xlsx",
+            "qualifies": true,
+            "checks": {
+              "completed": true,
+              "time": true,
+              "sampled_memory": true,
+              "exit_memory": true,
+              "reopen": true,
+              "counts": true
+            },
+            "slowest_phase": {
+              "name": "reimport_prepare",
+              "seconds": 27.976
+            },
+            "peak_service_rss_bytes": 100073472,
+            "arithmetic": [
+              "slowest phase reimport_prepare 27.976 s <= 300 s",
+              "largest sampled service RSS 100,073,472 B in reimport_apply < 268,435,456 B",
+              "largest service ru_maxrss at exit 100,073,472 B < 268,435,456 B",
+              "open 0.638 s + first viewport 0.01 s = 0.648 s <= 5 s opening budget",
+              "imported 1000000 of 1000000 cells; re-imported 1000000"
+            ]
+          },
+          {
+            "cells": 1000000,
+            "format": "ods",
+            "qualifies": true,
+            "checks": {
+              "completed": true,
+              "time": true,
+              "sampled_memory": true,
+              "exit_memory": true,
+              "reopen": true,
+              "counts": true
+            },
+            "slowest_phase": {
+              "name": "reimport_prepare",
+              "seconds": 35.33
+            },
+            "peak_service_rss_bytes": 100335616,
+            "arithmetic": [
+              "slowest phase reimport_prepare 35.33 s <= 300 s",
+              "largest sampled service RSS 100,335,616 B in reimport_apply < 268,435,456 B",
+              "largest service ru_maxrss at exit 100,335,616 B < 268,435,456 B",
+              "open 0.644 s + first viewport 0.011 s = 0.655 s <= 5 s opening budget",
+              "imported 1000000 of 1000000 cells; re-imported 1000000"
+            ]
+          }
+        ],
+        "formats": {
+          "xlsx": {
+            "measured": [
+              1000000
+            ],
+            "qualified": [
+              1000000
+            ],
+            "not_qualified": [],
+            "largest_qualifying_cells": 1000000
+          },
+          "ods": {
+            "measured": [
+              1000000
+            ],
+            "qualified": [
+              1000000
+            ],
+            "not_qualified": [],
+            "largest_qualifying_cells": 1000000
+          }
+        },
+        "largest_qualifying_cells_all_formats": 1000000,
+        "measured_at_that_size": {
+          "max_package_bytes": 10364017,
+          "max_expanded_bytes": 112051747
+        }
+      }
+    },
+    "final_review_xlsx_1000000": {
+      "recorded_at_utc": "2026-11-12T01:40:02.969189+00:00",
+      "host": {
+        "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+        "machine": "arm64",
+        "cpu_count": 8,
+        "cpu": "Apple M1",
+        "memory_bytes": 8589934592,
+        "model": "MacBookAir10,1"
+      },
+      "python": "3.14.6",
+      "python_executable": "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "sqlite": "3.53.4",
+      "commit": "aeb9fd0d92f70317be6c183ecbd4c14a845742c3",
+      "uncommitted_paths": [
+        "M docs/design/compatibility-v0.md",
+        " M docs/design/excel-fidelity-plan.md",
+        " M docs/design/implementation-status.md",
+        " M docs/design/native-format-v1.md",
+        " M docs/design/python-automation-guide.md"
+      ],
+      "limits_in_force": {
+        "LARGE_CELLS": 1000000,
+        "LARGE_EXPANDED": 268435456,
+        "LARGE_PACKAGE": 50331648,
+        "LARGE_SHEETS": 255,
+        "MAX_RECORD_BYTES": 1048576,
+        "SNAPSHOT_BYTES": 2147483648,
+        "MAX_EXPORT_STYLES": 1024,
+        "MAX_UPLOADS": 2,
+        "MAX_DOWNLOADS": 2,
+        "LARGE_PREPARATION_SECONDS": 300,
+        "EXPORT_JOB_SECONDS": 300,
+        "UPLOAD_SECONDS": 300,
+        "DOWNLOAD_SECONDS": 300,
+        "MAX_CELLS": 10000,
+        "opening_budget_seconds": 5
+      },
+      "generator": {
+        "sheets": 3,
+        "formula_share": 0.05,
+        "long_text_share": 0.05,
+        "strings": "shared"
+      },
+      "sizes": [
+        1000000
+      ],
+      "formats": [
+        "xlsx"
+      ],
+      "sample_interval_seconds": 0.05,
+      "limitations": [
+        "Host-specific: one machine, its disk and an uncontrolled (warm) OS file cache; not OS-cold.",
+        "Peak RSS is the service child's resident memory sampled every 50 ms plus its ru_maxrss at exit; the driver is excluded.",
+        "Phase seconds for jobs include the SDK's polling interval (at most 0.5 s).",
+        "One generated content mix; other workbook shapes (more long text, more formulas, more styles) can cost more."
+      ],
+      "cases": [
+        {
+          "cells": 1000000,
+          "format": "xlsx",
+          "phases": [
+            {
+              "name": "upload",
+              "service": "import",
+              "peak_rss_bytes": 47284224,
+              "samples": 2,
+              "seconds": 0.035
+            },
+            {
+              "name": "prepare",
+              "service": "import",
+              "peak_rss_bytes": 70909952,
+              "samples": 542,
+              "seconds": 31.761
+            },
+            {
+              "name": "create_workbook",
+              "service": "import",
+              "peak_rss_bytes": 66027520,
+              "samples": 2,
+              "seconds": 0.011
+            },
+            {
+              "name": "apply",
+              "service": "import",
+              "peak_rss_bytes": 81428480,
+              "samples": 141,
+              "seconds": 8.194
+            },
+            {
+              "name": "close",
+              "service": "import",
+              "peak_rss_bytes": 81395712,
+              "samples": 2,
+              "seconds": 0.001
+            },
+            {
+              "name": "open",
+              "service": "reopen",
+              "peak_rss_bytes": 47726592,
+              "samples": 18,
+              "seconds": 0.955
+            },
+            {
+              "name": "first_viewport",
+              "service": "reopen",
+              "peak_rss_bytes": 48021504,
+              "samples": 2,
+              "seconds": 0.011
+            },
+            {
+              "name": "export",
+              "service": "reopen",
+              "peak_rss_bytes": 52346880,
+              "samples": 489,
+              "seconds": 28.726
+            },
+            {
+              "name": "download",
+              "service": "reopen",
+              "peak_rss_bytes": 52674560,
+              "samples": 3,
+              "seconds": 0.06
+            },
+            {
+              "name": "reimport_upload",
+              "service": "reopen",
+              "peak_rss_bytes": 52658176,
+              "samples": 3,
+              "seconds": 0.043
+            },
+            {
+              "name": "reimport_prepare",
+              "service": "reopen",
+              "peak_rss_bytes": 82034688,
+              "samples": 528,
+              "seconds": 30.993
+            },
+            {
+              "name": "reimport_create_workbook",
+              "service": "reopen",
+              "peak_rss_bytes": 82034688,
+              "samples": 2,
+              "seconds": 0.008
+            },
+            {
+              "name": "reimport_apply",
+              "service": "reopen",
+              "peak_rss_bytes": 83165184,
+              "samples": 132,
+              "seconds": 7.642
+            }
+          ],
+          "services": [
+            {
+              "role": "import",
+              "baseline_rss_bytes": 47218688,
+              "ru_maxrss_at_exit_bytes": 81494016,
+              "staging_file_peaks_bytes": {
+                ".datahorizon": 80,
+                "upload": 23185126,
+                "stage": 229519360
+              }
+            },
+            {
+              "role": "reopen",
+              "baseline_rss_bytes": 47333376,
+              "ru_maxrss_at_exit_bytes": 83165184,
+              "staging_file_peaks_bytes": {
+                ".datahorizon": 79,
+                "snapshot": 262447104,
+                "export": 28183927,
+                "upload": 28183927,
+                "stage": 167124992
+              }
+            }
+          ],
+          "files": {
+            "stage_bytes": 229519360,
+            "native_bytes": 262447104,
+            "snapshot_bytes": 262447104,
+            "export": {
+              "package_bytes": 28183927,
+              "expanded_bytes": 105157126
+            },
+            "reimport_stage_bytes": 167124992
+          },
+          "counts": {
+            "prepared": 1000000,
+            "imported": 1000000,
+            "sheets": 3,
+            "first_viewport_cells": 512,
+            "reimported": 1000000,
+            "reimport_matches": true
+          },
+          "source": {
+            "cells": 1000000,
+            "sheets": 3,
+            "columns": 20,
+            "strings": "shared",
+            "seed": 20261111,
+            "formula_share": 0.05,
+            "long_text_share": 0.05,
+            "kinds": {
+              "number": 620642,
+              "short": 237474,
+              "long": 47244,
+              "date": 47427,
+              "formula": 47213,
+              "unsupported_formula": 9569
+            },
+            "cell_formats": 331,
+            "package_bytes": 23185126,
+            "expanded_bytes": 91727399,
+            "generate_seconds": 5.238
+          },
+          "report_totals": {
+            "approximated": 345621,
+            "converted": 9569,
+            "omitted": 0,
+            "unevaluable": 0
+          }
+        }
+      ],
+      "decision": {
+        "rule": "A size qualifies for a format when every phase finishes within 300 s, the service's peak RSS stays under 268,435,456 bytes in every phase (sampled every 50 ms) and at exit (ru_maxrss), the reopened file opens and serves its first viewport within the 5-second opening budget, and every generated cell is imported (and re-imported, where measured).",
+        "cases": [
+          {
+            "cells": 1000000,
+            "format": "xlsx",
+            "qualifies": true,
+            "checks": {
+              "completed": true,
+              "time": true,
+              "sampled_memory": true,
+              "exit_memory": true,
+              "reopen": true,
+              "counts": true
+            },
+            "slowest_phase": {
+              "name": "prepare",
+              "seconds": 31.761
+            },
+            "peak_service_rss_bytes": 83165184,
+            "arithmetic": [
+              "slowest phase prepare 31.761 s <= 300 s",
+              "largest sampled service RSS 83,165,184 B in reimport_apply < 268,435,456 B",
+              "largest service ru_maxrss at exit 83,165,184 B < 268,435,456 B",
+              "open 0.955 s + first viewport 0.011 s = 0.966 s <= 5 s opening budget",
+              "imported 1000000 of 1000000 cells; re-imported 1000000"
+            ]
+          }
+        ],
+        "formats": {
+          "xlsx": {
+            "measured": [
+              1000000
+            ],
+            "qualified": [
+              1000000
+            ],
+            "not_qualified": [],
+            "largest_qualifying_cells": 1000000
+          }
+        },
+        "largest_qualifying_cells_all_formats": 1000000,
+        "measured_at_that_size": {
+          "max_package_bytes": 28183927,
+          "max_expanded_bytes": 105157126
+        }
+      }
+    }
+  },
+  "decision": {
+    "rule": "A size qualifies for a format when every phase finishes within 300 s, the service's peak RSS stays under 268,435,456 bytes in every phase (sampled every 50 ms) and at exit (ru_maxrss), the reopened file opens and serves its first viewport within the 5-second opening budget, and every generated cell is imported (and re-imported, where measured).",
+    "standard_mix": {
+      "rule": "A size qualifies for a format when every phase finishes within 300 s, the service's peak RSS stays under 268,435,456 bytes in every phase (sampled every 50 ms) and at exit (ru_maxrss), the reopened file opens and serves its first viewport within the 5-second opening budget, and every generated cell is imported (and re-imported, where measured).",
+      "cases": [
+        {
+          "cells": 100000,
+          "format": "xlsx",
+          "qualifies": true,
+          "checks": {
+            "completed": true,
+            "time": true,
+            "sampled_memory": true,
+            "exit_memory": true,
+            "reopen": true,
+            "counts": true
+          },
+          "slowest_phase": {
+            "name": "prepare",
+            "seconds": 3.237
+          },
+          "peak_service_rss_bytes": 92995584,
+          "arithmetic": [
+            "slowest phase prepare 3.237 s <= 300 s",
+            "largest sampled service RSS 92,962,816 B in apply < 268,435,456 B",
+            "largest service ru_maxrss at exit 92,995,584 B < 268,435,456 B",
+            "open 0.065 s + first viewport 0.011 s = 0.076 s <= 5 s opening budget",
+            "imported 100000 of 100000 cells"
+          ]
+        },
+        {
+          "cells": 100000,
+          "format": "ods",
+          "qualifies": true,
+          "checks": {
+            "completed": true,
+            "time": true,
+            "sampled_memory": true,
+            "exit_memory": true,
+            "reopen": true,
+            "counts": true
+          },
+          "slowest_phase": {
+            "name": "prepare",
+            "seconds": 6.345
+          },
+          "peak_service_rss_bytes": 92848128,
+          "arithmetic": [
+            "slowest phase prepare 6.345 s <= 300 s",
+            "largest sampled service RSS 92,831,744 B in apply < 268,435,456 B",
+            "largest service ru_maxrss at exit 92,848,128 B < 268,435,456 B",
+            "open 0.073 s + first viewport 0.012 s = 0.085 s <= 5 s opening budget",
+            "imported 100000 of 100000 cells"
+          ]
+        },
+        {
+          "cells": 500000,
+          "format": "xlsx",
+          "qualifies": true,
+          "checks": {
+            "completed": true,
+            "time": true,
+            "sampled_memory": true,
+            "exit_memory": true,
+            "reopen": true,
+            "counts": true
+          },
+          "slowest_phase": {
+            "name": "prepare",
+            "seconds": 15.489
+          },
+          "peak_service_rss_bytes": 92848128,
+          "arithmetic": [
+            "slowest phase prepare 15.489 s <= 300 s",
+            "largest sampled service RSS 92,848,128 B in apply < 268,435,456 B",
+            "largest service ru_maxrss at exit 92,848,128 B < 268,435,456 B",
+            "open 0.308 s + first viewport 0.011 s = 0.319 s <= 5 s opening budget",
+            "imported 500000 of 500000 cells"
+          ]
+        },
+        {
+          "cells": 500000,
+          "format": "ods",
+          "qualifies": true,
+          "checks": {
+            "completed": true,
+            "time": true,
+            "sampled_memory": true,
+            "exit_memory": true,
+            "reopen": true,
+            "counts": true
+          },
+          "slowest_phase": {
+            "name": "prepare",
+            "seconds": 31.919
+          },
+          "peak_service_rss_bytes": 92930048,
+          "arithmetic": [
+            "slowest phase prepare 31.919 s <= 300 s",
+            "largest sampled service RSS 92,913,664 B in apply < 268,435,456 B",
+            "largest service ru_maxrss at exit 92,930,048 B < 268,435,456 B",
+            "open 0.313 s + first viewport 0.016 s = 0.329 s <= 5 s opening budget",
+            "imported 500000 of 500000 cells"
+          ]
+        },
+        {
+          "cells": 1000000,
+          "format": "xlsx",
+          "qualifies": true,
+          "checks": {
+            "completed": true,
+            "time": true,
+            "sampled_memory": true,
+            "exit_memory": true,
+            "reopen": true,
+            "counts": true
+          },
+          "slowest_phase": {
+            "name": "prepare",
+            "seconds": 30.907
+          },
+          "peak_service_rss_bytes": 93044736,
+          "arithmetic": [
+            "slowest phase prepare 30.907 s <= 300 s",
+            "largest sampled service RSS 93,011,968 B in apply < 268,435,456 B",
+            "largest service ru_maxrss at exit 93,044,736 B < 268,435,456 B",
+            "open 0.781 s + first viewport 0.011 s = 0.792 s <= 5 s opening budget",
+            "imported 1000000 of 1000000 cells; re-imported 1000000"
+          ]
+        },
+        {
+          "cells": 1000000,
+          "format": "ods",
+          "qualifies": false,
+          "checks": {
+            "completed": false,
+            "time": false,
+            "sampled_memory": false,
+            "exit_memory": false,
+            "reopen": false,
+            "counts": false
+          },
+          "slowest_phase": null,
+          "peak_service_rss_bytes": 0,
+          "arithmetic": [
+            "imported None of 1000000 cells"
+          ]
+        }
+      ],
+      "formats": {
+        "xlsx": {
+          "measured": [
+            100000,
+            500000,
+            1000000
+          ],
+          "qualified": [
+            100000,
+            500000,
+            1000000
+          ],
+          "not_qualified": [],
+          "largest_qualifying_cells": 1000000
+        },
+        "ods": {
+          "measured": [
+            100000,
+            500000,
+            1000000
+          ],
+          "qualified": [
+            100000,
+            500000
+          ],
+          "not_qualified": [
+            1000000
+          ],
+          "largest_qualifying_cells": 500000
+        }
+      },
+      "largest_qualifying_cells_all_formats": 500000,
+      "measured_at_that_size": {
+        "max_package_bytes": 31153327,
+        "max_expanded_bytes": 203074577
+      }
+    },
+    "without_long_text": {
+      "rule": "A size qualifies for a format when every phase finishes within 300 s, the service's peak RSS stays under 268,435,456 bytes in every phase (sampled every 50 ms) and at exit (ru_maxrss), the reopened file opens and serves its first viewport within the 5-second opening budget, and every generated cell is imported (and re-imported, where measured).",
+      "cases": [
+        {
+          "cells": 1000000,
+          "format": "xlsx",
+          "qualifies": true,
+          "checks": {
+            "completed": true,
+            "time": true,
+            "sampled_memory": true,
+            "exit_memory": true,
+            "reopen": true,
+            "counts": true
+          },
+          "slowest_phase": {
+            "name": "reimport_prepare",
+            "seconds": 27.976
+          },
+          "peak_service_rss_bytes": 100073472,
+          "arithmetic": [
+            "slowest phase reimport_prepare 27.976 s <= 300 s",
+            "largest sampled service RSS 100,073,472 B in reimport_apply < 268,435,456 B",
+            "largest service ru_maxrss at exit 100,073,472 B < 268,435,456 B",
+            "open 0.638 s + first viewport 0.01 s = 0.648 s <= 5 s opening budget",
+            "imported 1000000 of 1000000 cells; re-imported 1000000"
+          ]
+        },
+        {
+          "cells": 1000000,
+          "format": "ods",
+          "qualifies": true,
+          "checks": {
+            "completed": true,
+            "time": true,
+            "sampled_memory": true,
+            "exit_memory": true,
+            "reopen": true,
+            "counts": true
+          },
+          "slowest_phase": {
+            "name": "reimport_prepare",
+            "seconds": 35.33
+          },
+          "peak_service_rss_bytes": 100335616,
+          "arithmetic": [
+            "slowest phase reimport_prepare 35.33 s <= 300 s",
+            "largest sampled service RSS 100,335,616 B in reimport_apply < 268,435,456 B",
+            "largest service ru_maxrss at exit 100,335,616 B < 268,435,456 B",
+            "open 0.644 s + first viewport 0.011 s = 0.655 s <= 5 s opening budget",
+            "imported 1000000 of 1000000 cells; re-imported 1000000"
+          ]
+        }
+      ],
+      "formats": {
+        "xlsx": {
+          "measured": [
+            1000000
+          ],
+          "qualified": [
+            1000000
+          ],
+          "not_qualified": [],
+          "largest_qualifying_cells": 1000000
+        },
+        "ods": {
+          "measured": [
+            1000000
+          ],
+          "qualified": [
+            1000000
+          ],
+          "not_qualified": [],
+          "largest_qualifying_cells": 1000000
+        }
+      },
+      "largest_qualifying_cells_all_formats": 1000000,
+      "measured_at_that_size": {
+        "max_package_bytes": 10364017,
+        "max_expanded_bytes": 112051747
+      }
+    },
+    "ods_1000000_standard_mix": {
+      "qualifies": false,
+      "reason": "Not measurable: DataHorizon's ODS export of the imported 1,000,000-cell standard-mix workbook was rejected with LIMIT ('Expanded ODS export exceeds 256 MiB') while writing the ODS source, so no 1,000,000-cell ODS package of this mix exists within the expanded-byte limit. The ODS writer stores each text twice (office:string-value and text:p) and every space as <text:s/>; at 500,000 cells the standard-mix ODS export is 203,074,577 bytes expanded, about 406 bytes per cell, so 1,000,000 cells would need about 406 MB, over the 268,435,456-byte LARGE_EXPANDED. This is the expanded-byte limit doing its job, not a time or memory failure."
+    },
+    "cells": {
+      "LARGE_CELLS": 1000000,
+      "basis": "XLSX qualifies at 100,000, 500,000 and 1,000,000 cells with the standard mix (slowest phase 30.907 s prepare, peak service RSS 93,044,736 B). ODS qualifies at 100,000 and 500,000 with the standard mix and at 1,000,000 with the same mix minus long text (slowest 35.33 s, peak 100,335,616 B). Every qualifying 1,000,000-cell case reopened in at most 0.792 s including its first viewport. ODS workbooks of 1,000,000 cells are therefore qualified only within LARGE_EXPANDED; text-heavier ones are rejected by that byte limit with LIMIT.",
+      "arithmetic": [
+        "XLSX 1,000,000: 30.907 s <= 300 s; 93,044,736 B < 268,435,456 B; 0.792 s <= 5 s",
+        "ODS 500,000: 31.919 s <= 300 s; 92,930,048 B < 268,435,456 B; 0.329 s <= 5 s",
+        "ODS 1,000,000 without long text: 35.33 s <= 300 s; 100,335,616 B < 268,435,456 B; 0.655 s <= 5 s"
+      ]
+    },
+    "bytes": {
+      "headroom_rule": "limit = min(provisional, ceil(1.5 x largest measured qualifying size / 16 MiB) x 16 MiB)",
+      "largest_qualifying_package_bytes": 31153327,
+      "largest_qualifying_package_case": "standard_mix ods 500,000 source",
+      "largest_qualifying_expanded_bytes": 203074577,
+      "largest_qualifying_expanded_case": "standard_mix ods 500,000 source",
+      "at_cell_limit_max_package_bytes": 28183927,
+      "at_cell_limit_max_package_case": "standard_mix xlsx export",
+      "at_cell_limit_max_expanded_bytes": 112051747,
+      "at_cell_limit_max_expanded_case": "without_long_text ods source",
+      "LARGE_PACKAGE": 50331648,
+      "LARGE_PACKAGE_arithmetic": "min(67,108,864, ceil(1.5 x 31,153,327 / 16,777,216) x 16,777,216 = 50,331,648) = 50,331,648",
+      "LARGE_EXPANDED": 268435456,
+      "LARGE_EXPANDED_arithmetic": "min(268,435,456, ceil(1.5 x 203,074,577 / 16,777,216) x 16,777,216 = 318,767,104) = 268,435,456"
+    },
+    "largest_qualifying_cells_all_formats": 1000000,
+    "measured_at_that_size": {
+      "max_package_bytes": 28183927,
+      "max_expanded_bytes": 112051747
+    },
+    "not_qualified_or_not_run": [
+      "ODS at 1,000,000 cells with the standard mix (rejected by LARGE_EXPANDED while producing its source; see ods_1000000_standard_mix)",
+      "ODS at 500,000 cells without long text was not run",
+      "Inline-string XLSX was not measured (generator default: shared strings)",
+      "OS-cold opening was not measured (warm, uncontrolled cache)",
+      "Other hosts (Windows, Linux, Intel Mac) were not measured"
+    ],
+    "final_review_xlsx_1000000": {
+      "description": "Supplementary run after the final-review fixes (bounded feature scanner and its limits, commit aeb9fd0, documents uncommitted; that commit was then amended as 17638e4, changing only the CTest service timeout). Not a replacement for the runs above: only XLSX at 1,000,000 cells, standard mix, was repeated.",
+      "command": "PYTHONPATH=service python3 tests/qualify_large_interchange.py --sizes 1000000 --formats xlsx --output <final-review>.json",
+      "qualifies": true,
+      "slowest_phase": {
+        "name": "prepare",
+        "seconds": 31.761
+      },
+      "peak_service_rss_bytes": 83165184,
+      "arithmetic": [
+        "slowest phase prepare 31.761 s <= 300 s",
+        "largest sampled service RSS 83,165,184 B in reimport_apply < 268,435,456 B",
+        "largest service ru_maxrss at exit 83,165,184 B < 268,435,456 B",
+        "open 0.955 s + first viewport 0.011 s = 0.966 s <= 5 s opening budget",
+        "imported 1000000 of 1000000 cells; re-imported 1000000"
+      ],
+      "compared_with_standard_mix": "slowest phase prepare 31.761 s (was 30.9 s); peak service RSS 83,165,184 B (was about 93.0 MB); open + first viewport 0.966 s (was 0.79 s)"
+    }
+  }
+}

@@ -10,9 +10,11 @@ import os
 from pathlib import Path
 import sqlite3
 import sys
+import unicodedata
 from urllib.parse import quote
 
-from .client import APIError, Client, LocalService
+from .client import APIError, Client, LocalService, report_scope_lines, write_file
+from .conversion_report import place
 from .formula import FormulaError, coordinates
 
 
@@ -57,7 +59,7 @@ def direct_sql_result(db, sql):
 def emit_result(output, result, command, cleanup=None):
     try:
         # Flush here so a buffered pipe failure remains inside outcome handling.
-        print(output,flush=True)
+        print(output.replace("\x7f","\\u007f"),flush=True)
     except (OSError,ValueError) as error:
         # Avoid a second failed stdout flush at interpreter shutdown corrupting
         # the structured diagnostic or replacing the exit status with 120.
@@ -77,12 +79,135 @@ def emit_result(output, result, command, cleanup=None):
         elif command=="create":
             diagnostic.update(outcome="committed",path=result["path"],workbook_id=result.get("workbook_id"))
         if cleanup is not None: diagnostic["cleanup_errors"]=[cleanup]
-        try: print(json.dumps(diagnostic),file=sys.stderr,flush=True)
+        try: print(json_text(diagnostic),file=sys.stderr,flush=True)
         except OSError: pass  # Neither output channel is available; still fail.
         raise SystemExit(1)
     if cleanup is not None:
-        try: print(json.dumps(cleanup),file=sys.stderr,flush=True)
+        try: print(json_text(cleanup),file=sys.stderr,flush=True)
         except OSError: raise SystemExit(1)
+
+
+SEVERITY_ORDER = ("unevaluable", "omitted", "approximated", "converted")
+UNPRINTABLE = {"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"}
+
+
+def terminal_text(value):
+    """Text from a file or the service, safe to print: controls, format characters (including bidi overrides),
+    surrogates, private-use, unassigned characters and line/paragraph separators become \\xNN, \\uNNNN or \\UNNNNNNNN."""
+    def escape(character):
+        point = ord(character)
+        if unicodedata.category(character) not in UNPRINTABLE: return character
+        return f"\\x{point:02x}" if point < 0x100 else f"\\u{point:04x}" if point < 0x10000 else f"\\U{point:08x}"
+    return "".join(escape(character) for character in str(value))
+
+
+def json_text(value):
+    """JSON for a terminal: ensure_ascii escapes everything outside ASCII, and DEL is escaped as well."""
+    return json.dumps(value, allow_nan=False).replace("\x7f", "\\u007f")
+
+
+def plural(count, word):
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def report_text(review):
+    """The conversion report grouped for reading: totals by severity, then one line per entry in severity order."""
+    entries = review.get("report_entries") or []
+    totals = review.get("totals") or {}
+    lines = ["Conversion report: " + ", ".join(f"{severity} {totals.get(severity, 0)}" for severity in SEVERITY_ORDER)]
+    # The service's fixed scope statements; one line per entry follows below, in severity order.
+    lines += ["  " + line for line in report_scope_lines(review)]
+    rank = {severity: index for index, severity in enumerate(SEVERITY_ORDER)}
+    for entry in sorted(entries, key=lambda item: rank.get(item["severity"], len(rank))):
+        first = (entry.get("samples") or [None])[0]
+        where = "" if first is None else "; first at " + place(first)
+        count = f"{'>=' if entry.get('at_least') else ''}{entry['count']}"
+        lines.append(f"  {entry['severity']:<12} {count:>7}  {entry['category']}: {entry['detail']}{where}")
+    if "sheets" in review:
+        lines.append("Sheets:")
+        lines += [f"  {sheet['name']}: {plural(sheet['stored_cells'], 'cell')}" for sheet in review["sheets"]]
+        lines.append(f"Total: {plural(review['stored_cells'], 'cell')} in {plural(len(review['sheets']), 'sheet')}")
+    return "\n".join(terminal_text(line) for line in lines)
+
+
+def write_report(path, review, keys, overwrite):
+    """Write the report JSON through a temporary sibling; an existing file needs overwrite."""
+    data = json.dumps({key: review[key] for key in keys if key in review}, allow_nan=False, indent=2) + "\n"
+    write_file(path, data.encode("utf-8"), overwrite=overwrite)
+
+
+def same_file(left, right):
+    left, right = Path(left).expanduser(), Path(right).expanduser()
+    try:
+        if os.path.samefile(left, right): return True
+    except OSError:
+        pass
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return False
+
+
+def check_report_path(path, overwrite, **protected):
+    """Refuse a report path that exists (without overwrite) or that names one of the command's own files."""
+    if not path: return
+    for label, other in protected.items():
+        if other and same_file(path, other):
+            raise ValueError(f"--report-json must not name the {label.replace('_', ' ')} ({other})")
+    if os.path.lexists(Path(path).expanduser()) and not overwrite:
+        raise FileExistsError(f"Report destination {path} exists; pass --overwrite to replace it")
+
+
+def show_progress(label):
+    """Progress lines on an interactive stderr only, so redirected error output stays structured."""
+    if not sys.stderr.isatty(): return None
+    seen = []
+    def report(completed, phase):
+        if phase and phase not in seen:
+            seen.append(phase)
+            print(terminal_text(f"{label}: {phase}"), file=sys.stderr, flush=True)
+    return report
+
+
+def confirm(question):
+    """True on y/yes, False on anything else; None when stdin has nothing to answer with (non-interactive).
+    The question goes to stderr, so it is seen when stdout is redirected."""
+    print(question + " [y/N] ", end="", file=sys.stderr, flush=True)
+    try:
+        answer = sys.stdin.readline() if sys.stdin is not None else ""
+    except (OSError, ValueError):
+        answer = ""
+    if not answer:
+        print(file=sys.stderr, flush=True)
+        return None
+    # Echo a piped answer so the transcript reads as asked.
+    if not sys.stdin.isatty(): print(terminal_text(answer.strip()), file=sys.stderr, flush=True)
+    return answer.strip().lower() in ("y", "yes")
+
+
+def import_spreadsheet(client, book, args):
+    """Prepare, show the report, confirm and apply. The prepared job is cancelled and released unless the import commits."""
+    check_report_path(args.report_json, args.overwrite, native_workbook=args.file, import_source=args.source)
+    summary = client.prepare_spreadsheet_file(args.source, mode=args.mode, local=args.local, timezone_policy=args.timezone_policy,
+                                              progress=show_progress("Preparing"))
+    job, receipt = summary["stage_id"], None
+    try:
+        print(report_text(summary), flush=True)
+        if args.report_json:
+            write_report(args.report_json, summary, ("format", "mode", "stored_cells", "sheets", "totals", "report", "scope_lines", "report_entries"), args.overwrite)
+        if not args.yes:
+            answer = confirm(f"Import {plural(summary['stored_cells'], 'cell')} into {plural(len(summary['sheets']), 'sheet')}?")
+            if answer is not True:
+                body = ({"code": "CONFIRMATION_REQUIRED", "message": "No confirmation on standard input; pass --yes to import without asking. Nothing was imported.", "outcome": "rejected"}
+                        if answer is None else {"code": "DECLINED", "message": "Import declined; nothing was imported.", "outcome": "rejected"})
+                print(json_text(body), file=sys.stderr, flush=True)
+                raise SystemExit(2 if answer is None else 1)
+        receipt = book.import_staged(summary, target="add_sheets" if args.add_sheets else "replace_empty")
+    finally:
+        if receipt is None: client.discard_job(job)  # The service releases the stage only after a successful apply.
+    imported = receipt["imported"]
+    return terminal_text(f"Imported {plural(imported['cells'], 'cell')} into {plural(imported['sheets'], 'sheet')} "
+                         f"(operation {receipt['operation_id']}, state {receipt['state']})"), receipt
 
 
 def main():
@@ -146,6 +271,18 @@ def main():
     calculate.add_argument('--sheet',default='Sheet1');calculate.add_argument('--r1',type=int,default=1);calculate.add_argument('--c1',type=int,default=1);calculate.add_argument('--r2',type=int,default=32);calculate.add_argument('--c2',type=int,default=16)
     job=commands.add_parser('job',help='Durable reviewed operation jobs; create/append/start/resume read JSON stdin; execution waits for a terminal outcome')
     job.add_argument('job_action',choices=['create','append','seal','status','start','resume','cancel','release']);job.add_argument('--job-id');job.add_argument('--offset',type=int,default=0);job.add_argument('--limit',type=int,default=100)
+    spreadsheet_import=commands.add_parser('import-spreadsheet',help='Prepare a whole .xlsx/.ods workbook, print its conversion report, and import it after confirmation')
+    spreadsheet_import.add_argument('source');spreadsheet_import.add_argument('--mode',choices=['formulas','mixed','values'],default='mixed',
+        help='mixed (the default, as the desktop preselects): formulas DataHorizon can evaluate stay formulas, the rest take their cached values; '
+             'formulas keeps every formula (the REST default); values keeps cached values only')
+    spreadsheet_import.add_argument('--add-sheets',action='store_true',help='Add the sheets after the existing ones instead of filling an empty workbook')
+    spreadsheet_import.add_argument('--local',action='store_true',help='Let a service on this machine read SOURCE by path instead of uploading it')
+    spreadsheet_import.add_argument('--report-json',help='Also write the full conversion report as JSON to this path')
+    spreadsheet_import.add_argument('--yes',action='store_true',help='Import without asking for confirmation')
+    spreadsheet_import.add_argument('--timezone-policy',choices=['reject','utc'],default='reject')
+    spreadsheet_import.add_argument('--overwrite',action='store_true',help='Replace an existing --report-json file')
+    spreadsheet_export=commands.add_parser('export-spreadsheet',help='Export the whole workbook (formulas) as .xlsx/.ods, streamed to DESTINATION')
+    spreadsheet_export.add_argument('destination');spreadsheet_export.add_argument('--overwrite',action='store_true',help='Replace an existing destination and --report-json file');spreadsheet_export.add_argument('--report-json')
     direct = commands.add_parser("direct-sql", help="Explicit independent SQLite access; bypasses application behavior")
     direct.add_argument("sql")
     args = parser.parse_args()
@@ -277,6 +414,13 @@ def main():
                             result=book.operation_job(args.job_id,args.job_action,**arguments)
                         while result.get('status') in ('running',) or (args.job_action=='create' and 'source_path' in arguments and result.get('status')=='staging'):
                             time.sleep(.05);result=book.operation_job(result['job_id'])
+                    elif args.command=='import-spreadsheet':output,result=import_spreadsheet(client,book,args)
+                    elif args.command=='export-spreadsheet':
+                        check_report_path(args.report_json,args.overwrite,native_workbook=args.file,export_destination=args.destination)
+                        written=book.export_spreadsheet_file(args.destination,overwrite=args.overwrite,progress=show_progress('Exporting'))
+                        print(report_text(written),flush=True)
+                        if args.report_json:write_report(args.report_json,written,('path','bytes','sha256','state','report','scope_lines','report_entries','totals'),args.overwrite)
+                        output=terminal_text(f"Wrote {written['path']} ({written['bytes']} bytes)");result=None
                     elif args.command=='calculate':
                         import time
                         result=book.calculate(args.sheet,r1=args.r1,c1=args.c1,r2=args.r2,c2=args.c2)
@@ -284,7 +428,7 @@ def main():
                         book.calculation(result['job_id'],'release')
                     else:
                         result = book.outcome(args.operation_id)
-                    output=json.dumps(result, allow_nan=False)
+                    if args.command not in ('import-spreadsheet','export-spreadsheet'):output=json.dumps(result, allow_nan=False)
                     releasing=True
         releasing=False
         emit_result(output,result,args.command)
@@ -301,7 +445,7 @@ def main():
         fallback = {"code": code, "message": str(error), "outcome": "rejected"}
         body=dict(getattr(error, "body", fallback))
         if getattr(error,"cleanup_errors",None): body["cleanup_errors"]=error.cleanup_errors
-        print(json.dumps(body), file=sys.stderr)
+        print(json_text(body), file=sys.stderr)
         sys.exit(1)
 
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "mainwindow.h"
 #include "keyboardgrid.h"
+#include "englishplurals.h"
 #include <limits>
 #include "tracenavigation.h"
 #include "formatcellsdialog.h"
@@ -11,6 +12,11 @@
 #include "clipboarddata.h"
 #include "relationalworkbench.h"
 #include "queryworkbench.h"
+#include "conversionreportview.h"
+#include "restclient.h"
+#include <QEventLoop>
+#include <QTextDocument>
+#include <QToolButton>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTreeWidget>
@@ -291,6 +297,50 @@ private:
     }
     RestClient m_upstream;
     bool m_closeFailureReleased = false;
+};
+
+
+// Forwards JSON calls to a real service, but reports a different SHA-256 for
+// a completed export job and serves a short substitute body for its download.
+class ExportDigestProxy : public QTcpServer {
+public:
+    bool patched=false, served=false;
+    explicit ExportDigestProxy(const QJsonObject &service) : m_upstream(this) {
+        m_upstream.configure(service["url"].toString(),service["token"].toString());
+        connect(this,&QTcpServer::newConnection,this,[this] {
+            auto *socket=nextPendingConnection(); connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
+            connect(socket,&QTcpSocket::readyRead,socket,[this,socket] {
+                const auto request=socket->property("request").toByteArray()+socket->readAll(); socket->setProperty("request",request);
+                const auto end=request.indexOf("\r\n\r\n"); if(end<0 || socket->property("handled").toBool()) return;
+                const auto length=QRegularExpression("Content-Length: (\\d+)",QRegularExpression::CaseInsensitiveOption)
+                    .match(QString::fromLatin1(request.left(end))).captured(1).toInt();
+                if(request.size()<end+4+length) return;
+                socket->setProperty("handled",true);
+                const auto path=QString::fromLatin1(request.left(request.indexOf("\r\n")).split(' ').at(1));
+                const bool post=request.startsWith("POST ");
+                if(!post && path.startsWith("/v1/exports/")) {
+                    served=true;
+                    socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\nContent-Length: "+QByteArray::number(m_body.size())+"\r\n\r\n"+m_body);
+                    socket->disconnectFromHost(); return;
+                }
+                const QPointer<QTcpSocket> guarded=socket;
+                m_upstream.request(path,QJsonDocument::fromJson(request.mid(end+4)).object(),[this,guarded,path](QJsonObject result,QString error) {
+                    if(!guarded) return;
+                    if(error.isEmpty() && path.startsWith("/v1/jobs/") && result["result"].toObject().contains("export_id")) {
+                        auto value=result["result"].toObject(); value["bytes"]=double(m_body.size()); value["sha256"]=QString(64,'0');
+                        result["result"]=value; patched=true;
+                    }
+                    const auto body=QJsonDocument(error.isEmpty() || result.contains("code")?result:QJsonObject{{"code","UNAVAILABLE"},{"message",error}}).toJson(QJsonDocument::Compact);
+                    guarded->write(QByteArray("HTTP/1.1 ")+(error.isEmpty()?"200 OK":"409 Conflict")
+                        +"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(body.size())+"\r\n\r\n"+body);
+                    guarded->disconnectFromHost();
+                },post);
+            });
+        });
+    }
+private:
+    RestClient m_upstream;
+    const QByteArray m_body="PK substitute export body";
 };
 
 class JobLifecycleServer : public QTcpServer {
@@ -605,6 +655,7 @@ private slots:
         // QTest timers cannot reliably drive AppKit's separate NSAlert modal loop.
         // Native OS dialogs remain a manual gate; these tests exercise Qt widgets.
         QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+        installEnglishPlurals(QCoreApplication::instance());  // as main() does
     }
     void cleanupTestCase(){QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs,m_originalDialogAttribute);}
     void clipboardParserPreservesFieldsAndRejectsMalformedData(){
@@ -2704,9 +2755,8 @@ private slots:
         QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("whole.dhwb"),true);
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
         QFile fixture(QStringLiteral(DATAHORIZON_FIXTURES "/inputs.")+format); QVERIFY(fixture.open(QIODevice::ReadOnly));
-        QSignalSpy changed(&window,&MainWindow::operationFinished);
-        answerNextDialog(QMessageBox::Yes); window.importSpreadsheetBytes(fixture.readAll(),format,"formulas",0);
-        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,10000); QVERIFY(changed[0][0].toBool());
+        // All sheets take the large path: upload, staged preparation, grouped review, Apply.
+        importAndApply(window,fixture.fileName(),format,"formulas","replace_empty");
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14.00"),5000);
         // The public export helper captures the full reviewed context itself.
         const auto output=temp.filePath("whole."+format);
@@ -2785,6 +2835,501 @@ private slots:
         QVERIFY(!timedOut); QVERIFY(pickerSeen); QVERIFY(optionsSeen); QVERIFY(correctDelimiter); QVERIFY(changed[0][0].toBool());
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),expectedFirst,5000);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),expectedSecond,5000);
+    }
+    // A synchronous call to the window's own service, for checking what the
+    // desktop left behind there (released uploads, jobs and exports).
+    static QPair<QJsonObject,QString> serviceCall(MainWindow &window,const QString &path,bool post=true) {
+        auto *client=window.findChild<RestClient *>(); if(!client) return {{},"no client"};
+        QPair<QJsonObject,QString> answer; bool done=false; QEventLoop loop;
+        client->request(path,{},[&](QJsonObject result,QString error){answer={result,error};done=true;loop.quit();},post);
+        QTimer::singleShot(10000,&loop,&QEventLoop::quit); if(!done) loop.exec();
+        return answer;
+    }
+    static QDialog *visibleDialog(MainWindow &window,const QString &name) {
+        for(auto *dialog:window.findChildren<QDialog *>(name)) if(dialog->isVisible()) return dialog;
+        return nullptr;
+    }
+    static QStringList tabTexts(MainWindow &window) {
+        QStringList texts; auto *tabs=window.findChild<QTabBar *>("sheets"); if(!tabs) return texts;
+        for(int i=0;i<tabs->count();++i) texts.append(tabs->tabText(i));
+        return texts;
+    }
+    static void openFresh(MainWindow &window,const QString &path) {
+        QSignalSpy ready(&window,&MainWindow::serviceReady); QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path,true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+    }
+    // Starts a large import, waits for its review and clicks Apply.
+    static void importAndApply(MainWindow &window,const QString &path,const QString &format,const QString &mode,const QString &target) {
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        window.importWorkbookFile(path,format,mode,target);
+        QDialog *review=nullptr; QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        auto *apply=review->findChild<QPushButton *>("importApply"); QVERIFY(apply); QVERIFY(apply->isEnabled());
+        QVERIFY(!apply->isDefault()); apply->click();
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,20000); QVERIFY(changed[0][0].toBool());
+    }
+    void largeWorkbookImportUploadsReviewsAndApplies() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("large.dhwb"));
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/fidelity.xlsx"),"xlsx","mixed","replace_empty");
+        QPointer<QProgressDialog> progress=window.findChild<QProgressDialog *>("largeImportProgress"); QVERIFY(progress);
+        const auto upload=progress->property("uploadId").toString(), job=progress->property("jobId").toString();
+        QCOMPARE(progress->findChild<QLabel *>()->textFormat(),Qt::PlainText);
+        QDialog *review=nullptr; QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        QTRY_VERIFY_WITH_TIMEOUT(!progress,5000);
+        // The service's scope statements sit in a collapsed Details section.
+        auto *scopeLines=review->findChild<QLabel *>("importReviewScope"); QVERIFY(!scopeLines->isVisibleTo(review));
+        review->findChild<QToolButton *>("importReviewDetailsToggle")->click(); QVERIFY(scopeLines->isVisibleTo(review));
+        QVERIFY(review->findChild<QLabel *>("importReviewSummary")->text().contains("cannot be undone"));
+        auto *sheets=review->findChild<QTreeWidget *>("importSheets"); QVERIFY(sheets); QCOMPARE(sheets->topLevelItemCount(),3);
+        QCOMPARE(sheets->topLevelItem(0)->text(0),QString("Inputs")); QCOMPARE(sheets->topLevelItem(0)->text(1),QString("48"));
+        QVERIFY(review->findChild<ConversionReportView *>("conversionReport"));
+        QVERIFY(!review->findChild<QLabel *>("importReviewScope")->text().isEmpty());
+        // The upload is released once the stage is prepared; the job holds the stage until Apply.
+        QTRY_COMPARE_WITH_TIMEOUT(serviceCall(window,"/v1/uploads/"+upload+"/release").first["code"].toString(),QString("JOB_NOT_FOUND"),5000);
+        QCOMPARE(serviceCall(window,"/v1/jobs/"+job,false).first["status"].toString(),QString("completed"));
+        review->findChild<QPushButton *>("importApply")->click();
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,20000); QVERIFY(changed[0][0].toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(tabTexts(window),QStringList({"Inputs","Summary","Empty"}),10000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.findChild<QTabBar *>("sheets")->tabText(window.findChild<QTabBar *>("sheets")->currentIndex()),QString("Inputs"),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14.00"),5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!visibleDialog(window,"largeImportReview"),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceCall(window,"/v1/jobs/"+job,false).first["code"].toString(),QString("JOB_NOT_FOUND"),5000);
+    }
+    void importReviewCountsInTheSingularAndPlural() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("one.dhwb"));
+        // One sheet holding one stored cell.
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/markup.xlsx"),"xlsx","mixed","replace_empty");
+        QDialog *review=nullptr; QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        auto text=review->findChild<QLabel *>("importReviewSummary")->text();
+        QVERIFY2(text.startsWith("1 sheet with 1 stored cell will replace"),qPrintable(text));
+        QVERIFY2(!text.contains("(s)"),qPrintable(text));
+        review->reject(); QTRY_VERIFY_WITH_TIMEOUT(!visibleDialog(window,"largeImportReview"),5000);
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/fidelity.xlsx"),"xlsx","mixed","replace_empty");
+        QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        text=review->findChild<QLabel *>("importReviewSummary")->text();
+        QVERIFY2(text.startsWith("3 sheets with 49 stored cells will replace"),qPrintable(text));
+        review->reject();
+    }
+    void closeBeforeTheCapabilitiesReplyStillCloses() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("closing.dhwb"));
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/fidelity.xlsx"),"xlsx","mixed","replace_empty");
+        QVERIFY(window.findChild<QProgressDialog *>("largeImportProgress"));
+        // Closed before the event loop delivers the capabilities reply: the cleanup finishes synchronously
+        // inside closeEvent and the resumed close must not be lost.
+        window.close();
+        QTRY_VERIFY_WITH_TIMEOUT(!window.isVisible(),3000);
+    }
+    void importReportGroupsBySeverity() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("report.dhwb"));
+        // Keep every formula: INFO has no cached result to fall back on, so it is kept uncalculated.
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/unsupported.xlsx"),"xlsx","formulas","replace_empty");
+        QDialog *review=nullptr; QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        auto *report=review->findChild<ConversionReportView *>("conversionReport"); QVERIFY(report);
+        // The producer's theme font colour is omitted too; groups follow severity order.
+        auto *tree=report->tree(); QCOMPARE(tree->topLevelItemCount(),2);
+        QCOMPARE(tree->topLevelItem(1)->data(0,Qt::UserRole).toString(),QString("omitted"));
+        QCOMPARE(tree->topLevelItem(1)->text(0),QString("Left out"));
+        auto *group=tree->topLevelItem(0);
+        QCOMPARE(group->data(0,Qt::UserRole).toString(),QString("unevaluable"));
+        QCOMPARE(group->text(0),QString("Formulas kept but not calculated")); QCOMPARE(group->text(2),QString("1"));
+        QCOMPARE(group->childCount(),1);
+        auto *row=group->child(0);
+        QCOMPARE(row->data(0,Qt::UserRole).toString(),QString("formula.unsupported_function"));
+        QCOMPARE(row->text(0),QString("Unsupported function")); QCOMPARE(row->text(2),QString("1"));
+        QCOMPARE(row->childCount(),1); QCOMPARE(row->child(0)->text(0),QString("Data!B1"));
+        auto *totals=report->findChild<QLabel *>("conversionTotals"); QVERIFY(totals);
+        QVERIFY(totals->text().contains("Formulas kept but not calculated 1"));
+        if(qEnvironmentVariableIsSet("DATAHORIZON_IMPORT_REVIEW_SCREENSHOT")) QVERIFY(review->grab().save(qEnvironmentVariable("DATAHORIZON_IMPORT_REVIEW_SCREENSHOT")));
+        auto *cancel=review->findChild<QPushButton *>("importCancel"); QVERIFY(cancel); QVERIFY(cancel->isDefault());
+        const auto job=review->property("jobId").toString();
+        cancel->click();
+        QTRY_COMPARE_WITH_TIMEOUT(serviceCall(window,"/v1/jobs/"+job,false).first["code"].toString(),QString("JOB_NOT_FOUND"),5000);
+        QCOMPARE(tabTexts(window),QStringList({"Sheet1"}));
+    }
+    void importAddsSheetsToNonEmptyWorkbook() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("add.dhwb"));
+        QSignalSpy opened(&window,&MainWindow::workbookReady);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","kept"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        importAndApply(window,QStringLiteral(DATAHORIZON_FIXTURES "/fidelity.xlsx"),"xlsx","mixed","add_sheets");
+        QTRY_COMPARE_WITH_TIMEOUT(tabTexts(window),QStringList({"Sheet1","Inputs","Summary","Empty"}),10000);
+        auto *tabs=window.findChild<QTabBar *>("sheets"); QTRY_COMPARE_WITH_TIMEOUT(tabs->currentIndex(),1,5000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14.00"),5000);
+        tabs->setCurrentIndex(0);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("kept"),5000);
+    }
+    void importNameConflictLeavesWorkbookUnchanged() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("conflict.dhwb"));
+        QSignalSpy opened(&window,&MainWindow::workbookReady);
+        window.submit({{"action","sheet_add"},{"name","summary"}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/fidelity.xlsx"),"xlsx","mixed","add_sheets");
+        QDialog *review=nullptr; QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        const auto job=review->property("jobId").toString();
+        auto *apply=review->findChild<QPushButton *>("importApply"); apply->click();
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,20000); QVERIFY(!changed[0][0].toBool());
+        auto *message=review->findChild<QLabel *>("importReviewMessage"); QVERIFY(message);
+        QTRY_VERIFY_WITH_TIMEOUT(message->isVisible(),5000);
+        QVERIFY(message->text().contains("Summary")); QCOMPARE(message->textFormat(),Qt::PlainText);
+        QVERIFY(review->isVisible()); QVERIFY(!apply->isEnabled());
+        QCOMPARE(tabTexts(window),QStringList({"Sheet1","summary"}));
+        review->findChild<QPushButton *>("importCancel")->click();
+        QTRY_COMPARE_WITH_TIMEOUT(serviceCall(window,"/v1/jobs/"+job,false).first["code"].toString(),QString("JOB_NOT_FOUND"),5000);
+        QCOMPARE(tabTexts(window),QStringList({"Sheet1","summary"}));
+    }
+    void cancelDuringUploadLeavesNoStage() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        const auto path=temp.filePath("big.xlsx");
+        { QFile big(path); QVERIFY(big.open(QIODevice::WriteOnly)); const QByteArray block(1024*1024,'x'); for(int i=0;i<48;++i) big.write(block); }
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("upload.dhwb"));
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        window.importWorkbookFile(path,"xlsx","mixed","replace_empty");
+        QPointer<QProgressDialog> progress=window.findChild<QProgressDialog *>("largeImportProgress"); QVERIFY(progress);
+        const auto upload=progress->property("uploadId").toString(), job=progress->property("jobId").toString();
+        bool cancelledDuringUpload=false; QTimer watch; watch.setInterval(0);
+        connect(&watch,&QTimer::timeout,&window,[&]{
+            if(progress && progress->labelText().startsWith("Uploading") && progress->value()<progress->maximum()) {
+                cancelledDuringUpload=true; watch.stop(); progress->findChild<QPushButton *>()->click();
+            }
+        });
+        watch.start();
+        auto *issues=window.findChild<QPlainTextEdit *>("operationIssues"); QVERIFY(issues);
+        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("Import cancelled"),20000); watch.stop();
+        QVERIFY(cancelledDuringUpload); QVERIFY(!visibleDialog(window,"largeImportReview"));
+        QTRY_COMPARE_WITH_TIMEOUT(serviceCall(window,"/v1/uploads/"+upload+"/release").first["code"].toString(),QString("JOB_NOT_FOUND"),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceCall(window,"/v1/jobs/"+job,false).first["code"].toString(),QString("JOB_NOT_FOUND"),5000);
+        QCOMPARE(changed.count(),0); QCOMPARE(tabTexts(window),QStringList({"Sheet1"}));
+    }
+    void wholeWorkbookExportDownloadsThroughJob() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("native.dhwb"));
+        QSignalSpy opened(&window,&MainWindow::workbookReady);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}},QJsonObject{{"row",1},{"col",2},{"source","=A1*2"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        const auto output=temp.filePath("out/whole.xlsx"); QVERIFY(QDir().mkpath(temp.filePath("out")));
+        window.exportWorkbookFile(output,"xlsx");
+        QPointer<QProgressDialog> progress=window.findChild<QProgressDialog *>("largeExportProgress"); QVERIFY(progress);
+        const auto job=progress->property("jobId").toString();
+        QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(output),20000); QTRY_VERIFY_WITH_TIMEOUT(!progress,5000);
+        QFile file(output); QVERIFY(file.open(QIODevice::ReadOnly)); const auto data=file.readAll();
+        QVERIFY(data.startsWith("PK")); QVERIFY(data.contains("xl/workbook.xml"));
+        QCOMPARE(QDir(temp.filePath("out")).entryList(QDir::Files|QDir::Hidden|QDir::NoDotAndDotDot),QStringList({"whole.xlsx"}));
+        QTRY_COMPARE_WITH_TIMEOUT(serviceCall(window,"/v1/exports/"+job,false).first["code"].toString(),QString("JOB_NOT_FOUND"),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceCall(window,"/v1/jobs/"+job,false).first["code"].toString(),QString("JOB_NOT_FOUND"),5000);
+        QCOMPARE(opened.count(),1);
+    }
+    void importExpiredStageOffersToPrepareAgain() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("expired.dhwb"));
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/fidelity.xlsx"),"xlsx","mixed","replace_empty");
+        QDialog *review=nullptr; QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        const auto job=review->property("jobId").toString();
+        QVERIFY(serviceCall(window,"/v1/jobs/"+job+"/release").second.isEmpty());
+        bool offered=false,plainOffer=false; QString offer; QTimer answer; answer.setInterval(10);
+        connect(&answer,&QTimer::timeout,&window,[&]{
+            if(auto *box=qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); box && box->objectName()=="importExpiredReview") {
+                offered=true; offer=box->text(); plainOffer=box->textFormat()==Qt::PlainText; answer.stop(); box->button(QMessageBox::Yes)->click();
+            }
+        });
+        answer.start();
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        review->findChild<QPushButton *>("importApply")->click();
+        QTRY_VERIFY_WITH_TIMEOUT(offered,20000); QVERIFY(offer.contains("expired")); QVERIFY(plainOffer);
+        QCOMPARE(changed.count(),1); QVERIFY(!changed[0][0].toBool());
+        QDialog *again=nullptr;
+        QTRY_VERIFY_WITH_TIMEOUT((again=visibleDialog(window,"largeImportReview")) && again->property("jobId").toString()!=job,20000);
+        again->reject();
+        QTRY_VERIFY_WITH_TIMEOUT(!visibleDialog(window,"largeImportReview"),5000);
+        QCOMPARE(tabTexts(window),QStringList({"Sheet1"}));
+    }
+    // Drives File → Import… with the given file up to the options dialog and
+    // hands that dialog to inspect; inspect accepts or rejects it.
+    static bool driveImportOptions(MainWindow &window,const QString &path,const std::function<void(QDialog *)> &inspect) {
+        const bool nativeDialogs=QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs,true);
+        const auto restore=qScopeGuard([nativeDialogs]{QApplication::setAttribute(Qt::AA_DontUseNativeDialogs,nativeDialogs);});
+        bool pickerSeen=false,optionsSeen=false; QElapsedTimer elapsed; elapsed.start(); QTimer answer; answer.setInterval(10);
+        QObject::connect(&answer,&QTimer::timeout,&window,[&]{
+            auto *modal=QApplication::activeModalWidget();
+            if(elapsed.elapsed()>15000) { if(auto *dialog=qobject_cast<QDialog *>(modal)) dialog->reject(); return; }
+            if(auto *picker=qobject_cast<QFileDialog *>(modal)) {
+                if(!pickerSeen) { pickerSeen=true; picker->setDirectory(QFileInfo(path).absolutePath()); picker->findChild<QLineEdit *>("fileNameEdit")->setText(path); }
+                if(auto *buttons=picker->findChild<QDialogButtonBox *>())
+                    if(auto *button=buttons->button(QDialogButtonBox::Open);button && button->isEnabled()) QTimer::singleShot(0,button,[button]{button->click();});
+            } else if(auto *dialog=qobject_cast<QDialog *>(modal);dialog && dialog->objectName()=="spreadsheetOptionsDialog" && !optionsSeen) {
+                optionsSeen=true; answer.stop(); inspect(dialog);
+            }
+        });
+        answer.start(); window.findChild<QAction *>("importAction")->trigger();
+        QElapsedTimer wait; wait.start();
+        while(!optionsSeen && wait.elapsed()<16000) QTest::qWait(20);
+        return optionsSeen;
+    }
+    void importModeChooserPreselectsMixed() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("mode.dhwb"));
+        const auto path=temp.filePath("input.xlsx"); QVERIFY(QFile::copy(QStringLiteral(DATAHORIZON_FIXTURES "/inputs.xlsx"),path));
+        QStringList labels,modes; bool replaceEnabled=false,hintVisible=true; QString target;
+        QVERIFY(driveImportOptions(window,path,[&](QDialog *dialog){
+            auto *mode=dialog->findChild<QComboBox *>("importMode");
+            for(int i=0;i<mode->count();++i){labels.append(mode->itemText(i));modes.append(mode->itemData(i).toString());}
+            modes.prepend(mode->currentData().toString());
+            auto *destination=dialog->findChild<QComboBox *>("importTarget");
+            replaceEnabled=qobject_cast<QStandardItemModel *>(destination->model())->item(0)->isEnabled();
+            target=destination->currentData().toString();
+            hintVisible=dialog->findChild<QLabel *>("importTargetHint")->isVisibleTo(dialog);
+            dialog->reject();
+        }));
+        QCOMPARE(labels,QStringList({"Formulas where possible, values otherwise","Keep every formula","Values only"}));
+        QCOMPARE(modes,QStringList({"mixed","mixed","formulas","values"}));
+        QVERIFY(replaceEnabled); QCOMPARE(target,QString("replace_empty")); QVERIFY(!hintVisible);
+    }
+    void replaceTargetDisabledForNonEmptyWorkbook_data() {
+        QTest::addColumn<bool>("reopened");
+        // "edited": the window's undo history already rules Replace out.
+        // "stored": a reopened file has no history, so only the cell read finds the stored cell.
+        QTest::newRow("edited")<<false; QTest::newRow("stored")<<true;
+    }
+    void replaceTargetDisabledForNonEmptyWorkbook() {
+        QFETCH(bool,reopened);
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        const auto native=temp.filePath("full.dhwb");
+        if(reopened) {
+            MainWindow writer(options); writer.show(); openFresh(writer,native);
+            QSignalSpy written(&writer,&MainWindow::workbookReady);
+            writer.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",3},{"col",2},{"source","7"}}}}});
+            QTRY_COMPARE_WITH_TIMEOUT(written.count(),1,10000);
+        }
+        MainWindow window(options); window.show();
+        if(reopened) {
+            QSignalSpy ready(&window,&MainWindow::serviceReady); QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+            QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(native); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+            QAction *undo=nullptr; for(auto *action:window.findChildren<QAction *>()) if(action->text().startsWith("Undo")) undo=action;
+            QVERIFY(undo); QCOMPARE(undo->text(),QString("Undo"));
+            QCOMPARE(tabTexts(window),QStringList({"Sheet1"}));
+        } else {
+            openFresh(window,native);
+            QSignalSpy opened(&window,&MainWindow::workbookReady);
+            window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}}}}});
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        }
+        const auto path=temp.filePath("input.xlsx"); QVERIFY(QFile::copy(QStringLiteral(DATAHORIZON_FIXTURES "/inputs.xlsx"),path));
+        bool replaceEnabled=true,hintVisible=false; QString target,hint;
+        QVERIFY(driveImportOptions(window,path,[&](QDialog *dialog){
+            auto *scope=dialog->findChild<QComboBox *>("importScope"); scope->setCurrentIndex(scope->findData("workbook"));
+            auto *destination=dialog->findChild<QComboBox *>("importTarget");
+            replaceEnabled=qobject_cast<QStandardItemModel *>(destination->model())->item(0)->isEnabled();
+            target=destination->currentData().toString();
+            auto *label=dialog->findChild<QLabel *>("importTargetHint"); hintVisible=label->isVisibleTo(dialog); hint=label->text();
+            dialog->reject();
+        }));
+        QVERIFY(!replaceEnabled); QCOMPARE(target,QString("add_sheets")); QVERIFY(hintVisible); QVERIFY(hint.contains("Replace is available only"));
+    }
+    void odsWholeWorkbookImportUsesLargePath() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("ods.dhwb"));
+        const auto path=temp.filePath("fidelity.ods"); QVERIFY(QFile::copy(QStringLiteral(DATAHORIZON_FIXTURES "/fidelity.ods"),path));
+        QVERIFY(driveImportOptions(window,path,[&](QDialog *dialog){
+            auto *scope=dialog->findChild<QComboBox *>("importScope"); scope->setCurrentIndex(scope->findData("workbook"));
+            dialog->accept();
+        }));
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        QDialog *review=nullptr; QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        QCOMPARE(review->findChild<QTreeWidget *>("importSheets")->topLevelItemCount(),3);
+        review->findChild<QPushButton *>("importApply")->click();
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,20000); QVERIFY(changed[0][0].toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(tabTexts(window),QStringList({"Inputs","Summary","Empty"}),10000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14.00"),5000);
+    }
+    void exportCancelReleasesExportAndWritesNoFile() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("native.dhwb"));
+        QSignalSpy opened(&window,&MainWindow::workbookReady);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QVERIFY(QDir().mkpath(temp.filePath("out"))); const auto output=temp.filePath("out/cancelled.ods");
+        window.exportWorkbookFile(output,"ods");
+        QPointer<QProgressDialog> progress=window.findChild<QProgressDialog *>("largeExportProgress"); QVERIFY(progress);
+        const auto job=progress->property("jobId").toString();
+        progress->findChild<QPushButton *>()->click();
+        auto *issues=window.findChild<QPlainTextEdit *>("operationIssues");
+        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("Export cancelled"),5000);
+        // The job may be created after the cancel arrives; it is discarded then too.
+        QTest::qWait(1000);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceCall(window,"/v1/jobs/"+job,false).first["code"].toString(),QString("JOB_NOT_FOUND"),5000);
+        QCOMPARE(serviceCall(window,"/v1/exports/"+job,false).first["code"].toString(),QString("JOB_NOT_FOUND"));
+        QCOMPARE(QDir(temp.filePath("out")).entryList(QDir::Files|QDir::Hidden|QDir::NoDotAndDotDot),QStringList());
+        QCOMPARE(opened.count(),1);
+    }
+    void reportViewLabelsFeatureEntries() {
+        ConversionReportView view;
+        const QJsonObject merged{{"category","sheet.feature"},{"severity","omitted"},{"detail","merged_cells"},{"count",2},
+                                 {"samples",QJsonArray{QJsonObject{{"sheet","Sheet1"},{"cell",QJsonValue()}}}}};
+        const QJsonObject names{{"category","workbook.feature"},{"severity","omitted"},{"detail","defined_names"},{"count",3},{"samples",QJsonArray{}}};
+        const QJsonObject unknown{{"category","sheet.feature"},{"severity","omitted"},{"detail","future_feature"},{"count",1},{"samples",QJsonArray{}}};
+        view.setReport({{"report_entries",QJsonArray{merged,names,unknown}}});
+        auto *group=view.tree()->topLevelItem(0); QCOMPARE(group->text(0),QString("Left out")); QCOMPARE(group->childCount(),3);
+        auto *row=group->child(0);
+        QCOMPARE(row->text(0),QString("Sheet feature")); QCOMPARE(row->text(1),QString("Merged cells")); QCOMPARE(row->text(2),QString("2"));
+        QCOMPARE(row->data(1,Qt::UserRole).toString(),QString("merged_cells"));
+        QVERIFY(row->toolTip(1).contains("merged_cells"));
+        // A sample without a cell is the whole sheet.
+        QCOMPARE(row->childCount(),1); QCOMPARE(row->child(0)->text(0),QString("Sheet1"));
+        QCOMPARE(group->child(1)->text(0),QString("Workbook feature")); QCOMPARE(group->child(1)->text(1),QString("Defined names"));
+        view.setReport({{"report_entries",QJsonArray{QJsonObject{{"category","workbook.feature"},{"severity","omitted"},{"detail","chart_sheets"},{"count",1},
+                                                              {"samples",QJsonArray{QJsonObject{{"sheet","Chart1"},{"cell",QJsonValue()}}}}}}}});
+        QCOMPARE(view.tree()->topLevelItem(0)->child(0)->text(1),QString("Chart sheets"));
+        QCOMPARE(view.tree()->topLevelItem(0)->child(0)->child(0)->text(0),QString("Chart1"));
+        view.setReport({{"report_entries",QJsonArray{merged,names,unknown}}}); group=view.tree()->topLevelItem(0);
+        // An id this build does not know shows as it is.
+        QCOMPARE(group->child(2)->text(1),QString("future_feature"));
+    }
+    void reportViewShowsPlainTextForMarkupInSheetNames() {
+        ConversionReportView view;
+        QCOMPARE(view.objectName(),QString("conversionReport"));
+        view.setReport({});
+        QCOMPARE(view.findChild<QLabel *>("conversionTotals")->text(),QString("Nothing was changed or left out."));
+        const QJsonObject entry{{"category","formula.unsupported_function"},{"severity","unevaluable"},{"detail","<i>INFO</i>"},{"count",2},
+                                {"samples",QJsonArray{QJsonObject{{"sheet","<b>x</b>"},{"cell","B1"}},QJsonObject{{"sheet","<b>x</b>"},{"cell","B2"}}}}};
+        const QJsonObject other{{"category","vendor.custom"},{"severity","converted"},{"detail","kept"},{"count",1},{"samples",QJsonArray{}}};
+        view.setReport({{"report_entries",QJsonArray{other,entry}},{"totals",QJsonObject{{"unevaluable",2},{"omitted",0},{"approximated",0},{"converted",1}}}});
+        auto *tree=view.tree(); QCOMPARE(tree->topLevelItemCount(),2);
+        QCOMPARE(tree->topLevelItem(0)->text(0),QString("Formulas kept but not calculated"));
+        QCOMPARE(tree->topLevelItem(1)->text(0),QString("Converted"));
+        QCOMPARE(tree->topLevelItem(1)->child(0)->text(0),QString("vendor.custom"));
+        auto *row=tree->topLevelItem(0)->child(0);
+        QCOMPARE(row->text(1),QString("<i>INFO</i>")); QCOMPARE(row->childCount(),2);
+        QCOMPARE(row->child(0)->text(0),QString("<b>x</b>!B1"));
+        auto *totals=view.findChild<QLabel *>("conversionTotals"); QCOMPARE(totals->textFormat(),Qt::PlainText);
+        QVERIFY(totals->text().contains("Converted 1"));
+        QVERIFY(!tree->wordWrap()); QCOMPARE(tree->textElideMode(),Qt::ElideMiddle);
+        // Tooltips interpret markup they detect: the escaped tip renders literally.
+        auto rendered=[](const QString &tip){QTextDocument document; if(Qt::mightBeRichText(tip)) document.setHtml(tip); else document.setPlainText(tip); return document.toPlainText();};
+        QCOMPARE(rendered(row->toolTip(1)),QString("<i>INFO</i>"));
+        QCOMPARE(rendered(row->child(0)->toolTip(0)),QString("<b>x</b>!B1"));
+        QVERIFY(!row->toolTip(1).contains("<i>"));
+        // Through the import: the sheet list, its tooltip and a conflict message
+        // show a markup sheet name literally. Sheet names cannot contain "/".
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("markup.dhwb"));
+        QSignalSpy opened(&window,&MainWindow::workbookReady);
+        window.submit({{"action","sheet_add"},{"name","<b>x<b>"}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/markup.xlsx"),"xlsx","mixed","add_sheets");
+        QDialog *review=nullptr; QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        auto *sheets=review->findChild<QTreeWidget *>("importSheets");
+        QCOMPARE(sheets->topLevelItem(0)->text(0),QString("<b>x<b>"));
+        QCOMPARE(rendered(sheets->topLevelItem(0)->toolTip(0)),QString("<b>x<b>"));
+        for(auto *label:review->findChildren<QLabel *>()) QCOMPARE(label->textFormat(),Qt::PlainText);
+        review->findChild<QPushButton *>("importApply")->click();
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,20000);
+        auto *message=review->findChild<QLabel *>("importReviewMessage"); QTRY_VERIFY_WITH_TIMEOUT(message->isVisible(),5000);
+        QVERIFY(message->text().contains("<b>x<b>")); QCOMPARE(message->textFormat(),Qt::PlainText);
+        review->reject();
+    }
+
+    void cancelAfterJobStartLeavesNoUploadOrJob() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("race.dhwb"));
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/fidelity.xlsx"),"xlsx","mixed","replace_empty");
+        QPointer<QProgressDialog> progress=window.findChild<QProgressDialog *>("largeImportProgress"); QVERIFY(progress);
+        const auto upload=progress->property("uploadId").toString(), job=progress->property("jobId").toString();
+        // Cancel as soon as the job-creating request has been sent.
+        bool cancelled=false; QTimer watch; watch.setInterval(0);
+        connect(&watch,&QTimer::timeout,&window,[&]{
+            if(progress && progress->labelText().startsWith("Reading cells")) { cancelled=true; watch.stop(); progress->findChild<QPushButton *>()->click(); }
+        });
+        watch.start();
+        auto *issues=window.findChild<QPlainTextEdit *>("operationIssues");
+        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("Import cancelled"),20000); watch.stop(); QVERIFY(cancelled);
+        QTest::qWait(1000);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceCall(window,"/v1/jobs/"+job,false).first["code"].toString(),QString("JOB_NOT_FOUND"),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceCall(window,"/v1/uploads/"+upload+"/release").first["code"].toString(),QString("JOB_NOT_FOUND"),5000);
+        QVERIFY(!visibleDialog(window,"largeImportReview")); QCOMPARE(tabTexts(window),QStringList({"Sheet1"}));
+    }
+    void closingWindowDuringReviewReleasesJobAndUpload() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("close.dhwb"));
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/fidelity.xlsx"),"xlsx","mixed","replace_empty");
+        auto *progress=window.findChild<QProgressDialog *>("largeImportProgress"); QVERIFY(progress);
+        const auto upload=progress->property("uploadId").toString(), job=progress->property("jobId").toString();
+        QTRY_VERIFY_WITH_TIMEOUT(visibleDialog(window,"largeImportReview"),20000);
+        QCOMPARE(serviceCall(window,"/v1/jobs/"+job,false).first["status"].toString(),QString("completed"));
+        window.close();
+        QTRY_VERIFY_WITH_TIMEOUT(!window.isVisible(),10000);
+        QCOMPARE(serviceCall(window,"/v1/jobs/"+job,false).first["code"].toString(),QString("JOB_NOT_FOUND"));
+        QCOMPARE(serviceCall(window,"/v1/uploads/"+upload+"/release").first["code"].toString(),QString("JOB_NOT_FOUND"));
+    }
+    void declinedApplyKeepsReviewAndBusyState() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("declined.dhwb"));
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/fidelity.xlsx"),"xlsx","mixed","replace_empty");
+        QDialog *review=nullptr; QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        auto *tabs=window.findChild<QTabBar *>("sheets"); QVERIFY(!tabs->isEnabled());
+        // A formula-bar draft the user keeps makes submit decline before sending.
+        auto *source=window.findChild<QLineEdit *>("source"); source->setText("kept draft"); source->setModified(true);
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        answerNextDialog(QMessageBox::Cancel);
+        auto *apply=review->findChild<QPushButton *>("importApply"); apply->click();
+        auto *message=review->findChild<QLabel *>("importReviewMessage");
+        QTRY_VERIFY_WITH_TIMEOUT(message->isVisible(),5000);
+        QVERIFY(review->isVisible()); QVERIFY(apply->isEnabled()); QVERIFY(!tabs->isEnabled()); QCOMPARE(changed.count(),0);
+        QVERIFY(!window.findChild<QProgressDialog *>("importApplyProgress"));
+        source->setModified(false);
+        review->findChild<QPushButton *>("importCancel")->click();
+        QTRY_VERIFY_WITH_TIMEOUT(tabs->isEnabled(),5000); QCOMPARE(tabTexts(window),QStringList({"Sheet1"}));
+    }
+    void exportCancelDuringDownloadWritesNoFile() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("download.dhwb"));
+        QSignalSpy opened(&window,&MainWindow::workbookReady);
+        QJsonArray cells; for(int i=0;i<10000;++i) cells.append(QJsonObject{{"row",i/20+1},{"col",i%20+1},{"source",QString::fromLatin1(QCryptographicHash::hash(QByteArray::number(i),QCryptographicHash::Sha256).toHex())}});
+        window.submit({{"action","edit"},{"cells",cells}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,20000);
+        QVERIFY(QDir().mkpath(temp.filePath("out"))); const auto output=temp.filePath("out/download.xlsx");
+        window.exportWorkbookFile(output,"xlsx");
+        QPointer<QProgressDialog> progress=window.findChild<QProgressDialog *>("largeExportProgress"); QVERIFY(progress);
+        const auto job=progress->property("jobId").toString();
+        bool cancelledDuringDownload=false; QTimer watch; watch.setInterval(0);
+        connect(&watch,&QTimer::timeout,&window,[&]{
+            if(progress && progress->labelText().startsWith("Downloading")) { cancelledDuringDownload=true; watch.stop(); progress->findChild<QPushButton *>()->click(); }
+        });
+        watch.start();
+        auto *issues=window.findChild<QPlainTextEdit *>("operationIssues");
+        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("Export cancelled"),30000); watch.stop();
+        QVERIFY(cancelledDuringDownload);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceCall(window,"/v1/exports/"+job,false).first["code"].toString(),QString("JOB_NOT_FOUND"),10000);
+        QCOMPARE(QDir(temp.filePath("out")).entryList(QDir::Files|QDir::Hidden|QDir::NoDotAndDotDot),QStringList());
+    }
+    void exportHashMismatchWritesNoFile() {
+        QTemporaryDir temp; QJsonObject service; StartupOptions ownerOptions; ownerOptions.automaticWorkbook=false;
+        MainWindow owner(ownerOptions); observeOwnedServiceStartup(owner,service); QSignalSpy serviceReady(&owner,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceReady.count(),1,10000); QVERIFY(!service["token"].toString().isEmpty());
+        const auto path=temp.filePath("hash.dhwb");
+        QSignalSpy ownerOpened(&owner,&MainWindow::workbookReady); owner.openBook(path,true); QTRY_COMPARE_WITH_TIMEOUT(ownerOpened.count(),1,10000);
+        owner.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}}}}}); QTRY_COMPARE_WITH_TIMEOUT(ownerOpened.count(),2,10000);
+        ExportDigestProxy proxy(service); QVERIFY(proxy.listen(QHostAddress::LocalHost,0));
+        StartupOptions options; options.automaticWorkbook=false; options.url="http://127.0.0.1:"+QString::number(proxy.serverPort());
+        options.token=service["token"].toString(); options.recoveryDirectory=temp.filePath("recovery");
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady); QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(path); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QVERIFY(QDir().mkpath(temp.filePath("out"))); const auto output=temp.filePath("out/hash.xlsx");
+        window.exportWorkbookFile(output,"xlsx");
+        const auto job=window.findChild<QProgressDialog *>("largeExportProgress")->property("jobId").toString();
+        auto *issues=window.findChild<QPlainTextEdit *>("operationIssues");
+        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("does not match"),20000);
+        QVERIFY(proxy.patched); QVERIFY(proxy.served);
+        QCOMPARE(QDir(temp.filePath("out")).entryList(QDir::Files|QDir::Hidden|QDir::NoDotAndDotDot),QStringList());
+        // The real export is released on the service behind the proxy.
+        RestClient direct; direct.configure(service["url"].toString(),service["token"].toString());
+        auto lookup=[&]{QString code;bool done=false;direct.request("/v1/exports/"+job,{},[&](QJsonObject result,QString){code=result["code"].toString();done=true;},false);for(int i=0;i<250 && !done;++i)QTest::qWait(20);return code;};
+        QTRY_COMPARE_WITH_TIMEOUT(lookup(),QString("JOB_NOT_FOUND"),5000);
     }
     void unifiedExportUsesTheFormatDropdown_data() {
         QTest::addColumn<int>("formatIndex"); QTest::addColumn<QString>("extension"); QTest::addColumn<bool>("whole");
@@ -3784,6 +4329,24 @@ private slots:
         QCOMPARE(changed.count(),0);
         auto *tabs=window.findChild<QTabBar *>("sheets"); QCOMPARE(tabs->count(),2);
         QCOMPARE(tabs->tabText(0),QString("Other")); QCOMPARE(tabs->tabText(1),QString("Third"));
+    }
+    void unmaintainedFormulaShowsReferenceErrorUntilReentered() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("unmaintained.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",2},{"source","=A5 ` 1"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        window.submit({{"action","rows_insert"},{"start",1},{"count",1}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        auto *model=window.model(); const auto index=model->index(1,1);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(index).toString(),QString("#REF!"),5000);
+        QCOMPARE(model->cell(index)["kind"].toString(),QString("unmaintained"));
+        QCOMPARE(model->data(index,Qt::ToolTipRole).toString(),QString("References in this formula were not maintained through a structural edit. Re-enter the formula."));
+        QCOMPARE(model->data(index,Qt::ForegroundRole).value<QBrush>().color(),QColor("#b3261e"));
+        model->data(index,Qt::EditRole); QTRY_VERIFY_WITH_TIMEOUT(model->sourceReady(index),5000);
+        QVERIFY(model->setData(index,"=A5 ` 1",Qt::EditRole)); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),4,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->cell(index)["kind"].toString(),QString("formula"),5000);
     }
     void missingDraftSheetRequiresExplicitDiscardBeforeNewEdits() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;

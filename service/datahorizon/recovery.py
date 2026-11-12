@@ -5,19 +5,30 @@ import sqlite3
 import time
 
 from .engine import EngineError, Workbook, require, sql_deadline, typed
-from .formula import FormulaError, Parser
+from .formula import FormulaError
+from .formula_admission import status as formula_status
+from .formula_refs import scan
 
 INSPECTION_CELLS = 10_000
 INSPECTION_BYTES = 8*1024*1024
+INSPECTION_SAMPLES = 100
 
 
 def inspect_inputs(book):
+    """Check stored inputs without evaluating them. A formula the calculator can evaluate is valid; one it cannot, but
+    whose references the lenient scanner reads (as imports store by design), and a cell of kind unmaintained are valid
+    inputs counted under unevaluable_formulas and unmaintained_formulas; a formula source that cannot even be scanned
+    is an issue."""
     result={"checked_cells":0,"checked_bytes":0,"complete":True,"issue_count":0,"issues":[],
-            "max_cells":INSPECTION_CELLS,"max_bytes":INSPECTION_BYTES,"formula_check":"syntax only; no evaluation"}
+            "unevaluable_formulas":{"count":0,"samples":[]},"unmaintained_formulas":{"count":0,"samples":[]},
+            "max_cells":INSPECTION_CELLS,"max_bytes":INSPECTION_BYTES,"formula_check":"syntax and evaluability only; no evaluation"}
     def issue(code,message,location=None):
         result["issue_count"]+=1
         if len(result["issues"])<100:
             result["issues"].append({**(location or {}),"code":code,"message":str(message)[:200]})
+    def counted(key,location,**detail):
+        found=result[key]; found["count"]+=1
+        if len(found["samples"])<INSPECTION_SAMPLES: found["samples"].append({**location,**detail})
     with book.lock:
         deadline=time.monotonic()+5
         book.refresh(deadline=deadline)
@@ -28,6 +39,8 @@ def inspect_inputs(book):
             book.refresh(deadline=deadline)
             result["state"]=book.state()
             with sql_deadline(book.db,deadline):
+                # Stored formulas name sheets by identity; either spelling is a sheet of this workbook.
+                sheet_names=[value for row in book.db.execute("SELECT id,name FROM sheets") for value in row]
                 rows=book.db.execute("SELECT s.name,c.row,c.col,c.source,c.kind,c.style FROM cells c JOIN sheets s ON s.id=c.sheet_id ORDER BY c.sheet_id,c.row,c.col LIMIT ?",(INSPECTION_CELLS+1,))
                 for name,row,col,source,kind,style in rows:
                     if result["checked_cells"]>=INSPECTION_CELLS:
@@ -41,7 +54,10 @@ def inspect_inputs(book):
                     try:
                         require(isinstance(style,str) and len(style.encode())<=65536,"INVALID_STYLE","Style JSON must be text no larger than 64 KiB")
                         value=typed({"source":source,"kind":kind,"style":json.loads(style)})
-                        if value["kind"]=="formula": Parser(source[1:]).parse()
+                        if value["kind"]=="unmaintained": counted("unmaintained_formulas",location)
+                        elif value["kind"]=="formula" and (problem:=formula_status(source,sheet_names)) is not None:
+                            if scan(source) is None: raise FormulaError("Formula source cannot be read: "+(problem[1] or problem[0]))
+                            counted("unevaluable_formulas",location,reason=problem[0])
                     except (EngineError,FormulaError,ValueError,TypeError,UnicodeError,RecursionError) as error:
                         issue(error.body["code"] if isinstance(error,EngineError) else "INVALID_FORMULA" if isinstance(error,FormulaError) else "INVALID_INPUT",error,location)
             book.verify_file()
@@ -71,6 +87,8 @@ def inspect_native(path):
                 "sheets":result["sheets"],"sqlite_integrity":"ok","readonly":True,"inputs":inputs,
                 "report":["SQLite quick_check and native schema/catalog/coordinate validation passed within the opening budget.",
                           f'Input inspection checked {inputs["checked_cells"]} cells; {inputs["issue_count"]} issues; '+("complete." if inputs["complete"] else "incomplete: "+inputs["stop_reason"]+". Unchecked inputs are not validated."),
+                          f'{inputs["unevaluable_formulas"]["count"]} stored formulas DataHorizon cannot evaluate and {inputs["unmaintained_formulas"]["count"]} '
+                          "with unmaintained references are valid inputs (they calculate to an error naming the reason), not issues.",
                           "Input inspection is limited to 10,000 cells / 8 MiB / five seconds, with a 1-MiB SQLite record bound. Formula syntax is checked without evaluation or export-compatibility promises.",
                           "No code, change handlers, recalculation or repairs were run. Inspection opens no persistent client handle. Retain the original and inspect a native copy for further recovery work."]}
     finally:

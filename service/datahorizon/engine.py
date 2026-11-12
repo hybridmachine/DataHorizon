@@ -12,12 +12,14 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
+import tempfile
 import threading
 import time
 import uuid
 
-from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, address, translate, move_references, transform_structure, rename_sheet_references, delete_sheet_references
+from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, Unmaintainable, address, has_sheet_reference, translate, move_references, transform_structure, rename_sheet_references, delete_sheet_references
 from .hooks import HookFailure, invoke, supports_structure
 from .formats import numeric_display, numeric_spec, temporal_display, TEMPORAL_FORMATS
 from .borders import SIDES, BORDER_STYLES
@@ -30,7 +32,18 @@ MAX_HISTORY_BYTES = 16*1024*1024
 MAX_REVISION = 2**63-1
 MAX_SHEET_POSITION = 2**63-1
 SNAPSHOT_SECONDS = 5
+# Bounds of the private copy a streamed whole-workbook read takes (Workbook.stream_workbook).
+SNAPSHOT_BYTES = 2*1024**3     # largest native file copied
+SNAPSHOT_RESERVE = 256*1024**2  # free space left on the copy's filesystem
+SNAPSHOT_PAGES = 1024           # database pages copied between cancellation checks
+# workbook_import from a prepared stage: the service puts the stage file's path in this request field (a client
+# cannot), the operation may exceed MAX_CELLS, and it runs under STAGE_SECONDS loading STAGE_BATCH cells at a time.
+STAGE_PATH = "_stage_path"
+STAGE_SECONDS = 300
+STAGE_BATCH = 10_000
 NUMBER_SOURCE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
+# Typed kinds whose value comes from the calculator; an unmaintained cell always yields its #REF! error.
+EVALUATED = ("formula", "unmaintained")
 SCHEMA = """
 CREATE TABLE dh_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  format_version INTEGER NOT NULL, workbook_id TEXT NOT NULL, revision INTEGER NOT NULL);
@@ -194,7 +207,7 @@ def typed(item):
     source, kind, style = item["source"], item["kind"], item["style"]
     require(isinstance(source, str) and len(source.encode()) <= 65_536,
             "INVALID_INPUT", "Cell source must be text no larger than 64 KiB")
-    require(kind in ("auto", "text", "number", "boolean", "null", "formula", *TEMPORAL_KINDS), "INVALID_INPUT", "Unknown input kind")
+    require(kind in ("auto", "text", "number", "boolean", "null", "formula", "unmaintained", *TEMPORAL_KINDS), "INVALID_INPUT", "Unknown input kind")
     validate_style(style)
     value = source
     if kind in TEMPORAL_KINDS:
@@ -203,6 +216,10 @@ def typed(item):
         except ValueError as error:
             raise EngineError("INVALID_INPUT", str(error)) from error
     elif kind == "null":
+        value = None
+    elif kind == "unmaintained":
+        # Never evaluated: the calculator gives it a #REF! error (formula.UNMAINTAINED_MESSAGE).
+        require(source.startswith("="), "INVALID_INPUT", "Formula source must start with =")
         value = None
     elif kind == "auto" and source == "":
         kind, value = "blank", None
@@ -231,6 +248,49 @@ def typed(item):
     return {**item, "kind": kind, "value": value}
 
 
+BLANK_INPUT = {"source": "", "kind": "auto", "style": {}}
+
+
+def edited(item, edit, *, preserve_inputs=False, copied=False):
+    """The input a cell edit leaves in a cell currently holding item (None when empty), or None to clear it."""
+    for flag in ("clear", "clear_input", "replace_style"):
+        boolean(edit.get(flag, False), flag)
+    if edit.get("clear"):
+        return None
+    item = dict(item or BLANK_INPUT)
+    if edit.get("clear_input"):
+        item.update(source="", kind="auto")
+    if "source" in edit:
+        require(copied or edit.get("kind") != "unmaintained", "INVALID_INPUT",
+                "Only structural edits mark a formula unmaintained; re-enter the formula with another kind")
+        item.update(source=edit["source"], kind=edit.get("kind", "auto"))
+    if "style" in edit:
+        style=validate_style(edit["style"])
+        if ("decimals" in style or "grouping" in style) and "format" not in style and not edit.get("replace_style"):
+            if "decimals" not in style:
+                current=numeric_spec(item["style"]);style={**style,"decimals":current[1] if current else 2}
+            style={**style,"format":"percent" if item["style"].get("format") in ("percent","percent2") else "currency" if item["style"].get("format")=="currency" else "number"}
+        previous=item["style"]
+        if "border" in style: previous={key:value for key,value in previous.items() if key not in {"border_"+side for side in SIDES}}
+        item["style"] = style if edit.get("replace_style") else validate_style({**previous, **style})
+    # Text format affects subsequent entry, never retypes an existing
+    # number/formula merely because its presentation changed.
+    if not preserve_inputs and "source" in edit and item["source"] != "" and item["kind"] == "auto" and item["style"].get("format") == "text":
+        item["kind"] = "text"
+    elif not preserve_inputs and "source" in edit and item["kind"] == "auto" and isinstance(item["source"], str) and item["source"].startswith("="):
+        item["kind"] = "formula"
+    return item
+
+
+def stored_edit(edit):
+    """What the per-cell path stores when this edit is applied to an empty cell: the validated input, or None when
+    nothing is stored. A bulk loader that stores these rows matches a cell-by-cell import exactly."""
+    item = edited(None, edit)
+    if item is not None:
+        typed(item)
+    return None if item is None or item == BLANK_INPUT else item
+
+
 def display(value, style):
     if value is None:
         return ""
@@ -247,6 +307,24 @@ def interchange_text(value):
     if type(value) is float:
         return str(int(value)) if value.is_integer() and abs(value) <= 9_007_199_254_740_991 else repr(value)
     return display(value, {})
+
+
+def copied_formula(source, rows, cols):
+    """Copy/fill/paste offset; with none, even text no transform can read copies as is."""
+    return translate(source, rows, cols) if rows or cols else source
+
+
+def unmaintained(source, style):
+    """A formula a structural edit could not read, marked so it is never calculated against moved cells."""
+    return {"source": source, "kind": "unmaintained", "style": json.loads(style)}
+
+
+def unmaintained_report(marked):
+    """Receipt fields for the (sheet name, row, col) locations a structural edit marked unmaintained."""
+    if not marked:
+        return {}
+    return {"unmaintained": [{"sheet": name, "cell": address(row, col)} for name, row, col in marked[:100]],
+            "unmaintained_count": len(marked)}
 
 
 def input_signature(item):
@@ -271,6 +349,38 @@ def expected_schema(source=SCHEMA):
 
 EXPECTED_SCHEMA = expected_schema()
 EXPECTED_SCHEMA3 = expected_schema(SCHEMA+METADATA_SCHEMA)
+
+
+class WorkbookStream:
+    """One workbook state read from a private snapshot (see Workbook.stream_workbook). Iterating yields each sheet's
+    name and an iterator over its cells; `state` is the workbook state it holds and `native` the native catalog
+    (names, bindings, other omitted objects) for the export report."""
+
+    def __init__(self, db, state, catalog, native):
+        self.db, self.state, self.catalog, self.native = db, state, catalog, native
+        # Formulas store sheet identities; one search finds which of them a source mentions.
+        self._identities = re.compile("|".join(re.escape(identity) for identity, _ in catalog))
+
+    def __iter__(self):
+        for identity, name in self.catalog:
+            yield name, self._cells(identity, name)
+
+    def _cells(self, sheet, sheet_name):
+        rows = self.db.execute("SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? ORDER BY row,col", (sheet,))
+        for row, col, source, kind, style in rows:
+            item = typed({"source": source, "kind": kind, "style": json.loads(style)})
+            cell = {"row": row, "col": col, "source": source, "kind": item["kind"], "style": item["style"]}
+            if item["kind"] == "formula":
+                # Most formulas name no sheet; the rest are renamed exactly as read_workbook renames them.
+                # A source no transform can read keeps the identity as stored; the exporter reports it as untokenizable.
+                for identity, name in (self.catalog if self._identities.search(source) else ()):
+                    if identity not in cell["source"]: continue
+                    try: cell["source"] = rename_sheet_references(cell["source"], identity, name)
+                    except FormulaError: pass
+            elif item["kind"] not in EVALUATED:
+                cell.update(value=item["value"], calculation="current")
+                if isinstance(item["value"], Temporal): cell["value_kind"] = item["value"].kind
+            yield cell
 
 
 class Workbook:
@@ -390,7 +500,7 @@ class Workbook:
             require(signature in (EXPECTED_SCHEMA,EXPECTED_SCHEMA3) or reserved==EXPECTED_SCHEMA3,
                     "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
             meta = db.execute("SELECT format_version,revision,workbook_id FROM dh_meta WHERE singleton=1").fetchall()
-            require(len(meta) == 1 and meta[0][0] in (1,2,3,4,5,6) and type(meta[0][1]) is int and meta[0][1] >= 0,
+            require(len(meta) == 1 and meta[0][0] in (1,2,3,4,5,6,7) and type(meta[0][1]) is int and meta[0][1] >= 0,
                     "FORMAT_VERSION", "Unsupported or invalid native format", 409)
             if meta[0][0]>=4:
                 from . import relational
@@ -428,12 +538,12 @@ class Workbook:
             # Inspect stored cells once. Three independent scans of the native
             # WITHOUT ROWID table repeatedly fetched long-text overflow pages
             # even when no temporal inputs or invalid rows were present.
-            rows=db.execute("""SELECT CASE WHEN kind IN ('date','time','datetime') THEN source END,kind,
+            rows=db.execute("""SELECT CASE WHEN kind IN ('date','time','datetime','unmaintained') THEN source END,kind,
                 typeof(row)='integer' AND typeof(col)='integer'
                     AND row BETWEEN 1 AND ? AND col BETWEEN 1 AND ? AS coordinates_valid,
                 sheet_id IN (SELECT id FROM sheets) AS sheet_valid
                 FROM cells
-                WHERE kind IN ('date','time','datetime')
+                WHERE kind IN ('date','time','datetime','unmaintained')
                     OR typeof(row)<>'integer' OR typeof(col)<>'integer'
                     OR row NOT BETWEEN 1 AND ? OR col NOT BETWEEN 1 AND ?
                     OR sheet_id NOT IN (SELECT id FROM sheets)""",
@@ -442,7 +552,10 @@ class Workbook:
                 require(time.monotonic()<=deadline,"TIMEOUT","Workbook validation exceeded its time budget")
                 require(coordinates_valid,"INVALID_FORMAT","Native cells require integer coordinates within the supported grid",409)
                 require(sheet_valid,"INVALID_FORMAT","Native workbook contains orphaned cell references",409)
-                require(meta[0][0]>=2,"FORMAT_VERSION","Temporal inputs require native format 2",409)
+                if kind=="unmaintained":
+                    require(meta[0][0]>=7,"INVALID_FORMAT","Unmaintained formulas require native format 7",409)
+                else:
+                    require(meta[0][0]>=2,"FORMAT_VERSION","Temporal inputs require native format 2",409)
                 typed({"source":source,"kind":kind,"style":{}})
             if meta[0][0]>=3:
                 require(db.execute("PRAGMA foreign_key_check(dh_objects)").fetchone() is None,
@@ -549,7 +662,7 @@ class Workbook:
                             if item['kind']=='formula' and args.get('calculation')=='cached' and (sheet,row,col) not in self.dependencies.values:
                                 result.update(value=None,display='…',calculation='pending')
                             else:
-                                value = calc.cell(sheet, row, col) if item["kind"] == "formula" else item["value"]
+                                value = calc.cell(sheet, row, col) if item["kind"] in EVALUATED else item["value"]
                                 result.update(value=value, display=display(value, item["style"]), calculation="current")
                                 if isinstance(value,Temporal): result["value_kind"] = value.kind
                         except FormulaError as error:
@@ -654,7 +767,7 @@ class Workbook:
                         require(source_bytes<=4*1024*1024,"READ_LIMIT","Summary inputs exceed 4 MiB; select a smaller rectangle")
                         item=typed({"source":source,"kind":kind,"style":json.loads(style)})
                         try:
-                            value=calc.cell(sheet,row,col) if item["kind"]=="formula" else item["value"]
+                            value=calc.cell(sheet,row,col) if item["kind"] in EVALUATED else item["value"]
                         except FormulaError as error:
                             count+=1;error_count+=1
                             if len(errors)<100:errors.append({"row":row,"col":col,"code":error.code})
@@ -674,12 +787,13 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
-    def native_catalog(self, *, omissions=False):
+    def native_catalog(self, *, omissions=False, db=None):
         """Names and binding labels (and optionally other native objects) in the current read snapshot, for export reports."""
         from .relational import objects
         from .bindings import label as binding_label
-        found=list(objects(self.db))
-        result={'native_bindings':[binding_label(self.db,item) for kind,item in found if kind=='binding'],
+        db=self.db if db is None else db
+        found=list(objects(db))
+        result={'native_bindings':[binding_label(db,item) for kind,item in found if kind=='binding'],
                 'native_names':[item['name'] for kind,item in found if kind=='name']}
         if omissions:result['native_omissions']=[item['name'] for kind,item in found if kind not in ('name','binding')]
         return result
@@ -707,17 +821,17 @@ class Workbook:
                         item=typed({"source":source,"kind":kind,"style":json.loads(style)})
                         cell={"row":row,"col":col,"source":source,"kind":item["kind"],"style":item["style"]}
                         try:
-                            value=calc.cell(sheet,row,col) if item["kind"]=="formula" else item["value"]
+                            value=calc.cell(sheet,row,col) if item["kind"] in EVALUATED else item["value"]
                             cell.update(value=value,calculation="current")
                             if isinstance(value,Temporal):cell["value_kind"]=value.kind
                         except FormulaError as error:
                             cell.update(value=None,calculation="error",error=str(error))
                         if item["kind"]=="formula":
+                            # As in WorkbookStream: a source no transform can read keeps the identity as stored.
                             for identity,name in catalog:
                                 if identity in cell["source"]:
                                     try: cell["source"]=rename_sheet_references(cell["source"],identity,name)
-                                    except FormulaError as error:
-                                        raise EngineError("UNSUPPORTED_FORMULA",f"Cannot export formula at {sheet}!{address(row,col)}: {error}") from error
+                                    except FormulaError: pass
                         size+=len(encoded(cell).encode())
                         require(size<=4*1024*1024,"READ_LIMIT","Workbook snapshot exceeds 4 MiB")
                         targets[sheet].append(cell)
@@ -725,27 +839,176 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
-    def import_workbook(self,request):
+    @contextmanager
+    def stream_workbook(self, reserve=None, *, checkpoint=None):
+        """Every sheet of one consistent workbook state, without the MAX_CELLS bound: a WorkbookStream yielding
+        (sheet name, cells in row-major order) in display order.
+
+        Under the workbook lock and inside one read transaction, the workbook is first checked against the export
+        bounds (at most LARGE_CELLS cells and LARGE_SHEETS sheets, at most SNAPSHOT_BYTES of native file: LIMIT),
+        and only then copied to a private snapshot file: `reserve()` returns a new empty private path for it (by
+        default one in the system temporary directory), whose filesystem must keep SNAPSHOT_RESERVE bytes free after
+        the copy (STORAGE_ERROR). The copy runs SNAPSHOT_PAGES pages at a time, calling checkpoint(0, phase) between
+        steps; an exception it raises (cancellation, deadline) stops the copy. The cells are then read from the copy,
+        so the long read neither holds the workbook lock nor keeps a read transaction open on the workbook, which
+        would block its writers. The copy is deleted on exit. Cells are typed stored inputs as read_workbook returns
+        them, except that formulas are not evaluated: a formula or unmaintained cell has no value or calculation."""
+        from .xlsx_stream import LARGE_CELLS, LARGE_SHEETS
+        checkpoint=checkpoint or (lambda completed,phase:None)
+        snapshot=None
+        try:
+            # The lock is held for the whole copy: the copy's consistency rests on the read transaction of the
+            # shared connection, which another thread holding the lock could otherwise end or write through.
+            with self.lock:
+                deadline=time.monotonic()+SNAPSHOT_SECONDS
+                self.refresh(deadline=deadline)
+                self.db.execute("BEGIN")
+                try:
+                    self.refresh(deadline=deadline)
+                    with sql_deadline(self.db,deadline):
+                        cells=self.db.execute("SELECT count(*) FROM (SELECT 1 FROM cells LIMIT ?)",(LARGE_CELLS+1,)).fetchone()[0]
+                        require(cells<=LARGE_CELLS,"LIMIT",f"Whole-workbook export exceeds {LARGE_CELLS:,} stored cells")
+                        sheets=self.db.execute("SELECT count(*) FROM sheets").fetchone()[0]
+                        require(sheets<=LARGE_SHEETS,"LIMIT",f"Whole-workbook export exceeds {LARGE_SHEETS} sheets")
+                        size=self.db.execute("PRAGMA page_count").fetchone()[0]*self.db.execute("PRAGMA page_size").fetchone()[0]
+                        require(size<=SNAPSHOT_BYTES,"LIMIT",f"Whole-workbook export reads at most a {SNAPSHOT_BYTES//1024**2:,} MiB native file")
+                        state=self.state()
+                    if reserve is None:
+                        descriptor,name=tempfile.mkstemp(prefix="snapshot-",suffix=".dhwb")
+                        os.close(descriptor)
+                        snapshot=Path(name)
+                    else:
+                        snapshot=Path(reserve())
+                    require(size<=shutil.disk_usage(snapshot.parent).free-SNAPSHOT_RESERVE,"STORAGE_ERROR",
+                            f"Not enough free disk space to copy the workbook for export: {size:,} bytes are needed, "
+                            f"keeping {SNAPSHOT_RESERVE//1024**2} MiB free",409)
+                    target=sqlite3.connect(snapshot)
+                    try:
+                        self.db.backup(target,pages=SNAPSHOT_PAGES,progress=lambda *_:checkpoint(0,"Copying workbook"),sleep=0.01)
+                    finally:
+                        target.close()
+                finally:
+                    self.db.execute("ROLLBACK")
+            db=sqlite3.connect(snapshot.as_uri()+"?mode=ro",uri=True,isolation_level=None,check_same_thread=False)
+            try:
+                db.execute("BEGIN")
+                catalog=list(db.execute("SELECT id,name FROM sheets ORDER BY position,id LIMIT ?",(LARGE_SHEETS+1,)))
+                from .interchange import validate_sheet_names
+                validate_sheet_names([name for _,name in catalog],LARGE_SHEETS)
+                yield WorkbookStream(db,state,catalog,self.native_catalog(omissions=True,db=db))
+            finally:
+                db.close()
+        finally:
+            if snapshot is not None:
+                for path in (snapshot,snapshot.with_name(snapshot.name+"-journal")):
+                    path.unlink(missing_ok=True)
+
+    def plan_import(self,request):
+        """Validate a workbook_import request before any change. Reviewed sheets come inline (at most 10,000 cells) or
+        from a prepared stage, which is opened in one read snapshot and must still be what was reviewed: its content
+        digest, and for a local file the source's recorded size and modification time."""
         from .interchange import validate_sheet_names
-        from .relational import objects
-        present={kind for kind,_ in objects(self.db)}
-        if present:
-            labels=[label for kind,label in (("table","tables"),("query","saved queries"),("relationship","relationships"),("index","indexes"),
-                ("name","names"),("module","Python modules"),("binding","event bindings")) if kind in present]
-            labels+=sorted(kind for kind in present if kind not in ("table","query","relationship","index","name","module","binding"))
-            listed=labels[0] if len(labels)==1 else ", ".join(labels[:-1])+" or "+labels[-1]
-            raise EngineError("DESTINATION_NOT_EMPTY",f"Whole-workbook import requires a destination without {listed}; create a new workbook")
-        require(self.db.execute("SELECT 1 FROM cells LIMIT 1").fetchone() is None,"DESTINATION_NOT_EMPTY","Whole-workbook import requires an empty destination; create a new workbook")
-        sheets=request.get("sheets")
-        require(isinstance(sheets,list) and all(isinstance(s,dict) for s in sheets),"INVALID_ARGUMENT","sheets must be an array of sheet objects")
-        validate_sheet_names([s.get("name") for s in sheets])
-        require(all(isinstance(s.get("cells"),list) for s in sheets),"INVALID_ARGUMENT","Each sheet needs cells")
-        require(sum(len(s["cells"]) for s in sheets)<=MAX_CELLS,"LIMIT","Workbook import exceeds 10,000 stored cells")
-        self.db.execute("DELETE FROM sheets")
-        for index,sheet in enumerate(sheets):
-            identity=str(uuid.uuid4())
-            self.db.execute("INSERT INTO sheets VALUES(?,?,?)",(identity,sheet["name"],index))
-            if sheet["cells"]: self.apply_edit(identity,sheet["cells"])
+        target=request.get("target","replace_empty")
+        require(target in ("replace_empty","add_sheets"),"INVALID_ARGUMENT","target must be replace_empty or add_sheets")
+        if "stage_id" not in request:
+            require("stage_digest" not in request,"INVALID_ARGUMENT","stage_digest applies only with stage_id")
+            sheets=request.get("sheets")
+            require(isinstance(sheets,list) and all(isinstance(s,dict) for s in sheets),"INVALID_ARGUMENT","sheets must be an array of sheet objects")
+            validate_sheet_names([s.get("name") for s in sheets])
+            require(all(isinstance(s.get("cells"),list) for s in sheets),"INVALID_ARGUMENT","Each sheet needs cells")
+            require(sum(len(s["cells"]) for s in sheets)<=MAX_CELLS,"LIMIT","Workbook import exceeds 10,000 stored cells")
+            return {"target":target,"sheets":sheets,"stage":None,"names":[s["name"] for s in sheets],"counts":[len(s["cells"]) for s in sheets]}
+        require("sheets" not in request,"INVALID_ARGUMENT","Supply sheets or stage_id, not both")
+        require(isinstance(request["stage_id"],str) and bool(request["stage_id"]),"INVALID_ARGUMENT","stage_id must be text")
+        digest=request.get("stage_digest")
+        require(isinstance(digest,str) and re.fullmatch(r"[0-9a-f]{64}",digest) is not None,"INVALID_ARGUMENT","stage_digest must be the reviewed SHA-256 digest")
+        path=request.get(STAGE_PATH)
+        require(isinstance(path,str),"JOB_NOT_FOUND","Import stage is unavailable; prepare the workbook again",404)
+        from .import_stage import open_readonly
+        from .xlsx_stream import LARGE_SHEETS
+        stage=open_readonly(path)
+        try:
+            # Held until the last cell is loaded, so the cells loaded are the cells verified.
+            stage.db.execute("BEGIN")
+            with sql_deadline(stage.db,self.deadline,cancel_event=self.cancel_event):
+                summary=stage.summary()
+                # The recomputed digest must match both the review and the digest the stage was sealed with.
+                require(stage.digest()==digest==summary.get("stage_digest"),"STALE_PLAN","The import stage is not the reviewed one; prepare the workbook again",409)
+                source=summary.get("source")
+                if isinstance(source,dict) and source.get("kind")=="path":
+                    try: info=os.stat(source["path"])
+                    except (OSError,KeyError,TypeError,ValueError) as error:
+                        raise EngineError("STALE_PLAN","The source file is no longer available; prepare it again",409) from error
+                    require((info.st_size,info.st_mtime_ns)==(source.get("size"),source.get("mtime_ns")),"STALE_PLAN",
+                            "The source file changed after it was reviewed; prepare it again",409)
+                names=stage.sheets(); counts=stage.sheet_counts(); temporal=stage.has_temporal()
+            validate_sheet_names(names,limit=LARGE_SHEETS)
+        except BaseException:
+            stage.close()
+            raise
+        return {"target":target,"sheets":None,"stage":stage,"names":names,"counts":counts,"temporal":temporal}
+
+    @staticmethod
+    def import_arguments(plan):
+        """The structure event's description of an import: its target and each sheet's name and cell count."""
+        return {"target":plan["target"],"sheets":[{"name":name,"cells":count} for name,count in zip(plan["names"],plan["counts"])]}
+
+    def import_workbook(self,plan):
+        """Load a planned import in the open operation: replace an empty workbook's sheets, or add sheets after the existing ones."""
+        from .interchange import fold_name
+        names=plan["names"]
+        if plan["target"]=="replace_empty":
+            from .relational import objects
+            present={kind for kind,_ in objects(self.db)}
+            if present:
+                labels=[label for kind,label in (("table","tables"),("query","saved queries"),("relationship","relationships"),("index","indexes"),
+                    ("name","names"),("module","Python modules"),("binding","event bindings")) if kind in present]
+                labels+=sorted(kind for kind in present if kind not in ("table","query","relationship","index","name","module","binding"))
+                listed=labels[0] if len(labels)==1 else ", ".join(labels[:-1])+" or "+labels[-1]
+                raise EngineError("DESTINATION_NOT_EMPTY",f"Whole-workbook import requires a destination without {listed}; create a new workbook")
+            require(self.db.execute("SELECT 1 FROM cells LIMIT 1").fetchone() is None,"DESTINATION_NOT_EMPTY","Whole-workbook import requires an empty destination; create a new workbook")
+            self.db.execute("DELETE FROM sheets")
+            start=0
+        else:
+            existing={fold_name(name) for (name,) in self.db.execute("SELECT name FROM sheets")}
+            conflicts=[name for name in names if fold_name(name) in existing]
+            if conflicts:
+                raise EngineError("SHEET_NAME_CONFLICT","Imported sheet names already exist in this workbook; rename them and import again",409,conflicts=conflicts)
+            start=self.next_sheet_position()
+            require(len(names)-1<=MAX_SHEET_POSITION-start,"POSITION_LIMIT","Reorder sheets before adding more; display positions are exhausted",409)
+        identities=[str(uuid.uuid4()) for _ in names]
+        if plan["stage"] is None:
+            for index,(identity,sheet) in enumerate(zip(identities,plan["sheets"])):
+                self.db.execute("INSERT INTO sheets VALUES(?,?,?)",(identity,sheet["name"],start+index))
+                if sheet["cells"]: self.apply_edit(identity,sheet["cells"])
+            # Imported cells are new structure, not edits: no change events, as for a staged import.
+            fresh=set(identities)
+            self.pending={key:change for key,change in self.pending.items() if key[0] not in fresh}
+            marks=",".join("?"*len(identities))
+            cells=self.db.execute(f"SELECT count(*) FROM cells WHERE sheet_id IN ({marks})",identities).fetchone()[0]
+        else:
+            cells=self.load_stage(plan["stage"],identities,names,start)
+            if plan["temporal"]:self.db.execute("UPDATE dh_meta SET format_version=2 WHERE format_version=1")
+        return {"imported":{"sheets":len(names),"cells":cells}}
+
+    def load_stage(self,stage,identities,names,start):
+        """Insert every staged cell straight into cells, in batches, without per-cell change images; the stage was
+        validated when it was written. Deadline and cancellation are checked between batches and inside SQLite."""
+        loaded=0;unmaintained=False
+        with sql_deadline(self.db,self.deadline,cancel_event=self.cancel_event),sql_deadline(stage.db,self.deadline,cancel_event=self.cancel_event):
+            for position,(identity,name) in enumerate(zip(identities,names)):
+                self.db.execute("INSERT INTO sheets VALUES(?,?,?)",(identity,name,start+position))
+                for rows in stage.iter_cells(position,batch=STAGE_BATCH):
+                    self.check_operation()
+                    self.db.executemany("INSERT INTO cells VALUES(?,?,?,?,?,?)",[(identity,*row) for row in rows])
+                    loaded+=len(rows)
+                    unmaintained=unmaintained or any(row[3]=="unmaintained" for row in rows)
+            self.check_operation()
+        if unmaintained:
+            from .relational import ensure_version
+            ensure_version(self,7)
+        self.bulk_loaded=loaded
+        return loaded
 
     def put(self, sheet, row, col, item):
         integer(row, 1, MAX_ROWS, "row")
@@ -754,7 +1017,10 @@ class Workbook:
             typed(item)
             if item["kind"] in TEMPORAL_KINDS:
                 self.db.execute("UPDATE dh_meta SET format_version=2 WHERE format_version=1")
-            if item == {"source": "", "kind": "auto", "style": {}}:
+            elif item["kind"] == "unmaintained" and self.db.execute("SELECT format_version FROM dh_meta").fetchone()[0] < 7:
+                from .relational import ensure_version
+                ensure_version(self,7)
+            if item == BLANK_INPUT:
                 item = None
         key = (sheet, row, col)
         before = self.raw(*key)
@@ -787,39 +1053,15 @@ class Workbook:
         self.put(*key, item)
         self.structural_marks[key] = (origin or key) not in self.structure_touched
 
-    def apply_edit(self, sheet, edits, *, preserve_inputs=False):
+    def apply_edit(self, sheet, edits, *, preserve_inputs=False, copied=False):
+        """copied: the edits paste cells read from the workbook, which may carry kind unmaintained."""
         require(isinstance(edits, list) and 0 < len(edits) <= MAX_CELLS, "LIMIT", "Provide 1 to 10,000 edits")
         for edit in edits:
             require(isinstance(edit, dict), "INVALID_ARGUMENT", "Each cell edit must be an object")
-            for flag in ("clear", "clear_input", "replace_style"):
-                boolean(edit.get(flag, False), flag)
             row, col = edit.get("row"), edit.get("col")
             integer(row, 1, MAX_ROWS, "row")
             integer(col, 1, MAX_COLS, "col")
-            item = self.raw(sheet, row, col) or {"source": "", "kind": "auto", "style": {}}
-            if edit.get("clear"):
-                item = None
-            else:
-                if edit.get("clear_input"):
-                    item.update(source="", kind="auto")
-                if "source" in edit:
-                    item.update(source=edit["source"], kind=edit.get("kind", "auto"))
-                if "style" in edit:
-                    style=validate_style(edit["style"])
-                    if ("decimals" in style or "grouping" in style) and "format" not in style and not edit.get("replace_style"):
-                        if "decimals" not in style:
-                            current=numeric_spec(item["style"]);style={**style,"decimals":current[1] if current else 2}
-                        style={**style,"format":"percent" if item["style"].get("format") in ("percent","percent2") else "currency" if item["style"].get("format")=="currency" else "number"}
-                    previous=item["style"]
-                    if "border" in style: previous={key:value for key,value in previous.items() if key not in {"border_"+side for side in SIDES}}
-                    item["style"] = style if edit.get("replace_style") else validate_style({**previous, **style})
-                # Text format affects subsequent entry, never retypes an existing
-                # number/formula merely because its presentation changed.
-                if not preserve_inputs and "source" in edit and item["source"] != "" and item["kind"] == "auto" and item["style"].get("format") == "text":
-                    item["kind"] = "text"
-                elif not preserve_inputs and "source" in edit and item["kind"] == "auto" and isinstance(item["source"], str) and item["source"].startswith("="):
-                    item["kind"] = "formula"
-            self.put(sheet, row, col, item)
+            self.put(sheet, row, col, edited(self.raw(sheet, row, col), edit, preserve_inputs=preserve_inputs, copied=copied))
 
     def hook_dispatch(self,method,args):
         if method.startswith('table_'):
@@ -844,12 +1086,12 @@ class Workbook:
         elif type(source) is float:source=interchange_text(source)
         self.apply_edit(sheet,[dict(row=row,col=col,source=source,kind=args.get('kind','auto'))])
 
-    def structure_hook(self,operation,request,phase,before):
+    def structure_hook(self,operation,request,phase,before,arguments=None):
         if not self.handler:return
         require(supports_structure(self.handler),'UNSUPPORTED_HOOK_SCOPE','Required handler must explicitly define top-level on_structure(context,event)')
         catalog=[dict(id=i,name=n,position=p) for i,n,p in self.db.execute('SELECT id,name,position FROM sheets ORDER BY position,id LIMIT 257')]
         require(len(catalog)<=256,'LIMIT','Structural events support at most 256 sheets')
-        event=dict(phase=phase,action=request['action'],arguments={k:request[k] for k in ('sheet','name','start','count','order') if k in request},before=before if before is not None else catalog,after=catalog if phase=='after' else None)
+        event=dict(phase=phase,action=request['action'],arguments=arguments if arguments is not None else {k:request[k] for k in ('sheet','name','start','count','order') if k in request},before=before if before is not None else catalog,after=catalog if phase=='after' else None)
         invoke(self.handler,event,operation,self.hook_dispatch,self.deadline,event='on_structure')
         return catalog
 
@@ -906,7 +1148,9 @@ class Workbook:
             raise error
         return receipt
 
-    def mutate(self, request, *, cancel_event=None):
+    def mutate(self, request, *, cancel_event=None, on_commit=None):
+        """on_commit, if given, is called with no arguments once this call itself has committed the operation;
+        it is not called when a stored receipt is returned for a retried operation ID."""
         require(isinstance(request, dict), "INVALID_ARGUMENT", "Operation must be an object")
         operation = request.get("operation_id")
         require(isinstance(operation, str) and len(operation) <= 100 and bool(operation), "OPERATION_ID", "An operation_id is required")
@@ -914,7 +1158,9 @@ class Workbook:
             operation.encode("utf-8")
         except UnicodeEncodeError as error:
             raise EngineError("OPERATION_ID","operation_id must be valid Unicode text") from error
-        fingerprint = hashlib.sha256(encoded(request).encode()).hexdigest()
+        # The service-only stage path is where a stage happens to be, not part of the request's identity.
+        fingerprint = hashlib.sha256(encoded({key:value for key,value in request.items() if key!=STAGE_PATH}).encode()).hexdigest()
+        staged = request.get("action")=="workbook_import" and "stage_id" in request
         with self.lock:
             self.cancel_event=cancel_event
             try:
@@ -922,8 +1168,14 @@ class Workbook:
                 receipt = self.recorded_operation(operation, fingerprint)
                 if receipt is not None:
                     return receipt
-                require(not self.readonly, "READ_ONLY", "Workbook is open read-only", 403)
-                self.deadline = time.monotonic() + 5
+                # A released stage can only be answered from a stored receipt, as just tried. Nothing was admitted, so the
+                # refusal names this operation and is rejected, as the engine's own request refusals are.
+                if staged and not isinstance(request.get(STAGE_PATH),str):
+                    raise EngineError("JOB_NOT_FOUND","Import stage is unavailable; prepare the workbook again",404,operation_id=operation)
+                # Also before any transaction or write, after the stored receipts were consulted: rejected, naming the operation.
+                if self.readonly: raise EngineError("READ_ONLY", "Workbook is open read-only", 403, operation_id=operation)
+                self.deadline = time.monotonic() + (STAGE_SECONDS if staged else 5)
+                self.bulk_loaded = 0
                 self.refresh(deadline=self.deadline)
                 self.changes, self.pending = {}, {}
                 self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
@@ -954,6 +1206,7 @@ class Workbook:
                                   409 if isinstance(error,(OSError,sqlite3.Error)) else 500,
                                   "unknown",operation_id=operation) from error
             in_transaction = True
+            import_plan = None
             try:
                 self.db.execute("SAVEPOINT operation_changes")
                 self.check_operation()
@@ -978,7 +1231,9 @@ class Workbook:
                 from . import records
                 record_context=records.capture(self)
                 self.relational_before={item['id']:item for item in relational.tables(self.db)}
-                before_catalog=self.structure_hook(operation,request,'before',None) if sheet_structural else None
+                import_plan=self.plan_import(request) if kind=="workbook_import" else None
+                event_arguments=self.import_arguments(import_plan) if import_plan else None
+                before_catalog=self.structure_hook(operation,request,'before',None,event_arguments) if sheet_structural else None
                 # Cells edited so far (by a before-structure handler) are not structural content when moved.
                 self.structure_touched=set(self.changes)
                 reference_report = {}
@@ -1057,14 +1312,14 @@ class Workbook:
                                     require(isinstance(source,str),"INVALID_ARGUMENT","Clipboard source must be text")
                                     input_kind = value.get("input_kind", "text")
                                     if input_kind in ("auto", "formula") and source.startswith("="):
-                                        source = translate(source, row-integer(value.get("row"),1,MAX_ROWS,"source row"), col-integer(value.get("col"),1,MAX_COLS,"source column")) if record_projection else translate(source, start_row-origin_row, start_col-origin_col)
+                                        source = copied_formula(source, row-integer(value.get("row"),1,MAX_ROWS,"source row"), col-integer(value.get("col"),1,MAX_COLS,"source column")) if record_projection else copied_formula(source, start_row-origin_row, start_col-origin_col)
                                 if not edit.get("clear_input"):
                                     edit.update(source=source, kind=input_kind)
                             if mode != "values":
                                 edit["style"] = value.get("style", {})
                                 edit["replace_style"] = True
                             edits.append(edit)
-                    self.apply_edit(sheet, edits, preserve_inputs=mode=="all")
+                    self.apply_edit(sheet, edits, preserve_inputs=mode=="all", copied=True)
                 elif kind == "fill":
                     r1, c1, r2, c2 = rectangle(request)
                     source = self.raw(sheet, r1, c1)
@@ -1097,7 +1352,7 @@ class Workbook:
                                 item["source"] = str(seed["value"] + step*((row-r1)*(c2-c1+1)+col-c1))
                                 item["kind"] = "number"
                             elif item and typed(item)["kind"] == "formula":
-                                item["source"] = translate(item["source"], row-seed_row, col-seed_col)
+                                item["source"] = copied_formula(item["source"], row-seed_row, col-seed_col)
                             self.put(sheet, row, col, item)
                 elif kind == "move":
                     require(request.get("mode", "all") == "all", "UNSUPPORTED_PASTE_MODE", "Cut supports full paste only; use Copy for special paste")
@@ -1106,7 +1361,7 @@ class Workbook:
                     dest_row, dest_col = request.get("row"), request.get("col")
                     integer(dest_row, 1, MAX_ROWS-(r2-r1), "destination row")
                     integer(dest_col, 1, MAX_COLS-(c2-c1), "destination column")
-                    self.move_cells(sheet,(r1,c1,r2,c2),dest_row,dest_col)
+                    reference_report = self.move_cells(sheet,(r1,c1,r2,c2),dest_row,dest_col)
                 elif kind == "replace_all":
                     replacement = request.get("replacement")
                     require(isinstance(replacement, str), "INVALID_ARGUMENT", "Replacement must be text")
@@ -1149,7 +1404,7 @@ class Workbook:
                 elif kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"):
                     reference_report = self.change_structure(request)
                 elif kind == "workbook_import":
-                    self.import_workbook(request)
+                    reference_report=self.import_workbook(import_plan)
                 elif kind == "sheet_add":
                     name = request.get("name", "Sheet")
                     self.check_name(name)
@@ -1157,12 +1412,12 @@ class Workbook:
                 elif kind == "sheet_rename":
                     target = self.sheet(request.get("sheet"))
                     self.check_name(request.get("name"))
-                    self.rename_references(target, request["name"])
+                    reference_report = self.rename_references(target, request["name"])
                     self.db.execute("UPDATE sheets SET name=? WHERE id=?", (request["name"], target))
                 elif kind == "sheet_duplicate":
                     target = self.sheet(request.get("sheet"))
                     self.check_name(request.get("name"))
-                    self.duplicate_sheet(target, request["name"])
+                    reference_report = self.duplicate_sheet(target, request["name"])
                 elif kind == "sheet_reorder":
                     order = request.get("order")
                     current = [row[0] for row in self.db.execute("SELECT id FROM sheets")]
@@ -1177,7 +1432,7 @@ class Workbook:
                     raise EngineError("UNSUPPORTED_OPERATION", f"Operation is not available: {kind}")
                 # Records produced only by a structural rewrite are not cell-change events for bindings.
                 self.structural_records={key:self.pending[key]['after'] for key,quiet in self.structural_marks.items() if quiet and key in self.pending}
-                if sheet_structural:self.structure_hook(operation,request,'after',before_catalog)
+                if sheet_structural:self.structure_hook(operation,request,'after',before_catalog,event_arguments)
                 self.run_hooks(operation)
                 repaired_issues=None
                 if kind=='table_repair':
@@ -1188,7 +1443,7 @@ class Workbook:
                 self.check_operation()
                 self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1] or key in self.table_schema_keys}
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
-                result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": sum(key[0]!='table' for key in self.changes),
+                result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": sum(key[0]!='table' for key in self.changes)+self.bulk_loaded,
                           "changed_records":sum(key[0]=='table' for key in self.changes)}
                 result.update(reference_report)
                 if self.binding_notices:result["binding_notices"]=self.binding_notices
@@ -1218,6 +1473,7 @@ class Workbook:
                     self.undo = self.undo[-100:]
                 while sum(entry[2] for entry in self.undo + self.redo) > MAX_HISTORY_BYTES:
                     (self.undo if self.undo else self.redo).pop(0)
+                if on_commit is not None:on_commit()
                 return result
             except Exception as error:
                 if not in_transaction:
@@ -1288,6 +1544,8 @@ class Workbook:
                         pass
                     raise EngineError("OUTCOME_UNKNOWN","Data changes were rolled back but the receipt could not be confirmed; reconcile the operation ID",500,"unknown",operation_id=operation) from receipt_error
                 raise failure
+            finally:
+                if import_plan is not None and import_plan["stage"] is not None:import_plan["stage"].close()
 
     @staticmethod
     def history_cost(label,changes):
@@ -1296,9 +1554,10 @@ class Workbook:
 
     def move_cells(self, sheet, rectangle, dest_row, dest_col):
         r1,c1,r2,c2=rectangle;dr,dc=dest_row-r1,dest_col-c1
-        if dr==0 and dc==0:return
-        sources={};source_bytes=0;formulas={};scan_bytes=0
+        if dr==0 and dc==0:return {}
+        sources={};source_bytes=0;formulas={};scan_bytes=0;marked=[]
         target_name=self.db.execute("SELECT name FROM sheets WHERE id=?",(sheet,)).fetchone()[0]
+        sheet_order=[name for (name,) in self.db.execute("SELECT name FROM sheets ORDER BY position,id")]
         with sql_deadline(self.db,self.deadline):
             for row in range(r1,r2+1):
                 for col in range(c1,c2+1):
@@ -1315,7 +1574,13 @@ class Workbook:
                 moving=identity==sheet and r1<=row<=r2 and c1<=col<=c2
                 overwritten=identity==sheet and dest_row<=row<=dest_row+r2-r1 and dest_col<=col<=dest_col+c2-c1
                 if overwritten and not moving:continue
-                try:transformed=move_references(source,name,target_name,rectangle,dr,dc,target_id=sheet)
+                try:transformed=move_references(source,name,target_name,rectangle,dr,dc,target_id=sheet,sheet_order=sheet_order)
+                except Unmaintainable:
+                    if identity!=sheet and not has_sheet_reference(source):continue  # Cannot refer to the moved cells.
+                    item=unmaintained(source,style)
+                    if moving:sources[row,col]=item;marked.append((name,row+dr,col+dc))
+                    else:formulas[identity,row,col]=item;marked.append((name,row,col))
+                    continue
                 except FormulaError as error:
                     raise EngineError("REFERENCE_TRANSFORM_UNAVAILABLE",f"Cannot safely move reference at {name}!{address(row,col)}: {error}") from error
                 if transformed!=source:
@@ -1325,10 +1590,11 @@ class Workbook:
             for row,col in sources:self.put(sheet,row,col,None)
             for (row,col),item in sources.items():self.put(sheet,row+dr,col+dc,item)
             for key,item in formulas.items():self.put(*key,item)
+        return unmaintained_report(marked)
 
     def delete_sheet(self, target):
         target_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
-        deleted, formulas, payload_bytes, warnings, locations = [], [], 0, 0, []
+        deleted, formulas, payload_bytes, warnings, locations, marked = [], [], 0, 0, [], []
         with sql_deadline(self.db,self.deadline):
             for row, col, source, style in self.db.execute(
                     "SELECT row,col,source,style FROM cells WHERE sheet_id=? LIMIT ?",(target,MAX_CELLS+1)):
@@ -1346,6 +1612,10 @@ class Workbook:
                 require(payload_bytes<=8*1024*1024,"LIMIT","Sheet deletion sources exceed 8 MiB")
                 try:
                     transformed, broken = delete_sheet_references(source,name,target_name,target_id=target)
+                except Unmaintainable:
+                    if has_sheet_reference(source):  # Only a qualified reference can name the deleted sheet.
+                        formulas.append(((sheet,row,col),unmaintained(source,style)));marked.append((name,row,col))
+                    continue
                 except FormulaError as error:
                     raise EngineError("REFERENCE_TRANSFORM_UNAVAILABLE", f"Cannot safely transform {name}!{address(row,col)}: {error}") from error
                 if transformed != source:
@@ -1364,14 +1634,14 @@ class Workbook:
             from .bindings import scoped_to_names
             broken_bindings = sorted(break_binding_sheet(self,target)+scoped_to_names(self,broken_names))
             self.db.execute("DELETE FROM sheets WHERE id=?",(target,))
-        result = {"reference_warnings":warnings,"reference_issues":locations}
+        result = {"reference_warnings":warnings,"reference_issues":locations,**unmaintained_report(marked)}
         if broken_names:result["broken_names"] = broken_names
         if broken_bindings:result["broken_bindings"] = broken_bindings
         return result
 
     def duplicate_sheet(self, target, new_name):
         old_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
-        new_id, cells, payload_bytes = str(uuid.uuid4()), [], 0
+        new_id, cells, payload_bytes, marked = str(uuid.uuid4()), [], 0, []
         with sql_deadline(self.db, self.deadline):
             for row, col, source, kind, style in self.db.execute(
                     "SELECT row,col,source,kind,style FROM cells WHERE sheet_id=? LIMIT ?",(target,MAX_CELLS+1)):
@@ -1382,6 +1652,9 @@ class Workbook:
                 if kind in ("auto","formula") and source.startswith("="):
                     try:
                         source = rename_sheet_references(source, old_name, new_name, target_id=target, new_id=new_id)
+                    except Unmaintainable:
+                        if has_sheet_reference(source):  # The copy cannot retarget its own sheet's name.
+                            kind = "unmaintained";marked.append((new_name,row,col))
                     except FormulaError as error:
                         raise EngineError("REFERENCE_TRANSFORM_UNAVAILABLE", f"Cannot safely copy {old_name}!{address(row,col)}: {error}") from error
                 item = {"source":source,"kind":kind,"style":json.loads(style)}
@@ -1393,10 +1666,11 @@ class Workbook:
             if self.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=3:
                 self.db.execute("INSERT INTO dh_objects SELECT namespace,id,?,payload FROM dh_objects WHERE sheet_id=? AND namespace IN ('presentation','list')",(new_id,target))
                 require(self.db.execute('SELECT count(*)<=256 AND coalesce(sum(length(payload)),0)<=16777216 FROM dh_objects').fetchone()[0],'LIMIT','Native metadata exceeds its budget')
+        return unmaintained_report(marked)
 
     def rename_references(self, target, new_name):
         old_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
-        formulas, payload_bytes = [], 0
+        formulas, payload_bytes, marked = [], 0, []
         with sql_deadline(self.db, self.deadline):
             for scanned, (sheet, name, row, col, source, kind, style) in enumerate(self.db.execute(
                     "SELECT c.sheet_id,s.name,c.row,c.col,c.source,c.kind,c.style FROM cells c JOIN sheets s ON s.id=c.sheet_id "
@@ -1407,6 +1681,11 @@ class Workbook:
                 require(payload_bytes<=8*1024*1024, "LIMIT", "Sheet reference sources exceed 8 MiB")
                 try:
                     transformed = rename_sheet_references(source, old_name, new_name, target_id=target)
+                except Unmaintainable:
+                    if has_sheet_reference(source):  # Only a qualified reference can name the renamed sheet.
+                        formulas.append(((sheet,row,col),unmaintained(source,style)))
+                        marked.append((new_name if sheet==target else name,row,col))
+                    continue
                 except FormulaError as error:
                     raise EngineError("REFERENCE_TRANSFORM_UNAVAILABLE", f"Cannot safely transform {name}!{address(row,col)}: {error}") from error
                 if transformed != source:
@@ -1415,18 +1694,20 @@ class Workbook:
                     formulas.append(((sheet,row,col),item))
             for key, item in formulas:
                 self.structural_put(key,item)
+        return unmaintained_report(marked)
 
     def change_structure(self, request):
         """Bounded whole-row/column changes, including references on other sheets."""
         target = self.sheet(request.get("sheet", "Sheet1"))
         target_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
+        sheet_order = [name for (name,) in self.db.execute("SELECT name FROM sheets ORDER BY position,id")]
         axis = "row" if request["action"].startswith("rows_") else "col"
         maximum = MAX_ROWS if axis == "row" else MAX_COLS
         start = integer(request.get("start"), 1, maximum, "start")
         count = integer(request.get("count", 1), 1, maximum-start+1, "count")
         delete = request["action"].endswith("_delete")
         end = start+count-1
-        moved, formulas, payload_bytes, warnings, locations = {}, {}, 0, 0, []
+        moved, formulas, payload_bytes, warnings, locations, marked = {}, {}, 0, 0, [], []
         with sql_deadline(self.db, self.deadline):
             # Axis is selected internally. Stream sources so long cells cannot
             # allocate an unbounded fetchall before the ordinary-operation limit.
@@ -1455,7 +1736,14 @@ class Workbook:
                 payload_bytes += len(source.encode())+len(style.encode())+128
                 require(payload_bytes<=8*1024*1024, "LIMIT", "Structure sources exceed 8 MiB")
                 try:
-                    transformed, broken = transform_structure(source,name,target_name,axis,start,count,delete,target_id=target)
+                    transformed, broken = transform_structure(source,name,target_name,axis,start,count,delete,target_id=target,sheet_order=sheet_order)
+                except Unmaintainable:
+                    if sheet!=target and not has_sheet_reference(source):continue  # Cannot refer to the edited sheet.
+                    destination = moved[key][0] if key in moved else key
+                    marked.append((name,destination[1],destination[2]))
+                    if key in moved:moved[key][1]["kind"] = "unmaintained"
+                    else:formulas[key] = unmaintained(source,style)
+                    continue
                 except FormulaError as error:
                     raise EngineError("REFERENCE_TRANSFORM_UNAVAILABLE", f"Cannot safely transform {name}!{address(row,col)}: {error}") from error
                 warnings += broken
@@ -1480,7 +1768,7 @@ class Workbook:
             from .bindings import adjust_structure as adjust_bindings
             from .bindings import scoped_to_names
             broken_bindings = sorted(adjust_bindings(self,target,axis,start,count,delete)+scoped_to_names(self,broken_names))
-        result = {"reference_warnings":warnings,"reference_issues":locations}
+        result = {"reference_warnings":warnings,"reference_issues":locations,**unmaintained_report(marked)}
         if broken_names:result["broken_names"] = broken_names
         if broken_bindings:result["broken_bindings"] = broken_bindings
         return result
@@ -1621,7 +1909,7 @@ class Workbook:
                     for row,col,source,kind,style in self.range_cells(sheet,selected,left,right,deadline):
                         if col not in colmap:continue
                         item=typed({"source":source,"kind":kind,"style":json.loads(style)})
-                        value=calc.cell(sheet,row,col) if item["kind"]=="formula" else item["value"]
+                        value=calc.cell(sheet,row,col) if item["kind"] in EVALUATED else item["value"]
                         result["formulas_as_values"]+=int(item["kind"]=="formula")
                         scalar_kind=value.kind if isinstance(value,Temporal) else "null" if value is None else "boolean" if type(value) is bool else "number" if type(value) in (int,float) else "text"
                         scalar_source="NULL" if value is None else "TRUE" if value is True else "FALSE" if value is False else str(value)

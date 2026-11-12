@@ -29,17 +29,16 @@ class FidelityTests(unittest.TestCase):
         self.assertIn("Shared formulas expand"," ".join(result["report"]))
         self.assertEqual([c["source"] for c in preview(data,mode="values")["cells"]],["99","99"])
 
-    def test_broken_shared_groups_block_every_cell(self):
+    def test_broken_shared_groups_reject_the_file(self):
         samples=[
             '<c r="C3"><f t="shared" si="4"/></c>',
             '<c r="C2"><f t="shared" si="4" ref="C2">A1</f></c><c r="C3"><f t="shared" si="4"/></c>',
             '<c r="C2"><f t="shared" si="4" ref="C2:C3">A1</f></c><c r="C3"><f t="shared" si="4" ref="C2:C3">A2</f></c>',
-            '<c r="C2"><f t="shared" si="4" ref="A1:XFD1048576">A1</f></c>',
-            '<c r="C2"><f t="array" ref="C2:C3">A1</f></c>']
+            '<c r="C2"><f t="shared" si="4" ref="A1:B1048576">A1</f></c>']
         for sample in samples:
             with self.subTest(sample=sample):
-                result=preview(fixture('<c r="A1"><v>7</v></c>'+sample))
-                self.assertFalse(result["can_import"]); self.assertEqual(result["cells"],[])
+                with self.assertRaises(EngineError) as failure: preview(fixture('<c r="A1"><v>7</v></c>'+sample))
+                self.assertEqual(failure.exception.body["code"],"INVALID_SPREADSHEET")
 
     def test_ods_inherits_parent_properties_and_child_resets(self):
         styles='''<style:style style:name="Parent" style:family="table-cell"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/><style:table-cell-properties fo:background-color="#12ab34" fo:wrap-option="wrap" fo:border="0.75pt solid #000000"/></style:style>
@@ -50,7 +49,8 @@ class FidelityTests(unittest.TestCase):
         self.assertEqual(result["cells"][0]["style"],{"italic":True,"border":"box"})
         for parent in ("Child","Missing"):
             invalid=styles.replace('style:parent-style-name="Parent"',f'style:parent-style-name="{parent}"')
-            self.assertFalse(ods_parse(ods_fixture('<table:table-row><table:table-cell table:style-name="Child" office:value-type="float" office:value="7"/></table:table-row>',invalid))["can_import"])
+            with self.assertRaises(EngineError) as failure: ods_parse(ods_fixture('<table:table-row><table:table-cell table:style-name="Child" office:value-type="float" office:value="7"/></table:table-row>',invalid))
+            self.assertEqual(failure.exception.body["code"],"INVALID_SPREADSHEET")
 
     def test_checked_independent_producer_workbooks_calculate_and_retain_styles(self):
         provenance=json.loads((Path(__file__).parent/"fixtures"/"fidelity-provenance.json").read_text())

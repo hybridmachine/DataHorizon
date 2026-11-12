@@ -43,7 +43,7 @@ include(CTest)
 add_library(datahorizon_desktop STATIC
     desktop/restclient.cpp desktop/restclient.h desktop/servicepaths.cpp desktop/servicepaths.h
     desktop/sheetmodel.cpp desktop/sheetmodel.h desktop/viewportcalculations.h
-    desktop/mainwindow.cpp desktop/mainwindow.h desktop/frozentoprow.h)
+    desktop/mainwindow.cpp desktop/mainwindow.h desktop/frozentoprow.h desktop/conversionreportview.h desktop/englishplurals.h)
 target_sources(datahorizon_desktop PRIVATE desktop/relationalworkbench.cpp desktop/relationalworkbench.h)
 target_sources(datahorizon_desktop PRIVATE desktop/tablerecordeditor.cpp desktop/recordinputdialog.h)
 target_sources(datahorizon_desktop PRIVATE desktop/tablerelationships.cpp)
@@ -135,11 +135,10 @@ if(BUILD_TESTING)
     add_test(NAME python_workspace COMMAND python_workspace_tests -o python-workspace-tests.txt,txt)
     set_tests_properties(python_workspace PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;DATAHORIZON_VIEW_STATE=${CMAKE_CURRENT_BINARY_DIR}/test-views.ini" TIMEOUT 600)
     add_test(NAME service COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s tests -v)
+    # The suite runs about 290 s on the reference Mac (the bounded-memory and export round-trip checks of the
+    # increment 1 final review included), so every platform gets the limit Windows already had.
     set_tests_properties(service PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/service" TIMEOUT 180)
-    if(WIN32)
-        set_tests_properties(service PROPERTIES TIMEOUT 600)
-    endif()
+        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/service" TIMEOUT 600)
 endif()
 
 install(TARGETS DataHorizon BUNDLE DESTINATION . RUNTIME DESTINATION bin)

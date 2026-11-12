@@ -1,0 +1,1684 @@
+{
+  "files": {
+    "tests/fixtures/corpus/array-data-table.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "formula.array",
+            "count": 1,
+            "detail": "",
+            "severity": "unevaluable"
+          },
+          {
+            "category": "formula.data_table",
+            "count": 1,
+            "detail": "",
+            "severity": "converted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 17,
+        "totals": {
+          "approximated": 0,
+          "converted": 1,
+          "omitted": 0,
+          "unevaluable": 1
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "formula.array",
+            "count": 1,
+            "detail": "",
+            "severity": "converted"
+          },
+          {
+            "category": "formula.data_table",
+            "count": 1,
+            "detail": "",
+            "severity": "converted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 17,
+        "totals": {
+          "approximated": 0,
+          "converted": 2,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [],
+        "status": "clean",
+        "stored_cells": 17,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/chart-sheet.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "chart_sheets",
+            "severity": "omitted"
+          },
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "charts",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 8,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "chart_sheets",
+            "severity": "omitted"
+          },
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "charts",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 8,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "chart_sheets",
+            "severity": "omitted"
+          },
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "charts",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 8,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/conditional-formatting.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "conditional_formatting",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 6,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "conditional_formatting",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 6,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "conditional_formatting",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 6,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/data-validation.ods": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "data_validation",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 1,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "data_validation",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 1,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "data_validation",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 1,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/data-validation.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "data_validation",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 4,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "data_validation",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 4,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "data_validation",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 4,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/defined-names.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "formula.name",
+            "count": 1,
+            "detail": "LocalOffset",
+            "severity": "unevaluable"
+          },
+          {
+            "category": "formula.name",
+            "count": 1,
+            "detail": "Net",
+            "severity": "unevaluable"
+          },
+          {
+            "category": "workbook.feature",
+            "count": 3,
+            "detail": "defined_names",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 8,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 3,
+          "unevaluable": 2
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "formula.name",
+            "count": 1,
+            "detail": "LocalOffset",
+            "severity": "converted"
+          },
+          {
+            "category": "formula.name",
+            "count": 1,
+            "detail": "Net",
+            "severity": "converted"
+          },
+          {
+            "category": "workbook.feature",
+            "count": 3,
+            "detail": "defined_names",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 8,
+        "totals": {
+          "approximated": 0,
+          "converted": 2,
+          "omitted": 3,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "workbook.feature",
+            "count": 3,
+            "detail": "defined_names",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 8,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 3,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/error-cells.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "cell.error_value",
+            "count": 7,
+            "detail": "",
+            "severity": "converted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 9,
+        "totals": {
+          "approximated": 0,
+          "converted": 7,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "cell.error_value",
+            "count": 7,
+            "detail": "",
+            "severity": "converted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 9,
+        "totals": {
+          "approximated": 0,
+          "converted": 7,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "cell.error_value",
+            "count": 9,
+            "detail": "",
+            "severity": "converted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 9,
+        "totals": {
+          "approximated": 0,
+          "converted": 9,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/excel-table.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "formula.syntax",
+            "count": 1,
+            "detail": "",
+            "severity": "unevaluable"
+          },
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "excel_tables",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 8,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 1
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "formula.syntax",
+            "count": 1,
+            "detail": "",
+            "severity": "converted"
+          },
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "excel_tables",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 8,
+        "totals": {
+          "approximated": 0,
+          "converted": 1,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "excel_tables",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 8,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/external-3d-references.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "formula.external_reference",
+            "count": 1,
+            "detail": "",
+            "severity": "unevaluable"
+          },
+          {
+            "category": "formula.unsupported_reference",
+            "count": 1,
+            "detail": "First:Last!A1",
+            "severity": "unevaluable"
+          },
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "external_references",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 6,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 2
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "formula.external_reference",
+            "count": 1,
+            "detail": "",
+            "severity": "converted"
+          },
+          {
+            "category": "formula.unsupported_reference",
+            "count": 1,
+            "detail": "First:Last!A1",
+            "severity": "converted"
+          },
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "external_references",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 6,
+        "totals": {
+          "approximated": 0,
+          "converted": 2,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "workbook.feature",
+            "count": 1,
+            "detail": "external_references",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 6,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/hyperlink-comment.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "comments",
+            "severity": "omitted"
+          },
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "hyperlinks",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 2,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "comments",
+            "severity": "omitted"
+          },
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "hyperlinks",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 2,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "comments",
+            "severity": "omitted"
+          },
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "hyperlinks",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 2,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/layout-hidden-frozen.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 4,
+            "detail": "column_widths",
+            "severity": "omitted"
+          },
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "frozen_panes",
+            "severity": "omitted"
+          },
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "hidden_rows_columns",
+            "severity": "omitted"
+          },
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "row_heights",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 16,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 9,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 4,
+            "detail": "column_widths",
+            "severity": "omitted"
+          },
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "frozen_panes",
+            "severity": "omitted"
+          },
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "hidden_rows_columns",
+            "severity": "omitted"
+          },
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "row_heights",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 16,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 9,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 4,
+            "detail": "column_widths",
+            "severity": "omitted"
+          },
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "frozen_panes",
+            "severity": "omitted"
+          },
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "hidden_rows_columns",
+            "severity": "omitted"
+          },
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "row_heights",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 16,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 9,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/merged-cells.ods": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "merged_cells",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 3,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "merged_cells",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 3,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 1,
+            "detail": "merged_cells",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 3,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/merged-cells.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "merged_cells",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 6,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "merged_cells",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 6,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "sheet.feature",
+            "count": 2,
+            "detail": "merged_cells",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 6,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/number-format.ods": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Unsupported ODS number/date/currency display formats are omitted; typed values are retained.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 2,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Unsupported ODS number/date/currency display formats are omitted; typed values are retained.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 2,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Unsupported ODS number/date/currency display formats are omitted; typed values are retained.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 2,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/number-formats.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Number format 164 (yyyy\\-mm\\-dd) is omitted; numeric inputs remain numbers, including date/time serials.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Number format 165 (#,##0.00;[Red]\\-#,##0.00) is omitted; numeric inputs remain numbers, including date/time serials.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Number format 166 (# ?/?) is omitted; numeric inputs remain numbers, including date/time serials.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Number format 167 (\"EUR\"\\ #,##0.00) is omitted; numeric inputs remain numbers, including date/time serials.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 10,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 4,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Number format 164 (yyyy\\-mm\\-dd) is omitted; numeric inputs remain numbers, including date/time serials.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Number format 165 (#,##0.00;[Red]\\-#,##0.00) is omitted; numeric inputs remain numbers, including date/time serials.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Number format 166 (# ?/?) is omitted; numeric inputs remain numbers, including date/time serials.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Number format 167 (\"EUR\"\\ #,##0.00) is omitted; numeric inputs remain numbers, including date/time serials.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 10,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 4,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Number format 164 (yyyy\\-mm\\-dd) is omitted; numeric inputs remain numbers, including date/time serials.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Number format 165 (#,##0.00;[Red]\\-#,##0.00) is omitted; numeric inputs remain numbers, including date/time serials.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Number format 166 (# ?/?) is omitted; numeric inputs remain numbers, including date/time serials.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.number_format",
+            "count": 1,
+            "detail": "Number format 167 (\"EUR\"\\ #,##0.00) is omitted; numeric inputs remain numbers, including date/time serials.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 10,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 4,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/shared-formulas.xlsx": {
+      "formulas": {
+        "entries": [],
+        "status": "clean",
+        "stored_cells": 9,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [],
+        "status": "clean",
+        "stored_cells": 9,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [],
+        "status": "clean",
+        "stored_cells": 9,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/strict-namespace.xlsx": {
+      "formulas": {
+        "entries": [],
+        "status": "clean",
+        "stored_cells": 4,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [],
+        "status": "clean",
+        "stored_cells": 4,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [],
+        "status": "clean",
+        "stored_cells": 4,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/corpus/theme-colours.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "style.fill",
+            "count": 2,
+            "detail": "Non-solid, tinted, indexed or theme fills are omitted.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.font",
+            "count": 3,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.named_style",
+            "count": 1,
+            "detail": "Named style inheritance is omitted; direct cell formatting is mapped.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 3,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 6,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "style.fill",
+            "count": 2,
+            "detail": "Non-solid, tinted, indexed or theme fills are omitted.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.font",
+            "count": 3,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.named_style",
+            "count": 1,
+            "detail": "Named style inheritance is omitted; direct cell formatting is mapped.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 3,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 6,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "style.fill",
+            "count": 2,
+            "detail": "Non-solid, tinted, indexed or theme fills are omitted.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.font",
+            "count": 3,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.named_style",
+            "count": 1,
+            "detail": "Named style inheritance is omitted; direct cell formatting is mapped.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 3,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 6,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/fidelity.ods": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "style.border",
+            "count": 16,
+            "detail": "ODS border colors map to the native default color.",
+            "severity": "approximated"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 49,
+        "totals": {
+          "approximated": 16,
+          "converted": 0,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "style.border",
+            "count": 16,
+            "detail": "ODS border colors map to the native default color.",
+            "severity": "approximated"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 49,
+        "totals": {
+          "approximated": 16,
+          "converted": 0,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "style.border",
+            "count": 16,
+            "detail": "ODS border colors map to the native default color.",
+            "severity": "approximated"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 49,
+        "totals": {
+          "approximated": 16,
+          "converted": 0,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/fidelity.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "style.border",
+            "count": 16,
+            "detail": "Border colors map to the native default color.",
+            "severity": "approximated"
+          },
+          {
+            "category": "style.font",
+            "count": 33,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 49,
+        "totals": {
+          "approximated": 16,
+          "converted": 0,
+          "omitted": 33,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "style.border",
+            "count": 16,
+            "detail": "Border colors map to the native default color.",
+            "severity": "approximated"
+          },
+          {
+            "category": "style.font",
+            "count": 33,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 49,
+        "totals": {
+          "approximated": 16,
+          "converted": 0,
+          "omitted": 33,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "cell.missing_cache",
+            "count": 17,
+            "detail": "",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.font",
+            "count": 32,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 32,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 49,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/inputs.ods": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "style.border",
+            "count": 1,
+            "detail": "ODS border colors map to the native default color.",
+            "severity": "approximated"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 3,
+        "totals": {
+          "approximated": 1,
+          "converted": 0,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "style.border",
+            "count": 1,
+            "detail": "ODS border colors map to the native default color.",
+            "severity": "approximated"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 3,
+        "totals": {
+          "approximated": 1,
+          "converted": 0,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "style.border",
+            "count": 1,
+            "detail": "ODS border colors map to the native default color.",
+            "severity": "approximated"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 3,
+        "totals": {
+          "approximated": 1,
+          "converted": 0,
+          "omitted": 0,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/inputs.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "style.border",
+            "count": 1,
+            "detail": "Border colors map to the native default color.",
+            "severity": "approximated"
+          },
+          {
+            "category": "style.font",
+            "count": 2,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 3,
+        "totals": {
+          "approximated": 1,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "style.border",
+            "count": 1,
+            "detail": "Border colors map to the native default color.",
+            "severity": "approximated"
+          },
+          {
+            "category": "style.font",
+            "count": 2,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 3,
+        "totals": {
+          "approximated": 1,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "cell.missing_cache",
+            "count": 1,
+            "detail": "",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.font",
+            "count": 2,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 2,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 3,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/markup.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "style.font",
+            "count": 1,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 1,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "style.font",
+            "count": 1,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 1,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "style.font",
+            "count": 1,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 1,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 1,
+          "unevaluable": 0
+        }
+      }
+    },
+    "tests/fixtures/unsupported.xlsx": {
+      "formulas": {
+        "entries": [
+          {
+            "category": "formula.unsupported_function",
+            "count": 1,
+            "detail": "INFO",
+            "severity": "unevaluable"
+          },
+          {
+            "category": "style.font",
+            "count": 2,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 2,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 1
+        }
+      },
+      "mixed": {
+        "entries": [
+          {
+            "category": "formula.unsupported_function",
+            "count": 1,
+            "detail": "INFO",
+            "severity": "unevaluable"
+          },
+          {
+            "category": "style.font",
+            "count": 2,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 2,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 1
+        }
+      },
+      "values": {
+        "entries": [
+          {
+            "category": "cell.missing_cache",
+            "count": 1,
+            "detail": "",
+            "severity": "omitted"
+          },
+          {
+            "category": "style.font",
+            "count": 1,
+            "detail": "Unsupported text_color (including theme/tinted colors or fractional/out-of-range sizes) is omitted.",
+            "severity": "omitted"
+          }
+        ],
+        "status": "degraded",
+        "stored_cells": 1,
+        "totals": {
+          "approximated": 0,
+          "converted": 0,
+          "omitted": 2,
+          "unevaluable": 0
+        }
+      }
+    }
+  },
+  "summary": {
+    "entries_by_category": {
+      "formulas": {
+        "cell.error_value": 1,
+        "formula.array": 1,
+        "formula.data_table": 1,
+        "formula.external_reference": 1,
+        "formula.name": 2,
+        "formula.syntax": 1,
+        "formula.unsupported_function": 1,
+        "formula.unsupported_reference": 1,
+        "sheet.feature": 12,
+        "style.border": 4,
+        "style.fill": 1,
+        "style.font": 5,
+        "style.named_style": 1,
+        "style.number_format": 5,
+        "workbook.feature": 4
+      },
+      "mixed": {
+        "cell.error_value": 1,
+        "formula.array": 1,
+        "formula.data_table": 1,
+        "formula.external_reference": 1,
+        "formula.name": 2,
+        "formula.syntax": 1,
+        "formula.unsupported_function": 1,
+        "formula.unsupported_reference": 1,
+        "sheet.feature": 12,
+        "style.border": 4,
+        "style.fill": 1,
+        "style.font": 5,
+        "style.named_style": 1,
+        "style.number_format": 5,
+        "workbook.feature": 4
+      },
+      "values": {
+        "cell.error_value": 1,
+        "cell.missing_cache": 3,
+        "sheet.feature": 12,
+        "style.border": 2,
+        "style.fill": 1,
+        "style.font": 5,
+        "style.named_style": 1,
+        "style.number_format": 5,
+        "workbook.feature": 4
+      }
+    },
+    "files": 24,
+    "gaps": [
+      "no Excel-saved files",
+      "no LibreOffice-saved files"
+    ],
+    "known_unreported": {
+      "formulas": [],
+      "mixed": [],
+      "values": []
+    },
+    "producers": [
+      "DataHorizon test generator (standard library)",
+      "odfpy",
+      "openpyxl"
+    ],
+    "status_by_mode": {
+      "formulas": {
+        "clean": 2,
+        "degraded": 22
+      },
+      "mixed": {
+        "clean": 2,
+        "degraded": 22
+      },
+      "values": {
+        "clean": 3,
+        "degraded": 21
+      }
+    },
+    "status_meaning": "clean means the importer produced no report entry for the file in that mode; it does not mean the file's features were preserved, only that none of them was reported as changed or left out. degraded means at least one report entry; rejected means the import failed. known_unreported lists, per mode and in every status, each listed unsupported feature of a file whose required report entry is missing: features dropped without a report."
+  }
+}

@@ -5,13 +5,16 @@ import io
 import re
 import zipfile
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 
 from .engine import EngineError, MAX_CELLS, encoded, integer, require, typed, validate_style
-from .formula import Parser, split_ref
+from .formula import Parser, FormulaError, address, split_ref, translate
 from .borders import SIDES, border_edges, parse_ods_border, ODS_BORDERS
 from .formats import numeric_spec, simple_number_style
 from .temporal import Temporal, from_duration, to_duration, export_temporal_styles, import_temporal
-from .interchange import map_formula_functions, import_edits, local_formula, mode, native_only_report, node, package, read_xml, xml, preparation_scope, prepare_workbook, validate_sheet_names, workbook_report
+from .conversion_report import ConversionReport
+from .formula_admission import status as formula_status
+from .interchange import blocked_values, MAX_SHEET_INDEX, MAX_SOURCE_BYTES, map_formula_functions, import_edits, local_formula, mode, native_only_report, node, package, read_xml, xml, preparation_scope, prepare_workbook, unmaintained_formula, validate_sheet_names, workbook_report
 
 O="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
 T="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
@@ -52,7 +55,8 @@ def repeat(element,name,maximum):
     return int(value)
 
 
-def ods_to_native(source,sheet_names=None):
+def ods_to_native(source,sheet_names=None,*,strict=True):
+    """Translate OpenFormula syntax; strict also demands functions and sheets DataHorizon can evaluate."""
     require(source.startswith("of:="),"UNSUPPORTED_FORMULA","Only the of:= OpenFormula prefix is supported")
     def endpoint(value):
         match=re.fullmatch(r"(\$?(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z_0-9]*))?\.(\$?[A-Za-z]{1,3}\$?[1-9][0-9]*)",value)
@@ -75,7 +79,8 @@ def ods_to_native(source,sheet_names=None):
             part=re.sub(r"\b(TRUE|FALSE)\(\)",lambda m:m[1].upper(),part,flags=re.I)
             parts.append(part.replace(";",","))
     require(pos==len(source)-4,"UNSUPPORTED_FORMULA","Invalid OpenFormula syntax")
-    return local_formula(map_formula_functions("="+"".join(parts),{"COM.MICROSOFT.CONCAT":"CONCAT","COM.MICROSOFT.XLOOKUP":"XLOOKUP","COM.MICROSOFT.TEXTJOIN":"TEXTJOIN"}),sheet_names=sheet_names)
+    native=map_formula_functions("="+"".join(parts),{"COM.MICROSOFT.CONCAT":"CONCAT","COM.MICROSOFT.XLOOKUP":"XLOOKUP","COM.MICROSOFT.TEXTJOIN":"TEXTJOIN"})
+    return local_formula(native,sheet_names=sheet_names) if strict else native
 
 
 def native_to_ods(source,bounds=None,sheet_names=None):
@@ -143,19 +148,36 @@ def ods_text(cell):
     return value
 
 
+DATA_STYLE_TAGS=tuple(q(N,tag) for tag in ("number-style","text-style","date-style","time-style","currency-style","percentage-style"))
+# Every element OdsStyles.add can keep; the streaming reader collects these as whole records.
+STYLE_DEFINITION_TAGS=frozenset((q(Y,"font-face"),q(Y,"style"),*DATA_STYLE_TAGS))
+
+
 class OdsStyles:
-    def __init__(self,roots):
-        self.styles={}; self.formats={};self.fonts={}; self.losses=set(); self.cache={}
+    def __init__(self,roots,report=None):
+        self.styles={}; self.formats={};self.fonts={}; self.cache={}; self.recorded={}
+        self.report=report if report is not None else ConversionReport()
+        self._where=(None,None); self._count=1; self._current=[]
         for root in roots:
-            for item in root.iter():
-                if item.tag==q(Y,"font-face"):self.fonts[item.get(q(Y,"name"))]=item.get("{urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0}font-family","")
-                if item.tag==q(Y,"style") and item.get(q(Y,"family"))=="table-cell": self.styles[item.get(q(Y,"name"))]=item
-                if item.tag in (q(N,"number-style"),q(N,"text-style"),q(N,"date-style"),q(N,"time-style"),q(N,"currency-style"),q(N,"percentage-style")):
-                    self.formats[item.get(q(Y,"name"))]=item
+            for item in root.iter(): self.add(item)
         require(len(self.styles)<=4096 and len(self.formats)<=4096 and len(self.fonts)<=4096,"LIMIT","ODS styles exceed 4,096 entries")
 
-    def loss(self,message):
-        if len(self.losses)<100: self.losses.add(message)
+    def add(self,item):
+        """Keep one font face, cell style or data style definition; return whether `item` is one (a later one of the same name replaces it)."""
+        if item.tag==q(Y,"font-face"):self.fonts[item.get(q(Y,"name"))]=item.get("{urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0}font-family","")
+        elif item.tag==q(Y,"style") and item.get(q(Y,"family"))=="table-cell": self.styles[item.get(q(Y,"name"))]=item
+        elif item.tag in DATA_STYLE_TAGS: self.formats[item.get(q(Y,"name"))]=item
+        else: return False
+        return True
+
+    def definitions(self):
+        return len(self.styles)+len(self.formats)+len(self.fonts)
+
+    def loss(self,category,detail,severity="omitted"):
+        """Record one style loss for the cell being resolved (and for later cells sharing the style)."""
+        if (category,severity,detail) in self._current: return
+        self._current.append((category,severity,detail))
+        self.report.add(category,severity,detail,sheet=self._where[0],cell=self._where[1],count=self._count)
 
     def resolved(self,name):
         chain=[]; seen=set()
@@ -173,9 +195,18 @@ class OdsStyles:
                 props[child.tag].attrib.update(child.attrib)
         return result
 
-    def style(self,name):
+    def style(self,name,*,sheet=None,cell=None,count=1):
+        """The native style for a cell style name; its losses are reported once per cell that uses it."""
         if name is None: return {}
-        if name in self.cache: return self.cache[name]
+        if name in self.cache:
+            for category,severity,detail in self.recorded[name]: self.report.add(category,severity,detail,sheet=sheet,cell=cell,count=count)
+            return self.cache[name]
+        self._where=(sheet,cell); self._count=count; self._current=[]
+        self.cache[name]=result=self._resolve(name)
+        self.recorded[name]=self._current
+        return result
+
+    def _resolve(self,name):
         item=self.resolved(name)
         result={}
         data_name=item.get(q(Y,"data-style-name"))
@@ -190,7 +221,7 @@ class OdsStyles:
             elif fmt.tag==q(N,"percentage-style") and len(fmt)==2 and simple_number and fmt[0].tag==q(N,"number") and fmt[1].tag==q(N,"text") and fmt[1].text=="%": result.update(simple_number_style(("#,##0" if number.get(q(N,"grouping"))=="true" else "0")+("."+"0"*int(number.get(q(N,"decimal-places"))) if int(number.get(q(N,"decimal-places"))) else "")+"%"))
             elif fmt.tag==q(N,"currency-style") and len(fmt)==3 and simple_number and fmt[0].tag==q(N,"number") and fmt[1].tag==q(N,"text") and fmt[1].text==" " and fmt[2].tag==q(N,"currency-symbol") and re.fullmatch(r"[A-Z]{3}",fmt[2].text or ""):
                 result.update(simple_number_style(("#,##0" if number.get(q(N,"grouping"))=="true" else "0")+("."+"0"*int(number.get(q(N,"decimal-places"))) if int(number.get(q(N,"decimal-places"))) else "")+'" '+fmt[2].text+'"'))
-            else: self.loss("Unsupported ODS number/date/currency display formats are omitted; typed values are retained.")
+            else: self.loss("style.number_format","Unsupported ODS number/date/currency display formats are omitted; typed values are retained.")
         for prop in item:
             if prop.tag==q(Y,"text-properties"):
                 if prop.get(q(F,"font-weight"))=="bold": result["bold"]=True
@@ -203,41 +234,161 @@ class OdsStyles:
                     if value is None:continue
                     if key=="font_size":value=int(float(value[:-2])) if re.fullmatch(r"[0-9]{1,3}(?:\.0{1,8})?pt",value) else None
                     try:validate_style({key:value})
-                    except EngineError:self.loss(f"Unsupported ODS {key} is omitted; only a single portable family, integer 6–72pt and RGB color map.")
+                    except EngineError:self.loss("style.font",f"Unsupported ODS {key} is omitted; only a single portable family, integer 6–72pt and RGB color map.")
                     else:result[key]=value.lower() if key=="text_color" else value
             elif prop.tag==q(Y,"paragraph-properties"):
                 align=prop.get(q(F,"text-align"))
                 if align in ("left","center","right","start","end"): result["align"]={"start":"left","end":"right"}.get(align,align)
-                elif align: self.loss("Unsupported ODS alignment is omitted.")
+                elif align: self.loss("style.alignment","Unsupported ODS alignment is omitted.")
             elif prop.tag==q(Y,"table-cell-properties"):
                 color=prop.get(q(F,"background-color"))
                 if color and re.fullmatch(r"#[0-9a-fA-F]{6}",color): result["background"]=color.lower()
-                elif color not in (None,"transparent"): self.loss("Unsupported ODS fill is omitted.")
+                elif color not in (None,"transparent"): self.loss("style.fill","Unsupported ODS fill is omitted.")
                 if prop.get(q(F,"wrap-option"))=="wrap": result["wrap"]=True
                 base=prop.get(q(F,"border"));base_style=parse_ods_border(base);edges={side:base_style or "none" for side in SIDES};has_border=base is not None
-                if base is not None and base_style is None:self.loss("Unsupported ODS border thickness/pattern is omitted.")
+                if base is not None and base_style is None:self.loss("style.border","Unsupported ODS border thickness/pattern is omitted.")
                 for side in SIDES:
                     value=prop.get(q(F,"border-"+side))
                     if value is None:continue
                     has_border=True;mapped=parse_ods_border(value)
-                    if mapped is None:self.loss("Unsupported ODS border thickness/pattern is omitted.")
+                    if mapped is None:self.loss("style.border","Unsupported ODS border thickness/pattern is omitted.")
                     else:edges[side]=mapped
                 if all(value=="thin" for value in edges.values()):result["border"]="box"
                 else:
                     for side,value in edges.items():
                         if value!="none":result["border_"+side]=value
-                if has_border and any(v!="none" for v in edges.values()):self.loss("ODS border colors map to the native default color.")
-
-        self.cache[name]=result
+                if has_border and any(v!="none" for v in edges.values()):self.loss("style.border","ODS border colors map to the native default color.","approximated")
         return result
 
 
+ODS_ERRORS=("#N/A","#VALUE!","#REF!","#DIV/0!","#NUM!","#NAME?","#NULL!")
+NUMERIC_TYPES=("float","percentage","currency")
+
+
+class _Unusable(Exception):
+    """A stored value that cannot become a native input; carries the report entry."""
+    def __init__(self,category,detail=""):
+        super().__init__(category)
+        self.category,self.detail=category,detail
+
+
+@dataclass
+class OdsCellContext:
+    """Everything one cell conversion needs; row, col and count place the cell being converted."""
+    mode: str
+    styles: object
+    sheet_names: object
+    sheet: str
+    report: ConversionReport
+    timezone_policy: str = "reject"
+    shift: tuple = (0, 0)
+    row: int = 1
+    col: int = 1
+    count: int = 1
+
+
+def _stored_value(cell,kind,formula,timezone_policy):
+    """The native input a cell's own value (or a formula's cache) describes, and whether it is an error value."""
+    if kind in NUMERIC_TYPES:
+        value=cell.get(q(O,"value"))
+        if not value: raise _Unusable("cell.invalid_value","missing value")
+        return {"source":value,"kind":"number"},False
+    if kind=="boolean":
+        value=cell.get(q(O,"boolean-value"))
+        if value not in ("true","false"): raise _Unusable("cell.invalid_value","boolean")
+        return {"source":value.upper(),"kind":"boolean"},False
+    if kind in ("date","time"):
+        value=cell.get(q(O,"date-value") if kind=="date" else q(O,"time-value"))
+        if value is None: raise _Unusable("cell.invalid_value","missing value")
+        try: temporal=from_duration(value) if kind=="time" else import_temporal(value,"datetime" if "T" in value or " " in value else "date",timezone_policy)
+        except (ValueError,OverflowError): raise _Unusable("cell.invalid_value","date/time") from None
+        return {"source":str(temporal),"kind":temporal.kind},False
+    if kind not in (None,"void","string"): raise _Unusable("cell.unsupported_type",kind[:32])
+    if kind=="string" or cell.findall(q(X,"p")):
+        try: text=ods_text(cell)
+        except EngineError as error:
+            if error.body["code"]!="LIMIT": raise
+            raise _Unusable("cell.text_too_long") from None
+        marker=any(key.rsplit("}",1)[-1]=="value-type" and value=="error" for key,value in cell.attrib.items())
+        return {"source":text,"kind":"text"},marker or (formula is not None and text in ODS_ERRORS)
+    if formula is not None: raise _Unusable("cell.missing_cache")
+    return {"source":"","kind":"auto"},False
+
+
+def convert_ods_cell(cell,*,context):
+    """Convert one stored table:table-cell to an edit, or None when it is skipped (with a report entry).
+
+    context.row/col/count say where the cell sits and how many identical cells it stands for.
+    Raises EngineError only when the package itself is malformed."""
+    report,sheet,mode_,count=context.report,context.sheet,context.mode,context.count
+    location=address(context.row,context.col)
+
+    def skip(category,detail=""):
+        report.add(category,"omitted",detail,sheet=sheet,cell=location,count=count)
+
+    kind=cell.get(q(O,"value-type")); formula=cell.get(q(T,"formula"))
+    try: value,is_error=_stored_value(cell,kind,formula,context.timezone_policy); unusable=None
+    except _Unusable as error: value=is_error=None; unusable=error
+    cached=formula is not None and value is not None and not is_error
+    noted=[]
+    item=None
+    if formula is not None and mode_!="values":
+        names=context.sheet_names
+        matrix=any("matrix" in key for key in cell.attrib)
+        problem=("formula.array","") if matrix else None
+        try: native=ods_to_native(formula,names,strict=False)
+        except EngineError:
+            native=None
+            if not matrix: problem=("formula.unsupported_syntax","")
+        if native is not None and not matrix: problem=formula_status(native,names)
+        if problem is not None and problem[0]=="formula.unsupported_syntax":
+            # An untranslated OpenFormula string is not a native formula: keep it as readable text unless a value is usable.
+            if cached and mode_!="formulas": noted.append((problem[0],"converted",problem[1]))
+            else:
+                item={"source":formula,"kind":"text"}
+                noted.append((problem[0],"converted",problem[1]))
+        elif cached and (native is None or (mode_=="mixed" and problem is not None)):
+            noted.append((problem[0],"converted",problem[1]))
+        elif native is None:
+            skip(*problem); return None
+        else:
+            if problem is not None: noted.append((problem[0],"unevaluable",problem[1]))
+            if context.shift!=(0,0):
+                try: translate(native,*context.shift)
+                except FormulaError:
+                    # Neither the parser nor the reference scanner can read this source (formula.Unmaintainable),
+                    # so import_edits could not move it; omit it here, where the report is still open.
+                    skip("formula.untranslatable"); return None
+            item={"source":native,"kind":"formula"}
+    if item is None:
+        if value is None: skip(unusable.category,unusable.detail); return None
+        item=dict(value)
+        if is_error: noted.append(("cell.error_value","converted",""))
+    if item["kind"] in ("text","formula"):
+        # Same limit typed() enforces on managed cell source.
+        if len(item["source"].encode("utf-8","surrogatepass"))>MAX_SOURCE_BYTES:
+            skip("cell.text_too_long","formula source" if item["kind"]=="formula" else ""); return None
+        try: typed({**item,"style":{}})
+        except EngineError: skip("cell.invalid_value","rejected by the engine"); return None
+    elif item["kind"]=="number":
+        try: typed({**item,"style":{}})
+        except EngineError:
+            item={"source":item["source"],"kind":"text"}
+            noted.append(("cell.number_out_of_range","converted",""))
+    item.update(style=context.styles.style(cell.get(q(T,"style-name")),sheet=sheet,cell=location,count=count),replace_style=True)
+    typed(item)
+    for category,severity,detail in noted: report.add(category,severity,detail,sheet=sheet,cell=location,count=count)
+    return {"row":context.row,"col":context.col,**item}
+
+
 def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None):
-    selected=integer(request.get("sheet_index",1),1,64,"sheet_index"); selected_mode=mode(request)
+    selected=integer(request.get("sheet_index",1),1,MAX_SHEET_INDEX,"sheet_index"); selected_mode=mode(request)
+    require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
     report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct/inherited cell styles replace destination inputs/styles.",
-            "Other sheets, code, charts, comments, merged presentation, names, validation, conditional/default/row/column formatting, dimensions and advanced typography are omitted; code never activates.",
-            "Percentage/currency retain numeric magnitude. Number/percentage styles with 0–15 decimal places map; explicit three-letter currency suffix styles map; other display formats are omitted. Supported dates/datetimes and sub-day time durations restore native ISO types. Formula syntax is translated canonically; only the published native function tier and arithmetic/comparison formulas without powers are supported."]
-    if selected_mode=="values": report.append("Formula caches become values with unverified freshness; missing/error caches block Apply.")
+            "Other sheets are omitted and code never activates. Sheet and workbook features that are not imported (merged cells, sizes, validation, comments, names, conditional formatting and others) are listed below.",
+            "Percentage/currency retain numeric magnitude. Number/percentage styles with 0–15 decimal places map; explicit three-letter currency suffix styles map; other display formats are omitted. Supported dates/datetimes and sub-day time durations restore native ISO types. Formula syntax is translated canonically; formulas in the published native function tier without powers evaluate, and any other formula is kept, replaced or omitted as listed below."]
+    if selected_mode=="values": report.append("Formula caches become literal values with unverified freshness; formulas without a usable cache are omitted.")
+    if selected_mode=="mixed": report.append("Formulas DataHorizon can evaluate stay formulas; those it cannot become their cached values when a usable cache exists. Cache freshness cannot be verified.")
     with package(request) as archive:
         try: require(archive.read("mimetype")==MIME.encode(),"INVALID_SPREADSHEET","Package is not an ODS spreadsheet")
         except KeyError as error: raise EngineError("INVALID_SPREADSHEET","Missing ODS mimetype") from error
@@ -245,11 +396,31 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         root=read_xml(archive,"content.xml")
         require(root.tag==q(O,"document-content"),"INVALID_SPREADSHEET","Invalid ODS content")
         sheets=root.findall(f'{q(O,"body")}/{q(O,"spreadsheet")}/{q(T,"table")}')
-        require(0<len(sheets)<=64 and selected<=len(sheets),"INVALID_SPREADSHEET","Choose an existing ODS sheet")
+        require(0<len(sheets) and selected<=len(sheets),"INVALID_SPREADSHEET","Choose an existing ODS sheet")
         roots=([read_xml(archive,"styles.xml")] if "styles.xml" in archive.namelist() else [])+[root]
-        styles=OdsStyles(roots)
+        conversions=ConversionReport()
+        styles=OdsStyles(roots,conversions)
+        from .ods_features import LayoutStyles, OdsSheetFeatures, OdsWorkbookFeatures, mapped_styles, read_panes, report_unreadable_settings, scan_content, scan_table
+        layout=LayoutStyles()
+        for part in roots:
+            for item in part.iter(q(Y,"style")): layout.add(item)
+        workbook_features=OdsWorkbookFeatures(); scan_content(root,workbook_features)
+        # Workbook features are reported once: here for a selection, by prepare_workbook for a whole workbook.
+        from .xlsx_stream import _check_declaration
+        def read_settings(archive,name):
+            # As the streaming reader reads it: only UTF-8 declarations, so both readers agree on what is unreadable.
+            with archive.open(name) as stream: _check_declaration(stream.read(65536))
+            return read_xml(archive,name)
+        panes,readable=read_panes(archive,read_settings)
+        wide=ConversionReport(); workbook_features.report(wide,layout,archive.namelist()); report_unreadable_settings(wide,readable)
+        if sheet_names is None: conversions.merge(wide)
         report.append("ISO shorthand normalizes to native seconds; explicit timezone_policy=utc normalizes offset timestamps to UTC civil values and omits the original offset.")
-        edits=[]; issues=[]; row=1; processed=0; staged_bytes=0
+        scope=list(report)
+        edits=[]; row=1; processed=0; staged_bytes=0
+        shift=(integer(request.get("row",1),1,1048576,"row")-1,integer(request.get("col",1),1,16384,"col")-1)
+        sheet_label=sheets[selected-1].get(q(T,"name"),"")
+        context=OdsCellContext(mode=selected_mode,styles=styles,sheet_names=sheet_names,sheet=sheet_label,report=conversions,
+                               timezone_policy=request.get("timezone_policy","reject"),shift=shift)
         def rows(parent):
             for item in parent:
                 if item.tag==q(T,"table-row"): yield item
@@ -263,80 +434,72 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
                 count=repeat(cell,"number-columns-repeated",16384)
                 require(col+count-1<=16384,"LIMIT","ODS columns exceed the native grid")
                 processed+=1; checkpoint(processed,"Reading ODS cells")
-                kind=cell.get(q(O,"value-type")); formula=cell.get(q(T,"formula")); style_name=cell.get(q(T,"style-name"))
-                try:
-                    if cell.tag==q(T,"covered-table-cell"): col+=count; continue
-                    meaningful=kind is not None or formula is not None or style_name is not None or bool(cell.findall(q(X,"p")))
-                    if not meaningful: col+=count; continue
-                    if formula is not None and selected_mode=="formulas":
-                        require(not any("matrix" in key for key in cell.attrib),"UNSUPPORTED_FORMULA","ODS matrix formulas are unavailable")
-                        item={"source":ods_to_native(formula,sheet_names),"kind":"formula"}
-                    elif kind in ("float","percentage","currency"):
-                        item={"source":cell.get(q(O,"value"),""),"kind":"number"}
-                    elif kind=="boolean":
-                        value=cell.get(q(O,"boolean-value"))
-                        require(value in ("true","false"),"INVALID_SPREADSHEET","Invalid ODS Boolean")
-                        item={"source":value.upper(),"kind":"boolean"}
-                    elif kind in ("date","time"):
-                        value=cell.get(q(O,"date-value") if kind=="date" else q(O,"time-value"))
-                        require(value is not None,"INVALID_SPREADSHEET","Missing date/duration value")
-                        try:temporal=from_duration(value) if kind=="time" else import_temporal(value,"datetime" if "T" in value or " " in value else "date",request.get("timezone_policy","reject"))
-                        except ValueError as error:raise EngineError("UNSUPPORTED_CELL",str(error)) from error
-                        item={"source":str(temporal),"kind":temporal.kind}
-                    elif kind=="string" or cell.findall(q(X,"p")):
-                        item={"source":ods_text(cell),"kind":"text"}
-                    else:
-                        require(kind is None,"UNSUPPORTED_CELL","Unsupported ODS value type")
-                        require(formula is None,"MISSING_CACHE","ODS formula has no supported cache")
-                        item={"source":"","kind":"auto"}
-                    if formula is not None and selected_mode=="values":
-                        require(not any(key.rsplit("}",1)[-1]=="value-type" and value=="error" for key,value in cell.attrib.items())
-                                and item["source"] not in ("#N/A","#VALUE!","#REF!","#DIV/0!","#NUM!","#NAME?","#NULL!"),
-                                "MISSING_CACHE","ODS formula has an error cache")
-                    item.update(style=styles.style(style_name),replace_style=True)
-                    typed(item)
-                    require(len(edits)+row_count*(len(template)+count)<=MAX_CELLS,"LIMIT","Repeated stored cells exceed 10,000")
-                    staged_bytes+=row_count*count*(len(encoded(item).encode())+40)
-                    require(staged_bytes<=3*1024*1024,"READ_LIMIT","Repeated ODS input payload exceeds 3 MiB")
-                    template.extend({"col":col+offset,**item} for offset in range(count))
-                except EngineError as error:
-                    if error.body["code"] in ("LIMIT","READ_LIMIT"): raise
-                    if len(issues)<100: issues.append({"cell":f"row {row}, column {col}","message":str(error)[:200]})
+                meaningful=(cell.get(q(O,"value-type")) is not None or cell.get(q(T,"formula")) is not None
+                            or cell.get(q(T,"style-name")) is not None or bool(cell.findall(q(X,"p"))))
+                if cell.tag==q(T,"table-cell") and meaningful:
+                    context.row,context.col,context.count=row,col,row_count*count
+                    edit=convert_ods_cell(cell,context=context)
+                    if edit is not None:
+                        require(len(edits)+row_count*(len(template)+count)<=MAX_CELLS,"LIMIT","Repeated stored cells exceed 10,000")
+                        staged_bytes+=row_count*count*(len(encoded(edit).encode())+40)
+                        require(staged_bytes<=3*1024*1024,"READ_LIMIT","Repeated ODS input payload exceeds 3 MiB")
+                        template.extend({**edit,"col":col+offset} for offset in range(count))
                 col+=count
-            for offset in range(row_count if template else 0): edits.extend({"row":row+offset,**item} for item in template)
+            for offset in range(row_count if template else 0): edits.extend({**item,"row":row+offset} for item in template)
             row+=row_count
-        report.extend(sorted(styles.losses))
-        result={"cells":edits if not issues else [],"stored_cells":len(edits),"can_import":bool(edits) and not issues,
-                "issues":issues,"sheet":sheets[selected-1].get(q(T,"name"),""),"sheets":[s.get(q(T,"name"),"") for s in sheets],"report":report}
+        sheet_features=OdsSheetFeatures(layout,mapped_styles(styles.styles),panes.get(sheet_label))
+        scan_table(sheets[selected-1],sheet_features)
+        sheet_features.report(conversions,sheet_label,workbook_features.sheet_extra(sheet_label))
+        report.extend(conversions.lines())
+        result={"cells":edits,"stored_cells":len(edits),"can_import":bool(edits),"issues":[],"sheet":sheet_label,
+                "sheets":[s.get(q(T,"name"),"") for s in sheets],"report":report,"scope_lines":scope,"report_entries":conversions.entries(),
+                "totals":conversions.totals()}
         if result["can_import"]: result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","ODS preview exceeds 4 MiB")
+        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=wide
         return result
 
 
-def ods_export(snapshot,request):
-    selected_mode=mode(request)
-    require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
-    report=["One selection at original coordinates from a consistent native state. Native direct styles map to ODS; formulas translate canonically and use current snapshot values as caches.",
-            "Other sheets, code, queries, relationships, history, dimensions and view state are omitted. NULL becomes empty. Target formula/coercion compatibility can differ; retain the native workbook."]
-    whole="sheets" in snapshot
-    snapshots=export_temporal_styles(snapshot["sheets"] if whole else [{**snapshot,"name":"Sheet1"}])
-    names=validate_sheet_names([s["name"] for s in snapshots])
-    if whole: report=workbook_report()+["OpenFormula uses canonical named sheet references and current snapshot caches; sheet-relative movement semantics are not retained. NULL becomes empty."]
-    if snapshot.get('native_omissions'):report.append('Native relational objects omitted from this sheet export: '+', '.join(snapshot['native_omissions']))
-    report.extend(native_only_report(snapshot))
-    report.append("Native dates/datetimes use ISO office:date-value; times use nonnegative sub-day office:time-value durations. Date/time formats map to invariant calendar styles; default temporal displays become ISO styles. Unsupported durations/offsets reject import. Target volatile clocks and serial-date arithmetic/type coercions can differ; choose values to freeze native results.")
-    if selected_mode=="formulas" and any(map_formula_functions(c["source"],{"CONCAT":"COM.MICROSOFT.CONCAT","XLOOKUP":"COM.MICROSOFT.XLOOKUP","TEXTJOIN":"COM.MICROSOFT.TEXTJOIN"})!=c["source"] for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"):report.append("Known modern functions use COM.MICROSOFT extension identifiers; target support is required. Choose values for other targets.")
-    root=ET.Element(q(O,"document-content"),{q(O,"version"):"1.3","xmlns:of":OF})
-    automatic=node(root,q(O,"automatic-styles"))
-    number=node(automatic,q(N,"number-style"),**{q(Y,"name"):"N2"}); node(number,q(N,"number"),**{q(N,"decimal-places"):"2",q(N,"min-integer-digits"):"1"})
-    textstyle=node(automatic,q(N,"text-style"),**{q(Y,"name"):"NT"}); node(textstyle,q(N,"text-content"))
-    percentage=node(automatic,q(N,"percentage-style"),**{q(Y,"name"):"NP"})
-    node(percentage,q(N,"number"),**{q(N,"decimal-places"):"2",q(N,"min-integer-digits"):"1"}); node(percentage,q(N,"text"),"%")
-    style_ids={}; numeric_ids={}
-    for cell in [c for s in snapshots for c in s["cells"]]:
-        style=cell.get("style",{}); key=encoded(style)
-        if key in style_ids: continue
-        require(len(style_ids)<1024,"LIMIT","ODS export exceeds 1,024 styles")
+MODERN_FUNCTIONS={"CONCAT":"COM.MICROSOFT.CONCAT","XLOOKUP":"COM.MICROSOFT.XLOOKUP","TEXTJOIN":"COM.MICROSOFT.TEXTJOIN"}
+WHOLE_FORMULA_LINE="OpenFormula uses canonical named sheet references and current snapshot caches; sheet-relative movement semantics are not retained. NULL becomes empty."
+TEMPORAL_EXPORT_LINE="Native dates/datetimes use ISO office:date-value; times use nonnegative sub-day office:time-value durations. Date/time formats map to invariant calendar styles; default temporal displays become ISO styles. Unsupported durations/offsets reject import. Target volatile clocks and serial-date arithmetic/type coercions can differ; choose values to freeze native results."
+MODERN_FUNCTIONS_LINE="Known modern functions use COM.MICROSOFT extension identifiers; target support is required. Choose values for other targets."
+MAX_EXPORT_STYLES=1024
+
+
+def uses_modern_function(source):
+    """Whether exporting this formula source writes a COM.MICROSOFT extension identifier."""
+    return map_formula_functions(source,MODERN_FUNCTIONS)!=source
+
+
+def export_lines(head,catalog,modern_functions):
+    """The fixed report lines of an ODS export after its scope lines `head`; the conversion report's lines follow them."""
+    report=list(head)
+    if catalog.get('native_omissions'):report.append('Native relational objects omitted from this sheet export: '+', '.join(catalog['native_omissions']))
+    report.extend(native_only_report(catalog))
+    report.append(TEMPORAL_EXPORT_LINE)
+    if modern_functions:report.append(MODERN_FUNCTIONS_LINE)
+    return report
+
+
+class OdsStyleTable:
+    """The automatic styles of an ODS export, written into `automatic` as native styles are first named.
+
+    Both ODS exporters name every cell style through one table, so the same cells in the same order get the
+    same style names and data styles. More than MAX_EXPORT_STYLES distinct styles is LIMIT."""
+    def __init__(self,automatic):
+        self.automatic=automatic; self.ids={}; self.numeric={}
+        number=node(automatic,q(N,"number-style"),**{q(Y,"name"):"N2"}); node(number,q(N,"number"),**{q(N,"decimal-places"):"2",q(N,"min-integer-digits"):"1"})
+        textstyle=node(automatic,q(N,"text-style"),**{q(Y,"name"):"NT"}); node(textstyle,q(N,"text-content"))
+        percentage=node(automatic,q(N,"percentage-style"),**{q(Y,"name"):"NP"})
+        node(percentage,q(N,"number"),**{q(N,"decimal-places"):"2",q(N,"min-integer-digits"):"1"}); node(percentage,q(N,"text"),"%")
+
+    def name(self,style):
+        """The style:name of native `style`, adding its definition on first use."""
+        key=encoded(style)
+        if key in self.ids: return self.ids[key]
+        automatic,style_ids,numeric_ids=self.automatic,self.ids,self.numeric
+        require(len(style_ids)<MAX_EXPORT_STYLES,"LIMIT","ODS export exceeds 1,024 styles")
         name="S"+str(len(style_ids)); style_ids[key]=name
         attrs={q(Y,"name"):name,q(Y,"family"):"table-cell"}
         temporal_mode=style.get("format")
@@ -371,7 +534,108 @@ def ods_export(snapshot,request):
         if props: node(out,q(Y,"table-cell-properties"),**props)
         if paragraph: node(out,q(Y,"paragraph-properties"),**paragraph)
         if text: node(out,q(Y,"text-properties"),**text)
-    body=node(root,q(O,"body")); spreadsheet=node(body,q(O,"spreadsheet")); text_nodes=0
+        return name
+
+
+# Whole-workbook ODS export writes a formula native_to_ods cannot translate as its value, or as an empty cell: an
+# XLSX-dialect source is not OpenFormula. A translated formula without a current value is written without a cache.
+UNTRANSLATED_FORMULA="formula.unsupported_syntax"
+UNTRANSLATED_DETAIL_VALUE="formula not representable in OpenFormula; its current value is written instead"
+UNTRANSLATED_DETAIL_EMPTY="formula not representable in OpenFormula and without an error-free current value; the cell is written empty"
+CACHE_CATEGORY="formula.cache_omitted"
+CACHE_DETAIL="result not evaluated; written without a cached value, so the target must recalculate it"
+CACHE_ERROR_DETAIL="no error-free current result; written without a cached value, so the target must recalculate it"
+
+
+def export_ods_cell(cell,style_name,*,sheet,mode,report,whole,bounds=None,names=None,caches=True):
+    """The table:table-cell element of one native cell with style `style_name`, and how many whitespace elements
+    its text holds. Both ODS exporters write exactly this element.
+
+    `whole` is whole-workbook scope, where `names` are the exported sheet names; a selection checks references against
+    `bounds`. With caches, every cell needs a current value, which a formula carries as its cached result; without,
+    a formula is written with no cached value (its result was not evaluated). At whole-workbook scope a formula that
+    does not translate to OpenFormula is written as its current value, or empty without one (UNTRANSLATED_FORMULA),
+    and a translated formula without a current value is written without a cache (CACHE_CATEGORY)."""
+    out=ET.Element(q(T,"table-cell"),{q(T,"style-name"):style_name}); text_nodes=0
+    value=cell.get("value")
+    current=cell.get("calculation")=="current"
+    if cell["kind"]=="unmaintained" and mode=="formulas":
+        # No cache: its value is the #REF! error, which ODS has no typed cell value for.
+        out.set(q(T,"formula"),"of:"+unmaintained_formula(cell,sheet,report,whole))
+    elif cell["kind"]=="formula" and mode=="formulas":
+        try: formula=native_to_ods(cell["source"],None if whole else bounds,names if whole else None)
+        except EngineError:
+            if not whole: raise
+            formula=None
+        where={"sheet":sheet,"cell":address(cell["row"],cell["col"])}
+        if formula is None:
+            if caches and current: report.add(UNTRANSLATED_FORMULA,"converted",UNTRANSLATED_DETAIL_VALUE,**where)
+            else:
+                report.add(UNTRANSLATED_FORMULA,"omitted",UNTRANSLATED_DETAIL_EMPTY,**where)
+                value=None
+        else:
+            out.set(q(T,"formula"),formula)
+            if caches and not current:
+                require(whole,"CALCULATION_ERROR","ODS export requires error-free current values")
+                report.add(CACHE_CATEGORY,"approximated",CACHE_ERROR_DETAIL,**where)
+                value=None
+    else:
+        require(current,"CALCULATION_ERROR","ODS export requires error-free current values")
+    temporal_kind=cell.get("value_kind",cell.get("kind"))
+    if isinstance(value,Temporal) or temporal_kind in ("date","time","datetime"):
+        value=Temporal(str(value),value.kind if isinstance(value,Temporal) else temporal_kind)
+        clock=value.kind=="time"
+        out.set(q(O,"value-type"),"time" if clock else "date");out.set(q(O,"time-value") if clock else q(O,"date-value"),to_duration(value) if clock else str(value))
+    elif type(value) is bool: out.set(q(O,"value-type"),"boolean"); out.set(q(O,"boolean-value"),str(value).lower())
+    elif type(value) in (float,int):
+        spec=numeric_spec(cell.get("style",{}));mode_name=spec[0] if spec else "number"
+        out.set(q(O,"value-type"),{"percent":"percentage","currency":"currency"}.get(mode_name,"float"));out.set(q(O,"value"),str(value))
+        if mode_name=="currency":out.set(q(O,"currency"),spec[3])
+    elif value is not None:
+        require(not any((ord(c)<32 and c not in "\t\n\r") or ord(c) in (65534,65535) for c in value),"UNSUPPORTED_CELL","ODS cannot represent this cell's XML control characters")
+        out.set(q(O,"value-type"),"string"); out.set(q(O,"string-value"),value)
+        paragraph=node(out,q(X,"p"))
+        # Explicit whitespace elements preserve presentation as well as the typed value.
+        for segment in re.split(r"([ \t\r\n]+)",value):
+            if not segment: continue
+            if segment[0] in " \t\r\n":
+                for run in re.findall(r" +|[^ ]",segment):
+                    text_nodes+=1
+                    if run[0]==" ": node(paragraph,q(X,"s"),**{q(X,"c"):str(len(run))})
+                    elif run=="\t": node(paragraph,q(X,"tab"))
+                    else: node(paragraph,q(X,"line-break"))
+            else:
+                if len(paragraph): paragraph[-1].tail=(paragraph[-1].tail or "")+segment
+                else: paragraph.text=(paragraph.text or "")+segment
+    return out,text_nodes
+
+
+def package_parts():
+    """The styles and manifest parts of an ODS export, after its mimetype and content.xml."""
+    styles=ET.Element(q(O,"document-styles"),{q(O,"version"):"1.3"}); node(styles,q(O,"styles"))
+    manifest=ET.Element(q(M,"manifest"),{q(M,"version"):"1.3"})
+    for name,mime in (("/",MIME),("content.xml","text/xml"),("styles.xml","text/xml")):
+        node(manifest,q(M,"file-entry"),**{q(M,"full-path"):name,q(M,"media-type"):mime})
+    return [("styles.xml",styles),("META-INF/manifest.xml",manifest)]
+
+
+def ods_export(snapshot,request):
+    selected_mode=mode(request)
+    require(selected_mode!="mixed","INVALID_ARGUMENT","mode mixed applies to import; export formulas or values")
+    require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
+    head=["One selection at original coordinates from a consistent native state. Native direct styles map to ODS; formulas translate canonically and use current snapshot values as caches.",
+          "Other sheets, code, queries, relationships, history, dimensions and view state are omitted. NULL becomes empty. Target formula/coercion compatibility can differ; retain the native workbook."]
+    whole="sheets" in snapshot
+    snapshots=export_temporal_styles(snapshot["sheets"] if whole else [{**snapshot,"name":"Sheet1"}])
+    names=validate_sheet_names([s["name"] for s in snapshots])
+    if selected_mode=="values": blocked_values(snapshots,whole)
+    if whole: head=workbook_report()+[WHOLE_FORMULA_LINE]
+    report=export_lines(head,snapshot,selected_mode=="formulas" and any(uses_modern_function(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"))
+    root=ET.Element(q(O,"document-content"),{q(O,"version"):"1.3","xmlns:of":OF})
+    automatic=node(root,q(O,"automatic-styles"))
+    style_table=OdsStyleTable(automatic)
+    for cell in [c for s in snapshots for c in s["cells"]]: style_table.name(cell.get("style",{}))
+    body=node(root,q(O,"body")); spreadsheet=node(body,q(O,"spreadsheet")); text_nodes=0; conversions=ConversionReport()
     for sheet in snapshots:
         table=node(spreadsheet,q(T,"table"),**{q(T,"name"):sheet["name"]})
         previous_row=0; previous_col=0; row_node=None
@@ -382,50 +646,24 @@ def ods_export(snapshot,request):
                 row_node=node(table,q(T,"table-row")); previous_row=row; previous_col=0
             if col-previous_col>1: node(row_node,q(T,"table-cell"),**{q(T,"number-columns-repeated"):str(col-previous_col-1)})
             previous_col=col
-            out=node(row_node,q(T,"table-cell"),**{q(T,"style-name"):style_ids[encoded(cell.get("style",{}))]})
-            require(cell.get("calculation")=="current","CALCULATION_ERROR","ODS export requires error-free current values")
-            if cell["kind"]=="formula" and selected_mode=="formulas": out.set(q(T,"formula"),native_to_ods(cell["source"],None if whole else sheet["range"],names if whole else None))
-            value=cell.get("value")
-            temporal_kind=cell.get("value_kind",cell.get("kind"))
-            if isinstance(value,Temporal) or temporal_kind in ("date","time","datetime"):
-                value=Temporal(str(value),value.kind if isinstance(value,Temporal) else temporal_kind)
-                clock=value.kind=="time"
-                out.set(q(O,"value-type"),"time" if clock else "date");out.set(q(O,"time-value") if clock else q(O,"date-value"),to_duration(value) if clock else str(value))
-            elif type(value) is bool: out.set(q(O,"value-type"),"boolean"); out.set(q(O,"boolean-value"),str(value).lower())
-            elif type(value) in (float,int):
-                spec=numeric_spec(cell.get("style",{}));mode_name=spec[0] if spec else "number"
-                out.set(q(O,"value-type"),{"percent":"percentage","currency":"currency"}.get(mode_name,"float"));out.set(q(O,"value"),str(value))
-                if mode_name=="currency":out.set(q(O,"currency"),spec[3])
-            elif value is not None:
-                require(not any((ord(c)<32 and c not in "\t\n\r") or ord(c) in (65534,65535) for c in value),"UNSUPPORTED_CELL","ODS cannot represent this cell's XML control characters")
-                out.set(q(O,"value-type"),"string"); out.set(q(O,"string-value"),value)
-                paragraph=node(out,q(X,"p"))
-                # Explicit whitespace elements preserve presentation as well as the typed value.
-                for segment in re.split(r"([ \t\r\n]+)",value):
-                    if not segment: continue
-                    if segment[0] in " \t\r\n":
-                        for run in re.findall(r" +|[^ ]",segment):
-                            text_nodes+=1
-                            require(text_nodes<=50000,"LIMIT","ODS text structure exceeds 50,000 whitespace nodes")
-                            if run[0]==" ": node(paragraph,q(X,"s"),**{q(X,"c"):str(len(run))})
-                            elif run=="\t": node(paragraph,q(X,"tab"))
-                            else: node(paragraph,q(X,"line-break"))
-                    else:
-                        if len(paragraph): paragraph[-1].tail=(paragraph[-1].tail or "")+segment
-                        else: paragraph.text=(paragraph.text or "")+segment
-    styles=ET.Element(q(O,"document-styles"),{q(O,"version"):"1.3"}); node(styles,q(O,"styles"))
-    manifest=ET.Element(q(M,"manifest"),{q(M,"version"):"1.3"})
-    for name,mime in (("/",MIME),("content.xml","text/xml"),("styles.xml","text/xml")):
-        node(manifest,q(M,"file-entry"),**{q(M,"full-path"):name,q(M,"media-type"):mime})
+            out,whitespace=export_ods_cell(cell,style_table.name(cell.get("style",{})),sheet=sheet["name"],mode=selected_mode,report=conversions,
+                                           whole=whole,bounds=sheet.get("range"),names=names)
+            text_nodes+=whitespace
+            require(text_nodes<=50000,"LIMIT","ODS text structure exceeds 50,000 whitespace nodes")
+            row_node.append(out)
     output=io.BytesIO()
     with zipfile.ZipFile(output,"w",compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("mimetype",MIME,compress_type=zipfile.ZIP_STORED)
-        parts=[(name,xml(part)) for name,part in (("content.xml",root),("styles.xml",styles),("META-INF/manifest.xml",manifest))]
+        parts=[(name,xml(part)) for name,part in [("content.xml",root),*package_parts()]]
         require(sum(len(data) for _,data in parts)<=16*1024*1024,"LIMIT","Expanded ODS export exceeds 16 MiB")
         for name,data in parts: archive.writestr(name,data)
-    result={"file_base64":base64.b64encode(output.getvalue()).decode(),"state":snapshot["state"],"report":report}
+    result={"file_base64":base64.b64encode(output.getvalue()).decode(),"state":snapshot["state"],"report":report+conversions.lines(),
+            "scope_lines":list(report),"report_entries":conversions.entries()}
     require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","ODS export exceeds 4 MiB")
     return result
+
+
+WORKBOOK_IMPORT_LINE="Supported dates/datetimes and sub-day time durations restore native ISO types. Percentage/currency retain magnitudes; supported 0–15 decimal places, grouping and three-letter currency suffix styles map. Other currency/display metadata is omitted. Named sheet references replace sheet-relative movement semantics."
 
 
 def ods_preview(request,checkpoint=lambda completed,phase:None):
@@ -433,6 +671,5 @@ def ods_preview(request,checkpoint=lambda completed,phase:None):
     with package(request) as archive:
         root=read_xml(archive,"content.xml")
         names=[s.get(q(T,"name"),"") for s in root.findall(f'{q(O,"body")}/{q(O,"spreadsheet")}/{q(T,"table")}')]
-    result=prepare_workbook(request,checkpoint,names,_ods_preview)
-    result["report"].append("Supported dates/datetimes and sub-day time durations restore native ISO types. Percentage/currency retain magnitudes; supported 0–15 decimal places, grouping and three-letter currency suffix styles map. Other currency/display metadata is omitted. Named sheet references replace sheet-relative movement semantics.")
-    return result
+    # The scope lines come first and one line per entry follows, as the streaming reader's summary has them.
+    return prepare_workbook(request,checkpoint,names,_ods_preview,scope=[WORKBOOK_IMPORT_LINE])

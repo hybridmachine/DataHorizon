@@ -80,6 +80,10 @@ applications, and AI agents through REST.
 | [Next five qualification increments](qualification-next-five.md) | Native plugin checks, cache/RSS, HTTP/worker hardening and native capture binding |
 | [Everyday spreadsheet increments](everyday-next-five.md) | Wrap, borders, sizing, hide/unhide and freeze |
 | [Editing and CSV increments](editing-csv-next-five.md) | Sheet reference changes, CSV dialects and column types |
+| [Excel fidelity programme](excel-fidelity-plan.md) | Approved design and ten-increment plan for native features and full XLSX data/formatting import and export; increment 1 as built (section 15) |
+| [Excel fidelity increment 1 plan](excel-fidelity-increment-1-plan.md) | Task-level plan for import foundations: degrade instead of block, reference scanner, large staged import/export, clients, corpus and limits |
+| [SpreadsheetML specification coverage](excel-spec-coverage.md) | Every worksheet/workbook element, cell and formula attribute, style construct and related part, with today's status, report entry and owning increment |
+| [Increment 1 verification](evidence/excel-fidelity-1-verification.txt) | Commands, commit and results of the final increment 1 run; capacity in [excel-fidelity-1-capacity.json](evidence/excel-fidelity-1-capacity.json), corpus in [excel-fidelity-scorecard.json](evidence/excel-fidelity-scorecard.json) |
 | [Interchange and recovery increments](interchange-next-five.md) | Preparation jobs, XLSX/ODS fidelity stages and failure recovery |
 | [Workbook compatibility, recovery and qualification](workbook-next-five.md) | Authorized next five increments and bounded whole-workbook contracts |
 | [Next ten spreadsheet increments](spreadsheet-next-ten.md) | Formula, formatting, editing, navigation and selection-summary stages |
@@ -89,7 +93,7 @@ applications, and AI agents through REST.
 | [Formula editing and coverage](formula-next-ten.md) | Authorized ten tasks after PR #54 |
 | [M3–M5 completion increments](m3-m5-next-ten.md) | Dependency/calculation, structural hooks, portable lists and qualification |
 | [Date and time increments](date-time-next-ten.md) | Native types, UTC clock, arithmetic and CSV/XLSX/ODS date tiers |
-| [Native formats v1/v2](native-format-v1.md) | Actual development schema and callback-free direct SQLite access |
+| [Native formats v1–v7](native-format-v1.md) | Actual development schema and callback-free direct SQLite access |
 | [Compatibility tier 0](compatibility-v0.md) | Implemented formulas, formatting, interchange and editing limits |
 | [Architecture](architecture.md) | Components, execution paths, transactions, external edits, and recovery |
 | [Data model](data-model.md) | Proposed sheets/tables/views model, identity, types, formulas, and native storage |

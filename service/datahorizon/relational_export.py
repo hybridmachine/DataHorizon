@@ -55,7 +55,7 @@ def encode(columns,rows,state,format,omissions,*,include_header=True,kinds=None,
         snapshot=dict(cells=cells,state=state,range=[1,1,len(matrix),width])
         from .interchange import xlsx_export
         from .ods import ods_export
-        result=(xlsx_export if format=='xlsx' else ods_export)(snapshot,dict(mode='values'));result['report']=report+result['report'][2:]
+        result=(xlsx_export if format=='xlsx' else ods_export)(snapshot,dict(mode='values'));result['report']=report+result['report'][2:];result['scope_lines']=report+result['scope_lines'][2:]
     result.update(records=record_count,columns=width,header=include_header,format=format)
     require(len(encoded(result).encode())<=4*1024*1024,'EXPORT_LIMIT','Complete export response exceeds 4 MiB; no partial file produced',409);return result
 

@@ -43,6 +43,14 @@ replay and worker shutdown; expiry now applies to status reads as well as starts
 
 ## XLSX inputs and formulas
 
+> **Superseded by increment 1 (November 11, 2026).** The text below records this
+> stage as built. The current contract is the degrade policy, three import modes,
+> strict namespaces, structured report and bounded/large paths in
+> [the compatibility contract](compatibility-v0.md#xlsx-and-ods-input-tier):
+> unsupported cells and formulas no longer block an import; they are kept,
+> converted or left out and itemized, and every unimported worksheet and
+> workbook feature has a report entry ([coverage](excel-spec-coverage.md)).
+
 The UTF-8 transitional SpreadsheetML tier imports one selected sheet's stored
 cells (at most 10,000), preserving sparse coordinates relative to destination
 A1, literal Text/leading zeros, finite numbers, Booleans and implemented local
@@ -86,6 +94,14 @@ CTest, final service regressions, native Cocoa scale 2 and independent readers.
 
 ## XLSX native styles
 
+> **Superseded by increment 1 (November 11, 2026).** The text below records this
+> stage as built. The current contract is the degrade policy, three import modes,
+> strict namespaces, structured report and bounded/large paths in
+> [the compatibility contract](compatibility-v0.md#xlsx-and-ods-input-tier):
+> unsupported cells and formulas no longer block an import; they are kept,
+> converted or left out and itemized, and every unimported worksheet and
+> workbook feature has a report entry ([coverage](excel-spec-coverage.md)).
+
 Import maps direct cell formats to the existing native style tier. General,
 Text and fixed2 map from built-ins 0/49/2 and exact custom equivalents. Bold,
 italic, left/center/right alignment, wrap, solid RGB fill and four thin
@@ -117,6 +133,14 @@ reports tint, patterned fills and diagonal borders. The
 [native screenshot](evidence/xlsx-styles-native.png) was visually inspected.
 
 ## ODS inputs, formulas and native styles
+
+> **Superseded by increment 1 (November 11, 2026).** The text below records this
+> stage as built. The current contract is the degrade policy, three import modes,
+> strict namespaces, structured report and bounded/large paths in
+> [the compatibility contract](compatibility-v0.md#xlsx-and-ods-input-tier):
+> unsupported cells and formulas no longer block an import; they are kept,
+> converted or left out and itemized, and every unimported worksheet and
+> workbook feature has a report entry ([coverage](excel-spec-coverage.md)).
 
 ODS 1.3 uses the same ZIP/XML, preparation, response, managed Apply and export
 selection budgets as XLSX. One sheet's stored cells retain sparse coordinates;

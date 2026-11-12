@@ -97,7 +97,9 @@ QVariant SheetModel::data(const QModelIndex &index, int role) const {
     case Qt::EditRole:
         if (!sourceReady(index)) { ensureSource(index); return {}; }
         return item.value("source").toString();
-    case Qt::ToolTipRole: return item["calculation"]=="pending" ? tr("Calculating stored formula in background…") : item.value("error").toString(item.value("source").toString());
+    case Qt::ToolTipRole:
+        if (item["kind"]=="unmaintained") return tr("References in this formula were not maintained through a structural edit. Re-enter the formula.");
+        return item["calculation"]=="pending" ? tr("Calculating stored formula in background…") : item.value("error").toString(item.value("source").toString());
     case Qt::AccessibleTextRole:
     case Qt::AccessibleDescriptionRole: {
         const auto address=columnName(index.column()+1)+QString::number(sourceRow(index.row())+1);
@@ -132,7 +134,8 @@ bool SheetModel::setData(const QModelIndex &index, const QVariant &value, int ro
     if (role != Qt::EditRole || !(flags(index) & Qt::ItemIsEditable)) return false;
     const auto original=cell(index); const auto source=value.toString();
     const auto inputKind=original["input_kind"].toString("auto");
-    const auto kind=source==original["source"].toString() || QStringList{"text","date","time","datetime"}.contains(inputKind)?inputKind:QString("auto");
+    // Re-entering an unmaintained formula, even unchanged, stores it as an ordinary input again.
+    const auto kind=inputKind!="unmaintained" && (source==original["source"].toString() || QStringList{"text","date","time","datetime"}.contains(inputKind))?inputKind:QString("auto");
     emit editRequested(sourceRow(index.row())+1, index.column()+1, source,kind);
     return true;
 }

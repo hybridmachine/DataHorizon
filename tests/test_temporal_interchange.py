@@ -42,15 +42,20 @@ class TemporalInterchangeTests(unittest.TestCase):
                 self.assertEqual(cells[-1]['style'],dict(format='currency',currency='USD',decimals=4,grouping=True))
                 report=' '.join(result['report']);self.assertIn('native ISO types',report);self.assertIn('three-letter currency',report);self.assertIn('0–15',report);self.assertNotIn('ISO Text',report)
         invalid=ods_fixture('<table:table-row><table:table-cell office:value-type="time" office:time-value="PT24H"/></table:table-row>')
-        result=ods_preview(dict(file_base64=base64.b64encode(invalid).decode()));self.assertFalse(result['can_import']);self.assertTrue(result['issues'])
+        result=ods_preview(dict(file_base64=base64.b64encode(invalid).decode()));self.assertFalse(result['can_import']);self.assertEqual(result['issues'],[]);self.assertEqual(result['report_entries'][0]['category'],'cell.invalid_value')
     def test_xlsx_serial_epochs_hidden_clocks_and_fake_leap_day(self):
         for serial,epoch,expected in ((1,"0","1900-01-01"),(59,"0","1900-02-28"),(61,"0","1900-03-01"),(0,"1","1904-01-01"),(1.5,"1","1904-01-02T12:00:00")):
             result=xlsx_preview(serial_package(serial,epoch))
             self.assertTrue(result["can_import"],result)
             self.assertEqual(result["cells"][0]["source"],expected)
-        for serial in (60,60.5,"NaN","1e999"):
+        for serial in (60,60.5):
             result=xlsx_preview(serial_package(serial))
-            self.assertFalse(result["can_import"]);self.assertEqual(result["cells"],[])
+            self.assertTrue(result["can_import"],result);self.assertEqual(result["cells"][0]["kind"],"number");self.assertNotIn("format",result["cells"][0]["style"])
+            self.assertIn("cell.date_conversion",[e["category"] for e in result["report_entries"]])
+        for serial in ("NaN","1e999"):
+            result=xlsx_preview(serial_package(serial))
+            self.assertEqual((result["cells"][0]["kind"],result["cells"][0]["source"]),("text",serial))
+            self.assertIn("cell.number_out_of_range",[e["category"] for e in result["report_entries"]])
         self.assertEqual(xlsx_preview(serial_package(.5,fmt="21"))["cells"][0]["source"],"12:00:00")
 
     def test_independent_iso_and_duration_sources_reject_offsets_and_long_durations(self):
@@ -60,6 +65,7 @@ class TemporalInterchangeTests(unittest.TestCase):
         for source in ("2023-02-29","2024-02-29T00:00:00Z"):
             result=xlsx_preview(dict(file_base64=base64.b64encode(xlsx_fixture(f'<c r="A1" t="d"><v>{source}</v></c>')).decode()))
             self.assertFalse(result["can_import"])
+            self.assertEqual([(e["category"],e["detail"],e["severity"]) for e in result["report_entries"]],[("cell.invalid_value","date/time","omitted")])
         for duration,expected in (("PT2H","02:00:00"),("P0DT12H34M56.123456S","12:34:56.123456")):
             data=ods_fixture(f'<table:table-row><table:table-cell office:value-type="time" office:time-value="{duration}"/></table:table-row>')
             result=ods_preview(dict(file_base64=base64.b64encode(data).decode()));self.assertTrue(result["can_import"],result);self.assertEqual(result["cells"][0]["source"],expected)

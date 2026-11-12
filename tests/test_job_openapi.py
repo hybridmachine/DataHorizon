@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Validate and execute durable-job API examples in an isolated test environment."""
 from pathlib import Path
+import base64
 import copy
 import tempfile
 import time
@@ -8,6 +9,7 @@ import unittest
 from unittest.mock import patch
 import uuid
 from datahorizon.client import LocalService,APIError
+from datahorizon import service as service_module
 from datahorizon.service import openapi
 try:
     from jsonschema.exceptions import ValidationError
@@ -93,3 +95,99 @@ class JobOpenApiTests(unittest.TestCase):
             with self.assertRaises(APIError):book.operation_job(job['job_id'],'start',expected_state=book.state)
             with self.assertRaises(ValidationError):self.validate('JobPageRequest',dict(limit=True))
             with self.assertRaises(APIError):book.operation_job(job['job_id'],limit=True)
+
+
+FIXTURES=Path(__file__).resolve().parent/'fixtures'
+# Every route of the large XLSX/ODS path, with the request schema it takes and the 200 response schema it returns.
+LARGE_ROUTES={
+    ('/v1/uploads/{upload}','put'):(None,'UploadReceipt'),
+    ('/v1/uploads/{upload}/release','post'):('JobAction','UploadReleased'),
+    ('/v1/import/xlsx/jobs','post'):('XlsxPreparationRequest','SpreadsheetPreparationJob'),
+    ('/v1/import/ods/jobs','post'):('OdsPreparationRequest','SpreadsheetPreparationJob'),
+    ('/v1/jobs/{job}','get'):(None,'PreparationJob'),
+    ('/v1/jobs/{job}/cancel','post'):('JobAction','PreparationJob'),
+    ('/v1/jobs/{job}/release','post'):('JobAction','JobReleased'),
+    ('/v1/workbooks/{workbook}/operations','post'):('OperationRequest','Receipt'),
+    ('/v1/workbooks/{workbook}/export/xlsx/jobs','post'):('XlsxExportJobRequest','ExportJob'),
+    ('/v1/workbooks/{workbook}/export/ods/jobs','post'):('OdsExportJobRequest','ExportJob'),
+    ('/v1/workbooks/{workbook}/export/xlsx','post'):('SpreadsheetExport','SpreadsheetExportResult'),
+    ('/v1/workbooks/{workbook}/export/ods','post'):('SpreadsheetExport','SpreadsheetExportResult'),
+    ('/v1/exports/{export}','get'):(None,None),
+    ('/v1/exports/{export}/release','post'):('JobAction','ExportReleased'),
+}
+
+
+class LargeInterchangeOpenApiTests(unittest.TestCase):
+    """Runs without the optional validators too: structure is always checked, and validation is added when they are installed."""
+    def setUp(self):self.spec=openapi();self.schemas=self.spec['components']['schemas']
+    def validate(self,name,value):
+        if OAS30Validator is not None:OAS30Validator({**self.schemas[name],'components':self.spec['components']}).validate(value)
+    def finish(self,client,view):
+        for _ in range(2000):
+            if view['status']!='running':break
+            time.sleep(.005);view=client.preparation(view['job_id'])
+        self.validate('PreparationJob',view);return view
+
+    def test_every_large_route_has_request_and_response_schemas(self):
+        for (path,method),(request,response) in LARGE_ROUTES.items():
+            with self.subTest(path):
+                operation=self.spec['paths'][path][method]
+                if request:self.assertEqual(operation['requestBody']['content']['application/json']['schema']['$ref'],'#/components/schemas/'+request)
+                if response:self.assertEqual(operation['responses']['200']['content']['application/json']['schema']['$ref'],'#/components/schemas/'+response)
+        self.assertEqual(set(self.spec['paths']['/v1/uploads/{upload}']['put']['requestBody']['content']),{'application/octet-stream'})
+        self.assertEqual(set(self.spec['paths']['/v1/exports/{export}']['get']['responses']['200']['content']),
+                         {'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/vnd.oasis.opendocument.spreadsheet'})
+        for name in ('ReportEntry','ReportTotals','StagedImportSummary','SpreadsheetImportPreview','ExportJobResult','PreparationJob',
+                     'SpreadsheetPreparationJob','ExportJob','SpreadsheetExportResult','UploadReceipt','UploadReleased','ExportReleased',
+                     'XlsxUploadPreparation','XlsxPathPreparation','OdsUploadPreparation','OdsPathPreparation','SpreadsheetPreparation',
+                     'XlsxExportJobRequest','OdsExportJobRequest'):
+            with self.subTest(name):
+                self.assertIn('example',self.schemas[name]);self.validate(name,self.schemas[name]['example'])
+        for name in ('StagedImportSummary','SpreadsheetImportPreview','ExportJobResult'):
+            self.assertEqual(self.schemas[name]['properties']['report_entries']['items'],{'$ref':'#/components/schemas/ReportEntry'})
+            self.assertEqual(self.schemas[name]['properties']['totals'],{'$ref':'#/components/schemas/ReportTotals'})
+        self.assertIn('imported',self.schemas['Receipt']['properties']);self.assertIn('conflicts',self.schemas['Error']['properties'])
+        self.assertIn('<option>PUT</option>',service_module.EXPLORER)
+
+    def test_large_route_examples_execute(self):
+        schemas=self.schemas
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            temp=Path(temp)
+            # Upload and release, with the exact example body.
+            body=self.spec['paths']['/v1/uploads/{upload}']['put']['requestBody']['content']['application/octet-stream']['example']
+            (temp/'example.bin').write_bytes(body.encode())
+            receipt=client.upload(temp/'example.bin',schemas['UploadReceipt']['example']['upload_id'])
+            self.assertEqual(receipt,schemas['UploadReceipt']['example']);self.validate('UploadReceipt',receipt)
+            self.assertEqual(client.release_upload(receipt['upload_id']),schemas['UploadReleased']['example'])
+            for fmt,label in (('xlsx','Xlsx'),('ods','Ods')):
+                fixture=FIXTURES/('fidelity.'+fmt)
+                upload=copy.deepcopy(schemas[label+'UploadPreparation']['example']);client.upload(fixture,upload['upload_id'])
+                path=copy.deepcopy(schemas[label+'PathPreparation']['example']);path['source_path']=str(fixture.resolve())
+                inline=copy.deepcopy(schemas['SpreadsheetPreparation']['example']);inline.update(job_id='example-'+fmt+'-inline',file_base64=base64.b64encode(fixture.read_bytes()).decode())
+                for request,result in ((upload,'StagedImportSummary'),(path,'StagedImportSummary'),(inline,'SpreadsheetImportPreview')):
+                    with self.subTest(fmt=fmt,request=result):
+                        self.validate(label+'PreparationRequest',request)
+                        view=client.request('/v1/import/'+fmt+'/jobs',request);self.validate('SpreadsheetPreparationJob',view)
+                        view=self.finish(client,view);self.assertEqual(view['status'],'completed',view)
+                        self.validate('SpreadsheetPreparationJob',view);self.validate(result,view['result'])
+                        self.assertEqual(set(view['result'])>=set(schemas[result]['required']),True)
+                        self.validate('JobReleased',client.preparation(request['job_id'],'release'))
+                client.release_upload(upload['upload_id'])
+            # The staged workbook_import example, then both export job examples, the download and the release.
+            staged=next(variant for variant in schemas['WorkbookImportOperation']['oneOf'] if variant['title']=='Prepared stage')['example']
+            summary=client.prepare_spreadsheet_file(FIXTURES/'fidelity.xlsx',job_id=staged['stage_id'])
+            with client.open(temp/'examples.dhwb',create=True) as book:
+                request={**copy.deepcopy(staged),'stage_digest':summary['stage_digest'],'expected_state':book.state,'operation_id':str(uuid.uuid4())}
+                self.validate('OperationRequest',request)
+                receipt=client.request(book.base+'/operations',request,timeout=330);self.validate('Receipt',receipt)
+                self.assertEqual(receipt['imported'],{'sheets':3,'cells':49})
+                for fmt,label in (('xlsx','Xlsx'),('ods','Ods')):
+                    bounded=client.request(book.base+'/export/'+fmt,{'scope':'workbook'});self.validate('SpreadsheetExportResult',bounded)
+                    request=copy.deepcopy(schemas[label+'ExportJobRequest']['example'])
+                    view=client.request(book.base+'/export/'+fmt+'/jobs',request);self.validate('ExportJob',view)
+                    view=self.finish(client,view);self.assertEqual(view['status'],'completed',view)
+                    self.validate('ExportJob',view);self.validate('ExportJobResult',view['result'])
+                    written=client.download(view['result']['export_id'],temp/('example.'+fmt),expected=view['result'])
+                    self.assertEqual(written['sha256'],view['result']['sha256'])
+                    released=client.release_export(view['result']['export_id']);self.validate('ExportReleased',released)
+                    if fmt=='xlsx':self.assertEqual(released,schemas['ExportReleased']['example'])

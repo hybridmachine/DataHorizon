@@ -1,0 +1,403 @@
+[
+  {
+    "exercises": [
+      "shared formulas",
+      "inherited cell styles",
+      "bounded fidelity fixture"
+    ],
+    "file": "tests/fixtures/fidelity.xlsx",
+    "format": "xlsx",
+    "hand_built": false,
+    "producer": "openpyxl",
+    "producer_version": "3.1.5",
+    "saved_on": "2026-11-06",
+    "sha256": "76279b138de23ba5e73588cb4ea286bc06aa31d424da44ac1815ed168d81e1d3",
+    "source": "tests/fixtures/generate_fidelity.py (openpyxl 3.1.5, see tests/fixtures/fidelity-provenance.json)",
+    "unsupported_features": []
+  },
+  {
+    "exercises": [
+      "parent and child cell styles",
+      "formulas"
+    ],
+    "file": "tests/fixtures/fidelity.ods",
+    "format": "ods",
+    "hand_built": false,
+    "producer": "odfpy",
+    "producer_version": "1.4.1",
+    "saved_on": "2026-11-06",
+    "sha256": "c2230c83ef5bcb8e61bc9ba0add75d2d381b44c27f7dd370f477b661b0261e47",
+    "source": "tests/fixtures/generate_fidelity.py (odfpy 1.4.1, see tests/fixtures/fidelity-provenance.json)",
+    "unsupported_features": []
+  },
+  {
+    "exercises": [
+      "number format",
+      "font, fill, border and alignment styles",
+      "formula",
+      "text that looks like a number"
+    ],
+    "file": "tests/fixtures/inputs.xlsx",
+    "format": "xlsx",
+    "hand_built": false,
+    "producer": "openpyxl",
+    "producer_version": "3.1.5",
+    "saved_on": "2026-11-06",
+    "sha256": "9894abcfd4a4e8379e53373227c87e6d132cf8c1de45fbd1bd0e71a1f0e074d9",
+    "source": "tests/fixtures/generate_xlsx.py (openpyxl 3.1.5)",
+    "unsupported_features": []
+  },
+  {
+    "exercises": [
+      "number style",
+      "cell styles",
+      "formula",
+      "text that looks like a number"
+    ],
+    "file": "tests/fixtures/inputs.ods",
+    "format": "ods",
+    "hand_built": false,
+    "producer": "odfpy",
+    "producer_version": "1.4.1",
+    "saved_on": "2026-11-06",
+    "sha256": "581352eacf13ae05bd34a79ff49b46b5b537b19786bbc1dff5d6e2292bbc6a02",
+    "source": "tests/fixtures/generate_ods.py (odfpy 1.4.1)",
+    "unsupported_features": []
+  },
+  {
+    "exercises": [
+      "sheet name containing markup characters"
+    ],
+    "file": "tests/fixtures/markup.xlsx",
+    "format": "xlsx",
+    "hand_built": false,
+    "producer": "openpyxl",
+    "producer_version": "3.1.5",
+    "saved_on": "2026-11-11",
+    "sha256": "d0fcaa1850dc67e1e48fba0a55e62c2f32bf9c3608a86985a9570340f56b0a79",
+    "source": "tests/fixtures/generate_unsupported.py (openpyxl 3.1.5)",
+    "unsupported_features": []
+  },
+  {
+    "exercises": [
+      "formula DataHorizon cannot calculate (INFO)"
+    ],
+    "file": "tests/fixtures/unsupported.xlsx",
+    "format": "xlsx",
+    "hand_built": false,
+    "producer": "openpyxl",
+    "producer_version": "3.1.5",
+    "saved_on": "2026-11-11",
+    "sha256": "a0ee3af2889e35f45c9c43cce039731698dd2dd5c603845251461c63f3e80538",
+    "source": "tests/fixtures/generate_unsupported.py (openpyxl 3.1.5)",
+    "unsupported_features": []
+  },
+  {
+    "exercises": [
+      "merged cells"
+    ],
+    "file": "tests/fixtures/corpus/merged-cells.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "c4288167c3622985be88fb05b95a4f479e4d469b587f7607b02471227ab65ee5",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "merged_cells"
+    ]
+  },
+  {
+    "exercises": [
+      "column widths",
+      "row heights",
+      "hidden rows",
+      "hidden columns",
+      "frozen pane"
+    ],
+    "file": "tests/fixtures/corpus/layout-hidden-frozen.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "094e0861400f28820536a1bd7ea3bdbc1b5286e2a78c51a1b05f78082c5033aa",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "column_widths",
+      "frozen_panes",
+      "hidden_rows_columns",
+      "row_heights"
+    ]
+  },
+  {
+    "exercises": [
+      "custom number formats",
+      "date format code",
+      "negative-in-red section",
+      "fraction format"
+    ],
+    "file": "tests/fixtures/corpus/number-formats.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "e390a38b27f37480e509632663f0910fec20cc61b6346a879fa207ed39cdf676",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "custom_number_formats"
+    ]
+  },
+  {
+    "exercises": [
+      "conditional formatting (cell is, colour scale)",
+      "differential styles"
+    ],
+    "file": "tests/fixtures/corpus/conditional-formatting.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "3512b7f4bf3d261ec699725a20adc40142b94f9714e3c1d2a2aa2cd3a81fd73c",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "conditional_formatting"
+    ]
+  },
+  {
+    "exercises": [
+      "data validation (list, whole number)"
+    ],
+    "file": "tests/fixtures/corpus/data-validation.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "942810926bcbd5ba2bfb7b55148c889bb40196380f8b2686d494e83ca461241e",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "data_validation"
+    ]
+  },
+  {
+    "exercises": [
+      "hyperlink",
+      "cell comment"
+    ],
+    "file": "tests/fixtures/corpus/hyperlink-comment.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "a23a6941f246b99b6756b159c842cb3aa012e664f688f0a2259e883229da23da",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "comments",
+      "hyperlinks"
+    ]
+  },
+  {
+    "exercises": [
+      "defined names used in formulas",
+      "sheet-scoped defined name"
+    ],
+    "file": "tests/fixtures/corpus/defined-names.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "e6308dda8ddf628f0e74b63909e0dafc6c7915846513e8782c7aac3fff53aa5d",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "defined_names"
+    ]
+  },
+  {
+    "exercises": [
+      "array formula",
+      "data table formula"
+    ],
+    "file": "tests/fixtures/corpus/array-data-table.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "8524f77eca131e414b4a89aab661bc577cd15d7a438b830497130a23a1ff6e45",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "array_formulas",
+      "data_tables"
+    ]
+  },
+  {
+    "exercises": [
+      "Excel table part",
+      "structured reference"
+    ],
+    "file": "tests/fixtures/corpus/excel-table.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "d28e2f9a11783960a7407f92c179c29892a4cad331aabb7e1cfee2d509da7bf7",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "excel_tables"
+    ]
+  },
+  {
+    "exercises": [
+      "theme colours",
+      "indexed colours",
+      "named cell style",
+      "tinted colours"
+    ],
+    "file": "tests/fixtures/corpus/theme-colours.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "588c3e0a565d408a3b0106e688fef290e399cb571cc46f1c7972c5606ed541c7",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "named_styles",
+      "theme_colours"
+    ]
+  },
+  {
+    "exercises": [
+      "strict OOXML namespace"
+    ],
+    "file": "tests/fixtures/corpus/strict-namespace.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "070293ffb6b42215349657facc067ff90e25723ac3a4d052141656b1ad6265fb",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": []
+  },
+  {
+    "exercises": [
+      "shared formulas"
+    ],
+    "file": "tests/fixtures/corpus/shared-formulas.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "b265c4e712166a3178b7fc1db3eee016b3180fcf31f773b6f64b826e62cc6724",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": []
+  },
+  {
+    "exercises": [
+      "error-valued cells"
+    ],
+    "file": "tests/fixtures/corpus/error-cells.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "8a5a394e7d59f457a9f18a63f5ab1d103166272bb8f4d845c195f3ad07ea7cd3",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "error_values"
+    ]
+  },
+  {
+    "exercises": [
+      "3D reference",
+      "external workbook reference"
+    ],
+    "file": "tests/fixtures/corpus/external-3d-references.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "7cb3e4746f6f39ed64c08314d050d67cc039a6f4af9e240a9b455f9b13a2e340",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "3d_references",
+      "external_references"
+    ]
+  },
+  {
+    "exercises": [
+      "chart sheet beside a worksheet",
+      "drawing and chart parts"
+    ],
+    "file": "tests/fixtures/corpus/chart-sheet.xlsx",
+    "format": "xlsx",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "4c8a78fb77a45fb8157a954793b5f7186021253d78bf6f6ac09148b162f94534",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of Excel output)",
+    "unsupported_features": [
+      "chart_sheets"
+    ]
+  },
+  {
+    "exercises": [
+      "merged cells"
+    ],
+    "file": "tests/fixtures/corpus/merged-cells.ods",
+    "format": "ods",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "ea33d18d45a9c005c6a0627ca6662470b9ccabb9c9c2aec56c48d72aee120c34",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of LibreOffice output)",
+    "unsupported_features": [
+      "merged_cells"
+    ]
+  },
+  {
+    "exercises": [
+      "custom number style"
+    ],
+    "file": "tests/fixtures/corpus/number-format.ods",
+    "format": "ods",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "156f5be838f50da0aa738c918109d065905e0e60f7c7586b5642965553e73dff",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of LibreOffice output)",
+    "unsupported_features": [
+      "custom_number_formats"
+    ]
+  },
+  {
+    "exercises": [
+      "data validation (cell content between)"
+    ],
+    "file": "tests/fixtures/corpus/data-validation.ods",
+    "format": "ods",
+    "hand_built": true,
+    "producer": "DataHorizon test generator (standard library)",
+    "producer_version": null,
+    "saved_on": "2026-11-11",
+    "sha256": "a26d5e285fa92efbf1de73f2596c97b7e715d282c09083dd4cc3d05b21b8f296",
+    "source": "tests/fixtures/corpus/generate_feature_workbooks.py (hand-built approximation of LibreOffice output)",
+    "unsupported_features": [
+      "data_validation"
+    ]
+  }
+]

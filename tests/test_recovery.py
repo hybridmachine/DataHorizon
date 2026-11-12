@@ -152,13 +152,44 @@ os._exit(74)
             with closing(sqlite3.connect(path)) as db,db:
                 db.executemany("INSERT INTO cells VALUES(?,?,?,?,?,?)",[
                     (identity,2,1,"not-a-number","number","{}"),(identity,3,1,"x","text",'{"bold":"yes"}'),
-                    (identity,4,1,"=SUM(","formula","{}"),(identity,5,1,b"bytes","text","{}")])
+                    (identity,4,1,'="unterminated',"formula","{}"),(identity,5,1,b"bytes","text","{}")])
             original=path.read_bytes(); report=inspect_native(path)
             self.assertEqual(path.read_bytes(),original)
             self.assertTrue(report["inputs"]["complete"]); self.assertFalse(report["inputs"]["inputs_valid"])
             self.assertEqual(report["inputs"]["checked_cells"],5)
             self.assertEqual({i["row"] for i in report["inputs"]["issues"]},{2,3,4,5})
             self.assertEqual(report["inputs"]["issue_count"],4)
+
+    def test_formulas_the_calculator_cannot_evaluate_and_unmaintained_cells_are_valid_inputs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"degraded.dhwb"
+            with closing(Workbook(path,create=True)) as book:
+                book.mutate({"operation_id":"cells","expected_state":book.state(),"action":"edit","cells":[
+                    {"row":2,"col":1,"source":"=Net*TaxRate"},{"row":3,"col":1,"source":"=SUM("},{"row":4,"col":1,"source":"=A6 ` 1"},
+                    {"row":5,"col":1,"source":"=1+1"},{"row":6,"col":1,"source":"5"}]})
+                # Moving A6 marks the formula whose references cannot be read as unmaintained.
+                state=book.state()
+                book.mutate({"operation_id":"move","expected_state":state,"action":"move","sheet":"Sheet1","r1":6,"c1":1,"r2":6,"c2":1,"row":7,"col":1,"cut_state":state})
+            inputs=inspect_native(path)["inputs"]
+            self.assertTrue(inputs["inputs_valid"],inputs); self.assertEqual(inputs["issue_count"],0)
+            self.assertEqual(inputs["unevaluable_formulas"]["count"],2)
+            self.assertEqual([(s["row"],s["reason"]) for s in inputs["unevaluable_formulas"]["samples"]],[(2,"formula.name"),(3,"formula.syntax")])
+            self.assertEqual(inputs["unmaintained_formulas"],{"count":1,"samples":[{"sheet":"Sheet1","row":4,"col":1}]})
+
+    def test_rest_inspection_of_degraded_corpus_imports_keeps_inputs_valid(self):
+        corpus=Path(__file__).resolve().parent/"fixtures"/"corpus"
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client:
+            for name in ("defined-names.xlsx","excel-table.xlsx","external-3d-references.xlsx"):
+                with self.subTest(file=name):
+                    summary=client.prepare_spreadsheet_file(corpus/name,mode="formulas",local=True)
+                    path=Path(temp)/(name+".dhwb")
+                    with client.open(path,create=True) as book: book.import_staged(summary)
+                    result=client.inspect_native(path)["inputs"]
+                    self.assertTrue(result["inputs_valid"],result["issues"])
+                    self.assertEqual(result["issues"],[])
+                    self.assertGreater(result["unevaluable_formulas"]["count"],0)
+                    self.assertLessEqual(len(result["unevaluable_formulas"]["samples"]),100)
+                    self.assertTrue(all({"sheet","row","col","reason"}<=set(s) for s in result["unevaluable_formulas"]["samples"]))
 
     def test_input_inspection_limits_never_claim_unchecked_data_is_valid(self):
         with tempfile.TemporaryDirectory() as temp:

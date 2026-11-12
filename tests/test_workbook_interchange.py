@@ -13,6 +13,11 @@ import zipfile
 from datahorizon.client import APIError, LocalService
 from datahorizon.engine import Workbook, EngineError
 from datahorizon.interchange import xlsx_export, xlsx_preview
+from xlsx_builder import workbook_bytes
+
+
+def b64(data):
+    return base64.b64encode(data).decode()
 
 
 def sheets():
@@ -105,18 +110,77 @@ class WorkbookInterchangeTests(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(data)) as source,zipfile.ZipFile(output,"w") as target:
             for name in source.namelist():
                 value=source.read(name)
+                if name=="xl/worksheets/sheet2.xml": value=value.replace(b"<v>1</v>",b'<f t="shared" si="9"/>')
+                target.writestr(name,value)
+        with self.assertRaises(EngineError) as failure: xlsx_preview({"file_base64":base64.b64encode(output.getvalue()).decode(),"scope":"workbook"})
+        self.assertEqual(failure.exception.body["code"],"INVALID_SPREADSHEET")
+        # A reference to a sheet the workbook lacks is kept as an unevaluable formula, not a blocking issue.
+        output=io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(data)) as source,zipfile.ZipFile(output,"w") as target:
+            for name in source.namelist():
+                value=source.read(name)
                 if name=="xl/worksheets/sheet2.xml": value=value.replace(b"<v>1</v>",b"<f>Missing!A1</f>")
                 target.writestr(name,value)
         result=xlsx_preview({"file_base64":base64.b64encode(output.getvalue()).decode(),"scope":"workbook"})
-        self.assertFalse(result["can_import"]); self.assertEqual(result["workbook_sheets"],[])
-        self.assertEqual(result["issues"][0]["sheet"],"Two")
+        self.assertTrue(result["can_import"],result)
+        self.assertIn("1 cell: Missing (unevaluable); first at Two!A1"," ".join(result["report"]))
 
-    def test_missing_sheet_reference_blocks_whole_preview_and_values_mode_is_explicit(self):
+    def test_missing_sheet_reference_is_itemized_and_values_mode_is_explicit(self):
         snapshot={"state":"s","sheets":[{"name":"One","cells":[{"row":1,"col":1,"kind":"formula","source":"=Missing!A1","value":7,"calculation":"current","style":{}}]}]}
-        with self.assertRaises(EngineError): xlsx_export(snapshot,{})
+        # A whole-workbook formulas export writes it as stored and counts it as one DataHorizon cannot evaluate.
+        written=xlsx_export(snapshot,{})
+        self.assertEqual([(e["category"],e["severity"],e["count"]) for e in written["report_entries"]],[("formula.missing_sheet","unevaluable",1)])
+        result=xlsx_preview({"file_base64":written["file_base64"],"scope":"workbook"})
+        self.assertEqual(result["workbook_sheets"][0]["cells"][0]["source"],"=Missing!A1")
         data=xlsx_export(snapshot,{"mode":"values"})
         result=xlsx_preview({"file_base64":data["file_base64"],"scope":"workbook"})
         self.assertEqual(result["workbook_sheets"][0]["cells"][0]["kind"],"number")
+        # A package whose formula names a missing sheet keeps the formula and itemizes it.
+        data=workbook_bytes({"One":'<row r="1"><c r="A1"><f>Missing!A1</f><v>7</v></c></row>'})
+        result=xlsx_preview({"file_base64":base64.b64encode(data).decode(),"scope":"workbook"})
+        self.assertTrue(result["can_import"])
+        self.assertEqual(result["workbook_sheets"][0]["cells"][0]["source"],"=Missing!A1")
+        found=[e for e in result["report_entries"] if e["category"]=="formula.missing_sheet"]
+        self.assertEqual(len(found),1); self.assertEqual(found[0]["samples"],[{"sheet":"One","cell":"A1"}])
+
+    def test_sheet_where_every_cell_degrades_is_still_created(self):
+        data=workbook_bytes({"Bad":'<row r="1"><c r="A1" t="zz"><v>1</v></c></row>',"Empty":""})
+        result=xlsx_preview({"file_base64":b64(data),"scope":"workbook","mode":"mixed"})
+        self.assertTrue(result["can_import"])
+        self.assertEqual([(s["name"],s["cells"]) for s in result["workbook_sheets"]],[("Bad",[]),("Empty",[])])
+        self.assertEqual(result["totals"]["omitted"],1)
+        self.assertEqual(result["report_entries"][0]["samples"],[{"sheet":"Bad","cell":"A1"}])
+        self.assertEqual(sum(1 for line in result["report"] if "omitted" in line and "Bad!A1" in line),1)
+        with tempfile.TemporaryDirectory() as temp, LocalService() as client:
+            preview=prepare(client,data)
+            self.assertTrue(preview["can_import"])
+            with client.open(Path(temp)/"d.dhwb",create=True) as book:
+                book.import_prepared(preview)
+            with client.open(Path(temp)/"d.dhwb") as reopened:
+                self.assertEqual([s["name"] for s in reopened.info["sheets"]],["Bad","Empty"])
+
+    def test_reports_merge_across_sheets_with_sheet_in_samples(self):
+        bad='<row r="1"><c r="A1" t="zz"><v>1</v></c></row>'
+        result=xlsx_preview({"file_base64":b64(workbook_bytes({"One":bad,"Two":bad})),"scope":"workbook"})
+        (found,)=result["report_entries"]
+        self.assertEqual(found["count"],2)
+        self.assertEqual([x["sheet"] for x in found["samples"]],["One","Two"])
+        self.assertEqual(result["totals"]["omitted"],2)
+
+    def test_ods_sheet_where_every_cell_degrades_is_still_created(self):
+        from ods_builder import workbook_bytes as ods_bytes
+        from datahorizon.ods import ods_preview
+        data=ods_bytes({"Bad":'<table:table-row><table:table-cell office:value-type="unknown"/></table:table-row>',"Empty":""})
+        result=ods_preview({"file_base64":b64(data),"scope":"workbook","mode":"mixed"})
+        self.assertTrue(result["can_import"])
+        self.assertEqual([(s["name"],s["cells"]) for s in result["workbook_sheets"]],[("Bad",[]),("Empty",[])])
+        self.assertEqual(result["totals"]["omitted"],1)
+        with tempfile.TemporaryDirectory() as temp, LocalService() as client:
+            preview=prepare(client,data,"ods")
+            with client.open(Path(temp)/"d.dhwb",create=True) as book:
+                book.import_prepared(preview)
+            with client.open(Path(temp)/"d.dhwb") as reopened:
+                self.assertEqual([s["name"] for s in reopened.info["sheets"]],["Bad","Empty"])
 
 
 class OdsWorkbookTests(unittest.TestCase):

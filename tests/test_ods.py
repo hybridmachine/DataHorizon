@@ -58,16 +58,17 @@ class OdsTests(unittest.TestCase):
             self.assertLess(tracemalloc.get_traced_memory()[1],12*1024*1024)
         finally: tracemalloc.stop()
         result=preview(fixture('<table:table-row><table:table-cell office:value-type="unknown"/></table:table-row>'))
-        self.assertFalse(result["can_import"]); self.assertEqual(result["cells"],[])
-        self.assertIn("Unsupported ODS value type",result["issues"][0]["message"])
+        self.assertFalse(result["can_import"]); self.assertEqual(result["cells"],[]); self.assertEqual(result["issues"],[])
+        self.assertEqual(result["report_entries"][0]["category"],"cell.unsupported_type")
 
-    def test_unsupported_formulas_and_error_or_missing_caches_block_complete_payload(self):
+    def test_unsupported_formulas_and_error_or_missing_caches_degrade_instead_of_blocking(self):
         for source in ('of:=[Other.A1]','of:=2^3^2','of:=MEDIAN([.A1])','oooc:=1+1'):
             data=fixture(f'<table:table-row><table:table-cell table:formula="{source}" office:value-type="float" office:value="8"/></table:table-row>')
-            result=preview(data); self.assertFalse(result["can_import"]); self.assertEqual(result["cells"],[])
+            result=preview(data); self.assertTrue(result["can_import"]); self.assertEqual(len(result["cells"]),1); self.assertEqual(result["issues"],[])
             self.assertEqual(preview(data,mode="values")["cells"][0]["source"],"8")
         for attrs in ('','office:value-type="string" office:string-value="#DIV/0!"'):
-            self.assertFalse(preview(fixture(f'<table:table-row><table:table-cell table:formula="of:=1/0" {attrs}/></table:table-row>'),mode="values")["can_import"])
+            result=preview(fixture(f'<table:table-row><table:table-cell table:formula="of:=1/0" {attrs}/></table:table-row>'),mode="values")
+            self.assertEqual(result["issues"],[]); self.assertEqual(result["cells"] and result["cells"][0]["source"],"#DIV/0!" if attrs else [])
 
     def test_dates_use_native_types_and_native_styles_roundtrip(self):
         style={"format":"fixed2","bold":True,"italic":True,"align":"center","wrap":True,"background":"#12ab34","border":"box"}
@@ -91,7 +92,7 @@ class OdsTests(unittest.TestCase):
         self.assertEqual(preview(data)["cells"][0]["source"],"A B字   X")
         repeated='<text:s text:c="65536"/>'*2
         data=fixture(f'<table:table-row><table:table-cell office:value-type="string"><text:p>{repeated}</text:p></table:table-cell></table:table-row>')
-        with self.assertRaises(EngineError): preview(data)
+        result=preview(data); self.assertFalse(result["can_import"]); self.assertEqual(result["report_entries"][0]["category"],"cell.text_too_long")
 
     def test_ods_cannot_export_native_xml_controls_or_bad_values(self):
         cell={"row":1,"col":1,"kind":"text","value":"a\0b","calculation":"current","style":{}}

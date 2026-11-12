@@ -63,11 +63,12 @@ class SheetTests(unittest.TestCase):
                          '=\'New\'!a$2 + A1 + "Main!A2"')
         self.assertEqual(rename_sheet_references("='ä'!A1", "Ä", "New"),"='ä'!A1")
 
-    def test_rename_unsupported_syntax_and_hook_reject_without_catalog_change(self):
-        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2%+1"}])
-        self.assertRollback("sheet_rename","REFERENCE_TRANSFORM_UNAVAILABLE",name="New")
+    def test_rename_marks_unreadable_syntax_and_hook_rejects_without_catalog_change(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2 ` 1"}])
+        self.assertEqual(self.apply("sheet_rename",name="New")["unmaintained"],[{"sheet":"New","cell":"A1"}])
+        self.assertEqual(self.book.read("New",{})["cells"][0]["kind"],"unmaintained")
         self.book.handler="required.py"
-        self.assertRollback("sheet_rename","UNSUPPORTED_HOOK_SCOPE",name="New")
+        self.assertRollback("sheet_rename","UNSUPPORTED_HOOK_SCOPE",sheet="New",name="Newer")
 
     def test_rename_collision_and_write_failure_roll_back_formulas_and_catalog(self):
         self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2"},
@@ -153,10 +154,11 @@ class SheetTests(unittest.TestCase):
             self.assertRollback("sheet_duplicate","INJECTED",name="Copy")
         self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2"+" "*65520}])
         self.assertRollback("sheet_duplicate","INVALID_INPUT",name="a"*31)
-        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2%+1"}])
-        self.assertRollback("sheet_duplicate","REFERENCE_TRANSFORM_UNAVAILABLE",name="Copy")
+        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2 ` 1"}])
+        self.assertEqual(self.apply("sheet_duplicate",name="Copy")["unmaintained"],[{"sheet":"Copy","cell":"A1"}])
+        self.assertEqual(self.book.read("Sheet1",{})["cells"][0]["kind"],"formula")
         self.book.handler="required.py"
-        self.assertRollback("sheet_duplicate","UNSUPPORTED_HOOK_SCOPE",name="Copy")
+        self.assertRollback("sheet_duplicate","UNSUPPORTED_HOOK_SCOPE",name="Copy2")
 
     def test_duplicate_rest_replay_retains_the_single_new_identity(self):
         with LocalService() as client, client.open(Path(self.temp.name)/"copy-rest.dhwb",create=True) as book:
@@ -194,16 +196,15 @@ class SheetTests(unittest.TestCase):
         self.book.close(); self.book=Workbook(self.path)
         self.assertEqual(self.book.read("Other",{})["cells"][0]["error"],"#REF!")
 
-    def test_delete_ignores_deleted_formulas_but_rejects_unsupported_survivors_and_hooks(self):
-        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2%+1"}])
+    def test_delete_ignores_deleted_formulas_marks_unreadable_survivors_and_rejects_hooks(self):
+        self.apply(cells=[{"row":1,"col":1,"source":"=Sheet1!A2 ` 1"}])
         self.apply("sheet_add",name="Other")
-        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"=Sheet1!A2%+1"}])
-        self.assertRollback("sheet_delete","REFERENCE_TRANSFORM_UNAVAILABLE")
-        self.apply(sheet="Other",cells=[{"row":1,"col":1,"clear":True}])
+        self.apply(sheet="Other",cells=[{"row":1,"col":1,"source":"=Sheet1!A2 ` 1"},{"row":2,"col":1,"source":"=A1 ` 1"}])
         self.book.handler="required.py"
         self.assertRollback("sheet_delete","UNSUPPORTED_HOOK_SCOPE")
         self.book.handler=None
-        self.apply("sheet_delete")
+        self.assertEqual(self.apply("sheet_delete")["unmaintained"],[{"sheet":"Other","cell":"A1"}])
+        self.assertEqual([cell["kind"] for cell in self.book.read("Other",{"r2":2})["cells"]],["unmaintained","formula"])
         self.assertRollback("sheet_delete","LAST_SHEET",sheet="Other")
 
     def test_delete_affected_cell_budget_and_write_failure_preserve_catalog_and_history(self):

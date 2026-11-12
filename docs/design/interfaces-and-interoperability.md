@@ -149,3 +149,13 @@ aggregation, splitting, or another format. See [Microsoft's specifications](http
 Do not silently truncate records or substitute stale cached values for
 unsupported calculations. The precise fidelity tiers and fallback choices are
 open decisions to be backed by representative round-trip fixtures.
+
+As built in Excel fidelity increment 1 (November 11, 2026): XLSX and ODS
+imports degrade instead of blocking, and every item kept in another form,
+approximated or left out, including each worksheet and workbook feature that is
+not imported, appears as a structured report entry before Apply. Cached formula
+values are used only when the user chooses `values` or `mixed` mode, and the
+report says the cache's freshness cannot be verified. Whole workbooks of up to
+1,000,000 cells travel by streamed upload and download with a staged review;
+see [the compatibility contract](compatibility-v0.md#xlsx-and-ods-input-tier) and
+[the specification coverage](excel-spec-coverage.md).

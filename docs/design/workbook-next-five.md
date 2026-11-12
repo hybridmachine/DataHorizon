@@ -13,6 +13,14 @@ platform qualification from local results.
 
 ## Whole-workbook XLSX
 
+> **Superseded by increment 1 (November 11, 2026).** The text below records this
+> stage as built. The current contract is the degrade policy, three import modes,
+> import as additional sheets, the large path (1,000,000 cells), strict namespaces, structured report and bounded/large paths in
+> [the compatibility contract](compatibility-v0.md#xlsx-and-ods-input-tier):
+> unsupported cells and formulas no longer block an import; they are kept,
+> converted or left out and itemized, and every unimported worksheet and
+> workbook feature has a report entry ([coverage](excel-spec-coverage.md)).
+
 `scope=workbook` on preparation/export covers 1–64 sheets, including empty sheets,
 with original names/order/coordinates, supported inputs/styles and cross-sheet
 SUM/IF/arithmetic references. Names must be unique under SQLite ASCII NOCASE,
@@ -42,6 +50,14 @@ Local evidence is recorded in `evidence/workbook-xlsx-verification.txt`.
 
 ## Whole-workbook ODS
 
+> **Superseded by increment 1 (November 11, 2026).** The text below records this
+> stage as built. The current contract is the degrade policy, three import modes,
+> import as additional sheets, the large path (1,000,000 cells), strict namespaces, structured report and bounded/large paths in
+> [the compatibility contract](compatibility-v0.md#xlsx-and-ods-input-tier):
+> unsupported cells and formulas no longer block an import; they are kept,
+> converted or left out and itemized, and every unimported worksheet and
+> workbook feature has a report entry ([coverage](excel-spec-coverage.md)).
+
 ODS now supports the same `scope=workbook` and atomic Apply contract. OpenFormula
 cell/range references translate between native qualified names and ODF named
 sheet locators, including spaces, apostrophes, punctuation and absolute cell
@@ -61,6 +77,14 @@ consumption; it does not claim native LibreOffice acceptance. Local evidence is
 in `evidence/workbook-ods-verification.txt`.
 
 ## Formula and style fidelity
+
+> **Superseded by increment 1 (November 11, 2026).** The text below records this
+> stage as built. The current contract is the degrade policy, three import modes,
+> import as additional sheets, the large path (1,000,000 cells), strict namespaces, structured report and bounded/large paths in
+> [the compatibility contract](compatibility-v0.md#xlsx-and-ods-input-tier):
+> unsupported cells and formulas no longer block an import; they are kept,
+> converted or left out and itemized, and every unimported worksheet and
+> workbook feature has a report entry ([coverage](excel-spec-coverage.md)).
 
 XLSX ordinary formula metadata (`t=normal`, supported recalculation flag) and
 bounded shared groups are supported. Stored members are translated relative to
