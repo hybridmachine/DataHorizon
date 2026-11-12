@@ -80,6 +80,8 @@ applications, and AI agents through REST.
 | [Next five qualification increments](qualification-next-five.md) | Native plugin checks, cache/RSS, HTTP/worker hardening and native capture binding |
 | [Everyday spreadsheet increments](everyday-next-five.md) | Wrap, borders, sizing, hide/unhide and freeze |
 | [Editing and CSV increments](editing-csv-next-five.md) | Sheet reference changes, CSV dialects and column types |
+| [Charts design](charts-design.md) | Approved design: native chart object and specification, service-side resolve and SVG rendering, storage, interfaces and stages; nothing built |
+| [Charts stage 1 plan](charts-stage-1-plan.md) | Task-level plan for the renderer experiment: standard-library SVG renderer, Qt SVG probe, thresholds and evidence; not started |
 | [Excel fidelity programme](excel-fidelity-plan.md) | Approved design and ten-increment plan for native features and full XLSX data/formatting import and export; increment 1 as built (section 15) |
 | [Excel fidelity increment 1 plan](excel-fidelity-increment-1-plan.md) | Task-level plan for import foundations: degrade instead of block, reference scanner, large staged import/export, clients, corpus and limits |
 | [SpreadsheetML specification coverage](excel-spec-coverage.md) | Every worksheet/workbook element, cell and formula attribute, style construct and related part, with today's status, report entry and owning increment |
