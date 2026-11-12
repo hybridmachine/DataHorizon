@@ -1,0 +1,40 @@
+{
+  "task": 21,
+  "status": "passed_with_open_owner_items",
+  "title": "Specification check, unimported-feature reporting and increment 1 documents",
+  "source": {
+    "code_commit": "baf59f80c6dad3ebf68a417334d1ac6d0f2d00b5",
+    "documents_commit": "the commit that adds this file",
+    "scope": "service/datahorizon/xlsx_features.py, ods_features.py, conversion_report.py, interchange.py, xlsx_stream.py, ods.py, ods_stream.py, cli.py, service.py (ReportEntry schema), desktop/conversionreportview.h, tests (test_xlsx_degrade, test_xlsx_stream, test_ods_degrade, test_ods_stream, test_corpus, test_conversion_report, test_interchange, test_desktop.cpp), tests/corpus_scorecard.py, corpus README, design documents"
+  },
+  "host": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "model": "MacBookAir10,1",
+    "cpu": "Apple M1",
+    "memory_bytes": 8589934592,
+    "python": "3.14.6",
+    "sqlite": "3.53.4"
+  },
+  "verification": {
+    "python": {"tests_run": 1107, "optional_skips": 26, "failures": 0, "errors": 0, "seconds": 171.965,
+               "command": "PYTHONPATH=service python3 -m unittest discover -s tests", "baseline_tests": 1085},
+    "ctest": {"tests": 4, "passed": 4, "seconds": 426.59, "desktop_checks_passed": 252,
+              "command": "ctest --test-dir build --output-on-failure"},
+    "scorecard_check": {"exit": 0, "command": "PYTHONPATH=service python3 tests/corpus_scorecard.py --check"},
+    "generator_check": {"exit": 0, "command": "python3 tests/fixtures/corpus/generate_feature_workbooks.py --check"},
+    "record": "docs/design/evidence/excel-fidelity-1-verification.txt"
+  },
+  "results": {
+    "corpus_files": 23,
+    "rejected_in_any_mode": 0,
+    "known_unreported": {"formulas": [], "mixed": [], "values": []},
+    "specification_coverage": "docs/design/excel-spec-coverage.md",
+    "scanner_overhead_seconds_per_million_cells": 0.132
+  },
+  "open": [
+    "No Excel-saved or LibreOffice-saved workbook in the corpus (plan section 6, section 14 item 1)",
+    "Chart sheets, dialog sheets and macro sheets reject a whole-workbook import (plan section 15)",
+    "Document core properties and a cell's own extLst are not reported; ODS tab colour and page styles are not detected (plan section 14 item 5)",
+    "Large-path capacity not re-measured after the feature scanner was added"
+  ]
+}

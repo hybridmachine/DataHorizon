@@ -4,6 +4,32 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## Excel fidelity increment 1 — November 11, 2026
+
+Increment 1 of the [Excel fidelity programme](excel-fidelity-plan.md) is built
+on local branches `claude/excel-fidelity-1a` to `1e` (not pushed), following the
+[task plan](excel-fidelity-increment-1-plan.md). XLSX (transitional and strict)
+and ODS imports degrade instead of blocking: unsupported cells and formulas are
+kept, converted or left out, every worksheet and workbook feature that is not
+imported has an entry, and the structured report reaches REST, the SDK, the CLI
+and the desktop review. Import modes are `formulas`, `mixed` and `values`. A
+lenient reference scanner keeps references maintained inside formulas DataHorizon
+cannot evaluate, and the native `unmaintained` kind (format v7) marks the rest.
+A large path streams whole workbooks of up to 1,000,000 cells through upload,
+staged preparation, atomic apply (into an empty workbook or as additional sheets),
+an export job and download, within limits measured on the reference Mac.
+
+Evidence: [verification](evidence/excel-fidelity-1-verification.txt),
+[capacity](evidence/excel-fidelity-1-capacity.json),
+[corpus scorecard](evidence/excel-fidelity-scorecard.json),
+[specification coverage](excel-spec-coverage.md),
+[task 19](evidence/excel-fidelity-1-task19.json) and
+[task 21](evidence/excel-fidelity-1-task21.json) records. Open: the corpus has no
+Excel-saved or LibreOffice-saved workbook (hand-built approximations only), so
+the increment's corpus criterion is not met; the rulings and known limitations,
+including chart sheets rejecting a whole-workbook import, are in
+[section 15 of the plan](excel-fidelity-plan.md#15-increment-1-as-built-rulings-and-known-limitations).
+
 ## November 8 review remediation
 
 The [review remediation plan](review-remediation-plan.md) is implemented and
@@ -287,7 +313,7 @@ confirmation. Physical input, VoiceOver, Windows/Linux and release gates remain 
 | M3 | Typed entry/date functions and scalar contracts; bounded transitive dependency reuse/invalidation; state/generation/UTC-clock background calculations with pending/error/stale/cancelled results; transactional hook reads; bounded automatic visible/frozen viewport scheduling | Broader Excel functions/coercion/reference compatibility, native usability/accessibility and platform acceptance |
 | M4 | Typed/formula-aware copy, Cut/fill/history, supported sheet/row/column transforms; opt-in transactional before/after structural hooks; native v3 portable view settings; local hiding/freezing and cross-pane selection | Full Excel reference compatibility, broader presentation/view models, native platform conventions and screen-reader acceptance |
 | M5 | Portable named bounded list definitions and persistent declared-record UUIDs; explicit external-edit reconciliation; reviewed record bulk edits and formula-preserving filtered copy/XLSX/ODS export; explicit locale/temporal conversion; durable staged atomic/batched jobs, frozen global sort/find paging and cooperative cancellation | Wider locale/timezone/duration policies, larger scopes and performance qualification (including large-file opening budget), full SQL/query/relational models at M8, production job scheduling and platform/manual acceptance |
-| M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures | Broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
+| M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures; Excel fidelity increment 1: degrade-and-report XLSX/ODS import (strict namespaces, `mixed` mode, every unimported feature reported), large staged import/export at measured limits (1,000,000 cells on the reference Mac), corpus and scorecard ([verification](evidence/excel-fidelity-1-verification.txt)) | Excel-saved and LibreOffice-saved corpus; native features of fidelity increments 2–10; broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
 | M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
 | M8 | Bounded native tables/relationships/indexes, read-only SQL and saved views; native v5 modules, exact service-local activation, atomic macros, required hooks/history and managed clients; native v6 names and cell/table event bindings, owner-channel approval and the Qt Python workspace (local branch, no PR) | Proven managed SQL writes, names in formulas/interchange, structure/open/code binding events, custom functions/packages, durable external effects, remote TLS/mTLS/password access, physical-input/VoiceOver acceptance of the workspace and remaining foundation/platform qualification |
 

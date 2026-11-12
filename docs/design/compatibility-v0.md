@@ -152,9 +152,9 @@ generation checks prevent older results from overwriting a newer input state.
 | --- | --- | --- | --- | --- |
 | Typed values | Preserved; temporal inputs upgrade to v2 | Native temporal column conversions; optional hash-bound type companion | Native ISO dates/times; supported formatted serials use 1900/1904 epochs | Native ISO dates/datetimes and sub-day clock durations |
 | Leading-zero text | Preserved | Preserved as text; CSV receivers may infer types | Preserved as Text | Preserved as Text |
-| Formula source | Preserved | Literal Text / evaluated values | Implemented local formulas or explicit cached/fresh values | Shared scalar function tier and arithmetic except powers; canonical syntax |
+| Formula source | Preserved | Literal Text / evaluated values | Every formula kept (unevaluable ones reported) or replaced by caches by mode | As XLSX; canonical OpenFormula syntax; syntax it cannot translate (such as powers) is kept as text or replaced by the cache, and reported |
 | Supported styles | Preserved | Destination styles retained / omitted | Native direct styles mapped; unsupported display reported | Native direct styles mapped; unsupported display reported |
-| Sheets | Preserved | At selected cell / selected rectangle | One sheet at destination / one rectangle at source coordinates | One sheet / rectangle, as XLSX |
+| Sheets | Preserved | At selected cell / selected rectangle | One sheet at destination, or the whole workbook (bounded or large path) / one rectangle or the whole workbook | As XLSX |
 | Code / queries / relationships | Planned metadata | No code activation / omitted | Omitted and reported; no code activation | Omitted and reported; no code activation |
 
 CSV import supports explicitly selected UTF-8 (optional BOM), UTF-16 (required
@@ -251,46 +251,113 @@ or while row 1 is hidden. Cross-pane source-rectangle selection and Freeze first
 intersection) are implemented. Multiple frozen rows/columns are bounded to 16/8
 and available from the active cell; see [pane semantics](editing-lists-next-ten.md#freeze-selected-panes).
 
-### XLSX input tier
+### XLSX and ODS input tier
 
-Bounded XLSX sheet import and selection export are now available through the
-REST interface, SDK and desktop. Text/numbers/Booleans and implemented local
-formulas have separate support from formatting and advanced features. Every
-review includes a conversion report; unsupported cells block import, while
-unsupported non-cell features are reported as omitted. See the exact
-[interchange contract](interchange-next-five.md#xlsx-inputs-and-formulas).
-ODS now has a separate [bounded tier](interchange-next-five.md#ods-inputs-formulas-and-native-styles). XLSX direct styles follow the separate
-[native-style mapping](interchange-next-five.md#xlsx-native-styles).
+Increment 1 of the [Excel fidelity programme](excel-fidelity-plan.md) (built
+November 11, 2026; [section 15](excel-fidelity-plan.md#15-increment-1-as-built-rulings-and-known-limitations)
+records its rulings) replaces the earlier block-on-anything tier. This is the
+current contract; the earlier stages are recorded in the
+[interchange](interchange-next-five.md) and [workbook](workbook-next-five.md)
+documents.
 
+**Degrade, never block.** A valid package always imports. A cell or feature
+DataHorizon does not support is kept in another form, approximated or left out,
+and each such item is itemized in the conversion report before Apply. Only a
+malformed or unsafe package rejects: bad ZIP or XML, DTDs or entities, non-UTF-8
+parts, encryption, broken relationships, duplicate cells, broken shared-formula
+groups, invalid style or string indexes, or a bound exceeded (`LIMIT`).
+
+**Modes.** `formulas` keeps every formula; one DataHorizon cannot evaluate is
+stored as a formula that shows an error naming the reason and starts
+calculating when the function is added. `mixed` (the desktop default) keeps the
+formulas DataHorizon can evaluate and replaces the others by their cached value
+when one exists. `values` keeps only cached values; cache freshness cannot be
+verified. Export always writes formulas without cached values (the bounded
+selection export can also write values).
+
+**Formats.** Transitional and strict (ISO/IEC 29500 strict namespaces) XLSX and
+ODS 1.3. Error-valued cells import as Text and are reported as converted.
+Formulas are read with a lenient reference scanner, so references inside
+formulas DataHorizon cannot evaluate are still maintained by structural edits;
+a formula the scanner cannot read becomes the `unmaintained` kind (native format
+v7, see [native formats](native-format-v1.md#unmaintained-formulas-format-v7))
+when a structural edit touches its sheet, and is exported unchanged with a
+report entry.
+
+**The report.** Each entry has a category, a severity (`converted`,
+`approximated`, `omitted`, `unevaluable`), a detail, a count and up to 100
+samples (`{sheet, cell}`; a sample without a cell stands for a whole sheet,
+one without a sheet for the workbook). At most 200 entries; totals per severity
+count every item. The tree reader (bounded path) and the streaming reader
+(large path) produce the same entries.
+
+| Category | Meaning |
+| --- | --- |
+| `cell.*` | A cell value converted or skipped: `error_value`, `invalid_value`, `missing_cache`, `number_out_of_range`, `text_too_long`, `unsupported_type`, `date_conversion` |
+| `formula.*` | A formula kept unevaluable, replaced by its cache or skipped: `unsupported_function`, `name`, `missing_sheet`, `external_reference`, `unsupported_reference`, `syntax`, `unsupported_syntax`, `array`, `data_table`, `untranslatable`, `unmaintained` (export), `cache_omitted` and `display_not_evaluated` (large export) |
+| `style.*` | Formatting outside the native style tier: `number_format`, `font`, `fill`, `border`, `alignment`, `named_style` |
+| `sheet.feature` | A worksheet feature not imported; the detail is its feature id (`merged_cells`, `column_widths`, `row_heights`, `hidden_rows_columns`, `frozen_panes`, `conditional_formatting`, `data_validation`, `hyperlinks`, `comments`, `excel_tables`, `auto_filter`, `sheet_protection`, `page_setup`, `drawings` and others); the count is items (ranges, rules, links, rows or columns) |
+| `workbook.feature` | A workbook feature or package part not imported: `defined_names`, `external_references`, `hidden_sheets`, `workbook_protection`, `calculation_settings`, `charts`, `pivot_tables`, `vba`, `custom_xml`, `rich_text` and others |
+| `report.truncated` | Further distinct entries beyond 200, counted but not itemized |
+
+The [specification coverage table](excel-spec-coverage.md) lists every
+SpreadsheetML element with the entry it produces. Features in their default form
+(Excel's default margins, a view without panes, `dimension`) produce no entry.
+
+**Two paths.**
+
+| | Bounded path | Large path |
+| --- | --- | --- |
+| Scope | Selection (one sheet at an offset, or one rectangle) and whole workbook | Whole workbook only |
+| Transport | base64 in a JSON body of at most 4 MiB | `PUT /v1/uploads/{upload}` raw body (or `source_path` on the same machine), staged preparation job, `GET /v1/exports/{export}` download |
+| Limits | 10,000 stored cells, 64 sheets, 3 MiB package, 16 MiB expanded, 128 parts, 100,000 XML nodes per part | 1,000,000 stored cells, 255 sheets, 48 MiB package, 256 MiB expanded, 4,096 parts, 1 MiB of XML per cell or record, 300 s per phase, 2 concurrent uploads and downloads, 1,024 distinct styles per export |
+| Review | Every prepared cell | The report and a bounded sample; cells are staged on disk |
+| Apply | One managed edit (selection) or one atomic `workbook_import` | One atomic `workbook_import` from the stage |
+
+Whole-workbook import replaces the sheets of an empty workbook, or
+(`target=add_sheets`) adds the imported sheets after the existing ones when no
+name collides (`SHEET_NAME_CONFLICT` otherwise); either way one transaction that
+clears history. It raises the structural event and no per-cell change events;
+an activated required handler that has not opted into structural events
+rejects before any change. Export streams sheet by sheet from one read snapshot
+of the native file. Selection scope carries cell content only; sheet-level
+features travel, when a later increment adds them, only at whole-sheet and
+whole-workbook scope.
+
+The large-path limits were measured on November 11, 2026 on an Apple M1
+MacBook Air with 8 GB (macOS 26.6.2, Python 3.14.6, SQLite 3.53.4, warm cache)
+and hold for that host only; see
+[section 5.2 of the fidelity plan](excel-fidelity-plan.md#52-size) and the
+[evidence](evidence/excel-fidelity-1-capacity.json). XLSX qualified at
+1,000,000 cells (slowest phase 30.9 s, peak service RSS 93 MB). ODS qualified at
+500,000 cells with the generated standard mix; at 1,000,000 cells it qualified
+only for a mix without long text, because DataHorizon's ODS export of the
+standard mix exceeds the 256-MiB expanded limit and is rejected with `LIMIT`.
+ODS at other mixes and sizes, OS-cold opening and other hosts were not measured.
+
+**Clients.** REST with OpenAPI; the SDK's `prepare_spreadsheet_file`,
+`import_staged` and `export_spreadsheet_file`; the CLI's `import-spreadsheet`
+and `export-spreadsheet`; the desktop's File import and export with a grouped
+report review (see the [automation guide](python-automation-guide.md#importing-and-exporting-workbooks)).
+
+**Evidence.** The interchange corpus (`tests/fixtures/corpus/`) and its
+[scorecard](evidence/excel-fidelity-scorecard.json): no file is rejected and no
+listed feature is dropped without a report entry. The corpus has no file saved
+by Excel or LibreOffice yet, so this is not an Excel or LibreOffice
+compatibility claim.
 
 ## Whole-workbook interchange
 
-XLSX and ODS now support `scope=workbook`: all sheet names/order, empty sheets, mapped
-inputs/styles and supported cross-sheet formulas. Import replaces an empty
-workbook atomically and requires activated handlers to opt into transactional
-structural events; legacy handlers reject atomically. Success clears history.
-Export uses one bounded read transaction and translates stable native IDs to names.
-Aggregate limits and omissions remain explicit in the
-[workbook contract](workbook-next-five.md). Single-selection tiers remain available.
-
-Large whole-workbook XLSX and ODS files (streamed upload, staged preparation,
-atomic apply, export job and streamed download) are limited to 1,000,000
-stored cells, a 48-MiB package, 256 MiB expanded, 255 sheets, 1 MiB of XML per
-cell or shared string, 1,024 distinct styles per export and 300 seconds per
-phase. These limits were measured on November 11, 2026 on an Apple M1 Mac
-(macOS 26.6.2, Python 3.14.6, SQLite 3.53.1) and hold for that host only; see
-[section 5.2 of the fidelity plan](excel-fidelity-plan.md#52-size) and the
-[evidence](evidence/excel-fidelity-1-capacity.json). XLSX qualified at 1,000,000 cells. ODS
-qualified at 500,000 cells with the generated standard mix and at 1,000,000
-cells only within the expanded limit: DataHorizon's ODS export of text-heavy
-workbooks is about four times larger than XLSX, so such an export of 1,000,000
-cells is rejected with `LIMIT` rather than written.
-
+Both paths above support `scope=workbook` with all sheet names and order, empty
+sheets, mapped inputs and styles and cross-sheet formulas. Stable native sheet
+references become portable names on export. Code, queries, relationships,
+history and view state are omitted and reported; imported code never
+activates. Keep the native or source file for features outside this tier.
 
 The [formula/style fidelity increment](workbook-next-five.md#formula-and-style-fidelity)
 adds bounded XLSX shared-formula expansion and explicit ODS parent-cell-style
-inheritance. Unsupported arrays/data tables/default styles still report or block
-as documented; this does not widen the calculation function tier.
+inheritance. Unsupported arrays, data tables and default styles are kept or
+reported as above (they no longer block); this does not widen the calculation function tier.
 
 
 Selected-range status summaries follow the [snapshot summary contract](spreadsheet-next-ten.md#selection-summary-contract).

@@ -1,6 +1,6 @@
 # Excel fidelity programme: design and increment plan
 
-Draft 0.2 | November 11, 2026 | Status: approved by the owner on November 11, 2026; section 14 decisions remain open
+Draft 0.3 | November 11, 2026 | Status: approved by the owner on November 11, 2026. Increment 1 is built except for the open items in section 6 (the Excel-saved and LibreOffice-saved corpus); section 14 decisions remain open. Section 15 records how increment 1 was built.
 
 The [increment 1 plan](excel-fidelity-increment-1-plan.md) turns section 6 into tasks.
 
@@ -35,9 +35,12 @@ The owner's direction, November 11, 2026:
   large imported file can be worked in, not only opened. **Owner**
 
 "The specification" here means ECMA-376 Part 1 (SpreadsheetML), transitional
-and strict. The gap table in section 3 was written from the author's knowledge
-of that standard and from reading the importer; it was not checked clause by
-clause against the published text. Increment 1 includes that check.
+and strict. The gap table in section 3 was first written from the author's
+knowledge of that standard and from reading the importer. Increment 1 checked it
+element by element: [the specification coverage table](excel-spec-coverage.md)
+lists every worksheet and workbook element, cell and formula attribute, style
+construct and related part with its status and owner, and the rows it added to
+section 3 are marked **Call**.
 
 ## 2. Goals, non-goals and anti-goals
 
@@ -71,6 +74,12 @@ clause against the published text. Increment 1 includes that check.
 - Locale-specific number and date rendering. Display stays invariant
   (English names, `.` decimal, `,` group) as today. **Call**
 - Windows/Linux qualification, signing and the other open release gates.
+- Added by the increment 1 coverage check (section 14, item 5): view state
+  beyond sizes, hidden state and frozen panes (split panes, zoom, gridlines,
+  custom views, watch window); what-if tools (scenarios, data consolidation,
+  data tables); saved sort state; ignored-error flags, smart tags and web
+  publishing; rich values in cells; custom sheet and document properties. Each
+  is reported on import. **Call**
 
 **Anti-goals: these make the programme a failure even if it works**
 
@@ -91,16 +100,20 @@ clause against the published text. Increment 1 includes that check.
 
 Verified by reading `service/datahorizon/interchange.py`, `xlsx_styles.py`,
 `engine.py`, `metadata.py`, `formats.py`, `formula.py` and
-`desktop/sheetmodel.cpp` on November 11, 2026.
+`desktop/sheetmodel.cpp` on November 11, 2026, and updated when increment 1 was
+built. Since increment 1 every feature in the "Needs" column that is not yet
+imported is reported (`sheet.feature`, `workbook.feature`, `style.*`,
+`formula.*` or `cell.*` entries) rather than dropped; the
+[coverage table](excel-spec-coverage.md) names the entry for each element.
 
 | Area | Today | Needs |
 | --- | --- | --- |
 | Numbers, Booleans, strings, ISO dates, serial dates | Imported | — |
-| Error-valued cells | Block the import | Importer, engine literal |
-| Formulas | Ordinary and shared, if every function is one of 53 | Degrade policy; more functions |
-| Array formulas, data tables | Block | Engine |
+| Error-valued cells | Imported as Text and reported (increment 1) | Engine literal (8a) |
+| Formulas | Ordinary and shared; any formula DataHorizon cannot evaluate is kept and reported (increment 1) | More functions |
+| Array formulas, data tables | Kept unevaluable or replaced by caches, reported (increment 1) | Engine (arrays 8b) |
 | Defined names | Native names exist (v6) but not in formulas or interchange | Engine, importer |
-| External references | Block | Degrade policy |
+| External references | Kept unevaluable, reported (increment 1) | — (non-goal) |
 | Excel tables (`xl/tables`) | Omitted | Importer onto native lists |
 | Merged cells | Absent | Native, grid, importer |
 | Column widths, row heights | Native view settings exist (at most 1,024 per axis), not imported | Importer; raise bound |
@@ -120,9 +133,18 @@ Verified by reading `service/datahorizon/interchange.py`, `xlsx_styles.py`,
 | Vertical alignment, rotation, indent, shrink | Omitted | Native, grid |
 | Named-style inheritance | Omitted | Importer flattens |
 | Row and column default styles | Omitted | Native, importer |
-| Strict OOXML variant | Rejected | Importer |
-| Size | 10,000 cells, 64 sheets, 3 MiB zipped, 16 MiB expanded | Streaming, staged import |
-| Failure mode | One unsupported cell rejects the file | Degrade policy |
+| Strict OOXML variant | Imported (increment 1) | — |
+| Size | Bounded path: 10,000 cells, 64 sheets, 3 MiB zipped, 16 MiB expanded; large path: 1,000,000 cells, 255 sheets, 48 MiB, 256 MiB expanded (increment 1, 5.2) | Large edits and calculation (9, 10) |
+| Failure mode | Valid content degrades and is reported; only a malformed package rejects (increment 1) | — |
+| Split panes, zoom, gridlines, right-to-left, custom views, watch window | Reported | — (non-goal: view state) **Call** |
+| Scenarios, data consolidation, data tables as what-if tools | Reported | — (non-goal: what-if tools) **Call** |
+| AutoFilter ranges and saved sort state | Reported | AutoFilter with Excel tables onto native lists (8a); sort state is a non-goal **Call** |
+| Calculation settings (manual mode, iteration, precision as displayed) | Reported | 10 **Call** |
+| Phonetic guides (`rPh`, `ph`) | Reported | 5, with rich text **Call** |
+| Rich values in cells (`vm`: pictures in cells, data types) | Cached value imported; reported | — (non-goal: images, data types) **Call** |
+| Ignored-error flags, smart tags, web publishing, custom sheet and document properties | Reported | — (non-goal) **Call** |
+| Chart sheets, dialog sheets, macro sheets | Reject the package (section 15) | 2: report and skip them **Call** |
+| Document core properties (author, dates) | Not reported | Owner decision (section 14) **Call** |
 
 ## 4. The ten increments
 
@@ -213,7 +235,7 @@ constant. **Call**: interchange gets its own path and limits.
 - Export streams sheet by sheet from one read snapshot.
 - **Measured limits** (qualified November 11, 2026 on the reference Mac, an
   Apple M1 MacBook Air with 8 GB of memory, macOS 26.6.2, Python 3.14.6,
-  SQLite 3.53.1, warm and uncontrolled OS file cache; evidence:
+  SQLite 3.53.4, warm and uncontrolled OS file cache; evidence:
   [excel-fidelity-1-capacity.json](evidence/excel-fidelity-1-capacity.json),
   produced by `tests/qualify_large_interchange.py` from workbooks written by
   `tests/fixtures/generate_large_xlsx.py`). These numbers hold for this host
@@ -380,6 +402,23 @@ Done when: every corpus file imports without a blocking error in `mixed` and
 `formulas` modes; the scorecard is checked in; the measured limits replace the
 targets in 5.2; a 1,000,000-cell generated workbook imports, reopens and
 exports within recorded time and memory.
+
+**Status, November 11, 2026.** Built on branches `claude/excel-fidelity-1a`
+through `1e`; verification in
+[excel-fidelity-1-verification.txt](evidence/excel-fidelity-1-verification.txt).
+
+| Criterion | State | Evidence |
+| --- | --- | --- |
+| Every corpus file imports without a blocking error in `mixed` and `formulas` | Met for the corpus as it stands: no file is rejected in any mode | [scorecard](evidence/excel-fidelity-scorecard.json), `tests/test_corpus.py` |
+| The scorecard is checked in | Met; `known_unreported` is empty in every mode, so no listed feature is dropped without a report entry | [scorecard](evidence/excel-fidelity-scorecard.json), [corpus README](../../tests/fixtures/corpus/README.md) |
+| The measured limits replace the targets in 5.2 | Met | [capacity evidence](evidence/excel-fidelity-1-capacity.json), section 5.2 |
+| A 1,000,000-cell generated workbook imports, reopens and exports within recorded time and memory | Met for XLSX; ODS at 1,000,000 cells only within the 256-MiB expanded limit (5.2) | [capacity evidence](evidence/excel-fidelity-1-capacity.json) |
+| The corpus holds workbooks saved by real Excel and by LibreOffice (5.6) | **Not met.** The corpus is 6 openpyxl/odfpy fixtures and 17 hand-built approximations; no Excel-saved file has been supplied (section 14, item 1) and LibreOffice is not installed on the reference machine. Open on the owner: supply files or waive in writing here | [corpus README](../../tests/fixtures/corpus/README.md), scorecard `summary.gaps` |
+| The clause-by-clause check of section 3 | Met; additions are marked **Call** in section 3 and listed in section 14 | [coverage table](excel-spec-coverage.md) |
+
+Increment 1 is therefore complete except for the application-saved corpus. The
+measures above are only as representative as the hand-built files: a `clean` or
+fully reported result on them says nothing yet about files Excel writes.
 
 ## 7. Increment 2: sheet geometry
 
@@ -659,3 +698,215 @@ for every function DataHorizon claims.
    matters more.
 4. **Size target.** 1,000,000 cells / 256 MiB per import is a Call. Name a
    different target if you have a specific workbook in mind.
+5. **Coverage-check additions for the owner to confirm** (from the
+   [coverage table](excel-spec-coverage.md); each is a **Call** in section 3):
+   - Split panes, zoom, gridlines, right-to-left, custom views and the watch
+     window are view state and a non-goal.
+   - Scenarios, data consolidation and data tables (as what-if tools) are a
+     non-goal; data-table formulas keep their cached values.
+   - AutoFilter ranges move to increment 8a with Excel tables; a saved sort
+     state is a non-goal.
+   - Calculation settings (manual mode, iteration, precision as displayed) go
+     to increment 10, which owns the calculation model.
+   - Phonetic guides go to increment 5 with rich text.
+   - Rich values in cells (pictures in cells, data types), ignored-error flags,
+     smart tags, web publishing and custom sheet and document properties are a
+     non-goal.
+   - Chart sheets, dialog sheets and macro sheets: increment 2 should report and
+     skip them instead of rejecting the package (section 15).
+   - Document core properties (author, created and modified dates) are not
+     reported because every file has them. Decide whether they should be kept,
+     reported or ignored.
+   - ODS sheet tab colours and page styles (headers, footers) are not detected
+     (see the coverage table). Decide whether they need detection.
+
+## 15. Increment 1 as built: rulings and known limitations
+
+This section is the durable record of the decisions taken while building
+increment 1 and of what was left for later. Each ruling says what it costs if
+it turns out wrong. Task numbers refer to the
+[increment 1 plan](excel-fidelity-increment-1-plan.md).
+
+### Process
+
+- Work ran on stacked local branches (`claude/excel-fidelity-1a` to `1e`) in the
+  main checkout, not a separate worktree, because the plan files and build
+  directory lived there. Cost if wrong: the checkout was occupied for the
+  duration; nothing else.
+- Nothing was pushed and no pull request was opened without the owner's
+  say-so, although the plan asked for one pull request per group. Cost if
+  wrong: review on GitHub happens later than the plan's cadence.
+
+### Degrade policy and the report
+
+- Array and data-table formulas degrade instead of blocking: the anchor keeps
+  its formula as unevaluable (`formula.array`), or takes its cached value in
+  `mixed` mode. Cost if wrong: array anchors show an error where Excel shows
+  results, until increment 8b.
+- A formula that cannot be translated, imported at a destination other than A1,
+  is skipped and reported as `formula.untranslatable` (valid content must not
+  reject the file). Cost if wrong: such a cell is dropped (reported) instead of
+  kept as text.
+- A selection-scope export still refuses formulas the parser cannot read; only
+  whole-workbook export writes them through. Cost if wrong: such a selection
+  needs values export until 8a/8c widen the parser.
+- Every worksheet and workbook feature that is not imported produces one
+  `omitted` entry per feature (`sheet.feature` or `workbook.feature`, detail the
+  feature id, count of items, the sheets as samples with no cell); features in
+  their default form produce nothing (Task 21). Cost if wrong: a feature whose
+  default the scanner misjudges is either noise in every file or, if judged
+  default wrongly, silent; the default-file tests and the corpus guard both
+  directions only for the forms they contain.
+- In `values` mode the scorecard requires no entry for formula-only features
+  (arrays, data tables, 3D references): that mode replaces every formula by its
+  cache by request and says so. Cost if wrong: the array-ness of a formula lost
+  in values mode is not itemized.
+- Comments are counted per sheet that has a comments part, not per comment, so
+  the reader does not have to open the comments part. Cost if wrong: the count
+  understates; the entry is still present.
+- An XLSX drawing is reported on the sheet that holds it (`drawings`); charts,
+  pivot tables, VBA, custom XML and the other advanced parts are reported once
+  for the workbook from the package part names. Cost if wrong: none for loss;
+  the counts are of parts, not of objects.
+- ODS column widths are reported only for columns whose width differs from the
+  sheet's most common column width, because LibreOffice writes a width for every
+  column. Cost if wrong: a sheet whose columns are all widened by the same amount
+  reports nothing for them.
+
+### Formulas and references
+
+- In `first:second!ref`, a `first` that is a valid in-grid cell address reads as
+  a cell ranged with `second!ref`, since an unquoted sheet name cannot look like
+  a cell address. Cost if wrong: a 3D reference between sheets literally named
+  like cells (unquoted) is misread.
+- External references are untouched by structural edits, moves and sheet
+  renames or deletions, but their relative parts shift under copy, fill and
+  shared-formula expansion, as in Excel. Cost if wrong: copied external
+  references point one row off.
+- The receipt of a structural edit reports marked formulas as top-level
+  `unmaintained` and `unmaintained_count`, following the existing receipt shape.
+  Cost if wrong: clients read a different key.
+- Operation-job staging does not accept the `unmaintained` kind; clients cannot
+  author it. Cost if wrong: staged jobs cannot carry such cells.
+
+### Large import and export
+
+- The streaming reader caps one cell or shared string, or any other record at
+  the record depth (an `extLst` child included), at 1 MiB of XML and rejects the
+  file with `LIMIT` beyond it, to bound memory on untrusted input. Cost if wrong:
+  a valid file with a larger extension child or cell is rejected, not degraded.
+- The ODS streaming reader accepts trailing empty row and column repeats beyond
+  the grid, which real files commonly end with; the tree reader rejects them.
+  Cost if wrong: the two readers disagree on that one edge.
+- `LARGE_CELLS` stays at 1,000,000 for both formats; ODS at that size is
+  qualified only when its ODS form fits the 256-MiB expanded limit. Cost if
+  wrong: a text-heavy 1,000,000-cell workbook exports to XLSX but fails ODS
+  export with `LIMIT`.
+- The engine's staged import takes a stage file path resolved by the service
+  and stays unaware of staging. Cost if wrong: a small refactor.
+- The review summary always truncates sample cell sources to 256 characters.
+  Cost if wrong: a review shows clipped text even for small files.
+- Releasing an upload that is still receiving returns 409 `JOB_CONFLICT`. Cost
+  if wrong: a client must wait before releasing.
+- `source_path` is accepted as a local-use input (documented, capability
+  `import_source_path`). Cost if wrong: a token holder can learn whether a file
+  readable by the service exists.
+- The bounded inline `sheets` form of whole-workbook import also raises no
+  per-cell change events, matching 5.2 Hooks. Cost if wrong: existing
+  `on_change` handlers no longer see those imported cells.
+- The XLSX stylesheet is written last in one pass; the output equals the
+  bounded exporter's byte for byte. Cost if wrong: a reader that needs styles
+  before sheets would fail (none found).
+- The export snapshot copy holds the workbook lock for its whole duration, but
+  is capped at 2 GiB, checked for free space, cancellable and inside the
+  300-second budget. Cost if wrong: editing is blocked while a large workbook is
+  copied.
+
+### Clients
+
+- The CLI treats standard input at end of input as non-interactive (exit 2,
+  nothing applied) and honours a piped `y`/`n`. Cost if wrong: a script piping
+  `y` imports without `--yes`.
+- The desktop offers "Replace this empty workbook" from a 256 × 16 cell probe
+  plus catalog checks; the service's `DESTINATION_NOT_EMPTY` is the backstop.
+  Cost if wrong: the option is offered for a workbook with cells far from A1 and
+  Apply is then refused with a message.
+
+### Corpus
+
+- Task 20 closed with the Excel-saved and LibreOffice-saved requirements not
+  met: LibreOffice is not installed, no owner files were supplied, and nothing
+  is installed without the owner. Cost if wrong: none hidden; section 6 keeps the
+  criterion open.
+
+### Known limitations
+
+Defects and gaps found while building increment 1 and left for later, grouped
+and de-duplicated; items already fixed are not listed.
+
+- **Chart sheets and other non-worksheet sheets reject the package** at
+  whole-workbook scope (`INVALID_SPREADSHEET`, "Selected sheet must have a local
+  worksheet relationship"); a selection of a worksheet still imports. Found by
+  the coverage check; this is valid content and should be reported and skipped
+  (assigned to increment 2 in section 3).
+- Document core properties and a cell's own `extLst` are not reported
+  (section 14); ODS sheet tab colours and page styles are not detected.
+- The feature scanner adds per-row and per-cell checks to both readers. The
+  large-path capacity measurements of 5.2 were taken before it and were not
+  re-run. In isolation the per-cell checks cost about 0.13 s per 1,000,000 cells
+  on the reference Mac (against a 30.9-s slowest phase); the end-to-end effect
+  is unmeasured.
+- Sheet relationship parts and ODS `settings.xml` are now read for the report,
+  so a malformed one rejects a package that used to import.
+- The `theme_colours` scorecard check accepts the general font and fill
+  messages, which mention theme colours among other causes.
+- The `_xlfn` future-function table was written from knowledge, not checked
+  against Microsoft's list.
+- An unsupported function inside an array formula is reported only as
+  `formula.array`. The ODS unsupported-syntax entry has an empty detail, so a
+  kept cache cannot be told from text kept; matrix detection in ODS is loose.
+- A missing or cyclic ODS style reference on an imported cell rejects the file,
+  while one on a skipped cell goes unnoticed. A single wrong-variant styles or
+  shared-strings relationship in an otherwise consistent XLSX package is
+  ignored instead of rejected. The tree reader still accepts non-UTF-8 XML
+  declarations; a ZIP that lies about its sizes surfaces as
+  `INVALID_SPREADSHEET`, not `LIMIT`.
+- Deleting an end sheet of a 3D span gives `#REF!` where Excel shrinks the span;
+  a reversed whole range such as `XFD:A` clamps; `=IFS([1]!MyName,A1)` cannot be
+  scanned. Any formula on an edited sheet that cannot be scanned is marked
+  `unmaintained` even if its references would not have changed. Full paste can
+  create an `unmaintained` cell from client clipboard data.
+- In the streaming reader, a shared-formula member stored before its master is
+  converted at the end of its sheet, so the samples and tie order of its report
+  entries can differ from the tree reader's.
+- A full report (200 entries × 100 samples) can reach about 2.4 MiB before the
+  stage summary trims samples. `ConversionReport.add` accepts `True` as a count.
+- Service: an oversized `Content-Length` returns 400 with an interpreter
+  message; a 405 lacks `Allow`; the `/docs` explorer cannot send `PUT`; a retry
+  racing job expiry ends `JOB_NOT_FOUND`; an unfinished stage opens as
+  `INVALID_STAGE`; a finished stage keeps freed pages; the stage version was not
+  bumped when normalisation changed; the writer lock can be held up to 300 s
+  while a stage loads, and job retention expiry can delete a stage being read
+  (harmless on POSIX); an exception in `on_commit` would report a committed
+  import as `OUTCOME_UNKNOWN`; engine admission refusals such as `READ_ONLY` are
+  reported as an unknown outcome by the CLI.
+- Interchange round trips are not lexically exact: numbers can come back as
+  float text (`42` as `42.0`) and ODS formula text is rewritten. A large export
+  gives no date display to an unformatted formula with a temporal result
+  (reported as approximated).
+- Windows has not been exercised: releasing during a download, shutdown during a
+  copy and sweeping an open file may fail there. The CLI has not been run
+  against a long-lived remote service; `publish_file` copies setuid/setgid bits.
+- Desktop: the review summary does not pluralise ("1 stored cells"); closing
+  the window before the capabilities reply drops the first close; the
+  single-sheet review still shows the text report; there are no tests for a
+  session change mid-import or a failed replace-target probe; two cancel tests
+  are timing-sensitive; `mainwindow.cpp` grew by about 450 lines.
+- Measurement: the limit-consistency test checks the hand-written decision, not
+  each run's verdict; RSS excludes compressed and swapped pages; packages of
+  48–64 MiB were never measured; an RSS-growth test can pass vacuously.
+- Code structure: `formula_admission` duplicates `fold_name` and the formula
+  walk; about 240 lines of reference fallback helpers live in `formula.py`;
+  `ods_stream` uses private helpers of `xlsx_stream`; preparation logic lives in
+  `service.py`.
+

@@ -226,4 +226,14 @@ mapped to the default), *omitted* (dropped) or *unevaluable* (a formula kept tha
 DataHorizon cannot calculate). The import `--mode` decides what a formula
 becomes: `formulas` keeps every formula, `mixed` (the default) uses the file's
 cached value only for formulas DataHorizon cannot evaluate, and `values` keeps
-only cached values. Export always writes formulas, without cached values.
+only cached values. Export always writes formulas, without cached values. Entries with category `sheet.feature` or `workbook.feature` name a
+worksheet or workbook feature that was not imported (merged cells, validation,
+defined names, charts and so on); their detail is a stable feature id such as
+`merged_cells`, their count is the number of items, and their samples name the
+sheets (`cell` is `None`). The [coverage table](excel-spec-coverage.md) lists every
+id:
+
+```python
+left_out = {e['detail']: e['count'] for e in summary['report_entries']
+            if e['category'] in ('sheet.feature', 'workbook.feature')}
+```
