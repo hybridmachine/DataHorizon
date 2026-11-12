@@ -184,7 +184,7 @@ def _validate(resolved, width, height) -> dict:
     if not isinstance(resolved, dict):
         raise ChartRenderError("INVALID_SPEC", "resolved chart must be an object")
     kind = resolved.get("type")
-    if kind not in CARTESIAN:
+    if kind not in CARTESIAN + ("pie",):
         raise ChartRenderError("UNSUPPORTED_TYPE", f"unsupported chart type {kind!r}")
     raw_series = resolved.get("series")
     if not isinstance(raw_series, list):
@@ -424,10 +424,99 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
             svg.line(left, top, left, bottom, _AXIS)
 
 
+def _legend(svg, entries, position, top, right, bottom_edge):
+    """Draw the legend and return the (right, bottom_edge) left for the plot."""
+    if position == "none" or not entries:
+        return right, bottom_edge
+    swatch, gap = 10.0, 6.0
+    if position == "right":
+        widest = max(svg.width_of(name) for name in entries)
+        box = min(swatch + gap + widest + MARGIN, svg.width * 0.3)
+        x = right - box + MARGIN
+        y = top
+        for index, name in enumerate(entries):
+            if y + ROW > bottom_edge - MARGIN:
+                break
+            svg.rect(x, y + (ROW - swatch) / 2, swatch, swatch, PALETTE[index % len(PALETTE)])
+            svg.text(x + swatch + gap, y + ROW / 2 + LABEL_PX / 3, svg.fit(name, box - MARGIN - swatch - gap))
+            y += ROW
+        return right - box, bottom_edge
+    # bottom: entries flow left to right and wrap, at most three rows
+    placed, x, row = [], MARGIN, 0
+    for index, name in enumerate(entries):
+        label = svg.fit(name, 160.0)
+        width = swatch + gap + svg.width_of(label) + 12
+        if x + width > right and x > MARGIN:
+            x, row = MARGIN, row + 1
+        if row >= 3:
+            break
+        placed.append((index, label, x, row))
+        x += width
+    rows = max(item[3] for item in placed) + 1
+    first = bottom_edge - MARGIN - rows * ROW
+    for index, label, x, row in placed:
+        y = first + row * ROW
+        svg.rect(x, y + (ROW - swatch) / 2, swatch, swatch, PALETTE[index % len(PALETTE)])
+        svg.text(x + swatch + gap, y + ROW / 2 + LABEL_PX / 3, svg.fit(label, right - x - swatch - gap))
+    return right, first
+
+
+def _pie_values(chart) -> list[float | None]:
+    values = chart["series"][0]["values"] if chart["series"] else []
+    if any(value is not None and value < 0 for value in values):
+        raise ChartRenderError("NEGATIVE_IN_PIE", "a pie cannot show negative values")
+    return values
+
+
+def _render_pie(svg, values, top, right, bottom_edge):
+    total = sum(value for value in values if value)
+    cx = (MARGIN + right) / 2
+    cy = (top + bottom_edge - MARGIN) / 2
+    radius = max(min(right - MARGIN, bottom_edge - MARGIN - top) / 2 - 4, 1.0)
+    if total <= 0:
+        return
+
+    def at(degrees):
+        angle = math.radians(degrees)
+        return cx + radius * math.sin(angle), cy - radius * math.cos(angle)
+
+    start = 0.0
+    live = [index for index, value in enumerate(values) if value]
+    for index in live:
+        end = 360.0 if index == live[-1] else start + values[index] / total * 360.0
+        colour = PALETTE[index % len(PALETTE)]
+        if end - start >= 360.0 - 1e-9:
+            svg.circle(cx, cy, radius, colour)
+            corners = [(cx - radius, cy - radius), (cx + radius, cy + radius)]
+        else:
+            (x0, y0), (x1, y1) = at(start), at(end)
+            large = 1 if end - start > 180 else 0
+            svg.path(f"M{_num(cx)} {_num(cy)} L{_num(x0)} {_num(y0)} "
+                     f"A{_num(radius)} {_num(radius)} 0 {large} 1 {_num(x1)} {_num(y1)} Z",
+                     stroke="#ffffff", fill=colour, width=1)
+            corners = [(cx, cy), (x0, y0), (x1, y1)]
+            corners += [at(quarter) for quarter in (0, 90, 180, 270) if start < quarter < end]
+        xs = [x for x, _ in corners]
+        ys = [y for _, y in corners]
+        svg.mark(0, index, min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys), a0=start, a1=end)
+        start = end
+
+
 def render(resolved: dict, width: int, height: int, metrics: dict[str, float] | None = None) -> dict:
     """Render a resolved chart to ``{"svg": str, "marks": list[dict]}``."""
     chart = _validate(resolved, width, height)
+    pie = chart["type"] == "pie"
+    values = _pie_values(chart) if pie else []
     svg = _Svg(width, height, metrics)
     top = _title(svg, chart)
-    _render_cartesian(svg, chart, top, width - MARGIN, float(height))
+    if pie:
+        labels = chart["categories"] or []
+        entries = [labels[index] if index < len(labels) else "" for index in range(len(values))]
+    else:
+        entries = [item["name"] for item in chart["series"]]
+    right, bottom_edge = _legend(svg, entries, chart["legend"], top, width - MARGIN, float(height))
+    if pie:
+        _render_pie(svg, values, top, right, bottom_edge)
+    else:
+        _render_cartesian(svg, chart, top, right, bottom_edge)
     return svg.result()

@@ -117,5 +117,45 @@ class Cartesian(unittest.TestCase):
             self.assertEqual(caught.exception.code, code)
 
 
+class PieAndLegend(unittest.TestCase):
+    def test_pie_angles_cover_the_circle(self):
+        out = cr.render(load("pie"), 800, 500)
+        self.assertLessEqual(tags(out["svg"]), ALLOWED)
+        marks = out["marks"]
+        self.assertEqual(len(marks), 6)
+        self.assertAlmostEqual(marks[0]["a0"], 0.0)
+        self.assertAlmostEqual(marks[-1]["a1"], 360.0)
+        self.assertAlmostEqual(sum(m["a1"] - m["a0"] for m in marks), 360.0)
+
+    def test_pie_refuses_negatives_and_skips_gaps(self):
+        with self.assertRaises(cr.ChartRenderError) as caught:
+            cr.render(one([1.0, -1.0], type_="pie", grouping=None), 800, 500)
+        self.assertEqual(caught.exception.code, "NEGATIVE_IN_PIE")
+        out = cr.render(one([1.0, None, 3.0], type_="pie", grouping=None), 800, 500)
+        self.assertEqual([m["point"] for m in out["marks"]], [0, 2])
+
+    def test_all_zero_pie_renders_without_slices(self):
+        out = cr.render(one([0.0, 0.0], type_="pie", grouping=None), 800, 500)
+        self.assertEqual(out["marks"], [])
+        ET.fromstring(out["svg"])
+
+    def test_legend_positions_change_the_plot_area(self):
+        spec = load("column_clustered")
+        widths = {}
+        for pos in ("right", "bottom", "none"):
+            spec["legend"]["position"] = pos
+            marks = cr.render(spec, 800, 500)["marks"]
+            widths[pos] = max(m["x"] + m["w"] for m in marks)
+        self.assertLess(widths["right"], widths["none"])
+        self.assertAlmostEqual(widths["bottom"], widths["none"], places=3)
+
+    def test_long_series_names_do_not_starve_the_plot(self):
+        spec = load("column_clustered")
+        for s in spec["series"]:
+            s["name"] = "n" * 200
+        marks = cr.render(spec, 800, 500)["marks"]
+        self.assertGreater(max(m["x"] + m["w"] for m in marks), 400)
+
+
 if __name__ == "__main__":
     unittest.main()
