@@ -91,3 +91,343 @@ def truncate_to_width(text: str, size_px: float, max_px: float, table: dict[str,
             break
         kept += 1
     return text[:kept] + _ELLIPSIS
+
+
+# ---------------------------------------------------------------- rendering
+
+MARGIN = 8.0
+LABEL_PX = 12.0
+TITLE_PX = 14.0
+ROW = LABEL_PX * 1.5
+MAX_CANVAS = 16_384
+CARTESIAN = ("column", "bar", "line", "area", "scatter")
+# Placeholder palette for the experiment; not a product decision.
+PALETTE = ("#3b6fb6", "#d9822b", "#4f9d69", "#b8475f", "#7b61a8", "#8a8f98", "#c2a633", "#2f9aa0")
+_TEXT = "#333333"
+_GRID = "#dddddd"
+_AXIS = "#888888"
+
+
+def _num(value: float) -> str:
+    text = f"{value:.2f}".rstrip("0").rstrip(".")
+    return "0" if text in ("-0", "") else text
+
+
+def _xml(text: str) -> str:
+    cleaned = "".join(c if c >= " " and c not in "￾￿" and not "\ud800" <= c <= "\udfff" else " " for c in text)
+    return cleaned.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _clean(value) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+class _Svg:
+    def __init__(self, width: int, height: int, metrics):
+        self.width, self.height, self.metrics = width, height, metrics
+        self.parts = [
+            f'<svg xmlns="http://www.w3.org/2000/svg" version="1.2" baseProfile="tiny" '
+            f'width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+            f'<rect x="0" y="0" width="{width}" height="{height}" fill="#ffffff"/>',
+        ]
+        self.marks: list[dict] = []
+
+    def rect(self, x, y, w, h, fill, opacity=None):
+        extra = "" if opacity is None else f' fill-opacity="{opacity}"'
+        self.parts.append(f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(w)}" height="{_num(h)}" fill="{fill}"{extra}/>')
+
+    def line(self, x1, y1, x2, y2, stroke, width=1):
+        self.parts.append(f'<line x1="{_num(x1)}" y1="{_num(y1)}" x2="{_num(x2)}" y2="{_num(y2)}" stroke="{stroke}" stroke-width="{width}"/>')
+
+    def path(self, d, stroke="none", fill="none", width=2, opacity=None):
+        extra = "" if opacity is None else f' fill-opacity="{opacity}"'
+        self.parts.append(f'<path d="{d}" stroke="{stroke}" stroke-width="{width}" fill="{fill}"{extra} stroke-linejoin="round"/>')
+
+    def circle(self, cx, cy, r, fill):
+        self.parts.append(f'<circle cx="{_num(cx)}" cy="{_num(cy)}" r="{_num(r)}" fill="{fill}"/>')
+
+    def text(self, x, y, text, size=LABEL_PX, anchor="start", rotate=None):
+        if not text:
+            return
+        turn = "" if rotate is None else f' transform="rotate({rotate} {_num(x)} {_num(y)})"'
+        self.parts.append(
+            f'<text x="{_num(x)}" y="{_num(y)}" font-family="sans-serif" font-size="{_num(size)}" '
+            f'text-anchor="{anchor}" fill="{_TEXT}"{turn}>{_xml(text)}</text>')
+
+    def width_of(self, text, size=LABEL_PX):
+        return estimate_text_width(text, size, self.metrics)
+
+    def fit(self, text, max_px, size=LABEL_PX):
+        return truncate_to_width(text, size, max(max_px, 0.0), self.metrics)
+
+    def mark(self, series, point, x, y, w, h, **extra):
+        x = min(max(x, 0.0), self.width)
+        y = min(max(y, 0.0), self.height)
+        w = min(max(w, 0.0), self.width - x)
+        h = min(max(h, 0.0), self.height - y)
+        self.marks.append({"series": series, "point": point, "x": x, "y": y, "w": w, "h": h, **extra})
+
+    def point_mark(self, series, point, cx, cy):
+        self.mark(series, point, cx - 4, cy - 4, 8, 8)
+
+    def result(self) -> dict:
+        return {"svg": "".join(self.parts) + "</svg>", "marks": self.marks}
+
+
+def _validate(resolved, width, height) -> dict:
+    for size in (width, height):
+        if isinstance(size, bool) or not isinstance(size, int) or not 0 < size <= MAX_CANVAS:
+            raise ChartRenderError("INVALID_SIZE", f"canvas size must be 1..{MAX_CANVAS} pixels")
+    if not isinstance(resolved, dict):
+        raise ChartRenderError("INVALID_SPEC", "resolved chart must be an object")
+    kind = resolved.get("type")
+    if kind not in CARTESIAN:
+        raise ChartRenderError("UNSUPPORTED_TYPE", f"unsupported chart type {kind!r}")
+    raw_series = resolved.get("series")
+    if not isinstance(raw_series, list):
+        raise ChartRenderError("INVALID_SPEC", "series must be a list")
+    if len(raw_series) > LIMIT_SERIES:
+        raise ChartRenderError("LIMIT_SERIES", f"more than {LIMIT_SERIES} series")
+    series = []
+    for item in raw_series:
+        if not isinstance(item, dict) or not isinstance(item.get("values"), list):
+            raise ChartRenderError("INVALID_SPEC", "each series needs a values list")
+        xs = item.get("x")
+        if xs is not None and not isinstance(xs, list):
+            raise ChartRenderError("INVALID_SPEC", "series x must be a list or null")
+        if len(item["values"]) > LIMIT_POINTS or (xs is not None and len(xs) > LIMIT_POINTS):
+            raise ChartRenderError("LIMIT_POINTS", f"more than {LIMIT_POINTS} points in a series")
+        name = item.get("name")
+        series.append({"name": "" if name is None else str(name),
+                       "values": [_clean(v) for v in item["values"]],
+                       "x": None if xs is None else [_clean(v) for v in xs]})
+    categories = resolved.get("categories")
+    if categories is not None and not isinstance(categories, list):
+        raise ChartRenderError("INVALID_SPEC", "categories must be a list or null")
+    if categories is not None and len(categories) > LIMIT_POINTS:
+        raise ChartRenderError("LIMIT_POINTS", f"more than {LIMIT_POINTS} categories")
+    grouping = resolved.get("grouping")
+    if grouping not in (None, "clustered", "stacked"):
+        raise ChartRenderError("INVALID_SPEC", f"unknown grouping {grouping!r}")
+    axes = resolved.get("axes") if isinstance(resolved.get("axes"), dict) else {}
+    value_axis = axes.get("value") if isinstance(axes.get("value"), dict) else {}
+    category_axis = axes.get("category") if isinstance(axes.get("category"), dict) else {}
+    legend = resolved.get("legend") if isinstance(resolved.get("legend"), dict) else {}
+    position = legend.get("position", "none")
+    if position not in ("right", "bottom", "none"):
+        raise ChartRenderError("INVALID_SPEC", f"unknown legend position {position!r}")
+    title = resolved.get("title")
+    return {"type": kind, "grouping": grouping, "series": series,
+            "categories": None if categories is None else ["" if c is None else str(c) for c in categories],
+            "title": None if title in (None, "") else str(title),
+            "value_title": None if value_axis.get("title") in (None, "") else str(value_axis["title"]),
+            "category_title": None if category_axis.get("title") in (None, "") else str(category_axis["title"]),
+            "value_min": _clean(value_axis.get("min")), "value_max": _clean(value_axis.get("max")),
+            "legend": position}
+
+
+def _stack(chart, count):
+    """Per series, per point: (start, end) along the value axis, or None for a gap."""
+    stacked = chart["grouping"] == "stacked" and chart["type"] in ("column", "bar", "area")
+    positive = [0.0] * count
+    negative = [0.0] * count
+    spans = []
+    for item in chart["series"]:
+        row = []
+        for index in range(count):
+            value = item["values"][index] if index < len(item["values"]) else None
+            if value is None:
+                row.append(None)
+            elif not stacked:
+                row.append((0.0, value))
+            elif value >= 0:
+                row.append((positive[index], positive[index] + value))
+                positive[index] += value
+            else:
+                row.append((negative[index], negative[index] + value))
+                negative[index] += value
+        spans.append(row)
+    return spans
+
+
+def _scale(ticks, start_px, end_px):
+    lo, hi = ticks[0], ticks[-1]
+    span = (hi - lo) or 1.0
+    return lambda value: start_px + (value - lo) / span * (end_px - start_px)
+
+
+def _axis_ticks(lo, hi, forced_min, forced_max):
+    if forced_min is not None:
+        lo = forced_min
+    if forced_max is not None:
+        hi = forced_max
+    return nice_ticks(lo, hi)
+
+
+def _title(svg, chart):
+    if chart["title"] is None:
+        return MARGIN
+    text = svg.fit(chart["title"], svg.width - 2 * MARGIN, TITLE_PX)
+    svg.text(svg.width / 2, MARGIN + TITLE_PX, text, TITLE_PX, "middle")
+    return MARGIN + TITLE_PX * 1.5 + 4
+
+
+def _category_labels(svg, labels, start, slot, across, vertical, limit):
+    """Thinned, truncated category labels along the category axis."""
+    count = len(labels)
+    if count == 0 or slot <= 0:
+        return
+    if vertical:  # labels run left to right under the plot
+        widest = min(max(svg.width_of(text) for text in labels), 80.0)
+        every = max(1, math.ceil((widest + 6) / slot))
+        for index in range(0, count, every):
+            room = min(every, count - index) * slot - 4
+            if every == 1:
+                svg.text(start + (index + 0.5) * slot, across, svg.fit(labels[index], room), anchor="middle")
+            elif room >= 16:
+                svg.text(start + index * slot + 2, across, svg.fit(labels[index], room))
+    else:  # labels run top to bottom at the left of the plot
+        every = max(1, math.ceil((LABEL_PX + 2) / slot))
+        for index in range(0, count, every):
+            svg.text(across, start + (index + 0.5) * slot + LABEL_PX / 3, svg.fit(labels[index], limit), anchor="end")
+
+
+def _render_cartesian(svg, chart, top, right, bottom_edge):
+    kind = chart["type"]
+    series = chart["series"]
+    scatter = kind == "scatter"
+    horizontal = kind == "bar"
+    count = max((len(item["values"]) for item in series), default=0)
+    if chart["categories"] is not None and not scatter:
+        count = max(count, len(chart["categories"]))
+    labels = [] if scatter else [(chart["categories"] or [])[i] if i < len(chart["categories"] or []) else "" for i in range(count)]
+    spans = _stack(chart, count)
+
+    ends = [edge for row in spans for span in row if span is not None for edge in span]
+    if kind in ("line", "scatter"):
+        ends = [span[1] for row in spans for span in row if span is not None]
+    lo, hi = (min(ends), max(ends)) if ends else (0.0, 0.0)
+    if kind in ("column", "bar", "area"):
+        lo, hi = min(lo, 0.0), max(hi, 0.0)
+    ticks = _axis_ticks(lo, hi, chart["value_min"], chart["value_max"])
+    tick_labels = [format_tick(tick) for tick in ticks]
+
+    x_ticks = x_labels = None
+    if scatter:
+        xs = [x for item in series for x in (item["x"] or []) if x is not None]
+        x_ticks = nice_ticks(min(xs), max(xs)) if xs else [0, 1]
+        x_labels = [format_tick(tick) for tick in x_ticks]
+
+    left = MARGIN + (ROW if (chart["category_title"] if horizontal else chart["value_title"]) else 0)
+    bottom = bottom_edge - MARGIN - ROW - (ROW if (chart["value_title"] if horizontal else chart["category_title"]) else 0)
+    label_room = 0.0
+    if horizontal:
+        label_room = min(max((svg.width_of(text) for text in labels), default=0.0), svg.width * 0.3)
+        left += label_room + 6
+        right -= svg.width_of(tick_labels[-1]) / 2
+    else:
+        left += max(svg.width_of(text) for text in tick_labels) + 6
+        if scatter:
+            right -= svg.width_of(x_labels[-1]) / 2
+    right = max(right, left + 1)
+    bottom = max(bottom, top + 1)
+    plot_w, plot_h = right - left, bottom - top
+
+    # value axis: gridlines and tick labels
+    if horizontal:
+        to_px = _scale(ticks, left, right)
+        for tick, text in zip(ticks, tick_labels):
+            svg.line(to_px(tick), top, to_px(tick), bottom, _GRID)
+            svg.text(to_px(tick), bottom + LABEL_PX + 3, text, anchor="middle")
+    else:
+        to_px = _scale(ticks, bottom, top)
+        for tick, text in zip(ticks, tick_labels):
+            svg.line(left, to_px(tick), right, to_px(tick), _GRID)
+            svg.text(left - 6, to_px(tick) + LABEL_PX / 3, text, anchor="end")
+    if scatter:
+        x_px = _scale(x_ticks, left, right)
+        for tick, text in zip(x_ticks, x_labels):
+            svg.line(x_px(tick), top, x_px(tick), bottom, _GRID)
+            svg.text(x_px(tick), bottom + LABEL_PX + 3, text, anchor="middle")
+
+    # axis titles
+    across_title, along_title = (chart["category_title"], chart["value_title"]) if horizontal else (chart["value_title"], chart["category_title"])
+    if across_title:
+        svg.text(MARGIN + LABEL_PX, top + plot_h / 2, svg.fit(across_title, plot_h), anchor="middle", rotate=-90)
+    if along_title:
+        svg.text(left + plot_w / 2, bottom_edge - MARGIN - 3, svg.fit(along_title, plot_w), anchor="middle")
+
+    slot = (plot_h if horizontal else plot_w) / count if count else 0.0
+    origin = top if horizontal else left
+    if not scatter:
+        if horizontal:
+            _category_labels(svg, labels, top, slot, left - 6, False, label_room)
+        else:
+            _category_labels(svg, labels, left, slot, bottom + LABEL_PX + 3, True, 0.0)
+
+    stacked = chart["grouping"] == "stacked"
+    for number, (item, row) in enumerate(zip(series, spans)):
+        colour = PALETTE[number % len(PALETTE)]
+        if kind in ("column", "bar"):
+            band = slot * 0.8
+            thickness = band if stacked else band / max(len(series), 1)
+            offset = slot * 0.1 + (0 if stacked else number * thickness)
+            for index, span in enumerate(row):
+                if span is None:
+                    continue
+                a, b = sorted((to_px(span[0]), to_px(span[1])))
+                along = origin + index * slot + offset
+                box = (a, along, b - a, thickness) if horizontal else (along, a, thickness, b - a)
+                svg.rect(*box, colour)
+                svg.mark(number, index, *box)
+        elif scatter:
+            xs = item["x"] or []
+            for index, span in enumerate(row):
+                x = xs[index] if index < len(xs) else None
+                if span is None or x is None:
+                    continue
+                svg.circle(x_px(x), to_px(span[1]), 3, colour)
+                svg.point_mark(number, index, x_px(x), to_px(span[1]))
+        else:  # line and area: one path segment per run of points without a gap
+            runs, run = [], []
+            for index, span in enumerate(row):
+                if span is None:
+                    if run:
+                        runs.append(run)
+                    run = []
+                else:
+                    run.append((left + (index + 0.5) * slot, to_px(span[1]), to_px(span[0]), index))
+            if run:
+                runs.append(run)
+            for run in runs:
+                upper = " L".join(f"{_num(x)} {_num(y)}" for x, y, _, _ in run)
+                if kind == "area":
+                    lower = " L".join(f"{_num(x)} {_num(base)}" for x, _, base, _ in reversed(run))
+                    svg.path(f"M{upper} L{lower} Z", fill=colour, opacity=1 if stacked else 0.5)
+                if len(run) == 1:
+                    svg.circle(run[0][0], run[0][1], 2, colour)
+                else:
+                    svg.path(f"M{upper}", stroke=colour)
+                for x, y, _, index in run:
+                    svg.point_mark(number, index, x, y)
+
+    # axis lines on top of the data
+    zero = min(max(0, ticks[0]), ticks[-1])
+    if horizontal:
+        svg.line(to_px(zero), top, to_px(zero), bottom, _AXIS)
+    else:
+        svg.line(left, to_px(zero), right, to_px(zero), _AXIS)
+        if scatter:
+            svg.line(left, top, left, bottom, _AXIS)
+
+
+def render(resolved: dict, width: int, height: int, metrics: dict[str, float] | None = None) -> dict:
+    """Render a resolved chart to ``{"svg": str, "marks": list[dict]}``."""
+    chart = _validate(resolved, width, height)
+    svg = _Svg(width, height, metrics)
+    top = _title(svg, chart)
+    _render_cartesian(svg, chart, top, width - MARGIN, float(height))
+    return svg.result()
