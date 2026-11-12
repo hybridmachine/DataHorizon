@@ -1,0 +1,209 @@
+{
+ "task": "final_review_fixes",
+ "status": "passed_with_open_owner_items",
+ "title": "Final whole-branch review fixes of Excel fidelity increment 1",
+ "source": {
+  "code_commits": [
+   "d76827b Bound the feature scanner and export every stored formula",
+   "17638e4 Remove staging on shutdown, sweep dead services' staging and fix inspection and client edges"
+  ],
+  "documents_commit": "the commit that adds this file",
+  "base": "8c4b838",
+  "branch": "claude/excel-fidelity-1f (local; not pushed)",
+  "amended": "The second code commit was first aeb9fd0; the Python suite and the capacity run below ran at aeb9fd0, which was then amended as 17638e4 to raise the CTest service timeout from 180 s to 600 s (no other change)."
+ },
+ "host": {
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "model": "MacBookAir10,1",
+  "cpu": "Apple M1",
+  "memory_bytes": 8589934592,
+  "python": "3.14.6",
+  "sqlite": "3.53.4"
+ },
+ "verification": {
+  "python": {
+   "tests_run": 1168,
+   "optional_skips": 26,
+   "failures": 0,
+   "errors": 0,
+   "seconds": 285.761,
+   "command": "PYTHONPATH=service python3 -m unittest discover -s tests",
+   "commit": "aeb9fd0",
+   "baseline_tests": 1124
+  },
+  "ctest": {
+   "tests": 4,
+   "passed": 4,
+   "seconds": 580.16,
+   "desktop_checks_passed": 254,
+   "python_workspace_checks_passed": 72,
+   "service_seconds": 288.36,
+   "commit": "17638e4",
+   "command": "ctest --test-dir build --output-on-failure",
+   "first_run": "At aeb9fd0 the service test timed out at its 180-s CTest limit (the suite now takes about 290 s); 17638e4 raises it to 600 s on every platform, as Windows had."
+  },
+  "scorecard_check": {
+   "exit": 0,
+   "command": "PYTHONPATH=service python3 tests/corpus_scorecard.py --check",
+   "changed": false
+  },
+  "generator_check": {
+   "exit": 0,
+   "command": "python3 tests/fixtures/corpus/generate_feature_workbooks.py --check"
+  },
+  "record": "docs/design/evidence/excel-fidelity-1-verification.txt"
+ },
+ "results": {
+  "feature_bounds": {
+   "command": "PYTHONPATH=service python3 -m unittest discover -s tests -p test_feature_bounds.py",
+   "limits": {
+    "traced_peak_bytes": 67108864,
+    "rss_growth_bytes": 201326592,
+    "seconds": 20
+   },
+   "note": "Each input streamed into its ZIP and read by the streaming reader in a fresh process under tracemalloc; RSS growth from getrusage ru_maxrss.",
+   "inputs": {
+    "test_a_relationship_part_with_many_distinct_types_is_read_in_bounded_memory/rels.xlsx": {
+     "outcome": "imported",
+     "traced_peak_bytes": 641685,
+     "rss_growth_bytes": 229376,
+     "seconds": 2.99,
+     "at_least": []
+    },
+    "test_column_widths_are_aggregated_and_still_counted/widths.xlsx": {
+     "outcome": "imported",
+     "traced_peak_bytes": 1306628,
+     "rss_growth_bytes": 851968,
+     "seconds": 0.19,
+     "at_least": []
+    },
+    "test_conditional_rule_ids_saturate_and_the_count_is_a_lower_bound/ids.xlsx": {
+     "outcome": "imported",
+     "traced_peak_bytes": 8504677,
+     "rss_growth_bytes": 14172160,
+     "seconds": 2.8,
+     "at_least": [
+      "conditional_formatting"
+     ]
+    },
+    "test_filtered_ranges_naming_many_sheets_are_bounded/filters.ods": {
+     "outcome": "imported",
+     "traced_peak_bytes": 486310,
+     "rss_growth_bytes": 180224,
+     "seconds": 4.2,
+     "at_least": []
+    },
+    "test_half_a_million_distinct_validation_names_saturate/validations.ods": {
+     "outcome": "imported",
+     "traced_peak_bytes": 5638731,
+     "rss_growth_bytes": 10502144,
+     "seconds": 10.62,
+     "at_least": [
+      "data_validation"
+     ]
+    },
+    "test_layout_styles_are_bounded/layout.ods": {
+     "outcome": "LIMIT: ODS layout styles exceed 65,536 definitions",
+     "traced_peak_bytes": 15077448,
+     "rss_growth_bytes": 32309248,
+     "seconds": 1.41,
+     "at_least": []
+    },
+    "test_more_merged_ranges_hyperlinks_or_validations_than_cells_are_rejected/merged.xlsx": {
+     "outcome": "LIMIT: A sheet holds more than 1,000,000 merged ranges",
+     "traced_peak_bytes": 633215,
+     "rss_growth_bytes": 311296,
+     "seconds": 9.65,
+     "at_least": []
+    },
+    "test_more_merged_ranges_hyperlinks_or_validations_than_cells_are_rejected/links.xlsx": {
+     "outcome": "LIMIT: A sheet holds more than 1,000,000 hyperlinks",
+     "traced_peak_bytes": 655131,
+     "rss_growth_bytes": 294912,
+     "seconds": 9.99,
+     "at_least": []
+    },
+    "test_more_merged_ranges_hyperlinks_or_validations_than_cells_are_rejected/rules.xlsx": {
+     "outcome": "LIMIT: A sheet holds more than 1,000,000 validation rules",
+     "traced_peak_bytes": 651959,
+     "rss_growth_bytes": 294912,
+     "seconds": 9.72,
+     "at_least": []
+    },
+    "test_more_rows_than_the_grid_are_rejected/rows.xlsx": {
+     "outcome": "LIMIT: A worksheet holds more than 1,048,576 rows",
+     "traced_peak_bytes": 594689,
+     "rss_growth_bytes": 294912,
+     "seconds": 7.19,
+     "at_least": []
+    },
+    "test_more_workbook_sheets_than_package_parts_are_rejected/sheets.xlsx": {
+     "outcome": "LIMIT: Workbook declares more than 4,096 sheets",
+     "traced_peak_bytes": 2575304,
+     "rss_growth_bytes": 2506752,
+     "seconds": 0.02,
+     "at_least": []
+    },
+    "test_ods_merged_cells_beyond_the_cell_limit_are_rejected/merged.ods": {
+     "outcome": "LIMIT: A sheet holds more than 1,000,000 merged ranges",
+     "traced_peak_bytes": 279989,
+     "rss_growth_bytes": 98304,
+     "seconds": 0.0,
+     "at_least": []
+    },
+    "test_shared_formula_groups_are_bounded_per_sheet/shared.xlsx": {
+     "outcome": "LIMIT: One sheet holds more than 65,536 shared formula groups or 16 MiB of shared formula text",
+     "traced_peak_bytes": 24963595,
+     "rss_growth_bytes": 60588032,
+     "seconds": 7.7,
+     "at_least": []
+    },
+    "test_table_names_are_bounded_by_the_sheet_limit_before_they_are_kept/tables.ods": {
+     "outcome": "LIMIT: Provide 1-255 sheets",
+     "traced_peak_bytes": 385363,
+     "rss_growth_bytes": 180224,
+     "seconds": 0.0,
+     "at_least": []
+    },
+    "test_two_million_column_elements_are_rejected_without_holding_them/cols.xlsx": {
+     "outcome": "LIMIT: A worksheet holds more than 16,384 <col> elements",
+     "traced_peak_bytes": 654644,
+     "rss_growth_bytes": 180224,
+     "seconds": 0.18,
+     "at_least": []
+    }
+   }
+  },
+  "capacity_xlsx_1000000": {
+   "command": "PYTHONPATH=service python3 tests/qualify_large_interchange.py --sizes 1000000 --formats xlsx",
+   "commit": "aeb9fd0",
+   "qualifies": true,
+   "slowest_phase": {
+    "name": "prepare",
+    "seconds": 31.761
+   },
+   "peak_service_rss_bytes": 83165184,
+   "arithmetic": [
+    "slowest phase prepare 31.761 s <= 300 s",
+    "largest sampled service RSS 83,165,184 B in reimport_apply < 268,435,456 B",
+    "largest service ru_maxrss at exit 83,165,184 B < 268,435,456 B",
+    "open 0.955 s + first viewport 0.011 s = 0.966 s <= 5 s opening budget",
+    "imported 1000000 of 1000000 cells; re-imported 1000000"
+   ],
+   "recorded_in": "docs/design/evidence/excel-fidelity-1-capacity.json runs.final_review_xlsx_1000000"
+  },
+  "leftover_staging_directories_observed": {
+   "count_at_start": 7737,
+   "not_empty_at_start": 127,
+   "note": "datahorizon-<pid>-* directories in the system temporary directory without the owner marker; never matched by the product's sweep and not removed by hand. 447 of them were added by this pass's own test runs before the shutdown fix landed.",
+   "count_at_end": 8184,
+   "not_empty_at_end": 133
+  }
+ },
+ "open": [
+  "No Excel-saved or LibreOffice-saved workbook in the corpus (plan section 6, section 14 item 1)",
+  "ODS capacity not re-measured after the bounded scanner",
+  "Windows shutdown: terminate ends the service without a signal; only the next start's sweep removes its staging",
+  "Pre-existing unmarked staging directories on the reference Mac are left for the owner"
+ ]
+}

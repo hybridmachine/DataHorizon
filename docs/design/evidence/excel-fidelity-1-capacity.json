@@ -1390,6 +1390,279 @@
           "max_expanded_bytes": 112051747
         }
       }
+    },
+    "final_review_xlsx_1000000": {
+      "recorded_at_utc": "2026-11-12T01:40:02.969189+00:00",
+      "host": {
+        "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+        "machine": "arm64",
+        "cpu_count": 8,
+        "cpu": "Apple M1",
+        "memory_bytes": 8589934592,
+        "model": "MacBookAir10,1"
+      },
+      "python": "3.14.6",
+      "python_executable": "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "sqlite": "3.53.4",
+      "commit": "aeb9fd0d92f70317be6c183ecbd4c14a845742c3",
+      "uncommitted_paths": [
+        "M docs/design/compatibility-v0.md",
+        " M docs/design/excel-fidelity-plan.md",
+        " M docs/design/implementation-status.md",
+        " M docs/design/native-format-v1.md",
+        " M docs/design/python-automation-guide.md"
+      ],
+      "limits_in_force": {
+        "LARGE_CELLS": 1000000,
+        "LARGE_EXPANDED": 268435456,
+        "LARGE_PACKAGE": 50331648,
+        "LARGE_SHEETS": 255,
+        "MAX_RECORD_BYTES": 1048576,
+        "SNAPSHOT_BYTES": 2147483648,
+        "MAX_EXPORT_STYLES": 1024,
+        "MAX_UPLOADS": 2,
+        "MAX_DOWNLOADS": 2,
+        "LARGE_PREPARATION_SECONDS": 300,
+        "EXPORT_JOB_SECONDS": 300,
+        "UPLOAD_SECONDS": 300,
+        "DOWNLOAD_SECONDS": 300,
+        "MAX_CELLS": 10000,
+        "opening_budget_seconds": 5
+      },
+      "generator": {
+        "sheets": 3,
+        "formula_share": 0.05,
+        "long_text_share": 0.05,
+        "strings": "shared"
+      },
+      "sizes": [
+        1000000
+      ],
+      "formats": [
+        "xlsx"
+      ],
+      "sample_interval_seconds": 0.05,
+      "limitations": [
+        "Host-specific: one machine, its disk and an uncontrolled (warm) OS file cache; not OS-cold.",
+        "Peak RSS is the service child's resident memory sampled every 50 ms plus its ru_maxrss at exit; the driver is excluded.",
+        "Phase seconds for jobs include the SDK's polling interval (at most 0.5 s).",
+        "One generated content mix; other workbook shapes (more long text, more formulas, more styles) can cost more."
+      ],
+      "cases": [
+        {
+          "cells": 1000000,
+          "format": "xlsx",
+          "phases": [
+            {
+              "name": "upload",
+              "service": "import",
+              "peak_rss_bytes": 47284224,
+              "samples": 2,
+              "seconds": 0.035
+            },
+            {
+              "name": "prepare",
+              "service": "import",
+              "peak_rss_bytes": 70909952,
+              "samples": 542,
+              "seconds": 31.761
+            },
+            {
+              "name": "create_workbook",
+              "service": "import",
+              "peak_rss_bytes": 66027520,
+              "samples": 2,
+              "seconds": 0.011
+            },
+            {
+              "name": "apply",
+              "service": "import",
+              "peak_rss_bytes": 81428480,
+              "samples": 141,
+              "seconds": 8.194
+            },
+            {
+              "name": "close",
+              "service": "import",
+              "peak_rss_bytes": 81395712,
+              "samples": 2,
+              "seconds": 0.001
+            },
+            {
+              "name": "open",
+              "service": "reopen",
+              "peak_rss_bytes": 47726592,
+              "samples": 18,
+              "seconds": 0.955
+            },
+            {
+              "name": "first_viewport",
+              "service": "reopen",
+              "peak_rss_bytes": 48021504,
+              "samples": 2,
+              "seconds": 0.011
+            },
+            {
+              "name": "export",
+              "service": "reopen",
+              "peak_rss_bytes": 52346880,
+              "samples": 489,
+              "seconds": 28.726
+            },
+            {
+              "name": "download",
+              "service": "reopen",
+              "peak_rss_bytes": 52674560,
+              "samples": 3,
+              "seconds": 0.06
+            },
+            {
+              "name": "reimport_upload",
+              "service": "reopen",
+              "peak_rss_bytes": 52658176,
+              "samples": 3,
+              "seconds": 0.043
+            },
+            {
+              "name": "reimport_prepare",
+              "service": "reopen",
+              "peak_rss_bytes": 82034688,
+              "samples": 528,
+              "seconds": 30.993
+            },
+            {
+              "name": "reimport_create_workbook",
+              "service": "reopen",
+              "peak_rss_bytes": 82034688,
+              "samples": 2,
+              "seconds": 0.008
+            },
+            {
+              "name": "reimport_apply",
+              "service": "reopen",
+              "peak_rss_bytes": 83165184,
+              "samples": 132,
+              "seconds": 7.642
+            }
+          ],
+          "services": [
+            {
+              "role": "import",
+              "baseline_rss_bytes": 47218688,
+              "ru_maxrss_at_exit_bytes": 81494016,
+              "staging_file_peaks_bytes": {
+                ".datahorizon": 80,
+                "upload": 23185126,
+                "stage": 229519360
+              }
+            },
+            {
+              "role": "reopen",
+              "baseline_rss_bytes": 47333376,
+              "ru_maxrss_at_exit_bytes": 83165184,
+              "staging_file_peaks_bytes": {
+                ".datahorizon": 79,
+                "snapshot": 262447104,
+                "export": 28183927,
+                "upload": 28183927,
+                "stage": 167124992
+              }
+            }
+          ],
+          "files": {
+            "stage_bytes": 229519360,
+            "native_bytes": 262447104,
+            "snapshot_bytes": 262447104,
+            "export": {
+              "package_bytes": 28183927,
+              "expanded_bytes": 105157126
+            },
+            "reimport_stage_bytes": 167124992
+          },
+          "counts": {
+            "prepared": 1000000,
+            "imported": 1000000,
+            "sheets": 3,
+            "first_viewport_cells": 512,
+            "reimported": 1000000,
+            "reimport_matches": true
+          },
+          "source": {
+            "cells": 1000000,
+            "sheets": 3,
+            "columns": 20,
+            "strings": "shared",
+            "seed": 20261111,
+            "formula_share": 0.05,
+            "long_text_share": 0.05,
+            "kinds": {
+              "number": 620642,
+              "short": 237474,
+              "long": 47244,
+              "date": 47427,
+              "formula": 47213,
+              "unsupported_formula": 9569
+            },
+            "cell_formats": 331,
+            "package_bytes": 23185126,
+            "expanded_bytes": 91727399,
+            "generate_seconds": 5.238
+          },
+          "report_totals": {
+            "approximated": 345621,
+            "converted": 9569,
+            "omitted": 0,
+            "unevaluable": 0
+          }
+        }
+      ],
+      "decision": {
+        "rule": "A size qualifies for a format when every phase finishes within 300 s, the service's peak RSS stays under 268,435,456 bytes in every phase (sampled every 50 ms) and at exit (ru_maxrss), the reopened file opens and serves its first viewport within the 5-second opening budget, and every generated cell is imported (and re-imported, where measured).",
+        "cases": [
+          {
+            "cells": 1000000,
+            "format": "xlsx",
+            "qualifies": true,
+            "checks": {
+              "completed": true,
+              "time": true,
+              "sampled_memory": true,
+              "exit_memory": true,
+              "reopen": true,
+              "counts": true
+            },
+            "slowest_phase": {
+              "name": "prepare",
+              "seconds": 31.761
+            },
+            "peak_service_rss_bytes": 83165184,
+            "arithmetic": [
+              "slowest phase prepare 31.761 s <= 300 s",
+              "largest sampled service RSS 83,165,184 B in reimport_apply < 268,435,456 B",
+              "largest service ru_maxrss at exit 83,165,184 B < 268,435,456 B",
+              "open 0.955 s + first viewport 0.011 s = 0.966 s <= 5 s opening budget",
+              "imported 1000000 of 1000000 cells; re-imported 1000000"
+            ]
+          }
+        ],
+        "formats": {
+          "xlsx": {
+            "measured": [
+              1000000
+            ],
+            "qualified": [
+              1000000
+            ],
+            "not_qualified": [],
+            "largest_qualifying_cells": 1000000
+          }
+        },
+        "largest_qualifying_cells_all_formats": 1000000,
+        "measured_at_that_size": {
+          "max_package_bytes": 28183927,
+          "max_expanded_bytes": 105157126
+        }
+      }
     }
   },
   "decision": {
@@ -1699,6 +1972,24 @@
       "Inline-string XLSX was not measured (generator default: shared strings)",
       "OS-cold opening was not measured (warm, uncontrolled cache)",
       "Other hosts (Windows, Linux, Intel Mac) were not measured"
-    ]
+    ],
+    "final_review_xlsx_1000000": {
+      "description": "Supplementary run after the final-review fixes (bounded feature scanner and its limits, commit aeb9fd0, documents uncommitted; that commit was then amended as 17638e4, changing only the CTest service timeout). Not a replacement for the runs above: only XLSX at 1,000,000 cells, standard mix, was repeated.",
+      "command": "PYTHONPATH=service python3 tests/qualify_large_interchange.py --sizes 1000000 --formats xlsx --output <final-review>.json",
+      "qualifies": true,
+      "slowest_phase": {
+        "name": "prepare",
+        "seconds": 31.761
+      },
+      "peak_service_rss_bytes": 83165184,
+      "arithmetic": [
+        "slowest phase prepare 31.761 s <= 300 s",
+        "largest sampled service RSS 83,165,184 B in reimport_apply < 268,435,456 B",
+        "largest service ru_maxrss at exit 83,165,184 B < 268,435,456 B",
+        "open 0.955 s + first viewport 0.011 s = 0.966 s <= 5 s opening budget",
+        "imported 1000000 of 1000000 cells; re-imported 1000000"
+      ],
+      "compared_with_standard_mix": "slowest phase prepare 31.761 s (was 30.9 s); peak service RSS 83,165,184 B (was about 93.0 MB); open + first viewport 0.966 s (was 0.79 s)"
+    }
   }
 }

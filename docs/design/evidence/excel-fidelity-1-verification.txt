@@ -36,3 +36,52 @@ Working tree at the run: the code commit above plus uncommitted design documents
    excel-fidelity-1-capacity.json were not repeated after this change.
 
 Not verified here: Excel-saved or LibreOffice-saved files (none exist in the corpus); Windows and Linux; OS-cold opening.
+
+
+Final review fixes — verification
+Date: 2026-11-11
+Branch: claude/excel-fidelity-1f (local; not pushed). Base 8c4b838.
+Code commits verified: d76827b ("Bound the feature scanner and export every stored formula") and 17638e4
+  ("Remove staging on shutdown, sweep dead services' staging and fix inspection and client edges"; first committed as
+  aeb9fd0, then amended only to raise the CTest service timeout). Documents: the commit that adds
+  excel-fidelity-1-final-fixes.json. Same host and toolchain as above.
+
+1. Python suite
+   Command: PYTHONPATH=service python3 -m unittest discover -s tests
+   Result:  Ran 1168 tests in 285.761 s — OK (skipped=26) at aeb9fd0 (baseline before this pass: 1124 OK).
+            At d76827b alone: Ran 1149 tests in 247.735 s — OK (skipped=26).
+
+2. Build
+   Command: cmake --build build --parallel
+   Result:  exit 0
+
+3. Full CTest
+   Command: ctest --test-dir build --output-on-failure
+   Result:  100% tests passed out of 4 at 17638e4 (development_bundle_signature 0.27 s; desktop 218.09 s, 254 Qt checks
+            passed, 0 failed; python_workspace 73.43 s, 72 passed; service 288.36 s). Total 580.16 s.
+            The first CTest run, at aeb9fd0, failed only by the service test's 180-s timeout (the suite grew to about
+            290 s); 17638e4 sets 600 s on every platform, as Windows already had.
+
+4. Corpus scorecard and generator
+   Commands: PYTHONPATH=service python3 tests/corpus_scorecard.py --check
+             python3 tests/fixtures/corpus/generate_feature_workbooks.py --check
+   Result:   both exit 0; the scorecard is unchanged (import behaviour did not change).
+
+5. Bounded scanners
+   Command: PYTHONPATH=service python3 -m unittest discover -s tests -p test_feature_bounds.py
+   Result:  17 tests OK. Every crafted input (streamed into its ZIP, read in a fresh process) stays under 64 MiB traced
+            and 192 MiB RSS growth and finishes within 20 s: 2,000,000 <col> elements reject with LIMIT in 0.18 s
+            (0.65 MB traced); 500,000 distinct ODS validation names import with an at-least count in 10.6 s (5.6 MB
+            traced, 10.5 MB RSS growth). Per-input figures: excel-fidelity-1-final-fixes.json.
+
+6. Capacity, supplementary
+   Command: PYTHONPATH=service python3 tests/qualify_large_interchange.py --sizes 1000000 --formats xlsx
+   Result:  qualifies at aeb9fd0: slowest phase prepare 31.761 s <= 300 s; peak service RSS 83,165,184 B < 256 MiB;
+            open 0.955 s + first viewport 0.011 s = 0.966 s <= 5 s; 1,000,000 imported and re-imported. Recorded in
+            excel-fidelity-1-capacity.json (runs and decision final_review_xlsx_1000000), originals untouched.
+
+7. Leftover staging directories (not removed)
+   datahorizon-<pid>-* directories without the owner marker in the system temporary directory: 7,737 at the start
+   (127 not empty), 8,184 at the end (133 not empty); 447 came from this pass's own runs before the shutdown fix.
+
+Not verified here: Windows (signal delivery, sweep), Linux, ODS capacity after the bounded scanner.

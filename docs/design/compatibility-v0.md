@@ -280,6 +280,27 @@ when one exists. `values` keeps only cached values; cache freshness cannot be
 verified. Export always writes formulas without cached values (the bounded
 selection export can also write values).
 
+**Exporting formulas.** A whole-workbook export in `formulas` mode, bounded or
+large, writes every stored formula, so a workbook imported in `formulas` mode
+always exports. To XLSX, a formula DataHorizon can evaluate is written as
+before; any other is written as stored (with `_xlfn.` prefixes and sheet names
+in place of sheet identities) and counted in one `unevaluable` entry per reason
+(`formula.name`, `formula.external_reference`, `formula.unsupported_reference`,
+`formula.unsupported_function`, `formula.array`, `formula.syntax`, …); one whose
+references cannot even be read is written as stored with an `approximated`
+`formula.syntax` entry, as `unmaintained` cells are. To ODS, a formula that
+translates to OpenFormula is written as before; one that does not is not
+written as a formula, since an XLSX-dialect source is not OpenFormula: the cell
+takes its current value when the engine has an error-free one (bounded export;
+`formula.unsupported_syntax`, `converted`), and is otherwise written empty
+(`formula.unsupported_syntax`, `omitted`; always so in the large export, which
+evaluates nothing). A translated formula without an error-free current value
+is written without a cached value in the bounded export too
+(`formula.cache_omitted`). Selection-scope export stays strict: it refuses a
+formula it cannot check against the selection. A `values` export still needs a
+current, error-free value in every cell; its `CALCULATION_ERROR` names the
+first 100 blocking cells (`cells`, `blocked_count`).
+
 **Formats.** Transitional and strict (ISO/IEC 29500 strict namespaces) XLSX and
 ODS 1.3. Error-valued cells import as Text and are reported as converted.
 Formulas are read with a lenient reference scanner, so references inside
@@ -287,7 +308,11 @@ formulas DataHorizon cannot evaluate are still maintained by structural edits;
 a formula the scanner cannot read becomes the `unmaintained` kind (native format
 v7, see [native formats](native-format-v1.md#unmaintained-formulas-format-v7))
 when a structural edit touches its sheet, and is exported unchanged with a
-report entry.
+report entry. Recovery inspection counts the formulas a degraded import stores
+(unevaluable but scannable, or `unmaintained`) as valid inputs under
+`unevaluable_formulas` and `unmaintained_formulas`, not as issues; only a
+formula source the scanner cannot read is an issue (see
+[native formats](native-format-v1.md#bounded-recovery-validation)).
 
 **The report.** Each entry has a category, a severity (`converted`,
 `approximated`, `omitted`, `unevaluable`), a detail, a count and up to 100
@@ -313,9 +338,20 @@ SpreadsheetML element with the entry it produces. Features in their default form
 (Excel's, openpyxl's and LibreOffice's default margins, page setup and header
 and footer, a view without panes, row heights and column widths that are not
 custom, `dimension`) produce no entry. Auxiliary parts read only for the report
-never reject a valid file: an unreadable sheet relationship part or ODS
-`settings.xml` is reported instead (`relationships_unreadable`,
-`view_settings_unreadable`); one with a DTD or entity still rejects.
+never reject a valid file. Any problem reading an ODS `settings.xml`, a DTD or
+entity included, skips pane detection and is reported
+(`view_settings_unreadable`). An unreadable XLSX sheet relationship part is
+reported (`relationships_unreadable`), but one with a DTD or entity rejects the
+file. A workbook relationship typed as a worksheet whose part is a chart sheet
+is an inconsistent package and rejects.
+
+A count no valid file can reach rejects with `LIMIT` (more `<col>` elements
+than 16,384 columns, more rows than 1,048,576, more merged ranges, hyperlinks
+or validation rules than 1,000,000 in a sheet); a count kept only for the
+report that reaches a scanner bound saturates instead, and its entry carries
+`at_least: true` and reads "at least N" (for example more than 65,536 distinct
+ODS validation names in a sheet). Section 5.2 of the
+[fidelity plan](excel-fidelity-plan.md#52-size) lists every bound.
 
 **Two paths.**
 
@@ -323,7 +359,7 @@ never reject a valid file: an unreadable sheet relationship part or ODS
 | --- | --- | --- |
 | Scope | Selection (one sheet at an offset, or one rectangle) and whole workbook | Whole workbook only |
 | Transport | base64 in a JSON body of at most 4 MiB | `PUT /v1/uploads/{upload}` raw body (or `source_path` on the same machine), staged preparation job, `GET /v1/exports/{export}` download |
-| Limits | 10,000 stored cells, 64 sheets, 3 MiB package, 16 MiB expanded, 128 parts, 100,000 XML nodes per part | 1,000,000 stored cells, 255 sheets, 48 MiB package, 256 MiB expanded, 4,096 parts, 1 MiB of XML per cell or record, 300 s per phase, 2 concurrent uploads and downloads, 1,024 distinct styles per export |
+| Limits | 10,000 stored cells, 64 worksheets for a whole workbook (chart, dialog and macro sheets do not count; a selection can name any worksheet), 3 MiB package, 16 MiB expanded, 128 parts, 100,000 XML nodes per part | 1,000,000 stored cells, 255 worksheets, 48 MiB package, 256 MiB expanded, 4,096 parts, 1 MiB of XML per cell or record, 300 s per phase, 2 concurrent uploads and downloads, 1,024 distinct styles per export |
 | Review | Every prepared cell | The report and a bounded sample; cells are staged on disk |
 | Apply | One managed edit (selection) or one atomic `workbook_import` | One atomic `workbook_import` from the stage |
 

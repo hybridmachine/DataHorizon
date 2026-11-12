@@ -214,6 +214,25 @@ Replace that with per-item degradation. **Call** on the specific rules:
 - **Malformed package** (bad ZIP, invalid XML, broken relationships, encrypted):
   still rejects the file. Degradation is for valid content DataHorizon does not
   support, not for corrupt input.
+- **Exporting what was kept** (as built, final review). A workbook imported in
+  `formulas` mode must export: whole-workbook export in `formulas` mode, bounded
+  and large, writes every stored formula. XLSX writes a formula DataHorizon can
+  evaluate as before and any other as stored (with the `_xlfn.` mapping and sheet
+  names for sheet identities where the scanner's reference spans allow; a source
+  no transform can read keeps its identities), counted in one `unevaluable` entry
+  per `formula_admission` category (detail "written as stored; DataHorizon cannot
+  evaluate it"); a source the scanner cannot tokenize is written as stored with
+  an `approximated` `formula.syntax` entry, as `unmaintained` cells are. ODS
+  writes a formula that `native_to_ods` translates as before; any other is not
+  written as a formula (an XLSX-dialect string is not OpenFormula): the cell
+  takes its current value when the engine has an error-free one
+  (`formula.unsupported_syntax`, `converted`), else it is written empty
+  (`omitted`; the large export evaluates nothing, so always empty there). A
+  translated formula without an error-free current value is written without a
+  cache in the bounded export as well (`formula.cache_omitted`). Selection-scope
+  export keeps its strict checks. A `values` export still needs current,
+  error-free values; its `CALCULATION_ERROR` now names the first 100 blocking
+  cells (`cells`, `blocked_count`).
 
 The report gains structure: each entry has a category, a severity
 (`converted`, `approximated`, `omitted`, `unevaluable`), a count and up to 100
@@ -255,6 +274,14 @@ constant. **Call**: interchange gets its own path and limits.
   | ODS 500,000 cells | prepare 31.9 s | 92.9 MB | 0.33 s |
   | ODS 1,000,000 cells, no long text | re-import prepare 35.3 s | 100.3 MB | 0.66 s |
 
+  Supplementary run after the final-review fixes (the bounded feature scanner
+  in place; commit `aeb9fd0`, later amended as `17638e4` with only the CTest
+  timeout changed; same host, recorded as
+  `final_review_xlsx_1000000` in the evidence without replacing the runs
+  above): XLSX at 1,000,000 cells still qualifies, slowest phase prepare 31.8 s
+  (was 30.9 s), peak service RSS 83.2 MB (was 93.0 MB), open and first viewport
+  0.97 s (was 0.79 s), every cell imported and re-imported. ODS was not re-run.
+
   The generated mix is about 60% numbers, 25% short text, 5% long text
   (200–2,000 characters), 5% dates and 5% formulas (one in five using a
   function DataHorizon lacks), 331 cell formats, three sheets. Service memory
@@ -275,6 +302,28 @@ constant. **Call**: interchange gets its own path and limits.
   sample's sheet name cut to 64 and its cell to 32 characters, so a full report
   can reach about 2.4 MiB before the stage summary trims samples to stay under
   1 MiB. Progress and cooperative cancellation run throughout.
+
+  Bounds of the feature scanners and package surveys (final review), so that no
+  accumulator grows with untrusted content: per worksheet, at most 16,384
+  `<col>` elements (`xlsx_features.MAX_COLUMN_ELEMENTS`) and 1,048,576 rows
+  (`MAX_ROW_ELEMENTS`), and at most 1,000,000 merged ranges, hyperlinks or
+  validation rules (`MAX_FEATURE_ITEMS`, equal to `LARGE_CELLS`), each `LIMIT`
+  beyond; column widths are kept as one count per distinct width, so at most
+  16,384 keys. Distinct identifiers kept only for a report count (x14
+  conditional-format ids, ODS validation names) are a `DistinctCount` of at most
+  65,536 keys and 4 MiB of key text (`MAX_DISTINCT`, `DISTINCT_BYTES`); beyond
+  it the count saturates and the entry carries `at_least: true` ("at least N").
+  A sheet relationship part keeps only its comment targets. The XLSX streaming
+  reader admits at most 4,096 `<sheet>` elements (`LARGE_PARTS`) and counts only
+  worksheets toward 255 before it keeps their names, and keeps at most 65,536
+  shared-formula groups and 16 MiB of their master text per sheet
+  (`SHARED_GROUPS`, `SHARED_BYTES`), `LIMIT` beyond. The ODS survey keeps at
+  most 255 sheet names (checked before each is kept) with 1 MiB of names and
+  table styles, 65,536 column, row and table styles inside the 16-MiB style
+  budget (`ods_features.MAX_LAYOUT_STYLES`, `LIMIT`), and auto-filtered ranges
+  for at most 255 sheet names of up to 31 characters; ranges beyond those are
+  counted for the workbook. Sample lists stop at 100. The tree reader runs the
+  same scanners, so both readers reach the same outcome.
 
   What was not qualified: ODS at 1,000,000 cells with the standard mix could
   not be produced. DataHorizon's ODS export writes each text twice and every
@@ -362,6 +411,10 @@ constant. **Call**: interchange gets its own path and limits.
   XLSX leads; ODS may land as the increment's last pull request.
 - CSV is unaffected except that display-formatted export, if offered, uses the
   new format engine.
+- A stored formula never blocks a whole-workbook export (section 5.1, *Exporting
+  what was kept*): XLSX writes it verbatim and counts what DataHorizon cannot
+  evaluate; ODS writes the value, or an empty cell, for a formula OpenFormula
+  cannot carry, and reports it.
 
 ### 5.6 Verification
 
@@ -802,10 +855,11 @@ it turns out wrong. Task numbers refer to the
   sheet's most common column width, because LibreOffice writes a width for every
   column. Cost if wrong: a sheet whose columns are all widened by the same amount
   reports nothing for them.
-- The feature scanner landed after the capacity measurements of 5.2, which
-  were not repeated. In isolation it costs about 0.13 s per 1,000,000 cells on
-  the reference Mac (against a 30.9-s slowest phase). Cost if wrong: the
-  qualified sizes are slightly optimistic.
+- The feature scanner landed after the capacity measurements of 5.2. In
+  isolation it costs about 0.13 s per 1,000,000 cells on the reference Mac; the
+  1,000,000-cell XLSX case was re-run with the bounded scanner after the final
+  review and still qualifies (section 5.2). Cost if wrong: the ODS sizes, not
+  re-run, are slightly optimistic.
 
 ### Formulas and references
 
@@ -868,6 +922,85 @@ it turns out wrong. Task numbers refer to the
   plus catalog checks; the service's `DESTINATION_NOT_EMPTY` is the backstop.
   Cost if wrong: the option is offered for a workbook with cells far from A1 and
   Apply is then refused with a message.
+- The SDK's `prepare_spreadsheet_file` and the CLI's `import-spreadsheet`
+  default to mode `mixed`, matching the desktop's preselection, while the REST
+  preparation route defaults to `formulas` when no mode is sent. This is
+  intended and stated in the SDK docstring, the CLI help and the automation
+  guide. Cost if wrong: a script that omits the mode gets cached values for
+  formulas DataHorizon cannot evaluate, where a raw REST call keeps them.
+- Every preview, review summary and export result carries `scope_lines`, the
+  fixed scope statements its `report` starts with; clients read them and slice
+  `report` only when talking to a service that omits them. The desktop counts
+  with `tr("%n …(s)", nullptr, n)`, resolved for English by a small built-in
+  translator (`desktop/englishplurals.h`) until real translations exist. Cost if
+  wrong: a translation file must supply the numerus forms instead.
+
+### Final review fixes
+
+A whole-branch review after Task 21 reproduced four defects and listed smaller
+items; all were fixed in one pass.
+
+- **Feature-scanner memory.** The scanners kept every `<col>` width, every x14
+  rule id, every relationship type and every ODS validation name, outside the
+  reader's record bounds: a 498-KB XLSX of 16,000,000 `<col>` elements was
+  accepted at about 1.76 GiB RSS, a 7.7-MB ODS of 3,000,000 distinct validation
+  names at about 466 MiB. Every accumulator is now bounded (section 5.2): widths
+  are counted per distinct width, impossible counts are `LIMIT`, report-only
+  distinct counts saturate with `at_least`. In `tests/test_feature_bounds.py`
+  every crafted input stays under 64 MiB traced and 192 MiB RSS growth and
+  finishes within 20 s, among them 2,000,000 `<col>` elements (rejected) and
+  500,000 distinct validation names (imported with a saturated count). Cost if
+  wrong: a valid sheet with more than 65,536 shared-formula groups or 65,536 ODS
+  layout styles is refused with `LIMIT`; a saturated count understates.
+- **Export after a `formulas` import.** Whole-workbook export passed through only
+  formulas whose sole problem was an unsupported function, so one `=Net*TaxRate`
+  blocked every export route of a workbook imported in `formulas` mode. Section
+  5.1 *Exporting what was kept* now holds. Cost if wrong: an ODS export drops an
+  untranslatable formula to its value or an empty cell (reported).
+- **Staging left behind.** The service had no SIGTERM handling and the SDK and
+  desktop stop it with terminate, so `server_close()` never ran and uploads,
+  stages, exports and snapshots (up to 2 GiB) stayed in the temporary directory.
+  SIGTERM, SIGINT and, on Windows, SIGBREAK now end `serve_forever` like Ctrl+C,
+  so the orderly shutdown runs (jobs cancelled and closed, staging removed,
+  workbooks closed) and the process exits 0 within `LocalService.close`'s 3-s and
+  the desktop's 1.5-s wait. A staging directory holds an owner marker
+  (`.datahorizon-staging`: magic, pid, creation time); at startup the service
+  removes only marked directories named `datahorizon-<pid>-*` in the system
+  temporary directory, owned by its user, whose pid is no longer running. A live
+  pid, even if reused by another program, keeps its directory; unmarked
+  directories and caller-supplied roots are never touched; `Staging.new` after
+  `close()` is `SERVICE_STOPPING` (503). On Windows `Popen.terminate` and
+  `QProcess::kill` end the process without a signal, so there the next
+  service's sweep removes the directory. Cost if wrong: a directory whose pid was
+  reused waits until that process exits.
+- **Leftover directories on the reference Mac.** Before this fix the review
+  found thousands of `datahorizon-<pid>-*` directories in the temporary
+  directory; 7,737 were present (127 not empty) when this pass started, and
+  8,184 (133 not empty) at its end: the pass's own test runs of the old shutdown
+  code added 447. None has the owner marker, so the product's sweep never
+  removes them; they were not deleted by hand. The owner decides whether to
+  remove them.
+- **Recovery inspection.** `/v1/recovery/inspect` strict-parsed every formula
+  cell, so a degraded import was reported as invalid input. Formulas the
+  calculator cannot evaluate but the scanner reads, and `unmaintained` cells,
+  are now valid inputs counted under `unevaluable_formulas` and
+  `unmaintained_formulas` ([native formats](native-format-v1.md#bounded-recovery-validation)).
+  Cost if wrong: `=SUM(` (tokenizable, not parseable) no longer counts as an
+  issue; only sources the scanner cannot read do.
+- **Smaller items.** Both readers emit the fixed scope lines first, then one line
+  per entry, for XLSX and ODS, and every result carries `scope_lines`. The tree
+  reader's 64-sheet limit counts only worksheets, and a selection can name any
+  worksheet's position. The desktop review pluralises its counts, and a close
+  before the capabilities reply is resumed on a zero-delay timer instead of
+  being dropped. The ODS import job's OpenAPI text states that the large-path
+  reader accepts trailing empty repeats beyond the grid. A `READ_ONLY` refusal,
+  which happens after the stored receipts are consulted and before any
+  transaction, is now `rejected` with the request's `operation_id`; other
+  admission refusals keep their outcome (`OPERATION_ID_REUSED`: the stored
+  receipt belongs to a different request with that id; a failed file identity
+  check: the receipt cannot be consulted; storage errors: unknown by nature).
+  `docs/design/compatibility-v0.md` no longer says that a DTD or entity in ODS
+  `settings.xml` rejects the file.
 
 ### Corpus
 
@@ -883,8 +1016,8 @@ and de-duplicated; items already fixed are not listed.
 
 - Document core properties and a cell's own `extLst` are not reported
   (section 14); ODS sheet tab colours and page styles are not detected.
-- The large-path capacity was not re-measured after the feature scanner was
-  added (see the ruling above); the end-to-end effect is unmeasured.
+- The large-path capacity was re-measured after the feature scanner and its
+  bounds only for XLSX at 1,000,000 cells (section 5.2); ODS was not re-measured.
 - Default detection is heuristic and covers only the producers named in the
   rulings (Excel, older Excel and openpyxl, LibreOffice as hand-built); files
   from other producers, or real LibreOffice-saved files that differ from the
@@ -919,8 +1052,8 @@ and de-duplicated; items already fixed are not listed.
   bumped when normalisation changed; the writer lock can be held up to 300 s
   while a stage loads, and job retention expiry can delete a stage being read
   (harmless on POSIX); an exception in `on_commit` would report a committed
-  import as `OUTCOME_UNKNOWN`; engine admission refusals such as `READ_ONLY` are
-  reported as an unknown outcome by the CLI.
+  import as `OUTCOME_UNKNOWN`; admission refusals other than `READ_ONLY` (for
+  example `OPERATION_ID_REUSED`) are still reported with an unknown outcome.
 - Interchange round trips are not lexically exact: numbers can come back as
   float text (`42` as `42.0`) and ODS formula text is rewritten. A large export
   gives no date display to an unformatted formula with a temporal result
@@ -928,9 +1061,7 @@ and de-duplicated; items already fixed are not listed.
 - Windows has not been exercised: releasing during a download, shutdown during a
   copy and sweeping an open file may fail there. The CLI has not been run
   against a long-lived remote service; `publish_file` copies setuid/setgid bits.
-- Desktop: the review summary does not pluralise ("1 stored cells"); closing
-  the window before the capabilities reply drops the first close; the
-  single-sheet review still shows the text report; there are no tests for a
+- Desktop: the single-sheet review still shows the text report; there are no tests for a
   session change mid-import or a failed replace-target probe; two cancel tests
   are timing-sensitive; `mainwindow.cpp` grew by about 450 lines.
 - Measurement: the limit-consistency test checks the hand-written decision, not

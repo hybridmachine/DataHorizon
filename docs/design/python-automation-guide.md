@@ -181,7 +181,10 @@ with LocalService() as client, client.open(native_path) as book:
     written = book.export_spreadsheet_file('Budget-copy.ods', overwrite=False)
 ```
 
-`prepare_spreadsheet_file` uploads the file and always releases the upload
+`prepare_spreadsheet_file` defaults to `mode='mixed'`, as the desktop
+preselects and the CLI defaults to, while the REST preparation route defaults
+to `formulas` when no mode is sent; pass `mode='formulas'` to keep every
+formula. It uploads the file and always releases the upload
 afterwards; `local=True` instead sends its absolute path for a service on the
 same machine to read. The format comes from the extension unless `format` is
 given. It returns the review summary (sheets, cell counts, `report_entries`,
@@ -224,9 +227,18 @@ as a formula replaced by its cached value or an error value kept as text),
 *approximated* (kept with a close but different meaning, such as a border color
 mapped to the default), *omitted* (dropped) or *unevaluable* (a formula kept that
 DataHorizon cannot calculate). The import `--mode` decides what a formula
-becomes: `formulas` keeps every formula, `mixed` (the default) uses the file's
-cached value only for formulas DataHorizon cannot evaluate, and `values` keeps
-only cached values. Export always writes formulas, without cached values. Entries with category `sheet.feature` or `workbook.feature` name a
+becomes: `formulas` keeps every formula, `mixed` (the default of the CLI and
+SDK, not of REST) uses the file's cached value only for formulas DataHorizon
+cannot evaluate, and `values` keeps only cached values. Export always writes
+formulas, without cached values, and writes every stored formula: an XLSX
+export writes one DataHorizon cannot evaluate as stored and counts it as
+*unevaluable*, and an ODS export writes one that does not translate to
+OpenFormula as its value or an empty cell (`formula.unsupported_syntax`). A
+count that saturated at a scanner bound carries `at_least: True` (the CLI
+prints `>=N`). Every summary and export result lists its fixed scope
+statements in `scope_lines`; `report` is those lines followed by one line per
+entry, and `datahorizon.client.report_scope_lines(result)` reads them (slicing
+`report` only for an older service). Entries with category `sheet.feature` or `workbook.feature` name a
 worksheet or workbook feature that was not imported (merged cells, validation,
 defined names, charts and so on); their detail is a stable feature id such as
 `merged_cells`, their count is the number of items, and their samples name the

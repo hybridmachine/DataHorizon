@@ -272,6 +272,23 @@ through the common REST interface performs no repair, code activation or
 recalculation. Process-crash fixtures and exact limits are documented in
 [the recovery increment](interchange-next-five.md#native-recovery-and-failure-hardening).
 
+Input inspection (`POST /v1/recovery/inspect`, `inputs`) checks stored inputs
+without evaluating them and distinguishes three kinds of formula input:
+
+- a `formula` cell the calculator can evaluate is valid;
+- a `formula` cell it cannot evaluate but whose references the lenient scanner
+  reads (an unknown function or name, a whole-row or 3D reference, an external
+  reference, an array constant, as degraded imports store them), and any cell
+  of kind `unmaintained`, are valid inputs. They are counted under
+  `unevaluable_formulas` (each sample with its `reason`, a `formula.*` category)
+  and `unmaintained_formulas`, each `{count, samples}` with up to 100
+  `{sheet, row, col}` samples, and never as issues;
+- a `formula` cell whose source the scanner cannot even read is an issue
+  (`INVALID_FORMULA`), as before.
+
+`inputs_valid` is true when inspection completed with no issue, so the first
+two kinds leave it true.
+
 
 `percent2` is an additive native-v1 style token: finite numeric fractions display
 as two-decimal percentages without changing inputs/kinds. Older readers that do

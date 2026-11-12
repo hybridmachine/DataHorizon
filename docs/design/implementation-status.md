@@ -30,6 +30,18 @@ the increment's corpus criterion is not met; the rulings and known limitations,
 and the default-detection heuristics, are in
 [section 15 of the plan](excel-fidelity-plan.md#15-increment-1-as-built-rulings-and-known-limitations).
 
+A final whole-branch review was fixed on `claude/excel-fidelity-1f`
+([record](evidence/excel-fidelity-1-final-fixes.json)): the feature scanners'
+accumulators are bounded (`LIMIT` for impossible counts, saturated `at_least`
+counts otherwise); a workbook imported in `formulas` mode exports by every route
+(XLSX writes formulas DataHorizon cannot evaluate as stored and counts them; ODS
+writes the value or an empty cell for a formula OpenFormula cannot carry); the
+service removes its staging directory on SIGTERM and SIGINT and sweeps marked
+directories of dead services at startup; recovery inspection treats degraded
+formulas as valid inputs; every result carries `scope_lines`; and `READ_ONLY`
+refusals are `rejected`. The 1,000,000-cell XLSX capacity case was re-measured
+with the bounded scanner (section 5.2 of the plan).
+
 ## November 8 review remediation
 
 The [review remediation plan](review-remediation-plan.md) is implemented and
