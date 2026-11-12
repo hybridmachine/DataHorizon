@@ -13,6 +13,7 @@
 #include "cellborders.h"
 #include "formatpainter.h"
 #include <QListWidget>
+#include <limits>
 #include <QGridLayout>
 #include <QApplication>
 #include <QClipboard>
@@ -3160,7 +3161,9 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         if (m_largeClosing) return;
         m_largeClosing=true;
         auto pending=std::make_shared<int>(int(bool(m_largeImport))+int(bool(m_largeExport)));
-        auto resume=[this]{ if(!m_largeClosing) return; m_largeClosing=false; close(); };
+        // Deferred: the cleanup can finish synchronously inside this closeEvent,
+        // where a nested close() would be ignored and the close lost.
+        auto resume=[this]{ if(!m_largeClosing) return; m_largeClosing=false; QTimer::singleShot(0,this,[this]{close();}); };
         auto cleaned=[pending,resume]{ if(--*pending==0) resume(); };
         QTimer::singleShot(5000,this,resume);
         // Copies: finishing resets the members these would otherwise alias.
@@ -3536,21 +3539,21 @@ void MainWindow::reviewLargeImport(const std::shared_ptr<LargeImport> &run, cons
     auto *layout=new QVBoxLayout(dialog);
     const auto sheets=summary["sheets"].toArray();
     const qint64 cells=qint64(summary["stored_cells"].toDouble());
-    const auto sheetCount=sheets.size()==1?tr("1 sheet"):tr("%1 sheets").arg(sheets.size());
+    const auto sheetCount=tr("%n sheet(s)",nullptr,int(sheets.size()));
+    const auto cellCount=tr("%n stored cell(s)",nullptr,int(qMin<qint64>(cells,std::numeric_limits<int>::max())));
     // A short summary in the desktop's own words; the service's fixed scope
     // statements are kept under Details.
     QStringList sentences;
     sentences << (run->target=="replace_empty"
-        ? tr("%1 with %2 stored cells will replace this empty workbook's sheet.").arg(sheetCount).arg(cells)
-        : tr("%1 with %2 stored cells will be added after this workbook's sheets.").arg(sheetCount).arg(cells));
+        ? tr("%1 with %2 will replace this empty workbook's sheet.").arg(sheetCount,cellCount)
+        : tr("%1 with %2 will be added after this workbook's sheets.").arg(sheetCount,cellCount));
     sentences << tr("The import is one operation that clears this workbook's undo history, so it cannot be undone.");
     sentences << tr("The source file is not changed.");
     auto *heading=new QLabel(sentences.join(' '),dialog);
     heading->setObjectName("importReviewSummary"); heading->setTextFormat(Qt::PlainText); heading->setWordWrap(true);
     layout->addWidget(heading);
     auto *mode=new QLabel(tr("Formulas: %1").arg(importModeLabel(run->mode)),dialog); mode->setTextFormat(Qt::PlainText); layout->addWidget(mode);
-    const auto report=summary["report"].toArray(); const auto entries=summary["report_entries"].toArray();
-    QStringList scopeLines; for(int i=0;i<report.size()-entries.size();++i) scopeLines.append(oneLine(report[i].toString(),400));
+    QStringList scopeLines; for(const auto &line:reportScopeLines(summary)) scopeLines.append(oneLine(line,400));
     auto *details=new QToolButton(dialog); details->setObjectName("importReviewDetailsToggle"); details->setText(tr("Details"));
     details->setAccessibleName(tr("Show import details")); details->setCheckable(true); details->setChecked(false);
     details->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); details->setArrowType(Qt::RightArrow); details->setAutoRaise(true);
@@ -3640,7 +3643,7 @@ void MainWindow::largeImportReceipt(const std::shared_ptr<LargeImport> &run, con
         m_selectSheetWorkbook=run->workbook;
         const auto imported=receipt["imported"].toObject();
         finishLargeImport(run);
-        m_status->setText(tr("Imported %1 sheets and %2 cells • Native workbook stored").arg(qint64(imported["sheets"].toDouble())).arg(qint64(imported["cells"].toDouble())));
+        m_status->setText(tr("Imported %1 and %2 • Native workbook stored").arg(tr("%n sheet(s)",nullptr,imported["sheets"].toInt()),tr("%n cell(s)",nullptr,imported["cells"].toInt())));
         return;
     }
     run->operation.clear();
@@ -3662,7 +3665,7 @@ void MainWindow::largeImportReceipt(const std::shared_ptr<LargeImport> &run, con
     if(code=="SHEET_NAME_CONFLICT") {
         QStringList names; const auto conflicts=receipt["conflicts"].toArray();
         for(int i=0;i<qMin(20,int(conflicts.size()));++i) names.append(oneLine(conflicts[i].toString(),60));
-        if(conflicts.size()>names.size()) names.append(tr("and %1 more").arg(conflicts.size()-names.size()));
+        if(conflicts.size()>names.size()) names.append(tr("and %n more",nullptr,int(conflicts.size()-names.size())));
         run->message->setText(tr("These sheet names already exist in this workbook: %1. Nothing was imported. Cancel, rename the sheets, and import again.").arg(names.join(", ")));
         run->apply->setEnabled(false);
     } else if(code=="DESTINATION_NOT_EMPTY") {

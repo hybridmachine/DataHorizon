@@ -32,6 +32,7 @@ def export_list(book,format,request):
         snapshot={'cells':cells,'state':values['state'],'sheet':values['sheet'],'range':[1,1,len(rows),len(columns)]}
         result=(xlsx_export if format=='xlsx' else ods_export)(snapshot,{'mode':'values'})
         result['report']=report+result['report'][1:]
+        result['scope_lines']=report+result['scope_lines'][1:]
     result.update(source_rows=values['source_rows'],source_columns=columns,rows=len(rows),columns=len(columns))
     require(len(encoded(result).encode())<=4*1024*1024,'READ_LIMIT','List export response exceeds 4 MiB')
     return result

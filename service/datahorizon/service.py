@@ -35,7 +35,7 @@ from .ods import ods_preview, ods_export
 from .recovery import inspect_native
 from .list_export import export_list
 from .functions import function_catalog
-from .staging import IDENTIFIER, Staging
+from .staging import IDENTIFIER, Staging, sweep_terminated
 from .conversion_report import ConversionReport
 from .xlsx_stream import LARGE_CELLS, LARGE_EXPANDED, LARGE_PACKAGE, LARGE_SHEETS, export_lines, read_workbook, write_workbook
 from . import ods_stream
@@ -345,7 +345,7 @@ def openapi():
         "job_id":schemas["PreparationRequest"]["properties"]["job_id"],
         "file_base64":{"type":"string","format":"byte","description":"At most 3 MiB of ZIP data / 16 MiB expanded, 128 entries"},
         "scope":{"type":"string","enum":["selection","workbook"],"default":"selection"},
-        "sheet_index":{"type":"integer","minimum":1,"maximum":64,"default":1},"row":row,"col":col,
+        "sheet_index":{"type":"integer","minimum":1,"maximum":4096,"default":1,"description":"1-based position in the package's sheet list (an XLSX chart, dialog or macro sheet keeps its place but cannot be chosen); any worksheet can be selected"},"row":row,"col":col,
         "mode":{"type":"string","enum":["formulas","mixed","values"],"default":"formulas"}},
         "description":"Selected sheet or whole-workbook inputs, at most 10,000 stored cells total. Whole-workbook XLSX/ODS requires an empty destination and an explicit structural hook when handlers are activated, replaces sheets atomically and clears history. Values mode uses unverified formula caches; mixed mode uses them only for formulas DataHorizon cannot evaluate. XLSX formulas DataHorizon cannot evaluate are kept as formulas (or cached values) and itemized in the report instead of blocking. Whole-workbook previews are importable whenever the package is valid: unsupported content is skipped or degraded and itemized in report_entries (merged across sheets, at most 100 samples per entry, 200 entries) with matching severity totals, and sheets left without cells are still created. Explicit reviewed Apply is one managed edit; no code activation."}
     schemas["SpreadsheetExport"] = {**schemas["CsvExportRequest"],"properties":{**schemas["CsvExportRequest"]["properties"],
@@ -398,7 +398,8 @@ def openapi():
     schemas["OdsPreparationRequest"]={"oneOf":[{"$ref":"#/components/schemas/"+name} for name in ("SpreadsheetPreparation","OdsUploadPreparation","OdsPathPreparation")],
         "description":schemas["XlsxPreparationRequest"]["description"]+" The ODS package must start with its uncompressed mimetype entry; "
             "an encrypted package is INVALID_SPREADSHEET. Empty repeated rows and cells cost nothing; a repeat that would store more than "
-            f"{LARGE_CELLS:,} cells is LIMIT before any cell is stored. The summary's format is ods."}
+            f"{LARGE_CELLS:,} cells is LIMIT before any cell is stored. The large-path reader (upload_id or source_path) accepts trailing empty "
+            "row and column repeats that extend beyond the 1,048,576 × 16,384 grid, which the inline file_base64 reader rejects. The summary's format is ods."}
     schemas["UploadReleased"]={"type":"object","required":["released","upload_id"],"additionalProperties":False,"properties":{"released":{"type":"boolean","enum":[True]},"upload_id":upload_id},
         "example":{"released":True,"upload_id":"example-upload"}}
     export_id={"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"}
@@ -446,19 +447,21 @@ def openapi():
     entry={"$ref":"#/components/schemas/ReportEntry"}
     totals={"$ref":"#/components/schemas/ReportTotals"}
     lines={"type":"array","items":{"type":"string"},"description":"Fixed scope statements, then one readable line per report entry"}
-    schemas["ExportJobResult"]={"type":"object","required":["export_id","bytes","sha256","state","report","report_entries","totals"],"additionalProperties":False,"properties":{
+    scope={"type":"array","items":{"type":"string"},"description":"The fixed scope statements alone: the lines report starts with, before its one line per report entry. "
+           "Read these instead of slicing report"}
+    schemas["ExportJobResult"]={"type":"object","required":["export_id","bytes","sha256","state","report","scope_lines","report_entries","totals"],"additionalProperties":False,"properties":{
         "export_id":export_id,"bytes":{"type":"integer","minimum":1},"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"SHA-256 of the file GET /v1/exports/{export} returns"},
-        "state":{"type":"string","description":"The workbook state that was exported"},"report":lines,
+        "state":{"type":"string","description":"The workbook state that was exported"},"report":lines,"scope_lines":scope,
         "report_entries":{"type":"array","maxItems":200,"items":entry},"totals":totals},
         "description":"The result of a completed XLSX or ODS export job: what to download and the conversion report (approximated cells, such as unmaintained formulas written unchanged, are itemized).",
         "example":{"export_id":"example-xlsx-export","bytes":5120,"sha256":"0"*64,"state":"copy-from-workbook-info","report":["Formulas are written without cached values."],
-                   "report_entries":report_example,"totals":totals_example}}
+                   "scope_lines":["Formulas are written without cached values."],"report_entries":report_example,"totals":totals_example}}
     schemas["XlsxExportJobResult"]=schemas["ExportJobResult"]  # The earlier name of the same result, kept for clients.
-    schemas["StagedImportSummary"]={"type":"object","required":["scope","stage_id","stage_digest","sheets","stored_cells","report","report_entries","totals","sample","can_import","format","mode","source"],"properties":{
+    schemas["StagedImportSummary"]={"type":"object","required":["scope","stage_id","stage_digest","sheets","stored_cells","report","scope_lines","report_entries","totals","sample","can_import","format","mode","source"],"properties":{
         "scope":{"type":"string","enum":["workbook"]},"stage_id":{**upload_id,"description":"Equal to the job_id; names the stage for workbook_import"},
         "stage_digest":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"Send unchanged with stage_id to workbook_import"},
         "sheets":{"type":"array","maxItems":LARGE_SHEETS,"items":{"type":"object","required":["name","stored_cells"],"properties":{"name":name,"stored_cells":{"type":"integer","minimum":0}}}},
-        "stored_cells":{"type":"integer","minimum":0,"maximum":LARGE_CELLS},"report":lines,"report_entries":{"type":"array","maxItems":200,"items":entry},"totals":totals,
+        "stored_cells":{"type":"integer","minimum":0,"maximum":LARGE_CELLS},"report":lines,"scope_lines":scope,"report_entries":{"type":"array","maxItems":200,"items":entry},"totals":totals,
         "sample":{"type":"array","description":"The first 100 stored cells of each sheet, row-major, with resolved styles; long sources are truncated and flagged",
                   "items":{"type":"object","required":["sheet","cells"],"properties":{"sheet":{"type":"string"},"cells":{"type":"array","maxItems":100,"items":{"type":"object","properties":{
                       "row":row,"col":col,"source":{"type":"string"},"kind":{"type":"string"},"style":{"$ref":"#/components/schemas/Style"},"truncated":{"type":"boolean"}}}}}}},
@@ -469,11 +472,12 @@ def openapi():
             "path":{"type":"string","description":"The resolved source_path"},"size":{"type":"integer","minimum":0},"mtime_ns":{"type":"integer"}}}},
         "description":"The completed result of a whole-workbook preparation from upload_id or source_path: what Apply would import and what it converts, approximates or omits. Always under 1 MiB; never the cells.",
         "example":{"scope":"workbook","stage_id":"example-xlsx-upload","stage_digest":"0"*64,"sheets":[{"name":"Sheet1","stored_cells":1}],"stored_cells":1,
-                   "report":["All sheets, names, stored inputs and mapped direct cell styles from one consistent workbook state."],"report_entries":report_example,"totals":totals_example,
+                   "report":["All sheets, names, stored inputs and mapped direct cell styles from one consistent workbook state."],
+                   "scope_lines":["All sheets, names, stored inputs and mapped direct cell styles from one consistent workbook state."],"report_entries":report_example,"totals":totals_example,
                    "sample":[{"sheet":"Sheet1","cells":[{"row":1,"col":1,"source":"7","kind":"number","style":{}}]}],"can_import":True,"format":"xlsx","mode":"mixed",
                    "source":{"kind":"upload","upload_id":"example-upload","sha256":"0"*64}}}
     schemas["SpreadsheetImportPreview"]={"type":"object","required":["can_import","report","report_entries","totals","stored_cells","issues"],"properties":{
-        "can_import":{"type":"boolean"},"issues":{"type":"array","items":{"type":"string"},"description":"Problems that block Apply"},"report":lines,
+        "can_import":{"type":"boolean"},"issues":{"type":"array","items":{"type":"string"},"description":"Problems that block Apply"},"report":lines,"scope_lines":scope,
         "report_entries":{"type":"array","maxItems":200,"items":entry},"totals":totals,"stored_cells":{"type":"integer","minimum":0,"maximum":MAX_CELLS},
         "scope":{"type":"string","enum":["workbook"],"description":"Present for a whole-workbook preview"},
         "sheet":{"type":"string","description":"The selected sheet (selection scope)"},"sheets":{"type":"array","items":{"type":"string"},"description":"Every sheet name in the package (selection scope)"},
@@ -499,7 +503,7 @@ def openapi():
         "description":"A large export job; poll GET /v1/jobs/{job} while status is running, then download GET /v1/exports/{export}.",
         "example":{"job_id":"example-xlsx-export","status":"running","completed":0,"phase":"Queued"}}
     schemas["SpreadsheetExportResult"]={"type":"object","required":["file_base64","report","state"],"properties":{
-        "file_base64":{"type":"string","format":"byte"},"report":lines,"report_entries":{"type":"array","maxItems":200,"items":entry},"state":{"type":"string"}},
+        "file_base64":{"type":"string","format":"byte"},"report":lines,"scope_lines":scope,"report_entries":{"type":"array","maxItems":200,"items":entry},"state":{"type":"string"}},
         "description":"A bounded XLSX or ODS export: the package and its conversion report from one consistent state. At whole-workbook scope in formulas mode "
                        "every stored formula is written: XLSX writes one DataHorizon cannot evaluate as stored and counts it (unevaluable, by formula category; "
                        "formula.syntax approximated when its references cannot be read); ODS writes one that does not translate to OpenFormula as its current value "
@@ -508,6 +512,25 @@ def openapi():
         "example":{"file_base64":"UEsDBA==","report":[],"report_entries":[],"state":"copy-from-workbook-info"}}
     schemas["Receipt"]["properties"]["imported"]={"type":"object","required":["sheets","cells"],"properties":{"sheets":{"type":"integer","minimum":0},"cells":{"type":"integer","minimum":0}},
         "description":"workbook_import only: sheets and stored cells imported"}
+    location={"type":"object","required":["sheet","row","col"],"properties":{"sheet":{"type":"string"},"row":row,"col":col}}
+    def counted(description,**extra):
+        return {"type":"object","required":["count","samples"],"description":description,"properties":{"count":{"type":"integer","minimum":0},
+                "samples":{"type":"array","maxItems":100,"items":{**location,"properties":{**location["properties"],**extra}}}}}
+    schemas["NativeInspection"]={"type":"object","required":["path","workbook_id","format_version","sheets","sqlite_integrity","readonly","inputs","report"],"properties":{
+        "path":{"type":"string"},"workbook_id":{"type":"string"},"format_version":{"type":"integer"},"sheets":{"type":"array","items":{"type":"object"}},
+        "sqlite_integrity":{"type":"string","enum":["ok"]},"readonly":{"type":"boolean","enum":[True]},"report":lines,
+        "inputs":{"type":"object","required":["checked_cells","checked_bytes","complete","issue_count","issues","unevaluable_formulas","unmaintained_formulas","inputs_valid","state"],"properties":{
+            "checked_cells":{"type":"integer","minimum":0},"checked_bytes":{"type":"integer","minimum":0},"complete":{"type":"boolean"},
+            "stop_reason":{"type":"string","enum":["cell_limit","byte_limit","time_limit","storage_read_limit_or_error"]},
+            "issue_count":{"type":"integer","minimum":0},"issues":{"type":"array","maxItems":100,"items":{"type":"object","required":["code","message"],"properties":{
+                "sheet":{"type":"string"},"row":row,"col":col,"code":{"type":"string"},"message":{"type":"string"}}},
+                "description":"Invalid stored inputs: a wrong type or style, or a formula cell whose source cannot even be scanned for references"},
+            "unevaluable_formulas":counted("Valid formula inputs the calculator cannot evaluate but whose references the lenient scanner reads (as degraded imports store them); "
+                                           "each sample names its formula_admission reason. Not issues",reason={"type":"string"}),
+            "unmaintained_formulas":counted("Valid cells of kind unmaintained (references not maintained through a structural edit). Not issues"),
+            "inputs_valid":{"type":"boolean","description":"True when inspection completed with no issue; unevaluable and unmaintained formulas do not make it false"},
+            "state":{"type":"string"},"max_cells":{"type":"integer"},"max_bytes":{"type":"integer"},"formula_check":{"type":"string"}}}},
+        "description":"A read-only inspection of a native file: integrity, catalog and a bounded check of stored inputs. Nothing is evaluated, repaired or run."}
     schemas["Error"]["properties"]["cells"]={"type":"array","maxItems":100,"items":{"type":"string"},"description":"CALCULATION_ERROR of a values export only: the first blocking cells, as Sheet!A1 (whole workbook) or A1 (selection)"}
     schemas["Error"]["properties"]["blocked_count"]={"type":"integer","minimum":1,"description":"CALCULATION_ERROR of a values export only: every cell without a current, error-free value"}
     schemas["Error"]["properties"]["conflicts"]={"type":"array","items":{"type":"string"},"description":"SHEET_NAME_CONFLICT only: imported sheet names that already exist"}
@@ -557,7 +580,7 @@ def openapi():
         if path.startswith('/v1/uploads/'):
             operation['responses']['200']['content']={'application/json':{'schema':{'$ref':'#/components/schemas/'+('UploadReleased' if path.endswith('/release') else 'UploadReceipt')}}}
         response={'/v1/import/xlsx/jobs':'SpreadsheetPreparationJob','/v1/import/ods/jobs':'SpreadsheetPreparationJob','/v1/jobs/{job}':'PreparationJob',
-                  '/v1/jobs/{job}/cancel':'PreparationJob','/v1/jobs/{job}/release':'JobReleased'}.get(path)
+                  '/v1/jobs/{job}/cancel':'PreparationJob','/v1/jobs/{job}/release':'JobReleased','/v1/recovery/inspect':'NativeInspection'}.get(path)
         if path.endswith(('/export/xlsx/jobs','/export/ods/jobs')):response='ExportJob'
         if path.endswith(('/workbooks/{workbook}/export/xlsx','/workbooks/{workbook}/export/ods')):response='SpreadsheetExportResult'
         if response:operation['responses']['200']['content']={'application/json':{'schema':{'$ref':'#/components/schemas/'+response}}}
@@ -639,6 +662,8 @@ class Service(ThreadingHTTPServer):
         self._stopping = False
         from .query_storage import cleanup_terminated
         cleanup_terminated()
+        # Staging directories of services that stopped without their orderly shutdown (killed, or on Windows terminated).
+        sweep_terminated()
         self.jobs = PreparationJobs()
         # Uploads, import stages and exports; a supplied root lets tests inspect staged files.
         self.staging = Staging(staging_root)
@@ -986,7 +1011,7 @@ class Service(ThreadingHTTPServer):
             finally:
                 self.staging.release("snapshot",job_id)
             return {"export_id":job_id,"bytes":written["bytes"],"sha256":written["sha256"],"state":stream.state,
-                    "report":lines+report.lines(),
+                    "report":lines+report.lines(),"scope_lines":lines,
                     "report_entries":report.entries(),"totals":report.totals()}
         return prepare
 
@@ -1484,6 +1509,26 @@ def read_owner_channel(stream, store, limit=4096):
                 pending.clear();skipping=False
 
 
+STOP_SIGNALS = ("SIGTERM", "SIGINT", "SIGBREAK")  # SIGBREAK: a Windows console's Ctrl+Break
+
+
+def stop_on_signals():
+    """Make a stop signal end serve_forever as Ctrl+C does, so main's orderly shutdown runs (jobs cancelled and closed,
+    staging removed, workbooks closed). Once one arrives, further stop signals are ignored so they cannot interrupt
+    that shutdown. On Windows, Popen.terminate and QProcess::kill end the process without a signal: its staging
+    directory is then removed by the next service's sweep_terminated."""
+    import signal
+    present = [getattr(signal, name) for name in STOP_SIGNALS if hasattr(signal, name)]
+    def stop(signum, frame):
+        for number in present:
+            try: signal.signal(number, signal.SIG_IGN)
+            except (OSError, ValueError): pass
+        raise KeyboardInterrupt
+    for number in present:
+        try: signal.signal(number, stop)
+        except (OSError, ValueError): pass  # not available in this process or platform
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=0)
@@ -1497,6 +1542,7 @@ def main():
     if args.owner_channel:
         threading.Thread(target=read_owner_channel,args=(open(sys.stdin.fileno(),'rb',buffering=0,closefd=False),server.approved_code),daemon=True).start()
     try:
+        stop_on_signals()
         server.serve_forever()
     except KeyboardInterrupt:
         pass

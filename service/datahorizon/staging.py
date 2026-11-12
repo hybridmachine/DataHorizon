@@ -1,6 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """A private directory for uploads, import stages, exports, the workbook snapshots exports read and the parts they
-assemble, with per-kind capacity and age-based expiry."""
+assemble, with per-kind capacity and age-based expiry.
+
+A directory the service creates is `datahorizon-<pid>-<random>` in the system temporary directory and holds an owner
+marker (MARKER: a fixed magic string, the pid and the creation time). The service removes it on an orderly stop,
+SIGTERM included; sweep_terminated removes, at the next start, only such directories whose marker names a process
+that is no longer running. A directory without the marker, a caller-supplied root and anything whose owner is in
+doubt are never touched."""
+import json
 import os
 from pathlib import Path
 import re
@@ -16,6 +23,59 @@ from .engine import require
 SUFFIXES = {"upload": ".upload", "stage": ".stage", "export": ".export", "snapshot": ".snapshot", "part": ".part"}
 IDENTIFIER = re.compile(r"[A-Za-z0-9_-]{1,64}")
 SIDE_FILES = ("-journal", "-wal", "-shm")
+MARKER = ".datahorizon-staging"
+MAGIC = "datahorizon-staging-v1"
+MARKER_BYTES = 4096
+# tempfile.mkdtemp names: the prefix, then its random part of lower-case letters, digits and underscores.
+OWNED_NAME = re.compile(r"datahorizon-([1-9][0-9]{0,9})-[a-z0-9_]{1,32}")
+
+
+def _write_marker(root):
+    record = json.dumps({"magic": MAGIC, "pid": os.getpid(), "created": time.time()}).encode()
+    descriptor = os.open(root/MARKER, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(descriptor, "wb") as marker: marker.write(record)
+
+
+def _owner(directory, pid):
+    """The marker of `directory` when it is this project's and records `pid`, else None (never raises)."""
+    try:
+        info = directory.lstat()
+        if not stat.S_ISDIR(info.st_mode) or (hasattr(os, "getuid") and info.st_uid != os.getuid()): return None
+        marker = directory/MARKER
+        details = marker.lstat()
+        if not stat.S_ISREG(details.st_mode) or details.st_size > MARKER_BYTES: return None
+        owner = json.loads(marker.read_bytes())
+    except (OSError, ValueError):
+        return None
+    if (not isinstance(owner, dict) or owner.get("magic") != MAGIC or type(owner.get("pid")) is not int or owner["pid"] != pid
+            or type(owner.get("created")) not in (int, float)): return None
+    return owner
+
+
+def sweep_terminated(root=None):
+    """Remove the staging directories that services no longer running left in `root` (by default the system temporary
+    directory); return how many were removed.
+
+    Only a directory named like one Staging creates, owned by this user, holding this project's marker for the pid in
+    its name, whose process is not running is removed. A live pid is left even if it now belongs to another program:
+    when the owner is in doubt, the directory stays."""
+    from .query_storage import alive
+    base = Path(root) if root is not None else Path(tempfile.gettempdir())
+    removed = 0
+    try: candidates = list(base.glob("datahorizon-*"))
+    except OSError: return 0
+    for directory in candidates:
+        match = OWNED_NAME.fullmatch(directory.name)
+        if match is None: continue
+        pid = int(match[1])
+        if pid == os.getpid() or _owner(directory, pid) is None: continue
+        try:
+            if alive(pid): continue
+            shutil.rmtree(directory)
+            removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 class Staging:
@@ -29,6 +89,10 @@ class Staging:
         if root is None:
             self.root = Path(tempfile.mkdtemp(prefix=f"datahorizon-{os.getpid()}-"))
             self._owned = True
+            try: _write_marker(self.root)
+            except BaseException:
+                shutil.rmtree(self.root, ignore_errors=True)
+                raise
         else:
             self.root = Path(root)
             self._owned = not self.root.exists()
@@ -58,6 +122,8 @@ class Staging:
     def new(self, kind, identifier):
         """Reserve `identifier` by creating an empty private file; return its path."""
         with self._lock:
+            # A late handler must not create a file in a directory that is being removed.
+            require(not self._closed, "SERVICE_STOPPING", "The service is stopping; nothing more can be staged", 503)
             path = self._file(kind, identifier)
             self.sweep()
             require(not path.exists() and not path.is_symlink(), "JOB_CONFLICT", "That staging entry already exists", 409)

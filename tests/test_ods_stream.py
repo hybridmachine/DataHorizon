@@ -183,7 +183,11 @@ class StreamingReaderTests(unittest.TestCase):
         self.assertEqual(sink.sheets, [(s['name'], s['cells']) for s in tree['workbook_sheets']])
         self.assertEqual(sorted_entries(report.entries()), sorted_entries(tree['report_entries']))
         self.assertEqual(report.totals(), tree['totals'])
-        self.assertEqual(sorted(ods_stream.scope_lines({'mode': mode})+report.lines()), sorted(tree['report']))
+        # Both put the fixed scope lines first, then one line per entry; the tree reader names its scope lines.
+        scope = ods_stream.scope_lines({'mode': mode})
+        self.assertEqual(tree['scope_lines'], scope)
+        self.assertEqual(tree['report'][:len(scope)], scope)
+        self.assertEqual(sorted(tree['report'][len(scope):]), sorted(report.lines()))
         return sink, report
 
     def test_agrees_with_the_tree_reader_on_the_fixture(self):
@@ -706,7 +710,7 @@ class LargeOdsServiceTests(unittest.TestCase):
         before = stored_rows(self.engine())
         state = self.info()['state']
         result = self.export()
-        self.assertEqual(set(result), {'export_id', 'bytes', 'sha256', 'state', 'report', 'report_entries', 'totals'})
+        self.assertEqual(set(result), {'export_id', 'bytes', 'sha256', 'state', 'report', 'scope_lines', 'report_entries', 'totals'})
         self.assertEqual(result['state'], state)
         self.assertIn(ods_stream.FORMULA_LINE, result['report'])
         self.assertIn('COM.MICROSOFT', ' '.join(result['report']))

@@ -44,6 +44,9 @@ def namespaces(workbook_root):
 MAX_PACKAGE = 3*1024*1024
 MAX_EXPANDED = 16*1024*1024
 MAX_SOURCE_BYTES = 65_536  # typed() limit on a managed cell source
+# A selection's sheet_index names any sheet of the package's workbook list (a bounded package holds at most 128
+# parts); only worksheets count toward whole-workbook scope's 64-sheet limit.
+MAX_SHEET_INDEX = 4096
 
 
 def node(parent, tag, text=None, **attrs):
@@ -470,7 +473,7 @@ def read_book(archive):
 
 
 def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None):
-    selected=integer(request.get("sheet_index",1),1,64,"sheet_index")
+    selected=integer(request.get("sheet_index",1),1,MAX_SHEET_INDEX,"sheet_index")
     selected_mode=mode(request)
     require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
     report=["Only the selected sheet's stored cells are imported; absent cells do not clear the destination.",
@@ -485,7 +488,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         system=date_system(workbook,ns)
         report.append("ISO shorthand is normalized to native seconds; timezone offsets require explicit timezone_policy=utc, which stores UTC civil values and omits the original offset.")
         report.append(f"Date/time serials with supported formats use the {system} epoch; serial 60 in the 1900 system is rejected. Formula numeric literals are not epoch-shifted; native formulas use the 1900 system.")
-        require(0<len(sheets)<=64 and selected<=len(sheets),"INVALID_SPREADSHEET","Choose an existing sheet (at most 64)")
+        require(0<len(sheets) and selected<=len(sheets),"INVALID_SPREADSHEET","Choose an existing sheet")
         from .xlsx_features import KIND_NAMES
         kind=book.kinds[selected-1]
         require(kind is None,"INVALID_ARGUMENT",f"Sheet {sheets[selected-1].get('name','')!r} is {KIND_NAMES.get(kind)} and cannot be imported; choose a worksheet")
@@ -521,9 +524,10 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         sheet_features.report(conversions,sheet_label)
         if shared_formulas and shared_formulas.groups: report.append("Shared formulas expand to explicit per-cell sources with relative/absolute reference translation; caches are discarded.")
         report.extend(STYLE_SCOPE_LINES)
+        scope=list(report)
         report.extend(conversions.lines())
         result={"cells":edits,"can_import":bool(edits),"issues":issues,
-                "sheet":sheet_label,"sheets":[s.get("name","") for s in sheets],"report":report,"report_entries":conversions.entries(),
+                "sheet":sheet_label,"sheets":[s.get("name","") for s in sheets],"report":report,"scope_lines":scope,"report_entries":conversions.entries(),
                 "totals":conversions.totals(),"stored_cells":count}
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Spreadsheet preview exceeds 4 MiB")
         if result["can_import"]:
@@ -653,7 +657,8 @@ def xlsx_export(snapshot,request):
         payload=[(name,xml(part)) for name,part in parts]
         require(sum(len(data) for _,data in payload)<=MAX_EXPANDED,"LIMIT","Expanded XLSX export exceeds 16 MiB")
         for name,data in payload: archive.writestr(name,data)
-    result={"file_base64":base64.b64encode(output.getvalue()).decode(),"state":snapshot["state"],"report":report+conversions.lines(),"report_entries":conversions.entries()}
+    result={"file_base64":base64.b64encode(output.getvalue()).decode(),"state":snapshot["state"],"report":report+conversions.lines(),
+            "scope_lines":list(report),"report_entries":conversions.entries()}
     require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Export response exceeds 4 MiB")
     return result
 
@@ -702,9 +707,10 @@ def preparation_scope(request):
     return value
 
 
-def prepare_workbook(request,checkpoint,names,prepare,indexes=None):
+def prepare_workbook(request,checkpoint,names,prepare,indexes=None,scope=()):
     """`indexes` are the sheet_index of each name (by default 1, 2, ...): a package's sheets that are not imported
-    (XLSX chart, dialog and macro sheets) take no name but keep their place in the index."""
+    (XLSX chart, dialog and macro sheets) take no name but keep their place in the index. `scope` are the format's
+    fixed report lines after workbook_report(); the result's report is those scope lines, then one line per entry."""
     validate_sheet_names(names)
     require(request.get("row",1)==1 and request.get("col",1)==1,"INVALID_ARGUMENT","Whole-workbook import uses original coordinates")
     require(names,"INVALID_SPREADSHEET","Workbook has no sheets")
@@ -724,7 +730,8 @@ def prepare_workbook(request,checkpoint,names,prepare,indexes=None):
         require(size<=3*1024*1024,"READ_LIMIT","Workbook input payload exceeds 3 MiB")
         result["workbook_sheets"].append({"name":name,"cells":part["cells"]})
     # Sheets whose cells all degraded or were skipped are still created; their details are itemized here.
-    result["report"]=workbook_report()+conversions.lines()
+    result["scope_lines"]=workbook_report()+list(scope)
+    result["report"]=result["scope_lines"]+conversions.lines()
     result["report_entries"]=conversions.entries()
     result["totals"]=conversions.totals()
     require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Workbook preview exceeds 4 MiB")
@@ -740,6 +747,6 @@ def xlsx_preview(request,checkpoint=lambda completed,phase:None):
         # Only chart, dialog or macro sheets: nothing to import. As for any workbook without sheets, Apply is refused.
         result={"scope":"workbook","workbook_sheets":[],"stored_cells":0,"can_import":False,
                 "issues":["The workbook has no worksheets; its other sheets are not imported"],
-                "report":workbook_report()+book.report.lines(),"report_entries":book.report.entries(),"totals":book.report.totals()}
+                "report":workbook_report()+book.report.lines(),"scope_lines":workbook_report(),"report_entries":book.report.entries(),"totals":book.report.totals()}
         return result
     return prepare_workbook(request,checkpoint,[name for _,name in worksheets],_xlsx_preview,[index for index,_ in worksheets])

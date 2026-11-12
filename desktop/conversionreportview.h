@@ -5,9 +5,21 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
+#include <QStringList>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QWidget>
+
+// The service's fixed scope statements of a preview, summary or export result:
+// its scope_lines, or for an older service the report lines before the one
+// line each entry adds.
+inline QStringList reportScopeLines(const QJsonObject &result) {
+    QStringList lines;
+    if(result["scope_lines"].isArray()) { for(const auto &line:result["scope_lines"].toArray()) lines.append(line.toString()); return lines; }
+    const auto report=result["report"].toArray(); const auto entries=result["report_entries"].toArray();
+    for(int i=0;i<report.size()-entries.size();++i) lines.append(report[i].toString());
+    return lines;
+}
 
 // A conversion report grouped by severity: unevaluable, omitted, approximated,
 // converted. Every text comes from an untrusted file or the service and is
@@ -113,7 +125,9 @@ public:
                 const auto entry=value.toObject(); if(entry["severity"]!=severity) continue;
                 const auto category=entry["category"].toString(), detail=plain(entry["detail"].toString());
                 const auto shown=isFeature(category)?featureLabel(detail):detail;
-                auto *row=new QTreeWidgetItem(group,{categoryLabel(category),shown,QString::number(qint64(entry["count"].toDouble()))});
+                // A count that saturated at a scanner bound is a lower bound.
+                const auto count=QString::number(qint64(entry["count"].toDouble()));
+                auto *row=new QTreeWidgetItem(group,{categoryLabel(category),shown,entry["at_least"].toBool()?tr("at least %1").arg(count):count});
                 row->setData(0,Qt::UserRole,category); row->setData(1,Qt::UserRole,detail);
                 // The detail elides in its column; the whole text is in the
                 // tooltip, escaped so markup from the file shows literally.

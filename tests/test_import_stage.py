@@ -155,7 +155,7 @@ class ImportStageTests(Base):
         report = ConversionReport()
         report.add("fmt", "approximated", "approximated format", sheet="One", cell="B2")
         stage, summary = self.build(self.sheets(), report=report, extra={"source_mtime": 5})
-        self.assertEqual(set(summary), {"scope", "stage_id", "stage_digest", "sheets", "stored_cells", "report", "report_entries",
+        self.assertEqual(set(summary), {"scope", "stage_id", "stage_digest", "sheets", "stored_cells", "report", "scope_lines", "report_entries",
                                         "totals", "sample", "can_import", "source_mtime"})
         self.assertEqual(summary["stage_id"], "s1")
         self.assertEqual(summary["sheets"], [{"name": "One", "stored_cells": 203}, {"name": "Two", "stored_cells": 1}])

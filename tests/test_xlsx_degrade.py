@@ -677,5 +677,64 @@ class OtherSheetKindTests(unittest.TestCase):
         self.assertEqual([sheet["name"] for sheet in result["workbook_sheets"]], ["Data"])
         self.assertEqual(features(result, "workbook.feature")["chart_sheets"]["samples"], [{"sheet": "Sales chart", "cell": None}])
 
+
+class WorksheetCountTests(unittest.TestCase):
+    """Only worksheets count toward a reader's sheet limit, and a selection can name any worksheet's position."""
+
+    def book(self, worksheets):
+        # A chart sheet first, then the worksheets, so the last worksheet sits at position worksheets+1.
+        sheets = {f"W{index}": f'<row r="1"><c r="A1"><v>{index}</v></c></row>' for index in range(1, worksheets+1)}
+        chart = '<sheet name="Chart" sheetId="900" r:id="rIdChart"/>'
+        data = workbook_bytes(sheets, extra_sheets="", workbook_rels=[f'<Relationship Id="rIdChart" Type="{REL}/chartsheet" Target="other/chart.xml"/>'],
+                              extra_parts={"xl/other/chart.xml": f'<chartsheet xmlns="{S}"/>'})
+        # Put the chart sheet first in the workbook's sheet list.
+        output = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(output, "w") as target:
+            for name in source.namelist():
+                payload = source.read(name)
+                if name == "xl/workbook.xml": payload = payload.replace(b"<sheets>", b"<sheets>"+chart.encode())
+                target.writestr(name, payload)
+        return output.getvalue()
+
+    def test_sixty_four_worksheets_and_a_chart_sheet_import_whole_and_by_selection(self):
+        data = self.book(64)
+        whole = xlsx_preview({"file_base64": b64(data), "scope": "workbook"})
+        self.assertEqual(len(whole["workbook_sheets"]), 64)
+        self.assertEqual(whole["workbook_sheets"][-1]["name"], "W64")
+        last = xlsx_preview({"file_base64": b64(data), "sheet_index": 65})
+        self.assertEqual((last["sheet"], last["cells"][0]["source"]), ("W64", "64"))
+        with self.assertRaises(EngineError) as raised: xlsx_preview({"file_base64": b64(data), "sheet_index": 1})
+        self.assertEqual(raised.exception.body["code"], "INVALID_ARGUMENT")
+        with self.assertRaises(EngineError) as raised: xlsx_preview({"file_base64": b64(data), "sheet_index": 66})
+        self.assertEqual(raised.exception.body["code"], "INVALID_SPREADSHEET")
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp)/"book.xlsx"; path.write_bytes(data)
+            from datahorizon.xlsx_stream import read_workbook
+            names = []
+            class Sink:
+                class strings:
+                    put = staticmethod(lambda index, text: None)
+                def sheet(self, name): names.append(name)
+                def cells(self, batch): pass
+            read_workbook(path, {}, Sink(), lambda completed, phase: None)
+            self.assertEqual(len(names), 64)
+
+    def test_sixty_five_worksheets_exceed_the_bounded_whole_workbook_limit(self):
+        data = self.book(65)
+        with self.assertRaises(EngineError) as raised: xlsx_preview({"file_base64": b64(data), "scope": "workbook"})
+        self.assertEqual(raised.exception.body["code"], "LIMIT")
+        # A selection still reaches any of them.
+        self.assertEqual(xlsx_preview({"file_base64": b64(data), "sheet_index": 66})["sheet"], "W65")
+
+    def test_an_ods_selection_reaches_a_table_after_the_sixty_fourth(self):
+        import ods_builder
+        from datahorizon.ods import ods_preview
+        data = ods_builder.workbook_bytes({f"T{index}": '<table:table-row><table:table-cell office:value-type="float" office:value="1"/></table:table-row>'
+                                           for index in range(1, 66)})
+        self.assertEqual(ods_preview({"file_base64": b64(data), "sheet_index": 65})["sheet"], "T65")
+        with self.assertRaises(EngineError) as raised: ods_preview({"file_base64": b64(data), "scope": "workbook"})
+        self.assertEqual(raised.exception.body["code"], "LIMIT")
+
+
 if __name__ == "__main__":
     unittest.main()

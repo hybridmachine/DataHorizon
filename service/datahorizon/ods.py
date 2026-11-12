@@ -14,7 +14,7 @@ from .formats import numeric_spec, simple_number_style
 from .temporal import Temporal, from_duration, to_duration, export_temporal_styles, import_temporal
 from .conversion_report import ConversionReport
 from .formula_admission import status as formula_status
-from .interchange import blocked_values, MAX_SOURCE_BYTES, map_formula_functions, import_edits, local_formula, mode, native_only_report, node, package, read_xml, xml, preparation_scope, prepare_workbook, unmaintained_formula, validate_sheet_names, workbook_report
+from .interchange import blocked_values, MAX_SHEET_INDEX, MAX_SOURCE_BYTES, map_formula_functions, import_edits, local_formula, mode, native_only_report, node, package, read_xml, xml, preparation_scope, prepare_workbook, unmaintained_formula, validate_sheet_names, workbook_report
 
 O="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
 T="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
@@ -382,7 +382,7 @@ def convert_ods_cell(cell,*,context):
 
 
 def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None):
-    selected=integer(request.get("sheet_index",1),1,64,"sheet_index"); selected_mode=mode(request)
+    selected=integer(request.get("sheet_index",1),1,MAX_SHEET_INDEX,"sheet_index"); selected_mode=mode(request)
     require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
     report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct/inherited cell styles replace destination inputs/styles.",
             "Other sheets are omitted and code never activates. Sheet and workbook features that are not imported (merged cells, sizes, validation, comments, names, conditional formatting and others) are listed below.",
@@ -396,7 +396,7 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         root=read_xml(archive,"content.xml")
         require(root.tag==q(O,"document-content"),"INVALID_SPREADSHEET","Invalid ODS content")
         sheets=root.findall(f'{q(O,"body")}/{q(O,"spreadsheet")}/{q(T,"table")}')
-        require(0<len(sheets)<=64 and selected<=len(sheets),"INVALID_SPREADSHEET","Choose an existing ODS sheet")
+        require(0<len(sheets) and selected<=len(sheets),"INVALID_SPREADSHEET","Choose an existing ODS sheet")
         roots=([read_xml(archive,"styles.xml")] if "styles.xml" in archive.namelist() else [])+[root]
         conversions=ConversionReport()
         styles=OdsStyles(roots,conversions)
@@ -415,6 +415,7 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         wide=ConversionReport(); workbook_features.report(wide,layout,archive.namelist()); report_unreadable_settings(wide,readable)
         if sheet_names is None: conversions.merge(wide)
         report.append("ISO shorthand normalizes to native seconds; explicit timezone_policy=utc normalizes offset timestamps to UTC civil values and omits the original offset.")
+        scope=list(report)
         edits=[]; row=1; processed=0; staged_bytes=0
         shift=(integer(request.get("row",1),1,1048576,"row")-1,integer(request.get("col",1),1,16384,"col")-1)
         sheet_label=sheets[selected-1].get(q(T,"name"),"")
@@ -451,7 +452,7 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         sheet_features.report(conversions,sheet_label,workbook_features.sheet_extra(sheet_label))
         report.extend(conversions.lines())
         result={"cells":edits,"stored_cells":len(edits),"can_import":bool(edits),"issues":[],"sheet":sheet_label,
-                "sheets":[s.get(q(T,"name"),"") for s in sheets],"report":report,"report_entries":conversions.entries(),
+                "sheets":[s.get(q(T,"name"),"") for s in sheets],"report":report,"scope_lines":scope,"report_entries":conversions.entries(),
                 "totals":conversions.totals()}
         if result["can_import"]: result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","ODS preview exceeds 4 MiB")
@@ -656,7 +657,8 @@ def ods_export(snapshot,request):
         parts=[(name,xml(part)) for name,part in [("content.xml",root),*package_parts()]]
         require(sum(len(data) for _,data in parts)<=16*1024*1024,"LIMIT","Expanded ODS export exceeds 16 MiB")
         for name,data in parts: archive.writestr(name,data)
-    result={"file_base64":base64.b64encode(output.getvalue()).decode(),"state":snapshot["state"],"report":report+conversions.lines(),"report_entries":conversions.entries()}
+    result={"file_base64":base64.b64encode(output.getvalue()).decode(),"state":snapshot["state"],"report":report+conversions.lines(),
+            "scope_lines":list(report),"report_entries":conversions.entries()}
     require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","ODS export exceeds 4 MiB")
     return result
 
@@ -669,6 +671,5 @@ def ods_preview(request,checkpoint=lambda completed,phase:None):
     with package(request) as archive:
         root=read_xml(archive,"content.xml")
         names=[s.get(q(T,"name"),"") for s in root.findall(f'{q(O,"body")}/{q(O,"spreadsheet")}/{q(T,"table")}')]
-    result=prepare_workbook(request,checkpoint,names,_ods_preview)
-    result["report"].append(WORKBOOK_IMPORT_LINE)
-    return result
+    # The scope lines come first and one line per entry follows, as the streaming reader's summary has them.
+    return prepare_workbook(request,checkpoint,names,_ods_preview,scope=[WORKBOOK_IMPORT_LINE])

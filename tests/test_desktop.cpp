@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "mainwindow.h"
 #include "keyboardgrid.h"
+#include "englishplurals.h"
 #include <limits>
 #include "tracenavigation.h"
 #include "formatcellsdialog.h"
@@ -654,6 +655,7 @@ private slots:
         // QTest timers cannot reliably drive AppKit's separate NSAlert modal loop.
         // Native OS dialogs remain a manual gate; these tests exercise Qt widgets.
         QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+        installEnglishPlurals(QCoreApplication::instance());  // as main() does
     }
     void cleanupTestCase(){QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs,m_originalDialogAttribute);}
     void clipboardParserPreservesFieldsAndRejectsMalformedData(){
@@ -2894,6 +2896,32 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,1)).toString(),QString("14.00"),5000);
         QTRY_VERIFY_WITH_TIMEOUT(!visibleDialog(window,"largeImportReview"),5000);
         QTRY_COMPARE_WITH_TIMEOUT(serviceCall(window,"/v1/jobs/"+job,false).first["code"].toString(),QString("JOB_NOT_FOUND"),5000);
+    }
+    void importReviewCountsInTheSingularAndPlural() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("one.dhwb"));
+        // One sheet holding one stored cell.
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/markup.xlsx"),"xlsx","mixed","replace_empty");
+        QDialog *review=nullptr; QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        auto text=review->findChild<QLabel *>("importReviewSummary")->text();
+        QVERIFY2(text.startsWith("1 sheet with 1 stored cell will replace"),qPrintable(text));
+        QVERIFY2(!text.contains("(s)"),qPrintable(text));
+        review->reject(); QTRY_VERIFY_WITH_TIMEOUT(!visibleDialog(window,"largeImportReview"),5000);
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/fidelity.xlsx"),"xlsx","mixed","replace_empty");
+        QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        text=review->findChild<QLabel *>("importReviewSummary")->text();
+        QVERIFY2(text.startsWith("3 sheets with 49 stored cells will replace"),qPrintable(text));
+        review->reject();
+    }
+    void closeBeforeTheCapabilitiesReplyStillCloses() {
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("closing.dhwb"));
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/fidelity.xlsx"),"xlsx","mixed","replace_empty");
+        QVERIFY(window.findChild<QProgressDialog *>("largeImportProgress"));
+        // Closed before the event loop delivers the capabilities reply: the cleanup finishes synchronously
+        // inside closeEvent and the resumed close must not be lost.
+        window.close();
+        QTRY_VERIFY_WITH_TIMEOUT(!window.isVisible(),3000);
     }
     void importReportGroupsBySeverity() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;

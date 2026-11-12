@@ -8,9 +8,11 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include "relationalsmoke.h"
+#include "englishplurals.h"
 
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
+    installEnglishPlurals(&app);
     app.setOrganizationName("DataHorizon"); app.setApplicationName("DataHorizon"); app.setApplicationVersion("0.1.0");
     app.setWindowIcon(QIcon(":/icons/datahorizon.png"));
     app.setDesktopFileName("datahorizon");

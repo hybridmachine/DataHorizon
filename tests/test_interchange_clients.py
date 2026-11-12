@@ -62,7 +62,7 @@ class SdkTests(unittest.TestCase):
                     self.assertEqual(receipt['imported'], {'sheets': 3, 'cells': 49})
                     gone(self, lambda: client.preparation(summary['stage_id']))  # The service consumed the stage.
                     written = book.export_spreadsheet_file(exported)
-                    self.assertEqual(set(written), {'path', 'bytes', 'sha256', 'state', 'report', 'report_entries', 'totals'})
+                    self.assertEqual(set(written), {'path', 'bytes', 'sha256', 'state', 'report', 'scope_lines', 'report_entries', 'totals'})
                     self.assertEqual((written['path'], written['bytes'], written['state']), (str(exported), exported.stat().st_size, book.state))
                 with client.open(second, create=True) as book:
                     again = client.prepare_spreadsheet_file(exported)
@@ -293,7 +293,7 @@ class CliTests(unittest.TestCase):
         with LocalService() as client:
             summary = client.prepare_spreadsheet_file(FIXTURES/'fidelity.xlsx', mode='values', local=True)
             client.discard_job(summary['stage_id'])
-        self.assertEqual(written, {key: summary[key] for key in ('format', 'mode', 'stored_cells', 'sheets', 'totals', 'report', 'report_entries')})
+        self.assertEqual(written, {key: summary[key] for key in ('format', 'mode', 'stored_cells', 'sheets', 'totals', 'report', 'scope_lines', 'report_entries')})
         self.assertEqual(written['mode'], 'values')
 
     def test_errors_are_structured_with_a_nonzero_exit(self):

@@ -87,6 +87,14 @@ JOB_WAIT_SECONDS = 330
 DOWNLOAD_CHUNK = 64 * 1024
 
 
+def report_scope_lines(result):
+    """The fixed scope statements of a preview, review summary or export result, which precede its one line per report
+    entry: the service's scope_lines, or for an older service that omits them, the report lines before those entry lines."""
+    if isinstance(result.get("scope_lines"), list): return list(result["scope_lines"])
+    report, entries = result.get("report") or [], result.get("report_entries") or []
+    return list(report[:len(report)-len(entries)])
+
+
 def spreadsheet_format(path):
     """xlsx or ods from a file name's extension."""
     suffix = Path(path).suffix.lower()
@@ -218,7 +226,9 @@ class Client:
     def prepare_spreadsheet_file(self, path, *, format=None, mode="mixed", job_id=None, local=False, timezone_policy="reject", progress=None):
         """Prepare a whole XLSX or ODS workbook file into an import stage and return the completed review summary.
 
-        The file is uploaded (and the upload released afterwards, whatever happens), or with local=True named by its
+        `mode` defaults to "mixed" here, as the desktop preselects it and the CLI defaults to it: formulas DataHorizon
+        can evaluate stay formulas and the rest take their cached values. The REST preparation route itself defaults to
+        "formulas" when no mode is sent; pass mode="formulas" to keep every formula. The file is uploaded (and the upload released afterwards, whatever happens), or with local=True named by its
         absolute path for a service on this machine to read. A failed or cancelled preparation raises APIError with
         the job's error (status None) after releasing the job; an interruption cancels the job."""
         source = Path(path).expanduser()
@@ -608,7 +618,7 @@ class WorkbookClient:
         """Export the whole workbook (formulas) with an export job and stream it to `destination`.
 
         The file is downloaded to a temporary sibling, checked against the job's size and SHA-256, and moved into place;
-        the export is released afterwards whatever happens. Returns {path, bytes, sha256, state, report, report_entries, totals}."""
+        the export is released afterwards whatever happens. Returns {path, bytes, sha256, state, report, scope_lines, report_entries, totals}."""
         self._ensure_open()
         target = Path(destination).expanduser().absolute()
         format = format or spreadsheet_format(target)
@@ -622,7 +632,7 @@ class WorkbookClient:
         finally:
             try: self.client.release_export(result["export_id"])
             except (APIError, OSError, ValueError, HTTPException): pass  # Exports expire five minutes after last use.
-        return {**written, **{key: result[key] for key in ("state", "report", "report_entries", "totals")}}
+        return {**written, **{key: result[key] for key in ("state", "report", "report_entries", "totals")}, "scope_lines": report_scope_lines(result)}
 
     def import_staged(self, summary, *, target="replace_empty", operation_id=None):
         """Apply a prepared stage's review summary as one workbook_import operation and return the receipt."""

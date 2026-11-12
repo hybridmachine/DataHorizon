@@ -1172,7 +1172,8 @@ class Workbook:
                 # refusal names this operation and is rejected, as the engine's own request refusals are.
                 if staged and not isinstance(request.get(STAGE_PATH),str):
                     raise EngineError("JOB_NOT_FOUND","Import stage is unavailable; prepare the workbook again",404,operation_id=operation)
-                require(not self.readonly, "READ_ONLY", "Workbook is open read-only", 403)
+                # Also before any transaction or write, after the stored receipts were consulted: rejected, naming the operation.
+                if self.readonly: raise EngineError("READ_ONLY", "Workbook is open read-only", 403, operation_id=operation)
                 self.deadline = time.monotonic() + (STAGE_SECONDS if staged else 5)
                 self.bulk_loaded = 0
                 self.refresh(deadline=self.deadline)

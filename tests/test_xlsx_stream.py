@@ -257,6 +257,9 @@ class StreamingReaderTests(unittest.TestCase):
                 sink = ListSink(); report = read_workbook(self.write(data), {"mode": mode}, sink, lambda *_: None)
                 self.assertEqual(sink.sheets, [(s["name"], s["cells"]) for s in tree["workbook_sheets"]])
                 self.assertEqual(report.entries(), tree["report_entries"])
+                # Fixed scope lines first, then one line per entry, in both readers.
+                self.assertEqual(tree["scope_lines"], scope_lines({"mode": mode}))
+                self.assertEqual(tree["report"], scope_lines({"mode": mode})+report.lines())
 
     def test_generated_workbook_agrees_in_every_mode(self):
         for mode in ("mixed", "formulas", "values"):

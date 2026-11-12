@@ -239,7 +239,7 @@ class LargeExportTests(unittest.TestCase):
         self.fixture_book()
         before = snapshot(self.engine())
         result = self.export()
-        self.assertEqual(set(result), {'export_id', 'bytes', 'sha256', 'state', 'report', 'report_entries', 'totals'})
+        self.assertEqual(set(result), {'export_id', 'bytes', 'sha256', 'state', 'report', 'scope_lines', 'report_entries', 'totals'})
         self.assertEqual(result['export_id'], 'export')
         self.assertEqual(result['state'], self.info()['state'])
         self.assertTrue(any('_xlfn' in line for line in result['report']), result['report'])

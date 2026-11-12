@@ -237,8 +237,9 @@ class ImportStage(StageReader):
         self._writable()
         try:
             self._strings.flush()
+            fixed = scope_lines({}) if scope is None else list(scope)
             summary = {"scope": "workbook", "stage_id": self.stage_id(), "stage_digest": None, "sheets": [],
-                       "stored_cells": self._count, "report": (scope_lines({}) if scope is None else list(scope))+report.lines(),
+                       "stored_cells": self._count, "report": fixed+report.lines(), "scope_lines": fixed,
                        "report_entries": report.entries(), "totals": report.totals(), "sample": [],
                        # A package with no worksheets (only chart, dialog or macro sheets) stages nothing to apply.
                        "can_import": bool(self.sheets())}

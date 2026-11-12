@@ -13,7 +13,7 @@ import sys
 import unicodedata
 from urllib.parse import quote
 
-from .client import APIError, Client, LocalService, write_file
+from .client import APIError, Client, LocalService, report_scope_lines, write_file
 from .conversion_report import place
 from .formula import FormulaError, coordinates
 
@@ -114,15 +114,15 @@ def report_text(review):
     """The conversion report grouped for reading: totals by severity, then one line per entry in severity order."""
     entries = review.get("report_entries") or []
     totals = review.get("totals") or {}
-    report = review.get("report") or []
     lines = ["Conversion report: " + ", ".join(f"{severity} {totals.get(severity, 0)}" for severity in SEVERITY_ORDER)]
-    # The report's lines are its fixed scope statements followed by one line per entry.
-    lines += ["  " + line for line in report[:len(report) - len(entries)]]
+    # The service's fixed scope statements; one line per entry follows below, in severity order.
+    lines += ["  " + line for line in report_scope_lines(review)]
     rank = {severity: index for index, severity in enumerate(SEVERITY_ORDER)}
     for entry in sorted(entries, key=lambda item: rank.get(item["severity"], len(rank))):
         first = (entry.get("samples") or [None])[0]
         where = "" if first is None else "; first at " + place(first)
-        lines.append(f"  {entry['severity']:<12} {entry['count']:>7}  {entry['category']}: {entry['detail']}{where}")
+        count = f"{'>=' if entry.get('at_least') else ''}{entry['count']}"
+        lines.append(f"  {entry['severity']:<12} {count:>7}  {entry['category']}: {entry['detail']}{where}")
     if "sheets" in review:
         lines.append("Sheets:")
         lines += [f"  {sheet['name']}: {plural(sheet['stored_cells'], 'cell')}" for sheet in review["sheets"]]
@@ -177,7 +177,7 @@ def import_spreadsheet(client, book, args):
     try:
         print(report_text(summary), flush=True)
         if args.report_json:
-            write_report(args.report_json, summary, ("format", "mode", "stored_cells", "sheets", "totals", "report", "report_entries"), args.overwrite)
+            write_report(args.report_json, summary, ("format", "mode", "stored_cells", "sheets", "totals", "report", "scope_lines", "report_entries"), args.overwrite)
         if not args.yes:
             answer = confirm(f"Import {plural(summary['stored_cells'], 'cell')} into {plural(len(summary['sheets']), 'sheet')}?")
             if answer is not True:
@@ -255,7 +255,9 @@ def main():
     job=commands.add_parser('job',help='Durable reviewed operation jobs; create/append/start/resume read JSON stdin; execution waits for a terminal outcome')
     job.add_argument('job_action',choices=['create','append','seal','status','start','resume','cancel','release']);job.add_argument('--job-id');job.add_argument('--offset',type=int,default=0);job.add_argument('--limit',type=int,default=100)
     spreadsheet_import=commands.add_parser('import-spreadsheet',help='Prepare a whole .xlsx/.ods workbook, print its conversion report, and import it after confirmation')
-    spreadsheet_import.add_argument('source');spreadsheet_import.add_argument('--mode',choices=['formulas','mixed','values'],default='mixed')
+    spreadsheet_import.add_argument('source');spreadsheet_import.add_argument('--mode',choices=['formulas','mixed','values'],default='mixed',
+        help='mixed (the default, as the desktop preselects): formulas DataHorizon can evaluate stay formulas, the rest take their cached values; '
+             'formulas keeps every formula (the REST default); values keeps cached values only')
     spreadsheet_import.add_argument('--add-sheets',action='store_true',help='Add the sheets after the existing ones instead of filling an empty workbook')
     spreadsheet_import.add_argument('--local',action='store_true',help='Let a service on this machine read SOURCE by path instead of uploading it')
     spreadsheet_import.add_argument('--report-json',help='Also write the full conversion report as JSON to this path')
@@ -400,7 +402,7 @@ def main():
                         check_report_path(args.report_json,args.overwrite)
                         written=book.export_spreadsheet_file(args.destination,overwrite=args.overwrite,progress=show_progress('Exporting'))
                         print(report_text(written),flush=True)
-                        if args.report_json:write_report(args.report_json,written,('path','bytes','sha256','state','report','report_entries','totals'),args.overwrite)
+                        if args.report_json:write_report(args.report_json,written,('path','bytes','sha256','state','report','scope_lines','report_entries','totals'),args.overwrite)
                         output=terminal_text(f"Wrote {written['path']} ({written['bytes']} bytes)");result=None
                     elif args.command=='calculate':
                         import time
