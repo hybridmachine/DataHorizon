@@ -500,7 +500,7 @@ class Workbook:
             require(signature in (EXPECTED_SCHEMA,EXPECTED_SCHEMA3) or reserved==EXPECTED_SCHEMA3,
                     "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
             meta = db.execute("SELECT format_version,revision,workbook_id FROM dh_meta WHERE singleton=1").fetchall()
-            require(len(meta) == 1 and meta[0][0] in (1,2,3,4,5,6,7) and type(meta[0][1]) is int and meta[0][1] >= 0,
+            require(len(meta) == 1 and meta[0][0] in (1,2,3,4,5,6,7,8) and type(meta[0][1]) is int and meta[0][1] >= 0,
                     "FORMAT_VERSION", "Unsupported or invalid native format", 409)
             if meta[0][0]>=4:
                 from . import relational
@@ -510,11 +510,15 @@ class Workbook:
                 require(signature == (EXPECTED_SCHEMA3 if meta[0][0]==3 else EXPECTED_SCHEMA),"FORMAT_VERSION","Native schema/version mismatch",409)
             if meta[0][0]>=3:
                 from .metadata import validate
-                record_count=record_cells=0
+                record_count=record_cells=chart_count=0
                 for count,(namespace,identifier,payload) in enumerate(db.execute("SELECT namespace,id,substr(payload,1,1048577) FROM dh_objects"),1):
                     require(count<=256 and time.monotonic()<=deadline,"LIMIT","Native metadata exceeds validation bounds")
                     value=json.loads(payload)
                     if namespace in ("presentation","list"):validate(namespace,identifier,value)
+                    elif namespace=="chart":
+                        require(meta[0][0]>=8,"INVALID_FORMAT","Charts require native format 8",409)
+                        from .charts import validate_stored
+                        validate_stored(value);require(isinstance(identifier,str) and identifier!="","INVALID_FORMAT","Invalid chart identity",409);chart_count+=1
                     else:
                         require(namespace=="records","INVALID_FORMAT","Unknown native metadata")
                         from .records import validate as validate_records
@@ -522,6 +526,7 @@ class Workbook:
                         from .metadata import name
                         name(identifier);record_count+=1;spec=value["spec"];record_cells+=(spec["r2"]-spec["r1"]+1)*(spec["c2"]-spec["c1"]+1)
                 require(record_count<=16 and record_cells<=10000,"LIMIT","Declared record scopes exceed native bounds")
+                require(chart_count<=64,"LIMIT","Stored charts exceed native bounds")
             require(valid_uuid(meta[0][2]) and (not hasattr(self,"id") or meta[0][2] == self.id),
                     "INVALID_FORMAT","Invalid or changed workbook identity",409)
             positions = set()
@@ -1250,6 +1255,9 @@ class Workbook:
                 elif kind in ("name_save","name_delete"):
                     from .names import mutate as mutate_name
                     reference_report=mutate_name(self,request)
+                elif kind in ("chart_create","chart_update","chart_delete"):
+                    from .charts import mutate as mutate_chart
+                    reference_report=mutate_chart(self,request)
                 elif kind in relational.ACTIONS:
                     reference_report=relational.mutate(self,request)
                 elif kind=='list_edit':
@@ -1398,6 +1406,10 @@ class Workbook:
                             item=relational.table(self.db,key[1])
                             require(row_raw(self,item,key[2])==current,'HISTORY_CONFLICT','Undo record changed',409)
                             row_put(self,item,key[2],wanted)
+                        elif key[0]=='chart':
+                            from . import charts
+                            require(charts.stored(self,key[1],key[2])==current,'HISTORY_CONFLICT','Undo chart changed',409)
+                            charts.store(self,key[1],key[2],wanted)
                         else:
                             require(self.raw(*key) == current, "HISTORY_CONFLICT", "Undo target changed", 409)
                             self.put(*key, wanted)
@@ -1443,8 +1455,8 @@ class Workbook:
                 self.check_operation()
                 self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1] or key in self.table_schema_keys}
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
-                result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": sum(key[0]!='table' for key in self.changes)+self.bulk_loaded,
-                          "changed_records":sum(key[0]=='table' for key in self.changes)}
+                result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": sum(key[0] not in ('table','chart') for key in self.changes)+self.bulk_loaded,
+                          "changed_records":sum(key[0]=='table' for key in self.changes),"changed_charts":sum(key[0]=='chart' for key in self.changes)}
                 result.update(reference_report)
                 if self.binding_notices:result["binding_notices"]=self.binding_notices
                 self.db.execute("INSERT INTO operations VALUES(?,?,?)", (operation, fingerprint, encoded(result)))
@@ -1455,7 +1467,7 @@ class Workbook:
                 in_transaction = False
                 if repaired_issues is not None:self.relational_issues=repaired_issues
                 if structural or self.table_record_keys:self.dependencies.clear()
-                else:self.dependencies.invalidate(self.changes)
+                else:self.dependencies.invalidate([key for key in self.changes if key[0] not in ('table','chart')])
                 if structural:
                     self.undo.clear()
                     self.redo.clear()

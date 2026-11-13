@@ -43,8 +43,8 @@ class FormatV6Tests(unittest.TestCase):
         self.raw('UPDATE dh_meta SET format_version=6')
         reopened=Workbook(self.path);self.addCleanup(reopened.close);self.assertEqual(format_version(reopened),6)
 
-    def test_v8_is_rejected_on_open(self):
-        self.new_book().close();self.raw('UPDATE dh_meta SET format_version=8')
+    def test_v9_is_rejected_on_open(self):
+        self.new_book().close();self.raw('UPDATE dh_meta SET format_version=9')
         with self.assertRaises(EngineError) as raised:Workbook(self.path)
         self.assertEqual(raised.exception.body['code'],'FORMAT_VERSION')
 
