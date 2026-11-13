@@ -225,6 +225,10 @@ def main():
     code.add_argument('code_action',choices=['read','save','delete']);code.add_argument('module',nargs='?');code.add_argument('--fingerprint')
     names=commands.add_parser('names',help='Inspect workbook names; save reads JSON name/reference/name_id? from stdin; delete takes the name id')
     names.add_argument('names_action',choices=['read','save','delete']);names.add_argument('name_id',nargs='?')
+    charts=commands.add_parser('charts',help='Charts: list, create/update read JSON from stdin, delete, suggest, resolve, render')
+    charts.add_argument('charts_action',choices=['list','create','update','delete','suggest','resolve','render']);charts.add_argument('chart_id',nargs='?');charts.add_argument('--sheet')
+    charts.add_argument('--r1',type=int);charts.add_argument('--c1',type=int);charts.add_argument('--r2',type=int);charts.add_argument('--c2',type=int);charts.add_argument('--type',default='column')
+    charts.add_argument('--width',type=int);charts.add_argument('--height',type=int);charts.add_argument('--svg-out')
     bindings=commands.add_parser('bindings',help='Inspect event bindings; save reads JSON event/scope/module/function/fingerprint/required?/binding_id? from stdin; delete takes the binding id and --fingerprint')
     bindings.add_argument('bindings_action',choices=['read','save','delete']);bindings.add_argument('binding_id',nargs='?');bindings.add_argument('--fingerprint')
     macro=commands.add_parser('macro',help='Invoke one approved atomic macro; JSON scalar arguments on stdin')
@@ -332,6 +336,23 @@ def main():
                         else:
                             if not args.name_id:raise ValueError('names delete requires the name id')
                             result=book.delete_name(args.name_id)
+                    elif args.command=='charts':
+                        action=args.charts_action
+                        if action=='list':result=dict(state=book.state,charts=book.charts(args.sheet,args.chart_id))
+                        elif action=='create':result=book.create_chart(**json.load(sys.stdin),sheet=args.sheet or 'Sheet1')
+                        elif action=='suggest':
+                            if None in (args.r1,args.c1,args.r2,args.c2):raise ValueError('charts suggest requires --r1 --c1 --r2 --c2')
+                            result=book.suggest_chart(args.sheet or 'Sheet1',r1=args.r1,c1=args.c1,r2=args.r2,c2=args.c2,type=args.type)
+                        else:
+                            if not args.chart_id:raise ValueError('charts '+action+' requires the chart id')
+                            if action=='update':result=book.update_chart(args.chart_id,**json.load(sys.stdin))
+                            elif action=='delete':result=book.delete_chart(args.chart_id)
+                            elif action=='resolve':result=book.resolve_chart(args.chart_id)
+                            else:
+                                if args.width is None or args.height is None:raise ValueError('charts render requires --width and --height')
+                                result=book.render_chart(args.chart_id,args.width,args.height)
+                                if args.svg_out:
+                                    Path(args.svg_out).write_text(result.pop('svg'),encoding='utf-8');result['svg_path']=args.svg_out
                     elif args.command=='bindings':
                         if args.bindings_action=='read':result=book.code()['bindings']
                         elif args.bindings_action=='save':result=book.save_binding(**json.load(sys.stdin))
