@@ -7,8 +7,8 @@ development preview, not completion of the full M0–M8 plan or a release.
 ## Charts stage 1 renderer experiment — November 11, 2026
 
 The [charts design](charts-design.md) is approved and its stage 1
-[experiment](chart-render-experiment.md) has run on local branch
-`claude/charts-stage-1` (not pushed), following the
+[experiment](chart-render-experiment.md) has run on branch
+`claude/charts-stage-1`, following the
 [stage 1 plan](charts-stage-1-plan.md). It is isolated test code: a
 standard-library SVG chart renderer, an optional Qt SVG probe and a benchmark.
 No chart feature exists in the service or the desktop.
@@ -18,8 +18,11 @@ of 10,000 slices (limit 150 ms); every other type passes at 10,000 points. Text
 widths pass with a metrics table when the viewer's font is the measured one or
 narrower, and overflow by up to 18% under a wide substitute font. By the plan's
 rule the result is the QCustomPlot fallback; the result document explains why
-the author recommends a pie point limit and a bundled font instead. Open: that
-owner decision, and any measurement on Windows or Linux.
+the author recommended a pie point limit and a bundled font instead. On
+November 12, 2026 the owner accepted both, so stage 2 proceeds on the service
+SVG route and the fallback is not taken. Open: the stage 2 plan, including the
+choice of font and the pie limit's value, and any measurement on Windows or
+Linux.
 
 Evidence: [measurements](evidence/chart-render-experiment.json),
 [wide-font run](evidence/chart-render-experiment-verdana.json) and

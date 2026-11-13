@@ -1,6 +1,6 @@
 # Charts design
 
-Draft 0.2 | November 11, 2026 | Status: approved by the owner on November 11, 2026. Nothing here is built.
+Draft 0.3 | November 12, 2026 | Status: approved by the owner on November 11, 2026; rendering route confirmed with two changes on November 12, 2026. Only the stage 1 experiment is built.
 
 This document proposes how DataHorizon stores, renders and exposes charts. It is
 a design to plan from. It is not an implementation plan; each stage gets a
@@ -151,7 +151,9 @@ result so a client can say so.
 
 **Bounds.** A resolve reads at most a fixed number of points per series and
 series per chart. **Call**: 10,000 points per series and 64 series as the first
-limits, to be replaced by measured values. Over the limit the service refuses
+limits, to be replaced by measured values. **Owner** (November 12, 2026): a
+pie has its own, lower point limit, because Qt cannot paint 10,000 slices in
+time; stage 2 measures and fixes the value. Over the limit the service refuses
 with a structured error that names the limit; it does not silently truncate or
 downsample in the first stage.
 
@@ -248,8 +250,27 @@ resources in this document do not change in either outcome.
 on the reference Mac and did not meet every threshold: a 10,000-slice pie is too
 slow in Qt, and text overflows its estimate under a wide substitute font. Its
 result document proposes a lower point limit for pies and a bundled font in
-place of the fallback. Until the owner rules on that, the rendering route is
-not confirmed.
+place of the fallback.
+
+**Ruling, November 12, 2026 (Owner).** The owner accepted both proposals. The
+service SVG route is confirmed and the QCustomPlot fallback is not taken.
+
+1. **Pie point limit.** A pie is refused above a point limit lower than the
+   10,000 that applies to the other types, with the same structured error.
+   Stage 2 measures the value; the experiment only shows that a limit in the
+   hundreds passes with a wide margin.
+2. **One bundled font.** The product ships one freely licensed font. The
+   service lays out text against a metrics table for it, measured at label
+   size, and the SVG names that family. The desktop loads the same font, so
+   its text matches the layout. A REST consumer that views the SVG without the
+   font may see text a little wider or narrower than laid out; a PNG
+   rasterised by the desktop does not have that problem.
+
+Still to settle in the stage 2 plan: which font (its license must be
+compatible with GPL-3.0-only distribution and it must be recorded in
+`LICENSES.md`, with Qt SVG), the pie limit's value, how the font is packaged on
+all three platforms, and text outside the metrics table. The experiment
+measured only Latin text on one Mac; Windows and Linux are unmeasured.
 
 ## 7. Storage
 
@@ -335,7 +356,7 @@ interchange never carry charts.
 
 | Stage | Delivers | Done when |
 | --- | --- | --- |
-| 1. Renderer experiment | Section 6 measurements and a written result | The evidence confirms the service SVG route or triggers the fallback. Run November 11, 2026: thresholds not all met; owner decision pending ([result](chart-render-experiment.md)) |
+| 1. Renderer experiment | Section 6 measurements and a written result | The evidence confirms the service SVG route or triggers the fallback. Run November 11, 2026: thresholds not all met ([result](chart-render-experiment.md)). Owner ruling November 12, 2026: service SVG route confirmed with a pie point limit and a bundled font (section 6) |
 | 2. Engine and interfaces | Storage, specification validation, resolve, render, reference maintenance, staleness, REST/CLI/SDK, history | A script creates, changes and renders all six chart types with no desktop; structural edits and undo are verified |
 | 3. Desktop and Python | Wireframes, Insert Chart, floating charts, edit panel, object browser entry, context operations | The wireframe session is completed in the installed application |
 | 4. Interchange | XLSX and ODS chart export, then import, with reports | A round trip keeps every supported chart and reports the rest |
@@ -345,11 +366,13 @@ Each stage gets its own task-level plan when it starts.
 
 ## 13. Owner decisions
 
-All settled on November 11, 2026. None remain open.
+Settled on November 11, 2026, with the rendering route confirmed on November 12, 2026. None remain open.
 
 1. **Rendering route.** The single service SVG renderer of section 6. The
    stage 1 experiment still runs and can trigger the QCustomPlot fallback
-   described there.
+   described there. After the experiment the owner confirmed this route on
+   November 12, 2026, with a lower point limit for pies and one bundled font
+   in place of the fallback.
 2. **Timing.** Stage 1 starts now, in parallel with the Excel fidelity
    programme. Later stages are scheduled when stage 1 reports.
 3. **First chart types.** Column, bar, line, area, pie and scatter.

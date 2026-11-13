@@ -9,8 +9,9 @@ font is the measured font or a narrower one; a wide substitute font overflows
 by up to 18%.
 By the plan's rule the recorded result is `fallback_qcustomplot`. The author's
 reading is that neither failure is cured by the fallback, and that two smaller
-design changes are the better answer. That is a decision for the owner; see
-[Result and what it means](#result-and-what-it-means).
+design changes are the better answer. On November 12, 2026 the owner accepted
+both changes: stage 2 proceeds on the service SVG route and the fallback is not
+taken. See [Result and what it means](#result-and-what-it-means).
 
 Everything here is isolated experiment code in `tests/`. Nothing is installed,
 stored in workbooks or exposed through REST, and no file under `service/` or
@@ -173,7 +174,10 @@ the owner's decision:
    design anticipated, and at 5.5 KiB the table itself is cheap. The font file
    and its license are the real cost.
 
-If the owner accepts both, stage 2 proceeds on the service SVG route with those
-two changes. If not, the plan's rule stands and stage 2 starts from the
-fallback: the service resolves data and computes scales, the desktop paints
-with QCustomPlot, and pies need a separate answer.
+**Owner ruling, November 12, 2026.** The owner accepted both. Stage 2 proceeds
+on the service SVG route with a lower point limit for pies and one bundled
+font, and the QCustomPlot fallback is not taken. The measurements above are
+unchanged: the thresholds were not met as the plan set them, and the ruling
+changes the design rather than the result. The choice of font, the pie limit's
+value and packaging are for the stage 2 plan; see section 6 of the
+[design](charts-design.md).
