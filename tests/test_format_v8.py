@@ -111,6 +111,7 @@ class FormatV8Tests(unittest.TestCase):
                              (8, [1, 2, 3, 4, 5, 6, 7, 8]))
             self.assertIs(capabilities["charts"], True)
             self.assertEqual((capabilities["max_charts"], capabilities["chart_spec_version"]), (64, 1))
+            self.assertEqual(capabilities["max_chart_render_points"], 20_000)
             self.assertTrue({"chart_create", "chart_update", "chart_delete"} <= set(capabilities["operations"]))
             route = client.request("/openapi.json")["paths"]["/v1/workbooks/{workbook}/charts"]["post"]
             self.assertEqual(route["requestBody"]["content"]["application/json"]["schema"]["$ref"], "#/components/schemas/ChartsReadRequest")

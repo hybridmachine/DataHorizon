@@ -14,6 +14,8 @@ from .engine import EngineError
 LIMIT_POINTS = 10_000
 LIMIT_PIE_POINTS = 1_000
 LIMIT_SERIES = 64
+# Values across all series that one render draws: the marks list keeps a render result under 4 MiB.
+LIMIT_RENDER_POINTS = 20_000
 
 _NARROW = frozenset("iIjl.,:;|!' ")
 _WIDE = frozenset("mwMW@%")
@@ -243,6 +245,8 @@ def _validate(resolved, width, height) -> dict:
         series.append({"name": "" if name is None else str(name),
                        "values": [_clean(v) for v in item["values"]],
                        "x": None if xs is None else [_clean(v) for v in xs]})
+    if sum(len(item["values"]) for item in series) > LIMIT_RENDER_POINTS:
+        raise ChartRenderError("LIMIT_RENDER_POINTS", f"more than {LIMIT_RENDER_POINTS} values across the series of one render")
     categories = resolved.get("categories")
     if categories is not None and not isinstance(categories, list):
         raise ChartRenderError("INVALID_SPEC", "categories must be a list or null")

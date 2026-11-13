@@ -233,12 +233,24 @@ class ChartJobTests(unittest.TestCase):
         self.assertEqual(view["error"]["code"], "SOURCE_BROKEN")
         self.assertEqual(view["error"]["outcome"], "rejected")
 
-    def test_render_over_the_response_limit_is_refused(self):
+    def test_render_over_the_point_limit_is_refused(self):
         self.operate("edit", cells=[{"row": row, "col": 3, "source": str(row % 97 + 1)} for row in range(1, 2001)])
         wide = {"spec_version": 1, "type": "column", "legend": {"position": "none"},
                 "series": [{"name": {"text": f"S{index}"}, "values": {"source": source("C1:C2000")}} for index in range(48)]}
         self.chart = self.operate("chart_create", sheet="Sheet1", spec=wide)["chart_id"]
         view = self.wait(self.start("render", width=4096, height=4096), seconds=120)
+        self.assertEqual(view["status"], "failed", {key: value for key, value in view.items() if key != "result"})
+        self.assertEqual(view["error"]["code"], "LIMIT_RENDER_POINTS")
+        self.assertNotIn("result", view)
+
+    def test_resolve_over_the_response_limit_is_refused(self):
+        label = "x" * 2_500
+        for first in range(1, 2001, 500):
+            self.operate("edit", cells=[{"row": row, "col": 4, "source": f"{row} {label}"} for row in range(first, first + 500)])
+        long_labels = {"spec_version": 1, "type": "column", "categories": {"source": source("D1:D2000")},
+                       "series": [{"name": {"text": "S"}, "values": {"source": source("C1:C2000")}}]}
+        self.chart = self.operate("chart_create", sheet="Sheet1", spec=long_labels)["chart_id"]
+        view = self.wait(self.start("resolve"), seconds=120)
         self.assertEqual(view["status"], "failed", {key: value for key, value in view.items() if key != "result"})
         self.assertEqual(view["error"]["code"], "READ_LIMIT")
         self.assertNotIn("result", view)

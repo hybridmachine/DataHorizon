@@ -88,7 +88,8 @@ def _install_specification(schemas):
                     "title": nullable_text, "min": {"type": "number", "nullable": True}, "max": {"type": "number", "nullable": True}}}}},
             "legend": {"type": "object", "additionalProperties": False, "required": ["position"],
                        "properties": {"position": {"type": "string", "enum": list(LEGEND_POSITIONS)}}}},
-        "description": "Chart specification in input form. Sources together hold at most 100,000 cells; a series at most 10,000 points",
+        "description": "Chart specification in input form. Sources together hold at most 100,000 cells; a series at most 10,000 points "
+                       "(1,000 for a pie). A render draws at most 20,000 values across all series",
         "example": EXAMPLE_SPEC}
 
 
@@ -130,6 +131,7 @@ def _install_jobs(schemas, sheet, chart_id):
             {"title": "Resolve", "properties": {"kind": {"enum": ["resolve"]}}, "not": {"anyOf": [{"required": ["width"]}, {"required": ["height"]}]}},
             {"title": "Render", "properties": {"kind": {"enum": ["render"]}}, "required": ["width", "height"]}],
         "description": "Reads the chart's sources from a read-only snapshot, calculating formulas, within 30 seconds. "
+                       "A render of more than 20,000 values across all series fails with LIMIT_RENDER_POINTS. "
                        "An unknown chart is CHART_NOT_FOUND before any job starts",
         "example": {"job_id": "example-chart-render", "expected_state": "copy-from-workbook-info", "chart_id": EXAMPLE_ID,
                     "kind": "render", "width": 480, "height": 300}}

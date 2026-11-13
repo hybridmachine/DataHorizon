@@ -119,6 +119,23 @@ class Cartesian(unittest.TestCase):
             self.assertEqual(caught.exception.code, code)
 
 
+class RenderPoints(unittest.TestCase):
+    def chart(self, *lengths):
+        spec = one([1.0] * lengths[0], cats=[""] * max(lengths))
+        spec["series"] = [{"name": f"s{i}", "values": [float(n % 7) for n in range(length)], "x": None}
+                          for i, length in enumerate(lengths)]
+        return spec
+
+    def test_twenty_thousand_values_render(self):
+        self.assertEqual(cr.LIMIT_RENDER_POINTS, 20_000)
+        self.assertIn("<svg", cr.render(self.chart(10_000, 10_000), 800, 500)["svg"])
+
+    def test_more_values_across_series_are_refused_before_drawing(self):
+        with self.assertRaises(cr.ChartRenderError) as caught:
+            cr.render(self.chart(10_000, 10_000, 1), 800, 500)
+        self.assertEqual((caught.exception.code, caught.exception.status), ("LIMIT_RENDER_POINTS", 400))
+
+
 class PieAndLegend(unittest.TestCase):
     def test_pie_refuses_more_than_the_pie_limit(self):
         ok = one([1.0] * cr.LIMIT_PIE_POINTS, type_="pie", grouping=None)
