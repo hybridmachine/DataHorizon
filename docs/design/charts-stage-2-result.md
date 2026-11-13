@@ -123,17 +123,19 @@ within 3 ms. Evidence: [pie-limit.json](evidence/charts-stage-2/pie-limit.json).
 column and ten value columns, five of them formulas (`=B2*2+1` on the column to
 the left). Filling it took 12 edits and about 2 s. Each job ran three times,
 timed end to end through the SDK (start, poll, release); size is the job result
-as JSON.
+as JSON. The figures are from a rerun after the whole-branch review fixes
+(load average about 1.8 to 3.3); result sizes, points and gaps were identical
+to the first run and times within 0.25 s.
 
 | Chart | Job | Points | Wall time (median, worst) | Result |
 | --- | --- | --- | --- | --- |
-| Line, 8 series, 90,008 source cells, 4 of the series formulas | resolve | 80,000, no gaps | 2.06 s, 2.07 s | 0.67 MiB |
-| Column, 1 series of formulas | resolve | 10,000 | 0.51 s, 0.56 s | 0.19 MiB |
-| Column, 1 series of formulas | render | 10,000 | 0.62 s, 0.66 s | 2.07 MiB |
-| Bar, same | render | 10,000 | 0.62 s, 0.82 s | 1.92 MiB |
-| Line, same | render | 10,000 | 0.55 s, 0.59 s | 1.15 MiB |
-| Area, same | render | 10,000 | 0.64 s, 0.65 s | 1.40 MiB |
-| Scatter, x values and 1 series of formulas | render | 10,000 | 0.63 s, 0.66 s | 1.54 MiB |
+| Line, 8 series, 90,008 source cells, 4 of the series formulas | resolve | 80,000, no gaps | 2.01 s, 2.04 s | 0.67 MiB |
+| Column, 1 series of formulas | resolve | 10,000 | 0.49 s, 0.57 s | 0.19 MiB |
+| Column, 1 series of formulas | render | 10,000 | 0.57 s, 0.64 s | 2.07 MiB |
+| Bar, same | render | 10,000 | 0.57 s, 0.60 s | 1.92 MiB |
+| Line, same | render | 10,000 | 0.57 s, 0.58 s | 1.15 MiB |
+| Area, same | render | 10,000 | 0.60 s, 0.61 s | 1.40 MiB |
+| Scatter, x values and 1 series of formulas | render | 10,000 | 0.55 s, 0.67 s | 1.54 MiB |
 
 Every job finished well inside its 30-second budget and under 4 MiB, so
 `LIMIT_CELLS` stays at 100,000. The eight-series chart resolves but cannot be
@@ -174,7 +176,8 @@ What changed:
 
 Tests that failed first: a job over 3,000 dependent formulas returns 3,000
 points and no gaps; a budget error fails the resolve; slice counts and
-boundaries. Measured afterwards: 80,000 points, no gaps, in 2.1 s.
+boundaries. Measured afterwards: 80,000 points, no gaps, in 2.1 s (2.0 s after
+the whole-branch review fixes).
 
 **B. Render results over the 4 MiB job limit.** A render result carries the
 resolved data, the SVG and one mark of about 84 bytes per drawn value. The

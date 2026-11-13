@@ -20,7 +20,7 @@ Measured on the reference Mac only:
 - A pie of 1,000 slices loads and paints in 41 ms in Qt, so the pie limit is
   1,000.
 - An eight-series line chart over 10,000 rows, four of its eight value columns
-  formulas, resolves 80,000 points in 2.1 s.
+  formulas, resolves 80,000 points in 2.0 s.
 - Column, bar, line, area and scatter charts each render 10,000 formula points
   in under 1 s, with results of 1.2 to 2.1 MiB.
 - One render is limited to 10,000 values so that its result stays under the
