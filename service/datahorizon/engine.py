@@ -665,7 +665,7 @@ class Workbook:
                     sheet, calc = self.sheet(sheet), self.calculator()
                     cells = []
                     response = {"cells":cells, "state":self.state(), "sheet":sheet, "range":[r1,c1,r2,c2]}
-                    if native: response.update(self.native_catalog())
+                    if native: response.update(self.native_catalog(charts=True))
                     response_bytes = len(encoded(response).encode())
                     for row, col, source, kind, style in self.range_cells(sheet,rows,c1,c2,deadline):
                         require(time.monotonic()<=deadline,"TIMEOUT","Read exceeded its time budget")
@@ -800,8 +800,8 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
-    def native_catalog(self, *, omissions=False, db=None):
-        """Names and binding labels (and optionally other native objects) in the current read snapshot, for export reports."""
+    def native_catalog(self, *, omissions=False, charts=False, db=None):
+        """Names and binding labels (and optionally other native objects and charts) in the current read snapshot, for export reports."""
         from .relational import objects
         from .bindings import label as binding_label
         db=self.db if db is None else db
@@ -809,6 +809,9 @@ class Workbook:
         result={'native_bindings':[binding_label(db,item) for kind,item in found if kind=='binding'],
                 'native_names':[item['name'] for kind,item in found if kind=='name']}
         if omissions:result['native_omissions']=[item['name'] for kind,item in found if kind not in ('name','binding')]
+        if charts and db.execute("SELECT format_version FROM dh_meta").fetchone()[0]>=8:
+            rows=db.execute("SELECT s.position,s.id,s.name,o.payload FROM dh_objects o JOIN sheets s ON s.id=o.sheet_id WHERE o.namespace='chart'")
+            result['native_charts']=[f"{name} on {sheet}" for _,_,name,sheet in sorted((position,identity,json.loads(payload)['name'],sheet) for position,identity,sheet,payload in rows)]
         return result
 
     def read_workbook(self):
@@ -825,7 +828,7 @@ class Workbook:
                     validate_sheet_names([name for _,name in catalog])
                     rows=self.db.execute("SELECT sheet_id,row,col,source,kind,style FROM cells ORDER BY sheet_id,row,col LIMIT ?",(MAX_CELLS+1,))
                     result={"state":self.state(),"sheets":[{"name":name,"cells":[]} for _,name in catalog]}
-                    result.update(self.native_catalog(omissions=True))
+                    result.update(self.native_catalog(omissions=True,charts=True))
                     targets={key:result["sheets"][index]["cells"] for index,(key,_) in enumerate(catalog)}
                     calc=self.calculator(seconds=2); size=0
                     for count,(sheet,row,col,source,kind,style) in enumerate(rows,1):
@@ -908,7 +911,7 @@ class Workbook:
                 catalog=list(db.execute("SELECT id,name FROM sheets ORDER BY position,id LIMIT ?",(LARGE_SHEETS+1,)))
                 from .interchange import validate_sheet_names
                 validate_sheet_names([name for _,name in catalog],LARGE_SHEETS)
-                yield WorkbookStream(db,state,catalog,self.native_catalog(omissions=True,db=db))
+                yield WorkbookStream(db,state,catalog,self.native_catalog(omissions=True,charts=True,db=db))
             finally:
                 db.close()
         finally:

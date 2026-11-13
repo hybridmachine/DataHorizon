@@ -159,6 +159,25 @@ class ChartClientTests(unittest.TestCase):
         self.assertEqual(deleted.returncode, 0, deleted.stderr)
         self.assertEqual(json.loads(cli(path, "charts", "list").stdout)["charts"], [])
 
+    def test_export_reports_charts_as_native_only(self):
+        book = self.open_book("export.dhwb")
+        spec = book.suggest_chart("Sheet1", r1=1, c1=1, r2=7, c2=2)["spec"]
+        book.create_chart(spec, name="Sales")
+        book.apply("sheet_add", name="Summary")
+        book.create_chart(spec, sheet="Summary")
+        charts_line = "Charts are native-only and omitted from this export: Sales on Sheet1, Chart 1 on Summary"
+        for form in ("xlsx", "ods"):
+            with self.subTest(form=form):
+                whole = book.export_spreadsheet(form, scope="workbook")["report"]
+                self.assertEqual([line for line in whole if line.startswith("Charts ")], [charts_line])
+                selection = book.export_spreadsheet(form, sheet="Sheet1", r1=1, c1=1, r2=3, c2=3)["report"]
+                self.assertIn(charts_line, selection)
+        csv = self.client.request(book.base + "/export/csv", dict(sheet="Sheet1", r1=1, c1=1, r2=3, c2=3))["report"]
+        self.assertFalse([line for line in csv if "Chart" in line])
+        empty = self.open_book("no-charts.dhwb")
+        for form in ("xlsx", "ods"):
+            self.assertFalse([line for line in empty.export_spreadsheet(form, scope="workbook")["report"] if line.startswith("Charts ")])
+
     def test_cli_error_is_structured_json_on_stderr_with_exit_1(self):
         path = Path(self.temp.name) / "error.dhwb"
         with LocalService() as client, client.open(path, create=True):
