@@ -86,6 +86,20 @@ class ChartClientTests(unittest.TestCase):
             book.resolve_chart(chart_id)
         self.assertEqual(caught.exception.body["code"], "SOURCE_BROKEN")
 
+    def test_failed_job_raises_with_its_http_status(self):
+        book = self.open_book("render-limit.dhwb")
+        wide = {"spec_version": 1, "type": "line", "legend": {"position": "none"},
+                "series": [{"name": {"text": name}, "values": {"source": {"kind": "range", "sheet": "Sheet1", "ref": "B2:B5002"}}}
+                           for name in ("A", "B")]}
+        chart_id = book.create_chart(wide)["chart_id"]  # 2 x 5,001 values: over the 10,000-value render limit
+        with self.assertRaises(APIError) as caught:
+            book.render_chart(chart_id, 320, 200)
+        self.assertEqual((caught.exception.status, caught.exception.body["code"]), (400, "LIMIT_RENDER_POINTS"))
+        book.apply("rows_delete", "Sheet1", start=1, count=6000)
+        with self.assertRaises(APIError) as caught:
+            book.resolve_chart(chart_id)
+        self.assertEqual((caught.exception.status, caught.exception.body["code"]), (409, "SOURCE_BROKEN"))
+
     def test_timeout_cancels_the_job(self):
         book = self.open_book("timeout.dhwb")
         chart_id = book.create_chart(book.suggest_chart("Sheet1", r1=1, c1=1, r2=7, c2=2)["spec"])["chart_id"]

@@ -53,7 +53,7 @@ class ChartJobs:
             self.metadata = {key: value for key, value in self.metadata.items() if key in self.jobs.entries}
             clock = utc_clock()
 
-            def run(payload, checkpoint):
+            def compute(payload, checkpoint):
                 with closing(Workbook(self.book.path, readonly=True, cancel_event=checkpoint.cancel_event)) as snapshot:
                     base = snapshot.calculator
                     shared = []
@@ -89,6 +89,14 @@ class ChartJobs:
                     width, height = size
                     result.update(chart_render.render(result["resolved"], width, height), width=width, height=height)
                 return result
+
+            def run(payload, checkpoint):
+                try:
+                    return compute(payload, checkpoint)
+                except EngineError as error:
+                    # A failed job's error is its body; keep the status so a client can report it.
+                    error.body["http_status"] = error.status
+                    raise
 
             response = self.jobs.start(request, run, "chart")
             job_id = request["job_id"]

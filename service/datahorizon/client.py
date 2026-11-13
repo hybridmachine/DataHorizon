@@ -466,7 +466,7 @@ class WorkbookClient:
             if job['status']=='completed':return job['result']
             if job['status']=='stale':raise APIError(409,{'code':'STALE_STATE','message':'The workbook changed while the chart job ran; resolve or render again','outcome':'rejected'})
             error=job.get('error') or {'code':'CHART_JOB_'+str(job['status']).upper(),'message':'Chart job '+str(job['status']),'outcome':'rejected'}
-            raise APIError(error.get('status',409),error)
+            raise APIError(error.get('http_status',409),error)
         finally:
             try:self.chart_job_status(job_id,'release')
             except (APIError,OSError):pass
