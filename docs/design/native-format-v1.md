@@ -11,8 +11,11 @@ v8, and a `chart` row in a file below v8 is rejected as `INVALID_FORMAT`.
 
 A chart is one `dh_objects` row: `namespace` is `chart`, `id` is the chart's
 identity (a UUID written by the service), `sheet_id` is the sheet the chart is
-placed on, and `payload` is JSON. A workbook holds at most 64 charts, each
-payload is at most 256 KiB, and charts share the catalog's existing budget of
+placed on, and `payload` is JSON. A chart identity names one chart in the
+whole workbook: managed operations address a chart by identity alone, so the
+same `id` stored on two sheets is rejected as `INVALID_FORMAT` on open and on
+refresh, although the table's primary key would permit it. A workbook holds at
+most 64 charts, each payload is at most 256 KiB, and charts share the catalog's existing budget of
 256 rows and 16 MiB with presentation, list and record definitions.
 
 The payload has exactly these keys:

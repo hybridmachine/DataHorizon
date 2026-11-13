@@ -159,7 +159,8 @@ The service resolves a chart: it reads each source through the shared engine and
 returns series as typed values. Text in a value series, errors, empty cells and
 hidden rows need defined behaviour. **Call**: errors and text plot as gaps, empty
 cells plot as gaps, hidden rows are plotted; each is counted in the resolved
-result so a client can say so.
+result so a client can say so. A scatter point needs both coordinates:
+a usable value whose x cell is text, an error or empty is a counted gap too.
 
 **Bounds.** A resolve reads at most a fixed number of points per series and
 series per chart. **Call**: 10,000 points per series and 64 series as the first
@@ -420,7 +421,9 @@ The SDK's `WorkbookClient` has `charts`, `create_chart`, `update_chart`,
 release it and raise on a failed or stale job. The managed CLI has
 `charts list|create|update|delete|suggest|resolve|render`, reading create and
 update arguments as JSON from standard input; `render --svg-out FILE` writes
-the SVG to a file. Capabilities advertise `charts`, `max_charts`,
+the SVG to a file through a temporary sibling. It refuses a destination that
+is the workbook or a symbolic or hard link to it, and replaces another
+existing file only with `--overwrite`. Capabilities advertise `charts`, `max_charts`,
 `chart_spec_version`, `chart_jobs`, `chart_job_seconds` and
 `max_chart_render_points`.
 

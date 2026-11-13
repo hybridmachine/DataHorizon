@@ -138,5 +138,16 @@ class FormatV8Tests(unittest.TestCase):
         self.assertEqual(raised.exception.body["code"], "INVALID_FORMAT")
 
 
+    def test_the_same_chart_id_on_two_sheets_is_invalid_format(self):
+        book = self.new_book()
+        mutate(book, action="sheet_add", name="Two")
+        mutate(book, action="chart_create", sheet="Sheet1", spec=chart_spec())
+        book.close()
+        self.raw("INSERT INTO dh_objects SELECT namespace,id,(SELECT id FROM sheets WHERE name='Two'),payload "
+                 "FROM dh_objects WHERE namespace='chart'")
+        with self.assertRaises(EngineError) as raised:
+            Workbook(self.path)
+        self.assertEqual(raised.exception.body["code"], "INVALID_FORMAT")
+
 if __name__ == "__main__":
     unittest.main()

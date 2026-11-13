@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -130,6 +131,56 @@ class ChartClientTests(unittest.TestCase):
         with patch.object(book, "chart_job_status", failing), self.assertRaises(TimeoutError):
             book.resolve_chart(chart_id, timeout=.2)
         self.assertIn("release", seen)
+
+    def test_timed_out_job_is_released_only_after_it_has_stopped(self):
+        book = self.open_book("slowcancel.dhwb")
+        seen, after_cancel = [], []
+
+        def slow(job_id, action=None):
+            seen.append(action)
+            if action == "release":
+                if after_cancel.count(None) < 3:
+                    raise APIError(409, {"code": "JOB_RUNNING", "message": "still running", "outcome": "rejected"})
+                return {"released": True}
+            if "cancel" in seen:
+                after_cancel.append(action)
+            return {"status": "cancelled" if after_cancel.count(None) >= 3 else "running"}
+
+        with patch.object(book, "chart_job_status", slow), self.assertRaises(TimeoutError):
+            book._chart_result({"job_id": "j", "status": "running"}, .1)
+        self.assertEqual(seen.count("release"), 1)
+        self.assertGreaterEqual(after_cancel.count(None), 3)
+
+    def test_svg_out_never_replaces_the_workbook_or_an_existing_file_unasked(self):
+        path = Path(self.temp.name) / "guard.dhwb"
+        with LocalService() as client, client.open(path, create=True) as book:
+            fill(book)
+            chart_id = book.create_chart(book.suggest_chart("Sheet1", r1=1, c1=1, r2=7, c2=2)["spec"])["chart_id"]
+        before = path.read_bytes()
+        symlink, hardlink = Path(self.temp.name) / "alias-symlink", Path(self.temp.name) / "alias-hardlink"
+        symlink.symlink_to(path)
+        os.link(path, hardlink)
+
+        def render(target, *extra):
+            return cli(path, "charts", "render", chart_id, "--width", "320", "--height", "200", "--svg-out", str(target), *extra)
+
+        for target in (path, symlink, hardlink):
+            for extra in ((), ("--overwrite",)):
+                refused = render(target, *extra)
+                self.assertNotEqual(refused.returncode, 0, (target, extra))
+                self.assertEqual(refused.stdout, "")
+                self.assertEqual(path.read_bytes(), before, (target, extra))
+        other = Path(self.temp.name) / "existing.svg"
+        other.write_text("keep", encoding="utf-8")
+        refused = render(other)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(other.read_text(encoding="utf-8"), "keep")
+        replaced = render(other, "--overwrite")
+        self.assertEqual(replaced.returncode, 0, replaced.stderr)
+        self.assertTrue(parses(other.read_text(encoding="utf-8")))
+        self.assertEqual(path.read_bytes(), before)
+        with LocalService() as client, client.open(path) as book:
+            self.assertEqual(len(book.charts()), 1)
 
     def test_sdk_rest_and_cli_agree(self):
         path = Path(self.temp.name) / "agree.dhwb"

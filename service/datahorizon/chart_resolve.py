@@ -90,8 +90,9 @@ def _classify(cell):
     return float(value), None
 
 
-def _numbers(cells, source, gaps=None):
-    values = []
+def _numbers(cells, source):
+    """Return ``(values, causes)``: a number or ``None`` per cell, and why each ``None`` is a gap."""
+    values, causes = [], []
     for position in _positions(source):
         cell = cells.get(position)
         # #LIMIT! means the engine could not compute the value: the resolve cannot finish, it is not a gap.
@@ -100,9 +101,8 @@ def _numbers(cells, source, gaps=None):
             raise EngineError("CALCULATION_FAILED", f"{column_name(col)}{row} could not be calculated: {cell.get('error')}", 409)
         number, cause = _classify(cell)
         values.append(number)
-        if gaps is not None and cause is not None:
-            gaps[cause] += 1
-    return values
+        causes.append(cause)
+    return values, causes
 
 
 def resolve(snapshot, payload, state, checkpoint=None):
@@ -144,13 +144,20 @@ def resolve(snapshot, payload, state, checkpoint=None):
         else:
             name = item["name"]["text"]
         source = item["values"]["source"]
-        before = sum(gaps.values())
-        values = _numbers(fetch(source), source, gaps)
-        points += len(values) - (sum(gaps.values()) - before)
+        values, causes = _numbers(fetch(source), source)
         x = None
         if item["x"] is not None:
+            # A scatter point draws only with both coordinates: a usable value whose x is missing
+            # or unusable is a gap too, classified by what is wrong with the x cell.
             source = item["x"]["source"]
-            x = _numbers(fetch(source), source)
+            x, x_causes = _numbers(fetch(source), source)
+            x_causes += ["empty"] * (len(causes) - len(x_causes))
+            causes = [cause or x_cause for cause, x_cause in zip(causes, x_causes)]
+        for cause in causes:
+            if cause is None:
+                points += 1
+            else:
+                gaps[cause] += 1
         series.append({"name": name, "values": values, "x": x})
     if spec["type"] == "pie" and any(v is not None and v < 0 for item in series for v in item["values"]):
         raise EngineError("NEGATIVE_IN_PIE", "A pie chart cannot show negative values")
@@ -209,4 +216,6 @@ def suggest(book, args):
     spec = {"spec_version": 1, "type": chart_type, "title": {"text": None}, "series": series}
     if chart_type != "scatter":
         spec["categories"] = {"source": source(first, c1, r2, c1)} if has_categories else None
+    with book.lock:
+        charts.normalise_spec(book, spec)  # a suggestion must be creatable as it stands; refuse here, by name
     return {"spec": spec}

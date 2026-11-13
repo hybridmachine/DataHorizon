@@ -270,6 +270,21 @@ class Resolve(unittest.TestCase):
         self.assertEqual(item["values"][0], 2.0)
         self.assertIsNone(out["resolved"]["categories"])
 
+    def test_scatter_counts_only_points_with_both_coordinates(self):
+        self.edit([("E2", "1"), ("E3", "2"), ("E4", "3"), ("E5", "4"), ("E6", "x"),
+                   ("D2", "1"), ("D3", "abc"), ("D4", "=1/0"), ("D6", "6")])   # D5 is blank; E6 is text
+        spec = {"spec_version": 1, "type": "scatter", "series": [series("E2:E6", x="D2:D6")]}
+        out = self.resolve(self.payload(spec))
+        self.assertEqual(out["counts"], {"points": 1, "gaps": {"empty": 1, "text": 2, "error": 1}})
+        self.assertEqual(len(chart_render.render(out["resolved"], 480, 300)["marks"]), 1)
+
+    def test_scatter_with_a_shorter_x_source_counts_the_rest_as_empty(self):
+        self.edit([("E2", "1"), ("E3", "2"), ("E4", "3"), ("D2", "1"), ("D3", "2")])
+        spec = {"spec_version": 1, "type": "scatter", "series": [series("E2:E4", x="D2:D3")]}
+        out = self.resolve(self.payload(spec))
+        self.assertEqual(out["counts"], {"points": 2, "gaps": {"empty": 1, "text": 0, "error": 0}})
+        self.assertEqual(len(chart_render.render(out["resolved"], 480, 300)["marks"]), 2)
+
     def test_pie_negative_is_refused(self):
         self.edit([("B4", "-3")])
         with self.assertRaises(EngineError) as caught:
@@ -346,6 +361,12 @@ class Suggest(unittest.TestCase):
         self.assertEqual(len(pie["series"]), 1)
         self.assertEqual(pie["series"][0]["values"], {"source": source("B2:B13")})
         charts.normalise_spec(self.book, pie)
+
+    def test_suggestion_over_a_limit_is_refused_by_suggest_itself(self):
+        self.write([(1, 6, "5")])
+        with self.assertRaises(EngineError) as caught:
+            self.suggest(type="pie", r1=1, c1=6, r2=1001, c2=6)
+        self.assertEqual(code(caught), "LIMIT_PIE_POINTS")
 
     def test_suggest_refusals(self):
         with self.assertRaises(EngineError) as caught:

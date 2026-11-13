@@ -148,14 +148,19 @@ def same_file(left, right):
         return False
 
 
-def check_report_path(path, overwrite, **protected):
-    """Refuse a report path that exists (without overwrite) or that names one of the command's own files."""
+def check_output_path(option, path, overwrite, **protected):
+    """Refuse an output path that exists (without overwrite) or that names one of the command's own files,
+    directly or through a symbolic or hard link."""
     if not path: return
     for label, other in protected.items():
         if other and same_file(path, other):
-            raise ValueError(f"--report-json must not name the {label.replace('_', ' ')} ({other})")
+            raise ValueError(f"{option} must not name the {label.replace('_', ' ')} ({other})")
     if os.path.lexists(Path(path).expanduser()) and not overwrite:
-        raise FileExistsError(f"Report destination {path} exists; pass --overwrite to replace it")
+        raise FileExistsError(f"{option} destination {path} exists; pass --overwrite to replace it")
+
+
+def check_report_path(path, overwrite, **protected):
+    check_output_path("--report-json", path, overwrite, **protected)
 
 
 def show_progress(label):
@@ -228,7 +233,7 @@ def main():
     charts=commands.add_parser('charts',help='Charts: list, create/update read JSON from stdin, delete, suggest, resolve, render')
     charts.add_argument('charts_action',choices=['list','create','update','delete','suggest','resolve','render']);charts.add_argument('chart_id',nargs='?');charts.add_argument('--sheet')
     charts.add_argument('--r1',type=int);charts.add_argument('--c1',type=int);charts.add_argument('--r2',type=int);charts.add_argument('--c2',type=int);charts.add_argument('--type',default='column')
-    charts.add_argument('--width',type=int);charts.add_argument('--height',type=int);charts.add_argument('--svg-out')
+    charts.add_argument('--width',type=int);charts.add_argument('--height',type=int);charts.add_argument('--svg-out');charts.add_argument('--overwrite',action='store_true',help='Replace an existing --svg-out file')
     bindings=commands.add_parser('bindings',help='Inspect event bindings; save reads JSON event/scope/module/function/fingerprint/required?/binding_id? from stdin; delete takes the binding id and --fingerprint')
     bindings.add_argument('bindings_action',choices=['read','save','delete']);bindings.add_argument('binding_id',nargs='?');bindings.add_argument('--fingerprint')
     macro=commands.add_parser('macro',help='Invoke one approved atomic macro; JSON scalar arguments on stdin')
@@ -350,9 +355,12 @@ def main():
                             elif action=='resolve':result=book.resolve_chart(args.chart_id)
                             else:
                                 if args.width is None or args.height is None:raise ValueError('charts render requires --width and --height')
+                                # Checked before rendering, then written through a temporary sibling: the SVG can
+                                # never land on the workbook or replace another file unasked.
+                                check_output_path('--svg-out',args.svg_out,args.overwrite,native_workbook=args.file)
                                 result=book.render_chart(args.chart_id,args.width,args.height)
                                 if args.svg_out:
-                                    Path(args.svg_out).write_text(result.pop('svg'),encoding='utf-8');result['svg_path']=args.svg_out
+                                    write_file(args.svg_out,result.pop('svg').encode('utf-8'),overwrite=args.overwrite);result['svg_path']=args.svg_out
                     elif args.command=='bindings':
                         if args.bindings_action=='read':result=book.code()['bindings']
                         elif args.bindings_action=='save':result=book.save_binding(**json.load(sys.stdin))

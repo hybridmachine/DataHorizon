@@ -271,6 +271,37 @@ whole-workbook, selection and streamed exports. CSV export reports nothing new.
   content, and the import is refused with `DESTINATION_NOT_EMPTY`.
 - Chart tests and the benchmark read JSON with an explicit UTF-8 encoding.
 
+## Defects found by the pull request review
+
+The owner's review of the pull request made five findings. Each was
+reproduced by a test that failed first.
+
+- **`charts render --svg-out` could overwrite the workbook.** Naming the open
+  workbook, or a symbolic or hard link to it, replaced the SQLite file with
+  SVG and reported success. The destination is now checked before the render
+  starts: the workbook and its aliases are refused, another existing file is
+  replaced only with `--overwrite`, and the SVG is written through a temporary
+  sibling file. The workbook's SQLite sidecar files are not checked by name.
+- **The same chart identity could sit on two sheets.** The catalog's primary
+  key permits it after a direct SQLite edit, while update, delete, resolve and
+  render look a chart up by identity alone, so a delete could remove the copy
+  and leave the original. Opening and refreshing now reject a repeated chart
+  identity as `INVALID_FORMAT`.
+- **A timed-out chart job kept its slot.** The SDK cancelled and released at
+  once, but a job that is still stopping cannot be released, so four timeouts
+  could fill the four job slots for five minutes. The SDK now waits, for up to
+  about two seconds, until the cancelled job has stopped before releasing it.
+- **A suggestion could be refused by create.** Suggesting a pie over 1,001
+  rows succeeded and the returned specification then failed with
+  `LIMIT_PIE_POINTS`. Suggest now runs the same validation as create and
+  reports the limit itself.
+- **Scatter counts ignored the x coordinate.** A point was counted when its
+  value was a number even if its x cell was text, an error or empty, so resolve
+  reported more points than render drew. A scatter point is now counted only
+  when both coordinates are usable; otherwise it is a gap, classified by the
+  value cell first and then by the x cell. An x source shorter than the value
+  source leaves the remaining values as `empty` gaps.
+
 ## Decisions the controller made
 
 Made while the plan was executed. Each is open to reversal.
@@ -353,8 +384,6 @@ Found in review and judged minor. None changes a documented result.
 - The change set records the in-memory payload, while undo compares a JSON
   round trip. A value that is not JSON-identical would cause a false
   `HISTORY_CONFLICT`.
-- Opening does not require chart ids to be unique across sheets, and lookups
-  are by id alone. A direct SQLite edit could create duplicates.
 - A chart counts as one cell toward an operation's 10,000-cell budget.
 - `spec_patch` does not re-apply defaults. Changing a line chart to a column
   chart by patch needs `grouping` in the patch.

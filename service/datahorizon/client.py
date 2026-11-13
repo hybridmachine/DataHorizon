@@ -458,7 +458,13 @@ class WorkbookClient:
             deadline=time.monotonic()+timeout
             while job['status']=='running':
                 if time.monotonic()>=deadline:
-                    try:self.chart_job_status(job_id,'cancel')
+                    # Cancel can return while the worker is still running, and a running job cannot be
+                    # released: wait for it to stop so the release below frees its slot.
+                    try:
+                        job=self.chart_job_status(job_id,'cancel')
+                        for _ in range(100):
+                            if job.get('status')!='running':break
+                            time.sleep(.02);job=self.chart_job_status(job_id)
                     except (APIError,OSError):pass
                     raise TimeoutError('Chart job did not finish within %s seconds'%timeout)
                 time.sleep(.05)

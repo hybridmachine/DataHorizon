@@ -519,7 +519,7 @@ class Workbook:
                 require(signature == (EXPECTED_SCHEMA3 if meta[0][0]==3 else EXPECTED_SCHEMA),"FORMAT_VERSION","Native schema/version mismatch",409)
             if meta[0][0]>=3:
                 from .metadata import validate
-                record_count=record_cells=chart_count=0
+                record_count=record_cells=chart_count=0;chart_ids=set()
                 for count,(namespace,identifier,payload) in enumerate(db.execute("SELECT namespace,id,substr(payload,1,1048577) FROM dh_objects"),1):
                     require(count<=256 and time.monotonic()<=deadline,"LIMIT","Native metadata exceeds validation bounds")
                     value=json.loads(payload)
@@ -528,6 +528,8 @@ class Workbook:
                         require(meta[0][0]>=8,"INVALID_FORMAT","Charts require native format 8",409)
                         from .charts import validate_stored
                         validate_stored(value);require(isinstance(identifier,str) and identifier!="","INVALID_FORMAT","Invalid chart identity",409);chart_count+=1
+                        # Managed operations address a chart by ID alone, so an ID must name one chart in the workbook.
+                        require(identifier not in chart_ids,"INVALID_FORMAT","Chart identity is stored on more than one sheet",409);chart_ids.add(identifier)
                     else:
                         require(namespace=="records","INVALID_FORMAT","Unknown native metadata")
                         from .records import validate as validate_records

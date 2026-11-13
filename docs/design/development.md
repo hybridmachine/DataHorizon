@@ -392,7 +392,7 @@ PYTHONPATH=service python3 -m datahorizon.cli /tmp/charts.dhwb charts suggest --
 echo '{"spec": {"spec_version": 1, "type": "line", "series": [{"name": {"text": "Sales"}, "values": {"source": {"kind": "range", "sheet": "Sheet1", "ref": "B2:B3"}}}]}}' \
   | PYTHONPATH=service python3 -m datahorizon.cli /tmp/charts.dhwb charts create
 PYTHONPATH=service python3 -m datahorizon.cli /tmp/charts.dhwb charts list
-PYTHONPATH=service python3 -m datahorizon.cli /tmp/charts.dhwb charts render CHART_ID --width 800 --height 500 --svg-out /tmp/sales.svg
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/charts.dhwb charts render CHART_ID --width 800 --height 500 --svg-out /tmp/sales.svg --overwrite
 echo '{"order": "front"}' | PYTHONPATH=service python3 -m datahorizon.cli /tmp/charts.dhwb charts update CHART_ID
 PYTHONPATH=service python3 -m datahorizon.cli /tmp/charts.dhwb charts delete CHART_ID
 ```
