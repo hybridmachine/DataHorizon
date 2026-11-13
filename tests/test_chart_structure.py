@@ -5,8 +5,8 @@ import tempfile
 import unittest
 import uuid
 
-from datahorizon import charts
-from datahorizon.engine import Workbook
+from datahorizon import chart_resolve, charts
+from datahorizon.engine import EngineError, Workbook
 from test_charts import spec
 
 
@@ -133,6 +133,101 @@ class ChartStructure(unittest.TestCase):
         after = charts.find(self.book, self.chart)[1]
         self.assertEqual(after["spec"], payload["spec"])
         self.assertEqual(after["anchor"], {"row": 5, "col": 4})
+
+
+def ref_source(ref):
+    return {"kind": "range", "sheet": "Sheet1", "ref": ref}
+
+
+class ChartOverLimit(unittest.TestCase):
+    """A structural edit can push a stored chart past a size limit; it stays readable and maintained."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = pathlib.Path(self.tmp.name) / "limits.dhwb"
+        self.book = Workbook(self.path, create=True)
+        self.addCleanup(lambda: self.book.close())
+
+    def apply(self, action, **args):
+        return self.book.mutate(dict(action=action, operation_id=str(uuid.uuid4()), expected_state=self.book.state(), **args))
+
+    def refused(self, action, **args):
+        with self.assertRaises(EngineError) as caught:
+            self.apply(action, **args)
+        return caught.exception
+
+    def read_chart(self, chart_id):
+        return charts.read(self.book, dict(expected_state=self.book.state(), chart_id=chart_id))["charts"][0]
+
+    def resolve(self, chart_id):
+        return chart_resolve.resolve(self.book, charts.find(self.book, chart_id)[1], self.book.state())
+
+    def resolve_refused(self, chart_id):
+        with self.assertRaises(EngineError) as caught:
+            self.resolve(chart_id)
+        return caught.exception
+
+    def pie(self):
+        cells = []
+        for row in range(1, 1001):
+            cells += [{"row": row, "col": 1, "source": f"P{row}"}, {"row": row, "col": 2, "source": str(row)}]
+        self.apply("edit", sheet="Sheet1", cells=cells)
+        pie = {"spec_version": 1, "type": "pie", "categories": {"source": ref_source("A1:A1000")},
+               "series": [{"name": {"text": "Share"}, "values": {"source": ref_source("B1:B1000")}}]}
+        return self.apply("chart_create", sheet="Sheet1", spec=pie)["chart_id"]
+
+    def test_an_insert_that_pushes_a_pie_past_its_point_limit(self):
+        chart_id = self.pie()
+        before = self.read_chart(chart_id)
+        receipt = self.apply("rows_insert", sheet="Sheet1", start=10, count=2)
+        chart = self.read_chart(chart_id)
+        self.assertIsNone(chart["issue"])
+        self.assertEqual((before["over_limit"], chart["over_limit"]), (None, "LIMIT_PIE_POINTS"))
+        self.assertEqual(receipt["charts_over_limit"], [chart_id])
+        self.assertNotIn("broken_charts", receipt)
+        self.assertEqual(chart["spec"]["categories"]["source"]["ref"], "A1:A1002")
+        error = self.resolve_refused(chart_id)
+        self.assertEqual((error.body["code"], error.status), ("LIMIT_PIE_POINTS", 400))
+        self.assertIn("now holds 1002 cells", error.body["message"])
+        # Still a managed chart: placement edits are accepted, and a patch re-validates the limits.
+        self.apply("chart_update", chart_id=chart_id, name="Shares")
+        self.assertEqual(code_of(self.refused("chart_update", chart_id=chart_id, spec_patch={"title": {"text": "T"}})),
+                         "LIMIT_PIE_POINTS")
+        # An edit that keeps it over the limit does not list it again.
+        again = self.apply("rows_insert", sheet="Sheet1", start=1, count=1)
+        self.assertNotIn("charts_over_limit", again)
+        self.assertEqual(self.read_chart(chart_id)["spec"]["series"][0]["values"]["source"]["ref"], "B2:B1003")
+        # A later delete still moves its sources; once it fits again it resolves.
+        self.apply("rows_delete", sheet="Sheet1", start=1, count=5)
+        chart = self.read_chart(chart_id)
+        self.assertEqual(chart["spec"]["categories"]["source"]["ref"], "A1:A998")
+        self.assertEqual(chart["spec"]["series"][0]["values"]["source"]["ref"], "B1:B998")
+        self.assertIsNone(chart["over_limit"])
+        self.assertEqual(len(self.resolve(chart_id)["resolved"]["series"][0]["values"]), 998)
+        self.apply("chart_update", chart_id=chart_id, spec_patch={"title": {"text": "T"}})
+        self.assertEqual(self.read_chart(chart_id)["spec"]["title"], {"text": "T"})
+
+    def test_an_insert_that_pushes_a_series_past_the_point_limit_and_reopen(self):
+        line = {"spec_version": 1, "type": "line", "series": [{"name": {"text": "S"}, "values": {"source": ref_source("B1:B10000")}}]}
+        chart_id = self.apply("chart_create", sheet="Sheet1", spec=line)["chart_id"]
+        receipt = self.apply("rows_insert", sheet="Sheet1", start=5000, count=1)
+        self.assertIsNone(self.read_chart(chart_id)["issue"])
+        self.assertEqual(receipt["charts_over_limit"], [chart_id])
+        self.book.close()
+        self.book = Workbook(self.path)
+        chart = self.read_chart(chart_id)
+        self.assertEqual((chart["issue"], chart["over_limit"]), (None, "LIMIT_POINTS"))
+        self.assertEqual(chart["spec"]["series"][0]["values"]["source"]["ref"], "B1:B10001")
+        error = self.resolve_refused(chart_id)
+        self.assertEqual((error.body["code"], error.status), ("LIMIT_POINTS", 400))
+        self.assertIn("now holds 10001 cells", error.body["message"])
+        self.apply("chart_update", chart_id=chart_id, spec={**line, "title": {"text": "Fits"}})
+        self.assertIsNone(self.read_chart(chart_id)["over_limit"])
+
+
+def code_of(error):
+    return error.body["code"]
 
 
 if __name__ == "__main__":

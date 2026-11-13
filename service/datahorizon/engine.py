@@ -1794,10 +1794,11 @@ class Workbook:
             from .bindings import scoped_to_names
             broken_bindings = sorted(adjust_bindings(self,target,axis,start,count,delete)+scoped_to_names(self,broken_names))
             from .charts import adjust_structure as adjust_charts
-            broken_charts = adjust_charts(self,target,axis,start,count,delete)
+            broken_charts, over_limit_charts = adjust_charts(self,target,axis,start,count,delete)
         result = {"reference_warnings":warnings,"reference_issues":locations,**unmaintained_report(marked)}
         if broken_names:result["broken_names"] = broken_names
         if broken_charts:result["broken_charts"] = broken_charts
+        if over_limit_charts:result["charts_over_limit"] = over_limit_charts
         if broken_bindings:result["broken_bindings"] = broken_bindings
         return result
 

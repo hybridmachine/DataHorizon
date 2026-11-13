@@ -112,6 +112,9 @@ def resolve(snapshot, payload, state, checkpoint=None):
         status = 409 if issue == "UNSUPPORTED_SPEC_VERSION" else 400
         raise EngineError(issue, f"The chart specification cannot be read ({issue})", status)
     spec = payload["spec"]
+    limit = charts.limit_error(spec)
+    if limit is not None:
+        raise limit
     _check_sources(snapshot, charts._sources(spec))
 
     cells_read = 0

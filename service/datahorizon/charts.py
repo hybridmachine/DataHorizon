@@ -57,8 +57,8 @@ def _object(value, what, keys, required=None):
     return value
 
 
-def _check_extent(row1, col1, row2, col2, role, chart_type):
-    """Check a rectangle's shape and size; return its cell count."""
+def _check_extent(row1, col1, row2, col2, role, chart_type, limits=True):
+    """Check a rectangle's shape and, with ``limits``, its size; return its cell count."""
     if not (1 <= row1 <= row2 <= MAX_ROWS and 1 <= col1 <= col2 <= MAX_COLS):
         raise _invalid(f"{role} is outside the grid")
     count = (row2 - row1 + 1) * (col2 - col1 + 1)
@@ -68,6 +68,8 @@ def _check_extent(row1, col1, row2, col2, role, chart_type):
         return count
     if row1 != row2 and col1 != col2:
         raise _invalid(f"a {role} source must be one row or one column")
+    if not limits:
+        return count
     pie = chart_type == "pie" and role in ("values", "categories")
     limit = LIMIT_PIE_POINTS if pie else LIMIT_POINTS
     if count > limit:
@@ -113,7 +115,7 @@ def _stored_source(book, value, role, chart_type):
         return dict(value), 0
     if not all(_is_int(item) for item in coordinates):
         raise _invalid("a source rectangle is all integers or all null")
-    return dict(value), _check_extent(*coordinates, role, chart_type)
+    return dict(value), _check_extent(*coordinates, role, chart_type, limits=False)
 
 
 def _text_or_null(value, what, limit=None):
@@ -218,7 +220,7 @@ def _check(book, spec, convert, stored):
         x = item.get("x")
         out_x = None if x is None else {"source": source(x["source"], "x")}
         out_series.append({"name": copy.deepcopy(out_name), "values": out_values, "x": out_x})
-    if total > LIMIT_CELLS:
+    if not stored and total > LIMIT_CELLS:
         raise _invalid(f"sources together hold more than {LIMIT_CELLS} cells", "LIMIT_CELLS")
     return {"spec_version": version, "type": chart_type, "grouping": grouping,
             "title": {"text": title["text"]}, "categories": out_categories, "series": out_series,
@@ -250,7 +252,9 @@ def validate_stored(payload):
 
     Raises ``INVALID_FORMAT`` for a bad envelope.  Returns ``None`` for a
     readable chart, otherwise the issue code naming why its specification
-    cannot be read: ``UNSUPPORTED_SPEC_VERSION`` or ``INVALID_SPEC``.
+    cannot be read: ``UNSUPPORTED_SPEC_VERSION`` or ``INVALID_SPEC``.  Size
+    limits are not readability: an edit can push a stored chart past one
+    (see ``limit_error``).
     """
     _stored_object(payload, "chart", STORED_KEYS)
     try:
@@ -280,6 +284,45 @@ def validate_stored(payload):
     return None
 
 
+def _sized_sources(spec):
+    """``(role, source)`` for each source of a readable stored specification, in validation order."""
+    if spec["categories"] is not None:
+        yield "categories", spec["categories"]["source"]
+    for item in spec["series"]:
+        for role in ("name", "values", "x"):
+            part = item[role]
+            if part is not None and "source" in part:
+                yield role, part["source"]
+
+
+def limit_error(spec):
+    """The size-limit refusal for a readable stored specification, or ``None`` when it is within its limits."""
+    total = 0
+    for role, source in _sized_sources(spec):
+        if source["row1"] is None:
+            continue
+        count = (source["row2"] - source["row1"] + 1) * (source["col2"] - source["col1"] + 1)
+        total += count
+        if role == "name":
+            continue
+        pie = spec["type"] == "pie" and role in ("values", "categories")
+        limit = LIMIT_PIE_POINTS if pie else LIMIT_POINTS
+        if count > limit:
+            return EngineError("LIMIT_PIE_POINTS" if pie else "LIMIT_POINTS",
+                               f"The chart's {role} source now holds {count} cells; the limit is {limit}")
+    if total > LIMIT_CELLS:
+        return EngineError("LIMIT_CELLS", f"The chart's sources now hold {total} cells; the limit is {LIMIT_CELLS}")
+    return None
+
+
+def over_limit(payload):
+    """The limit code a readable stored chart now exceeds, or ``None``."""
+    if validate_stored(payload) is not None:
+        return None
+    error = limit_error(payload["spec"])
+    return None if error is None else error.body["code"]
+
+
 def _describe_source(db, source):
     source["broken"] = source["sheet_id"] is None or source["row1"] is None or db.execute(
         "SELECT 1 FROM sheets WHERE id=?", (source["sheet_id"],)).fetchone() is None
@@ -306,6 +349,7 @@ def describe(db, sheet_id, chart_id, payload):
     out["id"] = chart_id
     out["sheet_id"] = sheet_id
     out["issue"] = validate_stored(payload)
+    out["over_limit"] = over_limit(payload)
     if out["issue"] is None:
         for source in _sources(out["spec"]):
             _describe_source(db, source)
@@ -392,12 +436,12 @@ def _break(source, sheet_id):
 
 
 def adjust_structure(book, sheet_id, axis, start, count, delete):
-    """Follow a whole-row/column edit; return ids of charts with a newly broken source."""
+    """Follow a whole-row/column edit; return ids of charts with a newly broken source and of charts newly over a size limit."""
     if not _has_charts(book):
-        return []
+        return [], []
     low, high = (("row1", "row2"), MAX_ROWS) if axis == "row" else (("col1", "col2"), MAX_COLS)
     key = "row" if axis == "row" else "col"
-    broken = []
+    broken, over = [], []
     for owner, chart_id, payload in objects(book):
         changed = copy.deepcopy(payload)
         if owner == sheet_id:
@@ -419,9 +463,11 @@ def adjust_structure(book, sheet_id, axis, start, count, delete):
                 source[low[0]], source[low[1]] = moved
         if newly_broken:
             broken.append(chart_id)
+        if over_limit(payload) is None and over_limit(changed) is not None:
+            over.append(chart_id)
         if changed != payload:
             store(book, owner, chart_id, changed)
-    return sorted(broken)
+    return sorted(broken), sorted(over)
 
 
 def break_sheet(book, sheet_id):

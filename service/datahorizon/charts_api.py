@@ -43,7 +43,9 @@ def install(schemas, actions):
     _install_jobs(schemas, sheet, chart_id)
     schemas["Receipt"]["properties"].update(
         chart_id={**chart_id, "description": "Chart created, changed or deleted by this operation"},
-        changed_charts={"type": "integer", "minimum": 0, "description": "Charts written by this operation"})
+        changed_charts={"type": "integer", "minimum": 0, "description": "Charts written by this operation"},
+        charts_over_limit={"type": "array", "items": {"type": "string"},
+                           "description": "Charts this row or column edit pushed past a size limit (sorted chart IDs)"})
 
 
 def _ref(name):
@@ -95,7 +97,7 @@ def _install_specification(schemas):
 
 def _install_catalog(schemas, sheet, chart_id, name, anchor, offset, size):
     schemas["Chart"] = {
-        "type": "object", "required": ["id", "sheet_id", "name", "anchor", "offset", "size", "z", "spec_version", "spec", "issue"],
+        "type": "object", "required": ["id", "sheet_id", "name", "anchor", "offset", "size", "z", "spec_version", "spec", "issue", "over_limit"],
         "properties": {
             "id": chart_id, "sheet_id": {"type": "string", "description": "Stable ID of the sheet the chart is placed on"},
             "name": {key: value for key, value in name.items() if key != "description"},
@@ -104,7 +106,10 @@ def _install_catalog(schemas, sheet, chart_id, name, anchor, offset, size):
             "spec": {"type": "object", "description": "Stored specification: every key present, and each source as {kind, sheet_id, row1, col1, "
                      "row2, col2, broken, ref}; a broken source has null coordinates and ref, and ref is A1 text without a sheet"},
             "issue": {"type": "string", "nullable": True, "enum": ["INVALID_SPEC", "UNSUPPORTED_SPEC_VERSION", None],
-                      "description": "Why the stored specification cannot be read; null for a readable chart"}}}
+                      "description": "Why the stored specification cannot be read; null for a readable chart"},
+            "over_limit": {"type": "string", "nullable": True, "enum": ["LIMIT_POINTS", "LIMIT_PIE_POINTS", "LIMIT_CELLS", None],
+                           "description": "The size limit a readable chart's sources now exceed after a row or column edit; resolve and "
+                                          "render refuse it with that code until it fits again. Null otherwise"}}}
     schemas["ChartCatalog"] = {"type": "object", "required": ["state", "charts"], "properties": {
         "state": {"type": "string"}, "charts": {"type": "array", "maxItems": LIMIT_CHARTS, "items": _ref("Chart")}}}
 
