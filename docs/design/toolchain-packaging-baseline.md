@@ -50,7 +50,9 @@ Desktop, Python workspace and Python service whole-suite budgets are 600
 seconds each on all systems in CTest. The service budget on macOS/Linux was 180
 until the Excel fidelity increment 1 suites took it to about 290 seconds locally
 and 375 seconds on the hosted macOS runner. The standalone
-minimum-runtime CI job has a ten-minute job ceiling. Operation, hook and HTTP
+minimum-runtime CI job has a ten-minute job ceiling. The optional
+`chart_svg_probe_smoke` test, registered only where Qt SVG is found, has a
+30-second budget. Operation, hook and HTTP
 deadlines remain separate and unchanged. Timings are evidence rather than
 variable-host performance gates.
 The Windows budget follows two 180-second timeouts and a passing 171.77-second
