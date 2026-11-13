@@ -182,7 +182,7 @@ class _Svg:
             return
         turn = "" if rotate is None else f' transform="rotate({rotate} {_num(x)} {_num(y)})"'
         self.parts.append(
-            f'<text x="{_num(x)}" y="{_num(y)}" font-family="{chart_font.FAMILY}, sans-serif" font-size="{_num(size)}" '
+            f'<text x="{_num(x)}" y="{_num(y)}" font-family="{chart_font.FAMILY}" font-size="{_num(size)}" '
             f'text-anchor="{anchor}" fill="{_TEXT}"{turn}>{_xml(text)}</text>')
 
     def row_label(self, row, x, y, text, anchor="middle"):

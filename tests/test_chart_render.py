@@ -221,6 +221,21 @@ class Evaluate(unittest.TestCase):
         self.assertEqual(bench.evaluate(m), {"route": "fallback_qcustomplot", "failed": ["all_valid"]})
 
 
+class FontInSvg(unittest.TestCase):
+    def test_ratios_and_the_bundled_font_window(self):
+        self.assertEqual(bench.font_check(536, 459, 540.0),
+                         {"laid_out_px": 540.0, "bundled_px": 536, "unknown_family_px": 459,
+                          "bundled_ratio": 536 / 540.0, "unknown_family_ratio": 459 / 540.0, "ok": True})
+        self.assertTrue(bench.font_check(567, 459, 540.0)["ok"])  # 1.05
+        self.assertFalse(bench.font_check(568, 459, 540.0)["ok"])
+        self.assertFalse(bench.font_check(459, 459, 540.0)["ok"])
+
+    def test_probe_svg_names_one_family(self):
+        root = ET.fromstring(bench.font_svg("DejaVu Sans"))
+        text = [el for el in root.iter() if el.tag.endswith("text")]
+        self.assertEqual([(el.get("font-family"), el.text) for el in text], [("DejaVu Sans", bench.FONT_TEXT)])
+
+
 class PieLimit(unittest.TestCase):
     def test_sizes_parse_sorted_and_positive(self):
         self.assertEqual(bench.pie_sizes("2000,500,1000"), [500, 1000, 2000])

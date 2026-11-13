@@ -17,27 +17,27 @@
   "pies": [
     {
       "points": 500,
-      "svg_bytes": 72284,
+      "svg_bytes": 72272,
       "valid": true,
-      "load_ms": 1.6539165,
-      "paint_ms": 20.294646,
-      "qt_ms": 21.9485625
+      "load_ms": 1.6901045,
+      "paint_ms": 20.691041499999997,
+      "qt_ms": 22.381145999999998
     },
     {
       "points": 1000,
-      "svg_bytes": 144294,
+      "svg_bytes": 144282,
       "valid": true,
-      "load_ms": 3.3518749999999997,
-      "paint_ms": 37.868375,
-      "qt_ms": 41.22025
+      "load_ms": 3.3898545,
+      "paint_ms": 38.1549585,
+      "qt_ms": 41.544813
     },
     {
       "points": 2000,
-      "svg_bytes": 288490,
+      "svg_bytes": 288478,
       "valid": true,
-      "load_ms": 6.641854,
-      "paint_ms": 72.227771,
-      "qt_ms": 78.869625
+      "load_ms": 6.953187,
+      "paint_ms": 74.3292495,
+      "qt_ms": 81.2824365
     }
   ],
   "result": {

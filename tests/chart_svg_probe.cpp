@@ -74,8 +74,8 @@ Shot shoot(const QByteArray &svg, int runs)
     return shot;
 }
 
-// The renderer writes font-family="DejaVu Sans, sans-serif". Without --font-file
-// the probe measures the request "sans-serif"; with it, the loaded family.
+// The renderer writes font-family="DejaVu Sans". Without --font-file the probe
+// measures the request "sans-serif"; with it, the loaded family.
 QFont fontFor(const QString &family, double pixels)
 {
     QFont font(family);
@@ -161,6 +161,30 @@ QString loadFontFile(const QString &path)
     return families.isEmpty() ? QString() : families.first();
 }
 
+// Rasterises one SVG and writes the horizontal extent of everything drawn on its
+// white background, so a caller can tell which font Qt SVG used for its text.
+int inkWidth(const QString &svgPath, const QString &reportPath)
+{
+    QFile file(svgPath);
+    if (!file.open(QIODevice::ReadOnly))
+        return fail("cannot read " + svgPath);
+    const Shot shot = shoot(file.readAll(), 1);
+    if (!shot.valid)
+        return fail("Qt SVG rejected " + svgPath);
+    int left = shot.image.width(), right = -1;
+    for (int y = 0; y < shot.image.height(); ++y) {
+        for (int x = 0; x < shot.image.width(); ++x) {
+            if (shot.image.pixelColor(x, y) != QColor(Qt::white)) {
+                left = qMin(left, x);
+                right = qMax(right, x);
+            }
+        }
+    }
+    const QJsonObject report{{"file", QFileInfo(svgPath).fileName()},
+                             {"ink_px", right < left ? 0 : right - left + 1}};
+    return writeJson(reportPath, report) ? 0 : fail("cannot write " + reportPath);
+}
+
 int measure(const QString &svgDir, const QString &outDir, const QString &labelsPath, const QString &reportPath,
             const QString &substitute, const QString &requested)
 {
@@ -224,7 +248,8 @@ int main(int argc, char **argv)
                        {"report", "JSON report to write.", "file"},
                        {"font", "A second font family to measure with.", "family"},
                        {"font-file", "A TrueType file to load as the application font and measure by default.", "ttf"},
-                       {"emit-metrics", "Write a per-character advance table for a family.", "family"}});
+                       {"emit-metrics", "Write a per-character advance table for a family.", "family"},
+                       {"ink-width", "Write the drawn width of one SVG to --report.", "svg"}});
     parser.addPositionalArgument("table", "Output file for --emit-metrics.");
     if (!parser.parse(app.arguments()))
         return fail(parser.errorText());
@@ -241,6 +266,11 @@ int main(int argc, char **argv)
         requested = loadFontFile(parser.value("font-file"));
         if (requested.isEmpty())
             return fail("cannot load font " + parser.value("font-file"));
+    }
+    if (parser.isSet("ink-width")) {
+        if (!parser.isSet("report"))
+            return fail("--ink-width needs --report");
+        return inkWidth(parser.value("ink-width"), parser.value("report"));
     }
     for (const char *required : {"svg-dir", "out", "labels", "report"}) {
         if (!parser.isSet(required))

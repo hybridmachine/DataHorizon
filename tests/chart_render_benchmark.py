@@ -37,6 +37,10 @@ STRESS = ["WWWWWWWWWW", "iiiiiiiiii", "1,234,567.89", "Quarterly revenue (EUR)",
 LIMITS = {"render_ms_10k": 250.0, "svg_bytes_10k": 4 * 1024 * 1024, "qt_ms_10k": 150.0, "total_ms_12": 50.0}
 TEXT_MAX_UNDER = 1.05
 TEXT_MEDIAN_OVER = 1.35
+FONT_TEXT = "Quarterly revenue by region, 2026 (EUR) Wg"
+FONT_PX = 24
+FONT_RATIO = (0.95, 1.05)
+UNKNOWN_FAMILY = "NoSuchFamily Zq"
 PIE_BUDGET_MS = LIMITS["qt_ms_10k"] / 2
 PIE_FALLBACK = 250
 JOB_SECONDS = 30
@@ -65,6 +69,34 @@ def evaluate(measurements: dict) -> dict:
     if hard or not (text_ok or table_ok):
         return {"route": "fallback_qcustomplot", "failed": failed}
     return {"route": "service_svg" if text_ok else "service_svg_with_metrics_table", "failed": failed}
+
+
+def font_svg(family: str) -> str:
+    """One line of text in ``family``, for checking which font Qt SVG draws it in."""
+    return ('<svg xmlns="http://www.w3.org/2000/svg" version="1.2" baseProfile="tiny" width="800" height="60" '
+            f'viewBox="0 0 800 60"><text x="10" y="40" font-family="{family}" font-size="{FONT_PX}" '
+            f'fill="#000000">{FONT_TEXT}</text></svg>')
+
+
+def font_check(bundled_px: float, unknown_px: float, laid_out_px: float) -> dict:
+    """Compare ink widths drawn through Qt SVG with the width laid out from the metrics table."""
+    bundled, unknown = bundled_px / laid_out_px, unknown_px / laid_out_px
+    return {"laid_out_px": laid_out_px, "bundled_px": bundled_px, "unknown_family_px": unknown_px,
+            "bundled_ratio": bundled, "unknown_family_ratio": unknown,
+            "ok": FONT_RATIO[0] <= bundled <= FONT_RATIO[1]}
+
+
+def measure_font_in_svg(probe: pathlib.Path, work: pathlib.Path) -> dict:
+    """Draw one line through QSvgRenderer in the bundled family and in an unknown one."""
+    widths = {}
+    for name, family in (("bundled", chart_font.FAMILY), ("unknown", UNKNOWN_FAMILY)):
+        svg_path, report_path = work / f"font-{name}.svg", work / f"font-{name}.json"
+        svg_path.write_text(font_svg(family), encoding="utf-8")
+        _run([str(probe), "--font-file", str(chart_font.font_path()), "--ink-width", str(svg_path),
+              "--report", str(report_path)])
+        widths[name] = json.loads(report_path.read_text())["ink_px"]
+    laid_out = cr.estimate_text_width(FONT_TEXT, FONT_PX, chart_font.default_metrics())
+    return font_check(widths["bundled"], widths["unknown"], laid_out)
 
 
 def pie_sizes(text: str) -> list[int]:
@@ -380,6 +412,9 @@ def main(argv=None) -> int:
         "text_with_table": table_stats,
     }
     result = evaluate(measurements)
+    font_in_svg = measure_font_in_svg(args.probe, args.work)
+    if not font_in_svg["ok"]:
+        result["failed"].append("font_in_svg")
 
     copy_screenshots(charts, sorted(path.stem for path in FIXTURES.glob("*.json")),
                      png_dir, args.evidence / "chart-render")
@@ -396,14 +431,16 @@ def main(argv=None) -> int:
         "measurements": measurements,
         "metrics_table_bytes": table_bytes,
         "labels_measured": len(report["labels"]),
+        "font_in_svg": font_in_svg,
         "charts": report["charts"],
         "result": result,
     }
     for item in evidence["charts"]:
         item.pop("png", None)
     (args.evidence / "chart-render-experiment.json").write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"result": result, "text": measurements["text"], "text_with_table": table_stats}, indent=2))
-    return 0
+    print(json.dumps({"result": result, "text": measurements["text"], "text_with_table": table_stats,
+                      "font_in_svg": font_in_svg}, indent=2))
+    return 0 if font_in_svg["ok"] else 1
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import pathlib
 import struct
 import sys
 import unittest
+import xml.etree.ElementTree as ET
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "tools"))
@@ -95,7 +96,8 @@ class Bundled(unittest.TestCase):
 
     def test_render_names_the_family_and_uses_the_table(self):
         out = cr.render(load("column_clustered"), 800, 500)
-        self.assertIn('font-family="DejaVu Sans, sans-serif"', out["svg"])
+        families = {element.get("font-family") for element in ET.fromstring(out["svg"]).iter() if element.get("font-family")}
+        self.assertEqual(families, {"DejaVu Sans"})  # one family: Qt SVG reads a list as one unknown name
         self.assertEqual(cr.render(load("column_clustered"), 800, 500, chart_font.default_metrics()), out)
 
 
