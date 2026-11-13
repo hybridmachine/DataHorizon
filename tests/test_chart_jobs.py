@@ -368,5 +368,35 @@ class ChartJobCalculationTests(unittest.TestCase):
         self.assertEqual(view["result"]["counts"], {"points": 2, "gaps": {"empty": 0, "text": 0, "error": 1}})
 
 
+class ChartJobAccessorTests(unittest.TestCase):
+    def test_concurrent_first_requests_share_one_chart_jobs(self):
+        from datahorizon import chart_jobs
+
+        temp = self.enterContext(tempfile.TemporaryDirectory())
+        book = Workbook(pathlib.Path(temp) / "jobs.dhwb", create=True)
+        self.addCleanup(book.close)
+        real = chart_jobs.ChartJobs.__init__
+
+        def slow(self, *args, **kwargs):
+            time.sleep(0.05)  # widen the window between the check and the assignment
+            real(self, *args, **kwargs)
+
+        gate = threading.Barrier(2)
+        seen = []
+
+        def first():
+            gate.wait()
+            seen.append(book.chart_jobs())
+
+        with patch.object(chart_jobs.ChartJobs, "__init__", slow):
+            threads = [threading.Thread(target=first) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(5)
+        self.assertEqual(len(seen), 2)
+        self.assertIs(seen[0], seen[1])
+
+
 if __name__ == "__main__":
     unittest.main()

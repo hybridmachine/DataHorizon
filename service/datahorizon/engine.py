@@ -475,10 +475,11 @@ class Workbook:
         return self._calculation_jobs
 
     def chart_jobs(self):
-        if self._chart_jobs is None:
-            from .chart_jobs import ChartJobs
-            self._chart_jobs=ChartJobs(self)
-        return self._chart_jobs
+        with self.lock:
+            if self._chart_jobs is None:
+                from .chart_jobs import ChartJobs
+                self._chart_jobs=ChartJobs(self)
+            return self._chart_jobs
 
     def query_jobs(self):
         with self.lock:
