@@ -265,6 +265,14 @@ class Operations(unittest.TestCase):
         self.assertEqual(self.stored(chart_id), updated)
         self.assertEqual(self.book.info()["undo"], "Edit chart")
 
+    def test_whole_workbook_import_refuses_a_destination_with_only_a_chart(self):
+        chart_id = self.create()
+        self.assertEqual(self.book.db.execute("SELECT count(*) FROM cells").fetchone()[0], 0)
+        error = self.refused("workbook_import", sheets=[{"name": "Replacement", "cells": []}])
+        self.assertEqual((error.body["code"], error.body["message"]),
+                         ("DESTINATION_NOT_EMPTY", "Whole-workbook import requires a destination without charts; create a new workbook"))
+        self.assertEqual([item["id"] for item in self.listed()], [chart_id])
+
     def test_undo_labels_name_each_chart_operation(self):
         chart_id = self.create()
         self.assertEqual(self.book.info()["undo"], "Create chart")

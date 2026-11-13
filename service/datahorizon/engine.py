@@ -977,10 +977,12 @@ class Workbook:
         if plan["target"]=="replace_empty":
             from .relational import objects
             present={kind for kind,_ in objects(self.db)}
+            from .charts import objects as chart_objects
+            if chart_objects(self):present.add("chart")
             if present:
                 labels=[label for kind,label in (("table","tables"),("query","saved queries"),("relationship","relationships"),("index","indexes"),
-                    ("name","names"),("module","Python modules"),("binding","event bindings")) if kind in present]
-                labels+=sorted(kind for kind in present if kind not in ("table","query","relationship","index","name","module","binding"))
+                    ("name","names"),("module","Python modules"),("binding","event bindings"),("chart","charts")) if kind in present]
+                labels+=sorted(kind for kind in present if kind not in ("table","query","relationship","index","name","module","binding","chart"))
                 listed=labels[0] if len(labels)==1 else ", ".join(labels[:-1])+" or "+labels[-1]
                 raise EngineError("DESTINATION_NOT_EMPTY",f"Whole-workbook import requires a destination without {listed}; create a new workbook")
             require(self.db.execute("SELECT 1 FROM cells LIMIT 1").fetchone() is None,"DESTINATION_NOT_EMPTY","Whole-workbook import requires an empty destination; create a new workbook")
