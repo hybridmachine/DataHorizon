@@ -24,7 +24,20 @@ class ChartRenderError(ValueError):
 
 
 def nice_ticks(lo: float, hi: float, target: int = 5) -> list[float]:
-    """Ticks on a 1/2/5 x 10^k step that cover [lo, hi]."""
+    """Ticks on a 1/2/5 x 10^k step that cover [lo, hi].
+
+    Raises ``VALUE_RANGE`` when the step or a tick is not a finite float.
+    """
+    try:
+        ticks = _nice_ticks(lo, hi, target)
+    except (OverflowError, ValueError, ZeroDivisionError):
+        ticks = []
+    if not ticks or not all(math.isfinite(tick) for tick in ticks):
+        raise ChartRenderError("VALUE_RANGE", "values are too large or too small to plot")
+    return ticks
+
+
+def _nice_ticks(lo: float, hi: float, target: int) -> list[float]:
     if lo > hi:
         lo, hi = hi, lo
     if lo == hi:
@@ -45,6 +58,8 @@ def nice_ticks(lo: float, hi: float, target: int = 5) -> list[float]:
     ticks = []
     for index in range(first, last + 1):
         value = round(index * step, places)
+        if not math.isfinite(value):
+            return []
         ticks.append(int(value) if value == int(value) else value)
     return ticks
 
@@ -270,8 +285,7 @@ def _stack(chart, count):
     return spans
 
 
-def _scale(ticks, start_px, end_px):
-    lo, hi = ticks[0], ticks[-1]
+def _scale(lo, hi, start_px, end_px):
     span = (hi - lo) or 1.0
     return lambda value: start_px + (value - lo) / span * (end_px - start_px)
 
@@ -281,12 +295,30 @@ def _check_range(lo, hi):
         raise ChartRenderError("VALUE_RANGE", "values span a range too large to plot")
 
 
-def _axis_ticks(lo, hi, forced_min, forced_max):
+def _axis(lo, hi, forced_min, forced_max):
+    """The plotted range and the ticks inside it.
+
+    An explicit limit is the end of the range exactly; an automatic end is the
+    outer nice tick. Ticks never widen an explicit limit.
+    """
+    if forced_min is not None and forced_max is not None and forced_min > forced_max:
+        forced_min, forced_max = forced_max, forced_min
     if forced_min is not None:
         lo = forced_min
     if forced_max is not None:
         hi = forced_max
-    return nice_ticks(lo, hi)
+    if lo >= hi and (forced_min is not None or forced_max is not None):
+        # the explicit limit excludes all the data, or both limits are equal
+        if forced_max is None or forced_min == forced_max:
+            hi = lo + (abs(lo) or 1.0)
+        else:
+            lo = hi - (abs(hi) or 1.0)
+        _check_range(lo, hi)
+    ticks = nice_ticks(lo, hi)
+    low = ticks[0] if forced_min is None else forced_min
+    high = ticks[-1] if forced_max is None else forced_max
+    _check_range(low, high)
+    return low, high, [tick for tick in ticks if low <= tick <= high] or [low]
 
 
 def _title(svg, chart):
@@ -328,6 +360,13 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
     labels = [] if scatter else [(chart["categories"] or [])[i] if i < len(chart["categories"] or []) else "" for i in range(count)]
     spans = _stack(chart, count)
 
+    if scatter:  # a point draws only when it has both coordinates
+        for item, row in zip(series, spans):
+            xs = item["x"] or []
+            for index, span in enumerate(row):
+                if span is not None and (index >= len(xs) or xs[index] is None):
+                    row[index] = None
+
     ends = [edge for row in spans for span in row if span is not None for edge in span]
     if kind in ("line", "scatter"):
         ends = [span[1] for row in spans for span in row if span is not None]
@@ -335,12 +374,13 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
     _check_range(lo, hi)
     if kind in ("column", "bar", "area"):
         lo, hi = min(lo, 0.0), max(hi, 0.0)
-    ticks = _axis_ticks(lo, hi, chart["value_min"], chart["value_max"])
+    low, high, ticks = _axis(lo, hi, chart["value_min"], chart["value_max"])
     tick_labels = [format_tick(tick) for tick in ticks]
 
     x_ticks = x_labels = None
     if scatter:
-        xs = [x for item in series for x in (item["x"] or []) if x is not None]
+        xs = [item["x"][index] for item, row in zip(series, spans)
+              for index, span in enumerate(row) if span is not None]
         if xs:
             _check_range(min(xs), max(xs))
         x_ticks = nice_ticks(min(xs), max(xs)) if xs else [0, 1]
@@ -366,13 +406,13 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
 
     # value axis: gridlines and tick labels
     if horizontal:
-        to_px = _scale(ticks, left, right)
+        to_px = _scale(low, high, left, right)
         row = []
         for tick, text in zip(ticks, tick_labels):
             svg.line(to_px(tick), top, to_px(tick), bottom, _GRID)
             svg.row_label(row, to_px(tick), bottom + LABEL_PX + 3, text)
     else:
-        to_px = _scale(ticks, bottom, top)
+        to_px = _scale(low, high, bottom, top)
         last = None
         for tick, text in zip(ticks, tick_labels):
             y = to_px(tick)
@@ -381,7 +421,7 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
                 svg.text(left - 6, y + LABEL_PX / 3, svg.fit(text, label_room), anchor="end")
                 last = y
     if scatter:
-        x_px = _scale(x_ticks, left, right)
+        x_px = _scale(x_ticks[0], x_ticks[-1], left, right)
         row = []
         for tick, text in zip(x_ticks, x_labels):
             svg.line(x_px(tick), top, x_px(tick), bottom, _GRID)
@@ -403,7 +443,6 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
             _category_labels(svg, labels, left, slot, bottom + LABEL_PX + 3, True, 0.0)
 
     stacked = chart["grouping"] == "stacked"
-    low, high = ticks[0], ticks[-1]
 
     def clamp(value):
         return min(max(value, low), high)
@@ -434,8 +473,16 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
                 svg.circle(x_px(x), to_px(span[1]), 3, colour)
                 svg.point_mark(number, index, x_px(x), to_px(span[1]))
         else:  # line and area: one path segment per run of points without a gap
-            runs, run = [], []
+            # A stacked area also breaks where the value changes sign: positive
+            # and negative values stack from different bases, and one polygon
+            # across both would cross itself and cover the series below.
+            runs, run, side = [], [], None
             for index, span in enumerate(row):
+                here = None if span is None else span[1] < span[0]
+                if run and (span is None or (kind == "area" and stacked and here != side)):
+                    runs.append(run)
+                    run = []
+                side = here
                 if span is None or (kind == "line" and not low <= span[1] <= high):
                     if run:
                         runs.append(run)
@@ -457,7 +504,7 @@ def _render_cartesian(svg, chart, top, right, bottom_edge):
                     svg.point_mark(number, index, x, y)
 
     # axis lines on top of the data
-    zero = min(max(0, ticks[0]), ticks[-1])
+    zero = min(max(0, low), high)
     if horizontal:
         svg.line(to_px(zero), top, to_px(zero), bottom, _AXIS)
     else:

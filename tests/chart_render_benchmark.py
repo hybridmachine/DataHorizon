@@ -96,6 +96,23 @@ def _text_stats(rows, table=None) -> dict:
     return {"max_under": max(under), "median_over": statistics.median(over)}
 
 
+def copy_screenshots(charts: dict, names, png_dir: pathlib.Path, shots: pathlib.Path) -> list[str]:
+    """Replace ``shots`` with the screenshots of the fixtures Qt rendered.
+
+    The probe writes no PNG for an SVG it rejects, so those are left out and
+    the evidence records them as invalid instead.
+    """
+    shutil.rmtree(shots, ignore_errors=True)
+    shots.mkdir(parents=True)
+    copied = []
+    for name in names:
+        source = png_dir / f"{name}.png"
+        if charts.get(f"{name}.svg", {}).get("valid") and source.is_file():
+            shutil.copyfile(source, shots / f"{name}.png")
+            copied.append(name)
+    return copied
+
+
 def _run(command):
     done = subprocess.run(command, capture_output=True, text=True)
     if done.returncode != 0:
@@ -165,11 +182,8 @@ def main(argv=None) -> int:
     }
     result = evaluate(measurements)
 
-    shots = args.evidence / "chart-render"
-    shutil.rmtree(shots, ignore_errors=True)
-    shots.mkdir(parents=True)
-    for path in sorted(FIXTURES.glob("*.json")):
-        shutil.copyfile(png_dir / f"{path.stem}.png", shots / f"{path.stem}.png")
+    copy_screenshots(charts, sorted(path.stem for path in FIXTURES.glob("*.json")),
+                     png_dir, args.evidence / "chart-render")
     evidence = {
         "experiment": "charts stage 1 renderer",
         "machine": {"platform": platform.platform(), "machine": platform.machine()},

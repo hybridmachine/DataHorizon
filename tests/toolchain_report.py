@@ -35,6 +35,8 @@ def build_report(build, grid_path):
     expected = {'desktop': 600, 'python_workspace': 600, 'service': 600}
     if current['system']=='Darwin':
         expected['development_bundle_signature']=30
+    if 'chart_svg_probe_smoke' in budgets:  # optional: registered only when Qt SVG is found
+        expected['chart_svg_probe_smoke']=30
     if budgets != expected:
         raise RuntimeError(f'Test budgets differ from the documented baseline: {budgets}')
     frozen = grid['frozen_row']

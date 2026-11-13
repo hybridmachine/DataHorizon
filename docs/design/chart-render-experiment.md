@@ -27,8 +27,10 @@ legend at the right or bottom. Gaps (`null`, text, errors, non-finite numbers)
 draw nothing and have no mark. It refuses, with a structured code, more than
 10,000 points per series, more than 64 series, a canvas smaller than 64×48 or
 larger than 16,384 pixels, an unknown type, a negative value in a pie, and
-values whose range overflows a float. Values outside a forced axis range are
-clipped to the plot or left out.
+values whose range or ticks are not finite floats. An explicit axis limit is
+the end of the plotted range exactly, whatever the tick spacing; values outside
+it are clipped to the plot or left out. A scatter point draws, and counts
+towards either axis, only when it has both coordinates.
 
 Layout is computed from estimated text widths, because the service has no font
 metrics. The default estimate uses six character classes. Category labels are
@@ -46,9 +48,9 @@ painting, measures real label widths with `QFontMetricsF`, and can write a
 per-character advance table for a font. `tests/chart_render_benchmark.py` runs
 both, applies the thresholds and writes the evidence.
 
-29 `unittest` cases cover ticks, text estimates, every chart type, the five
+35 `unittest` cases cover ticks, text estimates, every chart type, the five
 review-focus inputs from the plan, the defects found by the whole-branch review
-(below), and the threshold evaluation. One CTest,
+and by the pull request review (both below), and the threshold evaluation. One CTest,
 `chart_svg_probe_smoke`, checks that Qt SVG draws a known document and rejects
 a malformed one.
 
@@ -126,6 +128,36 @@ being refused; canvases too small for their decorations drew outside the
 canvas; and value-axis labels on bar and scatter charts could overlap. The
 evidence files were regenerated after the fixes. The evaluation also now lists
 the text failure beside the speed failure instead of stopping at the first.
+
+## Pull request review
+
+The owner's review of the pull request made five findings, each fixed with a
+test that failed first:
+
+- An explicit axis range of 2.4 to 7.9 was widened to the ticks 2 and 8, so a
+  point at 2.1 still drew. The limits are now the plotted range and ticks fall
+  inside it.
+- A stacked area whose values change sign was drawn as one polygon that crossed
+  itself and covered the series below. The fill now breaks at each sign change.
+  A value isolated between two sign changes draws as a point with no filled
+  area.
+- A scatter point with only one coordinate widened an axis without drawing,
+  which could collapse the visible points together. Axes now use complete
+  pairs.
+- `1.79e308` and `5e-324` crashed tick generation. Both are now refused with
+  `VALUE_RANGE`.
+- The benchmark copied a screenshot for every fixture, and would have stopped
+  before writing its result if Qt rejected one. It now copies only the fixtures
+  Qt rendered and always writes the result.
+
+The eight fixture SVGs are byte-for-byte the same before and after these fixes,
+and the 10,000-point inputs use none of the changed paths, so the evidence
+files were not regenerated. The owner's own Verdana run reproduced the recorded
+outcome, with the 10,000-slice pie at 381 ms.
+
+The pull request's first CI run failed in the toolchain baseline check, which
+compares CTest budgets with a fixed list and did not know the optional
+`chart_svg_probe_smoke` test. The check now accepts it at its 30-second budget.
 
 ## Limits of this experiment
 

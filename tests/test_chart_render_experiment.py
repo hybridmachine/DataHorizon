@@ -312,5 +312,105 @@ class ReviewFixes(unittest.TestCase):
                                              "failed": ["qt_ms_10k.pie", "text", "text_with_table"]})
 
 
+def fills(svg, colour):
+    """Vertex lists of the filled paths drawn in ``colour``."""
+    out = []
+    for el in ET.fromstring(svg).iter():
+        if el.tag.endswith("path") and el.get("fill") == colour:
+            body = el.get("d").lstrip("M").rstrip("Z ").split(" L")
+            out.append([tuple(float(n) for n in pair.split()) for pair in body])
+    return out
+
+
+def circles(svg):
+    return [(float(el.get("cx")), float(el.get("cy"))) for el in ET.fromstring(svg).iter()
+            if el.tag.endswith("circle")]
+
+
+class PullRequestReview(unittest.TestCase):
+    def test_screenshots_are_copied_only_for_fixtures_qt_rendered(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            png, shots = pathlib.Path(folder, "png"), pathlib.Path(folder, "shots")
+            png.mkdir()
+            (png / "pie.png").write_bytes(b"x")
+            charts = {"pie.svg": {"valid": True}, "line.svg": {"valid": False}}
+            copied = bench.copy_screenshots(charts, ["line", "pie"], png, shots)
+            self.assertEqual(copied, ["pie"])
+            self.assertEqual(sorted(p.name for p in shots.iterdir()), ["pie.png"])
+
+    def test_explicit_axis_limits_are_the_plotted_range(self):
+        spec = one([2.1, 5.0, 7.95, 7.0], type_="line", grouping=None, cats=list("abcd"))
+        spec["axes"]["value"].update(min=2.4, max=7.9)
+        out = cr.render(spec, 800, 500)
+        self.assertEqual([m["point"] for m in out["marks"]], [1, 3])
+        labels = [el.text for el in ET.fromstring(out["svg"]).iter() if el.tag.endswith("text")]
+        for tick in ("2", "8"):
+            self.assertNotIn(tick, labels)
+        for tick in ("4", "6"):
+            self.assertIn(tick, labels)
+        column = one([2.1, 5.0], grouping="clustered")
+        column["axes"]["value"].update(min=2.4, max=7.9)
+        self.assertEqual([m["point"] for m in cr.render(column, 800, 500)["marks"]], [1])
+
+    def test_one_explicit_axis_limit_leaves_the_other_end_automatic(self):
+        spec = one([2.1, 5.0, 7.5], type_="line", grouping=None)
+        spec["axes"]["value"]["min"] = 2.4
+        self.assertEqual([m["point"] for m in cr.render(spec, 800, 500)["marks"]], [1, 2])
+        above = one([1.0, 2.0], type_="line", grouping=None)
+        above["axes"]["value"]["min"] = 10
+        out = cr.render(above, 800, 500)
+        self.assertEqual(out["marks"], [])
+        self.assertEqual(outside_canvas(out["svg"], 800, 500), [])
+
+    def test_stacked_area_does_not_join_positive_and_negative_spans(self):
+        spec = one([5.0, 5.0, 5.0], type_="area", grouping="stacked")
+        spec["series"].append({"name": "t", "values": [2.0, -2.0, 2.0], "x": None})
+        out = cr.render(spec, 800, 500)
+        base = fills(out["svg"], cr.PALETTE[0])
+        self.assertEqual(len(base), 1)
+        top_of_base = min(y for _, y in base[0])
+        zero = max(y for _, y in base[0])
+        upper = fills(out["svg"], cr.PALETTE[1])
+        self.assertTrue(upper)
+        for polygon in upper:
+            ys = [y for _, y in polygon]
+            self.assertTrue(max(ys) <= top_of_base + 0.01 or min(ys) >= zero - 0.01, polygon)
+        self.assertEqual(sorted(m["point"] for m in out["marks"] if m["series"] == 1), [0, 1, 2])
+
+    def test_scatter_axes_come_from_complete_pairs(self):
+        spec = one([1.0, 2.0, None], type_="scatter", grouping=None)
+        spec["categories"], spec["series"][0]["x"] = None, [1.0, 2.0, 1_000_000.0]
+        dots = circles(cr.render(spec, 800, 500)["svg"])
+        self.assertEqual(len(dots), 2)
+        self.assertGreater(abs(dots[0][0] - dots[1][0]), 100)
+        flipped = one([1.0, 2.0, 1_000_000.0], type_="scatter", grouping=None)
+        flipped["categories"], flipped["series"][0]["x"] = None, [1.0, 2.0, None]
+        dots = circles(cr.render(flipped, 800, 500)["svg"])
+        self.assertEqual(len(dots), 2)
+        self.assertGreater(abs(dots[0][1] - dots[1][1]), 100)
+
+    def test_float_extremes_are_refused_with_a_code_or_drawn(self):
+        for value in (1.79e308, -1.79e308, 5e-324, -5e-324, 1e-320):
+            for type_, grouping in [("column", "clustered"), ("bar", "clustered"), ("line", None),
+                                    ("area", "stacked"), ("scatter", None)]:
+                spec = one([value], type_=type_, grouping=grouping)
+                if type_ == "scatter":
+                    spec["categories"], spec["series"][0]["x"] = None, [value]
+                try:
+                    out = cr.render(spec, 800, 500)
+                except cr.ChartRenderError as error:
+                    self.assertEqual(error.code, "VALUE_RANGE", (value, type_))
+                else:
+                    self.assertEqual(outside_canvas(out["svg"], 800, 500), [], (value, type_))
+            for call in (lambda: cr.nice_ticks(0, value), lambda: cr.nice_ticks(value, value)):
+                try:
+                    ticks = call()
+                except cr.ChartRenderError as error:
+                    self.assertEqual(error.code, "VALUE_RANGE")
+                else:
+                    self.assertTrue(all(math.isfinite(t) for t in ticks))
+
+
 if __name__ == "__main__":
     unittest.main()
