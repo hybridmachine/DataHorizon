@@ -14,7 +14,7 @@ import uuid
 from . import relational
 from .chart_render import LIMIT_PIE_POINTS, LIMIT_POINTS, LIMIT_SERIES
 from .engine import MAX_COLS, MAX_ROWS, EngineError, encoded, require
-from .formula import FormulaError, column_name, split_ref
+from .formula import FormulaError, adjust_interval, column_name, split_ref
 from .metadata import name as metadata_name
 
 SPEC_VERSION = 1
@@ -376,6 +376,88 @@ def store(book, sheet_id, chart_id, payload):
             "LIMIT", "Native metadata exceeds its budget")
     original = book.changes[key][0] if key in book.changes else before
     book.changes[key] = [original, copy.deepcopy(payload)]
+
+
+# Following the data.
+
+def _readable_sources(payload):
+    """The live source objects of a readable chart, in place; none for an unreadable one."""
+    if validate_stored(payload) is not None:
+        return []
+    return [source for source in _sources(payload["spec"]) if source["sheet_id"] is not None and source["row1"] is not None]
+
+
+def _break(source, sheet_id):
+    source.update(sheet_id=sheet_id, row1=None, col1=None, row2=None, col2=None)
+
+
+def adjust_structure(book, sheet_id, axis, start, count, delete):
+    """Follow a whole-row/column edit; return ids of charts with a newly broken source."""
+    if not _has_charts(book):
+        return []
+    low, high = (("row1", "row2"), MAX_ROWS) if axis == "row" else (("col1", "col2"), MAX_COLS)
+    key = "row" if axis == "row" else "col"
+    broken = []
+    for owner, chart_id, payload in objects(book):
+        changed = copy.deepcopy(payload)
+        if owner == sheet_id:
+            position = changed["anchor"][key]
+            if delete:
+                position = start if start <= position < start + count else position - count if position >= start + count else position
+            elif position >= start:
+                position = min(position + count, high)
+            changed["anchor"][key] = position
+        newly_broken = False
+        for source in _readable_sources(changed):
+            if source["sheet_id"] != sheet_id:
+                continue
+            moved = adjust_interval(source[low[0]], source[low[1]], start, count, delete, high)
+            if moved is None:
+                _break(source, sheet_id)
+                newly_broken = True
+            else:
+                source[low[0]], source[low[1]] = moved
+        if newly_broken:
+            broken.append(chart_id)
+        if changed != payload:
+            store(book, owner, chart_id, changed)
+    return sorted(broken)
+
+
+def break_sheet(book, sheet_id):
+    """Break sources that read a sheet about to be deleted; its own charts go with the sheet."""
+    if not _has_charts(book):
+        return []
+    broken = []
+    for owner, chart_id, payload in objects(book):
+        if owner == sheet_id:
+            continue
+        changed = copy.deepcopy(payload)
+        sources = [source for source in _readable_sources(changed) if source["sheet_id"] == sheet_id]
+        for source in sources:
+            _break(source, None)
+        if sources:
+            broken.append(chart_id)
+            store(book, owner, chart_id, changed)
+    return sorted(broken)
+
+
+def adjust_move(book, sheet_id, rectangle, dest_row, dest_col):
+    """Move sources wholly inside a Cut rectangle with it; others stay."""
+    if not _has_charts(book):
+        return
+    r1, c1, r2, c2 = rectangle
+    for owner, chart_id, payload in objects(book):
+        changed = copy.deepcopy(payload)
+        for source in _readable_sources(changed):
+            if source["sheet_id"] == sheet_id and r1 <= source["row1"] and source["row2"] <= r2 \
+                    and c1 <= source["col1"] and source["col2"] <= c2:
+                source["row1"] += dest_row - r1
+                source["row2"] += dest_row - r1
+                source["col1"] += dest_col - c1
+                source["col2"] += dest_col - c1
+        if changed != payload:
+            store(book, owner, chart_id, changed)
 
 
 def read(book, args):

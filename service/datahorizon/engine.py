@@ -1602,6 +1602,8 @@ class Workbook:
             for row,col in sources:self.put(sheet,row,col,None)
             for (row,col),item in sources.items():self.put(sheet,row+dr,col+dc,item)
             for key,item in formulas.items():self.put(*key,item)
+            from .charts import adjust_move
+            adjust_move(self,sheet,rectangle,dest_row,dest_col)
         return unmaintained_report(marked)
 
     def delete_sheet(self, target):
@@ -1645,9 +1647,12 @@ class Workbook:
             from .bindings import break_sheet as break_binding_sheet
             from .bindings import scoped_to_names
             broken_bindings = sorted(break_binding_sheet(self,target)+scoped_to_names(self,broken_names))
+            from .charts import break_sheet as break_chart_sheet
+            broken_charts = break_chart_sheet(self,target)
             self.db.execute("DELETE FROM sheets WHERE id=?",(target,))
         result = {"reference_warnings":warnings,"reference_issues":locations,**unmaintained_report(marked)}
         if broken_names:result["broken_names"] = broken_names
+        if broken_charts:result["broken_charts"] = broken_charts
         if broken_bindings:result["broken_bindings"] = broken_bindings
         return result
 
@@ -1780,8 +1785,11 @@ class Workbook:
             from .bindings import adjust_structure as adjust_bindings
             from .bindings import scoped_to_names
             broken_bindings = sorted(adjust_bindings(self,target,axis,start,count,delete)+scoped_to_names(self,broken_names))
+            from .charts import adjust_structure as adjust_charts
+            broken_charts = adjust_charts(self,target,axis,start,count,delete)
         result = {"reference_warnings":warnings,"reference_issues":locations,**unmaintained_report(marked)}
         if broken_names:result["broken_names"] = broken_names
+        if broken_charts:result["broken_charts"] = broken_charts
         if broken_bindings:result["broken_bindings"] = broken_bindings
         return result
 
