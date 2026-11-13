@@ -33,7 +33,7 @@ fixed test-first, among them a formula chain across 1,000-cell slices plotting
 as error gaps and an insert that could strand a chart past a size limit.
 
 Open: table and query sources, the desktop, workbook-Python chart operations,
-per-chart export reports, and Windows and Linux. See the
+XLSX and ODS chart interchange, and Windows and Linux. See the
 [result](charts-stage-2-result.md) and the as-built [design](charts-design.md)
 (Draft 0.4).
 
