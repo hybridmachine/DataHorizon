@@ -191,3 +191,52 @@ class LargeInterchangeOpenApiTests(unittest.TestCase):
                     self.assertEqual(written['sha256'],view['result']['sha256'])
                     released=client.release_export(view['result']['export_id']);self.validate('ExportReleased',released)
                     if fmt=='xlsx':self.assertEqual(released,schemas['ExportReleased']['example'])
+
+
+# Every chart route, with the request schema it takes and the 200 response schema it returns.
+CHART_ROUTES={
+    ('/v1/workbooks/{workbook}/charts','post'):('ChartsReadRequest','ChartCatalog'),
+    ('/v1/workbooks/{workbook}/charts/suggest','post'):('ChartSuggestRequest','ChartSuggestion'),
+    ('/v1/workbooks/{workbook}/charts/jobs','post'):('ChartJobRequest','ChartJob'),
+    ('/v1/workbooks/{workbook}/charts/jobs/{job}','get'):(None,'ChartJob'),
+    ('/v1/workbooks/{workbook}/charts/jobs/{job}/cancel','post'):('JobAction','ChartJob'),
+    ('/v1/workbooks/{workbook}/charts/jobs/{job}/release','post'):('JobAction','JobReleased'),
+}
+
+
+class ChartJobOpenApiTests(unittest.TestCase):
+    """Runs without the optional validators too: structure is always checked, and validation is added when they are installed."""
+    def setUp(self):self.spec=openapi();self.schemas=self.spec['components']['schemas']
+    def validate(self,name,value):
+        if OAS30Validator is not None:OAS30Validator({**self.schemas[name],'components':self.spec['components']}).validate(value)
+
+    def test_every_chart_route_has_request_and_response_schemas(self):
+        for (path,method),(request,response) in CHART_ROUTES.items():
+            with self.subTest(path):
+                operation=self.spec['paths'][path][method]
+                if request:self.assertEqual(operation['requestBody']['content']['application/json']['schema']['$ref'],'#/components/schemas/'+request)
+                self.assertEqual(operation['responses']['200']['content']['application/json']['schema']['$ref'],'#/components/schemas/'+response)
+                self.assertIn(response,self.schemas)
+        for name in ('ChartSource','ChartSpec','ChartSuggestRequest','ChartJobRequest','ChartJob'):
+            with self.subTest(name):self.assertIn('example',self.schemas[name]);self.validate(name,self.schemas[name]['example'])
+
+    def test_chart_route_examples_execute(self):
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client,client.open(Path(temp)/'charts.dhwb',create=True) as book:
+            for row in range(1,14):
+                book.set(row,1,'Month' if row==1 else 'M'+str(row));book.set(row,2,'Units' if row==1 else str(row));book.set(row,3,'Cost' if row==1 else '=B'+str(row)+'*2')
+            book.refresh();suggest={**copy.deepcopy(self.schemas['ChartSuggestRequest']['example']),'expected_state':book.state}
+            self.validate('ChartSuggestRequest',suggest)
+            suggestion=client.request(book.base+'/charts/suggest',suggest);self.validate('ChartSuggestion',suggestion)
+            self.assertEqual(len(suggestion['spec']['series']),2)
+            receipt=client.request(book.base+'/operations',{'action':'chart_create','operation_id':str(uuid.uuid4()),'expected_state':book.state,'spec':suggestion['spec']})
+            book.refresh();catalog=client.request(book.base+'/charts',{'expected_state':book.state});self.validate('ChartCatalog',catalog)
+            request={**copy.deepcopy(self.schemas['ChartJobRequest']['example']),'expected_state':book.state,'chart_id':receipt['chart_id']}
+            self.validate('ChartJobRequest',request)
+            view=client.request(book.base+'/charts/jobs',request);self.validate('ChartJob',view)
+            deadline=time.monotonic()+30
+            while view['status']=='running':
+                self.assertLess(time.monotonic(),deadline);time.sleep(.01);view=client.request(book.base+'/charts/jobs/'+view['job_id'])
+            self.assertEqual(view['status'],'completed',view);self.validate('ChartJob',view)
+            self.assertEqual((view['result']['width'],view['result']['height']),(480,300))
+            released=client.request(book.base+'/charts/jobs/'+view['job_id']+'/release',{});self.validate('JobReleased',released)
+            self.assertEqual(released,{'released':True,'job_id':request['job_id']})

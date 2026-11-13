@@ -399,6 +399,7 @@ class Workbook:
         self.dependencies=DependencyIndex()
         self.unverified_records=set()
         self._calculation_jobs=None
+        self._chart_jobs=None
         self._operation_jobs=None
         self._query_jobs=None
         self.cancel_event=None
@@ -460,6 +461,7 @@ class Workbook:
         if self._query_jobs is not None:self._query_jobs.close()
         if self._operation_jobs is not None:self._operation_jobs.close()
         if self._calculation_jobs is not None:self._calculation_jobs.close()
+        if self._chart_jobs is not None:self._chart_jobs.close()
         with self.lock:self.db.close()
 
     def ensure_metadata(self):
@@ -471,6 +473,12 @@ class Workbook:
             from .calculation_jobs import CalculationJobs
             self._calculation_jobs=CalculationJobs(self)
         return self._calculation_jobs
+
+    def chart_jobs(self):
+        if self._chart_jobs is None:
+            from .chart_jobs import ChartJobs
+            self._chart_jobs=ChartJobs(self)
+        return self._chart_jobs
 
     def query_jobs(self):
         with self.lock:
