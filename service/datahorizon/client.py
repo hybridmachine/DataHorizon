@@ -459,7 +459,7 @@ class WorkbookClient:
             while job['status']=='running':
                 if time.monotonic()>=deadline:
                     try:self.chart_job_status(job_id,'cancel')
-                    except APIError:pass
+                    except (APIError,OSError):pass
                     raise TimeoutError('Chart job did not finish within %s seconds'%timeout)
                 time.sleep(.05)
                 job=self.chart_job_status(job_id)

@@ -67,14 +67,14 @@ class ChartClientTests(unittest.TestCase):
     def test_resolve_chart_raises_on_stale(self):
         book = self.open_book("stale.dhwb")
         chart_id = book.create_chart(book.suggest_chart("Sheet1", r1=1, c1=1, r2=7, c2=2)["spec"])["chart_id"]
-        real = book.chart_job_status
+        real = book.chart_job
 
-        def moved(job_id, action=None):
-            if action is None:
-                book.set(20, 20, "1")  # the workbook changes while the job is outstanding
-            return real(job_id, action)
+        def moved(*arguments, **keywords):
+            started = real(*arguments, **keywords)
+            book.set(20, 20, "1")  # the workbook changes after the job starts, before any status read
+            return {**started, "status": "running"}
 
-        with patch.object(book, "chart_job_status", moved), self.assertRaises(APIError) as caught:
+        with patch.object(book, "chart_job", moved), self.assertRaises(APIError) as caught:
             book.resolve_chart(chart_id)
         self.assertEqual((caught.exception.status, caught.exception.body["code"]), (409, "STALE_STATE"))
 
@@ -99,6 +99,22 @@ class ChartClientTests(unittest.TestCase):
         with patch.object(book, "chart_job_status", running), self.assertRaises(TimeoutError):
             book.resolve_chart(chart_id, timeout=.2)
         self.assertIn("cancel", seen)
+        self.assertIn("release", seen)
+
+    def test_timeout_survives_a_failing_cancel(self):
+        book = self.open_book("cancel.dhwb")
+        chart_id = book.create_chart(book.suggest_chart("Sheet1", r1=1, c1=1, r2=7, c2=2)["spec"])["chart_id"]
+        seen = []
+        real = book.chart_job_status
+
+        def failing(job_id, action=None):
+            seen.append(action)
+            if action == "cancel":
+                raise OSError("connection lost")
+            return {"status": "running"} if action is None else real(job_id, action)
+
+        with patch.object(book, "chart_job_status", failing), self.assertRaises(TimeoutError):
+            book.resolve_chart(chart_id, timeout=.2)
         self.assertIn("release", seen)
 
     def test_sdk_rest_and_cli_agree(self):
