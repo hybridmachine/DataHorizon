@@ -275,16 +275,40 @@ def _range(col: int, first: int, last: int) -> dict:
     return {"kind": "range", "sheet": "Sheet1", "ref": f"{column_name(col)}{first}:{column_name(col)}{last}"}
 
 
+def _name(col: int) -> dict:
+    return {"source": {"kind": "range", "sheet": "Sheet1", "ref": f"{column_name(col)}1"}}
+
+
 def _capacity_specs() -> dict:
+    """Charts to measure, each with the jobs to time: name -> (specification, kinds)."""
     last = ROWS + 1
-    line = {"spec_version": 1, "type": "line", "categories": {"source": _range(1, 2, last)},
-            "series": [{"name": {"source": {"kind": "range", "sheet": "Sheet1", "ref": f"{column_name(col)}1"}},
-                        "values": {"source": _range(col, 2, last)}} for col in range(2, 10)],
-            "legend": {"position": "bottom"}}
-    column = {"spec_version": 1, "type": "column", "categories": {"source": _range(1, 2, last)},
-              "series": [{"name": {"text": "V2"}, "values": {"source": _range(3, 2, last)}}],
-              "legend": {"position": "none"}}
-    return {"line_8_series": line, "column_10k_points": column}
+    categories = {"source": _range(1, 2, last)}
+    specs = {"line_8_series": ({"spec_version": 1, "type": "line", "categories": categories,
+                                "series": [{"name": _name(col), "values": {"source": _range(col, 2, last)}}
+                                           for col in range(2, 10)],
+                                "legend": {"position": "bottom"}}, ("resolve",))}
+    # The largest renders admitted (LIMIT_RENDER_POINTS values), over a formula column; column is also resolved.
+    for kind in ("column", "bar", "line", "area", "scatter"):
+        series = {"name": _name(3), "values": {"source": _range(3, 2, last)}}
+        spec = {"spec_version": 1, "type": kind, "series": [series], "legend": {"position": "none"}}
+        if kind == "scatter":
+            series["x"] = {"source": _range(2, 2, last)}
+        else:
+            spec["categories"] = categories
+        specs[f"{kind}_10k_points"] = (spec, ("resolve", "render") if kind == "column" else ("render",))
+    return specs
+
+
+def _cells(spec: dict) -> int:
+    parts = [spec["categories"]] if spec.get("categories") else []
+    for item in spec["series"]:
+        parts += [part for part in (item["name"], item["values"], item.get("x")) if part and "source" in part]
+    total = 0
+    for part in parts:
+        ref = part["source"]["ref"]
+        first, _, last = ref.partition(":")
+        total += 1 if not last else int(last[1:]) - int(first[1:]) + 1
+    return total
 
 
 def measure_service(work: pathlib.Path, evidence_dir: pathlib.Path) -> dict:
@@ -301,9 +325,9 @@ def measure_service(work: pathlib.Path, evidence_dir: pathlib.Path) -> dict:
         for first in range(1, ROWS + 2, ROWS_PER_EDIT):
             book.apply("edit", "Sheet1", cells=_capacity_cells(first, min(first + ROWS_PER_EDIT - 1, ROWS + 1)))
         fill_s = time.perf_counter() - start
-        for name, spec in _capacity_specs().items():
+        for name, (spec, kinds) in _capacity_specs().items():
             chart_id = book.create_chart(spec, size={"width": 800, "height": 500})["chart_id"]
-            for kind in ("resolve", "render"):
+            for kind in kinds:
                 run = {"wall_s": [], "result_bytes": [], "error": None}
                 for _ in range(SERVICE_RUNS):
                     start = time.perf_counter()
@@ -325,10 +349,8 @@ def measure_service(work: pathlib.Path, evidence_dir: pathlib.Path) -> dict:
         "machine": _machine(),
         "workbook": {"rows": ROWS, "columns": VALUE_COLUMNS + 1, "formula_columns": VALUE_COLUMNS // 2,
                      "fill_seconds": fill_s, "edits": len(range(1, ROWS + 2, ROWS_PER_EDIT))},
-        "charts": {name: {"type": spec["type"], "series": len(spec["series"]),
-                          "source_cells": ROWS * (len(spec["series"]) + 1)
-                          + sum("source" in item["name"] for item in spec["series"])}
-                   for name, spec in _capacity_specs().items()},
+        "charts": {name: {"type": spec["type"], "series": len(spec["series"]), "source_cells": _cells(spec)}
+                   for name, (spec, _) in _capacity_specs().items()},
         "size_px": [800, 500],
         "runs": SERVICE_RUNS,
         "limits": {"job_seconds": JOB_SECONDS, "result_bytes": RESULT_BYTES},

@@ -1,0 +1,220 @@
+{
+  "measurement": "charts stage 2 capacity through the service",
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "python": "3.14.6"
+  },
+  "workbook": {
+    "rows": 10000,
+    "columns": 11,
+    "formula_columns": 5,
+    "fill_seconds": 2.027401875006035,
+    "edits": 12
+  },
+  "charts": {
+    "line_8_series": {
+      "type": "line",
+      "series": 8,
+      "source_cells": 90008
+    },
+    "column_10k_points": {
+      "type": "column",
+      "series": 1,
+      "source_cells": 20001
+    },
+    "bar_10k_points": {
+      "type": "bar",
+      "series": 1,
+      "source_cells": 20001
+    },
+    "line_10k_points": {
+      "type": "line",
+      "series": 1,
+      "source_cells": 20001
+    },
+    "area_10k_points": {
+      "type": "area",
+      "series": 1,
+      "source_cells": 20001
+    },
+    "scatter_10k_points": {
+      "type": "scatter",
+      "series": 1,
+      "source_cells": 20001
+    }
+  },
+  "size_px": [
+    800,
+    500
+  ],
+  "runs": 3,
+  "limits": {
+    "job_seconds": 30,
+    "result_bytes": 4194304
+  },
+  "jobs": {
+    "line_8_series.resolve": {
+      "wall_s": [
+        2.012330709025264,
+        2.072071332950145,
+        2.0561563330702484
+      ],
+      "result_bytes": [
+        702948,
+        702948,
+        702948
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 80000
+      },
+      "median_s": 2.0561563330702484,
+      "peak_result_bytes": 702948
+    },
+    "column_10k_points.resolve": {
+      "wall_s": [
+        0.5067985409405082,
+        0.5089564169757068,
+        0.5637483331374824
+      ],
+      "result_bytes": [
+        203732,
+        203732,
+        203732
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 10000
+      },
+      "median_s": 0.5089564169757068,
+      "peak_result_bytes": 203732
+    },
+    "column_10k_points.render": {
+      "wall_s": [
+        0.6597665001172572,
+        0.5674274999182671,
+        0.6162896249443293
+      ],
+      "result_bytes": [
+        2175064,
+        2175064,
+        2175064
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 10000
+      },
+      "median_s": 0.6162896249443293,
+      "peak_result_bytes": 2175064
+    },
+    "bar_10k_points.render": {
+      "wall_s": [
+        0.5604739580303431,
+        0.8152183338534087,
+        0.6158618750050664
+      ],
+      "result_bytes": [
+        2015934,
+        2015934,
+        2015934
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 10000
+      },
+      "median_s": 0.6158618750050664,
+      "peak_result_bytes": 2015934
+    },
+    "line_10k_points.render": {
+      "wall_s": [
+        0.5424843751825392,
+        0.5928805000148714,
+        0.5517297501210123
+      ],
+      "result_bytes": [
+        1204356,
+        1204356,
+        1204356
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 10000
+      },
+      "median_s": 0.5517297501210123,
+      "peak_result_bytes": 1204356
+    },
+    "area_10k_points.render": {
+      "wall_s": [
+        0.647920791991055,
+        0.5600909171625972,
+        0.6395744171459228
+      ],
+      "result_bytes": [
+        1467307,
+        1467307,
+        1467307
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 10000
+      },
+      "median_s": 0.6395744171459228,
+      "peak_result_bytes": 1467307
+    },
+    "scatter_10k_points.render": {
+      "wall_s": [
+        0.5641588747967035,
+        0.6608123751357198,
+        0.6315887081436813
+      ],
+      "result_bytes": [
+        1614031,
+        1614031,
+        1614031
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 10000
+      },
+      "median_s": 0.6315887081436813,
+      "peak_result_bytes": 1614031
+    }
+  },
+  "failed": []
+}

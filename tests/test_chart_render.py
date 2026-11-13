@@ -126,14 +126,28 @@ class RenderPoints(unittest.TestCase):
                           for i, length in enumerate(lengths)]
         return spec
 
-    def test_twenty_thousand_values_render(self):
-        self.assertEqual(cr.LIMIT_RENDER_POINTS, 20_000)
-        self.assertIn("<svg", cr.render(self.chart(10_000, 10_000), 800, 500)["svg"])
+    def test_the_limit_number_of_values_renders(self):
+        self.assertEqual(cr.LIMIT_RENDER_POINTS, 10_000)
+        self.assertIn("<svg", cr.render(self.chart(5_000, 5_000), 800, 500)["svg"])
 
     def test_more_values_across_series_are_refused_before_drawing(self):
         with self.assertRaises(cr.ChartRenderError) as caught:
-            cr.render(self.chart(10_000, 10_000, 1), 800, 500)
+            cr.render(self.chart(5_000, 5_000, 1), 800, 500)
         self.assertEqual((caught.exception.code, caught.exception.status), ("LIMIT_RENDER_POINTS", 400))
+
+    def test_a_render_at_the_limit_fits_a_job_result(self):
+        # Worst case measured: column and bar marks at the largest canvas with long fractional values.
+        from datahorizon.engine import encoded
+        half = cr.LIMIT_RENDER_POINTS // 2
+        for kind in ("column", "bar"):
+            spec = one([0.0], type_=kind, cats=[f"Item {n}" for n in range(half)])
+            spec["series"] = [{"name": f"s{i}", "values": [math.sin(n + i) * 1234.56789 for n in range(half)], "x": None}
+                              for i in range(2)]
+            out = cr.render(spec, 4096, 4096)
+            result = {"resolved": spec, "counts": {"points": 2 * half, "gaps": {"empty": 0, "text": 0, "error": 0}},
+                      "state": "s" * 64, **out, "width": 4096, "height": 4096}
+            with self.subTest(kind=kind):
+                self.assertLess(len(encoded(result).encode()), 4 * 1024 * 1024)
 
 
 class PieAndLegend(unittest.TestCase):

@@ -66,7 +66,7 @@ CAPABILITIES.update(names=True,max_names=256)
 CAPABILITIES['operations'].extend(['binding_save','binding_delete'])
 CAPABILITIES.update(event_bindings=True,max_bindings=16,binding_events=['cell_change','table_change'])
 CAPABILITIES['operations'].extend(['chart_create','chart_update','chart_delete'])
-CAPABILITIES.update(charts=True,max_charts=64,chart_spec_version=1,chart_jobs=True,chart_job_seconds=30,max_chart_render_points=20_000)
+CAPABILITIES.update(charts=True,max_charts=64,chart_spec_version=1,chart_jobs=True,chart_job_seconds=30,max_chart_render_points=10_000)
 MAX_UPLOADS, UPLOAD_SECONDS, UPLOAD_CHUNK = 2, 300, 64*1024
 CAPABILITIES.update(uploads=True,max_upload_bytes=LARGE_PACKAGE,max_import_cells=LARGE_CELLS,max_concurrent_uploads=MAX_UPLOADS)
 LARGE_PREPARATION_SECONDS = 300

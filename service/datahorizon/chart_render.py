@@ -15,7 +15,7 @@ LIMIT_POINTS = 10_000
 LIMIT_PIE_POINTS = 1_000
 LIMIT_SERIES = 64
 # Values across all series that one render draws: the marks list keeps a render result under 4 MiB.
-LIMIT_RENDER_POINTS = 20_000
+LIMIT_RENDER_POINTS = 10_000
 
 _NARROW = frozenset("iIjl.,:;|!' ")
 _WIDE = frozenset("mwMW@%")
