@@ -16,7 +16,7 @@ ALLOWED = {"svg", "g", "rect", "line", "path", "circle", "text"}
 
 
 def load(name):
-    return json.loads((FIX / f"{name}.json").read_text())
+    return json.loads((FIX / f"{name}.json").read_text(encoding="utf-8"))
 
 
 def tags(svg):

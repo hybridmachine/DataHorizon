@@ -21,7 +21,7 @@ FIX = HERE / "fixtures" / "charts"
 
 
 def load(name):
-    return json.loads((FIX / f"{name}.json").read_text())
+    return json.loads((FIX / f"{name}.json").read_text(encoding="utf-8"))
 
 
 def _cmap(chars, glyph_of, cmap_format):
@@ -84,7 +84,7 @@ class Reader(unittest.TestCase):
 
 class Bundled(unittest.TestCase):
     def test_table_matches_the_bundled_font(self):
-        table = json.loads((FONTS / "DejaVuSans-metrics.json").read_text())
+        table = json.loads((FONTS / "DejaVuSans-metrics.json").read_text(encoding="utf-8"))
         data = chart_font.font_path().read_bytes()
         self.assertEqual(table["sha256"], hashlib.sha256(data).hexdigest())
         self.assertEqual(table["advances"], font_metrics.advances(data))

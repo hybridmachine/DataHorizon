@@ -94,7 +94,7 @@ def measure_font_in_svg(probe: pathlib.Path, work: pathlib.Path) -> dict:
         svg_path.write_text(font_svg(family), encoding="utf-8")
         _run([str(probe), "--font-file", str(chart_font.font_path()), "--ink-width", str(svg_path),
               "--report", str(report_path)])
-        widths[name] = json.loads(report_path.read_text())["ink_px"]
+        widths[name] = json.loads(report_path.read_text(encoding="utf-8"))["ink_px"]
     laid_out = cr.estimate_text_width(FONT_TEXT, FONT_PX, chart_font.default_metrics())
     return font_check(widths["bundled"], widths["unknown"], laid_out)
 
@@ -229,7 +229,7 @@ def measure_pies(probe: pathlib.Path, work: pathlib.Path, evidence_dir: pathlib.
     labels_path.write_text("[]", encoding="utf-8")
     _run([str(probe), "--svg-dir", str(svg_dir), "--out", str(png_dir), "--labels", str(labels_path),
           "--report", str(report_path), "--font-file", str(chart_font.font_path())])
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     charts = {item["file"]: item for item in report["charts"]}
     medians = {size: charts[f"pie_{size}.svg"]["load_ms"] + charts[f"pie_{size}.svg"]["paint_ms"] for size in sizes}
     evidence = {
@@ -389,7 +389,7 @@ def main(argv=None) -> int:
 
     render_ms_12, fixture_svgs = {}, []
     for path in sorted(FIXTURES.glob("*.json")):
-        spec = json.loads(path.read_text())
+        spec = json.loads(path.read_text(encoding="utf-8"))
         elapsed, svg = _timed(spec, 800, 500)
         render_ms_12[path.stem] = elapsed
         fixture_svgs.append(svg)
@@ -411,7 +411,7 @@ def main(argv=None) -> int:
                "--labels", str(labels_path), "--report", str(report_path),
                "--font-file", str(chart_font.font_path())]
     _run(command + (["--font", args.font] if args.font else []))
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     charts = {item["file"]: item for item in report["charts"]}
 
     def qt_ms(name):
@@ -422,7 +422,7 @@ def main(argv=None) -> int:
         table_path = args.work / "metrics-table.json"
         _run([str(args.probe), "--emit-metrics", "sans-serif", str(table_path)])
         table_bytes = table_path.stat().st_size
-        table_stats = _text_stats(report["labels"], json.loads(table_path.read_text())["advances"])
+        table_stats = _text_stats(report["labels"], json.loads(table_path.read_text(encoding="utf-8"))["advances"])
 
     measurements = {
         "render_ms_10k": render_ms_10k,
