@@ -130,21 +130,80 @@ class Resolve(unittest.TestCase):
             self.resolve()
         self.assertEqual(code(caught), "READ_LIMIT")
 
-    def test_each_source_is_one_bounded_read(self):
-        wide = self.payload(self.spec(series=[series("B2:B13")]))
-        wide["spec"]["series"][0]["values"]["source"].update(row1=1, row2=10_000, col1=5, col2=5)
+    def counted_reads(self, fail_at=None):
+        """Replace the book's read with one that records each call and can time out on call ``fail_at``."""
         calls = []
         real = self.book.read
 
         def counting(*args, **kwargs):
             calls.append((args, kwargs))
+            if len(calls) == fail_at:
+                raise EngineError("TIMEOUT", "too slow")
             return real(*args, **kwargs)
         self.book.read = counting
-        out = self.resolve(wide)
-        self.assertEqual(len(calls), 3)  # categories, name, values
+        self.addCleanup(setattr, self.book, "read", real)
+        return calls
+
+    def wide_payload(self):
+        wide = self.payload(self.spec(series=[series("B2:B13")]))
+        wide["spec"]["series"][0]["values"]["source"].update(row1=1, row2=10_000, col1=5, col2=5)
+        return wide
+
+    def test_each_source_is_read_in_slices_of_at_most_1000_cells(self):
+        self.assertEqual(chart_resolve.SLICE_CELLS, 1_000)
+        calls = self.counted_reads()
+        out = self.resolve(self.wide_payload())
+        self.assertEqual(len(calls), 12)  # categories 1, name 1, values 10
         self.assertTrue(all(kwargs["limit"] == MAX_CELLS for _, kwargs in calls))
+        slices = [(args[1]["r1"], args[1]["r2"]) for args, _ in calls[2:]]
+        self.assertEqual(slices, [(start, start + 999) for start in range(1, 10_001, 1_000)])
         self.assertEqual(len(out["resolved"]["series"][0]["values"]), 10_000)
         self.assertEqual(out["counts"]["gaps"]["empty"], 10_000)
+
+    def test_a_row_source_is_sliced_along_the_row(self):
+        wide = self.payload(self.spec(categories=None, series=[{"name": {"text": "Row"}, "values": {"source": source("B20:B20")}}]))
+        wide["spec"]["series"][0]["values"]["source"].update(col1=1, col2=2_500)
+        calls = self.counted_reads()
+        out = self.resolve(wide)
+        self.assertEqual([(args[1]["c1"], args[1]["c2"]) for args, _ in calls], [(1, 1000), (1001, 2000), (2001, 2500)])
+        self.assertEqual(len(out["resolved"]["series"][0]["values"]), 2_500)
+
+    def test_a_timeout_on_a_later_slice_fails_with_no_series(self):
+        calls = self.counted_reads(fail_at=6)
+        with self.assertRaises(EngineError) as caught:
+            self.resolve(self.wide_payload())
+        self.assertEqual((code(caught), caught.exception.status), ("CALCULATION_FAILED", 409))
+        self.assertEqual(len(calls), 6)  # no read after the failure
+
+    def test_a_calculation_budget_error_fails_the_resolve(self):
+        real = self.book.read
+
+        def exhausted(*args, **kwargs):
+            result = real(*args, **kwargs)
+            for cell in result["cells"]:
+                if cell["col"] in (2, 3) and cell["row"] == 5:
+                    cell.update(value=None, display="#LIMIT!", calculation="error", error=chart_resolve.BUDGET_ERROR)
+            return result
+        self.book.read = exhausted
+        self.addCleanup(setattr, self.book, "read", real)
+        for spec in (self.spec(), self.spec("scatter", categories=None, series=[series("B2:B13", x="C2:C13")]),
+                     self.spec("scatter", categories=None, series=[series("C2:C13", x="B2:B13")])):
+            with self.subTest(spec=spec["type"]), self.assertRaises(EngineError) as caught:
+                self.resolve(self.payload(spec))
+            self.assertEqual((code(caught), caught.exception.status), ("CALCULATION_FAILED", 409))
+
+    def test_other_limit_errors_stay_counted_gaps(self):
+        real = self.book.read
+
+        def chain(*args, **kwargs):
+            result = real(*args, **kwargs)
+            for cell in result["cells"]:
+                if cell["col"] == 2 and cell["row"] == 5:
+                    cell.update(value=None, display="#LIMIT!", calculation="error", error="Dependency chain exceeds 128 cells")
+            return result
+        self.book.read = chain
+        self.addCleanup(setattr, self.book, "read", real)
+        self.assertEqual(self.resolve()["counts"]["gaps"]["error"], 1)
 
     def test_checkpoint_follows_each_read(self):
         seen = []

@@ -94,6 +94,19 @@ class ChartJobTests(unittest.TestCase):
         self.assertNotIn("svg", result)
         self.assertEqual(self.state(), state)
 
+    def test_resolve_calculates_thousands_of_formulas_inside_the_job(self):
+        cells = []
+        for row in range(1, 3001):
+            cells += [{"row": row, "col": 4, "source": str(row)}, {"row": row, "col": 5, "source": f"=D{row}*2+1"}]
+        self.operate("edit", cells=cells)
+        formulas = {"spec_version": 1, "type": "line", "legend": {"position": "none"},
+                    "series": [{"name": {"text": "Derived"}, "values": {"source": source("E1:E3000")}}]}
+        self.chart = self.operate("chart_create", sheet="Sheet1", spec=formulas)["chart_id"]
+        view = self.wait(self.start("resolve"), seconds=60)
+        self.assertEqual(view["status"], "completed", {key: value for key, value in view.items() if key != "result"})
+        self.assertEqual(view["result"]["counts"], {"points": 3000, "gaps": {"empty": 0, "text": 0, "error": 0}})
+        self.assertEqual(view["result"]["resolved"]["series"][0]["values"][-1], 6001.0)
+
     def test_render_job_returns_svg_marks_and_size(self):
         view = self.wait(self.start("render", width=640, height=400))
         self.assertEqual(view["status"], "completed", view)

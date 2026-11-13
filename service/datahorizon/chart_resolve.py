@@ -13,6 +13,10 @@ from .engine import MAX_CELLS, EngineError, rectangle, require
 from .formula import column_name
 
 GAP_CAUSES = ("empty", "text", "error")
+# Each Workbook.read has a fixed two-second calculation deadline, so sources are read in slices.
+SLICE_CELLS = 1_000
+# The error text of a cell the calculator gave up on; such a value fails the resolve, it is not a gap.
+BUDGET_ERROR = "Calculation budget exceeded"
 
 
 def _broken(source):
@@ -30,19 +34,39 @@ def _check_sources(book, sources):
         raise EngineError("SOURCE_BROKEN", "A chart source names a sheet that no longer exists", 409)
 
 
-def _read(book, source, state):
-    """Read one source in a single bounded call; return its cells by position."""
-    args = {"r1": source["row1"], "c1": source["col1"], "r2": source["row2"], "c2": source["col2"],
-            "calculation": "fresh"}
-    try:
-        result = book.read(source["sheet_id"], args, limit=MAX_CELLS)
-    except EngineError as error:
-        if error.body["code"] == "TIMEOUT":
-            raise EngineError("CALCULATION_FAILED", "The chart's sources could not be calculated in time", 409) from error
-        raise
-    if result["state"] != state:
-        raise EngineError("STALE_STATE", "Workbook changed while reading chart sources", 409)
-    return {(cell["row"], cell["col"]): cell for cell in result["cells"]}
+def _slices(source):
+    """Split a one-row or one-column source into rectangles of at most SLICE_CELLS cells."""
+    if source["row1"] == source["row2"]:
+        low, high, axis = source["col1"], source["col2"], ("c1", "c2")
+        fixed = {"r1": source["row1"], "r2": source["row2"]}
+    else:
+        low, high, axis = source["row1"], source["row2"], ("r1", "r2")
+        fixed = {"c1": source["col1"], "c2": source["col2"]}
+    for start in range(low, high + 1, SLICE_CELLS):
+        yield {**fixed, axis[0]: start, axis[1]: min(start + SLICE_CELLS - 1, high)}
+
+
+def _read(book, source, state, checkpoint=None):
+    """Read one source slice by slice, each a bounded call; return its cells by position.
+
+    ``checkpoint(cells)`` is called after each slice with the cells read so far.
+    """
+    cells = {}
+    done = 0
+    for part in _slices(source):
+        try:
+            result = book.read(source["sheet_id"], {**part, "calculation": "fresh"}, limit=MAX_CELLS)
+        except EngineError as error:
+            if error.body["code"] == "TIMEOUT":
+                raise EngineError("CALCULATION_FAILED", "The chart's sources could not be calculated in time", 409) from error
+            raise
+        if result["state"] != state:
+            raise EngineError("STALE_STATE", "Workbook changed while reading chart sources", 409)
+        cells.update(((cell["row"], cell["col"]), cell) for cell in result["cells"])
+        done += (part["r2"] - part["r1"] + 1) * (part["c2"] - part["c1"] + 1)
+        if checkpoint is not None:
+            checkpoint(done)
+    return cells
 
 
 def _positions(source):
@@ -71,7 +95,10 @@ def _classify(cell):
 def _numbers(cells, source, gaps=None):
     values = []
     for position in _positions(source):
-        number, cause = _classify(cells.get(position))
+        cell = cells.get(position)
+        if cell is not None and cell.get("calculation") == "error" and cell.get("error") == BUDGET_ERROR:
+            raise EngineError("CALCULATION_FAILED", "The chart's sources could not be calculated within the budget", 409)
+        number, cause = _classify(cell)
         values.append(number)
         if gaps is not None and cause is not None:
             gaps[cause] += 1
@@ -91,11 +118,14 @@ def resolve(snapshot, payload, state, checkpoint=None):
 
     def fetch(source):
         nonlocal cells_read
-        cells = _read(snapshot, source, state)
-        cells_read += len(_positions(source))
-        if checkpoint is not None:
-            checkpoint(cells_read, "Reading sources")
-        return cells
+        before = cells_read
+
+        def progress(done):
+            nonlocal cells_read
+            cells_read = before + done
+            if checkpoint is not None:
+                checkpoint(cells_read, "Reading sources")
+        return _read(snapshot, source, state, progress)
 
     categories = None
     if spec["categories"] is not None:

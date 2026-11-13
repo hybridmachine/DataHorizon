@@ -59,11 +59,13 @@ class ChartJobs:
 
                     def calculator(seconds=.25, **kwargs):
                         calc = base(seconds=2, clock=clock, transactional=True)
-                        check = calc.check
 
+                        # Not the calculator's own check: its 10,000-step budget would turn a large
+                        # source into #LIMIT! cells. The job's deadline and cancellation bound it
+                        # instead, with each read's own two-second deadline.
                         def checked():
+                            calc.count += 1
                             checkpoint(calc.count, "Calculating")
-                            check()
 
                         calc.check = checked
                         return calc
