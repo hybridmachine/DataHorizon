@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Tests for the charts stage 1 renderer experiment (not product code)."""
+"""Tests for the chart renderer (service/datahorizon/chart_render.py) and the benchmark's logic."""
 
 import json
 import math

@@ -1,6 +1,6 @@
 # Charts design
 
-Draft 0.3 | November 12, 2026 | Status: approved by the owner on November 11, 2026; rendering route confirmed with two changes on November 12, 2026. Only the stage 1 experiment is built.
+Draft 0.4 | November 12, 2026 | Status: approved by the owner on November 11, 2026; rendering route confirmed with two changes on November 12, 2026. Stage 1 (the experiment) and stage 2 for range sources are built on branch `claude/charts-stage-2`, which is not merged; table and query sources, the desktop and workbook Python are not. Sections marked **Built** record what the code does; [section 15](#15-departures-from-draft-03-as-built) lists where it departs from Draft 0.3.
 
 This document proposes how DataHorizon stores, renders and exposes charts. It is
 a design to plan from. It is not an implementation plan; each stage gets a
@@ -82,9 +82,9 @@ packages ([LICENSES.md](../../LICENSES.md)), which Plotly would end.
 | Plotly | Not the core engine | **Owner** |
 | Who resolves data | The service: it reads the sources, applies bounds and returns resolved series | **Call** |
 | Who draws | The service draws SVG; the desktop displays that SVG. See section 6 | **Owner** (November 11, 2026), subject to the stage 1 experiment |
-| Storage | A chart kind in the existing `dh_objects` catalog, at native format v8 | **Call** |
+| Storage | A chart kind in the existing `dh_objects` catalog, at native format v8 | **Call**; **Built** |
 | Source kinds | `range` first; `table` and `query` in a later step of stage 2 | **Owner** (accepted as proposed) |
-| Uncalculated sources | Resolve and render are cancellable jobs that calculate their sources | **Call** |
+| Uncalculated sources | Resolve and render are cancellable jobs that calculate their sources inside their own read-only snapshot | **Call**; **Built** |
 | Staleness | Coarse: any managed revision change marks every chart stale | **Call** |
 | Placement | Floating over a sheet, anchored to a cell, with a size in pixels. Chart sheets later | **Call** |
 | Hooks | No chart events in the first stages; chart operations do not raise cell change events | **Owner** (accepted as proposed) |
@@ -141,6 +141,17 @@ An invalid or unknown specification is rejected with a structured error. A
 specification whose `spec_version` is newer than the service understands is
 kept, shown as a placeholder and never rewritten.
 
+**Built (range sources).** The illustration above is the input form: REST, the
+CLI and the SDK accept a source as `{"kind": "range", "sheet", "ref"}`, where
+`sheet` is a name or identity and `ref` is A1 text without a sheet. The stored
+form replaces `sheet` and `ref` with `sheet_id`, `row1`, `col1`, `row2` and
+`col2`, so structural edits are arithmetic; a read returns both, adding `ref`
+and `broken` to each source. Optional keys are defaulted on write, so a stored
+specification has every key. Version 1 is specified key by key in the
+[native format](native-format-v1.md#charts-format-v8). An unreadable or newer
+stored specification is listed with an `issue` (`INVALID_SPEC` or
+`UNSUPPORTED_SPEC_VERSION`) and resolve and render refuse it with that code.
+
 ## 5. Resolving data
 
 The service resolves a chart: it reads each source through the shared engine and
@@ -157,6 +168,26 @@ time; stage 2 measures and fixes the value. Over the limit the service refuses
 with a structured error that names the limit; it does not silently truncate or
 downsample in the first stage.
 
+**Built: the limits.** Each is refused with a structured error carrying its
+own code, never truncated. Measurements are in the
+[stage 2 result](charts-stage-2-result.md).
+
+| Limit | Value | Code |
+| --- | --- | --- |
+| Charts per workbook | 64 | `LIMIT_CHARTS` |
+| Series per chart | 64 | `LIMIT_SERIES` |
+| Points per series (cells in a values, categories or x source) | 10,000 | `LIMIT_POINTS` |
+| Points in a pie | 1,000 (measured: 41 ms in Qt against a 75 ms budget) | `LIMIT_PIE_POINTS` |
+| Source cells per chart, all sources together | 100,000 | `LIMIT_CELLS` |
+| Values drawn by one render, all series together | 10,000 (a render result must stay under 4 MiB) | `LIMIT_RENDER_POINTS` |
+| Chart size | 64×48 to 4,096×4,096 pixels | `INVALID_ARGUMENT` |
+| Stored payload | 256 KiB | `LIMIT` |
+| Job time and result | 30 seconds; 4 MiB | `TIMEOUT`, `CALCULATION_FAILED`; `READ_LIMIT` |
+
+A chart can therefore hold more data than one render draws: an eight-series
+line chart over 10,000 rows resolves, but rendering it is refused with
+`LIMIT_RENDER_POINTS`.
+
 **Calculated values.** Formula results are calculated today by bounded
 background jobs over visible grid tiles ([viewport calculation](viewport-calculation.md)),
 and a client may not fall back to synchronous evaluation. A chart can sit over
@@ -166,6 +197,16 @@ bounded calculation job for those source rectangles and waits on it; if the
 calculation is refused, cancelled or fails, the resolve reports that and returns
 no partial series. A chart over stored values only completes at once through
 the same job interface.
+
+**Built differently.** The chart job does not start a second calculation job.
+It opens its own read-only snapshot and calculates there, with a calculator
+wrapper modelled on the calculation jobs', so cancellation and the job's
+30-second deadline bound the work. The ordinary per-read budget of 10,000 evaluation steps does
+not apply inside a chart job; each source is read in slices of at most 1,000
+cells, one bounded read per slice, each with a read's two-second deadline. A
+read that times out, or a value or x cell left with the calculator's budget
+error, fails the whole job with `CALCULATION_FAILED` and no series. Ordinary
+formula errors (`#DIV/0!`, `#REF!`, a cycle) plot as counted gaps.
 
 **Following the data.** Chart sources are JSON rectangles addressed by sheet
 identity, so a sheet rename needs no maintenance. Row and column inserts and
@@ -188,7 +229,11 @@ at. That revision is returned to the client and held in service memory; it is
 not written to the workbook, so a resolve is never a workbook write. **Call**:
 staleness is coarse in the first stages. Any change of the managed revision
 makes every chart's last result stale, and clients resolve again for the charts
-they show. Exact tracking through formulas and queries is a later refinement. Because resolved data is derived state, nothing is
+they show. Exact tracking through formulas and queries is a later refinement.
+**Built**: staleness is decided when the job is read. A job records the
+workbook state it started at; once the workbook's state differs, a completed
+job, or one that failed because the workbook changed while it read, is
+reported `stale` and its result is withheld. Because resolved data is derived state, nothing is
 replayed after a direct SQLite edit: on reopen or refresh the chart is stale and
 resolves again from stored data, under the existing external-edit contract. A
 chart over values the engine has not calculated yet says so, in the same way the
@@ -266,7 +311,15 @@ service SVG route is confirmed and the QCustomPlot fallback is not taken.
    font may see text a little wider or narrower than laid out; a PNG
    rasterised by the desktop does not have that problem.
 
-Still to settle in the stage 2 plan: which font (its license must be
+**Built.** The font is DejaVu Sans 2.37, shipped as
+`service/datahorizon/fonts/DejaVuSans.ttf` with a metrics table generated from
+it; the pie limit is 1,000. The SVG names exactly one family,
+`font-family="DejaVu Sans"`: Qt SVG reads a list such as
+`"DejaVu Sans, sans-serif"` as one unknown family and draws in the system font
+even when the bundled font is loaded. A viewer without the font therefore uses
+its own default face rather than a sans-serif.
+
+Settled by the stage 2 plan: which font (its license must be
 compatible with GPL-3.0-only distribution and it must be recorded in
 `LICENSES.md`, with Qt SVG), the pie limit's value, how the font is packaged on
 all three platforms, and text outside the metrics table. The experiment
@@ -274,7 +327,7 @@ measured only Latin text on one Mac; Windows and Linux are unmeasured.
 
 ## 7. Storage
 
-**Call**: charts are a new kind in the existing `dh_objects` catalog
+**Call**, **Built**: charts are a new kind in the existing `dh_objects` catalog
 (`namespace`, `id`, `sheet_id`, `payload`), following formats v3 to v7, which
 each added kinds to the existing catalogs and upgrade a workbook lazily on
 first use. The format becomes v8 when a workbook first holds a chart. The
@@ -282,6 +335,14 @@ payload holds display name, anchor cell, offset, size, z-order, the
 specification JSON and its `spec_version`. Resolved data and rendered output
 are not stored. The kind is documented in the native format document so direct
 SQLite readers can list charts and read their specifications.
+
+As built, the payload has exactly `name`, `anchor` (`row`, `col`), `offset`
+(`x`, `y`), `size` (`width`, `height`), `z`, `spec_version` and `spec`, and each
+stored source is `{"kind": "range", "sheet_id", "row1", "col1", "row2",
+"col2"}`, all four coordinates `null` when broken. The row's `sheet_id` is the
+sheet the chart is placed on. See [Charts format v8](native-format-v1.md#charts-format-v8).
+Duplicating a sheet does not copy its charts, as it does not copy declared
+lists.
 
 A direct edit to a chart row is treated like any other direct edit: the
 service validates on open, reports a specification it cannot read, and does not
@@ -305,7 +366,46 @@ CLI and the SDK:
   rectangles)
 
 Create, change, move and delete take part in history and undo as single
-operations. Errors are structured: an unknown source, a broken reference, a
+operations.
+
+**Built.** Writes are three operation actions on the existing operations route:
+
+- `chart_create`: `spec` (input form), optional `sheet`, `name`, `anchor`,
+  `offset`, `size`; the name defaults to the lowest unused "Chart N" and the
+  new chart goes on top.
+- `chart_update`: `chart_id` and at least one of `name`, `anchor`, `offset`,
+  `size`, `z` or `order` (`front` or `back`), and `spec` (a replacement) or
+  `spec_patch` (an RFC 7386 merge patch on the input form). A patch is refused
+  with `SOURCE_BROKEN` while a source is broken; send `spec` instead.
+- `chart_delete`: `chart_id`.
+
+Each records its own change-set entry, so it undoes and redoes without clearing
+cell history. Receipts carry `chart_id` and `changed_charts`; a structural edit
+that breaks a chart source lists it in `broken_charts`.
+
+Reads and jobs:
+
+| Route | Purpose |
+| --- | --- |
+| `POST /v1/workbooks/{workbook}/charts` | State-checked catalog: every chart, or one sheet's, or one chart |
+| `POST /v1/workbooks/{workbook}/charts/suggest` | Suggest an input-form specification from a rectangle of at most 10,000 cells |
+| `POST /v1/workbooks/{workbook}/charts/jobs` | Start a resolve or render job (`kind`, and `width` and `height` for render) |
+| `GET /v1/workbooks/{workbook}/charts/jobs/{job}` | Poll: `running`, `completed`, `failed`, `cancelled` or `stale` |
+| `POST .../charts/jobs/{job}/cancel`, `.../release` | Cancel a job; release a finished one |
+
+The SDK's `WorkbookClient` has `charts`, `create_chart`, `update_chart`,
+`delete_chart`, `suggest_chart`, `chart_job`, `chart_job_status`,
+`resolve_chart` and `render_chart`; the last two start a job, wait for it,
+release it and raise on a failed or stale job. The managed CLI has
+`charts list|create|update|delete|suggest|resolve|render`, reading create and
+update arguments as JSON from standard input; `render --svg-out FILE` writes
+the SVG to a file. Capabilities advertise `charts`, `max_charts`,
+`chart_spec_version`, `chart_jobs`, `chart_job_seconds` and
+`max_chart_render_points`.
+
+Not built: rename, move, resize and reorder are fields of `chart_update`
+rather than separate operations, and there is no render of an unsaved
+specification; a preview of one is left to the desktop stage. Errors are structured: an unknown source, a broken reference, a
 limit, an unsupported specification version.
 
 **Call**: chart operations raise no Python events in the first stages and are
@@ -346,6 +446,11 @@ Until stage 4, importing an XLSX or ODS file with charts reports them as today
 (`workbook.feature` `charts`, `chart_sheets`), and exporting a workbook that
 holds native charts reports each one as omitted. Nothing is dropped silently.
 
+**Not built in stage 2.** XLSX and ODS exports do not yet list native charts
+one by one. Their report carries only the existing general note that
+unsupported spreadsheet features are omitted. This is open work for stage 4 or
+earlier.
+
 Stage 4 maps the specification to and from DrawingML charts and OpenDocument
 chart objects: export first, because it only has to write what DataHorizon
 holds; import second, with unsupported chart types and options degraded and
@@ -357,7 +462,7 @@ interchange never carry charts.
 | Stage | Delivers | Done when |
 | --- | --- | --- |
 | 1. Renderer experiment | Section 6 measurements and a written result | The evidence confirms the service SVG route or triggers the fallback. Run November 11, 2026: thresholds not all met ([result](chart-render-experiment.md)). Owner ruling November 12, 2026: service SVG route confirmed with a pie point limit and a bundled font (section 6) |
-| 2. Engine and interfaces | Storage, specification validation, resolve, render, reference maintenance, staleness, REST/CLI/SDK, history | A script creates, changes and renders all six chart types with no desktop; structural edits and undo are verified |
+| 2. Engine and interfaces | Storage, specification validation, resolve, render, reference maintenance, staleness, REST/CLI/SDK, history | A script creates, changes and renders all six chart types with no desktop; structural edits and undo are verified. **Done for range sources** on November 12, 2026 ([result](charts-stage-2-result.md)); table and query sources are outstanding and get their own plan |
 | 3. Desktop and Python | Wireframes, Insert Chart, floating charts, edit panel, object browser entry, context operations | The wireframe session is completed in the installed application |
 | 4. Interchange | XLSX and ODS chart export, then import, with reports | A round trip keeps every supported chart and reports the rest |
 | 5. More chart types | Combination charts, secondary axis, histogram, trendlines, chart sheets | Per-type criteria in that stage's plan |
@@ -385,3 +490,25 @@ Settled on November 11, 2026, with the rendering route confirmed on November 12,
 - Qt Charts deprecation: <https://doc.qt.io/qt-6/qtcharts-index.html>
 - Qt Graphs widgets: <https://doc.qt.io/qt-6.9/qtgraphswidgets-index.html>
 - QCustomPlot: <https://www.qcustomplot.com/>
+
+## 15. Departures from Draft 0.3, as built
+
+Each is recorded above where it applies. All are **Built** on branch
+`claude/charts-stage-2`.
+
+- **Undo entries for charts.** No earlier `dh_objects` kind took part in undo;
+  names and bindings clear history. Chart writes record their own change-set
+  entries, so chart edits undo without clearing cell history.
+- **Calculation inside the job.** Section 5 said a resolve starts a calculation
+  job and waits on it. The chart job calculates inside its own read-only
+  snapshot instead, without the per-read step budget, reading each source in
+  slices of 1,000 cells.
+- **Integer stored sources.** Section 4's illustration stores `ref` text.
+  Stored sources hold `row1`, `col1`, `row2`, `col2`; `ref` is accepted on input
+  and returned on read.
+- **A render point limit.** Not in Draft 0.3. One render draws at most 10,000
+  values across all series, because a render result over 4 MiB fails.
+- **One font family name.** Draft 0.3 had the SVG name the bundled family. It
+  names that family alone, with no fallback list, because Qt SVG cannot read a
+  list.
+- **Sheet duplication does not copy charts.**

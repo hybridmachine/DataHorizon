@@ -4,6 +4,37 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## Charts stage 2 engine and interfaces (range sources) — November 12, 2026
+
+The [stage 2 plan](charts-stage-2-plan.md) is executed for range sources on
+branch `claude/charts-stage-2`. That branch is stacked on the unmerged
+`claude/charts-stage-1`, and neither is merged. Charts are a `chart` kind in
+`dh_objects` at [native format v8](native-format-v1.md#charts-format-v8). They
+are created, changed and deleted by undoable operation actions, follow row and
+column edits, and are resolved and rendered to SVG by cancellable 30-second
+jobs. They are reachable through REST, the managed CLI (`charts`) and the SDK.
+The renderer lays text out against a metrics table for the bundled DejaVu Sans
+font.
+
+Measured on the reference Mac only:
+- A pie of 1,000 slices loads and paints in 41 ms in Qt, so the pie limit is
+  1,000.
+- An eight-series line chart over 10,000 rows, half of them formulas, resolves
+  80,000 points in 2.1 s.
+- Each chart type renders 10,000 formula points in under 1 s, with results of
+  1.2 to 2.1 MiB.
+- One render is limited to 10,000 values so that its result stays under the
+  4 MiB job limit.
+
+The capacity run found three defects, each fixed test-first: formula sources
+plotted as error gaps, renders overflowing the result limit, and Qt SVG
+ignoring the bundled font.
+
+Open: table and query sources, the desktop, workbook-Python chart operations,
+per-chart export reports, and Windows and Linux. See the
+[result](charts-stage-2-result.md) and the as-built [design](charts-design.md)
+(Draft 0.4).
+
 ## Charts stage 1 renderer experiment — November 11, 2026
 
 The [charts design](charts-design.md) is approved and its stage 1

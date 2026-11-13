@@ -50,6 +50,7 @@ Proposed resource families are:
 | Code and macros | Inspect modules/bindings and invoke permitted entry points |
 | Calculations | Request evaluation and inspect pending/error/current state |
 | Jobs | Submit, inspect progress/results, cancel, and inspect failures |
+| Charts | List, suggest, create, change and delete charts; resolve and render them as jobs |
 
 Design requirements:
 
@@ -64,6 +65,18 @@ Design requirements:
   the whole operation so a network retry does not repeat its macros.
 - Jobs for expensive work, with documented cancellation and transaction units.
 - Discoverable capabilities and compatibility information for scripts and agents.
+
+As built in charts stage 2 (range sources, branch `claude/charts-stage-2`, not
+merged): chart writes are the operation actions `chart_create`, `chart_update`
+and `chart_delete` on the existing operations route, with undo and redo. Reads
+are `POST /v1/workbooks/{workbook}/charts` (the state-checked catalog) and
+`POST .../charts/suggest` (a specification suggested from a range). Resolve and
+render are read-only jobs: start with `POST .../charts/jobs`, poll
+`GET .../charts/jobs/{job}`, and finish with `.../cancel` or `.../release`. A
+render returns SVG and one mark rectangle per drawn value. A job's result is
+withheld as `stale` once the workbook changes, and every limit is refused with
+a code that names it. The SDK and the managed CLI `charts` command wrap the
+same routes. See [the charts design](charts-design.md#8-managed-operations-and-interfaces).
 
 Server-local paths and remote client paths are different. Remote open/import
 operations need a defined upload or registered-workbook mechanism; a client's
