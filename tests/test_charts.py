@@ -285,6 +285,11 @@ class Operations(unittest.TestCase):
             with self.subTest(action=action):
                 error = self.refused(action, chart_id=missing, **args)
                 self.assertEqual((error.body["code"], error.status), ("CHART_NOT_FOUND", 404))
+        for action, args in (("chart_update", {"name": "X"}), ("chart_delete", {})):
+            for bad in ({}, {"chart_id": 7}, {"chart_id": None}):
+                with self.subTest(action=action, bad=bad):
+                    error = self.refused(action, **bad, **args)
+                    self.assertEqual((error.body["code"], error.status), ("INVALID_ARGUMENT", 400))
         with self.assertRaises(EngineError) as caught:
             self.listed(chart_id=missing)
         self.assertEqual((code(caught), caught.exception.status), ("CHART_NOT_FOUND", 404))

@@ -510,6 +510,8 @@ def mutate(book, request):
         raise _argument(f"Unsupported chart operation field: {', '.join(unknown)}")
     if action == "chart_create":
         return _create(book, request)
+    if not isinstance(request.get("chart_id"), str):
+        raise _argument(f"{action} needs chart_id as text")
     if action == "chart_update":
         return _update(book, request)
     sheet_id, _ = find(book, request.get("chart_id"))
