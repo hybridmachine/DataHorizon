@@ -151,6 +151,7 @@ specification has every key. Version 1 is specified key by key in the
 [native format](native-format-v1.md#charts-format-v8). An unreadable or newer
 stored specification is listed with an `issue` (`INVALID_SPEC` or
 `UNSUPPORTED_SPEC_VERSION`) and resolve and render refuse it with that code.
+A stored specification over a size limit is not unreadable (see section 5).
 
 ## 5. Resolving data
 
@@ -188,6 +189,19 @@ A chart can therefore hold more data than one render draws: an eight-series
 line chart over 10,000 rows resolves, but rendering it is refused with
 `LIMIT_RENDER_POINTS`.
 
+The size limits (`LIMIT_POINTS`, `LIMIT_PIE_POINTS`, `LIMIT_CELLS`) are
+enforced when a specification is given (`chart_create`, or `chart_update` with
+`spec` or `spec_patch`) and again by resolve before it reads anything. They are
+not part of stored-form readability: a stored specification is readable when
+its shape and grid bounds are valid. A row or column insert can therefore grow
+a stored chart past a size limit. Such a chart has no `issue`, keeps following
+structural edits, and accepts `spec` and `spec_patch`, which re-validate the
+limits; resolve and render refuse it with the limit's code and a message that
+gives the cells its source now holds. `charts.read` reports
+`"over_limit"` (the limit code, or `null`) for each chart, and a row or column
+edit's receipt lists `charts_over_limit` (sorted chart ids) for each chart it
+pushed from within its limits to over one, alongside `broken_charts`.
+
 **Calculated values.** Formula results are calculated today by bounded
 background jobs over visible grid tiles ([viewport calculation](viewport-calculation.md)),
 and a client may not fall back to synchronous evaluation. A chart can sit over
@@ -203,10 +217,13 @@ It opens its own read-only snapshot and calculates there, with a calculator
 wrapper modelled on the calculation jobs', so cancellation and the job's
 30-second deadline bound the work. The ordinary per-read budget of 10,000 evaluation steps does
 not apply inside a chart job; each source is read in slices of at most 1,000
-cells, one bounded read per slice, each with a read's two-second deadline. A
-read that times out, or a value or x cell left with the calculator's budget
-error, fails the whole job with `CALCULATION_FAILED` and no series. Ordinary
-formula errors (`#DIV/0!`, `#REF!`, a cycle) plot as counted gaps.
+cells, one bounded read per slice, each with a read's two-second deadline. One
+calculator serves the whole job: every slice reuses its cache, so a formula
+chain that crosses a slice boundary (a running total, say) is not recalculated
+from an empty cache. A read that times out, or any `#LIMIT!` engine error in a
+value or x cell, fails the whole job with `CALCULATION_FAILED` and no series;
+the message names the cell. Ordinary formula errors (`#DIV/0!`, `#REF!`,
+`#VALUE!`, a cycle) plot as counted gaps.
 
 **Following the data.** Chart sources are JSON rectangles addressed by sheet
 identity, so a sheet rename needs no maintenance. Row and column inserts and
@@ -380,8 +397,12 @@ operations.
 - `chart_delete`: `chart_id`.
 
 Each records its own change-set entry, so it undoes and redoes without clearing
-cell history. Receipts carry `chart_id` and `changed_charts`; a structural edit
-that breaks a chart source lists it in `broken_charts`.
+cell history. Their undo labels are `Create chart`, `Edit chart` and `Delete
+chart`; an explicit `label` in the request wins. Receipts carry `chart_id` and
+`changed_charts`; a structural edit that breaks a chart source lists it in
+`broken_charts`, and one that pushes a chart past a size limit lists it in
+`charts_over_limit` (section 5). A failed chart job's error carries
+`http_status`, which the SDK raises with.
 
 Reads and jobs:
 
@@ -446,10 +467,12 @@ Until stage 4, importing an XLSX or ODS file with charts reports them as today
 (`workbook.feature` `charts`, `chart_sheets`), and exporting a workbook that
 holds native charts reports each one as omitted. Nothing is dropped silently.
 
-**Not built in stage 2.** XLSX and ODS exports do not yet list native charts
-one by one. Their report carries only the existing general note that
-unsupported spreadsheet features are omitted. This is open work for stage 4 or
-earlier.
+**Built.** XLSX and ODS exports (whole workbook, selection and streamed) list
+each native chart as omitted, by chart and sheet name, as they list workbook
+names and event bindings: "Charts are native-only and omitted from this
+export: Sales on Sheet1, …". CSV export reports nothing about charts. A
+whole-workbook import with `replace_empty` counts charts as content and is
+refused with `DESTINATION_NOT_EMPTY`.
 
 Stage 4 maps the specification to and from DrawingML charts and OpenDocument
 chart objects: export first, because it only has to write what DataHorizon
@@ -501,8 +524,13 @@ Each is recorded above where it applies. All are **Built** on branch
   entries, so chart edits undo without clearing cell history.
 - **Calculation inside the job.** Section 5 said a resolve starts a calculation
   job and waits on it. The chart job calculates inside its own read-only
-  snapshot instead, without the per-read step budget, reading each source in
-  slices of 1,000 cells.
+  snapshot instead, with one calculator for the whole job and without the
+  per-read step budget, reading each source in slices of 1,000 cells. Any
+  `#LIMIT!` in a value or x cell fails the resolve.
+- **Size limits outside stored readability.** The point and cell limits are
+  enforced on input and at resolve, not as a condition of a readable stored
+  specification, so a structural edit cannot strand a chart (`over_limit`,
+  `charts_over_limit`).
 - **Integer stored sources.** Section 4's illustration stores `ref` text.
   Stored sources hold `row1`, `col1`, `row2`, `col2`; `ref` is accepted on input
   and returned on read.

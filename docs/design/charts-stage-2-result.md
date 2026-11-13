@@ -12,7 +12,10 @@ The capacity run in the last task found three defects, each fixed test-first
 before this document was written. A chart over thousands of formulas came back
 mostly as error gaps. A large render overflowed the job result limit. And Qt
 SVG ignored the bundled font. See
-[Defects found by the capacity run](#defects-found-by-the-capacity-run).
+[Defects found by the capacity run](#defects-found-by-the-capacity-run). The
+whole-branch review then found seven more, also fixed test-first; the most
+serious was a running total over more than 1,000 rows plotting as error gaps.
+See [Defects found by the whole-branch review](#defects-found-by-the-whole-branch-review).
 
 Table and query sources, the desktop, workbook-Python chart operations,
 interchange, and any measurement on Windows or Linux are not done.
@@ -41,14 +44,22 @@ Behaviour worth knowing:
   clear history, as before.
 - Row and column inserts and deletes move chart sources and anchors. A source
   on deleted rows, or on a deleted sheet, is marked broken and reported in the
-  receipt's `broken_charts`, never repointed. A same-sheet Cut moves sources
+  receipt's `broken_charts`, never repointed. An insert that pushes a chart
+  past a size limit is reported in the receipt's `charts_over_limit`; the chart
+  stays readable and maintained, and `charts.read` reports `over_limit`. A
+  same-sheet Cut moves sources
   wholly inside the cut rectangle, but not the chart's anchor. Deleting a sheet
   deletes the charts placed on it. Duplicating a sheet does not copy its
   charts.
 - Chart operations raise no Python events and are not cell changes. A bound
   change handler does not run for them.
 - A direct SQLite edit that leaves a specification unreadable does not block
-  opening. The chart is listed with an `issue` and kept unchanged.
+  opening. The chart is listed with an `issue`, and its specification is kept
+  unchanged; structural edits still move its anchor.
+- Undo labels are `Create chart`, `Edit chart` and `Delete chart`; an explicit
+  `label` in the request wins.
+- XLSX and ODS export list each omitted chart, by chart and sheet name, in the
+  export report. CSV export reports nothing about charts.
 
 ## Limits
 
@@ -63,6 +74,11 @@ Behaviour worth knowing:
 | Chart size | 64×48 to 4,096×4,096 px | Plan's choice |
 | Job time and result | 30 s; 4 MiB | Existing job limits |
 | Stored payload | 256 KiB | Existing catalog limit |
+
+The points-per-series, pie and source-cell limits are checked when a
+specification is given and again at resolve, each with its own code. They are
+not part of the stored form: a row or column insert can push a stored chart
+past one, and resolve and render then refuse it by name until it fits again.
 
 ## Measurements
 
@@ -153,7 +169,8 @@ What changed:
 - Each source is read in slices of at most 1,000 cells, each under a read's own
   two-second deadline.
 - A value or x cell that still carries the budget error fails the resolve with
-  `CALCULATION_FAILED`. Other formula errors stay counted gaps.
+  `CALCULATION_FAILED`. Other formula errors stay counted gaps. (The
+  whole-branch review widened this to any `#LIMIT!` cell; see defect D.)
 
 Tests that failed first: a job over 3,000 dependent formulas returns 3,000
 points and no gaps; a budget error fails the resolve; slice counts and
@@ -191,6 +208,65 @@ What changed:
 
 The cost: a viewer without the font uses its default face, which may be serif,
 not a sans-serif.
+
+## Defects found by the whole-branch review
+
+**D. A formula chain across slices plotted as error gaps.** Slicing (decision
+10) gave each 1,000-cell read a new, empty calculator. The first cell of each
+later slice recalculated its whole chain, hit the engine's "Dependency chain
+exceeds 128 cells", and every later cell inherited the error. A running total
+over A1:A2500 came back from a `completed` job with 1,000 points and 1,500
+error gaps.
+
+What changed:
+- The chart job builds one calculator for the whole job and reuses it for
+  every read. The snapshot is read-only and each read is state-checked, so its
+  cache stays valid. Its input-bytes counter is not reset between reads.
+- Any `#LIMIT!` engine error in a value or x cell now fails the resolve with
+  `CALCULATION_FAILED` (409), with a message naming the cell, for example
+  "A300 could not be calculated: Dependency chain exceeds 128 cells". It is
+  detected by the cell's `#LIMIT!` display, not by message text. Other formula
+  errors (`#DIV/0!`, `#REF!`, `#VALUE!`, `#CYCLE!`, …) stay counted gaps.
+
+Tests that failed first: a real job over the 2,500-row chain on a reopened
+workbook returns 2,500 points and no gaps; a cell whose own chain is deeper
+than the engine allows fails the resolve. A `#DIV/0!` cell is still a gap.
+
+**E. An insert could push a chart past a size limit and strand it.** The size
+limits were part of stored-form readability. A pie over A1:A1000 and B1:B1000,
+after inserting two rows at row 10, read as `INVALID_SPEC`: it could not be
+patched, and structural edits stopped maintaining it, so its sources drifted
+from the data.
+
+What changed:
+- `validate_stored` checks shape and grid bounds only. `LIMIT_POINTS`,
+  `LIMIT_PIE_POINTS` and `LIMIT_CELLS` are enforced by `normalise_spec` on
+  input, as before, and by resolve before any read, with a message that gives
+  the cell count the source now holds.
+- Such a chart has no `issue`, is still maintained by structural edits, and
+  accepts `spec` and `spec_patch`, which re-validate the limits.
+- `charts.read` reports `"over_limit"`, the limit code or `null`, for each
+  chart. A row or column receipt lists `charts_over_limit` (sorted ids) when an
+  edit pushes a chart from within its limits to over them.
+
+**F. XLSX and ODS export dropped charts with only a generic note.** The export
+report now lists each chart as omitted ("Charts are native-only and omitted
+from this export: Sales on Sheet1, …"), as it does for names and bindings, for
+whole-workbook, selection and streamed exports. CSV export reports nothing new.
+
+**G. Smaller defects.**
+- `Workbook.chart_jobs()` is created under the book lock. Two concurrent first
+  requests could each create one, and jobs on the lost instance answered
+  `JOB_NOT_FOUND` and were never closed.
+- Undo labels are `Create chart`, `Edit chart` and `Delete chart` instead of
+  the engine default (`Chart_Update`).
+- The SDK reported every failed chart job as 409. A chart job's error now
+  carries `http_status`, and the SDK raises with it, so `LIMIT_RENDER_POINTS`
+  reaches callers as 400.
+- A whole-workbook import with `replace_empty` into a workbook whose only
+  content was a chart deleted the chart unreported. Charts now count as
+  content, and the import is refused with `DESTINATION_NOT_EMPTY`.
+- Chart tests and the benchmark read JSON with an explicit UTF-8 encoding.
 
 ## Decisions the controller made
 
@@ -234,6 +310,28 @@ Made while the plan was executed. Each is open to reversal.
     some renders that would fit are refused.
 12. **The SVG names one font family** with no fallback list. Cost if wrong: a
     browser without the font uses its default face, often a serif.
+13. **One calculator per chart job, and any `#LIMIT!` fails the resolve**
+    (defect D). Slicing gave each slice an empty calculator cache. A `#LIMIT!`
+    means the engine could not compute the value, which is "cannot finish", not
+    an ordinary formula error. Cost if wrong: a chart over a cell that
+    permanently shows `#LIMIT!` in the grid fails outright instead of drawing
+    with a gap.
+14. **Size limits are not stored-form readability** (defect E).
+    `validate_stored` checks shape and grid bounds; `normalise_spec` enforces
+    the limits on input; resolve enforces them with their own codes; the
+    structural-edit receipt lists such charts under `charts_over_limit`. Cost if
+    wrong: a stored chart can exceed a limit and exist until it is resolved,
+    where it is refused by name.
+15. **Export lists each omitted chart, in this branch** (defect F). The design
+    names an unreported dropped chart as an anti-goal, and stage 2 is what
+    makes charts creatable; no plan task owned it. Cost if wrong: a few lines
+    outside the plan's stated scope.
+16. **Smaller review findings fixed now, graded by effect** (defect G): the
+    chart jobs accessor under the book lock, the undo labels, the SDK's job
+    error status, charts counted as content by a `replace_empty` import, the
+    UTF-8 reads, and false or imprecise sentences in
+    [implementation-status.md](implementation-status.md) and
+    [native-format-v1.md](native-format-v1.md).
 
 ## Known and left as they are
 
@@ -245,8 +343,7 @@ Found in review and judged minor. None changes a documented result.
 - Series name text and axis titles have no length cap or control-character
   rule. The chart title is capped at 255 characters, and the payload at 256 KiB.
 - `tools/font_metrics.py` does not bound a format 12 cmap group at U+10FFFF. Its
-  CLI hard-codes the family name `DejaVu Sans`. A font test reads text without
-  an explicit UTF-8 encoding, which matters on Windows. The shared-last-advance
+  CLI hard-codes the family name `DejaVu Sans`. The shared-last-advance
   test does not use a distinct trailing advance.
 
 **Validation, storage and undo**
@@ -256,7 +353,6 @@ Found in review and judged minor. None changes a documented result.
 - Opening does not require chart ids to be unique across sheets, and lookups
   are by id alone. A direct SQLite edit could create duplicates.
 - A chart counts as one cell toward an operation's 10,000-cell budget.
-- Undo labels are the engine default, such as "Chart_Update".
 - `spec_patch` does not re-apply defaults. Changing a line chart to a column
   chart by patch needs `grouping` in the patch.
 - `describe` runs one query per source. `_stored_source` has an unused `book`
@@ -282,8 +378,7 @@ Found in review and judged minor. None changes a documented result.
 - A job that fails because the chart was deleted, or its source broken, between
   start and snapshot is reported `failed` at the old state rather than `stale`.
   The failed-then-stale branch has no test.
-- The lazy chart job accessor is not created under the book lock, the same as
-  calculation jobs.
+- The lazy calculation jobs accessor is still not created under the book lock.
 - The OpenAPI schemas for `chart_update` and `chart_delete` omit the accepted
   `sheet` envelope field. `ChartSuggestRequest` allows unknown keys. The
   release schema allows 64-character job ids while chart jobs allow 100.
@@ -298,6 +393,19 @@ Found in review and judged minor. None changes a documented result.
   error.
 - No CLI test covers update with a bad id or suggest without its arguments.
 
+**Deferred from the whole-branch review**
+- The `chart_create` and `chart_update` OpenAPI `spec` is a bare object rather
+  than a `$ref` to `ChartSpec`.
+- Capabilities do not advertise the per-series, pie or cell limits.
+- Repeated `order: "front"` grows `z` without bound until the ±1,000,000
+  envelope limit.
+- The "two-second deadline" wording.
+- No committed evidence for the 3.99 MiB figure in defect B.
+- `capacity.json` does not record the eight-series render refusal.
+- A chart whose source starts in the middle of a dependency chain longer than
+  128 cells fails with `CALCULATION_FAILED`. The grid shows `#LIMIT!` for the
+  same cell: a pre-existing engine limit.
+
 ## What is open
 
 - **Table and query sources,** the second step of stage 2, with their own plan.
@@ -306,7 +414,7 @@ Found in review and judged minor. None changes a documented result.
 - **The desktop** (stage 3): wireframes, Insert Chart, floating charts and the
   edit panel. The desktop must load `fonts/DejaVuSans.ttf` and link Qt SVG.
 - **Workbook-Python chart operations** (stage 3).
-- **Export reports** that list native charts one by one (stage 4 or earlier),
-  and XLSX and ODS chart interchange (stage 4).
+- **XLSX and ODS chart interchange** (stage 4). Export already reports each
+  omitted chart.
 - **Formula sources at the edge of the job budget.** The largest or slowest
   source that still calculates within 30 seconds is not measured.

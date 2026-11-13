@@ -19,16 +19,18 @@ font.
 Measured on the reference Mac only:
 - A pie of 1,000 slices loads and paints in 41 ms in Qt, so the pie limit is
   1,000.
-- An eight-series line chart over 10,000 rows, half of them formulas, resolves
-  80,000 points in 2.1 s.
-- Each chart type renders 10,000 formula points in under 1 s, with results of
-  1.2 to 2.1 MiB.
+- An eight-series line chart over 10,000 rows, four of its eight value columns
+  formulas, resolves 80,000 points in 2.1 s.
+- Column, bar, line, area and scatter charts each render 10,000 formula points
+  in under 1 s, with results of 1.2 to 2.1 MiB.
 - One render is limited to 10,000 values so that its result stays under the
   4 MiB job limit.
 
 The capacity run found three defects, each fixed test-first: formula sources
 plotted as error gaps, renders overflowing the result limit, and Qt SVG
-ignoring the bundled font.
+ignoring the bundled font. The whole-branch review found seven more, also
+fixed test-first, among them a formula chain across 1,000-cell slices plotting
+as error gaps and an insert that could strand a chart past a size limit.
 
 Open: table and query sources, the desktop, workbook-Python chart operations,
 per-chart export reports, and Windows and Linux. See the

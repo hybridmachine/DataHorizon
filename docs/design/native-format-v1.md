@@ -42,9 +42,16 @@ Specification version 1 has exactly these keys, all present in stored form:
 
 A stored source `S` is `{"kind": "range", "sheet_id", "row1", "col1",
 "row2", "col2"}` with 1-based integer coordinates, the same field names as a
-workbook name. A values, categories or x source is one row or one column of 1
-to 10,000 cells (1 to 1,000 for a pie's values and categories); a name source
-is one cell; all sources of a chart together hold at most 100,000 cells. A
+workbook name. A values, categories or x source is one row or one column of
+at least one cell inside the grid; a name source is one cell. The service
+accepts a new specification only when each values, categories or x source
+holds at most 10,000 cells (1,000 for a pie's values and categories) and all
+sources together hold at most 100,000 cells, but these size limits are not
+part of the stored form: a row or column insert can grow a stored source past
+one. Such a chart is still readable and is still maintained by structural
+edits; resolve and render refuse it with the limit's code (`LIMIT_POINTS`,
+`LIMIT_PIE_POINTS` or `LIMIT_CELLS`) until it fits again. Direct readers must
+not assume a stored chart is within the size limits. A
 source the service could not maintain through a structural edit is broken: its
 four coordinates are `null`, and its `sheet_id` is `null` when its sheet was
 deleted. A source is never silently repointed. REST and the SDK accept sources
@@ -62,8 +69,10 @@ opened, copied or refreshed. A payload whose envelope breaks the rules above
 the workbook `INVALID_FORMAT`, as for other catalog kinds. A specification the
 service cannot read (`INVALID_SPEC`) or one with a newer `spec_version`
 (`UNSUPPORTED_SPEC_VERSION`) does not block opening: the chart is listed with
-that `issue`, resolve and render refuse it with the same code, and the row is
-kept unchanged until a managed update replaces its specification. Nothing
+that `issue`, and resolve and render refuse it with the same code. Its
+specification is kept unchanged until a managed update replaces it, but
+structural edits still move its anchor: a row or column insert or delete on
+the chart's own sheet moves the anchor as it does for a readable chart. Nothing
 replays or repairs a direct edit; chart writes raise no Python events.
 
 ## Unmaintained formulas format v7
