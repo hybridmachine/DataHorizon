@@ -1,0 +1,47 @@
+{
+  "measurement": "charts stage 2 pie point limit",
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "python": "3.14.6",
+    "qt": "6.12.0",
+    "qt_platform": "cocoa"
+  },
+  "size_px": [
+    800,
+    500
+  ],
+  "runs_per_median": 20,
+  "budget_ms": 75.0,
+  "fallback": 250,
+  "pies": [
+    {
+      "points": 500,
+      "svg_bytes": 72284,
+      "valid": true,
+      "load_ms": 1.6539165,
+      "paint_ms": 20.294646,
+      "qt_ms": 21.9485625
+    },
+    {
+      "points": 1000,
+      "svg_bytes": 144294,
+      "valid": true,
+      "load_ms": 3.3518749999999997,
+      "paint_ms": 37.868375,
+      "qt_ms": 41.22025
+    },
+    {
+      "points": 2000,
+      "svg_bytes": 288490,
+      "valid": true,
+      "load_ms": 6.641854,
+      "paint_ms": 72.227771,
+      "qt_ms": 78.869625
+    }
+  ],
+  "result": {
+    "limit": 1000,
+    "fallback": false
+  }
+}

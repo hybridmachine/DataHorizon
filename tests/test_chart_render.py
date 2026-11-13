@@ -204,6 +204,37 @@ class Evaluate(unittest.TestCase):
         self.assertEqual(bench.evaluate(m), {"route": "fallback_qcustomplot", "failed": ["all_valid"]})
 
 
+class PieLimit(unittest.TestCase):
+    def test_sizes_parse_sorted_and_positive(self):
+        self.assertEqual(bench.pie_sizes("2000,500,1000"), [500, 1000, 2000])
+        for bad in ("", "0,500", "a", "500,-1"):
+            with self.assertRaises(ValueError):
+                bench.pie_sizes(bad)
+
+    def test_largest_size_within_half_the_qt_threshold(self):
+        self.assertEqual(bench.choose_pie_limit({500: 20.0, 1000: 75.0, 2000: 75.1}),
+                         {"limit": 1000, "fallback": False})
+
+    def test_a_slower_smaller_size_does_not_hide_a_faster_larger_one(self):
+        self.assertEqual(bench.choose_pie_limit({500: 80.0, 1000: 70.0}), {"limit": 1000, "fallback": False})
+
+    def test_none_within_budget_falls_back_to_250(self):
+        self.assertEqual(bench.choose_pie_limit({500: 76.0, 1000: 150.0}), {"limit": 250, "fallback": True})
+
+
+class Capacity(unittest.TestCase):
+    def run_of(self, wall=(1.0, 2.0), size=(1000, 2000), error=None):
+        return {"wall_s": list(wall), "result_bytes": list(size), "error": error}
+
+    def test_within_budget_and_size_passes(self):
+        self.assertEqual(bench.capacity_failures({"line_8": self.run_of(), "column_1": self.run_of()}), [])
+
+    def test_time_size_and_errors_are_named(self):
+        runs = {"line_8": self.run_of(wall=(1.0, 30.5)), "column_1": self.run_of(size=(4 * 1024 * 1024 + 1,)),
+                "pie": self.run_of(wall=(), size=(), error="READ_LIMIT")}
+        self.assertEqual(bench.capacity_failures(runs), ["column_1.result_bytes", "line_8.wall_s", "pie.error"])
+
+
 def text_extent(el, size_px):
     width = cr.estimate_text_width(el.text or "", size_px, chart_font.default_metrics())
     x = float(el.get("x"))
