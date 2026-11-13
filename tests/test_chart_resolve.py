@@ -82,30 +82,45 @@ class Resolve(unittest.TestCase):
         self.assertEqual(out["counts"], {"points": 9, "gaps": {"empty": 1, "text": 1, "error": 1}})
         values = out["resolved"]["series"][0]["values"]
         self.assertEqual([values[1], values[2], values[3]], [None, None, None])
+        self.assertEqual(values[4], 5.0)  # a value after a gap keeps its index
 
-    def test_boolean_temporal_and_non_finite_values_are_text_gaps(self):
-        self.edit([("B2", "=TRUE"), ("B3", "=DATE(2024,1,2)"), ("B4", "=1E308*10")])
+    def test_boolean_and_temporal_values_are_text_gaps_and_errors_are_errors(self):
+        self.edit([("B2", "=TRUE"), ("B3", "=DATE(2024,1,2)"), ("B4", "=1/0")])
         out = self.resolve()
-        gaps = out["counts"]["gaps"]
-        self.assertEqual(gaps["empty"], 0)
-        self.assertGreaterEqual(gaps["text"] + gaps["error"], 3)
-        self.assertEqual(out["resolved"]["series"][0]["values"][:3], [None, None, None])
-        self.assertEqual(out["counts"]["points"], 9)
+        self.assertEqual(out["counts"], {"points": 9, "gaps": {"empty": 0, "text": 2, "error": 1}})
+        self.assertEqual(out["resolved"]["series"][0]["values"][:4], [None, None, None, 4.0])
 
     def test_formula_sources_are_calculated_without_a_viewport(self):
-        out = self.resolve(self.payload(self.spec(series=[series("C2:C13", name="C1")])))
-        self.assertEqual(out["resolved"]["series"][0]["values"], [float(v * 2) for v in range(1, 13)])
+        cells = [("D1", "Derived")]
+        for row in range(2, 14):
+            cells += [(f"D{row}", f"=B{row}+1"), (f"E{row}", f"=D{row}*2")]
+        self.edit(cells)
+        payload = self.payload(self.spec(series=[series("D2:D13", name="D1"), series("E2:E13", name="D1")]))
+        path = pathlib.Path(self.tmp.name) / "r.dhwb"
+        self.book.close()
+        self.book = Workbook(path, readonly=True)  # never read or calculated anything
+        cached = self.book.read("Sheet1", {"r1": 2, "c1": 4, "r2": 13, "c2": 5, "calculation": "cached"})
+        self.assertEqual({cell["calculation"] for cell in cached["cells"]}, {"pending"})
+        out = chart_resolve.resolve(self.book, payload, self.book.state())
+        first, second = out["resolved"]["series"]
+        self.assertEqual(first["values"], [float(v + 1) for v in range(1, 13)])
+        self.assertEqual(second["values"], [float((v + 1) * 2) for v in range(1, 13)])
 
     def test_calculation_that_cannot_finish_fails_with_no_series(self):
         real = self.book.read
+        calls = []
 
-        def timeout(*args, **kwargs):
-            raise EngineError("TIMEOUT", "too slow")
-        self.book.read = timeout
+        def slow_second(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise EngineError("TIMEOUT", "too slow")
+            return real(*args, **kwargs)
+        self.book.read = slow_second
+        self.addCleanup(setattr, self.book, "read", real)
         with self.assertRaises(EngineError) as caught:
             self.resolve()
         self.assertEqual((code(caught), caught.exception.status), ("CALCULATION_FAILED", 409))
-        self.book.read = real
+        self.assertEqual(len(calls), 2)  # no read after the failure
 
     def test_other_read_errors_propagate(self):
         def limit(*args, **kwargs):
