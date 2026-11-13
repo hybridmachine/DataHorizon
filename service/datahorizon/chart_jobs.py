@@ -56,8 +56,14 @@ class ChartJobs:
             def run(payload, checkpoint):
                 with closing(Workbook(self.book.path, readonly=True, cancel_event=checkpoint.cancel_event)) as snapshot:
                     base = snapshot.calculator
+                    shared = []
 
+                    # One calculator for the whole job: the snapshot is read-only and each read is
+                    # state-checked, so its cache stays valid and a formula chain that crosses a
+                    # slice reuses the cells already calculated.
                     def calculator(seconds=.25, **kwargs):
+                        if shared:
+                            return shared[0]
                         calc = base(seconds=2, clock=clock, transactional=True)
 
                         # Not the calculator's own check: its 10,000-step budget would turn a large
@@ -68,6 +74,7 @@ class ChartJobs:
                             checkpoint(calc.count, "Calculating")
 
                         calc.check = checked
+                        shared.append(calc)
                         return calc
 
                     snapshot.calculator = calculator

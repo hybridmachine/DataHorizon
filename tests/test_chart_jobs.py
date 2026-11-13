@@ -303,5 +303,70 @@ class ChartJobTests(unittest.TestCase):
                     self.assertIn(ref[len(prefix):], schemas)
 
 
+class ChartJobCalculationTests(unittest.TestCase):
+    """Formula sources calculated by a real ChartJobs job on a reopened workbook."""
+
+    def setUp(self):
+        temp = self.enterContext(tempfile.TemporaryDirectory())
+        self.path = pathlib.Path(temp) / "chain.dhwb"
+        self.book = Workbook(self.path, create=True)
+        self.addCleanup(lambda: self.book.close())
+
+    def apply(self, action, **args):
+        return self.book.mutate({"action": action, "operation_id": str(uuid.uuid4()), "expected_state": self.book.state(), **args})
+
+    def chart_over(self, ref):
+        line = {"spec_version": 1, "type": "line", "legend": {"position": "none"},
+                "series": [{"name": {"text": "Chain"}, "values": {"source": source(ref)}}]}
+        return self.apply("chart_create", sheet="Sheet1", spec=line)["chart_id"]
+
+    def reopen(self):
+        self.book.close()
+        self.book = Workbook(self.path)
+
+    def resolve(self, chart_id):
+        start = {"job_id": uuid.uuid4().hex, "expected_state": self.book.state(), "chart_id": chart_id, "kind": "resolve"}
+        job = self.book.chart_jobs().start(start)
+        deadline = time.monotonic() + 60
+        while job["status"] == "running":
+            self.assertLess(time.monotonic(), deadline, "chart job did not finish")
+            time.sleep(0.01)
+            job = self.book.chart_jobs().access(start["job_id"])
+        return job
+
+    def chain(self, rows):
+        cells = [{"row": 1, "col": 1, "source": "1"}]
+        cells += [{"row": row, "col": 1, "source": f"=A{row - 1}+1"} for row in range(2, rows + 1)]
+        self.apply("edit", sheet="Sheet1", cells=cells)
+
+    def test_a_formula_chain_across_slices_resolves_without_gaps(self):
+        self.chain(2500)
+        chart_id = self.chart_over("A1:A2500")
+        self.reopen()
+        view = self.resolve(chart_id)
+        self.assertEqual(view["status"], "completed", {key: value for key, value in view.items() if key != "result"})
+        self.assertEqual(view["result"]["counts"], {"points": 2500, "gaps": {"empty": 0, "text": 0, "error": 0}})
+        self.assertEqual(view["result"]["resolved"]["series"][0]["values"][-1], 2500.0)
+
+    def test_a_limit_error_cell_fails_the_resolve(self):
+        self.chain(300)
+        chart_id = self.chart_over("A300")  # its own chain of 300 cells is deeper than the engine allows
+        self.reopen()
+        view = self.resolve(chart_id)
+        self.assertEqual(view["status"], "failed")
+        self.assertNotIn("result", view)
+        self.assertEqual(view["error"]["code"], "CALCULATION_FAILED")
+        self.assertEqual(view["error"]["message"], "A300 could not be calculated: Dependency chain exceeds 128 cells")
+
+    def test_a_division_by_zero_cell_stays_a_counted_gap(self):
+        self.apply("edit", sheet="Sheet1", cells=[{"row": 1, "col": 1, "source": "1"}, {"row": 2, "col": 1, "source": "=1/0"},
+                                                  {"row": 3, "col": 1, "source": "=A1+1"}])
+        chart_id = self.chart_over("A1:A3")
+        self.reopen()
+        view = self.resolve(chart_id)
+        self.assertEqual(view["status"], "completed", view)
+        self.assertEqual(view["result"]["counts"], {"points": 2, "gaps": {"empty": 0, "text": 0, "error": 1}})
+
+
 if __name__ == "__main__":
     unittest.main()

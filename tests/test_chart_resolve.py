@@ -182,7 +182,7 @@ class Resolve(unittest.TestCase):
             result = real(*args, **kwargs)
             for cell in result["cells"]:
                 if cell["col"] in (2, 3) and cell["row"] == 5:
-                    cell.update(value=None, display="#LIMIT!", calculation="error", error=chart_resolve.BUDGET_ERROR)
+                    cell.update(value=None, display="#LIMIT!", calculation="error", error="Calculation budget exceeded")
             return result
         self.book.read = exhausted
         self.addCleanup(setattr, self.book, "read", real)
@@ -192,7 +192,7 @@ class Resolve(unittest.TestCase):
                 self.resolve(self.payload(spec))
             self.assertEqual((code(caught), caught.exception.status), ("CALCULATION_FAILED", 409))
 
-    def test_other_limit_errors_stay_counted_gaps(self):
+    def test_other_limit_errors_fail_the_resolve(self):
         real = self.book.read
 
         def chain(*args, **kwargs):
@@ -203,7 +203,10 @@ class Resolve(unittest.TestCase):
             return result
         self.book.read = chain
         self.addCleanup(setattr, self.book, "read", real)
-        self.assertEqual(self.resolve()["counts"]["gaps"]["error"], 1)
+        with self.assertRaises(EngineError) as caught:
+            self.resolve()
+        self.assertEqual((code(caught), caught.exception.status), ("CALCULATION_FAILED", 409))
+        self.assertEqual(caught.exception.body["message"], "B5 could not be calculated: Dependency chain exceeds 128 cells")
 
     def test_checkpoint_follows_each_read(self):
         seen = []

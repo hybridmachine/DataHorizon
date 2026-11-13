@@ -15,8 +15,6 @@ from .formula import column_name
 GAP_CAUSES = ("empty", "text", "error")
 # Each Workbook.read has a fixed two-second calculation deadline, so sources are read in slices.
 SLICE_CELLS = 1_000
-# The error text of a cell the calculator gave up on; such a value fails the resolve, it is not a gap.
-BUDGET_ERROR = "Calculation budget exceeded"
 
 
 def _broken(source):
@@ -96,8 +94,10 @@ def _numbers(cells, source, gaps=None):
     values = []
     for position in _positions(source):
         cell = cells.get(position)
-        if cell is not None and cell.get("calculation") == "error" and cell.get("error") == BUDGET_ERROR:
-            raise EngineError("CALCULATION_FAILED", "The chart's sources could not be calculated within the budget", 409)
+        # #LIMIT! means the engine could not compute the value: the resolve cannot finish, it is not a gap.
+        if cell is not None and cell.get("calculation") == "error" and cell.get("display") == "#LIMIT!":
+            row, col = position
+            raise EngineError("CALCULATION_FAILED", f"{column_name(col)}{row} could not be calculated: {cell.get('error')}", 409)
         number, cause = _classify(cell)
         values.append(number)
         if gaps is not None and cause is not None:
