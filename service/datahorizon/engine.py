@@ -1492,7 +1492,7 @@ class Workbook:
                     self.undo.append((label, self.changes, self.history_cost(label,self.changes)))
                 elif self.changes:
                     self.redo.clear()
-                    label = request.get("label",{'table_insert':'Insert records','table_update':'Edit records','table_delete':'Delete records'}.get(kind,kind.title()))
+                    label = request.get("label",{'table_insert':'Insert records','table_update':'Edit records','table_delete':'Delete records','chart_create':'Create chart','chart_update':'Edit chart','chart_delete':'Delete chart'}.get(kind,kind.title()))
                     self.undo.append((label, self.changes, self.history_cost(label,self.changes)))
                     self.undo = self.undo[-100:]
                 while sum(entry[2] for entry in self.undo + self.redo) > MAX_HISTORY_BYTES:

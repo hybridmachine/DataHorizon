@@ -263,7 +263,19 @@ class Operations(unittest.TestCase):
         self.assertEqual(self.listed(), [])
         self.apply("undo")
         self.assertEqual(self.stored(chart_id), updated)
-        self.assertEqual(self.book.info()["undo"], "Chart_Update")
+        self.assertEqual(self.book.info()["undo"], "Edit chart")
+
+    def test_undo_labels_name_each_chart_operation(self):
+        chart_id = self.create()
+        self.assertEqual(self.book.info()["undo"], "Create chart")
+        self.apply("chart_update", chart_id=chart_id, name="Renamed")
+        self.assertEqual(self.book.info()["undo"], "Edit chart")
+        self.apply("chart_delete", chart_id=chart_id)
+        self.assertEqual(self.book.info()["undo"], "Delete chart")
+        self.apply("undo")
+        self.assertEqual(self.book.info()["redo"], "Delete chart")
+        self.apply("chart_update", chart_id=chart_id, name="Again", label="Rename sales chart")
+        self.assertEqual(self.book.info()["undo"], "Rename sales chart")
 
     def test_undo_conflict_when_the_chart_changed_underneath(self):
         chart_id = self.create()
