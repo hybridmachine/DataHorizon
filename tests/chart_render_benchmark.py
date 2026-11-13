@@ -18,6 +18,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
+from datahorizon import chart_font
 from datahorizon import chart_render as cr
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "charts"
@@ -82,10 +83,13 @@ def _labels(svgs) -> list[dict]:
                 seen[(element.text, float(element.get("font-size")))] = None
     for text in STRESS:
         seen[(text, cr.LABEL_PX)] = None
-    return [{"text": text, "size_px": size, "estimate": cr.estimate_text_width(text, size)} for text, size in seen]
+    table = chart_font.default_metrics()
+    return [{"text": text, "size_px": size, "estimate": cr.estimate_text_width(text, size, table)} for text, size in seen]
 
 
 def _text_stats(rows, table=None) -> dict:
+    """Measured over estimated width; ``table`` defaults to the bundled font's."""
+    table = chart_font.default_metrics() if table is None else table
     under, over = [], []
     for row in rows:
         estimate = cr.estimate_text_width(row["text"], row["size_px"], table)
@@ -156,7 +160,8 @@ def main(argv=None) -> int:
     labels_path, report_path = args.work / "labels.json", args.work / "report.json"
     labels_path.write_text(json.dumps(_labels(fixture_svgs)), encoding="utf-8")
     command = [str(args.probe), "--svg-dir", str(svg_dir), "--out", str(png_dir),
-               "--labels", str(labels_path), "--report", str(report_path)]
+               "--labels", str(labels_path), "--report", str(report_path),
+               "--font-file", str(chart_font.font_path())]
     _run(command + (["--font", args.font] if args.font else []))
     report = json.loads(report_path.read_text())
     charts = {item["file"]: item for item in report["charts"]}

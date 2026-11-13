@@ -1,0 +1,203 @@
+{
+  "experiment": "charts stage 1 renderer",
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64"
+  },
+  "python": "3.14.6",
+  "qt": "6.12.0",
+  "qt_platform": "cocoa",
+  "default_font": "DejaVu Sans",
+  "substituted_font": null,
+  "runs_per_median": 20,
+  "thresholds": {
+    "render_ms_10k": 250.0,
+    "svg_bytes_10k": 4194304,
+    "qt_ms_10k": 150.0,
+    "total_ms_12": 50.0,
+    "text_max_under": 1.05,
+    "text_median_over": 1.35
+  },
+  "measurements": {
+    "render_ms_10k": {
+      "column": 33.39512459933758,
+      "bar": 32.88604156114161,
+      "line": 25.927603943273425,
+      "area": 36.51666652876884,
+      "pie": 44.9950413312763,
+      "scatter": 24.676125030964613
+    },
+    "svg_bytes_10k": {
+      "column": 722596,
+      "bar": 718221,
+      "line": 148133,
+      "area": 410261,
+      "pie": 1440129,
+      "scatter": 536771
+    },
+    "qt_ms_10k": {
+      "column": 59.676666499999996,
+      "bar": 53.666792,
+      "line": 93.9601045,
+      "area": 115.946749,
+      "pie": 385.05818700000003,
+      "scatter": 29.136604000000002
+    },
+    "total_ms_12": {
+      "column": 0.9223739435267448,
+      "bar": 0.8128545149011612,
+      "line": 1.1523539940544367,
+      "area": 1.312042623183608,
+      "pie": 0.5953964573879837,
+      "scatter": 0.8158954699763059
+    },
+    "all_valid": true,
+    "text": {
+      "max_under": 0.9994753741909385,
+      "median_over": 1.0012327868852458
+    },
+    "text_with_table": null
+  },
+  "metrics_table_bytes": null,
+  "labels_measured": 36,
+  "charts": [
+    {
+      "file": "area_10k.svg",
+      "load_ms": 3.230958,
+      "paint_ms": 112.715791,
+      "valid": true
+    },
+    {
+      "file": "area_stacked.svg",
+      "load_ms": 0.1963335,
+      "paint_ms": 0.938542,
+      "valid": true
+    },
+    {
+      "file": "area_stacked_400.svg",
+      "load_ms": 0.160229,
+      "paint_ms": 0.426521,
+      "valid": true
+    },
+    {
+      "file": "bar_10k.svg",
+      "load_ms": 46.489646,
+      "paint_ms": 7.1771460000000005,
+      "valid": true
+    },
+    {
+      "file": "bar_clustered.svg",
+      "load_ms": 0.320646,
+      "paint_ms": 0.312521,
+      "valid": true
+    },
+    {
+      "file": "bar_clustered_400.svg",
+      "load_ms": 0.3243545,
+      "paint_ms": 0.2624585,
+      "valid": true
+    },
+    {
+      "file": "bar_stacked.svg",
+      "load_ms": 0.3257295,
+      "paint_ms": 0.3194165,
+      "valid": true
+    },
+    {
+      "file": "bar_stacked_400.svg",
+      "load_ms": 0.326521,
+      "paint_ms": 0.26966650000000003,
+      "valid": true
+    },
+    {
+      "file": "column_10k.svg",
+      "load_ms": 46.265249999999995,
+      "paint_ms": 13.4114165,
+      "valid": true
+    },
+    {
+      "file": "column_clustered.svg",
+      "load_ms": 0.32116599999999995,
+      "paint_ms": 0.423479,
+      "valid": true
+    },
+    {
+      "file": "column_clustered_400.svg",
+      "load_ms": 0.28079149999999997,
+      "paint_ms": 0.2468545,
+      "valid": true
+    },
+    {
+      "file": "column_stacked.svg",
+      "load_ms": 0.32306250000000003,
+      "paint_ms": 0.3876875,
+      "valid": true
+    },
+    {
+      "file": "column_stacked_400.svg",
+      "load_ms": 0.286354,
+      "paint_ms": 0.23739549999999998,
+      "valid": true
+    },
+    {
+      "file": "line.svg",
+      "load_ms": 0.19375,
+      "paint_ms": 0.798854,
+      "valid": true
+    },
+    {
+      "file": "line_10k.svg",
+      "load_ms": 1.2543959999999998,
+      "paint_ms": 92.7057085,
+      "valid": true
+    },
+    {
+      "file": "line_400.svg",
+      "load_ms": 0.156958,
+      "paint_ms": 0.3843955,
+      "valid": true
+    },
+    {
+      "file": "pie.svg",
+      "load_ms": 0.10200000000000001,
+      "paint_ms": 0.43187549999999997,
+      "valid": true
+    },
+    {
+      "file": "pie_10k.svg",
+      "load_ms": 33.570312,
+      "paint_ms": 351.48787500000003,
+      "valid": true
+    },
+    {
+      "file": "pie_400.svg",
+      "load_ms": 0.09985450000000001,
+      "paint_ms": 0.2073125,
+      "valid": true
+    },
+    {
+      "file": "scatter.svg",
+      "load_ms": 0.227333,
+      "paint_ms": 0.409271,
+      "valid": true
+    },
+    {
+      "file": "scatter_10k.svg",
+      "load_ms": 16.232354,
+      "paint_ms": 12.904250000000001,
+      "valid": true
+    },
+    {
+      "file": "scatter_400.svg",
+      "load_ms": 0.22883350000000002,
+      "paint_ms": 0.31443699999999997,
+      "valid": true
+    }
+  ],
+  "result": {
+    "route": "fallback_qcustomplot",
+    "failed": [
+      "qt_ms_10k.pie"
+    ]
+  }
+}

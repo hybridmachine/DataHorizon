@@ -8,6 +8,7 @@ access) into SVG plus mark metadata. Built in charts stage 1 as an experiment
 
 import math
 
+from . import chart_font
 from .engine import EngineError
 
 LIMIT_POINTS = 10_000
@@ -178,7 +179,7 @@ class _Svg:
             return
         turn = "" if rotate is None else f' transform="rotate({rotate} {_num(x)} {_num(y)})"'
         self.parts.append(
-            f'<text x="{_num(x)}" y="{_num(y)}" font-family="sans-serif" font-size="{_num(size)}" '
+            f'<text x="{_num(x)}" y="{_num(y)}" font-family="{chart_font.FAMILY}, sans-serif" font-size="{_num(size)}" '
             f'text-anchor="{anchor}" fill="{_TEXT}"{turn}>{_xml(text)}</text>')
 
     def row_label(self, row, x, y, text, anchor="middle"):
@@ -604,7 +605,7 @@ def render(resolved: dict, width: int, height: int, metrics: dict[str, float] | 
     chart = _validate(resolved, width, height)
     pie = chart["type"] == "pie"
     values = _pie_values(chart) if pie else []
-    svg = _Svg(width, height, metrics)
+    svg = _Svg(width, height, chart_font.default_metrics() if metrics is None else metrics)
     top = _title(svg, chart)
     if pie:
         labels = chart["categories"] or []

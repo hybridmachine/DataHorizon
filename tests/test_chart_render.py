@@ -8,6 +8,7 @@ import unittest
 import xml.etree.ElementTree as ET
 
 import chart_render_benchmark as bench
+from datahorizon import chart_font
 from datahorizon import chart_render as cr
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "charts"
@@ -197,7 +198,7 @@ class Evaluate(unittest.TestCase):
 
 
 def text_extent(el, size_px):
-    width = cr.estimate_text_width(el.text or "", size_px)
+    width = cr.estimate_text_width(el.text or "", size_px, chart_font.default_metrics())
     x = float(el.get("x"))
     anchor = el.get("text-anchor")
     if anchor == "middle":
