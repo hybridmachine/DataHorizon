@@ -8,7 +8,7 @@ import unittest
 import xml.etree.ElementTree as ET
 
 import chart_render_benchmark as bench
-import chart_render_experiment as cr
+from datahorizon import chart_render as cr
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "charts"
 ALLOWED = {"svg", "g", "rect", "line", "path", "circle", "text"}
@@ -410,6 +410,15 @@ class PullRequestReview(unittest.TestCase):
                     self.assertEqual(error.code, "VALUE_RANGE")
                 else:
                     self.assertTrue(all(math.isfinite(t) for t in ticks))
+
+
+class ServiceErrors(unittest.TestCase):
+    def test_render_errors_are_engine_errors(self):
+        from datahorizon.engine import EngineError
+        with self.assertRaises(EngineError) as caught:
+            cr.render(one([1.0], type_="radar"), 800, 500)
+        self.assertEqual((caught.exception.code, caught.exception.status), ("UNSUPPORTED_TYPE", 400))
+        self.assertEqual(caught.exception.body["code"], "UNSUPPORTED_TYPE")
 
 
 if __name__ == "__main__":

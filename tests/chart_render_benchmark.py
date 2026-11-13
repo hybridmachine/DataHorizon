@@ -18,7 +18,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
-import chart_render_experiment as cr
+from datahorizon import chart_render as cr
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "charts"
 RUNS = 20

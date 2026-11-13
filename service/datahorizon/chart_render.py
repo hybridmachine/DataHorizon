@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Charts stage 1 experiment: a standard-library SVG chart renderer.
+"""Standard-library SVG chart renderer.
 
-Isolated experiment code. It is not installed, not exposed through REST and
-reads no workbook. See docs/design/charts-stage-1-plan.md.
+Service code. Turns a resolved chart (plain dicts and lists, no workbook
+access) into SVG plus mark metadata. Built in charts stage 1 as an experiment
+(docs/design/charts-stage-1-plan.md) and moved into the service in stage 2.
 """
 
 import math
+
+from .engine import EngineError
 
 LIMIT_POINTS = 10_000
 LIMIT_SERIES = 64
@@ -15,11 +18,11 @@ _WIDE = frozenset("mwMW@%")
 _ELLIPSIS = "…"
 
 
-class ChartRenderError(ValueError):
+class ChartRenderError(EngineError):
     """A structured refusal; ``code`` is the stable identifier."""
 
     def __init__(self, code: str, message: str = ""):
-        super().__init__(message or code)
+        super().__init__(code, message or code, 400)
         self.code = code
 
 
