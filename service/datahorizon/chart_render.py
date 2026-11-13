@@ -12,6 +12,7 @@ from . import chart_font
 from .engine import EngineError
 
 LIMIT_POINTS = 10_000
+LIMIT_PIE_POINTS = 1_000
 LIMIT_SERIES = 64
 
 _NARROW = frozenset("iIjl.,:;|!' ")
@@ -236,6 +237,8 @@ def _validate(resolved, width, height) -> dict:
             raise ChartRenderError("INVALID_SPEC", "series x must be a list or null")
         if len(item["values"]) > LIMIT_POINTS or (xs is not None and len(xs) > LIMIT_POINTS):
             raise ChartRenderError("LIMIT_POINTS", f"more than {LIMIT_POINTS} points in a series")
+        if kind == "pie" and len(item["values"]) > LIMIT_PIE_POINTS:
+            raise ChartRenderError("LIMIT_PIE_POINTS", f"more than {LIMIT_PIE_POINTS} values in a pie")
         name = item.get("name")
         series.append({"name": "" if name is None else str(name),
                        "values": [_clean(v) for v in item["values"]],

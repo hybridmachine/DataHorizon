@@ -56,7 +56,7 @@ def evaluate(measurements: dict) -> dict:
 
 
 def _large(kind: str) -> dict:
-    count = cr.LIMIT_POINTS
+    count = cr.LIMIT_PIE_POINTS if kind == "pie" else cr.LIMIT_POINTS
     values = [math.sin(i / 50) * 100 + 100 for i in range(count)]
     return {"type": kind, "grouping": "clustered" if kind in ("column", "bar", "area") else None,
             "title": "10,000 points", "categories": None if kind == "scatter" else [str(i) for i in range(count)],

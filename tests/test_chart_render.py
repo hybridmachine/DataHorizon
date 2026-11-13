@@ -120,6 +120,13 @@ class Cartesian(unittest.TestCase):
 
 
 class PieAndLegend(unittest.TestCase):
+    def test_pie_refuses_more_than_the_pie_limit(self):
+        ok = one([1.0] * cr.LIMIT_PIE_POINTS, type_="pie", grouping=None)
+        self.assertIn("<svg", cr.render(ok, 800, 500)["svg"])
+        with self.assertRaises(cr.ChartRenderError) as caught:
+            cr.render(one([1.0] * (cr.LIMIT_PIE_POINTS + 1), type_="pie", grouping=None), 800, 500)
+        self.assertEqual(caught.exception.code, "LIMIT_PIE_POINTS")
+
     def test_pie_angles_cover_the_circle(self):
         out = cr.render(load("pie"), 800, 500)
         self.assertLessEqual(tags(out["svg"]), ALLOWED)
