@@ -1,0 +1,274 @@
+{
+  "measurement": "charts table and saved-query sources through the service",
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "python": "3.14.6"
+  },
+  "table": {
+    "name": "Sales",
+    "rows": 10000,
+    "columns": [
+      {
+        "name": "Region",
+        "type": "text"
+      },
+      {
+        "name": "A",
+        "type": "number"
+      },
+      {
+        "name": "B",
+        "type": "number"
+      },
+      {
+        "name": "C",
+        "type": "number"
+      },
+      {
+        "name": "D",
+        "type": "number"
+      }
+    ],
+    "inserts": 10,
+    "fill_seconds": 0.46412012493237853
+  },
+  "query": {
+    "name": "Totals",
+    "sql": "SELECT Region, SUM(A) AS Total FROM Sales GROUP BY Region ORDER BY Region",
+    "rows": 100
+  },
+  "padding": {
+    "sheet_cells": 200000,
+    "edits": 20,
+    "seconds": 4.0412452078890055
+  },
+  "workbook_bytes": {
+    "before_padding": 729088,
+    "after_padding": 13926400
+  },
+  "charts": {
+    "table_line_1_series": {
+      "type": "line",
+      "series": 1
+    },
+    "table_line_4_series": {
+      "type": "line",
+      "series": 4
+    },
+    "query_column": {
+      "type": "column",
+      "series": 1
+    }
+  },
+  "size_px": [
+    800,
+    500
+  ],
+  "runs": 3,
+  "limits": {
+    "job_seconds": 30,
+    "result_bytes": 4194304
+  },
+  "jobs": {
+    "table_line_1_series.resolve": {
+      "wall_s": [
+        0.14258579188026488,
+        0.12327524996362627,
+        0.11955070798285306
+      ],
+      "result_bytes": [
+        222822,
+        222822,
+        222822
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 10000
+      },
+      "median_s": 0.12327524996362627,
+      "peak_result_bytes": 222822
+    },
+    "table_line_1_series.render": {
+      "wall_s": [
+        0.14143699989654124,
+        0.18414608389139175,
+        0.19107841700315475
+      ],
+      "result_bytes": [
+        1238750,
+        1238750,
+        1238750
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 10000
+      },
+      "median_s": 0.18414608389139175,
+      "peak_result_bytes": 1238750
+    },
+    "table_line_4_series.resolve": {
+      "wall_s": [
+        0.19012912502512336,
+        0.14845454110763967,
+        0.1393161250744015
+      ],
+      "result_bytes": [
+        470381,
+        470381,
+        470381
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 40000
+      },
+      "median_s": 0.14845454110763967,
+      "peak_result_bytes": 470381
+    },
+    "query_column.resolve": {
+      "wall_s": [
+        0.05732191703282297,
+        0.05715904221870005,
+        0.05733029101975262
+      ],
+      "result_bytes": [
+        2865,
+        2865,
+        2865
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 100
+      },
+      "median_s": 0.05732191703282297,
+      "peak_result_bytes": 2865
+    },
+    "query_column.render": {
+      "wall_s": [
+        0.057689249981194735,
+        0.057540084002539515,
+        0.05768495914526284
+      ],
+      "result_bytes": [
+        24275,
+        24275,
+        24275
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 100
+      },
+      "median_s": 0.05768495914526284,
+      "peak_result_bytes": 24275
+    },
+    "query_column_padded.resolve": {
+      "wall_s": [
+        0.16984041593968868,
+        0.16293024993501604,
+        0.169222375145182
+      ],
+      "result_bytes": [
+        2865,
+        2865,
+        2865
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 100
+      },
+      "median_s": 0.169222375145182,
+      "peak_result_bytes": 2865
+    },
+    "query_column_padded.render": {
+      "wall_s": [
+        0.17177608306519687,
+        0.1727264579385519,
+        0.17312195897102356
+      ],
+      "result_bytes": [
+        24275,
+        24275,
+        24275
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 100
+      },
+      "median_s": 0.1727264579385519,
+      "peak_result_bytes": 24275
+    },
+    "table_line_1_series_padded.resolve": {
+      "wall_s": [
+        0.12518483283929527,
+        0.12991283321753144,
+        0.17546625016257167
+      ],
+      "result_bytes": [
+        222822,
+        222822,
+        222822
+      ],
+      "error": null,
+      "counts": {
+        "gaps": {
+          "empty": 0,
+          "error": 0,
+          "text": 0
+        },
+        "points": 10000
+      },
+      "median_s": 0.12991283321753144,
+      "peak_result_bytes": 222822
+    }
+  },
+  "query_job_snapshot": {
+    "unpadded": {
+      "status": "completed",
+      "snapshot_bytes": 737280,
+      "snapshot_seconds": 0.001876999856904149,
+      "execution_seconds": 0.004119041841477156
+    },
+    "padded": {
+      "status": "completed",
+      "snapshot_bytes": 13926400,
+      "snapshot_seconds": 0.02236445900052786,
+      "execution_seconds": 0.004781625000759959
+    }
+  },
+  "failed": []
+}

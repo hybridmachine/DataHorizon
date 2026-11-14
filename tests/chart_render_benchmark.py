@@ -10,6 +10,10 @@ renderer benchmark when asked for:
 
     --pie-sizes 500,1000,2000   Qt load plus paint of one-series pies; writes pie-limit.json
     --service                   resolve and render through LocalService; writes capacity.json
+    --sources                   table and saved-query charts through LocalService, then the query
+                                chart on a workbook padded with 200,000 cells; writes sources.json.
+                                Its workbook is in a temporary directory removed at the end; --work
+                                is not used
 """
 
 import argparse
@@ -362,6 +366,147 @@ def measure_service(work: pathlib.Path, evidence_dir: pathlib.Path) -> dict:
     return evidence
 
 
+SOURCE_ROWS = 10_000
+SOURCE_COLUMNS = [{"name": "Region", "type": "text"}] + [{"name": name, "type": "number"} for name in "ABCD"]
+SOURCE_ROWS_PER_INSERT = 1_000  # 5,000 fields: an operation admits at most 10,000
+QUERY_GROUPS = 100
+QUERY_SQL = 'SELECT Region, SUM(A) AS Total FROM Sales GROUP BY Region ORDER BY Region'
+PAD_CELLS = 200_000
+PAD_COLUMNS = 20
+PAD_CELLS_PER_EDIT = 10_000  # an edit admits at most 10,000 cells
+
+
+def source_rows(first: int, last: int) -> list[dict]:
+    """Rows ``first``..``last`` of the source table: a region text in one of 100 groups and four numbers."""
+    return [{"Region": f"Region {row % QUERY_GROUPS:03d}",
+             **{name: round(math.sin(row / (50 + index)) * 100 + 100, 3) for index, name in enumerate("ABCD")}}
+            for row in range(first, last + 1)]
+
+
+def pad_edits(count: int) -> list[list[dict]]:
+    """``count`` number cells in rows of PAD_COLUMNS, split into edits of at most PAD_CELLS_PER_EDIT cells."""
+    cells = [{"row": index // PAD_COLUMNS + 1, "col": index % PAD_COLUMNS + 1, "source": str(index % 997)}
+             for index in range(count)]
+    return [cells[start:start + PAD_CELLS_PER_EDIT] for start in range(0, count, PAD_CELLS_PER_EDIT)]
+
+
+def _table(column: str) -> dict:
+    return {"source": {"kind": "table", "table": "Sales", "column": column}}
+
+
+def _query(column: str) -> dict:
+    return {"source": {"kind": "query", "query": "Totals", "column": column}}
+
+
+def source_specs() -> dict:
+    """Table and saved-query charts to measure: name -> (specification, kinds)."""
+    def line(columns):
+        return {"spec_version": 1, "type": "line", "categories": _table("Region"),
+                "series": [{"name": {"text": name}, "values": _table(name)} for name in columns],
+                "legend": {"position": "bottom"}}
+
+    return {"table_line_1_series": (line("A"), ("resolve", "render")),
+            # Four series of 10,000 exceed the render limit, so this one is resolved only.
+            "table_line_4_series": (line("ABCD"), ("resolve",)),
+            "query_column": ({"spec_version": 1, "type": "column", "categories": _query("Region"),
+                              "series": [{"name": {"text": "Total"}, "values": _query("Total")}],
+                              "legend": {"position": "none"}}, ("resolve", "render"))}
+
+
+def _time_jobs(book, chart_id, kinds, APIError) -> dict:
+    runs = {}
+    for kind in kinds:
+        run = {"wall_s": [], "result_bytes": [], "error": None}
+        for _ in range(SERVICE_RUNS):
+            start = time.perf_counter()
+            try:
+                if kind == "resolve":
+                    result = book.resolve_chart(chart_id, timeout=JOB_SECONDS + 15)
+                else:
+                    result = book.render_chart(chart_id, 800, 500, timeout=JOB_SECONDS + 15)
+            except (APIError, TimeoutError) as error:
+                run["error"] = error.body.get("code") if isinstance(error, APIError) else "SDK_TIMEOUT"
+                break
+            run["wall_s"].append(time.perf_counter() - start)
+            run["result_bytes"].append(len(json.dumps(result).encode("utf-8")))
+            run["counts"] = result["counts"]
+        runs[kind] = run
+    return runs
+
+
+def _query_job_snapshot(book) -> dict:
+    """Run the saved query once as an ordinary query job and return its own snapshot figures."""
+    job_id = book.run_saved_query("Totals")["job_id"]
+    deadline = time.monotonic() + JOB_SECONDS + 15
+    while (job := book.query(job_id))["status"] == "running":
+        if time.monotonic() > deadline:
+            raise TimeoutError("query job did not finish")
+        time.sleep(0.05)
+    book.query(job_id, "release")
+    result = job.get("result") or {}
+    return {"status": job["status"], "snapshot_bytes": result.get("snapshot_bytes"),
+            "snapshot_seconds": result.get("snapshot_seconds"), "execution_seconds": result.get("execution_seconds")}
+
+
+def measure_sources(evidence_dir: pathlib.Path) -> dict:
+    """Time table and saved-query charts through a LocalService, then the query chart on a padded workbook.
+
+    The workbook lives in a temporary directory that is removed when the run ends.
+    """
+    import tempfile
+    from datahorizon.client import APIError, LocalService
+
+    runs, sizes, query_jobs = {}, {}, {}
+    with tempfile.TemporaryDirectory(prefix="chart-sources-") as work:
+        path = pathlib.Path(work) / "sources.dhwb"
+        with LocalService() as client, client.open(path, create=True) as book:
+            start = time.perf_counter()
+            book.create_table("Sales", SOURCE_COLUMNS)
+            for first in range(1, SOURCE_ROWS + 1, SOURCE_ROWS_PER_INSERT):
+                book.insert_records("Sales", source_rows(first, min(first + SOURCE_ROWS_PER_INSERT - 1, SOURCE_ROWS)))
+            book.save_query(book.preview_query("Totals", QUERY_SQL))
+            fill_s = time.perf_counter() - start
+            sizes["filled"] = path.stat().st_size
+            specs = source_specs()
+            chart_ids = {name: book.create_chart(spec, size={"width": 800, "height": 500})["chart_id"]
+                         for name, (spec, _) in specs.items()}
+            for name, (_, kinds) in specs.items():
+                for kind, run in _time_jobs(book, chart_ids[name], kinds, APIError).items():
+                    runs[f"{name}.{kind}"] = run
+            query_jobs["unpadded"] = _query_job_snapshot(book)
+            start = time.perf_counter()
+            edits = pad_edits(PAD_CELLS)
+            for cells in edits:
+                book.apply("edit", "Sheet1", cells=cells)
+            pad_s = time.perf_counter() - start
+            sizes["padded"] = path.stat().st_size
+            for kind, run in _time_jobs(book, chart_ids["query_column"], ("resolve", "render"), APIError).items():
+                runs[f"query_column_padded.{kind}"] = run
+            # A table chart runs no query, so it shows what padding costs a chart job without a snapshot copy.
+            runs["table_line_1_series_padded.resolve"] = _time_jobs(
+                book, chart_ids["table_line_1_series"], ("resolve",), APIError)["resolve"]
+            query_jobs["padded"] = _query_job_snapshot(book)
+    evidence = {
+        "measurement": "charts table and saved-query sources through the service",
+        "machine": _machine(),
+        "table": {"name": "Sales", "rows": SOURCE_ROWS, "columns": SOURCE_COLUMNS,
+                  "inserts": len(range(1, SOURCE_ROWS + 1, SOURCE_ROWS_PER_INSERT)), "fill_seconds": fill_s},
+        "query": {"name": "Totals", "sql": QUERY_SQL, "rows": QUERY_GROUPS},
+        "padding": {"sheet_cells": PAD_CELLS, "edits": len(edits), "seconds": pad_s},
+        "workbook_bytes": {"before_padding": sizes["filled"], "after_padding": sizes["padded"]},
+        "charts": {name: {"type": spec["type"], "series": len(spec["series"])} for name, (spec, _) in specs.items()},
+        "size_px": [800, 500],
+        "runs": SERVICE_RUNS,
+        "limits": {"job_seconds": JOB_SECONDS, "result_bytes": RESULT_BYTES},
+        "jobs": {name: {**run, "median_s": statistics.median(run["wall_s"]) if run["wall_s"] else None,
+                        "peak_result_bytes": max(run["result_bytes"], default=None)} for name, run in runs.items()},
+        "query_job_snapshot": query_jobs,
+        "failed": capacity_failures(runs),
+    }
+    _write(evidence_dir / "sources.json", evidence)
+    return evidence
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--probe", type=pathlib.Path)
@@ -370,10 +515,14 @@ def main(argv=None) -> int:
     parser.add_argument("--font", help="a second installed font family, standing in for a viewer's substitute")
     parser.add_argument("--pie-sizes", type=pie_sizes, help="measure pies of these sizes, such as 500,1000,2000")
     parser.add_argument("--service", action="store_true", help="measure resolve and render through LocalService")
+    parser.add_argument("--sources", action="store_true", help="measure table and saved-query sources through LocalService")
     args = parser.parse_args(argv)
     if args.service:
         print(json.dumps(measure_service(args.work, args.evidence)["jobs"], indent=2))
-    if args.service and not args.pie_sizes:
+    if args.sources:
+        evidence = measure_sources(args.evidence)
+        print(json.dumps({key: evidence[key] for key in ("workbook_bytes", "jobs", "query_job_snapshot", "failed")}, indent=2))
+    if (args.service or args.sources) and not args.pie_sizes:
         return 0
     if args.probe is None or not args.probe.is_file():
         print(f"probe not found: {args.probe} (build the chart_svg_probe target)", file=sys.stderr)
