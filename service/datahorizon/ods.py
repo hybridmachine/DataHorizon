@@ -158,8 +158,9 @@ UNDEFINED_NUMBER_STYLE="An ODS number style that the file does not define is ign
 
 def external_cache_table(name):
     """Whether a table:table name is LibreOffice's cache of another document's sheet ('file:///other.ods'#Sheet1):
-    stored after the sheets for external references, and not a sheet of this workbook."""
-    return re.fullmatch(r"'(?:[^']|'')*'#.*",name or "",re.S) is not None
+    stored after the sheets for external references, and not a sheet of this workbook. As LibreOffice decides it:
+    a quoted URL with a known scheme, then # and a sheet name. Any other quoted name ('FY2025'#Actuals) is a sheet."""
+    return re.fullmatch(r"'(?:file|https?|ftps?|sftp|smb|davs?|webdavs?|vnd\.sun\.star\.[a-z.]+):(?:[^']|'')*'#.+",name or "",re.S|re.I) is not None
 
 
 class OdsStyles:
@@ -209,6 +210,10 @@ class OdsStyles:
     def style(self,name,*,sheet=None,cell=None,count=1):
         """The native style for a cell style name; its losses are reported once per cell that uses it."""
         if name is None: return {}
+        if name not in self.styles:
+            # Reported and not cached: the names a file can leave undefined are not bounded by the style limits.
+            self.report.add("style.named_style","omitted",UNDEFINED_STYLE,sheet=sheet,cell=cell,count=count)
+            return {}
         if name in self.cache:
             for category,severity,detail in self.recorded[name]: self.report.add(category,severity,detail,sheet=sheet,cell=cell,count=count)
             return self.cache[name]

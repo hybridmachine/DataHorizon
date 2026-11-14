@@ -155,12 +155,28 @@ class StreamingReaderTests(unittest.TestCase):
                                  [(1, 1, "1"), (1, 3, "2"), (1, 4, "3"), (2, 1, "4"), (5, 1, "5"), (6, 1, "6")])
                 self.assertEqual(report.entries(), [])
 
+    def test_a_row_index_with_leading_zeros_positions_the_cells_after_it(self):
+        rows = '<row r="4"><c r="C4"><v>1</v></c></row><row r="0005"><c><v>2</v></c></row><row><c><v>3</v></c></row>'
+        sink, _ = self.assert_agree(workbook_bytes({"S": rows}))
+        self.assertEqual([(c["row"], c["col"], c["source"]) for c in sink.sheets[0][1]], [(4, 3, "1"), (5, 1, "2"), (6, 1, "3")])
+
+    def test_a_cell_position_cannot_be_inferred_from_an_invalid_row_index(self):
+        for index in ("0", "x", "1048577", "-1"):
+            with self.subTest(index=index):
+                self.assert_both_reject(workbook_bytes({"S": f'<row r="{index}"><c><v>2</v></c></row>'}), "INVALID_SPREADSHEET")
+                self.assert_both_reject(workbook_bytes({"S": f'<row r="{index}"/><row><c><v>2</v></c></row>'}), "INVALID_SPREADSHEET")
+
     def test_part_names_written_with_backslashes_are_read(self):
         good = workbook_bytes({"S": '<row r="1"><c r="A1"><v>1</v></c></row>'})
         output = io.BytesIO()
         with zipfile.ZipFile(io.BytesIO(good)) as source, zipfile.ZipFile(output, "w") as target:
-            for name in source.namelist(): target.writestr(name.replace("/", "\\"), source.read(name))
-        with zipfile.ZipFile(io.BytesIO(output.getvalue())) as check: self.assertIn("xl\\workbook.xml", check.namelist())
+            for name in source.namelist():
+                # Set after construction: on Windows ZipInfo() itself turns backslashes into forward slashes.
+                info = zipfile.ZipInfo(name)
+                info.filename, info.compress_type = name.replace("/", "\\"), zipfile.ZIP_DEFLATED
+                target.writestr(info, source.read(name))
+        with zipfile.ZipFile(io.BytesIO(output.getvalue())) as check:
+            self.assertIn("xl\\workbook.xml", [item.orig_filename for item in check.infolist()])
         sink, _ = self.assert_agree(output.getvalue())
         self.assertEqual(sink.sheets, self.stream(good)[0].sheets)
 

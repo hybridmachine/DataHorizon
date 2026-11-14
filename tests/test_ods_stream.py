@@ -30,7 +30,7 @@ from datahorizon import xlsx_stream
 from datahorizon.client import APIError
 from datahorizon.conversion_report import ConversionReport
 from datahorizon.engine import EngineError, require
-from datahorizon.ods import MIME, O, T, WORKBOOK_IMPORT_LINE, native_to_ods, ods_export, ods_preview, ods_to_native, q
+from datahorizon.ods import MIME, O, OdsStyles, T, WORKBOOK_IMPORT_LINE, native_to_ods, ods_export, ods_preview, ods_to_native, q
 from datahorizon.service import Service, openapi
 from datahorizon.temporal import Temporal
 
@@ -387,6 +387,32 @@ class StreamingReaderTests(unittest.TestCase):
                 sink, report = self.assert_agree(data, mode)
                 self.assertEqual([(name, [c['source'] for c in cells]) for name, cells in sink.sheets], [('Data', ['1']), ('Last', ['2'])])
                 self.assertEqual([(e['category'], e['detail'], e['count']) for e in report.entries()], [('workbook.feature', 'external_references', 1)])
+
+    def test_a_quoted_name_without_a_url_is_a_sheet_not_a_cache(self):
+        sheets = {'S': row(cell(1)), "'FY2025'#Actuals": row(cell(7)), 'Final': row(cell(2))}
+        data = workbook_bytes(sheets)
+        selected = ods_preview({'file_base64': b64(data), 'sheet_index': 2})
+        self.assertEqual([c['source'] for c in selected['cells']], ['7'])
+        # Its name is outside the native rule, so the whole workbook rejects rather than losing the sheet.
+        self.rejects('INVALID_NAME', ods_preview, {'file_base64': b64(data), 'scope': 'workbook'})
+        self.rejects('INVALID_NAME', self.stream, data)
+        for name in ("'file:///tmp/a.ods'#", "'nothing://x'#S", "'file:///tmp/a.ods'S"):
+            with self.subTest(name):
+                self.rejects('INVALID_NAME', self.stream, workbook_bytes({'S': row(cell(1)), name: row(cell(7))}))
+
+    def test_each_cache_table_and_each_linked_sheet_is_one_external_reference(self):
+        source = '<table:table-source xlink:href="file:///tmp/base.ods" table:table-name="Sheet1" xmlns:xlink="http://www.w3.org/1999/xlink"/>'
+        sheets = {'Linked': source+row(cell(1)), "'file:///tmp/a.ods'#Sheet1": row(cell(9)), "'file:///tmp/b.ods'#Sheet1": source+row(cell(9))}
+        sink, report = self.assert_agree(workbook_bytes(sheets), 'formulas')
+        self.assertEqual([name for name, _ in sink.sheets], ['Linked'])
+        self.assertEqual([(e['detail'], e['count']) for e in report.entries()], [('external_references', 3)])
+
+    def test_directly_undefined_styles_are_not_cached(self):
+        report = ConversionReport()
+        styles = OdsStyles([], report)
+        for index in range(1000): self.assertEqual(styles.style(f'missing{index}', sheet='S', cell='A1', count=2), {})
+        self.assertEqual((len(styles.cache), len(styles.recorded)), (0, 0))
+        self.assertEqual([(e['category'], e['count']) for e in report.entries()], [('style.named_style', 2000)])
 
     def test_unsafe_or_foreign_packages_reject(self):
         good = rich_package()

@@ -29,7 +29,7 @@ from .interchange import mode, validate_sheet_names, workbook_report, xml
 from .ods import (CACHE_CATEGORY, CACHE_DETAIL, F, M, MIME, N, O, OF, STYLE_DEFINITION_TAGS, T, WORKBOOK_IMPORT_LINE, WHOLE_FORMULA_LINE, X, Y, OdsCellContext, external_cache_table,
                   OdsStyles, OdsStyleTable, convert_ods_cell, export_lines as ods_export_lines, export_ods_cell, package_parts, q,
                   repeat, uses_modern_function)
-from .ods_features import (DRAW_PREFIX, SHEET_TAGS, WORKBOOK_TAGS, LayoutStyles, OdsSheetFeatures, OdsWorkbookFeatures,
+from .ods_features import (DRAW_PREFIX, SHEET_TAGS, TABLE_SOURCE, WORKBOOK_TAGS, LayoutStyles, OdsSheetFeatures, OdsWorkbookFeatures,
                            mapped_styles, read_panes, report_unreadable_settings)
 from .temporal import export_temporal_style
 
@@ -104,21 +104,24 @@ def _survey(archive, budget, checkpoint):
         root = xlsx_stream._read_whole(archive, "styles.xml", budget)
         for item in root.iter():
             if item.tag in STYLE_DEFINITION_TAGS: collector.add(item)
-    names, tags, elements = [], [], 0
+    names, tags, elements, cache = [], [], 0, False
     for event, item in xlsx_stream.read_part(archive, "content.xml", budget, record_tags=RECORDS):
         if event == "start":
             if not tags: require(item.tag == DOCUMENT, "INVALID_SPREADSHEET", "Invalid ODS content")
             tags.append(item.tag)
             if item.tag == TABLE and tags == SHEET_PATH:
                 # Bounded by the sheet limit (and the names' length) before the name is kept.
-                if workbook.table(item): names.append(item.get(q(T, "name"), ""))
+                cache = not workbook.table(item)
+                if not cache: names.append(item.get(q(T, "name"), ""))
             elements += 1
             if elements % ELEMENTS_PER_CHECKPOINT == 0: checkpoint(0, "Reading styles and sheets")
             continue
         tags.pop()
         # Wherever it appears, as the tree reader collects them.
         if item.tag in STYLE_DEFINITION_TAGS: collector.add(item)
-        elif item.tag in WORKBOOK_TAGS: workbook.end(item)
+        elif item.tag == TABLE and tags == SHEET_PATH[:3]: cache = False
+        # A cache table's own source was counted with the table.
+        elif item.tag in WORKBOOK_TAGS and not (cache and item.tag == TABLE_SOURCE): workbook.end(item)
     return names, collector.styles, layout, workbook
 
 

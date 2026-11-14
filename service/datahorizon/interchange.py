@@ -365,15 +365,21 @@ class XlsxCellContext:
 
 class CellPositions:
     """Gives rows and cells written without their optional r attribute their position, as SpreadsheetML defines it:
-    a row follows the previous row and a cell follows the previous cell of its row. Feed every row, then its cells."""
+    a row follows the previous row and a cell follows the previous cell of its row. Feed every row, then its cells.
+    After a row index that is not a decimal number on the grid no position can be inferred, so a row or cell
+    without its reference stays without one and rejects as an invalid reference does."""
     def __init__(self): self.row_number=0; self.col=0
 
     def row(self,element):
         value=element.get("r")
         if value is None:
-            self.row_number+=1
-            element.set("r",str(self.row_number))
-        elif re.fullmatch(r"[1-9][0-9]{0,6}",value): self.row_number=int(value)
+            if self.row_number is not None:
+                self.row_number+=1
+                element.set("r",str(self.row_number))
+        else:
+            # An unsignedInt: leading zeros are valid, so the number is parsed rather than matched as written.
+            number=int(value) if re.fullmatch(r"[0-9]{1,10}",value) else 0
+            self.row_number=number if 1<=number<=1048576 else None
         self.col=0
 
     def cell(self,element):
@@ -381,7 +387,7 @@ class CellPositions:
         if value is None:
             self.col+=1
             # A position off the grid stays without a reference, which rejects as an invalid one does.
-            if 1<=self.row_number<=1048576 and self.col<=16384: element.set("r",address(self.row_number,self.col))
+            if self.row_number is not None and 1<=self.row_number<=1048576 and self.col<=16384: element.set("r",address(self.row_number,self.col))
             return
         try: self.col=coordinates(value)[1]
         except FormulaError: pass
