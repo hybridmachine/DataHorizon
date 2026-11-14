@@ -4,12 +4,16 @@
 import copy
 import json
 import pathlib
+import shutil
 import tempfile
+import time
 import unittest
 import uuid
+from unittest import mock
 
-from datahorizon import charts, relational
+from datahorizon import chart_render, chart_resolve, chart_sources, charts, relational
 from datahorizon.engine import EngineError, Workbook
+from datahorizon.service import Service
 from datahorizon.table_schema import preview as schema_preview
 
 from test_charts import code, payload, spec
@@ -27,7 +31,7 @@ def source_spec(values, categories=None, type_="column"):
     return result
 
 
-class Spec(unittest.TestCase):
+class Fixture(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -46,6 +50,9 @@ class Spec(unittest.TestCase):
         return self.book.mutate(dict(action=action, operation_id=str(uuid.uuid4()),
                                      expected_state=self.book.state(), **args))
 
+
+
+class Spec(Fixture):
     def refused(self, value):
         with self.assertRaises(EngineError) as caught:
             charts.normalise_spec(self.book, value)
@@ -264,3 +271,211 @@ class Spec(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def column_spec(values, categories=None, type_="column", x=None):
+    item = {"name": {"text": "s"}, "values": {"source": values}}
+    if x is not None:
+        item["x"] = {"source": x}
+    result = {"spec_version": 1, "type": type_, "series": [item]}
+    if categories is not None:
+        result["categories"] = {"source": categories}
+    return result
+
+
+class Resolving(Fixture):
+    def payload(self, spec, book=None):
+        stored = charts.normalise_spec(book or self.book, spec)
+        return {"name": "Chart", "anchor": {"row": 1, "col": 1}, "offset": {"x": 0, "y": 0},
+                "size": {"width": 480, "height": 320}, "z": 0, "spec_version": 1, "spec": stored}
+
+    def resolve(self, spec=None, payload=None, book=None, **kwargs):
+        book = book or self.book
+        return chart_resolve.resolve(book, payload or self.payload(spec, book), book.state(), **kwargs)
+
+    def refused_resolve(self, *args, **kwargs):
+        with self.assertRaises(EngineError) as caught:
+            self.resolve(*args, **kwargs)
+        return caught.exception
+
+    def test_resolves_table_columns_into_series_and_categories(self):
+        spec = column_spec(table("Sales", "Units"), table("Sales", "Month"))
+        spec["series"].append({"name": {"text": "Cost"}, "values": {"source": table("Sales", "Cost")}})
+        out = self.resolve(spec)
+        resolved = out["resolved"]
+        self.assertEqual(resolved["categories"], [f"M{n}" for n in range(1, 13)])
+        self.assertEqual(resolved["series"][0]["values"], [float(n) for n in range(1, 13)])
+        self.assertEqual(resolved["series"][1]["values"], [n * 1.5 for n in range(1, 13)])
+        self.assertEqual(out["counts"], {"points": 24, "gaps": {"empty": 0, "text": 0, "error": 0}})
+        self.assertEqual(out["state"], self.book.state())
+        chart_render.render(resolved, 480, 300)
+
+    def test_null_text_boolean_and_date_values_are_classified(self):
+        self.apply("table_create", name="Mixed", columns=[
+            dict(name="Num", type="number"), dict(name="Flag", type="boolean"), dict(name="Day", type="date")])
+        self.apply("table_insert", table="Mixed", rows=[
+            dict(Num=1, Flag=True, Day="2026-01-01"), dict(Num=None, Flag=False, Day="2026-01-02"),
+            dict(Num=3, Flag=None, Day=None)])
+        spec = column_spec(table("Mixed", "Num"))
+        spec["series"] += [{"name": {"text": "f"}, "values": {"source": table("Mixed", "Flag")}},
+                           {"name": {"text": "d"}, "values": {"source": table("Mixed", "Day")}}]
+        out = self.resolve(spec)
+        self.assertEqual(out["counts"], {"points": 2, "gaps": {"empty": 3, "text": 4, "error": 0}})
+        self.assertEqual([item["values"] for item in out["resolved"]["series"]],
+                         [[1.0, None, 3.0], [None] * 3, [None] * 3])
+
+    def test_category_display_per_column_type(self):
+        self.apply("table_create", name="Disp", columns=[
+            dict(name="T", type="text"), dict(name="B", type="boolean"), dict(name="D", type="date"),
+            dict(name="N", type="number"), dict(name="I", type="integer")])
+        self.apply("table_insert", table="Disp", rows=[
+            dict(T="a", B=True, D="2026-01-31", N=12.5, I=7), dict(T=None, B=False, D=None, N=None, I=None)])
+        expected = {"T": ["a", ""], "B": ["TRUE", "FALSE"], "D": ["2026-01-31", ""], "N": ["12.5", ""], "I": ["7", ""]}
+        for column, display in expected.items():
+            out = self.resolve(column_spec(table("Disp", "N"), table("Disp", column)))
+            self.assertEqual(out["resolved"]["categories"], display, column)
+
+    def test_rows_come_in_stored_order_after_deletes_and_inserts(self):
+        ids = [str(row[0]) for row in self.book.db.execute('SELECT "_dh_row_id" FROM "Sales" ORDER BY "_dh_row_id"')]
+        self.apply("table_delete", table="Sales", record_ids=[ids[0], ids[5]])
+        self.apply("table_insert", table="Sales", rows=[dict(Month="late", Units=99)])
+        out = self.resolve(column_spec(table("Sales", "Units"), table("Sales", "Month")))
+        self.assertEqual(out["resolved"]["categories"], [f"M{n}" for n in (2, 3, 4, 5, 7, 8, 9, 10, 11, 12)] + ["late"])
+        self.assertEqual(out["resolved"]["series"][0]["values"], [2.0, 3.0, 4.0, 5.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 99.0])
+
+    def test_pie_over_its_point_limit_is_refused_by_name(self):
+        self.apply("table_insert", table="Sales", rows=[dict(Units=n) for n in range(989)])
+        self.assertEqual(self.book.db.execute('SELECT count(*) FROM "Sales"').fetchone()[0], 1001)
+        error = self.refused_resolve(column_spec(table("Sales", "Units"), type_="pie"))
+        self.assertEqual(error.body["code"], "LIMIT_PIE_POINTS")
+        self.assertIn("Sales", error.body["message"])
+        self.assertIn("1,000", error.body["message"])
+        self.assertEqual(self.resolve(column_spec(table("Sales", "Units"), type_="column"))["counts"]["points"], 1001)
+
+    def test_running_total_enforces_limit_cells(self):
+        spec = column_spec(table("Big", "N"))
+        spec["series"] = [{"name": {"text": f"s{n}"}, "values": {"source": table("Big", "N")}} for n in range(11)]
+        error = self.refused_resolve(spec, book=self.big)
+        self.assertEqual((error.body["code"], error.status), ("LIMIT_CELLS", 400))
+        spec["series"] = spec["series"][:10]
+        self.assertEqual(self.resolve(spec, book=self.big)["counts"]["points"], 100_000)
+
+    def test_table_over_the_point_limit_is_refused_by_name(self):
+        copy_path = pathlib.Path(self.tmp.name) / "over.dhwb"
+        shutil.copy(self.big_path, copy_path)
+        over = Workbook(copy_path)
+        self.addCleanup(over.close)
+        over.mutate(dict(action="table_insert", operation_id=str(uuid.uuid4()), expected_state=over.state(),
+                         table="Big", rows=[dict(N=1)]))
+        error = self.refused_resolve(column_spec(table("Big", "N")), book=over)
+        self.assertEqual(error.body["code"], "LIMIT_POINTS")
+        self.assertIn("Big", error.body["message"])
+        self.assertIn("10,000", error.body["message"])
+
+    def test_change_between_two_column_reads_is_stale(self):
+        spec = column_spec(table("Sales", "Units"), table("Sales", "Month"))
+        payload = self.payload(spec)
+        real = chart_sources.read_table
+        calls = []
+
+        def read_then_change(*args, **kwargs):
+            calls.append(1)
+            result = real(*args, **kwargs)
+            if len(calls) == 1:
+                other = Workbook(pathlib.Path(self.tmp.name) / "t.dhwb")
+                try:
+                    other.mutate(dict(action="table_insert", operation_id=str(uuid.uuid4()),
+                                      expected_state=other.state(), table="Sales", rows=[dict(Month="x", Units=1)]))
+                finally:
+                    other.close()
+            return result
+        with mock.patch.object(chart_sources, "read_table", read_then_change):
+            error = self.refused_resolve(payload=payload)
+        self.assertEqual((error.body["code"], error.status), ("STALE_STATE", 409))
+        self.assertEqual(len(calls), 2)
+
+    def test_broken_or_vanished_source_is_refused_before_reading(self):
+        spec = column_spec(table("Sales", "Units"), table("Sales", "Month"))
+        for table_id, column_id in ((None, None), (self.table_id, str(uuid.uuid4())),
+                                    (str(uuid.uuid4()), self.column_id["Units"])):
+            payload = self.payload(spec)
+            payload["spec"]["series"][0]["values"]["source"] = {"kind": "table", "table_id": table_id, "column_id": column_id}
+            with mock.patch.object(chart_sources, "read_table") as read:
+                with self.assertRaises(EngineError) as caught:
+                    self.resolve(payload=payload)
+            self.assertEqual((caught.exception.body["code"], caught.exception.status), ("SOURCE_BROKEN", 409))
+            read.assert_not_called()
+
+    def test_query_source_waits_for_a_query_runner(self):
+        payload = self.payload(column_spec(table("Sales", "Units")))
+        payload["spec"]["series"][0]["values"]["source"] = {"kind": "query", "query_id": str(uuid.uuid4()), "column": "x"}
+        with self.assertRaises(EngineError) as caught:
+            self.resolve(payload=payload)
+        self.assertEqual(caught.exception.body["code"], "INVALID_ARGUMENT")
+        self.assertIn("query runner", caught.exception.body["message"])
+
+    def test_scatter_from_two_table_columns(self):
+        out = self.resolve(column_spec(table("Sales", "Cost"), type_="scatter", x=table("Sales", "Units")))
+        series = out["resolved"]["series"][0]
+        self.assertEqual(series["x"], [float(n) for n in range(1, 13)])
+        self.assertEqual(series["values"], [n * 1.5 for n in range(1, 13)])
+        self.assertEqual(out["counts"]["points"], 12)
+        chart_render.render(out["resolved"], 480, 300)
+
+    def test_mixed_range_categories_and_table_values(self):
+        names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        self.apply("edit", sheet="Sheet1", cells=[{"row": n, "col": 1, "source": name} for n, name in enumerate(names, 1)])
+        out = self.resolve(column_spec(table("Sales", "Units"), {"kind": "range", "sheet": "Sheet1", "ref": "A1:A12"}))
+        self.assertEqual(out["resolved"]["categories"], names)
+        self.assertEqual(out["resolved"]["series"][0]["values"], [float(n) for n in range(1, 13)])
+
+    def test_progress_advances_for_table_sources(self):
+        seen = []
+        self.resolve(column_spec(table("Sales", "Units"), table("Sales", "Month")),
+                     checkpoint=lambda done, phase: seen.append((done, phase)))
+        self.assertEqual(seen[-1], (24, "Reading sources"))
+
+    def test_through_a_real_chart_job(self):
+        with Service() as server:
+            info = server.dispatch("POST", "/v1/open", {"path": str(pathlib.Path(self.tmp.name) / "t.dhwb")})
+            base = f"/v1/workbooks/{info['id']}"
+
+            def operate(**args):
+                state = server.dispatch("GET", base, {})["state"]
+                return server.dispatch("POST", base + "/operations",
+                                       {"operation_id": str(uuid.uuid4()), "expected_state": state, **args})
+            chart = operate(action="chart_create", sheet="Sheet1",
+                            spec=column_spec(table("Sales", "Units"), table("Sales", "Month")))["chart_id"]
+            for kind in ("resolve", "render"):
+                body = {"job_id": uuid.uuid4().hex, "expected_state": server.dispatch("GET", base, {})["state"],
+                        "chart_id": chart, "kind": kind}
+                if kind == "render":
+                    body.update(width=480, height=300)
+                job = server.dispatch("POST", base + "/charts/jobs", body)
+                deadline = time.monotonic() + 30
+                view = job
+                while view["status"] == "running" and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                    view = server.dispatch("GET", f"{base}/charts/jobs/{job['job_id']}", {})
+                self.assertEqual(view["status"], "completed", view)
+                self.assertEqual(view["result"]["counts"]["points"], 12)
+                self.assertEqual(view["result"]["resolved"]["categories"][:2], ["M1", "M2"])
+
+    @classmethod
+    def setUpClass(cls):
+        cls.big_dir = tempfile.mkdtemp()
+        cls.addClassCleanup(shutil.rmtree, cls.big_dir, True)
+        cls.big_path = pathlib.Path(cls.big_dir) / "big.dhwb"
+        big = Workbook(cls.big_path, create=True)
+        try:
+            big.mutate(dict(action="table_create", operation_id=str(uuid.uuid4()), expected_state=big.state(),
+                            name="Big", columns=[dict(name="N", type="integer")]))
+            big.mutate(dict(action="table_insert", operation_id=str(uuid.uuid4()), expected_state=big.state(),
+                            table="Big", rows=[dict(N=n) for n in range(10_000)]))
+        finally:
+            big.close()
+
+    def setUp(self):
+        super().setUp()
+        self.big = Workbook(self.big_path)
+        self.addCleanup(self.big.close)

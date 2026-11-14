@@ -7,8 +7,8 @@ specification for a selected rectangle.  Neither writes anything.
 """
 import math
 
-from . import charts
-from .chart_render import LIMIT_SERIES
+from . import chart_sources, charts
+from .chart_render import LIMIT_PIE_POINTS, LIMIT_POINTS, LIMIT_SERIES
 from .engine import MAX_CELLS, EngineError, rectangle, require
 from .formula import column_name
 
@@ -17,19 +17,19 @@ GAP_CAUSES = ("empty", "text", "error")
 SLICE_CELLS = 1_000
 
 
-def _broken(source):
-    keys = ("sheet_id", "row1", "col1", "row2", "col2")
-    return any(source[key] is None for key in keys)
-
-
 def _check_sources(book, sources):
-    """Raise SOURCE_BROKEN for a source that names no rectangle or a sheet that is gone."""
-    if any(_broken(source) for source in sources):
-        raise EngineError("SOURCE_BROKEN", "A chart source no longer names a range", 409)
+    """Raise SOURCE_BROKEN for a source that names no data, a sheet that is gone, or a table column that is gone."""
+    for source in sources:
+        if charts.is_broken(source):
+            raise EngineError("SOURCE_BROKEN", "A chart source no longer names its data", 409)
     with book.lock:
         existing = {row[0] for row in book.db.execute("SELECT id FROM sheets")}
-    if any(source["sheet_id"] not in existing for source in sources):
-        raise EngineError("SOURCE_BROKEN", "A chart source names a sheet that no longer exists", 409)
+        for source in sources:
+            kind = charts.source_kind(source)
+            if kind == "range" and source["sheet_id"] not in existing:
+                raise EngineError("SOURCE_BROKEN", "A chart source names a sheet that no longer exists", 409)
+            if kind == "table":
+                chart_sources.find(book, source)
 
 
 def _slices(source):
@@ -72,8 +72,25 @@ def _positions(source):
             for col in range(source["col1"], source["col2"] + 1)]
 
 
-def _text(cells, source):
-    return [cells[position]["display"] if position in cells else "" for position in _positions(source)]
+def _cells(snapshot, source, state, role, chart_type, progress):
+    """Return the cells of one source in order, ``None`` for an empty one.
+
+    ``progress(cells)`` is called with the number of cells read so far in this source.
+    """
+    kind = charts.source_kind(source)
+    if kind == "table":
+        pie = chart_type == "pie" and role in ("values", "categories")
+        cells = chart_sources.read_table(snapshot, source, state, LIMIT_PIE_POINTS if pie else LIMIT_POINTS)
+        progress(len(cells))
+        return cells
+    if kind == "query":
+        raise EngineError("INVALID_ARGUMENT", "Saved-query chart sources need a query runner")
+    read = _read(snapshot, source, state, progress)
+    return [read.get(position) for position in _positions(source)]
+
+
+def _text(cells):
+    return [cell["display"] if cell is not None else "" for cell in cells]
 
 
 def _classify(cell):
@@ -93,8 +110,8 @@ def _classify(cell):
 def _numbers(cells, source):
     """Return ``(values, causes)``: a number or ``None`` per cell, and why each ``None`` is a gap."""
     values, causes = [], []
-    for position in _positions(source):
-        cell = cells.get(position)
+    positions = _positions(source) if charts.source_kind(source) == "range" else [None] * len(cells)
+    for position, cell in zip(positions, cells):
         # #LIMIT! means the engine could not compute the value: the resolve cannot finish, it is not a gap.
         if cell is not None and cell.get("calculation") == "error" and cell.get("display") == "#LIMIT!":
             row, col = position
@@ -119,7 +136,7 @@ def resolve(snapshot, payload, state, checkpoint=None):
 
     cells_read = 0
 
-    def fetch(source):
+    def fetch(source, role):
         nonlocal cells_read
         before = cells_read
 
@@ -128,29 +145,32 @@ def resolve(snapshot, payload, state, checkpoint=None):
             cells_read = before + done
             if checkpoint is not None:
                 checkpoint(cells_read, "Reading sources")
-        return _read(snapshot, source, state, progress)
+        cells = _cells(snapshot, source, state, role, spec["type"], progress)
+        cells_read = before + len(cells)
+        if cells_read > charts.LIMIT_CELLS:
+            raise EngineError("LIMIT_CELLS", f"The chart's sources hold more than {charts.LIMIT_CELLS} cells")
+        return cells
 
     categories = None
     if spec["categories"] is not None:
-        source = spec["categories"]["source"]
-        categories = _text(fetch(source), source)
+        categories = _text(fetch(spec["categories"]["source"], "categories"))
     gaps = dict.fromkeys(GAP_CAUSES, 0)
     series = []
     points = 0
     for item in spec["series"]:
         if "source" in item["name"]:
             source = item["name"]["source"]
-            name = _text(fetch(source), source)[0]
+            name = _text(fetch(source, "name"))[0]
         else:
             name = item["name"]["text"]
         source = item["values"]["source"]
-        values, causes = _numbers(fetch(source), source)
+        values, causes = _numbers(fetch(source, "values"), source)
         x = None
         if item["x"] is not None:
             # A scatter point draws only with both coordinates: a usable value whose x is missing
             # or unusable is a gap too, classified by what is wrong with the x cell.
             source = item["x"]["source"]
-            x, x_causes = _numbers(fetch(source), source)
+            x, x_causes = _numbers(fetch(source, "x"), source)
             x_causes += ["empty"] * (len(causes) - len(x_causes))
             causes = [cause or x_cause for cause, x_cause in zip(causes, x_causes)]
         for cause in causes:
