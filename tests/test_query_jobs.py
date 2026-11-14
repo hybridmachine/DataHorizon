@@ -13,7 +13,9 @@ import uuid
 from unittest.mock import patch
 from datahorizon.engine import Workbook,EngineError
 from datahorizon.client import LocalService,APIError
-from datahorizon.query_sql import bindings
+from datahorizon.query_sql import bindings,authorize
+from datahorizon.query_storage import create
+from datahorizon.query_views import preview
 
 class QueryJobTests(unittest.TestCase):
     def setUp(self):
@@ -117,6 +119,72 @@ class QueryJobTests(unittest.TestCase):
             db=connect(path,*args,**kwargs);return Full(db) if str(path).endswith('result.sqlite') else db
         with patch('datahorizon.query_jobs.sqlite3.connect',side_effect=limited):result=self.run_query('SELECT * FROM Customers')
         self.assertEqual(result['status'],'failed');self.assertEqual(result['error']['code'],'QUERY_LIMIT');self.assertNotIn('result',result)
+    def save(self,sql,**options):
+        review=preview(self.book,dict(name=options.pop('name','Saved '+str(uuid.uuid4())),sql=sql,expected_state=self.book.state(),**options));return self.apply('query_save',**review['source_request'],review_digest=review['review_digest'])['query']
+    def once(self,query_id,**options):
+        arguments=dict(state=self.book.state(),cancel_event=threading.Event(),seconds=5,max_rows=100);arguments.update(options);return self.jobs.run_once(query_id,**arguments)
+    def code(self,call):
+        with self.assertRaises(EngineError) as failure:call()
+        return failure.exception.body['code'],failure.exception.status
+    def test_run_once_returns_columns_and_rows_of_a_saved_query(self):
+        item=self.save('SELECT ID,Name,9007199254740993 AS big,NULL AS empty FROM Customers ORDER BY ID')
+        self.assertEqual(self.once(item['id']),dict(columns=['ID','Name','big','empty'],rows=[['C001','Ada',dict(type='integer',value='9007199254740993'),None],['C002','Grace',dict(type='integer',value='9007199254740993'),None]]))
+    def test_run_once_binds_saved_defaults(self):
+        item=self.save('SELECT Customer,Qty FROM Orders WHERE Qty>=:minimum ORDER BY Qty',parameters=[dict(name='minimum',type='integer')],defaults=dict(minimum=2))
+        self.assertEqual(self.once(item['id'])['rows'],[['C001',2],['C002',3]])
+    def test_run_once_without_a_default_is_invalid_parameters(self):
+        item=self.save('SELECT Customer FROM Orders WHERE Qty>=:minimum',parameters=[dict(name='minimum',type='integer')])
+        self.assertEqual(self.code(lambda:self.once(item['id'])),('INVALID_PARAMETERS',400))
+    def test_run_once_over_max_rows_is_query_limit(self):
+        item=self.save('SELECT Customer,Qty FROM Orders');self.assertEqual(len(self.once(item['id'],max_rows=3)['rows']),3)
+        with self.assertRaises(EngineError) as failure:self.once(item['id'],max_rows=2)
+        self.assertEqual((failure.exception.body['code'],failure.exception.status),('QUERY_LIMIT',409));self.assertIn('2',failure.exception.body['message'])
+    def test_run_once_requires_the_given_state(self):
+        item=self.save('SELECT Name FROM Customers');state=self.book.state();self.apply('table_update',table='Customers',edits=[dict(row_id='1',values=dict(Name='Changed'))])
+        self.assertEqual(self.code(lambda:self.once(item['id'],state=state)),('STALE_STATE',409));self.assertEqual(self.once(item['id'])['rows'][0],['Changed'])
+        # The snapshot itself also refuses a workbook that moved after preparation.
+        original=self.jobs._snapshot
+        def moved(entry):
+            with closing(sqlite3.connect(self.path,isolation_level=None)) as db:db.execute("UPDATE Customers SET Name='External' WHERE ID='C001'")
+            return original(entry)
+        with patch.object(self.jobs,'_snapshot',side_effect=moved):self.assertEqual(self.code(lambda:self.once(item['id'])),('STALE_STATE',409))
+    def test_run_once_detects_a_changed_dependency(self):
+        item=self.save('SELECT Name FROM Customers');from datahorizon import query_views;original=query_views.prepare
+        def changed(*args):declarations,deps,shape=original(*args);return declarations,deps,[dict(id='0',name='Renamed')]
+        with patch('datahorizon.query_views.prepare',side_effect=changed):self.assertEqual(self.code(lambda:self.once(item['id'])),('QUERY_DEPENDENCY_CHANGED',409))
+    def test_run_once_is_cancellable_and_bounded(self):
+        item=self.save('WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n) SELECT max(i) AS top FROM n')
+        cancel=threading.Event();timer=threading.Timer(.2,cancel.set);timer.start();self.addCleanup(timer.cancel);started=time.monotonic()
+        self.assertEqual(self.code(lambda:self.once(item['id'],cancel_event=cancel,seconds=5,max_rows=1000000)),('CANCELLED',409));self.assertLess(time.monotonic()-started,3)
+        started=time.monotonic();self.assertEqual(self.code(lambda:self.once(item['id'],seconds=.2,max_rows=1000000)),('TIMEOUT',409));self.assertLess(time.monotonic()-started,3)
+        # A stopping manager cancels a run in progress and refuses new ones.
+        outcome=[];runner=threading.Thread(target=lambda:outcome.append(self.code(lambda:self.once(item['id'],seconds=30))));runner.start();time.sleep(.2);self.jobs.close();runner.join(5)
+        self.assertFalse(runner.is_alive());self.assertEqual(outcome,[('CANCELLED',409)]);self.assertEqual(self.code(lambda:self.once(item['id'])),('SERVICE_STOPPING',503))
+    def test_run_once_refuses_blob_results(self):
+        item=self.save("SELECT x'0102' AS b");self.assertEqual(self.code(lambda:self.once(item['id'])),('QUERY_VALUE',409))
+    def test_run_once_uses_no_job_slot_and_leaves_no_files(self):
+        item=self.save('SELECT Name FROM Customers ORDER BY ID');made=[]
+        def tracked():directory=create();made.append(Path(directory.name));return directory
+        for i in range(3):self.run_query('SELECT '+str(i))
+        self.jobs.start(dict(job_id='slow',sql='WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n) SELECT max(i) FROM n',expected_state=self.book.state()))
+        with self.assertRaises(EngineError):self.run_query('SELECT 4')
+        before={key:entry['status'] for key,entry in self.jobs.entries.items()};self.assertEqual(list(before.values()).count('running'),1)
+        with patch('datahorizon.query_jobs.create',side_effect=tracked):
+            self.assertEqual(self.once(item['id'])['rows'],[['Ada'],['Grace']]);self.assertEqual(self.code(lambda:self.once(item['id'],max_rows=1)),('QUERY_LIMIT',409))
+        self.assertEqual({key:entry['status'] for key,entry in self.jobs.entries.items()},before);self.assertEqual(len(made),2);self.assertFalse(any(path.exists() for path in made))
+        self.jobs.access('slow','cancel');self.wait('slow')
+    def test_run_once_denies_what_a_query_job_denies(self):
+        for sql in ('SELECT * FROM dh_meta','SELECT load_extension(\'anything\')','SELECT * FROM sqlite_schema'):
+            with self.subTest(sql=sql):self.assertEqual(self.code(lambda:self.save(sql)),('SQL_DENIED',409))
+        item=self.save('SELECT Name FROM Customers');calls=[]
+        def nothing_registered(db,registered):calls.append(registered);return authorize(db,[])
+        with patch('datahorizon.query_jobs.authorize',side_effect=nothing_registered):self.assertEqual(self.code(lambda:self.once(item['id'])),('SQL_DENIED',403))
+        self.assertEqual(len(calls),1);self.assertIn('Customers',[table['name'] for table in calls[0]])
+    def test_existing_query_job_results_are_unchanged(self):
+        item=self.save('SELECT o.Customer,c.Name,o.Qty*o.Price AS total FROM Orders o JOIN Customers c ON c.ID=o.Customer ORDER BY o.Qty')
+        job=self.wait(self.jobs.start(dict(query=item['id'],job_id='saved',expected_state=self.book.state()))['job_id']);self.assertEqual(job['status'],'completed',job);page=self.page(job)
+        once=self.once(item['id']);self.assertEqual([col['name'] for col in job['result']['columns']],once['columns']);self.assertEqual(job['result']['row_count'],len(once['rows']));self.assertEqual([row['values'] for row in page['rows']],once['rows'])
+        self.assertEqual(once['rows'],[['C001','Ada',10.0],['C001','Ada',25.0],['C002','Grace',21.0]])
 
 class QueryClientTests(unittest.TestCase):
     def test_rest_sdk_cli_run_status_page_release_and_openapi(self):
