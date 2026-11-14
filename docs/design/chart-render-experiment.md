@@ -13,6 +13,10 @@ design changes are the better answer. On November 12, 2026 the owner accepted
 both changes: stage 2 proceeds on the service SVG route and the fallback is not
 taken. See [Result and what it means](#result-and-what-it-means).
 
+The renderer and its tests moved to `service/datahorizon/chart_render.py` and
+`tests/test_chart_render.py` in stage 2; paths in this document are as they
+were when it ran.
+
 Everything here is isolated experiment code in `tests/`. Nothing is installed,
 stored in workbooks or exposed through REST, and no file under `service/` or
 `desktop/` changed.

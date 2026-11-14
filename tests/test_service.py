@@ -438,7 +438,7 @@ class ServiceTests(unittest.TestCase):
                     self.assertIn(schema["$ref"].rsplit("/",1)[-1],schemas,path)
             with client.open(Path(temp)/"examples.dhwb",create=True) as book:
                 sequence=("workbook_import","edit","paste","fill","move","replace_all","undo","redo", "sheet_add","sheet_rename","sheet_duplicate","sheet_reorder","sheet_delete",
-                          "rows_insert","rows_delete","columns_insert","columns_delete","metadata_set","metadata_delete","list_declare","list_reconcile","list_edit","list_forget","table_create","table_drop","table_promote","table_schema","table_insert","table_update","table_delete","index_create","index_drop","relationship_create","relationship_drop","table_repair","query_save","query_rename","query_delete")
+                          "rows_insert","rows_delete","columns_insert","columns_delete","metadata_set","metadata_delete","list_declare","list_reconcile","list_edit","list_forget","table_create","table_drop","table_promote","table_schema","table_insert","table_update","table_delete","index_create","index_drop","relationship_create","relationship_drop","table_repair","query_save","query_rename","query_delete","chart_create","chart_update","chart_delete")
                 # Approved code examples execute in test_automation_clients;
                 # this service deliberately has no operator code activation.
                 # Name examples execute in test_names_clients (delete needs a live name id).
@@ -475,8 +475,10 @@ class ServiceTests(unittest.TestCase):
                             request.update(columns=preview['source_request']['columns'],review_digest=preview['review_digest'])
                         if action=='index_create':request['columns'][0]['column']=book.tables()['tables'][0]['columns'][0]['id']
                         if action=="sheet_reorder": request["order"]=[sheet["id"] for sheet in reversed(book.info["sheets"])]
+                        if action in ("chart_update","chart_delete"):request["chart_id"]=chart_id
                         result=client.request(book.base+"/operations",request)
                         self.assertEqual(result["outcome"],"committed")
+                        if action=="chart_create":chart_id=result["chart_id"]
                         book.refresh()
 
     def test_row_column_operations_share_sdk_rest_and_cli_behavior(self):

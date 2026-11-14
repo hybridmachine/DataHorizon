@@ -1,25 +1,32 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Charts stage 1 experiment: a standard-library SVG chart renderer.
+"""Standard-library SVG chart renderer.
 
-Isolated experiment code. It is not installed, not exposed through REST and
-reads no workbook. See docs/design/charts-stage-1-plan.md.
+Service code. Turns a resolved chart (plain dicts and lists, no workbook
+access) into SVG plus mark metadata. Built in charts stage 1 as an experiment
+(docs/design/charts-stage-1-plan.md) and moved into the service in stage 2.
 """
 
 import math
 
+from . import chart_font
+from .engine import EngineError
+
 LIMIT_POINTS = 10_000
+LIMIT_PIE_POINTS = 1_000
 LIMIT_SERIES = 64
+# Values across all series that one render draws: the marks list keeps a render result under 4 MiB.
+LIMIT_RENDER_POINTS = 10_000
 
 _NARROW = frozenset("iIjl.,:;|!' ")
 _WIDE = frozenset("mwMW@%")
 _ELLIPSIS = "…"
 
 
-class ChartRenderError(ValueError):
+class ChartRenderError(EngineError):
     """A structured refusal; ``code`` is the stable identifier."""
 
     def __init__(self, code: str, message: str = ""):
-        super().__init__(message or code)
+        super().__init__(code, message or code, 400)
         self.code = code
 
 
@@ -175,7 +182,7 @@ class _Svg:
             return
         turn = "" if rotate is None else f' transform="rotate({rotate} {_num(x)} {_num(y)})"'
         self.parts.append(
-            f'<text x="{_num(x)}" y="{_num(y)}" font-family="sans-serif" font-size="{_num(size)}" '
+            f'<text x="{_num(x)}" y="{_num(y)}" font-family="{chart_font.FAMILY}" font-size="{_num(size)}" '
             f'text-anchor="{anchor}" fill="{_TEXT}"{turn}>{_xml(text)}</text>')
 
     def row_label(self, row, x, y, text, anchor="middle"):
@@ -232,10 +239,14 @@ def _validate(resolved, width, height) -> dict:
             raise ChartRenderError("INVALID_SPEC", "series x must be a list or null")
         if len(item["values"]) > LIMIT_POINTS or (xs is not None and len(xs) > LIMIT_POINTS):
             raise ChartRenderError("LIMIT_POINTS", f"more than {LIMIT_POINTS} points in a series")
+        if kind == "pie" and len(item["values"]) > LIMIT_PIE_POINTS:
+            raise ChartRenderError("LIMIT_PIE_POINTS", f"more than {LIMIT_PIE_POINTS} values in a pie")
         name = item.get("name")
         series.append({"name": "" if name is None else str(name),
                        "values": [_clean(v) for v in item["values"]],
                        "x": None if xs is None else [_clean(v) for v in xs]})
+    if sum(len(item["values"]) for item in series) > LIMIT_RENDER_POINTS:
+        raise ChartRenderError("LIMIT_RENDER_POINTS", f"more than {LIMIT_RENDER_POINTS} values across the series of one render")
     categories = resolved.get("categories")
     if categories is not None and not isinstance(categories, list):
         raise ChartRenderError("INVALID_SPEC", "categories must be a list or null")
@@ -601,7 +612,7 @@ def render(resolved: dict, width: int, height: int, metrics: dict[str, float] | 
     chart = _validate(resolved, width, height)
     pie = chart["type"] == "pie"
     values = _pie_values(chart) if pie else []
-    svg = _Svg(width, height, metrics)
+    svg = _Svg(width, height, chart_font.default_metrics() if metrics is None else metrics)
     top = _title(svg, chart)
     if pie:
         labels = chart["categories"] or []

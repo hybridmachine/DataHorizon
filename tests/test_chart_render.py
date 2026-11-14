@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Tests for the charts stage 1 renderer experiment (not product code)."""
+"""Tests for the chart renderer (service/datahorizon/chart_render.py) and the benchmark's logic."""
 
 import json
 import math
@@ -8,14 +8,15 @@ import unittest
 import xml.etree.ElementTree as ET
 
 import chart_render_benchmark as bench
-import chart_render_experiment as cr
+from datahorizon import chart_font
+from datahorizon import chart_render as cr
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "charts"
 ALLOWED = {"svg", "g", "rect", "line", "path", "circle", "text"}
 
 
 def load(name):
-    return json.loads((FIX / f"{name}.json").read_text())
+    return json.loads((FIX / f"{name}.json").read_text(encoding="utf-8"))
 
 
 def tags(svg):
@@ -118,7 +119,45 @@ class Cartesian(unittest.TestCase):
             self.assertEqual(caught.exception.code, code)
 
 
+class RenderPoints(unittest.TestCase):
+    def chart(self, *lengths):
+        spec = one([1.0] * lengths[0], cats=[""] * max(lengths))
+        spec["series"] = [{"name": f"s{i}", "values": [float(n % 7) for n in range(length)], "x": None}
+                          for i, length in enumerate(lengths)]
+        return spec
+
+    def test_the_limit_number_of_values_renders(self):
+        self.assertEqual(cr.LIMIT_RENDER_POINTS, 10_000)
+        self.assertIn("<svg", cr.render(self.chart(5_000, 5_000), 800, 500)["svg"])
+
+    def test_more_values_across_series_are_refused_before_drawing(self):
+        with self.assertRaises(cr.ChartRenderError) as caught:
+            cr.render(self.chart(5_000, 5_000, 1), 800, 500)
+        self.assertEqual((caught.exception.code, caught.exception.status), ("LIMIT_RENDER_POINTS", 400))
+
+    def test_a_render_at_the_limit_fits_a_job_result(self):
+        # Worst case measured: column and bar marks at the largest canvas with long fractional values.
+        from datahorizon.engine import encoded
+        half = cr.LIMIT_RENDER_POINTS // 2
+        for kind in ("column", "bar"):
+            spec = one([0.0], type_=kind, cats=[f"Item {n}" for n in range(half)])
+            spec["series"] = [{"name": f"s{i}", "values": [math.sin(n + i) * 1234.56789 for n in range(half)], "x": None}
+                              for i in range(2)]
+            out = cr.render(spec, 4096, 4096)
+            result = {"resolved": spec, "counts": {"points": 2 * half, "gaps": {"empty": 0, "text": 0, "error": 0}},
+                      "state": "s" * 64, **out, "width": 4096, "height": 4096}
+            with self.subTest(kind=kind):
+                self.assertLess(len(encoded(result).encode()), 4 * 1024 * 1024)
+
+
 class PieAndLegend(unittest.TestCase):
+    def test_pie_refuses_more_than_the_pie_limit(self):
+        ok = one([1.0] * cr.LIMIT_PIE_POINTS, type_="pie", grouping=None)
+        self.assertIn("<svg", cr.render(ok, 800, 500)["svg"])
+        with self.assertRaises(cr.ChartRenderError) as caught:
+            cr.render(one([1.0] * (cr.LIMIT_PIE_POINTS + 1), type_="pie", grouping=None), 800, 500)
+        self.assertEqual(caught.exception.code, "LIMIT_PIE_POINTS")
+
     def test_pie_angles_cover_the_circle(self):
         out = cr.render(load("pie"), 800, 500)
         self.assertLessEqual(tags(out["svg"]), ALLOWED)
@@ -196,8 +235,54 @@ class Evaluate(unittest.TestCase):
         self.assertEqual(bench.evaluate(m), {"route": "fallback_qcustomplot", "failed": ["all_valid"]})
 
 
+class FontInSvg(unittest.TestCase):
+    def test_ratios_and_the_bundled_font_window(self):
+        self.assertEqual(bench.font_check(536, 459, 540.0),
+                         {"laid_out_px": 540.0, "bundled_px": 536, "unknown_family_px": 459,
+                          "bundled_ratio": 536 / 540.0, "unknown_family_ratio": 459 / 540.0, "ok": True})
+        self.assertTrue(bench.font_check(567, 459, 540.0)["ok"])  # 1.05
+        self.assertFalse(bench.font_check(568, 459, 540.0)["ok"])
+        self.assertFalse(bench.font_check(459, 459, 540.0)["ok"])
+
+    def test_probe_svg_names_one_family(self):
+        root = ET.fromstring(bench.font_svg("DejaVu Sans"))
+        text = [el for el in root.iter() if el.tag.endswith("text")]
+        self.assertEqual([(el.get("font-family"), el.text) for el in text], [("DejaVu Sans", bench.FONT_TEXT)])
+
+
+class PieLimit(unittest.TestCase):
+    def test_sizes_parse_sorted_and_positive(self):
+        self.assertEqual(bench.pie_sizes("2000,500,1000"), [500, 1000, 2000])
+        for bad in ("", "0,500", "a", "500,-1"):
+            with self.assertRaises(ValueError):
+                bench.pie_sizes(bad)
+
+    def test_largest_size_within_half_the_qt_threshold(self):
+        self.assertEqual(bench.choose_pie_limit({500: 20.0, 1000: 75.0, 2000: 75.1}),
+                         {"limit": 1000, "fallback": False})
+
+    def test_a_slower_smaller_size_does_not_hide_a_faster_larger_one(self):
+        self.assertEqual(bench.choose_pie_limit({500: 80.0, 1000: 70.0}), {"limit": 1000, "fallback": False})
+
+    def test_none_within_budget_falls_back_to_250(self):
+        self.assertEqual(bench.choose_pie_limit({500: 76.0, 1000: 150.0}), {"limit": 250, "fallback": True})
+
+
+class Capacity(unittest.TestCase):
+    def run_of(self, wall=(1.0, 2.0), size=(1000, 2000), error=None):
+        return {"wall_s": list(wall), "result_bytes": list(size), "error": error}
+
+    def test_within_budget_and_size_passes(self):
+        self.assertEqual(bench.capacity_failures({"line_8": self.run_of(), "column_1": self.run_of()}), [])
+
+    def test_time_size_and_errors_are_named(self):
+        runs = {"line_8": self.run_of(wall=(1.0, 30.5)), "column_1": self.run_of(size=(4 * 1024 * 1024 + 1,)),
+                "pie": self.run_of(wall=(), size=(), error="READ_LIMIT")}
+        self.assertEqual(bench.capacity_failures(runs), ["column_1.result_bytes", "line_8.wall_s", "pie.error"])
+
+
 def text_extent(el, size_px):
-    width = cr.estimate_text_width(el.text or "", size_px)
+    width = cr.estimate_text_width(el.text or "", size_px, chart_font.default_metrics())
     x = float(el.get("x"))
     anchor = el.get("text-anchor")
     if anchor == "middle":
@@ -410,6 +495,15 @@ class PullRequestReview(unittest.TestCase):
                     self.assertEqual(error.code, "VALUE_RANGE")
                 else:
                     self.assertTrue(all(math.isfinite(t) for t in ticks))
+
+
+class ServiceErrors(unittest.TestCase):
+    def test_render_errors_are_engine_errors(self):
+        from datahorizon.engine import EngineError
+        with self.assertRaises(EngineError) as caught:
+            cr.render(one([1.0], type_="radar"), 800, 500)
+        self.assertEqual((caught.exception.code, caught.exception.status), ("UNSUPPORTED_TYPE", 400))
+        self.assertEqual(caught.exception.body["code"], "UNSUPPORTED_TYPE")
 
 
 if __name__ == "__main__":

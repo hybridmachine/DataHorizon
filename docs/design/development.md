@@ -364,6 +364,44 @@ The worker uses context.get/value/set in the parent transaction. A failure,
 load error, timeout or recursion limit rolls back all changes. Workers are not
 security sandboxes, and transactional code must not perform external effects.
 
+### Charts
+
+Charts over cell ranges are created, changed and deleted as undoable
+operations, and resolved or rendered to SVG by cancellable 30-second jobs; see
+the [charts design](charts-design.md) and the
+[stage 2 result](charts-stage-2-result.md). `examples/charts_script.py` runs
+all six types end to end.
+
+```python
+from datahorizon.client import LocalService
+
+with LocalService() as client, client.open('/tmp/charts.dhwb', create=True) as book:
+    book.apply('edit', cells=[dict(row=1, col=1, source='Month'), dict(row=1, col=2, source='Sales'),
+                              dict(row=2, col=1, source='Jan'), dict(row=2, col=2, source='120'),
+                              dict(row=3, col=1, source='Feb'), dict(row=3, col=2, source='=B2*1.1')])
+    spec = book.suggest_chart('Sheet1', r1=1, c1=1, r2=3, c2=2, type='column')['spec']
+    chart_id = book.create_chart(spec, name='Sales')['chart_id']
+    book.update_chart(chart_id, spec_patch={'title': {'text': 'Sales by month'}})
+    print(book.resolve_chart(chart_id)['counts'])
+    open('/tmp/sales.svg', 'w').write(book.render_chart(chart_id, 800, 500)['svg'])
+    book.apply('undo')  # the title patch
+```
+
+```sh
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/charts.dhwb charts suggest --r1 1 --c1 1 --r2 3 --c2 2 --type line
+echo '{"spec": {"spec_version": 1, "type": "line", "series": [{"name": {"text": "Sales"}, "values": {"source": {"kind": "range", "sheet": "Sheet1", "ref": "B2:B3"}}}]}}' \
+  | PYTHONPATH=service python3 -m datahorizon.cli /tmp/charts.dhwb charts create
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/charts.dhwb charts list
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/charts.dhwb charts render CHART_ID --width 800 --height 500 --svg-out /tmp/sales.svg --overwrite
+echo '{"order": "front"}' | PYTHONPATH=service python3 -m datahorizon.cli /tmp/charts.dhwb charts update CHART_ID
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/charts.dhwb charts delete CHART_ID
+```
+
+`charts resolve CHART_ID` prints the resolved series and gap counts. A job that
+the workbook outdates while it runs raises `STALE_STATE`; resolve or render
+again. Over-limit charts are refused with a code that names the limit
+(`LIMIT_POINTS`, `LIMIT_PIE_POINTS`, `LIMIT_CELLS`, `LIMIT_RENDER_POINTS`, …).
+
 ## Install smoke and measurements
 
 ```sh

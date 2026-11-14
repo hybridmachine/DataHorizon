@@ -23,6 +23,14 @@ retains its standard-library/pip notices. Runtime and provenance archive hashes
 are in `packaging/runtime-macos-arm64.json`. No application pip dependencies are
 required. Optional test bindings are not shipped in the application.
 
+Chart text uses DejaVu Sans 2.37 (`DejaVuSans.ttf`, SHA-256
+`7da195a74c55bef988d0d48f9508bd5d849425c1770dba5d7bfc6ce9ed848954`), shipped
+under `service/datahorizon/fonts/` with its license text in
+`LICENSE-DejaVu.txt`. The font is covered by the Bitstream Vera and Arev Fonts
+licenses; the DejaVu changes to those fonts are in the public domain. The
+neighboring `DejaVuSans-metrics.json` holds advance widths read from that file
+by `tools/font_metrics.py`.
+
 A distributable artifact must accompany the exact DataHorizon source, build and
 installation scripts and matching dependency source/materials. Developer ID
 signing, notarization, clean-machine acceptance and complete distribution review

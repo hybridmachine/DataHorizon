@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFont>
+#include <QFontDatabase>
 #include <QFontInfo>
 #include <QFontMetricsF>
 #include <QGuiApplication>
@@ -73,8 +74,8 @@ Shot shoot(const QByteArray &svg, int runs)
     return shot;
 }
 
-// The renderer writes font-family="sans-serif"; measure with the same request
-// so the family Qt resolves it to is the one Qt SVG draws with.
+// The renderer writes font-family="DejaVu Sans". Without --font-file the probe
+// measures the request "sans-serif"; with it, the loaded family.
 QFont fontFor(const QString &family, double pixels)
 {
     QFont font(family);
@@ -149,8 +150,43 @@ int emitMetrics(const QString &family, const QString &path)
     return writeJson(path, table) ? 0 : fail("cannot write " + path);
 }
 
+// Loads a font file into the application and returns its first family, or an
+// empty string when Qt cannot load it.
+QString loadFontFile(const QString &path)
+{
+    const int id = QFontDatabase::addApplicationFont(path);
+    if (id < 0)
+        return QString();
+    const QStringList families = QFontDatabase::applicationFontFamilies(id);
+    return families.isEmpty() ? QString() : families.first();
+}
+
+// Rasterises one SVG and writes the horizontal extent of everything drawn on its
+// white background, so a caller can tell which font Qt SVG used for its text.
+int inkWidth(const QString &svgPath, const QString &reportPath)
+{
+    QFile file(svgPath);
+    if (!file.open(QIODevice::ReadOnly))
+        return fail("cannot read " + svgPath);
+    const Shot shot = shoot(file.readAll(), 1);
+    if (!shot.valid)
+        return fail("Qt SVG rejected " + svgPath);
+    int left = shot.image.width(), right = -1;
+    for (int y = 0; y < shot.image.height(); ++y) {
+        for (int x = 0; x < shot.image.width(); ++x) {
+            if (shot.image.pixelColor(x, y) != QColor(Qt::white)) {
+                left = qMin(left, x);
+                right = qMax(right, x);
+            }
+        }
+    }
+    const QJsonObject report{{"file", QFileInfo(svgPath).fileName()},
+                             {"ink_px", right < left ? 0 : right - left + 1}};
+    return writeJson(reportPath, report) ? 0 : fail("cannot write " + reportPath);
+}
+
 int measure(const QString &svgDir, const QString &outDir, const QString &labelsPath, const QString &reportPath,
-            const QString &substitute)
+            const QString &substitute, const QString &requested)
 {
     QDir input(svgDir);
     if (!input.exists())
@@ -178,7 +214,6 @@ int measure(const QString &svgDir, const QString &outDir, const QString &labelsP
                                   {"paint_ms", shot.paintMs}, {"png", png}});
     }
 
-    const QString requested = QStringLiteral("sans-serif");
     QJsonArray labels;
     for (const QJsonValue &value : labelsDocument.array()) {
         const QJsonObject label = value.toObject();
@@ -212,7 +247,9 @@ int main(int argc, char **argv)
                        {"labels", "JSON list of labels to measure.", "file"},
                        {"report", "JSON report to write.", "file"},
                        {"font", "A second font family to measure with.", "family"},
-                       {"emit-metrics", "Write a per-character advance table for a family.", "family"}});
+                       {"font-file", "A TrueType file to load as the application font and measure by default.", "ttf"},
+                       {"emit-metrics", "Write a per-character advance table for a family.", "family"},
+                       {"ink-width", "Write the drawn width of one SVG to --report.", "svg"}});
     parser.addPositionalArgument("table", "Output file for --emit-metrics.");
     if (!parser.parse(app.arguments()))
         return fail(parser.errorText());
@@ -224,10 +261,21 @@ int main(int argc, char **argv)
             return fail("--emit-metrics needs a family and one output file");
         return emitMetrics(parser.value("emit-metrics"), parser.positionalArguments().first());
     }
+    QString requested = QStringLiteral("sans-serif");
+    if (parser.isSet("font-file")) {
+        requested = loadFontFile(parser.value("font-file"));
+        if (requested.isEmpty())
+            return fail("cannot load font " + parser.value("font-file"));
+    }
+    if (parser.isSet("ink-width")) {
+        if (!parser.isSet("report"))
+            return fail("--ink-width needs --report");
+        return inkWidth(parser.value("ink-width"), parser.value("report"));
+    }
     for (const char *required : {"svg-dir", "out", "labels", "report"}) {
         if (!parser.isSet(required))
             return fail(QStringLiteral("missing --%1").arg(required));
     }
     return measure(parser.value("svg-dir"), parser.value("out"), parser.value("labels"), parser.value("report"),
-                   parser.value("font"));
+                   parser.value("font"), requested);
 }

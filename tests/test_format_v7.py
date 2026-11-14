@@ -112,8 +112,8 @@ class FormatV7Tests(unittest.TestCase):
         reopened=Workbook(self.path);self.addCleanup(reopened.close)
         self.assertEqual(read(reopened,'A1')['kind'],'unmaintained')
 
-    def test_v8_is_rejected_on_open(self):
-        self.new_book().close();self.raw('UPDATE dh_meta SET format_version=8')
+    def test_v9_is_rejected_on_open(self):
+        self.new_book().close();self.raw('UPDATE dh_meta SET format_version=9')
         with self.assertRaises(EngineError) as raised:Workbook(self.path)
         self.assertEqual(raised.exception.body['code'],'FORMAT_VERSION')
 
@@ -200,7 +200,7 @@ class FormatV7Tests(unittest.TestCase):
     def test_rest_exposes_kind_versions_and_rejects_direct_kind(self):
         with LocalService() as client:
             capabilities=client.request('/v1/capabilities');api=client.request('/openapi.json')
-            self.assertEqual((capabilities['format_version'],capabilities['supported_format_versions']),(7,[1,2,3,4,5,6,7]))
+            self.assertEqual((capabilities['format_version'],capabilities['supported_format_versions']),(8,[1,2,3,4,5,6,7,8]))
             schemas=api['components']['schemas']
             self.assertIn('unmaintained',schemas['ClipboardCell']['properties']['kind']['enum'])
             self.assertIn('unmaintained',schemas['ClipboardCell']['properties']['input_kind']['enum'])

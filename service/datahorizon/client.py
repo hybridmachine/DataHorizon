@@ -423,6 +423,66 @@ class WorkbookClient:
     def delete_name(self,name_id,*,operation_id=None):
         return self.apply('name_delete',name_id=name_id,operation_id=operation_id)
 
+    def charts(self,sheet=None,chart_id=None):
+        self._ensure_open()
+        scope=dict(**(dict(sheet=sheet) if sheet is not None else {}),**(dict(chart_id=chart_id) if chart_id is not None else {}))
+        return self.client.request(self.base+'/charts',dict(expected_state=self.state,**scope))['charts']
+
+    def create_chart(self,spec,*,sheet='Sheet1',name=None,anchor=None,offset=None,size=None,operation_id=None):
+        placement={key:value for key,value in (('name',name),('anchor',anchor),('offset',offset),('size',size)) if value is not None}
+        return self.apply('chart_create',sheet,operation_id,spec=spec,**placement)
+
+    def update_chart(self,chart_id,*,operation_id=None,**changes):
+        return self.apply('chart_update',operation_id=operation_id,chart_id=chart_id,**changes)
+
+    def delete_chart(self,chart_id,*,operation_id=None):
+        return self.apply('chart_delete',operation_id=operation_id,chart_id=chart_id)
+
+    def suggest_chart(self,sheet='Sheet1',*,r1,c1,r2,c2,type='column'):
+        self._ensure_open()
+        return self.client.request(self.base+'/charts/suggest',dict(expected_state=self.state,sheet=sheet,r1=r1,c1=c1,r2=r2,c2=c2,type=type))
+
+    def chart_job(self,chart_id,kind,*,width=None,height=None,job_id=None):
+        self._ensure_open()
+        size={key:value for key,value in (('width',width),('height',height)) if value is not None}
+        return self.client.request(self.base+'/charts/jobs',dict(job_id=job_id or str(uuid.uuid4()),expected_state=self.state,chart_id=chart_id,kind=kind,**size))
+
+    def chart_job_status(self,job_id,action=None):
+        self._ensure_open()
+        if action not in (None,'cancel','release'):raise ValueError('Unknown chart job action')
+        return self.client.request(self.base+'/charts/jobs/'+quote(job_id,safe='')+('/'+action if action else ''),{} if action else None)
+
+    def _chart_result(self,job,timeout):
+        job_id=job['job_id']
+        try:
+            deadline=time.monotonic()+timeout
+            while job['status']=='running':
+                if time.monotonic()>=deadline:
+                    # Cancel can return while the worker is still running, and a running job cannot be
+                    # released: wait for it to stop so the release below frees its slot.
+                    try:
+                        job=self.chart_job_status(job_id,'cancel')
+                        for _ in range(100):
+                            if job.get('status')!='running':break
+                            time.sleep(.02);job=self.chart_job_status(job_id)
+                    except (APIError,OSError):pass
+                    raise TimeoutError('Chart job did not finish within %s seconds'%timeout)
+                time.sleep(.05)
+                job=self.chart_job_status(job_id)
+            if job['status']=='completed':return job['result']
+            if job['status']=='stale':raise APIError(409,{'code':'STALE_STATE','message':'The workbook changed while the chart job ran; resolve or render again','outcome':'rejected'})
+            error=job.get('error') or {'code':'CHART_JOB_'+str(job['status']).upper(),'message':'Chart job '+str(job['status']),'outcome':'rejected'}
+            raise APIError(error.get('http_status',409),error)
+        finally:
+            try:self.chart_job_status(job_id,'release')
+            except (APIError,OSError):pass
+
+    def resolve_chart(self,chart_id,*,timeout=30):
+        return self._chart_result(self.chart_job(chart_id,'resolve'),timeout)
+
+    def render_chart(self,chart_id,width,height,*,timeout=30):
+        return self._chart_result(self.chart_job(chart_id,'render',width=width,height=height),timeout)
+
     def save_binding(self,event,scope,module,function,*,fingerprint,required=True,binding_id=None,operation_id=None):
         return self.apply('binding_save',event=event,scope=scope,module=module,function=function,required=required,fingerprint=fingerprint,operation_id=operation_id,**(dict(binding_id=binding_id) if binding_id is not None else {}))
 

@@ -399,6 +399,7 @@ class Workbook:
         self.dependencies=DependencyIndex()
         self.unverified_records=set()
         self._calculation_jobs=None
+        self._chart_jobs=None
         self._operation_jobs=None
         self._query_jobs=None
         self.cancel_event=None
@@ -460,6 +461,7 @@ class Workbook:
         if self._query_jobs is not None:self._query_jobs.close()
         if self._operation_jobs is not None:self._operation_jobs.close()
         if self._calculation_jobs is not None:self._calculation_jobs.close()
+        if self._chart_jobs is not None:self._chart_jobs.close()
         with self.lock:self.db.close()
 
     def ensure_metadata(self):
@@ -471,6 +473,13 @@ class Workbook:
             from .calculation_jobs import CalculationJobs
             self._calculation_jobs=CalculationJobs(self)
         return self._calculation_jobs
+
+    def chart_jobs(self):
+        with self.lock:
+            if self._chart_jobs is None:
+                from .chart_jobs import ChartJobs
+                self._chart_jobs=ChartJobs(self)
+            return self._chart_jobs
 
     def query_jobs(self):
         with self.lock:
@@ -500,7 +509,7 @@ class Workbook:
             require(signature in (EXPECTED_SCHEMA,EXPECTED_SCHEMA3) or reserved==EXPECTED_SCHEMA3,
                     "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
             meta = db.execute("SELECT format_version,revision,workbook_id FROM dh_meta WHERE singleton=1").fetchall()
-            require(len(meta) == 1 and meta[0][0] in (1,2,3,4,5,6,7) and type(meta[0][1]) is int and meta[0][1] >= 0,
+            require(len(meta) == 1 and meta[0][0] in (1,2,3,4,5,6,7,8) and type(meta[0][1]) is int and meta[0][1] >= 0,
                     "FORMAT_VERSION", "Unsupported or invalid native format", 409)
             if meta[0][0]>=4:
                 from . import relational
@@ -510,11 +519,17 @@ class Workbook:
                 require(signature == (EXPECTED_SCHEMA3 if meta[0][0]==3 else EXPECTED_SCHEMA),"FORMAT_VERSION","Native schema/version mismatch",409)
             if meta[0][0]>=3:
                 from .metadata import validate
-                record_count=record_cells=0
+                record_count=record_cells=chart_count=0;chart_ids=set()
                 for count,(namespace,identifier,payload) in enumerate(db.execute("SELECT namespace,id,substr(payload,1,1048577) FROM dh_objects"),1):
                     require(count<=256 and time.monotonic()<=deadline,"LIMIT","Native metadata exceeds validation bounds")
                     value=json.loads(payload)
                     if namespace in ("presentation","list"):validate(namespace,identifier,value)
+                    elif namespace=="chart":
+                        require(meta[0][0]>=8,"INVALID_FORMAT","Charts require native format 8",409)
+                        from .charts import validate_stored
+                        validate_stored(value);require(isinstance(identifier,str) and identifier!="","INVALID_FORMAT","Invalid chart identity",409);chart_count+=1
+                        # Managed operations address a chart by ID alone, so an ID must name one chart in the workbook.
+                        require(identifier not in chart_ids,"INVALID_FORMAT","Chart identity is stored on more than one sheet",409);chart_ids.add(identifier)
                     else:
                         require(namespace=="records","INVALID_FORMAT","Unknown native metadata")
                         from .records import validate as validate_records
@@ -522,6 +537,7 @@ class Workbook:
                         from .metadata import name
                         name(identifier);record_count+=1;spec=value["spec"];record_cells+=(spec["r2"]-spec["r1"]+1)*(spec["c2"]-spec["c1"]+1)
                 require(record_count<=16 and record_cells<=10000,"LIMIT","Declared record scopes exceed native bounds")
+                require(chart_count<=64,"LIMIT","Stored charts exceed native bounds")
             require(valid_uuid(meta[0][2]) and (not hasattr(self,"id") or meta[0][2] == self.id),
                     "INVALID_FORMAT","Invalid or changed workbook identity",409)
             positions = set()
@@ -652,7 +668,7 @@ class Workbook:
                     sheet, calc = self.sheet(sheet), self.calculator()
                     cells = []
                     response = {"cells":cells, "state":self.state(), "sheet":sheet, "range":[r1,c1,r2,c2]}
-                    if native: response.update(self.native_catalog())
+                    if native: response.update(self.native_catalog(charts=True))
                     response_bytes = len(encoded(response).encode())
                     for row, col, source, kind, style in self.range_cells(sheet,rows,c1,c2,deadline):
                         require(time.monotonic()<=deadline,"TIMEOUT","Read exceeded its time budget")
@@ -787,8 +803,8 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
-    def native_catalog(self, *, omissions=False, db=None):
-        """Names and binding labels (and optionally other native objects) in the current read snapshot, for export reports."""
+    def native_catalog(self, *, omissions=False, charts=False, db=None):
+        """Names and binding labels (and optionally other native objects and charts) in the current read snapshot, for export reports."""
         from .relational import objects
         from .bindings import label as binding_label
         db=self.db if db is None else db
@@ -796,6 +812,9 @@ class Workbook:
         result={'native_bindings':[binding_label(db,item) for kind,item in found if kind=='binding'],
                 'native_names':[item['name'] for kind,item in found if kind=='name']}
         if omissions:result['native_omissions']=[item['name'] for kind,item in found if kind not in ('name','binding')]
+        if charts and db.execute("SELECT format_version FROM dh_meta").fetchone()[0]>=8:
+            rows=db.execute("SELECT s.position,s.id,s.name,o.payload FROM dh_objects o JOIN sheets s ON s.id=o.sheet_id WHERE o.namespace='chart'")
+            result['native_charts']=[f"{name} on {sheet}" for _,_,name,sheet in sorted((position,identity,json.loads(payload)['name'],sheet) for position,identity,sheet,payload in rows)]
         return result
 
     def read_workbook(self):
@@ -812,7 +831,7 @@ class Workbook:
                     validate_sheet_names([name for _,name in catalog])
                     rows=self.db.execute("SELECT sheet_id,row,col,source,kind,style FROM cells ORDER BY sheet_id,row,col LIMIT ?",(MAX_CELLS+1,))
                     result={"state":self.state(),"sheets":[{"name":name,"cells":[]} for _,name in catalog]}
-                    result.update(self.native_catalog(omissions=True))
+                    result.update(self.native_catalog(omissions=True,charts=True))
                     targets={key:result["sheets"][index]["cells"] for index,(key,_) in enumerate(catalog)}
                     calc=self.calculator(seconds=2); size=0
                     for count,(sheet,row,col,source,kind,style) in enumerate(rows,1):
@@ -895,7 +914,7 @@ class Workbook:
                 catalog=list(db.execute("SELECT id,name FROM sheets ORDER BY position,id LIMIT ?",(LARGE_SHEETS+1,)))
                 from .interchange import validate_sheet_names
                 validate_sheet_names([name for _,name in catalog],LARGE_SHEETS)
-                yield WorkbookStream(db,state,catalog,self.native_catalog(omissions=True,db=db))
+                yield WorkbookStream(db,state,catalog,self.native_catalog(omissions=True,charts=True,db=db))
             finally:
                 db.close()
         finally:
@@ -960,10 +979,12 @@ class Workbook:
         if plan["target"]=="replace_empty":
             from .relational import objects
             present={kind for kind,_ in objects(self.db)}
+            from .charts import objects as chart_objects
+            if chart_objects(self):present.add("chart")
             if present:
                 labels=[label for kind,label in (("table","tables"),("query","saved queries"),("relationship","relationships"),("index","indexes"),
-                    ("name","names"),("module","Python modules"),("binding","event bindings")) if kind in present]
-                labels+=sorted(kind for kind in present if kind not in ("table","query","relationship","index","name","module","binding"))
+                    ("name","names"),("module","Python modules"),("binding","event bindings"),("chart","charts")) if kind in present]
+                labels+=sorted(kind for kind in present if kind not in ("table","query","relationship","index","name","module","binding","chart"))
                 listed=labels[0] if len(labels)==1 else ", ".join(labels[:-1])+" or "+labels[-1]
                 raise EngineError("DESTINATION_NOT_EMPTY",f"Whole-workbook import requires a destination without {listed}; create a new workbook")
             require(self.db.execute("SELECT 1 FROM cells LIMIT 1").fetchone() is None,"DESTINATION_NOT_EMPTY","Whole-workbook import requires an empty destination; create a new workbook")
@@ -1250,6 +1271,9 @@ class Workbook:
                 elif kind in ("name_save","name_delete"):
                     from .names import mutate as mutate_name
                     reference_report=mutate_name(self,request)
+                elif kind in ("chart_create","chart_update","chart_delete"):
+                    from .charts import mutate as mutate_chart
+                    reference_report=mutate_chart(self,request)
                 elif kind in relational.ACTIONS:
                     reference_report=relational.mutate(self,request)
                 elif kind=='list_edit':
@@ -1398,6 +1422,10 @@ class Workbook:
                             item=relational.table(self.db,key[1])
                             require(row_raw(self,item,key[2])==current,'HISTORY_CONFLICT','Undo record changed',409)
                             row_put(self,item,key[2],wanted)
+                        elif key[0]=='chart':
+                            from . import charts
+                            require(charts.stored(self,key[1],key[2])==current,'HISTORY_CONFLICT','Undo chart changed',409)
+                            charts.store(self,key[1],key[2],wanted)
                         else:
                             require(self.raw(*key) == current, "HISTORY_CONFLICT", "Undo target changed", 409)
                             self.put(*key, wanted)
@@ -1443,8 +1471,8 @@ class Workbook:
                 self.check_operation()
                 self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1] or key in self.table_schema_keys}
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
-                result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": sum(key[0]!='table' for key in self.changes)+self.bulk_loaded,
-                          "changed_records":sum(key[0]=='table' for key in self.changes)}
+                result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": sum(key[0] not in ('table','chart') for key in self.changes)+self.bulk_loaded,
+                          "changed_records":sum(key[0]=='table' for key in self.changes),"changed_charts":sum(key[0]=='chart' for key in self.changes)}
                 result.update(reference_report)
                 if self.binding_notices:result["binding_notices"]=self.binding_notices
                 self.db.execute("INSERT INTO operations VALUES(?,?,?)", (operation, fingerprint, encoded(result)))
@@ -1455,7 +1483,7 @@ class Workbook:
                 in_transaction = False
                 if repaired_issues is not None:self.relational_issues=repaired_issues
                 if structural or self.table_record_keys:self.dependencies.clear()
-                else:self.dependencies.invalidate(self.changes)
+                else:self.dependencies.invalidate([key for key in self.changes if key[0] not in ('table','chart')])
                 if structural:
                     self.undo.clear()
                     self.redo.clear()
@@ -1468,7 +1496,7 @@ class Workbook:
                     self.undo.append((label, self.changes, self.history_cost(label,self.changes)))
                 elif self.changes:
                     self.redo.clear()
-                    label = request.get("label",{'table_insert':'Insert records','table_update':'Edit records','table_delete':'Delete records'}.get(kind,kind.title()))
+                    label = request.get("label",{'table_insert':'Insert records','table_update':'Edit records','table_delete':'Delete records','chart_create':'Create chart','chart_update':'Edit chart','chart_delete':'Delete chart'}.get(kind,kind.title()))
                     self.undo.append((label, self.changes, self.history_cost(label,self.changes)))
                     self.undo = self.undo[-100:]
                 while sum(entry[2] for entry in self.undo + self.redo) > MAX_HISTORY_BYTES:
@@ -1590,6 +1618,8 @@ class Workbook:
             for row,col in sources:self.put(sheet,row,col,None)
             for (row,col),item in sources.items():self.put(sheet,row+dr,col+dc,item)
             for key,item in formulas.items():self.put(*key,item)
+            from .charts import adjust_move
+            adjust_move(self,sheet,rectangle,dest_row,dest_col)
         return unmaintained_report(marked)
 
     def delete_sheet(self, target):
@@ -1633,9 +1663,12 @@ class Workbook:
             from .bindings import break_sheet as break_binding_sheet
             from .bindings import scoped_to_names
             broken_bindings = sorted(break_binding_sheet(self,target)+scoped_to_names(self,broken_names))
+            from .charts import break_sheet as break_chart_sheet
+            broken_charts = break_chart_sheet(self,target)
             self.db.execute("DELETE FROM sheets WHERE id=?",(target,))
         result = {"reference_warnings":warnings,"reference_issues":locations,**unmaintained_report(marked)}
         if broken_names:result["broken_names"] = broken_names
+        if broken_charts:result["broken_charts"] = broken_charts
         if broken_bindings:result["broken_bindings"] = broken_bindings
         return result
 
@@ -1768,8 +1801,12 @@ class Workbook:
             from .bindings import adjust_structure as adjust_bindings
             from .bindings import scoped_to_names
             broken_bindings = sorted(adjust_bindings(self,target,axis,start,count,delete)+scoped_to_names(self,broken_names))
+            from .charts import adjust_structure as adjust_charts
+            broken_charts, over_limit_charts = adjust_charts(self,target,axis,start,count,delete)
         result = {"reference_warnings":warnings,"reference_issues":locations,**unmaintained_report(marked)}
         if broken_names:result["broken_names"] = broken_names
+        if broken_charts:result["broken_charts"] = broken_charts
+        if over_limit_charts:result["charts_over_limit"] = over_limit_charts
         if broken_bindings:result["broken_bindings"] = broken_bindings
         return result
 

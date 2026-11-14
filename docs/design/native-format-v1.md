@@ -1,4 +1,82 @@
-# Development native formats v1 through v7
+# Development native formats v1 through v8
+
+## Charts format v8
+
+v8 reuses v7's schema and adds the `dh_objects` namespace `chart`. A workbook
+enters v8 in the same transaction as the first chart write (`chart_create`, or
+an undo or redo that writes a chart), upgrading v1-v3 to the v4 relational
+catalog layout as v5 to v7 do. No operation lowers the version, including undo
+of the operation that created the workbook's only chart. v1-v7 readers reject
+v8, and a `chart` row in a file below v8 is rejected as `INVALID_FORMAT`.
+
+A chart is one `dh_objects` row: `namespace` is `chart`, `id` is the chart's
+identity (a UUID written by the service), `sheet_id` is the sheet the chart is
+placed on, and `payload` is JSON. A chart identity names one chart in the
+whole workbook: managed operations address a chart by identity alone, so the
+same `id` stored on two sheets is rejected as `INVALID_FORMAT` on open and on
+refresh, although the table's primary key would permit it. A workbook holds at
+most 64 charts, each payload is at most 256 KiB, and charts share the catalog's existing budget of
+256 rows and 16 MiB with presentation, list and record definitions.
+
+The payload has exactly these keys:
+
+| Key | Rule |
+| --- | --- |
+| `name` | 1 to 64 printable characters |
+| `anchor` | `{"row": 1..1048576, "col": 1..16384}`, the cell the chart is placed over |
+| `offset` | `{"x": 0..4096, "y": 0..4096}` in pixels from the anchor |
+| `size` | `{"width": 64..4096, "height": 48..4096}` in pixels |
+| `z` | integer from −1,000,000 to 1,000,000; higher draws above lower |
+| `spec_version` | equal to `spec.spec_version` |
+| `spec` | the specification, in stored form |
+
+Specification version 1 has exactly these keys, all present in stored form:
+
+| Key | Rule |
+| --- | --- |
+| `spec_version` | `1` |
+| `type` | `column`, `bar`, `line`, `area`, `pie` or `scatter` |
+| `grouping` | `clustered` or `stacked` for column, bar and area; `null` otherwise |
+| `title` | `{"text": text or null}`, at most 255 characters |
+| `categories` | `null` or `{"source": S}`; `null` for scatter |
+| `series` | 1 to 64 items (exactly 1 for pie), each `{"name": {"text": text} or {"source": S}, "values": {"source": S}, "x": {"source": S} or null}`; `x` is required for scatter and `null` otherwise |
+| `axes` | `{"category": {"title": text or null}, "value": {"title": text or null, "min": number or null, "max": number or null}}`, with `min` ≤ `max` when both are set |
+| `legend` | `{"position": "right", "bottom" or "none"}` |
+
+A stored source `S` is `{"kind": "range", "sheet_id", "row1", "col1",
+"row2", "col2"}` with 1-based integer coordinates, the same field names as a
+workbook name. A values, categories or x source is one row or one column of
+at least one cell inside the grid; a name source is one cell. The service
+accepts a new specification only when each values, categories or x source
+holds at most 10,000 cells (1,000 for a pie's values and categories) and all
+sources together hold at most 100,000 cells, but these size limits are not
+part of the stored form: a row or column insert can grow a stored source past
+one. Such a chart is still readable and is still maintained by structural
+edits; resolve and render refuse it with the limit's code (`LIMIT_POINTS`,
+`LIMIT_PIE_POINTS` or `LIMIT_CELLS`) until it fits again. Direct readers must
+not assume a stored chart is within the size limits. A
+source the service could not maintain through a structural edit is broken: its
+four coordinates are `null`, and its `sheet_id` is `null` when its sheet was
+deleted. A source is never silently repointed. REST and the SDK accept sources
+as `{"kind": "range", "sheet", "ref"}` with A1 text and return both forms on
+read; only the integer form is stored.
+
+Direct readers can rely on the payload keys above, on every specification key
+being present in stored form, on sources being addressed by sheet identity so
+a sheet rename changes nothing, and on resolved values and rendered output never
+being stored. A chart's data is read from the cells its sources name.
+
+A direct SQLite edit to a chart row is not validated until the workbook is next
+opened, copied or refreshed. A payload whose envelope breaks the rules above
+(missing or extra keys, values out of range, `spec_version` not matching) makes
+the workbook `INVALID_FORMAT`, as for other catalog kinds. A specification the
+service cannot read (`INVALID_SPEC`) or one with a newer `spec_version`
+(`UNSUPPORTED_SPEC_VERSION`) does not block opening: the chart is listed with
+that `issue`, and resolve and render refuse it with the same code. Its
+specification is kept unchanged until a managed update replaces it, but
+structural edits still move its anchor: a row or column insert or delete on
+the chart's own sheet moves the anchor as it does for a readable chart. Nothing
+replays or repairs a direct edit; chart writes raise no Python events.
 
 ## Unmaintained formulas format v7
 

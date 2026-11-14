@@ -42,7 +42,7 @@ from . import ods_stream
 from .ods_stream import read_workbook as ods_read_workbook, write_workbook as ods_write_workbook
 
 CAPABILITIES = {
-    "api_version": 1, "format_version": 7, "supported_format_versions": [1,2,3,4,5,6,7], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
+    "api_version": 1, "format_version": 8, "supported_format_versions": [1,2,3,4,5,6,7,8], "new_file_format_version": 1, "max_operation_cells": MAX_CELLS,
     "workbook_modules":True,"atomic_macros":True,"macro_worker_seconds":2,"macro_activation":"operator-approved workbook UUID:code SHA256; set at service start-up, never over HTTP",
     "structured_tables":True,"table_types":["text","integer","number","boolean","date","time","datetime"],
     "readonly_sql":True,"query_jobs":True,"query_result_rows":100000,"query_result_values":1000000,"query_spool_bytes":64*1024*1024,
@@ -65,6 +65,8 @@ CAPABILITIES['operations'].extend(['name_save','name_delete'])
 CAPABILITIES.update(names=True,max_names=256)
 CAPABILITIES['operations'].extend(['binding_save','binding_delete'])
 CAPABILITIES.update(event_bindings=True,max_bindings=16,binding_events=['cell_change','table_change'])
+CAPABILITIES['operations'].extend(['chart_create','chart_update','chart_delete'])
+CAPABILITIES.update(charts=True,max_charts=64,chart_spec_version=1,chart_jobs=True,chart_job_seconds=30,max_chart_render_points=10_000)
 MAX_UPLOADS, UPLOAD_SECONDS, UPLOAD_CHUNK = 2, 300, 64*1024
 CAPABILITIES.update(uploads=True,max_upload_bytes=LARGE_PACKAGE,max_import_cells=LARGE_CELLS,max_concurrent_uploads=MAX_UPLOADS)
 LARGE_PREPARATION_SECONDS = 300
@@ -85,6 +87,12 @@ CAPABILITIES.update(export_jobs=True,max_export_cells=LARGE_CELLS,export_job_sec
 ROUTES = {
     "/v1/workbooks/{workbook}/code": ("post", "Inspect inert workbook modules and the exact service-local activation key"),
     "/v1/workbooks/{workbook}/names": ("post", "Read the state-checked workbook name catalog"),
+    "/v1/workbooks/{workbook}/charts": ("post", "Read the state-checked chart catalog"),
+    "/v1/workbooks/{workbook}/charts/suggest": ("post", "Suggest a chart specification from a range"),
+    "/v1/workbooks/{workbook}/charts/jobs": ("post", "Start a cancellable read-only chart resolve or render job"),
+    "/v1/workbooks/{workbook}/charts/jobs/{job}": ("get", "Read a chart job; a result is withheld as stale once the workbook changes"),
+    "/v1/workbooks/{workbook}/charts/jobs/{job}/cancel": ("post", "Cancel a chart job or discard its result"),
+    "/v1/workbooks/{workbook}/charts/jobs/{job}/release": ("post", "Release a terminal chart job"),
     "/v1/workbooks/{workbook}/tables":("post","Read the state-checked structured table catalog"),
     "/v1/workbooks/{workbook}/tables/preview":("post","Review selection values and types before independent table creation"),
     "/v1/workbooks/{workbook}/tables/read":("post","Read a bounded state-checked record page"),
@@ -287,13 +295,15 @@ def openapi():
     install_names_schemas(schemas,actions)
     from .bindings_api import install as install_binding_schemas
     install_binding_schemas(schemas,actions)
+    from .charts_api import install as install_chart_schemas
+    install_chart_schemas(schemas,actions)
     for action, (required, properties, example) in actions.items():
         schema_name = "".join(word.title() for word in action.split("_"))+"Operation"
         mapping[action] = "#/components/schemas/"+schema_name
         schemas[schema_name] = {"type":"object","required":["operation_id","expected_state","action",*required],
             "properties":{**common,"action":{"type":"string","enum":[action]},**properties},
             "example":{"operation_id":"generate-a-uuid","expected_state":"copy-from-workbook-info","action":action,**example}}
-        if action in ("module_save","module_delete","macro_run","name_save","name_delete","binding_save","binding_delete"):schemas[schema_name]["additionalProperties"]=False
+        if action in ("module_save","module_delete","macro_run","name_save","name_delete","binding_save","binding_delete","chart_create","chart_update","chart_delete"):schemas[schema_name]["additionalProperties"]=False
     schemas["WorkbookImportOperation"].update(oneOf=[
         {"title":"Reviewed sheets","required":["sheets"],"not":{"anyOf":[{"required":["stage_id"]},{"required":["stage_digest"]}]},
          "example":schemas["WorkbookImportOperation"]["example"]},
@@ -548,8 +558,8 @@ def openapi():
                                    "431":{"description":"HTTP parser rejected oversized headers before dispatch; no operation receipt is implied"}},
                      "security": [{"localToken": []}]}
         if method == "post":
-            name = "JobAction" if path.startswith(("/v1/uploads/","/v1/exports/")) else "XlsxExportJobRequest" if path.endswith("/export/xlsx/jobs") else "OdsExportJobRequest" if path.endswith("/export/ods/jobs") else ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "XlsxPreparationRequest" if path=="/v1/import/xlsx/jobs" else "OdsPreparationRequest" if path=="/v1/import/ods/jobs" else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
-                "code":"CodeReadRequest","names":"NamesReadRequest","inspect":"TableCatalogRequest","repair-preview":"RelationshipRepairRequest","cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
+            name = "JobAction" if path.startswith(("/v1/uploads/","/v1/exports/")) else "XlsxExportJobRequest" if path.endswith("/export/xlsx/jobs") else "OdsExportJobRequest" if path.endswith("/export/ods/jobs") else ("QueryRunRequest" if path.endswith('/queries/jobs') else "QueryPageRequest" if path.endswith('/page') else "JobAction") if '/queries/jobs' in path else "TableCatalogRequest" if path.endswith('/tables') else job_request_schema(path) if "/operation-jobs" in path else "ConversionRequest" if path=="/v1/convert/value" else "RecordRequest" if "/records/" in path else "MetadataRequest" if path.endswith(("/metadata/read","/records/read")) else ("CalculationRequest" if path.endswith("/calculation/jobs") else "JobAction") if "/calculation/jobs" in path else ("ChartJobRequest" if path.endswith("/charts/jobs") else "JobAction") if "/charts/jobs" in path else "ChartSuggestRequest" if path.endswith("/charts/suggest") else "ListExportRequest" if "/list/export/" in path else "ListValuesRequest" if path.endswith("/list/values") else "SnapshotRequest" if path == "/v1/recovery/inspect" else "XlsxPreparationRequest" if path=="/v1/import/xlsx/jobs" else "OdsPreparationRequest" if path=="/v1/import/ods/jobs" else "SpreadsheetExport" if path.endswith(("/export/xlsx","/export/ods")) else "PreparationRequest" if path == "/v1/import/csv/jobs" else "JobAction" if path.startswith("/v1/jobs/") else "OpenRequest" if path == "/v1/open" else "CsvPreviewRequest" if path == "/v1/import/csv/preview" else "RangeRequest" if path.endswith("/range") else "ClipboardRequest" if path.endswith("/clipboard") else "OperationRequest" if path.endswith("/operations") else {
+                "code":"CodeReadRequest","names":"NamesReadRequest","charts":"ChartsReadRequest","inspect":"TableCatalogRequest","repair-preview":"RelationshipRepairRequest","cancel":"JobAction","edit-preview":"TableEditPreviewRequest","schema-preview":"TableSchemaPreviewRequest","read":"TableReadRequest","preview":"TablePreviewRequest","styles":"StylesRequest","navigate":"NavigationRequest","summary":"SummaryRequest","list":"ListRequest","find":"FindRequest","trace":"TraceRequest","snapshot":"SnapshotRequest","close":"CloseRequest","csv":"CsvExportRequest"}[path.rsplit("/",1)[-1]]
             schema = {"$ref":"#/components/schemas/"+name}
             if '/queries/' in path and path.endswith('/preview'):schema={'$ref':'#/components/schemas/QueryDefinitionRequest'}
             if '/queries/' in path and path.endswith('/read'):schema={'$ref':'#/components/schemas/QueryReadRequest'}
@@ -562,6 +572,9 @@ def openapi():
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/CodeCatalog"}}}
         elif path.endswith("/names"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/NameCatalog"}}}
+        elif "/charts" in path:
+            response="ChartCatalog" if path.endswith("/charts") else "ChartSuggestion" if path.endswith("/suggest") else "JobReleased" if path.endswith("/release") else "ChartJob"
+            operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/"+response}}}
         elif path=="/v1/functions":
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/FunctionCatalog"}}}
         elif path.endswith("/styles"):
@@ -1227,6 +1240,19 @@ class Service(ThreadingHTTPServer):
         if method == "POST" and suffix == ["names"]:
             from .names import read as read_names
             return read_names(book,body)
+        if method == "POST" and suffix == ["charts"]:
+            from .charts import read as read_charts
+            return read_charts(book,body)
+        if method == "POST" and suffix == ["charts","suggest"]:
+            from .chart_resolve import suggest
+            with book.lock:
+                book.refresh();return suggest(book,body)
+        if method == "POST" and suffix == ["charts","jobs"]:
+            return book.chart_jobs().start(body)
+        if len(suffix) in (3,4) and suffix[:2] == ["charts","jobs"]:
+            action=suffix[3] if len(suffix)==4 else None
+            require((method=='GET' and action is None) or (method=='POST' and action in ('cancel','release')),'NOT_FOUND','Unknown chart job action',404)
+            return book.chart_jobs().access(suffix[2],action)
         if method == "POST" and suffix == ["code"]:
             from .workbook_code import read
             return read(book,body)
