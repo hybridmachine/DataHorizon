@@ -112,6 +112,10 @@ def _input_query_source(book, value, role):
     found = query_views.query(book.db, value["query"])
     if [item["name"] for item in found["shape"]].count(value["column"]) != 1:
         raise EngineError("COLUMN_NOT_FOUND", f"Saved query {found['name']} has no single result column {value['column']}")
+    missing = next((item["name"] for item in found["parameters"] if item["name"] not in found["defaults"]), None)
+    if missing is not None:
+        raise _invalid(f"Saved query {found['name']} has no default for parameter {missing}; "
+                       "a chart cannot supply parameter values")
     return {"kind": "query", "query_id": found["id"], "column": value["column"]}, 0
 
 

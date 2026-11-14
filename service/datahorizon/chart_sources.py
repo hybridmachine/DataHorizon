@@ -95,21 +95,27 @@ def find_query(book, source):
     return item
 
 
-def run_query(run, query_id):
+def run_query(run, item):
     """Run a saved query through ``run``; return its result, or ``None`` when it holds more rows than any series may.
 
     ``run`` is asked for at most QUERY_ROWS rows. Its row refusal is told from its other QUERY_LIMIT
-    refusals (memory, labels, values), which pass through unchanged, by that refusal's exact message.
+    refusals (memory, labels, values) by that refusal's exact message. Every other refusal keeps its
+    code, status and details and names the saved query, except STALE_STATE and CANCELLED, which are
+    about the chart job rather than the query.
     """
     try:
-        result = run(query_id)
+        result = run(item["id"])
     except EngineError as error:
         code = error.body["code"]
         if code == "QUERY_LIMIT" and error.body["message"] == f"Query exceeds {QUERY_ROWS:,} rows":
             return None
+        if code in ("STALE_STATE", "CANCELLED"):
+            raise
         if code == "TIMEOUT":
-            raise EngineError("CALCULATION_FAILED", "The chart's sources could not be calculated in time", 409) from error
-        raise
+            error = EngineError("CALCULATION_FAILED", "The chart's sources could not be calculated in time", 409)
+        details = {key: value for key, value in error.body.items() if key not in ("code", "message")}
+        raise EngineError(error.body["code"], f"Saved query {item['name']}: {error.body['message']}",
+                          error.status, **details) from error
     return result
 
 

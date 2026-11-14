@@ -112,6 +112,16 @@ class Spec(Fixture):
         self.assertEqual(stored["series"][0]["values"]["source"],
                          {"kind": "query", "query_id": self.query_id, "column": "Units"})
 
+    def test_a_query_with_a_parameter_without_a_default_is_refused_at_create(self):
+        self.save("Param", "SELECT Units FROM Sales WHERE Units >= :m", parameters=[dict(name="m", type="integer")])
+        state = self.book.state()
+        with self.assertRaises(EngineError) as caught:
+            self.apply("chart_create", spec=source_spec(query_source("Param", "Units")))
+        self.assertEqual((code(caught.exception), caught.exception.status), ("INVALID_SPEC", 400))
+        self.assertEqual(caught.exception.body["message"],
+                         "Saved query Param has no default for parameter m; a chart cannot supply parameter values")
+        self.assertEqual(self.book.state(), state)
+
     def test_query_sources_add_nothing_to_size_checks(self):
         out = charts.normalise_spec(self.book, source_spec(query_source("Top", "Units")))
         self.assertIsNone(charts.limit_error(out))
@@ -314,6 +324,7 @@ class Resolving(Fixture):
         self.save("Blob", "SELECT x'0102' AS b")
         error = self.refused_resolve(query_spec(None, query_source("Blob", "b")))
         self.assertEqual((error.body["code"], error.status), ("QUERY_VALUE", 409))
+        self.assertTrue(error.body["message"].startswith("Saved query Blob: "), error.body["message"])
 
     def test_redefined_query_without_the_column_is_refused(self):
         stored = self.payload(query_spec(None, query_source("Top", "Units")))
@@ -349,7 +360,7 @@ class Resolving(Fixture):
         self.book.query_jobs().run_once_bytes = 1024
         error = self.refused_resolve(query_spec(None, query_source("Fits", "i")))
         self.assertEqual((error.body["code"], error.body["message"]),
-                         ("QUERY_LIMIT", "Query result exceeds 16 MiB in memory"))
+                         ("QUERY_LIMIT", "Saved query Fits: Query result exceeds 16 MiB in memory"))
 
     def test_parameter_defaults_are_used(self):
         self.save("Min", "SELECT Month, Units FROM Sales WHERE Units >= :minimum ORDER BY Units",
@@ -357,6 +368,42 @@ class Resolving(Fixture):
         out = self.resolve(query_spec(query_source("Min", "Month"), query_source("Min", "Units")))
         self.assertEqual(out["resolved"]["categories"], ["M10", "M11", "M12"])
         self.assertEqual(out["resolved"]["series"][0]["values"], [10.0, 11.0, 12.0])
+
+    def test_a_query_saved_again_without_a_default_fails_at_resolve_by_name(self):
+        query_id = self.save("Min", "SELECT Units FROM Sales WHERE Units >= :minimum",
+                             parameters=[dict(name="minimum", type="integer")], defaults=dict(minimum=10))
+        stored = self.payload(query_spec(None, query_source("Min", "Units")))
+        self.save("Min", "SELECT Units FROM Sales WHERE Units >= :minimum",
+                  parameters=[dict(name="minimum", type="integer")], query=query_id)
+        error = self.refused_resolve(stored=stored)
+        self.assertEqual((error.body["code"], error.status), ("INVALID_PARAMETERS", 400))
+        self.assertTrue(error.body["message"].startswith("Saved query Min: "), error.body["message"])
+
+    def test_a_query_runs_job_errors_are_not_prefixed(self):
+        def stale(query_id):
+            raise EngineError("STALE_STATE", "Query source changed before snapshot", 409, detail=1)
+
+        def cancelled(query_id):
+            raise EngineError("CANCELLED", "Query cancelled; no workbook data changed", 409)
+
+        def failed(query_id):
+            raise EngineError("QUERY_FAILED", "no such column: x", 400, detail=1)
+
+        def timed_out(query_id):
+            raise EngineError("TIMEOUT", "Query exceeded its time budget", 409)
+
+        value = query_spec(None, query_source("Top", "Units"))
+        error = self.refused_resolve(value, run_query=stale)
+        self.assertEqual(error.body, {"code": "STALE_STATE", "message": "Query source changed before snapshot",
+                                      "outcome": "rejected", "detail": 1})
+        error = self.refused_resolve(value, run_query=cancelled)
+        self.assertEqual(error.body["message"], "Query cancelled; no workbook data changed")
+        error = self.refused_resolve(value, run_query=failed)
+        self.assertEqual((error.status, error.body), (400, {"code": "QUERY_FAILED", "outcome": "rejected", "detail": 1,
+                                                            "message": "Saved query Top: no such column: x"}))
+        error = self.refused_resolve(value, run_query=timed_out)
+        self.assertEqual((error.status, error.body["code"], error.body["message"]),
+                         (409, "CALCULATION_FAILED", "Saved query Top: The chart's sources could not be calculated in time"))
 
     def test_query_without_run_query_is_invalid_argument(self):
         error = self.refused_resolve(query_spec(None, query_source("Top", "Units")), run_query=None)

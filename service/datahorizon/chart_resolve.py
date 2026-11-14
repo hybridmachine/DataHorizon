@@ -158,7 +158,7 @@ def resolve(snapshot, payload, state, checkpoint=None, run_query=None):
                 item = chart_sources.find_query(snapshot, source)
             if checkpoint is not None:
                 checkpoint(cells_read, "Running saved query")
-            query_results[query_id] = (item, chart_sources.run_query(run_query, query_id))
+            query_results[query_id] = (item, chart_sources.run_query(run_query, item))
         return query_results[query_id]
 
     def fetch(source, role):
