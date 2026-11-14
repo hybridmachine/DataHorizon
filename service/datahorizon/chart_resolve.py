@@ -18,7 +18,7 @@ SLICE_CELLS = 1_000
 
 
 def _check_sources(book, sources):
-    """Raise SOURCE_BROKEN for a source that names no data, a sheet that is gone, or a table column that is gone."""
+    """Raise SOURCE_BROKEN for a source that names no data, or a sheet, table column or saved query that is gone."""
     for source in sources:
         if charts.is_broken(source):
             raise EngineError("SOURCE_BROKEN", "A chart source no longer names its data", 409)
@@ -30,6 +30,8 @@ def _check_sources(book, sources):
                 raise EngineError("SOURCE_BROKEN", "A chart source names a sheet that no longer exists", 409)
             if kind == "table":
                 chart_sources.find(book, source)
+            if kind == "query":
+                chart_sources.find_query(book, source)
 
 
 def _slices(source):
@@ -72,19 +74,24 @@ def _positions(source):
             for col in range(source["col1"], source["col2"] + 1)]
 
 
-def _cells(snapshot, source, state, role, chart_type, progress):
+def _cells(snapshot, source, state, role, chart_type, progress, query_result):
     """Return the cells of one source in order, ``None`` for an empty one.
 
     ``progress(cells)`` is called with the number of cells read so far in this source.
+    ``query_result(source)`` returns the saved query and its result for a query source.
     """
     kind = charts.source_kind(source)
+    pie = chart_type == "pie" and role in ("values", "categories")
+    limit = LIMIT_PIE_POINTS if pie else LIMIT_POINTS
     if kind == "table":
-        pie = chart_type == "pie" and role in ("values", "categories")
-        cells = chart_sources.read_table(snapshot, source, state, LIMIT_PIE_POINTS if pie else LIMIT_POINTS)
+        cells = chart_sources.read_table(snapshot, source, state, limit)
         progress(len(cells))
         return cells
     if kind == "query":
-        raise EngineError("INVALID_ARGUMENT", "Saved-query chart sources need a query runner")
+        item, result = query_result(source)
+        cells = chart_sources.read_query(item, result, source["column"], limit)
+        progress(len(cells))
+        return cells
     read = _read(snapshot, source, state, progress)
     return [read.get(position) for position in _positions(source)]
 
@@ -122,8 +129,12 @@ def _numbers(cells, source):
     return values, causes
 
 
-def resolve(snapshot, payload, state, checkpoint=None):
-    """Return the renderer's input for a stored chart, with point and gap counts."""
+def resolve(snapshot, payload, state, checkpoint=None, run_query=None):
+    """Return the renderer's input for a stored chart, with point and gap counts.
+
+    ``run_query(query_id)`` runs a saved query and returns ``{"columns", "rows"}``; it is needed only
+    by a chart with a saved-query source. Each saved query runs once per resolve, outside any lock.
+    """
     issue = charts.validate_stored(payload)
     if issue is not None:
         status = 409 if issue == "UNSUPPORTED_SPEC_VERSION" else 400
@@ -132,9 +143,21 @@ def resolve(snapshot, payload, state, checkpoint=None):
     limit = charts.limit_error(spec)
     if limit is not None:
         raise limit
-    _check_sources(snapshot, charts._sources(spec))
+    sources = charts._sources(spec)
+    if run_query is None and any(charts.source_kind(source) == "query" for source in sources):
+        raise EngineError("INVALID_ARGUMENT", "Saved-query chart sources need a query runner")
+    _check_sources(snapshot, sources)
 
     cells_read = 0
+    query_results = {}
+
+    def query_result(source):
+        query_id = source["query_id"]
+        if query_id not in query_results:
+            with snapshot.lock:
+                item = chart_sources.find_query(snapshot, source)
+            query_results[query_id] = (item, chart_sources.run_query(run_query, query_id))
+        return query_results[query_id]
 
     def fetch(source, role):
         nonlocal cells_read
@@ -145,7 +168,7 @@ def resolve(snapshot, payload, state, checkpoint=None):
             cells_read = before + done
             if checkpoint is not None:
                 checkpoint(cells_read, "Reading sources")
-        cells = _cells(snapshot, source, state, role, spec["type"], progress)
+        cells = _cells(snapshot, source, state, role, spec["type"], progress, query_result)
         cells_read = before + len(cells)
         if cells_read > charts.LIMIT_CELLS:
             raise EngineError("LIMIT_CELLS", f"The chart's sources hold more than {charts.LIMIT_CELLS} cells")

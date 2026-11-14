@@ -1,13 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Read the cells of a chart's table-column source from a workbook snapshot."""
+"""Read the cells of a chart's table-column and saved-query sources."""
 import time
 
-from . import relational
+from . import query_views, relational
 from .chart_render import LIMIT_PIE_POINTS, LIMIT_POINTS, format_tick
 from .engine import EngineError, sql_deadline
 
 DEADLINE_SECONDS = 2
 TEMPORAL = ("date", "time", "datetime")
+# A query run is asked for one row more than a series may hold, so a longer result is refused by its own row limit.
+QUERY_ROWS = LIMIT_POINTS + 1
 
 
 def _broken(message):
@@ -72,8 +74,68 @@ def read_table(book, source, state, limit):
         finally:
             book.db.execute("ROLLBACK")
     if len(rows) > limit:
-        pie = limit == LIMIT_PIE_POINTS
-        raise EngineError("LIMIT_PIE_POINTS" if pie else "LIMIT_POINTS",
-                          f"Table {item['name']} holds more than {limit:,} rows; "
-                          f"the limit for a {'pie' if pie else 'series'} is {limit:,}")
+        raise _limit_error("Table", item["name"], limit)
     return [_cell(column, row[0]) for row in rows]
+
+
+def _limit_error(kind, name, limit):
+    pie = limit == LIMIT_PIE_POINTS
+    return EngineError("LIMIT_PIE_POINTS" if pie else "LIMIT_POINTS",
+                       f"{kind} {name} holds more than {limit:,} rows; "
+                       f"the limit for a {'pie' if pie else 'series'} is {limit:,}")
+
+
+def find_query(book, source):
+    """Return the saved query a query source names; raise SOURCE_BROKEN when it is gone."""
+    if source["query_id"] is None:
+        raise _broken("A chart source no longer names a saved query")
+    item = next((found for found in query_views.queries(book.db) if found["id"] == source["query_id"]), None)
+    if item is None:
+        raise _broken("A chart source names a saved query that no longer exists")
+    return item
+
+
+def run_query(run, query_id):
+    """Run a saved query through ``run``; return its result, or ``None`` when it holds more rows than any series may.
+
+    ``run`` is asked for at most QUERY_ROWS rows. Its row refusal is told from its other QUERY_LIMIT
+    refusals (memory, labels, values), which pass through unchanged, by that refusal's exact message.
+    """
+    try:
+        result = run(query_id)
+    except EngineError as error:
+        code = error.body["code"]
+        if code == "QUERY_LIMIT" and error.body["message"] == f"Query exceeds {QUERY_ROWS:,} rows":
+            return None
+        if code == "TIMEOUT":
+            raise EngineError("CALCULATION_FAILED", "The chart's sources could not be calculated in time", 409) from error
+        raise
+    return result
+
+
+def read_query(item, result, column, limit):
+    """Return one cell per result row of the named column; refuse a result over ``limit`` rows or a column that is not one."""
+    if result is None or len(result["rows"]) > limit:
+        raise _limit_error("Saved query", item["name"], limit)
+    matches = result["columns"].count(column)
+    if matches != 1:
+        problem = "no result column" if matches == 0 else "more than one result column"
+        raise _broken(f"Saved query {item['name']} has {problem} named {column}")
+    return query_cells(result, column)
+
+
+def _query_cell(value):
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        # The engine's tag for an integer beyond 2^53.
+        return {"value": float(int(value["value"])), "display": value["value"], "calculation": "current"}
+    if isinstance(value, (int, float)):
+        return {"value": value, "display": format_tick(value), "calculation": "current"}
+    return {"value": value, "display": value, "calculation": "current"}
+
+
+def query_cells(result, column):
+    """Return the cells of one result column in row order, in the shape ``read_table`` returns."""
+    index = result["columns"].index(column)
+    return [_query_cell(row[index]) for row in result["rows"]]
