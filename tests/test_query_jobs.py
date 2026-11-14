@@ -139,6 +139,18 @@ class QueryJobTests(unittest.TestCase):
         item=self.save('SELECT Customer,Qty FROM Orders');self.assertEqual(len(self.once(item['id'],max_rows=3)['rows']),3)
         with self.assertRaises(EngineError) as failure:self.once(item['id'],max_rows=2)
         self.assertEqual((failure.exception.body['code'],failure.exception.status),('QUERY_LIMIT',409));self.assertIn('2',failure.exception.body['message'])
+    def test_run_once_bounds_the_size_held_in_memory(self):
+        # An endless result of 1,000-character rows: only a limit can end it, and the memory cap must be the one that does.
+        item=self.save("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n) SELECT x,printf('%01000d',x) AS wide FROM n");made=[]
+        def tracked():directory=create();made.append(Path(directory.name));return directory
+        self.jobs.run_once_bytes=64*1024
+        with patch('datahorizon.query_jobs.create',side_effect=tracked):
+            with self.assertRaises(EngineError) as failure:self.once(item['id'],max_rows=1000)
+        self.assertEqual((failure.exception.body['code'],failure.exception.status),('QUERY_LIMIT',409));self.assertEqual(failure.exception.body['message'],'Query result exceeds 16 MiB in memory')
+        self.assertEqual(len(made),1);self.assertFalse(made[0].exists())
+    def test_run_once_max_rows_is_clamped_to_the_query_job_limit(self):
+        item=self.save('SELECT Customer,Qty FROM Orders');self.jobs.max_rows=2
+        self.assertEqual(self.code(lambda:self.once(item['id'],max_rows=1000)),('QUERY_LIMIT',409));self.jobs.max_rows=3;self.assertEqual(len(self.once(item['id'],max_rows=1000)['rows']),3)
     def test_run_once_requires_the_given_state(self):
         item=self.save('SELECT Name FROM Customers');state=self.book.state();self.apply('table_update',table='Customers',edits=[dict(row_id='1',values=dict(Name='Changed'))])
         self.assertEqual(self.code(lambda:self.once(item['id'],state=state)),('STALE_STATE',409));self.assertEqual(self.once(item['id'])['rows'][0],['Changed'])
@@ -158,8 +170,10 @@ class QueryJobTests(unittest.TestCase):
         self.assertEqual(self.code(lambda:self.once(item['id'],cancel_event=cancel,seconds=5,max_rows=1000000)),('CANCELLED',409));self.assertLess(time.monotonic()-started,3)
         started=time.monotonic();self.assertEqual(self.code(lambda:self.once(item['id'],seconds=.2,max_rows=1000000)),('TIMEOUT',409));self.assertLess(time.monotonic()-started,3)
         # A stopping manager cancels a run in progress and refuses new ones.
-        outcome=[];runner=threading.Thread(target=lambda:outcome.append(self.code(lambda:self.once(item['id'],seconds=30))));runner.start();time.sleep(.2);self.jobs.close();runner.join(5)
-        self.assertFalse(runner.is_alive());self.assertEqual(outcome,[('CANCELLED',409)]);self.assertEqual(self.code(lambda:self.once(item['id'])),('SERVICE_STOPPING',503))
+        outcome=[];runner=threading.Thread(target=lambda:outcome.append(self.code(lambda:self.once(item['id'],seconds=30))[0]));runner.start();deadline=time.monotonic()+5
+        while not self.jobs.runs and time.monotonic()<deadline:time.sleep(.005)
+        self.assertEqual(len(self.jobs.runs),1);self.jobs.close();runner.join(5)
+        self.assertFalse(runner.is_alive());self.assertEqual(outcome,['CANCELLED']);self.assertEqual(self.code(lambda:self.once(item['id'])),('SERVICE_STOPPING',503))
     def test_run_once_refuses_blob_results(self):
         item=self.save("SELECT x'0102' AS b");self.assertEqual(self.code(lambda:self.once(item['id'])),('QUERY_VALUE',409))
     def test_run_once_uses_no_job_slot_and_leaves_no_files(self):

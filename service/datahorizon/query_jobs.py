@@ -32,7 +32,7 @@ class _Stop:
 class QueryJobs:
     def __init__(self,book):
         self.book=book;self.lock=threading.RLock();self.entries={};self.runs=set();self.generation=0;self.stopping=False
-        self.seconds=60;self.snapshot_seconds=5;self.max_rows=100000;self.max_values=1000000;self.max_bytes=64*1024*1024;self.retention=300
+        self.seconds=60;self.snapshot_seconds=5;self.max_rows=100000;self.max_values=1000000;self.max_bytes=64*1024*1024;self.run_once_bytes=16*1024*1024;self.retention=300
 
     def _cleanup(self,entry):
         entry['directory'].cleanup()
@@ -86,12 +86,14 @@ class QueryJobs:
                 saved,request=self._saved(dict(query=query_id));declarations,values=bindings(request['sql'],request['parameters'],request['values'])
             # Closing the manager cancels this run as it cancels job workers.
             directory=create();entry=dict(state=state,cancel=_Stop(self,cancel_event),directory=directory,sql=request['sql'],values=values,saved=saved)
-            snapshot,registered=self._snapshot(entry);deadline=time.monotonic()+seconds;rows=[]
+            snapshot,registered=self._snapshot(entry);deadline=time.monotonic()+seconds;rows=[];size=0;max_rows=min(max_rows,self.max_rows)
             with closing(sqlite3.connect(snapshot,isolation_level=None)) as db:
                 configure(db);dependencies,denied=authorize(db,registered)
                 with self._executing(entry,db,deadline,denied):
                     results=self._results(entry,db,deadline,dependencies);columns=[col['name'] for col in next(results)]
-                    for row in results:require(len(rows)<max_rows,'QUERY_LIMIT',f'Query exceeds {max_rows:,} rows',409);rows.append(row)
+                    for row in results:
+                        require(len(rows)<max_rows,'QUERY_LIMIT',f'Query exceeds {max_rows:,} rows',409);size+=len(encoded(row).encode())
+                        require(size<=self.run_once_bytes,'QUERY_LIMIT','Query result exceeds 16 MiB in memory',409);rows.append(row)
                     self._checkpoint(entry,deadline)
             return dict(columns=columns,rows=rows)
         finally:
