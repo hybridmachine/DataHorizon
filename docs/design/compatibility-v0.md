@@ -314,6 +314,34 @@ report entry. Recovery inspection counts the formulas a degraded import stores
 formula source the scanner cannot read is an issue (see
 [native formats](native-format-v1.md#bounded-recovery-validation)).
 
+**XLSX packages LibreOffice reads.** Four leniencies follow LibreOffice, whose
+own test files need them. A row or cell written without its optional `r`
+attribute takes the next position: a row follows the previous row and a cell
+the previous cell of its row. A row index is read as a decimal number (`0005`
+is row 5); after one that is not a number on the grid, a row or cell without
+its reference rejects. Part names written with backslashes
+(`xl\workbook.xml`) are read as the forward-slash names. A cell style index
+past the end of `cellXfs` is read as unstyled and reported
+(`style.named_style`, `omitted`). A workbook `<sheet>` whose relationship id
+names no relationship has no part: it is left out and reported as
+`workbook.feature` `sheets_without_part`, like the sheet kinds above. A cell
+reference that is present but not an A1 address, a cell off the grid and a
+sheet relationship of an unknown type still reject.
+
+**ODS packages LibreOffice reads.** Three leniencies follow LibreOffice, whose
+own test files need them. The `mimetype` entry must exist and hold exactly the
+spreadsheet type, but it may be compressed or stored after other entries. A
+cell style, parent style or number style that the file references without
+defining is ignored and reported (`style.named_style` or `style.number_format`,
+`omitted`); `number:boolean-style` is a known data style. A `table:table`
+named like `'file:///other.ods'#Sheet1` (a quoted URL with a known scheme, `#`
+and a sheet name) is LibreOffice's cache of another document's sheet: it is not
+imported as a sheet, takes no sheet index, and counts as one
+`external_references` item together with its own `table:table-source`. Any
+other quoted name, such as `'FY2025'#Actuals`, is a sheet. Encrypted packages, sheet names outside
+the native rule (longer than 31 characters, or absent) and the size limits
+still reject.
+
 **The report.** Each entry has a category, a severity (`converted`,
 `approximated`, `omitted`, `unevaluable`), a detail, a count and up to 100
 samples (`{sheet, cell}`; a sample without a cell stands for a whole sheet,

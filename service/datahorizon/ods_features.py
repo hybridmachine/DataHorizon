@@ -49,6 +49,7 @@ WORKBOOK_FEATURES = ("defined_names", "external_references", "hidden_sheets", "w
                      "embedded_objects", "macros")
 NAMED = frozenset((q(T, "named-range"), q(T, "named-expression")))
 DATABASE_RANGE, FILTER = q(T, "database-range"), q(T, "filter")
+TABLE_SOURCE = q(T, "table-source")
 # Every tag OdsWorkbookFeatures reads, wherever it appears in content.xml.
 WORKBOOK_TAGS = frozenset((*NAMED, DATABASE_RANGE, q(T, "dde-link"), q(T, "table-source"), q(O, "spreadsheet"),
                            q(T, "iteration"), q(T, "calculation-settings"), q(T, "changed-region"), q(T, "label-range"),
@@ -193,11 +194,18 @@ class OdsWorkbookFeatures:
         if count > 0: self.counts[feature] = self.counts.get(feature, 0) + count
 
     def table(self, item):
+        """Record one table:table; return whether it is a sheet. An external-reference cache table is not: it is one
+        external reference, and the caller keeps its own table:table-source away from end()."""
+        from .ods import external_cache_table
+        if external_cache_table(item.get(q(T, "name"))):
+            self.add("external_references")
+            return False
         require(len(self.tables) < LARGE_SHEETS, "LIMIT", f"Provide 1-{LARGE_SHEETS} sheets")
         name, style = item.get(q(T, "name"), ""), item.get(q(T, "style-name"))
         self.table_bytes += len(name)+len(style or "")
         require(self.table_bytes <= TABLE_STYLE_BYTES, "LIMIT", f"ODS sheet names and styles exceed {TABLE_STYLE_BYTES//(1024*1024)} MiB")
         self.tables.append((name, style))
+        return True
 
     def end(self, item):
         tag = item.tag
@@ -242,9 +250,11 @@ class OdsWorkbookFeatures:
 
 def scan_content(root, features):
     """Feed a parsed content.xml to `features`, as the streaming survey does."""
-    for table in root.findall(f'{q(O, "body")}/{q(O, "spreadsheet")}/{TABLE}'): features.table(table)
+    counted = set()   # the sources of cache tables, each already counted with its table
+    for table in root.findall(f'{q(O, "body")}/{q(O, "spreadsheet")}/{TABLE}'):
+        if not features.table(table): counted.update(id(item) for item in table.iter(TABLE_SOURCE))
     for item in root.iter():
-        if item.tag in WORKBOOK_TAGS: features.end(item)
+        if item.tag in WORKBOOK_TAGS and id(item) not in counted: features.end(item)
 
 
 def read_panes(archive, read):

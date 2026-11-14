@@ -13,6 +13,9 @@ def enabled(item):
     return item is not None and item.get("val","1") not in ("0","false")
 
 
+UNDEFINED_XF="A cell style index that the stylesheet does not define is ignored."
+
+
 class XlsxStyles:
     def __init__(self,archive,path="xl/styles.xml",report=None,ns=TRANSITIONAL):
         self.ns=ns
@@ -45,6 +48,10 @@ class XlsxStyles:
         """The native style for an xf index; its losses are reported once per cell that uses it."""
         if not self.xfs:
             require(index=="0","INVALID_SPREADSHEET","Cell references a missing stylesheet")
+            return {}
+        if isinstance(index,str) and re.fullmatch(r"[0-9]{1,8}",index) and int(index)>=len(self.xfs):
+            # Some producers write indexes past the end of cellXfs; LibreOffice reads such a cell as unstyled.
+            self.report.add("style.named_style","omitted",UNDEFINED_XF,sheet=sheet,cell=cell)
             return {}
         if index in self.cache:
             for category,severity,detail in self.recorded[index]: self.report.add(category,severity,detail,sheet=sheet,cell=cell)

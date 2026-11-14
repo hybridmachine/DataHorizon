@@ -265,7 +265,7 @@ class CellDegradeTests(unittest.TestCase):
 
     def test_malformed_cells_reject_the_file(self):
         for body in ('<c r="A1"><v>1</v></c><c r="A1"><v>2</v></c>', '<c r="A1" t="s"><v>5</v></c>',
-                     '<c r="A1" t="s"><v>x</v></c>', '<c r="1A"><v>1</v></c>', '<c><v>1</v></c>'):
+                     '<c r="A1" t="s"><v>x</v></c>', '<c r="1A"><v>1</v></c>'):
             with self.subTest(body), self.assertRaises(EngineError) as failure:
                 preview(f'<row r="1">{body}</row>')
             self.assertEqual(failure.exception.body["code"], "INVALID_SPREADSHEET")

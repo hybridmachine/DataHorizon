@@ -30,7 +30,7 @@ from datahorizon import xlsx_stream
 from datahorizon.client import APIError
 from datahorizon.conversion_report import ConversionReport
 from datahorizon.engine import EngineError, require
-from datahorizon.ods import MIME, O, T, WORKBOOK_IMPORT_LINE, native_to_ods, ods_export, ods_preview, ods_to_native, q
+from datahorizon.ods import MIME, O, OdsStyles, T, WORKBOOK_IMPORT_LINE, native_to_ods, ods_export, ods_preview, ods_to_native, q
 from datahorizon.service import Service, openapi
 from datahorizon.temporal import Temporal
 
@@ -343,6 +343,77 @@ class StreamingReaderTests(unittest.TestCase):
         self.assertIn('single cell', error.body['message'])
         self.assertLess(peak, 16*1024*1024)
 
+    def test_a_mimetype_entry_that_is_compressed_or_not_first_is_read(self):
+        # LibreOffice opens such packages, and its own test files include them.
+        good = rich_package()
+        expected = self.stream(good)[0].sheets
+        for name, data in {'not first': rebuild(good, first='content.xml'), 'compressed': rebuild(good, stored=False)}.items():
+            with self.subTest(name):
+                self.assertEqual(self.stream(data)[0].sheets, expected)
+
+    def test_an_undefined_number_style_is_reported_and_the_cell_is_kept(self):
+        styles = '<style:style style:name="ce1" style:family="table-cell" style:data-style-name="N2"/>'
+        data = workbook_bytes({'S': row(cell(1.5, style='ce1'))}, styles=styles)
+        for mode in MODES:
+            with self.subTest(mode=mode):
+                sink, report = self.assert_agree(data, mode)
+                self.assertEqual([(c['row'], c['col'], c['source']) for c in sink.sheets[0][1]], [(1, 1, '1.5')])
+                self.assertEqual([(e['category'], e['severity'], e['count']) for e in report.entries()], [('style.number_format', 'omitted', 1)])
+
+    def test_a_boolean_number_style_is_a_defined_data_style(self):
+        styles = ('<number:boolean-style style:name="N99"><number:boolean/></number:boolean-style>'
+                  '<style:style style:name="ce1" style:family="table-cell" style:data-style-name="N99"/>')
+        sink, report = self.assert_agree(workbook_bytes({'S': row(cell('true', 'boolean', style='ce1'))}, styles=styles), 'formulas')
+        self.assertEqual(len(sink.sheets[0][1]), 1)
+        self.assertEqual([e['detail'] for e in report.entries()],
+                         ['Unsupported ODS number/date/currency display formats are omitted; typed values are retained.'])
+
+    def test_an_undefined_cell_or_parent_style_is_reported_and_the_cell_is_kept(self):
+        styles = '<style:style style:name="ce1" style:family="table-cell" style:parent-style-name="Default"><style:text-properties fo:font-weight="bold"/></style:style>'
+        data = workbook_bytes({'S': row(cell(1, style='ce1'), cell(2, style='gone'))}, styles=styles)
+        sink, report = self.assert_agree(data, 'formulas')
+        cells = sink.sheets[0][1]
+        self.assertEqual([c['source'] for c in cells], ['1', '2'])
+        self.assertTrue(cells[0]['style']['bold'])
+        self.assertEqual([(e['category'], e['severity'], e['detail'], e['count']) for e in report.entries()],
+                         [('style.named_style', 'omitted', 'An ODS cell style or parent style that the file does not define is ignored.', 2)])
+
+    def test_external_reference_cache_tables_are_not_sheets(self):
+        cache = '<table:table-source xlink:href="file:///tmp/base.ods" table:table-name="Sheet1" table:mode="copy-results-only" xmlns:xlink="http://www.w3.org/1999/xlink"/>'
+        sheets = {'Data': row(cell(1)), "'file:///tmp/base.ods'#Sheet1": cache+row(cell(9)), 'Last': row(cell(2))}
+        data = workbook_bytes(sheets)
+        for mode in MODES:
+            with self.subTest(mode=mode):
+                sink, report = self.assert_agree(data, mode)
+                self.assertEqual([(name, [c['source'] for c in cells]) for name, cells in sink.sheets], [('Data', ['1']), ('Last', ['2'])])
+                self.assertEqual([(e['category'], e['detail'], e['count']) for e in report.entries()], [('workbook.feature', 'external_references', 1)])
+
+    def test_a_quoted_name_without_a_url_is_a_sheet_not_a_cache(self):
+        sheets = {'S': row(cell(1)), "'FY2025'#Actuals": row(cell(7)), 'Final': row(cell(2))}
+        data = workbook_bytes(sheets)
+        selected = ods_preview({'file_base64': b64(data), 'sheet_index': 2})
+        self.assertEqual([c['source'] for c in selected['cells']], ['7'])
+        # Its name is outside the native rule, so the whole workbook rejects rather than losing the sheet.
+        self.rejects('INVALID_NAME', ods_preview, {'file_base64': b64(data), 'scope': 'workbook'})
+        self.rejects('INVALID_NAME', self.stream, data)
+        for name in ("'file:///tmp/a.ods'#", "'nothing://x'#S", "'file:///tmp/a.ods'S"):
+            with self.subTest(name):
+                self.rejects('INVALID_NAME', self.stream, workbook_bytes({'S': row(cell(1)), name: row(cell(7))}))
+
+    def test_each_cache_table_and_each_linked_sheet_is_one_external_reference(self):
+        source = '<table:table-source xlink:href="file:///tmp/base.ods" table:table-name="Sheet1" xmlns:xlink="http://www.w3.org/1999/xlink"/>'
+        sheets = {'Linked': source+row(cell(1)), "'file:///tmp/a.ods'#Sheet1": row(cell(9)), "'file:///tmp/b.ods'#Sheet1": source+row(cell(9))}
+        sink, report = self.assert_agree(workbook_bytes(sheets), 'formulas')
+        self.assertEqual([name for name, _ in sink.sheets], ['Linked'])
+        self.assertEqual([(e['detail'], e['count']) for e in report.entries()], [('external_references', 3)])
+
+    def test_directly_undefined_styles_are_not_cached(self):
+        report = ConversionReport()
+        styles = OdsStyles([], report)
+        for index in range(1000): self.assertEqual(styles.style(f'missing{index}', sheet='S', cell='A1', count=2), {})
+        self.assertEqual((len(styles.cache), len(styles.recorded)), (0, 0))
+        self.assertEqual([(e['category'], e['count']) for e in report.entries()], [('style.named_style', 2000)])
+
     def test_unsafe_or_foreign_packages_reject(self):
         good = rich_package()
         doctype = '<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "b">]>'+content_xml({'S': ''})
@@ -353,8 +424,6 @@ class StreamingReaderTests(unittest.TestCase):
                  'entity': rebuild(good, {'content.xml': entity}),
                  'encrypted manifest': rebuild(good, {'META-INF/manifest.xml': encrypted}),
                  'wrong mimetype': rebuild(good, {'mimetype': b'application/vnd.oasis.opendocument.text'}),
-                 'mimetype not first': rebuild(good, first='content.xml'),
-                 'compressed mimetype': rebuild(good, stored=False),
                  'missing content': self.without(good, 'content.xml'),
                  'missing mimetype': self.without(good, 'mimetype'),
                  'utf-16 declaration': rebuild(good, {'content.xml': '<?xml version="1.0" encoding="UTF-16"?>'+content_xml({'S': ''})}),

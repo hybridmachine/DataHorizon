@@ -26,10 +26,10 @@ from .conversion_report import ConversionReport
 from .engine import EngineError, require
 from .formula import address
 from .interchange import mode, validate_sheet_names, workbook_report, xml
-from .ods import (CACHE_CATEGORY, CACHE_DETAIL, F, M, MIME, N, O, OF, STYLE_DEFINITION_TAGS, T, WORKBOOK_IMPORT_LINE, WHOLE_FORMULA_LINE, X, Y, OdsCellContext,
+from .ods import (CACHE_CATEGORY, CACHE_DETAIL, F, M, MIME, N, O, OF, STYLE_DEFINITION_TAGS, T, WORKBOOK_IMPORT_LINE, WHOLE_FORMULA_LINE, X, Y, OdsCellContext, external_cache_table,
                   OdsStyles, OdsStyleTable, convert_ods_cell, export_lines as ods_export_lines, export_ods_cell, package_parts, q,
                   repeat, uses_modern_function)
-from .ods_features import (DRAW_PREFIX, SHEET_TAGS, WORKBOOK_TAGS, LayoutStyles, OdsSheetFeatures, OdsWorkbookFeatures,
+from .ods_features import (DRAW_PREFIX, SHEET_TAGS, TABLE_SOURCE, WORKBOOK_TAGS, LayoutStyles, OdsSheetFeatures, OdsWorkbookFeatures,
                            mapped_styles, read_panes, report_unreadable_settings)
 from .temporal import export_temporal_style
 
@@ -54,12 +54,13 @@ def scope_lines(request) -> list[str]:
 
 
 def _check_package(archive, budget):
-    """The ODS package rules: the exact mimetype as the first entry, stored; no encrypted entries in the manifest."""
-    items = archive.infolist()
-    require(bool(items) and items[0].filename == "mimetype" and items[0].compress_type == zipfile.ZIP_STORED
-            and items[0].file_size == len(MIME), "INVALID_SPREADSHEET",
-            "Package is not an ODS spreadsheet: its first entry must be the uncompressed spreadsheet mimetype")
-    budget.charge(items[0].file_size)
+    """The ODS package rules: a mimetype entry holding exactly the spreadsheet type; no encrypted entries in the manifest.
+    OpenDocument asks for that entry first and uncompressed, but LibreOffice reads and has written packages with it
+    elsewhere or deflated, so its place and compression are not checked; its declared size is, before it is read."""
+    try: item = archive.getinfo("mimetype")
+    except KeyError as error: raise EngineError("INVALID_SPREADSHEET", "Package is not an ODS spreadsheet: it has no mimetype entry") from error
+    require(item.file_size == len(MIME), "INVALID_SPREADSHEET", "Package is not an ODS spreadsheet")
+    budget.charge(item.file_size)
     try: mimetype = archive.read("mimetype")
     except (zipfile.BadZipFile, OSError, EOFError) as error: raise EngineError("INVALID_SPREADSHEET", "Invalid ODS mimetype entry") from error
     require(mimetype == MIME.encode(), "INVALID_SPREADSHEET", "Package is not an ODS spreadsheet")
@@ -103,21 +104,24 @@ def _survey(archive, budget, checkpoint):
         root = xlsx_stream._read_whole(archive, "styles.xml", budget)
         for item in root.iter():
             if item.tag in STYLE_DEFINITION_TAGS: collector.add(item)
-    names, tags, elements = [], [], 0
+    names, tags, elements, cache = [], [], 0, False
     for event, item in xlsx_stream.read_part(archive, "content.xml", budget, record_tags=RECORDS):
         if event == "start":
             if not tags: require(item.tag == DOCUMENT, "INVALID_SPREADSHEET", "Invalid ODS content")
             tags.append(item.tag)
             if item.tag == TABLE and tags == SHEET_PATH:
                 # Bounded by the sheet limit (and the names' length) before the name is kept.
-                workbook.table(item); names.append(item.get(q(T, "name"), ""))
+                cache = not workbook.table(item)
+                if not cache: names.append(item.get(q(T, "name"), ""))
             elements += 1
             if elements % ELEMENTS_PER_CHECKPOINT == 0: checkpoint(0, "Reading styles and sheets")
             continue
         tags.pop()
         # Wherever it appears, as the tree reader collects them.
         if item.tag in STYLE_DEFINITION_TAGS: collector.add(item)
-        elif item.tag in WORKBOOK_TAGS: workbook.end(item)
+        elif item.tag == TABLE and tags == SHEET_PATH[:3]: cache = False
+        # A cache table's own source was counted with the table.
+        elif item.tag in WORKBOOK_TAGS and not (cache and item.tag == TABLE_SOURCE): workbook.end(item)
     return names, collector.styles, layout, workbook
 
 
@@ -190,7 +194,8 @@ def _read_sheets(archive, names, styles, base, sink, progress, conversions, surv
             if elements % ELEMENTS_PER_CHECKPOINT == 0:
                 if reader is not None: reader.flush()
                 progress.checkpoint(progress.cells, "Reading cells")
-            if item.tag == TABLE and tags == SHEET_PATH:
+            if item.tag == TABLE and tags == SHEET_PATH and not external_cache_table(item.get(q(T, "name"))):
+                require(index < len(names), "INVALID_SPREADSHEET", "ODS content changed between reads")
                 name = names[index]; index += 1
                 progress.checkpoint(progress.cells, "Reading sheet "+name)
                 sheet = styles.report = ConversionReport()
