@@ -269,9 +269,6 @@ class Spec(Fixture):
         self.assertEqual(charts.break_table(other, "x"), [])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 def column_spec(values, categories=None, type_="column", x=None):
     item = {"name": {"text": "s"}, "values": {"source": values}}
@@ -479,3 +476,63 @@ class Resolving(Fixture):
         super().setUp()
         self.big = Workbook(self.big_path)
         self.addCleanup(self.big.close)
+
+
+class Suggesting(Fixture):
+    def suggest(self, **args):
+        return chart_resolve.suggest(self.book, {"expected_state": self.book.state(), **args})["spec"]
+
+    def refused_suggest(self, **args):
+        with self.assertRaises(EngineError) as caught:
+            self.suggest(**args)
+        return caught.exception
+
+    def test_suggest_from_a_table_picks_categories_and_numeric_series(self):
+        result = self.suggest(table="Sales")
+        by_id = lambda name: {"kind": "table", "table": self.table_id, "column": self.column_id[name]}
+        self.assertEqual(result["type"], "column")
+        self.assertEqual(result["categories"], {"source": by_id("Month")})
+        self.assertEqual([(item["name"], item["values"]) for item in result["series"]],
+                         [({"text": "Units"}, {"source": by_id("Units")}), ({"text": "Cost"}, {"source": by_id("Cost")})])
+        self.assertEqual(self.suggest(table=self.table_id), result)  # by id as well as by name
+
+    def test_suggest_scatter_and_pie_from_a_table(self):
+        scatter = self.suggest(table="Sales", type="scatter")
+        self.assertEqual(len(scatter["series"]), 1)
+        self.assertEqual(scatter["series"][0]["x"]["source"]["column"], self.column_id["Units"])
+        self.assertEqual(scatter["series"][0]["values"]["source"]["column"], self.column_id["Cost"])
+        self.assertNotIn("categories", scatter)
+        pie = self.suggest(table="Sales", type="pie")
+        self.assertEqual([item["name"] for item in pie["series"]], [{"text": "Units"}])
+        self.assertEqual(pie["categories"]["source"]["column"], self.column_id["Month"])
+
+    def test_a_table_without_text_like_columns_has_no_categories(self):
+        self.apply("table_create", name="Nums", columns=[dict(name="A", type="integer"), dict(name="Flag", type="boolean")])
+        self.assertIsNone(self.suggest(table="Nums")["categories"])
+
+    def test_suggest_refusals(self):
+        self.assertEqual((self.refused_suggest(table="Nope").body["code"], self.refused_suggest(table="Nope").status), ("TABLE_NOT_FOUND", 404))
+        self.apply("table_create", name="Words", columns=[dict(name="W", type="text"), dict(name="Flag", type="boolean")])
+        self.assertEqual(self.refused_suggest(table="Words").body["code"], "INVALID_SPEC")
+        self.assertEqual(self.refused_suggest(table="Sales", type="scatter", sheet="Sheet1").body["code"], "INVALID_ARGUMENT")
+        for extra in ({"r1": 1}, {"c2": 2}, {"sheet": "Sheet1"}):
+            self.assertEqual(self.refused_suggest(table="Sales", **extra).body["code"], "INVALID_ARGUMENT")
+        self.apply("table_create", name="One", columns=[dict(name="X", type="integer")])
+        self.assertEqual(self.refused_suggest(table="One", type="scatter").body["code"], "INVALID_SPEC")
+        self.apply("table_create", name="Wide", columns=[dict(name=f"C{n}", type="integer") for n in range(65)])
+        self.assertEqual(self.refused_suggest(table="Wide").body["code"], "LIMIT_SERIES")
+        self.assertEqual(len(self.suggest(table="Wide", type="pie")["series"]), 1)
+        stale = self.refused_suggest(table="Sales", expected_state="old")
+        self.assertEqual((stale.body["code"], stale.status), ("STALE_STATE", 409))
+
+    def test_suggestion_creates_and_renders(self):
+        for chart_type in charts.TYPES:
+            with self.subTest(chart_type):
+                chart_id = self.apply("chart_create", spec=self.suggest(table="Sales", type=chart_type))["chart_id"]
+                found = charts.find(self.book, chart_id)
+                self.assertTrue(chart_render.render(
+                    chart_resolve.resolve(self.book, found[1], self.book.state())["resolved"], 320, 200)["svg"].startswith("<svg"))
+
+
+if __name__ == "__main__":
+    unittest.main()

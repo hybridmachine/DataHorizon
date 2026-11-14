@@ -243,6 +243,58 @@ class ChartClientTests(unittest.TestCase):
         for form in ("xlsx", "ods"):
             self.assertFalse([line for line in empty.export_spreadsheet(form, scope="workbook")["report"] if line.startswith("Charts ")])
 
+    def fill_table(self, book):
+        book.create_table("Sales", [dict(name="Month", type="text"), dict(name="Units", type="integer"), dict(name="Cost", type="number")])
+        book.insert_records("Sales", [dict(Month=f"M{n}", Units=n * 10, Cost=n * 1.5) for n in range(1, 7)])
+
+    def test_sdk_and_cli_suggest_from_a_table_agree(self):
+        path = Path(self.temp.name) / "table-suggest.dhwb"
+        with LocalService() as client, client.open(path, create=True) as book:
+            fill(book)
+            self.fill_table(book)
+            sdk = book.suggest_chart(table="Sales", type="line")
+            raw = client.request(book.base + "/charts/suggest", {"expected_state": book.state, "table": "Sales", "type": "line"})
+            self.assertEqual(sdk, raw)
+            self.assertEqual([item["name"] for item in sdk["spec"]["series"]], [{"text": "Units"}, {"text": "Cost"}])
+            self.assertEqual(sdk["spec"]["series"][0]["values"]["source"]["kind"], "table")
+            self.assertEqual(book.suggest_chart("Sheet1", r1=1, c1=1, r2=7, c2=3)["spec"]["series"][0]["values"]["source"]["kind"], "range")
+            with self.assertRaises(ValueError):
+                book.suggest_chart("Sheet1", r1=1, c1=1)
+            with self.assertRaises(APIError) as caught:
+                book.suggest_chart(table="Missing")
+            self.assertEqual(caught.exception.body["code"], "TABLE_NOT_FOUND")
+        result = cli(path, "charts", "suggest", "--table", "Sales", "--type", "line")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), sdk)
+        self.assertEqual(json.loads(cli(path, "charts", "suggest", "--table", "Sales").stdout)["spec"]["type"], "column")
+        ranged = cli(path, "charts", "suggest", "--r1", "1", "--c1", "1", "--r2", "7", "--c2", "3")
+        self.assertEqual(ranged.returncode, 0, ranged.stderr)
+        for arguments in ((), ("--table", "Sales", "--r1", "1"), ("--table", "Sales", "--sheet", "Sheet1"), ("--r1", "1")):
+            refused = cli(path, "charts", "suggest", *arguments)
+            self.assertNotEqual(refused.returncode, 0, arguments)
+            self.assertEqual(refused.stdout, "")
+            self.assertIn("charts suggest", refused.stderr)
+
+    def test_sdk_round_trip_over_table_and_query_sources(self):
+        book = self.open_book("sources.dhwb")
+        self.fill_table(book)
+        book.save_query(book.preview_query("Totals", "SELECT Month, Units * 2 AS Doubled FROM Sales ORDER BY Month"))
+        table_id = book.create_chart(book.suggest_chart(table="Sales", type="bar")["spec"])["chart_id"]
+        query_spec = {"spec_version": 1, "type": "column",
+                      "categories": {"source": {"kind": "query", "query": "Totals", "column": "Month"}},
+                      "series": [{"name": {"text": "Doubled"}, "values": {"source": {"kind": "query", "query": "Totals", "column": "Doubled"}}}]}
+        query_id = book.create_chart(query_spec)["chart_id"]
+        for chart_id in (table_id, query_id):
+            self.assertTrue(parses(book.render_chart(chart_id, 320, 200)["svg"]))
+        stored = {chart["id"]: chart["spec"] for chart in book.charts()}
+        self.assertEqual(stored[table_id]["series"][0]["values"]["source"]["table"], "Sales")
+        self.assertEqual(stored[query_id]["series"][0]["values"]["source"]["query"], "Totals")
+        book.delete_query("Totals")
+        with self.assertRaises(APIError) as caught:
+            book.resolve_chart(query_id)
+        self.assertEqual((caught.exception.status, caught.exception.body["code"]), (409, "SOURCE_BROKEN"))
+        self.assertTrue(parses(book.render_chart(table_id, 320, 200)["svg"]))
+
     def test_cli_error_is_structured_json_on_stderr_with_exit_1(self):
         path = Path(self.temp.name) / "error.dhwb"
         with LocalService() as client, client.open(path, create=True):

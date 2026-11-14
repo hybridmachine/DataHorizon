@@ -220,6 +220,30 @@ class ChartJobOpenApiTests(unittest.TestCase):
         for name in ('ChartSource','ChartSpec','ChartSuggestRequest','ChartJobRequest','ChartJob'):
             with self.subTest(name):self.assertIn('example',self.schemas[name]);self.validate(name,self.schemas[name]['example'])
 
+    def test_openapi_chart_source_lists_three_kinds_with_runnable_examples(self):
+        source=self.schemas['ChartSource'];kinds={variant['properties']['kind']['enum'][0]:variant for variant in source['oneOf']}
+        self.assertEqual(set(kinds),{'range','table','query'})
+        for kind,variant in kinds.items():
+            with self.subTest(kind):
+                self.assertEqual(variant['example']['kind'],kind);self.validate('ChartSource',variant['example'])
+        # Only the range form is executed against the workbook below: the others name a table and a saved query this workbook lacks.
+        for text in ('{kind: range','{kind: table','{kind: query'):self.assertIn(text,self.schemas['Chart']['properties']['spec']['description'])
+        request=self.schemas['ChartSuggestRequest'];self.assertIn('table',request['properties'])
+        for name,example in request['x-examples'].items():
+            with self.subTest(name):self.validate('ChartSuggestRequest',example)
+        if OAS30Validator is not None:
+            for bad in ({'kind':'table','table':'Sales'},{'kind':'range','table':'Sales','column':'Units'},{'kind':'query','query':'Q'}):
+                with self.assertRaises(ValidationError):self.validate('ChartSource',bad)
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client,client.open(Path(temp)/'sources.dhwb',create=True) as book:
+            book.create_table('Sales',[dict(name='Month',type='text'),dict(name='Units',type='integer')])
+            book.insert_records('Sales',[dict(Month=f'M{n}',Units=n) for n in range(1,5)])
+            book.refresh();suggest={**copy.deepcopy(request['x-examples']['table']),'expected_state':book.state}
+            suggestion=client.request(book.base+'/charts/suggest',suggest);self.validate('ChartSuggestion',suggestion)
+            self.assertEqual(suggestion['spec']['series'][0]['name'],{'text':'Units'})
+            receipt=client.request(book.base+'/operations',{'action':'chart_create','operation_id':str(uuid.uuid4()),'expected_state':book.state,'spec':suggestion['spec']})
+            book.refresh();catalog=client.request(book.base+'/charts',{'expected_state':book.state});self.validate('ChartCatalog',catalog)
+            self.assertEqual(catalog['charts'][0]['id'],receipt['chart_id'])
+
     def test_chart_route_examples_execute(self):
         with tempfile.TemporaryDirectory() as temp,LocalService() as client,client.open(Path(temp)/'charts.dhwb',create=True) as book:
             for row in range(1,14):

@@ -88,7 +88,7 @@ ROUTES = {
     "/v1/workbooks/{workbook}/code": ("post", "Inspect inert workbook modules and the exact service-local activation key"),
     "/v1/workbooks/{workbook}/names": ("post", "Read the state-checked workbook name catalog"),
     "/v1/workbooks/{workbook}/charts": ("post", "Read the state-checked chart catalog"),
-    "/v1/workbooks/{workbook}/charts/suggest": ("post", "Suggest a chart specification from a range"),
+    "/v1/workbooks/{workbook}/charts/suggest": ("post", "Suggest a chart specification from a range or a table"),
     "/v1/workbooks/{workbook}/charts/jobs": ("post", "Start a cancellable read-only chart resolve or render job"),
     "/v1/workbooks/{workbook}/charts/jobs/{job}": ("get", "Read a chart job; a result is withheld as stale once the workbook changes"),
     "/v1/workbooks/{workbook}/charts/jobs/{job}/cancel": ("post", "Cancel a chart job or discard its result"),

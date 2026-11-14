@@ -232,7 +232,7 @@ def main():
     names.add_argument('names_action',choices=['read','save','delete']);names.add_argument('name_id',nargs='?')
     charts=commands.add_parser('charts',help='Charts: list, create/update read JSON from stdin, delete, suggest, resolve, render')
     charts.add_argument('charts_action',choices=['list','create','update','delete','suggest','resolve','render']);charts.add_argument('chart_id',nargs='?');charts.add_argument('--sheet')
-    charts.add_argument('--r1',type=int);charts.add_argument('--c1',type=int);charts.add_argument('--r2',type=int);charts.add_argument('--c2',type=int);charts.add_argument('--type',default='column')
+    charts.add_argument('--r1',type=int);charts.add_argument('--c1',type=int);charts.add_argument('--r2',type=int);charts.add_argument('--c2',type=int);charts.add_argument('--type',default='column');charts.add_argument('--table')
     charts.add_argument('--width',type=int);charts.add_argument('--height',type=int);charts.add_argument('--svg-out');charts.add_argument('--overwrite',action='store_true',help='Replace an existing --svg-out file')
     bindings=commands.add_parser('bindings',help='Inspect event bindings; save reads JSON event/scope/module/function/fingerprint/required?/binding_id? from stdin; delete takes the binding id and --fingerprint')
     bindings.add_argument('bindings_action',choices=['read','save','delete']);bindings.add_argument('binding_id',nargs='?');bindings.add_argument('--fingerprint')
@@ -346,8 +346,12 @@ def main():
                         if action=='list':result=dict(state=book.state,charts=book.charts(args.sheet,args.chart_id))
                         elif action=='create':result=book.create_chart(**json.load(sys.stdin),sheet=args.sheet or 'Sheet1')
                         elif action=='suggest':
-                            if None in (args.r1,args.c1,args.r2,args.c2):raise ValueError('charts suggest requires --r1 --c1 --r2 --c2')
-                            result=book.suggest_chart(args.sheet or 'Sheet1',r1=args.r1,c1=args.c1,r2=args.r2,c2=args.c2,type=args.type)
+                            rectangle=(args.r1,args.c1,args.r2,args.c2)
+                            if args.table is not None and (args.sheet is not None or any(value is not None for value in rectangle)):raise ValueError('charts suggest takes --table or --sheet --r1 --c1 --r2 --c2, not both')
+                            if args.table is not None:result=book.suggest_chart(table=args.table,type=args.type)
+                            else:
+                                if None in rectangle:raise ValueError('charts suggest requires --table, or --r1 --c1 --r2 --c2')
+                                result=book.suggest_chart(args.sheet or 'Sheet1',r1=args.r1,c1=args.c1,r2=args.r2,c2=args.c2,type=args.type)
                         else:
                             if not args.chart_id:raise ValueError('charts '+action+' requires the chart id')
                             if action=='update':result=book.update_chart(args.chart_id,**json.load(sys.stdin))

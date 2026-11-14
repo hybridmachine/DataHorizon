@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Read a stored chart's sources through the engine, and suggest a chart from a range.
+"""Read a stored chart's sources through the engine, and suggest a chart from a range or a table.
 
 ``resolve`` turns a stored chart payload into the plain values
 ``chart_render.render`` draws.  ``suggest`` proposes an input-form
-specification for a selected rectangle.  Neither writes anything.
+specification for a selected rectangle or a table.  Neither writes anything.
 """
 import math
 
-from . import chart_sources, charts
+from . import chart_sources, charts, relational
 from .chart_render import LIMIT_PIE_POINTS, LIMIT_POINTS, LIMIT_SERIES
 from .engine import MAX_CELLS, EngineError, rectangle, require
 from .formula import column_name
@@ -215,11 +215,48 @@ def _holds_number(cell):
     return cell is not None and cell.get("calculation") != "error" and _classify(cell)[0] is not None
 
 
+def _suggest_table(book, identity, chart_type):
+    """Suggest a specification over a table's columns, given by id, reading the schema only."""
+    with book.lock:
+        found = relational.table(book.db, identity)
+
+    def source(column):
+        return {"kind": "table", "table": found["id"], "column": column["id"]}
+
+    columns = found["columns"]
+    data = [column for column in columns if column["type"] in ("integer", "number")]
+    require(data, "INVALID_SPEC", "The table holds no numeric data column")
+    label = next((column for column in columns if column["type"] not in ("integer", "number", "boolean")), None)
+    x_column = None
+    if chart_type == "scatter":
+        x_column, data = data[0], data[1:]
+        require(data, "INVALID_SPEC", "A scatter chart needs an x column and a value column")
+    elif chart_type == "pie":
+        data = data[:1]
+    require(len(data) <= LIMIT_SERIES, "LIMIT_SERIES", f"The table would make more than {LIMIT_SERIES} series")
+    series = []
+    for column in data:
+        item = {"name": {"text": column["name"]}, "values": {"source": source(column)}}
+        if x_column is not None:
+            item["x"] = {"source": source(x_column)}
+        series.append(item)
+    spec = {"spec_version": 1, "type": chart_type, "title": {"text": None}, "series": series}
+    if chart_type != "scatter":
+        spec["categories"] = {"source": source(label)} if label is not None else None
+    with book.lock:
+        charts.normalise_spec(book, spec)
+    return {"spec": spec}
+
+
 def suggest(book, args):
-    """Suggest an input-form specification for the rectangle in ``args``."""
+    """Suggest an input-form specification for the rectangle, or the table, in ``args``."""
     require(args.get("expected_state") == book.state(), "STALE_STATE", "Workbook changed. Select the range again", 409)
     chart_type = args.get("type", "column")
     require(chart_type in charts.TYPES, "INVALID_ARGUMENT", f"type must be one of {', '.join(charts.TYPES)}")
+    if "table" in args:
+        clash = [key for key in ("sheet", "r1", "c1", "r2", "c2") if key in args]
+        require(not clash, "INVALID_ARGUMENT", f"table cannot be combined with {', '.join(clash)}")
+        return _suggest_table(book, args["table"], chart_type)
     r1, c1, r2, c2 = rectangle(args, MAX_CELLS)
     result = book.read(args.get("sheet"), {"r1": r1, "c1": c1, "r2": r2, "c2": c2, "calculation": "fresh"}, limit=MAX_CELLS)
     require(result["state"] == args["expected_state"], "STALE_STATE", "Workbook changed. Select the range again", 409)
