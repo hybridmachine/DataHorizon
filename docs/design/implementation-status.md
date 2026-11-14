@@ -4,6 +4,42 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## Charts table and saved-query sources — November 13, 2026
+
+The [table and saved-query sources plan](charts-table-query-sources-plan.md) is
+executed on branch `claude/charts-table-query-sources`, which is not merged.
+With it, charts stage 2 is complete. A chart's values, categories or x values
+can now come from a column of a structured table (`{"kind": "table", "table",
+"column"}`) or a column of a saved query's result (`{"kind": "query", "query",
+"column"}`), as well as a range, through REST, the managed CLI and the SDK.
+Tables, columns and saved queries are held by identity, a query column by
+name. Dropping a table, removing a column or deleting a saved query marks the
+chart sources that used them broken and lists the charts in the receipt's
+`broken_charts`; nothing is repointed. A table is read whole in stored row
+order; filtering and ordering go through a saved query. Each saved query a
+chart reads runs once per chart job on a private snapshot copy, bounded by the
+chart job's deadline and a 16 MiB in-memory cap, and takes no query job slot.
+A table or result longer than the point limit is refused at resolve by name.
+Suggest works from a table (`suggest_chart(table=...)`, `charts suggest
+--table`); there is no suggestion from a saved query.
+
+Measured on the reference Mac only, through the service:
+- Over a 10,000-row table, a one-series line chart resolves in 0.12 s and
+  renders in 0.18 s (1.18 MiB result); a four-series chart resolves 40,000
+  points in 0.15 s.
+- A column chart over a 100-row grouping query resolves and renders in about
+  0.06 s. On the same workbook padded with 200,000 cells (0.70 MiB to
+  13.3 MiB), it takes about 0.17 s; the query's snapshot copy itself grew from
+  2 ms to 22 ms.
+
+Also recorded: the engine's 8 MiB calculation input cap applies to a whole
+chart job, because one calculator serves the job.
+
+Open: the desktop, workbook-Python chart operations, XLSX and ODS chart
+interchange, and Windows and Linux. See the
+[result](charts-stage-2-result.md#table-and-saved-query-sources) and the
+as-built [design](charts-design.md) (Draft 0.5).
+
 ## Charts stage 2 engine and interfaces (range sources) — November 12, 2026
 
 The [stage 2 plan](charts-stage-2-plan.md) is executed for range sources on

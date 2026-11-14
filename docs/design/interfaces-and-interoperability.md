@@ -78,6 +78,22 @@ withheld as `stale` once the workbook changes, and every limit is refused with
 a code that names it. The SDK and the managed CLI `charts` command wrap the
 same routes. See [the charts design](charts-design.md#8-managed-operations-and-interfaces).
 
+Table and saved-query sources (branch `claude/charts-table-query-sources`, not
+merged) use the same routes. A source in a request is one of three input forms
+(`ChartSource` in OpenAPI): `{"kind": "range", "sheet", "ref"}`,
+`{"kind": "table", "table", "column"}` or `{"kind": "query", "query",
+"column"}`, with a table, column or saved query given by name or identity and
+a query column by its result name. The catalog returns each source's stored
+identities with current names and `broken`. `POST .../charts/suggest` also
+takes `{expected_state, table, type?}` (not combined with a rectangle); the SDK
+has `suggest_chart(table=...)` and the CLI `charts suggest --table NAME`.
+Receipts of `table_drop`, `table_schema` and `query_delete` list the charts
+whose sources they broke in `broken_charts`. A saved query a chart reads runs
+inside the chart job, not as a query job, so it is not visible on the query
+job routes. The query engine's error codes pass through in the chart job's
+error, except that a timeout becomes `CALCULATION_FAILED` and a result too long
+for a series `LIMIT_POINTS`.
+
 Server-local paths and remote client paths are different. Remote open/import
 operations need a defined upload or registered-workbook mechanism; a client's
 filesystem path must not be interpreted as an arbitrary server file request.
