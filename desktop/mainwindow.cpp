@@ -2630,14 +2630,30 @@ void MainWindow::prepareImport(QJsonObject request, RestClient::Callback callbac
     auto *progress=new QProgressDialog(tr("Preparing %1…").arg(label),tr("Cancel"),0,0,this);
     progress->setObjectName(format+"PreparationProgress"); progress->setWindowModality(Qt::WindowModal);
     progress->setMinimumDuration(0); progress->setAutoClose(false); progress->setAutoReset(false);
+    // Show it now. Left alone, QProgressDialog shows itself from a timer four
+    // seconds after construction, and hide() does not stop that timer: a
+    // preparation that finished sooner would resurface its stale progress over
+    // the review that the callback opens.
+    progress->show();
     auto cancelled=std::make_shared<bool>(false);
-    connect(progress,&QProgressDialog::canceled,this,[this,resource,cancelled]{
-        *cancelled=true;
-        m_client->request(resource+"/cancel",{},[](QJsonObject,QString){});
-    });
+    // Cancel can be clicked before the start request has created the job; the
+    // service then answers JOB_NOT_FOUND and the job starts afterwards. The
+    // cancel is therefore sent again, one request at a time, for as long as
+    // the job reports running and the service has not accepted one.
+    struct CancelRequest { bool pending=false, accepted=false; };
+    auto cancelRequest=std::make_shared<CancelRequest>();
+    auto sendCancel=[this,resource,cancelRequest]{
+        if(cancelRequest->pending || cancelRequest->accepted) return;
+        cancelRequest->pending=true;
+        m_client->request(resource+"/cancel",{},[cancelRequest](QJsonObject,QString error){
+            cancelRequest->pending=false; cancelRequest->accepted=error.isEmpty();
+        });
+    };
+    connect(progress,&QProgressDialog::canceled,this,[cancelled,sendCancel]{ *cancelled=true; sendCancel(); });
     auto *timer=new QTimer(progress); timer->setInterval(100);
-    auto finish=[this,progress,timer,resource,cancelled,callback,label](QJsonObject job,QString error) {
+    auto finish=[this,progress,timer,resource,cancelled,sendCancel,callback,label](QJsonObject job,QString error) {
         if(error.isEmpty() && job["status"]=="running") {
+            if(*cancelled) sendCancel();
             progress->setLabelText(tr("%1 • %2 processed").arg(job["phase"].toString()).arg(job["completed"].toInt()));
             timer->start(); return;
         }

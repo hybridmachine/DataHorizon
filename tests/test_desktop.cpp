@@ -230,6 +230,47 @@ private:
     static void send(QTcpSocket *socket,QJsonObject result){const auto bytes=QJsonDocument(result).toJson(QJsonDocument::Compact);socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(bytes.size())+"\r\n\r\n"+bytes);socket->disconnectFromHost();}
 };
 
+// Forwards every request to the service, holding a preparation start back
+// first, and records what the service answered about the job.
+class HeldStartProxy : public QTcpServer {
+public:
+    int startDelayMs = 450;
+    QStringList cancelErrors;   // one entry per /cancel answer; empty when accepted
+    QString lastStatus;         // last job status the service reported
+    HeldStartProxy(const QJsonObject &service) : m_upstream(this) {
+        m_upstream.configure(service["url"].toString(),service["token"].toString());
+        connect(this,&QTcpServer::newConnection,this,[this] {
+            auto *socket=nextPendingConnection(); connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
+            connect(socket,&QTcpSocket::readyRead,socket,[this,socket] {
+                const auto request=socket->property("request").toByteArray()+socket->readAll(); socket->setProperty("request",request);
+                const auto end=request.indexOf("\r\n\r\n"); if(end<0 || socket->property("handled").toBool()) return;
+                const auto length=QRegularExpression("Content-Length: (\\d+)",QRegularExpression::CaseInsensitiveOption)
+                    .match(QString::fromLatin1(request.left(end))).captured(1).toInt();
+                if(request.size()<end+4+length) return;
+                socket->setProperty("handled",true);
+                const auto path=QString::fromLatin1(request.left(request.indexOf("\r\n")).split(' ').at(1));
+                const bool post=request.startsWith("POST "), start=post && path.startsWith("/v1/import/") && path.endsWith("/jobs");
+                const auto body=QJsonDocument::fromJson(request.mid(end+4)).object();
+                const QPointer<QTcpSocket> guarded=socket;
+                QTimer::singleShot(start?startDelayMs:0,this,[this,guarded,path,body,post,start] {
+                    m_upstream.request(path,body,[this,guarded,path,start](QJsonObject result,QString error) {
+                        if(path.startsWith("/v1/jobs/") && path.endsWith("/cancel")) cancelErrors.append(error);
+                        else if(error.isEmpty() && (start || path.startsWith("/v1/jobs/")) && result["status"].isString()) lastStatus=result["status"].toString();
+                        if(!guarded) return;
+                        const auto bytes=QJsonDocument(error.isEmpty() || !result.isEmpty()?result:QJsonObject{{"code","UNAVAILABLE"},{"message",error}})
+                            .toJson(QJsonDocument::Compact);
+                        guarded->write(QByteArray("HTTP/1.1 ")+(error.isEmpty()?"200 OK":"409 Conflict")
+                            +"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(bytes.size())+"\r\n\r\n"+bytes);
+                        guarded->disconnectFromHost();
+                    },post);
+                });
+            });
+        });
+    }
+private:
+    RestClient m_upstream;
+};
+
 class DelayedCloseProxy : public QTcpServer {
 public:
     struct Pending { QPointer<QTcpSocket> socket; QJsonObject result; QString error; };
@@ -2762,6 +2803,72 @@ private slots:
         const auto output=temp.filePath("whole."+format);
         answerNextDialog(QMessageBox::Yes); window.exportSpreadsheetTo(output,format);
         QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(output),5000);
+    }
+    void finishedPreparationProgressStaysHiddenWhileReviewIsOpen() {
+        // QProgressDialog shows itself from a timer four seconds after it is
+        // built unless it was shown first. A preparation that finishes sooner
+        // must not resurface its stale progress over the open review.
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("stale.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QFile fixture(QStringLiteral(DATAHORIZON_FIXTURES "/inputs.xlsx")); QVERIFY(fixture.open(QIODevice::ReadOnly));
+        bool reviewed=false, resurfaced=false;
+        QTimer watch; watch.setInterval(50);
+        connect(&watch,&QTimer::timeout,&window,[&]{
+            auto *review=window.findChild<QMessageBox *>("spreadsheetImportReview");
+            if(!review || !review->isVisible()) return;
+            watch.stop();
+            QTimer::singleShot(4500,&window,[&]{
+                for(auto *progress:window.findChildren<QProgressDialog *>("xlsxPreparationProgress")) resurfaced=resurfaced || progress->isVisible();
+                reviewed=true;
+                if(auto *open=window.findChild<QMessageBox *>("spreadsheetImportReview")) open->reject();
+            });
+        });
+        // Run inside an event loop, as the application does: there the finished
+        // progress dialog's deferred deletion waits until the review returns.
+        QEventLoop loop; const auto data=fixture.readAll();
+        QTimer::singleShot(0,&window,[&]{window.importSpreadsheetBytes(data);});
+        QTimer done; done.setInterval(50); connect(&done,&QTimer::timeout,&loop,[&]{if(reviewed) loop.quit();});
+        // On a timeout, close whatever the import left open first: quitting
+        // only the outer loop would leave a nested modal exec() running.
+        QTimer::singleShot(15000,&window,[&]{
+            for(auto *dialog:window.findChildren<QDialog *>()) if(dialog->isVisible()) dialog->reject();
+            loop.quit();
+        });
+        watch.start(); done.start(); loop.exec();
+        QVERIFY(reviewed);
+        QVERIFY(!resurfaced);
+        QTRY_VERIFY_WITH_TIMEOUT(!QApplication::activeModalWidget(),5000);
+    }
+    void cancellingBeforePreparationStartsStillStopsTheJob() {
+        // Cancel is available as soon as the progress shows, before the start
+        // request has created the job. The first cancel finds no job; the
+        // window must cancel again once the start answers with a running job.
+        QTemporaryDir temp; QJsonObject service; StartupOptions ownerOptions; ownerOptions.automaticWorkbook=false;
+        MainWindow owner(ownerOptions); observeOwnedServiceStartup(owner,service); QSignalSpy serviceReady(&owner,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceReady.count(),1,10000);
+        HeldStartProxy proxy(service); QVERIFY(proxy.listen(QHostAddress::LocalHost,0));
+        StartupOptions options; options.automaticWorkbook=false; options.url="http://127.0.0.1:"+QString::number(proxy.serverPort());
+        options.token=service["token"].toString(); options.recoveryDirectory=temp.filePath("recovery");
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("early-cancel.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        // A valid import within the 10,000-cell limit, so the job can only end
+        // cancelled because the service accepted a cancel for it.
+        QByteArray csv; for(int row=0;row<2000;++row) csv+="1,2,3,4\n";
+        window.importCsvBytes(csv,"utf-8",",");
+        auto *progress=window.findChild<QProgressDialog *>("csvPreparationProgress"); QVERIFY(progress); QVERIFY(progress->isVisible());
+        auto *cancel=progress->findChild<QPushButton *>(); QVERIFY(cancel); cancel->click();
+        auto *issues=window.findChild<QPlainTextEdit *>("operationIssues"); QVERIFY(issues);
+        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("preparation cancelled"),15000);
+        QCOMPARE(proxy.cancelErrors.size(),2);
+        QVERIFY(!proxy.cancelErrors.at(0).isEmpty()); QVERIFY2(proxy.cancelErrors.at(1).isEmpty(),qPrintable(proxy.cancelErrors.at(1)));
+        QCOMPARE(proxy.lastStatus,QString("cancelled"));
+        QCOMPARE(changed.count(),0); QVERIFY(!qobject_cast<QMessageBox *>(QApplication::activeModalWidget()));
     }
     void cancellingCsvPreparationCannotOpenReviewOrWriteCells() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
