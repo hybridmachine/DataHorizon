@@ -2630,6 +2630,11 @@ void MainWindow::prepareImport(QJsonObject request, RestClient::Callback callbac
     auto *progress=new QProgressDialog(tr("Preparing %1…").arg(label),tr("Cancel"),0,0,this);
     progress->setObjectName(format+"PreparationProgress"); progress->setWindowModality(Qt::WindowModal);
     progress->setMinimumDuration(0); progress->setAutoClose(false); progress->setAutoReset(false);
+    // Show it now. Left alone, QProgressDialog shows itself from a timer four
+    // seconds after construction, and hide() does not stop that timer: a
+    // preparation that finished sooner would resurface its stale progress over
+    // the review that the callback opens.
+    progress->show();
     auto cancelled=std::make_shared<bool>(false);
     connect(progress,&QProgressDialog::canceled,this,[this,resource,cancelled]{
         *cancelled=true;

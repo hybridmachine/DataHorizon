@@ -2763,6 +2763,39 @@ private slots:
         answerNextDialog(QMessageBox::Yes); window.exportSpreadsheetTo(output,format);
         QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(output),5000);
     }
+    void finishedPreparationProgressStaysHiddenWhileReviewIsOpen() {
+        // QProgressDialog shows itself from a timer four seconds after it is
+        // built unless it was shown first. A preparation that finishes sooner
+        // must not resurface its stale progress over the open review.
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("stale.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QFile fixture(QStringLiteral(DATAHORIZON_FIXTURES "/inputs.xlsx")); QVERIFY(fixture.open(QIODevice::ReadOnly));
+        bool reviewed=false, resurfaced=false;
+        QTimer watch; watch.setInterval(50);
+        connect(&watch,&QTimer::timeout,&window,[&]{
+            auto *review=window.findChild<QMessageBox *>("spreadsheetImportReview");
+            if(!review || !review->isVisible()) return;
+            watch.stop();
+            QTimer::singleShot(4500,&window,[&]{
+                for(auto *progress:window.findChildren<QProgressDialog *>("xlsxPreparationProgress")) resurfaced=resurfaced || progress->isVisible();
+                reviewed=true;
+                if(auto *open=window.findChild<QMessageBox *>("spreadsheetImportReview")) open->reject();
+            });
+        });
+        // Run inside an event loop, as the application does: there the finished
+        // progress dialog's deferred deletion waits until the review returns.
+        QEventLoop loop; const auto data=fixture.readAll();
+        QTimer::singleShot(0,&window,[&]{window.importSpreadsheetBytes(data);});
+        QTimer done; done.setInterval(50); connect(&done,&QTimer::timeout,&loop,[&]{if(reviewed) loop.quit();});
+        QTimer::singleShot(15000,&loop,&QEventLoop::quit);
+        watch.start(); done.start(); loop.exec();
+        QVERIFY(reviewed);
+        QVERIFY(!resurfaced);
+        QTRY_VERIFY_WITH_TIMEOUT(!QApplication::activeModalWidget(),5000);
+    }
     void cancellingCsvPreparationCannotOpenReviewOrWriteCells() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
