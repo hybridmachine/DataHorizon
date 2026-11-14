@@ -187,17 +187,24 @@ class OdsWorkbookFeatures:
         # sheet cannot be named, or beyond those names, are counted in `stray` and reported for the workbook.
         self.filters, self.stray = {}, 0
         self.tables = []   # (name, style) of each sheet, at most LARGE_SHEETS
+        self.cache_tables = 0   # external-reference cache tables, which are not sheets
         self.table_bytes = 0
 
     def add(self, feature, count=1):
         if count > 0: self.counts[feature] = self.counts.get(feature, 0) + count
 
     def table(self, item):
+        """Record one table:table; return whether it is a sheet (an external-reference cache table is not)."""
+        from .ods import external_cache_table
+        if external_cache_table(item.get(q(T, "name"))):
+            self.cache_tables += 1
+            return False
         require(len(self.tables) < LARGE_SHEETS, "LIMIT", f"Provide 1-{LARGE_SHEETS} sheets")
         name, style = item.get(q(T, "name"), ""), item.get(q(T, "style-name"))
         self.table_bytes += len(name)+len(style or "")
         require(self.table_bytes <= TABLE_STYLE_BYTES, "LIMIT", f"ODS sheet names and styles exceed {TABLE_STYLE_BYTES//(1024*1024)} MiB")
         self.tables.append((name, style))
+        return True
 
     def end(self, item):
         tag = item.tag
@@ -228,6 +235,8 @@ class OdsWorkbookFeatures:
     def report(self, report, layout, package_names):
         hidden = [name for name, style in self.tables if style in layout.hidden_tables]
         self.add("hidden_sheets", len(hidden))
+        # A cache table normally holds a table:table-source, already counted; one without it is still reported.
+        self.add("external_references", self.cache_tables-self.counts.get("external_references", 0))
         self.add("embedded_objects", len({m[1] for m in (OBJECT_DIRECTORY.match(n) for n in package_names) if m}))
         if any(MACRO_DIRECTORY.match(name) for name in package_names): self.add("macros")
         for feature in WORKBOOK_FEATURES:

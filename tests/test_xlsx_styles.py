@@ -48,7 +48,11 @@ class XlsxStyleTests(unittest.TestCase):
         self.assertEqual(result["cells"][0]["kind"],"date")
         report=" ".join(result["report"])
         for word in ("serials","theme","Partial","alignment","rotation"): self.assertIn(word,report)
-        with self.assertRaises(EngineError) as failure: preview(styled_fixture('<c r="A1" s="99"><v>7</v></c>',styles))
+        # A cell style index past the end of cellXfs is read as unstyled and reported; one that is not a number rejects.
+        result=preview(styled_fixture('<c r="A1" s="99"><v>7</v></c>',styles))
+        self.assertEqual(result["cells"][0]["source"],"7")
+        self.assertIn(("style.named_style","omitted"),[(e["category"],e["severity"]) for e in result["report_entries"]])
+        with self.assertRaises(EngineError) as failure: preview(styled_fixture('<c r="A1" s="x"><v>7</v></c>',styles))
         self.assertEqual(failure.exception.body["code"],"INVALID_SPREADSHEET")
 
     def test_rgb_alpha_case_is_ignored_for_cell_fills_and_tint_is_reported(self):

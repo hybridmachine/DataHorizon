@@ -343,6 +343,51 @@ class StreamingReaderTests(unittest.TestCase):
         self.assertIn('single cell', error.body['message'])
         self.assertLess(peak, 16*1024*1024)
 
+    def test_a_mimetype_entry_that_is_compressed_or_not_first_is_read(self):
+        # LibreOffice opens such packages, and its own test files include them.
+        good = rich_package()
+        expected = self.stream(good)[0].sheets
+        for name, data in {'not first': rebuild(good, first='content.xml'), 'compressed': rebuild(good, stored=False)}.items():
+            with self.subTest(name):
+                self.assertEqual(self.stream(data)[0].sheets, expected)
+
+    def test_an_undefined_number_style_is_reported_and_the_cell_is_kept(self):
+        styles = '<style:style style:name="ce1" style:family="table-cell" style:data-style-name="N2"/>'
+        data = workbook_bytes({'S': row(cell(1.5, style='ce1'))}, styles=styles)
+        for mode in MODES:
+            with self.subTest(mode=mode):
+                sink, report = self.assert_agree(data, mode)
+                self.assertEqual([(c['row'], c['col'], c['source']) for c in sink.sheets[0][1]], [(1, 1, '1.5')])
+                self.assertEqual([(e['category'], e['severity'], e['count']) for e in report.entries()], [('style.number_format', 'omitted', 1)])
+
+    def test_a_boolean_number_style_is_a_defined_data_style(self):
+        styles = ('<number:boolean-style style:name="N99"><number:boolean/></number:boolean-style>'
+                  '<style:style style:name="ce1" style:family="table-cell" style:data-style-name="N99"/>')
+        sink, report = self.assert_agree(workbook_bytes({'S': row(cell('true', 'boolean', style='ce1'))}, styles=styles), 'formulas')
+        self.assertEqual(len(sink.sheets[0][1]), 1)
+        self.assertEqual([e['detail'] for e in report.entries()],
+                         ['Unsupported ODS number/date/currency display formats are omitted; typed values are retained.'])
+
+    def test_an_undefined_cell_or_parent_style_is_reported_and_the_cell_is_kept(self):
+        styles = '<style:style style:name="ce1" style:family="table-cell" style:parent-style-name="Default"><style:text-properties fo:font-weight="bold"/></style:style>'
+        data = workbook_bytes({'S': row(cell(1, style='ce1'), cell(2, style='gone'))}, styles=styles)
+        sink, report = self.assert_agree(data, 'formulas')
+        cells = sink.sheets[0][1]
+        self.assertEqual([c['source'] for c in cells], ['1', '2'])
+        self.assertTrue(cells[0]['style']['bold'])
+        self.assertEqual([(e['category'], e['severity'], e['detail'], e['count']) for e in report.entries()],
+                         [('style.named_style', 'omitted', 'An ODS cell style or parent style that the file does not define is ignored.', 2)])
+
+    def test_external_reference_cache_tables_are_not_sheets(self):
+        cache = '<table:table-source xlink:href="file:///tmp/base.ods" table:table-name="Sheet1" table:mode="copy-results-only" xmlns:xlink="http://www.w3.org/1999/xlink"/>'
+        sheets = {'Data': row(cell(1)), "'file:///tmp/base.ods'#Sheet1": cache+row(cell(9)), 'Last': row(cell(2))}
+        data = workbook_bytes(sheets)
+        for mode in MODES:
+            with self.subTest(mode=mode):
+                sink, report = self.assert_agree(data, mode)
+                self.assertEqual([(name, [c['source'] for c in cells]) for name, cells in sink.sheets], [('Data', ['1']), ('Last', ['2'])])
+                self.assertEqual([(e['category'], e['detail'], e['count']) for e in report.entries()], [('workbook.feature', 'external_references', 1)])
+
     def test_unsafe_or_foreign_packages_reject(self):
         good = rich_package()
         doctype = '<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "b">]>'+content_xml({'S': ''})
@@ -353,8 +398,6 @@ class StreamingReaderTests(unittest.TestCase):
                  'entity': rebuild(good, {'content.xml': entity}),
                  'encrypted manifest': rebuild(good, {'META-INF/manifest.xml': encrypted}),
                  'wrong mimetype': rebuild(good, {'mimetype': b'application/vnd.oasis.opendocument.text'}),
-                 'mimetype not first': rebuild(good, first='content.xml'),
-                 'compressed mimetype': rebuild(good, stored=False),
                  'missing content': self.without(good, 'content.xml'),
                  'missing mimetype': self.without(good, 'mimetype'),
                  'utf-16 declaration': rebuild(good, {'content.xml': '<?xml version="1.0" encoding="UTF-16"?>'+content_xml({'S': ''})}),

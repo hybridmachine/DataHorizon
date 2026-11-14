@@ -32,7 +32,7 @@ SHEET_FEATURES = (
     "form_controls", "sparklines", "slicers", "cell_watches", "ignored_errors", "smart_tags", "custom_properties",
     "web_publish", "extensions", "relationships_unreadable")
 WORKBOOK_FEATURES = (
-    "chart_sheets", "dialog_sheets", "macro_sheets", "defined_names", "external_references", "hidden_sheets", "workbook_protection", "file_sharing",
+    "chart_sheets", "dialog_sheets", "macro_sheets", "sheets_without_part", "defined_names", "external_references", "hidden_sheets", "workbook_protection", "file_sharing",
     "calculation_settings", "custom_views", "rich_text", "phonetic", "function_groups", "smart_tags", "web_publish",
     "slicers", "data_model", "extensions", "charts", "pivot_tables", "vba", "custom_xml", "connections",
     "query_tables", "embedded_objects", "document_properties")
@@ -40,7 +40,8 @@ WORKBOOK_FEATURES = (
 # imported: each is reported (workbook.feature, with the sheet as sample) and no native sheet is created for it.
 SHEET_KINDS = {"chartsheet": "chart_sheets", "dialogsheet": "dialog_sheets", "xlMacrosheet": "macro_sheets",
                "xlIntlMacrosheet": "macro_sheets"}
-KIND_NAMES = {"chart_sheets": "a chart sheet", "dialog_sheets": "a dialog sheet", "macro_sheets": "a macro sheet"}
+KIND_NAMES = {"chart_sheets": "a chart sheet", "dialog_sheets": "a dialog sheet", "macro_sheets": "a macro sheet",
+              "sheets_without_part": "a sheet without a part"}
 # Header and footer texts LibreOffice writes into every sheet (font codes &"..." and sizes &NN removed first).
 STOCK_HEADER_FOOTER = {"&C&A", "&CPage &P", "&C&P", "&CPage &P of &N"}
 
@@ -411,13 +412,14 @@ def relationship_summary(archive, part, budget):
 
 
 def sheet_kinds(sheets, mapping, ns):
-    """For each workbook <sheet>, None for a worksheet (or an unknown relationship, which the readers reject) or the
-    feature id of a sheet kind that is not imported."""
+    """For each workbook <sheet>, None for a worksheet (or an unknown relationship type, which the readers reject) or
+    the feature id of a sheet kind that is not imported. A sheet whose relationship id names no relationship has no
+    part to read (Excel leaves such entries behind for removed macro sheets): it is reported and not imported."""
     kinds = []
     for sheet in sheets:
         relationship = mapping.get(sheet.get(f"{{{ns.rel}}}id"))
         kind = relationship.get("Type", "").rstrip("/").rsplit("/", 1)[-1] if relationship is not None else ""
-        kinds.append(SHEET_KINDS.get(kind))
+        kinds.append(SHEET_KINDS.get(kind) if relationship is not None else "sheets_without_part")
     return kinds
 
 

@@ -23,7 +23,7 @@ from typing import BinaryIO, Callable, Iterator, Protocol
 
 from .conversion_report import ConversionReport
 from .engine import EngineError, require
-from .interchange import (MAX_EXPANDED, S, WHOLE_EXPORT_CACHES, SharedFormulas, XlsxCellContext, convert_xlsx_cell,
+from .interchange import (CellPositions, normalise_part_names, MAX_EXPANDED, S, WHOLE_EXPORT_CACHES, SharedFormulas, XlsxCellContext, convert_xlsx_cell,
                           date_system, export_cell, export_report, mode, namespaces, package_parts, read_xml,
                           shared_strings_path, styles_path, uses_future_prefix, validate_sheet_names, workbook_report,
                           worksheet_path, xlsx_text, xml)
@@ -100,6 +100,7 @@ def open_package(source: Path | BinaryIO) -> zipfile.ZipFile:
     try:
         if opened: source.seek(0)
         archive = zipfile.ZipFile(source)
+        normalise_part_names(archive)
     except OSError as error:
         raise EngineError("INVALID_SPREADSHEET", "Spreadsheet package cannot be read") from error
     except (ValueError, EOFError, zipfile.BadZipFile) as error:
@@ -313,6 +314,7 @@ def _read_sheet(archive, path, budget, context, sink, progress, features):
     shared = context.shared_formulas
     batch, deferred, tags = [], [], []
     deferred_bytes = 0
+    positions = CellPositions()
 
     def flush():
         if batch: sink.cells(batch[:]); batch.clear()
@@ -327,6 +329,7 @@ def _read_sheet(archive, path, budget, context, sink, progress, features):
         if event == "start":
             if not tags: require(item.tag == root, "INVALID_SPREADSHEET", "Invalid worksheet")
             tags.append(item.tag)
+            if item.tag == row and len(tags) == 3 and tags[1] == sheet_data: positions.row(item)
             continue
         tags.pop()
         depth = len(tags)
@@ -337,6 +340,7 @@ def _read_sheet(archive, path, budget, context, sink, progress, features):
             if item.tag == row: features.row(item)
             continue
         if item.tag != cell or depth != 3 or tags[2] != row: continue
+        positions.cell(item)
         features.cell(item)
         progress.cell()
         if shared is not None:

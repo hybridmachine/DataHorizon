@@ -148,9 +148,18 @@ def ods_text(cell):
     return value
 
 
-DATA_STYLE_TAGS=tuple(q(N,tag) for tag in ("number-style","text-style","date-style","time-style","currency-style","percentage-style"))
+DATA_STYLE_TAGS=tuple(q(N,tag) for tag in ("number-style","text-style","date-style","time-style","currency-style","percentage-style","boolean-style"))
 # Every element OdsStyles.add can keep; the streaming reader collects these as whole records.
 STYLE_DEFINITION_TAGS=frozenset((q(Y,"font-face"),q(Y,"style"),*DATA_STYLE_TAGS))
+
+UNDEFINED_STYLE="An ODS cell style or parent style that the file does not define is ignored."
+UNDEFINED_NUMBER_STYLE="An ODS number style that the file does not define is ignored; typed values are retained."
+
+
+def external_cache_table(name):
+    """Whether a table:table name is LibreOffice's cache of another document's sheet ('file:///other.ods'#Sheet1):
+    stored after the sheets for external references, and not a sheet of this workbook."""
+    return re.fullmatch(r"'(?:[^']|'')*'#.*",name or "",re.S) is not None
 
 
 class OdsStyles:
@@ -185,7 +194,9 @@ class OdsStyles:
             require(name not in seen and len(chain)<32,"INVALID_SPREADSHEET","ODS style inheritance is cyclic or exceeds 32 levels")
             seen.add(name)
             item=self.styles.get(name)
-            require(item is not None,"INVALID_SPREADSHEET","Missing ODS cell or parent style")
+            if item is None:
+                # LibreOffice writes references to styles it leaves undefined (such as a parent named Default) and reads them as absent.
+                self.loss("style.named_style",UNDEFINED_STYLE); break
             chain.append(item); name=item.get(q(Y,"parent-style-name"))
         result=ET.Element(q(Y,"style")); props={}
         for item in reversed(chain):
@@ -210,9 +221,9 @@ class OdsStyles:
         item=self.resolved(name)
         result={}
         data_name=item.get(q(Y,"data-style-name"))
-        if data_name:
-            fmt=self.formats.get(data_name)
-            require(fmt is not None,"INVALID_SPREADSHEET","Missing ODS number style")
+        fmt=self.formats.get(data_name) if data_name else None
+        if data_name and fmt is None: self.loss("style.number_format",UNDEFINED_NUMBER_STYLE)
+        elif data_name:
             number=fmt.find(q(N,"number"))
             simple_number=number is not None and re.fullmatch(r"[0-9]|1[0-5]",number.get(q(N,"decimal-places"),"")) is not None and number.get(q(N,"grouping"),"false") in ("false","true") and number.get(q(N,"min-integer-digits"),"1")=="1" and set(number.attrib)<={q(N,"decimal-places"),q(N,"min-integer-digits"),q(N,"grouping")}
             if temporal_format(fmt):result["format"]=temporal_format(fmt)
@@ -395,7 +406,7 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         checkpoint(0,"Reading ODS")
         root=read_xml(archive,"content.xml")
         require(root.tag==q(O,"document-content"),"INVALID_SPREADSHEET","Invalid ODS content")
-        sheets=root.findall(f'{q(O,"body")}/{q(O,"spreadsheet")}/{q(T,"table")}')
+        sheets=[s for s in root.findall(f'{q(O,"body")}/{q(O,"spreadsheet")}/{q(T,"table")}') if not external_cache_table(s.get(q(T,"name")))]
         require(0<len(sheets) and selected<=len(sheets),"INVALID_SPREADSHEET","Choose an existing ODS sheet")
         roots=([read_xml(archive,"styles.xml")] if "styles.xml" in archive.namelist() else [])+[root]
         conversions=ConversionReport()
@@ -670,6 +681,6 @@ def ods_preview(request,checkpoint=lambda completed,phase:None):
     if preparation_scope(request)!="workbook": return _ods_preview(request,checkpoint)
     with package(request) as archive:
         root=read_xml(archive,"content.xml")
-        names=[s.get(q(T,"name"),"") for s in root.findall(f'{q(O,"body")}/{q(O,"spreadsheet")}/{q(T,"table")}')]
+        names=[s.get(q(T,"name"),"") for s in root.findall(f'{q(O,"body")}/{q(O,"spreadsheet")}/{q(T,"table")}') if not external_cache_table(s.get(q(T,"name")))]
     # The scope lines come first and one line per entry follows, as the streaming reader's summary has them.
     return prepare_workbook(request,checkpoint,names,_ods_preview,scope=[WORKBOOK_IMPORT_LINE])

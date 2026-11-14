@@ -66,6 +66,15 @@ def mode(request):
     return value
 
 
+def normalise_part_names(archive):
+    """Some producers write part names with backslashes; LibreOffice and Excel read them as the forward-slash names."""
+    for item in archive.infolist():
+        if "\\" in item.filename:
+            archive.NameToInfo.pop(item.filename,None)
+            item.filename=item.filename.replace("\\","/")
+            archive.NameToInfo[item.filename]=item
+
+
 def package(request):
     value=request.get("file_base64")
     require(isinstance(value,str) and len(value)<=4*1024*1024,"LIMIT","Spreadsheet package must be at most 3 MiB")
@@ -73,6 +82,7 @@ def package(request):
         data=base64.b64decode(value,validate=True)
         require(len(data)<=MAX_PACKAGE,"LIMIT","Spreadsheet package exceeds 3 MiB")
         archive=zipfile.ZipFile(io.BytesIO(data))
+        normalise_part_names(archive)
         items=archive.infolist()
         require(len(items)<=128 and len({i.filename for i in items})==len(items),"INVALID_SPREADSHEET","Package has too many or duplicate entries")
         require(sum(i.file_size for i in items)<=MAX_EXPANDED,"LIMIT","Expanded spreadsheet exceeds 16 MiB")
@@ -353,6 +363,30 @@ class XlsxCellContext:
     seen: set | None = field(default_factory=set)  # None: duplicate coordinates are detected downstream
 
 
+class CellPositions:
+    """Gives rows and cells written without their optional r attribute their position, as SpreadsheetML defines it:
+    a row follows the previous row and a cell follows the previous cell of its row. Feed every row, then its cells."""
+    def __init__(self): self.row_number=0; self.col=0
+
+    def row(self,element):
+        value=element.get("r")
+        if value is None:
+            self.row_number+=1
+            element.set("r",str(self.row_number))
+        elif re.fullmatch(r"[1-9][0-9]{0,6}",value): self.row_number=int(value)
+        self.col=0
+
+    def cell(self,element):
+        value=element.get("r")
+        if value is None:
+            self.col+=1
+            # A position off the grid stays without a reference, which rejects as an invalid one does.
+            if 1<=self.row_number<=1048576 and self.col<=16384: element.set("r",address(self.row_number,self.col))
+            return
+        try: self.col=coordinates(value)[1]
+        except FormulaError: pass
+
+
 def convert_xlsx_cell(cell,*,context):
     """Convert one stored <c> to an edit, or None when it is skipped (with a report entry).
 
@@ -539,6 +573,10 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         shift=(integer(request.get("row",1),1,1048576,"row")-1,integer(request.get("col",1),1,16384,"col")-1)
         sheet_label=sheets[selected-1].get("name","")
         count=0
+        positions=CellPositions()
+        for row_element in root.findall(f"{{{ns.main}}}sheetData/{{{ns.main}}}row"):
+            positions.row(row_element)
+            for cell in row_element.findall(f"{{{ns.main}}}c"): positions.cell(cell)
         stored=root.findall(f"{{{ns.main}}}sheetData/{{{ns.main}}}row/{{{ns.main}}}c")
         require(len(stored)<=MAX_CELLS,"LIMIT","Import exceeds 10,000 stored cells")
         # Shared-formula structure is package structure: a broken group rejects the file.

@@ -47,10 +47,14 @@ class FidelityTests(unittest.TestCase):
         result=ods_parse(data)
         self.assertTrue(result["can_import"],result)
         self.assertEqual(result["cells"][0]["style"],{"italic":True,"border":"box"})
-        for parent in ("Child","Missing"):
-            invalid=styles.replace('style:parent-style-name="Parent"',f'style:parent-style-name="{parent}"')
-            with self.assertRaises(EngineError) as failure: ods_parse(ods_fixture('<table:table-row><table:table-cell table:style-name="Child" office:value-type="float" office:value="7"/></table:table-row>',invalid))
-            self.assertEqual(failure.exception.body["code"],"INVALID_SPREADSHEET")
+        cyclic=styles.replace('style:parent-style-name="Parent"','style:parent-style-name="Child"')
+        with self.assertRaises(EngineError) as failure: ods_parse(ods_fixture('<table:table-row><table:table-cell table:style-name="Child" office:value-type="float" office:value="7"/></table:table-row>',cyclic))
+        self.assertEqual(failure.exception.body["code"],"INVALID_SPREADSHEET")
+        # A parent the file does not define is ignored and reported, as LibreOffice reads it.
+        orphan=styles.replace('style:parent-style-name="Parent"','style:parent-style-name="Missing"')
+        result=ods_parse(ods_fixture('<table:table-row><table:table-cell table:style-name="Child" office:value-type="float" office:value="7"/></table:table-row>',orphan))
+        self.assertTrue(result["can_import"],result)
+        self.assertIn(("style.named_style","omitted"),[(e["category"],e["severity"]) for e in result["report_entries"]])
 
     def test_checked_independent_producer_workbooks_calculate_and_retain_styles(self):
         provenance=json.loads((Path(__file__).parent/"fixtures"/"fidelity-provenance.json").read_text())
