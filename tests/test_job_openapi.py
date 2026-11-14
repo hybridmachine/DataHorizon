@@ -221,7 +221,8 @@ class ChartJobOpenApiTests(unittest.TestCase):
             with self.subTest(name):self.assertIn('example',self.schemas[name]);self.validate(name,self.schemas[name]['example'])
 
     def test_openapi_chart_source_lists_three_kinds_with_runnable_examples(self):
-        source=self.schemas['ChartSource'];kinds={variant['properties']['kind']['enum'][0]:variant for variant in source['oneOf']}
+        source=self.schemas['ChartSource'];variants=[self.schemas[item['$ref'].rsplit('/',1)[1]] if '$ref' in item else item for item in source['oneOf']]
+        kinds={variant['properties']['kind']['enum'][0]:variant for variant in variants}
         self.assertEqual(set(kinds),{'range','table','query'})
         for kind,variant in kinds.items():
             with self.subTest(kind):
@@ -243,6 +244,27 @@ class ChartJobOpenApiTests(unittest.TestCase):
             receipt=client.request(book.base+'/operations',{'action':'chart_create','operation_id':str(uuid.uuid4()),'expected_state':book.state,'spec':suggestion['spec']})
             book.refresh();catalog=client.request(book.base+'/charts',{'expected_state':book.state});self.validate('ChartCatalog',catalog)
             self.assertEqual(catalog['charts'][0]['id'],receipt['chart_id'])
+
+    def test_openapi_receipt_lists_chart_fields_and_a_series_name_source_is_a_range(self):
+        receipt=self.schemas['Receipt']['properties']
+        for field in ('broken_charts','charts_over_limit'):
+            with self.subTest(field):self.assertEqual(receipt[field]['type'],'array');self.assertEqual(receipt[field]['items'],{'type':'string'})
+        self.assertIn('source this operation broke',receipt['broken_charts']['description'])
+        range_source=self.schemas['ChartRangeSource'];self.assertEqual(range_source['properties']['kind']['enum'],['range'])
+        self.validate('ChartRangeSource',range_source['example'])
+        self.assertIn({'$ref':'#/components/schemas/ChartRangeSource'},self.schemas['ChartSource']['oneOf'])
+        name=self.schemas['ChartSpec']['properties']['series']['items']['properties']['name']
+        self.assertEqual(name['oneOf'][1]['properties']['source'],{'$ref':'#/components/schemas/ChartRangeSource'})
+        patch_text=self.schemas['ChartUpdateOperation']['properties']['spec_patch']['description']
+        for text in ("source's kind",'null'):self.assertIn(text,patch_text)
+        if OAS30Validator is not None:
+            named=copy.deepcopy(self.schemas['ChartSpec']['example']);named['series'][0]['name']={'source':{'kind':'table','table':'Sales','column':'Month'}}
+            with self.assertRaises(ValidationError):self.validate('ChartSpec',named)
+        with tempfile.TemporaryDirectory() as temp,LocalService() as client,client.open(Path(temp)/'broken.dhwb',create=True) as book:
+            book.create_table('Sales',[dict(name='Units',type='integer')])
+            book.refresh();client.request(book.base+'/operations',{'action':'chart_create','operation_id':str(uuid.uuid4()),'expected_state':book.state,
+                'spec':{**copy.deepcopy(self.schemas['ChartSpec']['example']),'series':[{'name':{'text':'Units'},'values':{'source':{'kind':'table','table':'Sales','column':'Units'}}}]}})
+            book.refresh();dropped=book.drop_table('Sales');self.validate('Receipt',dropped);self.assertEqual(len(dropped['broken_charts']),1)
 
     def test_chart_route_examples_execute(self):
         with tempfile.TemporaryDirectory() as temp,LocalService() as client,client.open(Path(temp)/'charts.dhwb',create=True) as book:

@@ -32,7 +32,9 @@ def install(schemas, actions):
         "order": {"type": "string", "enum": ["front", "back"], "description": "Move above or below every other chart on the sheet; not with z"},
         "spec": {**spec, "description": spec["description"] + ". Replaces the specification; not with spec_patch"},
         "spec_patch": {"type": "object", "description": "RFC 7386 merge patch applied to the input form of the stored specification; "
-                       "refused with SOURCE_BROKEN when a source is broken, or with the chart's issue code"}},
+                       "refused with SOURCE_BROKEN when a source is broken, or with the chart's issue code. A merge patch keeps keys it "
+                       "is not told to remove, so changing a source's kind sets the old kind's keys to null in the patch, for example "
+                       "{kind: table, table: Sales, column: Units, sheet: null, ref: null}; or replace the specification with spec"}},
         {"chart_id": EXAMPLE_ID, "name": "Revenue"})
     actions["chart_delete"] = (["chart_id"], {"chart_id": chart_id}, {"chart_id": EXAMPLE_ID})
     schemas["ChartsReadRequest"] = {"type": "object", "additionalProperties": False, "required": ["expected_state"],
@@ -45,7 +47,10 @@ def install(schemas, actions):
         chart_id={**chart_id, "description": "Chart created, changed or deleted by this operation"},
         changed_charts={"type": "integer", "minimum": 0, "description": "Charts written by this operation"},
         charts_over_limit={"type": "array", "items": {"type": "string"},
-                           "description": "Charts this row or column edit pushed past a size limit (sorted chart IDs)"})
+                           "description": "Charts this row or column edit pushed past a size limit (sorted chart IDs)"},
+        broken_charts={"type": "array", "items": {"type": "string"},
+                       "description": "Charts with a source this operation broke (chart IDs): a sheet delete, row or column delete, "
+                                      "table drop, column removal in a schema change or saved query delete. Present only when it breaks one"})
 
 
 def _ref(name):
@@ -58,13 +63,15 @@ def _part(what):
 
 
 def _install_specification(schemas):
+    schemas["ChartRangeSource"] = {
+        "type": "object", "additionalProperties": False, "required": ["kind", "sheet", "ref"],
+        "properties": {"kind": {"type": "string", "enum": ["range"]},
+                       "sheet": {"type": "string", "minLength": 1, "description": "Sheet name or stable sheet ID"},
+                       "ref": {"type": "string", "minLength": 2, "description": "One cell or one rectangle without a sheet, such as A2:A13"}},
+        "description": "A cell range", "example": {"kind": "range", "sheet": "Sheet1", "ref": "A2:A13"}}
     schemas["ChartSource"] = {
         "oneOf": [
-            {"type": "object", "additionalProperties": False, "required": ["kind", "sheet", "ref"],
-             "properties": {"kind": {"type": "string", "enum": ["range"]},
-                            "sheet": {"type": "string", "minLength": 1, "description": "Sheet name or stable sheet ID"},
-                            "ref": {"type": "string", "minLength": 2, "description": "One cell or one rectangle without a sheet, such as A2:A13"}},
-             "description": "A cell range", "example": {"kind": "range", "sheet": "Sheet1", "ref": "A2:A13"}},
+            _ref("ChartRangeSource"),
             {"type": "object", "additionalProperties": False, "required": ["kind", "table", "column"],
              "properties": {"kind": {"type": "string", "enum": ["table"]},
                             "table": {"type": "string", "minLength": 1, "description": "Table name or stable table ID"},
@@ -85,7 +92,8 @@ def _install_specification(schemas):
     series = {"type": "object", "additionalProperties": False, "required": ["name", "values"], "properties": {
         "name": {"oneOf": [
             {"type": "object", "additionalProperties": False, "required": ["text"], "properties": {"text": {"type": "string"}}},
-            {"type": "object", "additionalProperties": False, "required": ["source"], "properties": {"source": _ref("ChartSource")}}]},
+            {"type": "object", "additionalProperties": False, "required": ["source"], "properties": {"source": _ref("ChartRangeSource")},
+             "description": "One cell of a range; a table or saved query is not a name source"}]},
         "values": _part("Numeric values"),
         "x": {**_part("Numeric x values; required for scatter charts and refused otherwise"), "nullable": True}}}
     schemas["ChartSpec"] = {
