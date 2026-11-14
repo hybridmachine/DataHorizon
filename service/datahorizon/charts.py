@@ -11,7 +11,7 @@ import json
 import math
 import uuid
 
-from . import relational
+from . import query_views, relational
 from .chart_render import LIMIT_PIE_POINTS, LIMIT_POINTS, LIMIT_SERIES
 from .engine import MAX_COLS, MAX_ROWS, EngineError, encoded, require
 from .formula import FormulaError, adjust_interval, column_name, split_ref
@@ -77,7 +77,52 @@ def _check_extent(row1, col1, row2, col2, role, chart_type, limits=True):
     return count
 
 
+def source_kind(source):
+    """``"range"``, ``"table"`` or ``"query"`` for a stored source."""
+    return source["kind"]
+
+
+def is_broken(source):
+    """Whether a stored source no longer names its data; reads the stored form only."""
+    kind = source_kind(source)
+    if kind == "table":
+        return source["table_id"] is None or source["column_id"] is None
+    if kind == "query":
+        return source["query_id"] is None
+    return source["sheet_id"] is None or any(source[key] is None for key in RECTANGLE_KEYS)
+
+
+def _input_table_source(book, value, role):
+    value = _object(value, f"{role} source", ("kind", "table", "column"), ("kind", "table", "column"))
+    if not isinstance(value["table"], str) or not isinstance(value["column"], str):
+        raise _invalid("a table source names its table and column as text")
+    found = relational.table(book.db, value["table"])
+    column = next((item for item in found["columns"] if item["id"] == value["column"]), None)
+    if column is None:
+        column = next((item for item in found["columns"] if item["name"].casefold() == value["column"].casefold()), None)
+    if column is None:
+        raise EngineError("COLUMN_NOT_FOUND", f"Table {found['name']} has no column {value['column']}")
+    return {"kind": "table", "table_id": found["id"], "column_id": column["id"]}, 0
+
+
+def _input_query_source(book, value, role):
+    value = _object(value, f"{role} source", ("kind", "query", "column"), ("kind", "query", "column"))
+    if not isinstance(value["query"], str) or not isinstance(value["column"], str):
+        raise _invalid("a query source names its saved query and column as text")
+    found = query_views.query(book.db, value["query"])
+    if [item["name"] for item in found["shape"]].count(value["column"]) != 1:
+        raise EngineError("COLUMN_NOT_FOUND", f"Saved query {found['name']} has no single result column {value['column']}")
+    return {"kind": "query", "query_id": found["id"], "column": value["column"]}, 0
+
+
 def _input_source(book, value, role, chart_type):
+    kind = value.get("kind") if isinstance(value, dict) else None
+    if kind in ("table", "query") and role == "name":
+        raise _invalid("a series name source must be a range; use {'text': ...} for a fixed name")
+    if kind == "table":
+        return _input_table_source(book, value, role)
+    if kind == "query":
+        return _input_query_source(book, value, role)
     value = _object(value, f"{role} source", ("kind", "sheet", "ref"))
     if value["kind"] != "range":
         raise _invalid("a source kind must be 'range'")
@@ -103,7 +148,27 @@ def _input_source(book, value, role, chart_type):
     return stored, count
 
 
+def _stored_ids(value, role, keys, ids):
+    value = _object(value, f"{role} source", keys, keys)
+    if role == "name":
+        raise _invalid("a series name source must be a range")
+    if not all(value[key] is None or isinstance(value[key], str) for key in ids):
+        raise _invalid("a source id must be text or null")
+    return value
+
+
 def _stored_source(book, value, role, chart_type):
+    kind = value.get("kind") if isinstance(value, dict) else None
+    if kind == "table":
+        value = _stored_ids(value, role, ("kind", "table_id", "column_id"), ("table_id", "column_id"))
+        if (value["table_id"] is None) != (value["column_id"] is None):
+            raise _invalid("a table source has both ids or neither")
+        return dict(value), 0
+    if kind == "query":
+        value = _stored_ids(value, role, ("kind", "query_id", "column"), ("query_id",))
+        if not isinstance(value["column"], str) or not value["column"]:
+            raise _invalid("a query source column must be non-empty text")
+        return dict(value), 0
     value = _object(value, f"{role} source", ("kind", "sheet_id") + RECTANGLE_KEYS,
                     ("kind", "sheet_id") + RECTANGLE_KEYS)
     if value["kind"] != "range":
@@ -299,7 +364,7 @@ def limit_error(spec):
     """The size-limit refusal for a readable stored specification, or ``None`` when it is within its limits."""
     total = 0
     for role, source in _sized_sources(spec):
-        if source["row1"] is None:
+        if source_kind(source) != "range" or source["row1"] is None:
             continue
         count = (source["row2"] - source["row1"] + 1) * (source["col2"] - source["col1"] + 1)
         total += count
@@ -323,7 +388,29 @@ def over_limit(payload):
     return None if error is None else error.body["code"]
 
 
+def _describe_table_source(db, source):
+    source["table"] = source["column"] = None
+    found = None if source["table_id"] is None else next(
+        (item for item in relational.tables(db) if item["id"] == source["table_id"]), None)
+    column = None if found is None or source["column_id"] is None else next(
+        (item for item in found["columns"] if item["id"] == source["column_id"]), None)
+    source["broken"] = column is None
+    if column is not None:
+        source["table"], source["column"] = found["name"], column["name"]
+
+
+def _describe_query_source(db, source):
+    found = None if source["query_id"] is None else next(
+        (item for item in query_views.queries(db) if item["id"] == source["query_id"]), None)
+    source["query"] = None if found is None else found["name"]
+    source["broken"] = found is None or [item["name"] for item in found["shape"]].count(source["column"]) != 1
+
+
 def _describe_source(db, source):
+    if source_kind(source) == "table":
+        return _describe_table_source(db, source)
+    if source_kind(source) == "query":
+        return _describe_query_source(db, source)
     source["broken"] = source["sheet_id"] is None or source["row1"] is None or db.execute(
         "SELECT 1 FROM sheets WHERE id=?", (source["sheet_id"],)).fetchone() is None
     source["ref"] = None
@@ -428,7 +515,8 @@ def _readable_sources(payload):
     """The live source objects of a readable chart, in place; none for an unreadable one."""
     if validate_stored(payload) is not None:
         return []
-    return [source for source in _sources(payload["spec"]) if source["sheet_id"] is not None and source["row1"] is not None]
+    return [source for source in _sources(payload["spec"])
+            if source_kind(source) == "range" and source["sheet_id"] is not None and source["row1"] is not None]
 
 
 def _break(source, sheet_id):
@@ -567,9 +655,15 @@ def _input_form(db, sheet_id, chart_id, payload):
     for source in _sources(spec):
         if source["broken"]:
             raise EngineError("SOURCE_BROKEN", "A chart source is broken; replace the specification with spec", 409)
-        sheet, ref = source["sheet_id"], source["ref"]
+        kind = source_kind(source)
+        if kind == "table":
+            rebuilt = {"kind": "table", "table": source["table_id"], "column": source["column_id"]}
+        elif kind == "query":
+            rebuilt = {"kind": "query", "query": source["query_id"], "column": source["column"]}
+        else:
+            rebuilt = {"kind": "range", "sheet": source["sheet_id"], "ref": source["ref"]}
         source.clear()
-        source.update(kind="range", sheet=sheet, ref=ref)
+        source.update(rebuilt)
     return spec
 
 
