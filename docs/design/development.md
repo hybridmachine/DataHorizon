@@ -444,6 +444,14 @@ or deleting the saved query marks the source broken; resolve then fails with
 A table or query result longer than the point limit is refused at resolve with
 `LIMIT_POINTS` or `LIMIT_PIE_POINTS`, naming it.
 
+Sources of different kinds in one chart are lined up by position only.
+Categories from a table come in stored row order; values from a saved query
+come in the query's order. Mixing them can label points wrongly, and nothing
+checks it, so take a chart's categories and values from the same table or the
+same saved query. The same has always been true of two ranges of different
+lengths or orders. A saved query can be charted only when each of its
+parameters has a saved default.
+
 ## Install smoke and measurements
 
 ```sh

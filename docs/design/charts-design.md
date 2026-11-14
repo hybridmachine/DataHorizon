@@ -172,7 +172,11 @@ the relational interfaces, and its column by identity, else by name ignoring
 case; an unknown table is `TABLE_NOT_FOUND` (404) and an unknown column
 `COLUMN_NOT_FOUND`. A saved query is found by identity or name
 (`QUERY_NOT_FOUND`, 404), and `column` must equal exactly one name in the
-query's saved result shape, else `COLUMN_NOT_FOUND`. Tables, columns and saved
+query's saved result shape, else `COLUMN_NOT_FOUND`. A chart cannot supply
+parameter values, so a saved query can be charted only when every parameter it
+declares has a saved default; otherwise the source is `INVALID_SPEC`, for
+example "Saved query Param has no default for parameter m; a chart cannot
+supply parameter values". Tables, columns and saved
 queries are then held by identity, so renaming any of them needs no chart
 maintenance. A query result column is held by its name, because result columns
 have no identity.
@@ -180,8 +184,18 @@ have no identity.
 A series name is one cell, so a name source must be a `range`; a `table` or
 `query` name source is `INVALID_SPEC`, and `{"text": ...}` gives a fixed name.
 `values`, `categories` and `x` accept all three kinds, and one chart may mix
-them. A `spec_patch` rebuilds table and query sources in input form by
+them. Sources are lined up by position only: categories from a table come in
+stored row order, and values from a saved query come in the query's order.
+Mixing kinds can therefore label points wrongly, and nothing checks it; take a
+chart's categories and values from the same table or the same saved query. The
+same has always been true of two ranges of different lengths or orders.
+
+A `spec_patch` rebuilds table and query sources in input form by
 identity, so a rename between read and patch cannot change their target. A
+merge patch keeps keys it is not told to remove, so changing a source's kind
+with `spec_patch` sets the old kind's keys to `null` in the patch, for example
+`{"kind": "table", "table": "Sales", "column": "Units", "sheet": null, "ref":
+null}` over a range source; or replace the specification with `spec`. A
 build from before this block lists a chart that uses the new kinds with issue
 `INVALID_SPEC`; nothing has been released, so no such reader is in use.
 
@@ -308,8 +322,13 @@ range code classifies, so gaps are counted the same way for every kind.
   in memory, at most 10,001 and at most 16 MiB; past 16 MiB the run fails with
   the query engine's `QUERY_LIMIT`, although an ordinary query job would spool
   the same result. The query engine's own codes (`QUERY_FAILED`, `QUERY_VALUE`,
-  `QUERY_DEPENDENCY_CHANGED`, `SQL_DENIED`, `INVALID_PARAMETERS`) pass through;
-  a `TIMEOUT` becomes `CALCULATION_FAILED`. The source's column must be exactly
+  `QUERY_DEPENDENCY_CHANGED`, `SQL_DENIED`, `INVALID_PARAMETERS`) pass through
+  with their status and details, and a `TIMEOUT` becomes `CALCULATION_FAILED`;
+  each message is prefixed with `Saved query <name>: ` so a failed job names
+  the query. `STALE_STATE` and `CANCELLED` are about the job, not the query,
+  and are not prefixed. A query saved again later with a parameter that has no
+  default fails here with `INVALID_PARAMETERS`; a chart already stored over it
+  is not marked broken. The source's column must be exactly
   one column of the result, else `SOURCE_BROKEN` naming the query and the
   column.
 - *Values.* From a table: integer and number columns give points; text,
@@ -337,7 +356,8 @@ range code classifies, so gaps are counted the same way for every kind.
   breaks every source on it. A broken table source has both identities `null`;
   a broken query source has `query_id` `null` and keeps its column name. Each
   receipt (`table_drop`, `table_schema`, `query_delete`) lists the charts in
-  `broken_charts`. Renaming or retyping a column, renaming a table or a saved
+  `broken_charts`; each breaks the sources before its after-structure hook
+  runs, so a handler sees them already broken. Renaming or retyping a column, renaming a table or a saved
   query, and saving a saved query again break nothing in storage. A retyped
   column simply resolves as gaps. A saved query saved again without the
   chart's column is reported `broken` on read and refused at resolve with
@@ -507,7 +527,10 @@ operations.
 - `chart_update`: `chart_id` and at least one of `name`, `anchor`, `offset`,
   `size`, `z` or `order` (`front` or `back`), and `spec` (a replacement) or
   `spec_patch` (an RFC 7386 merge patch on the input form). A patch is refused
-  with `SOURCE_BROKEN` while a source is broken; send `spec` instead.
+  with `SOURCE_BROKEN` while a source is broken; send `spec` instead. To change
+  a source's kind with a patch, set the old kind's keys to `null` (section 4).
+  A table or query source is not admitted as a series name, and the OpenAPI
+  `ChartSpec` points the name source at `ChartRangeSource` alone.
 - `chart_delete`: `chart_id`.
 
 Each records its own change-set entry, so it undoes and redoes without clearing
@@ -702,3 +725,8 @@ Table and saved-query sources, **Built** on branch
 - **Suggest from a table, not from a saved query.** Section 8 named suggest from
   a range; a table is added, and a saved query is left out until the desktop
   needs it.
+- **A saved query needs a default for every parameter to be charted.** Draft
+  0.4 said a query source runs with its saved parameter values; a chart has no
+  way to supply others, so a query with a parameter that has no saved default
+  is refused on input with `INVALID_SPEC`, and every error a query run raises
+  at resolve names the saved query.

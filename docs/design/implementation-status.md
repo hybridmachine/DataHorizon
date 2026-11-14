@@ -70,8 +70,9 @@ as error gaps and an insert that could strand a chart past a size limit.
 
 Open: table and query sources, the desktop, workbook-Python chart operations,
 XLSX and ODS chart interchange, and Windows and Linux. See the
-[result](charts-stage-2-result.md) and the as-built [design](charts-design.md)
-(Draft 0.4).
+[result](charts-stage-2-result.md) and the as-built [design](charts-design.md),
+which was Draft 0.4 on November 12. The current as-built design is Draft 0.5,
+with table and saved-query sources, built on November 13.
 
 ## Charts stage 1 renderer experiment — November 11, 2026
 
