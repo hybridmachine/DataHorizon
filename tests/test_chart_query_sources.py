@@ -130,5 +130,128 @@ class Spec(unittest.TestCase):
         self.assertEqual(charts.find(self.book, chart_id)[1]["spec"]["categories"]["source"]["kind"], "range")
 
 
+    # Following the saved query, and mixed sources.
+
+    def make_chart(self):
+        self.chart = self.apply("chart_create", spec=source_spec(query_source("Top", "Units")))["chart_id"]
+        return self.chart
+
+    def source(self, chart_id=None):
+        return charts.find(self.book, chart_id or self.chart)[1]["spec"]["series"][0]["values"]["source"]
+
+    def test_deleting_the_saved_query_breaks_its_sources(self):
+        self.make_chart()
+        receipt = self.apply("query_delete", query=self.query_id)
+        self.assertEqual(receipt["broken_charts"], [self.chart])
+        self.assertEqual(self.source(), {"kind": "query", "query_id": None, "column": "Units"})
+        described = charts.read(self.book, dict(expected_state=self.book.state()))["charts"][0]
+        self.assertTrue(described["spec"]["series"][0]["values"]["source"]["broken"])
+
+    def test_deleting_another_saved_query_breaks_nothing(self):
+        self.make_chart()
+        receipt = self.apply("query_delete", query=self.dupe_id)
+        self.assertNotIn("broken_charts", receipt)
+        self.assertEqual(self.source()["query_id"], self.query_id)
+
+    def test_renaming_the_saved_query_breaks_nothing(self):
+        self.make_chart()
+        receipt = self.apply("query_rename", query=self.query_id, name="Renamed")
+        self.assertNotIn("broken_charts", receipt)
+        self.assertEqual(self.source()["query_id"], self.query_id)
+
+    def test_saving_a_query_touches_no_chart(self):
+        self.make_chart()
+        before = charts.find(self.book, self.chart)[1]
+        review = preview(self.book, dict(name="Third", sql="SELECT Units FROM Sales", expected_state=self.book.state()))
+        receipt = self.apply("query_save", **review["source_request"], review_digest=review["review_digest"])
+        self.assertNotIn("broken_charts", receipt)
+        self.assertEqual(charts.find(self.book, self.chart)[1], before)
+
+    def test_a_refused_table_drop_leaves_the_chart_alone(self):
+        chart_id = self.apply("chart_create", spec=source_spec(
+            {"kind": "table", "table": "Sales", "column": "Units"}))["chart_id"]
+        before = charts.find(self.book, chart_id)[1]
+        with self.assertRaises(EngineError) as caught:
+            self.apply("table_drop", table="Sales", allow_data_loss=True)
+        self.assertEqual(code(caught), "DEPENDENCY_BLOCKED")
+        self.assertEqual(charts.find(self.book, chart_id)[1], before)
+
+    def test_a_broken_saved_query_source_survives_reopen_and_blocks_spec_patch(self):
+        self.make_chart()
+        self.apply("query_delete", query=self.query_id)
+        path = self.book.path
+        self.book.close()
+        self.book = Workbook(path)
+        self.assertIsNone(self.source()["query_id"])
+        with self.assertRaises(EngineError) as caught:
+            self.apply("chart_update", chart_id=self.chart, spec_patch={"title": {"text": "T"}})
+        self.assertEqual((code(caught), caught.exception.status), ("SOURCE_BROKEN", 409))
+
+    def test_charts_without_the_query_are_not_rewritten(self):
+        self.make_chart()
+        other = self.apply("chart_create", spec=spec())["chart_id"]
+        before = charts.find(self.book, other)[1]
+        receipt = self.apply("query_delete", query=self.query_id)
+        self.assertEqual(receipt["changed_charts"], 1)
+        self.assertEqual(charts.find(self.book, other)[1], before)
+
+    def test_a_series_name_may_not_be_a_table_or_query_source(self):
+        out = charts.normalise_spec(self.book, source_spec(query_source("Top", "Units")))
+        for named in (query_source("Top", "Month"), {"kind": "table", "table": "Sales", "column": "Month"}):
+            stored = copy.deepcopy(out)
+            stored["series"][0]["name"] = {"source": named}
+            self.assertEqual(charts.validate_stored(payload(stored)), "INVALID_SPEC")
+        stored = copy.deepcopy(out)
+        stored["series"][0]["name"] = {"source": {"kind": "query", "query_id": self.query_id, "column": "Month"}}
+        self.assertEqual(charts.validate_stored(payload(stored)), "INVALID_SPEC")
+        stored["series"][0]["name"] = {"source": {"kind": "table", "table_id": "t", "column_id": "c"}}
+        self.assertEqual(charts.validate_stored(payload(stored)), "INVALID_SPEC")
+
+    def test_a_chart_with_a_broken_query_source_refuses_spec_patch(self):
+        chart_id = self.make_chart()
+        sheet_id, stored = charts.find(self.book, chart_id)
+        stored["spec"]["series"][0]["values"]["source"]["query_id"] = None
+        self.book.db.execute("BEGIN")
+        charts.store(self.book, sheet_id, chart_id, stored)
+        self.book.db.execute("COMMIT")
+        with self.assertRaises(EngineError) as caught:
+            self.apply("chart_update", chart_id=chart_id, spec_patch={"title": {"text": "T"}})
+        self.assertEqual((code(caught), caught.exception.status), ("SOURCE_BROKEN", 409))
+
+    def mixed(self, sheet):
+        column = spec(categories={"source": {"kind": "range", "sheet": sheet, "ref": "A2:A13"}})
+        column["series"] = [
+            {"name": {"text": "t"}, "values": {"source": {"kind": "table", "table": "Sales", "column": "Units"}}},
+            {"name": {"text": "q"}, "values": {"source": query_source("Top", "Units")}}]
+        return self.apply("chart_create", spec=column)["chart_id"]
+
+    def parts(self, chart_id):
+        stored = charts.find(self.book, chart_id)[1]["spec"]
+        return (stored["categories"]["source"], stored["series"][0]["values"]["source"],
+                stored["series"][1]["values"]["source"])
+
+    def test_a_mixed_chart_follows_only_its_range_source(self):
+        chart_id = self.mixed("Sheet1")
+        _, table_source, query_source_ = self.parts(chart_id)
+        self.apply("rows_insert", sheet="Sheet1", start=1, count=2)
+        moved, table_after, query_after = self.parts(chart_id)
+        self.assertEqual((moved["row1"], moved["row2"]), (4, 15))
+        self.assertEqual((table_after, query_after), (table_source, query_source_))
+        self.apply("move", sheet="Sheet1", r1=1, c1=1, r2=15, c2=1, row=1, col=6, cut_state=self.book.state())
+        moved, table_after, query_after = self.parts(chart_id)
+        self.assertEqual((moved["col1"], moved["col2"]), (6, 6))
+        self.assertEqual((table_after, query_after), (table_source, query_source_))
+
+    def test_deleting_the_range_sheet_breaks_only_the_range_source(self):
+        self.apply("sheet_add", name="Sheet2")
+        chart_id = self.mixed("Sheet2")
+        _, table_source, query_source_ = self.parts(chart_id)
+        receipt = self.apply("sheet_delete", sheet="Sheet2")
+        self.assertEqual(receipt["broken_charts"], [chart_id])
+        broken, table_after, query_after = self.parts(chart_id)
+        self.assertTrue(charts.is_broken(broken))
+        self.assertEqual((table_after, query_after), (table_source, query_source_))
+
+
 if __name__ == "__main__":
     unittest.main()

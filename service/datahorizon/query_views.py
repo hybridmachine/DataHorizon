@@ -195,5 +195,9 @@ def mutate(book,args):
         structure_hook(book,args,'before',before)
         if args['action']=='query_rename':
             name=query_name(args.get('name'));require(not any(q['id']!=item['id'] and q['name'].casefold()==name.casefold() for q in queries(book.db)),'QUERY_EXISTS','Query name already exists',409);item={**item,'name':name};store(book,'query',item);out=dict(query=item,definition_digest=definition_digest(item))
-        else:book.db.execute("DELETE FROM dh_relational WHERE kind='query' AND id=?",(item['id'],));out={}
+        else:
+            book.db.execute("DELETE FROM dh_relational WHERE kind='query' AND id=?",(item['id'],));out={}
+            from .charts import break_query
+            broken_charts=break_query(book,item['id'])
+            if broken_charts:out['broken_charts']=broken_charts
     structure_hook(book,args,'after',before);return out

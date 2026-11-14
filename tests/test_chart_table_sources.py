@@ -2,6 +2,7 @@
 """Tests for table-column chart sources in specifications."""
 
 import copy
+import json
 import pathlib
 import tempfile
 import unittest
@@ -152,6 +153,113 @@ class Spec(unittest.TestCase):
         out = charts.normalise_spec(self.book, source_spec(table("Sales", "Units")))
         source = charts.describe(other.db, "s", "c", payload(out))["spec"]["series"][0]["values"]["source"]
         self.assertTrue(source["broken"])
+
+
+    # Following the table.
+
+    def make_chart(self):
+        self.chart = self.apply("chart_create", spec=source_spec(table("Sales", "Units"), table("Sales", "Month")))["chart_id"]
+        return self.chart
+
+    def read_chart(self):
+        return charts.find(self.book, self.chart)[1]
+
+    def sources(self):
+        spec_ = self.read_chart()["spec"]
+        return spec_["series"][0]["values"]["source"], spec_["categories"]["source"]
+
+    def review(self, columns, **args):
+        return schema_preview(self.book, dict(table="Sales", columns=columns, expected_state=self.book.state(), **args))
+
+    def change(self, review):
+        return self.apply("table_schema", **review["source_request"], review_digest=review["review_digest"])
+
+    def columns(self):
+        return [dict(column) for column in relational.table(self.book.db, "Sales")["columns"]]
+
+    def test_dropping_the_table_breaks_its_sources(self):
+        self.make_chart()
+        receipt = self.apply("table_drop", table="Sales", allow_data_loss=True)
+        self.assertEqual(receipt["broken_charts"], [self.chart])
+        values, categories = self.sources()
+        self.assertEqual((values["table_id"], values["column_id"]), (None, None))
+        self.assertEqual(categories, {"kind": "table", "table_id": None, "column_id": None})
+        described = charts.read(self.book, dict(expected_state=self.book.state()))["charts"][0]
+        self.assertTrue(described["spec"]["series"][0]["values"]["source"]["broken"])
+
+    def test_a_new_table_of_the_same_name_does_not_repair_the_chart(self):
+        self.make_chart()
+        self.apply("table_drop", table="Sales", allow_data_loss=True)
+        self.apply("table_create", name="Sales", columns=[dict(name="Month", type="text"), dict(name="Units", type="integer")])
+        values, _ = self.sources()
+        self.assertEqual((values["table_id"], values["column_id"]), (None, None))
+
+    def test_removing_the_column_breaks_only_that_source(self):
+        self.make_chart()
+        columns = self.columns()
+        removed = columns.pop(1)
+        receipt = self.change(self.review(columns, drop_columns=[removed["id"]]))
+        self.assertEqual(receipt["broken_charts"], [self.chart])
+        values, categories = self.sources()
+        self.assertEqual((values["table_id"], values["column_id"]), (None, None))
+        self.assertEqual(categories, self.stored(column="Month"))
+
+    def test_removing_another_column_breaks_nothing(self):
+        self.make_chart()
+        columns = self.columns()
+        removed = columns.pop(2)
+        receipt = self.change(self.review(columns, drop_columns=[removed["id"]]))
+        self.assertNotIn("broken_charts", receipt)
+        self.assertEqual(self.sources(), (self.stored(column="Units"), self.stored(column="Month")))
+
+    def test_renaming_or_retyping_a_column_breaks_nothing(self):
+        self.make_chart()
+        columns = self.columns()
+        columns[1].update(name="Quantity", type="number")
+        receipt = self.change(self.review(columns))
+        self.assertNotIn("broken_charts", receipt)
+        self.assertEqual(self.sources(), (self.stored(column="Units"), self.stored(column="Month")))
+
+    def test_renaming_the_table_breaks_nothing(self):
+        self.make_chart()
+        receipt = self.change(self.review(self.columns(), name="Revenue"))
+        self.assertNotIn("broken_charts", receipt)
+        self.assertEqual(self.sources(), (self.stored(column="Units"), self.stored(column="Month")))
+
+    def test_broken_source_survives_reopen_and_blocks_spec_patch(self):
+        self.make_chart()
+        self.apply("table_drop", table="Sales", allow_data_loss=True)
+        path = self.book.path
+        self.book.close()
+        self.book = Workbook(path)
+        values, _ = self.sources()
+        self.assertEqual((values["table_id"], values["column_id"]), (None, None))
+        with self.assertRaises(EngineError) as caught:
+            self.apply("chart_update", chart_id=self.chart, spec_patch={"title": {"text": "T"}})
+        self.assertEqual((code(caught), caught.exception.status), ("SOURCE_BROKEN", 409))
+
+    def test_charts_without_these_sources_are_not_rewritten(self):
+        self.make_chart()
+        other = self.apply("chart_create", spec=spec())["chart_id"]
+        before = charts.find(self.book, other)[1]
+        receipt = self.apply("table_drop", table="Sales", allow_data_loss=True)
+        self.assertEqual(receipt["broken_charts"], [self.chart])
+        self.assertEqual(charts.find(self.book, other)[1], before)
+        self.assertEqual(receipt["changed_charts"], 1)
+
+    def test_unreadable_chart_is_left_untouched(self):
+        self.make_chart()
+        stored = self.read_chart()
+        stored["spec"] = {"spec_version": 1, "type": "bogus", "series": [{"values": {"source": {"table_id": self.table_id}}}]}
+        self.book.db.execute("UPDATE dh_objects SET payload=json(?) WHERE namespace='chart'", (json.dumps(stored),))
+        receipt = self.apply("table_drop", table="Sales", allow_data_loss=True)
+        self.assertNotIn("broken_charts", receipt)
+        self.assertEqual(self.read_chart()["spec"], stored["spec"])
+
+    def test_break_table_below_format_8_returns_at_once(self):
+        other = Workbook(pathlib.Path(self.tmp.name) / "old.dhwb", create=True)
+        self.addCleanup(other.close)
+        self.assertEqual(charts.break_table(other, "x"), [])
 
 
 if __name__ == "__main__":

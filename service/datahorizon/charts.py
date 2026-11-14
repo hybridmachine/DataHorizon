@@ -576,6 +576,39 @@ def break_sheet(book, sheet_id):
     return sorted(broken)
 
 
+def _break_sources(book, selects, breaks):
+    """Apply ``breaks`` to every readable source ``selects`` accepts; return the sorted ids of the charts that changed."""
+    if not _has_charts(book):
+        return []
+    broken = []
+    for owner, chart_id, payload in objects(book):
+        if validate_stored(payload) is not None:
+            continue
+        changed = copy.deepcopy(payload)
+        hit = [source for source in _sources(changed["spec"]) if selects(source)]
+        for source in hit:
+            breaks(source)
+        if hit:
+            broken.append(chart_id)
+            store(book, owner, chart_id, changed)
+    return sorted(broken)
+
+
+def break_table(book, table_id, kept_column_ids=None):
+    """Break table sources on a dropped table, or on columns a schema change no longer keeps."""
+    def selects(source):
+        return source_kind(source) == "table" and source["table_id"] == table_id and (
+            kept_column_ids is None or source["column_id"] not in kept_column_ids)
+
+    return _break_sources(book, selects, lambda source: source.update(table_id=None, column_id=None))
+
+
+def break_query(book, query_id):
+    """Break query sources on a deleted saved query; the result column name stays."""
+    return _break_sources(book, lambda source: source_kind(source) == "query" and source["query_id"] == query_id,
+                          lambda source: source.update(query_id=None))
+
+
 def adjust_move(book, sheet_id, rectangle, dest_row, dest_col):
     """Move sources wholly inside a Cut rectangle with it; others stay."""
     if not _has_charts(book):
