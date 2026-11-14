@@ -1,6 +1,6 @@
 # Charts design
 
-Draft 0.4 | November 12, 2026 | Status: approved by the owner on November 11, 2026; rendering route confirmed with two changes on November 12, 2026. Stage 1 (the experiment) and stage 2 for range sources are built on branch `claude/charts-stage-2`, which is not merged; table and query sources, the desktop and workbook Python are not. Sections marked **Built** record what the code does; [section 15](#15-departures-from-draft-03-as-built) lists where it departs from Draft 0.3.
+Draft 0.5 | November 13, 2026 | Status: approved by the owner on November 11, 2026; rendering route confirmed with two changes on November 12, 2026; table and saved-query sources decided on November 13, 2026. Stage 1 (the experiment) and stage 2 are built: range sources on branch `claude/charts-stage-2`, and table and saved-query sources on branch `claude/charts-table-query-sources`, which is not merged. The desktop and workbook Python are not built. Sections marked **Built** record what the code does; [section 15](#15-departures-from-draft-03-as-built) lists where it departs from Draft 0.3, and [section 16](#16-departures-from-draft-04-as-built) where table and saved-query sources depart from Draft 0.4.
 
 This document proposes how DataHorizon stores, renders and exposes charts. It is
 a design to plan from. It is not an implementation plan; each stage gets a
@@ -83,7 +83,8 @@ packages ([LICENSES.md](../../LICENSES.md)), which Plotly would end.
 | Who resolves data | The service: it reads the sources, applies bounds and returns resolved series | **Call** |
 | Who draws | The service draws SVG; the desktop displays that SVG. See section 6 | **Owner** (November 11, 2026), subject to the stage 1 experiment |
 | Storage | A chart kind in the existing `dh_objects` catalog, at native format v8 | **Call**; **Built** |
-| Source kinds | `range` first; `table` and `query` in a later step of stage 2 | **Owner** (accepted as proposed) |
+| Source kinds | `range` first; `table` and `query` in a later step of stage 2 | **Owner** (accepted as proposed); **Built** |
+| Table source | The whole table in stored row order, with no saved view; filtering and ordering through a saved query | **Owner** (November 13, 2026); **Built** |
 | Uncalculated sources | Resolve and render are cancellable jobs that calculate their sources inside their own read-only snapshot | **Call**; **Built** |
 | Staleness | Coarse: any managed revision change marks every chart stale | **Call** |
 | Placement | Floating over a sheet, anchored to a cell, with a size in pixels. Chart sheets later | **Call** |
@@ -122,8 +123,10 @@ A source is one of three kinds:
 
 - `range`: a rectangle on a sheet, by sheet identity.
 - `table`: a column of a structured table, by table and column identity, read
-  through a saved view when one is named so that the view supplies filter and
-  order.
+  whole in stored row order. **Owner** (November 13, 2026). Draft 0.4 read it
+  through a saved view that supplied filter and order; the code has no saved
+  view over a table, and what the project calls saved views are saved queries.
+  A chart that needs a filter or an order reads a saved query instead.
 - `query`: a column of a saved query's result, by saved-definition identity and
   column name. Resolving it runs the query as a snapshot job with its saved
   parameter values; it does not reuse an earlier result.
@@ -131,6 +134,8 @@ A source is one of three kinds:
 **Call**: `range` sources are built first. `table` and `query` sources follow
 as a second step of stage 2, because they depend on the saved-view and snapshot
 job paths and a table without a view is refused once it passes the point limit.
+**Owner** (November 13, 2026): table and saved-query sources come next, before
+the desktop.
 
 The specification deliberately follows the shape Excel and OpenDocument share
 (a chart type, a grouping, category and value axes, series that each name their
@@ -152,6 +157,48 @@ specification has every key. Version 1 is specified key by key in the
 stored specification is listed with an `issue` (`INVALID_SPEC` or
 `UNSUPPORTED_SPEC_VERSION`) and resolve and render refuse it with that code.
 A stored specification over a size limit is not unreadable (see section 5).
+
+**Built (table and saved-query sources).** Both are additions to specification
+version 1; the version does not change. The three kinds have these forms:
+
+| Kind | Input form | Stored form | Added on read |
+| --- | --- | --- | --- |
+| `range` | `{"kind": "range", "sheet", "ref"}` | `{"kind": "range", "sheet_id", "row1", "col1", "row2", "col2"}` | `ref`, `broken` |
+| `table` | `{"kind": "table", "table", "column"}` | `{"kind": "table", "table_id", "column_id"}` | `table`, `column` (current names), `broken` |
+| `query` | `{"kind": "query", "query", "column"}` | `{"kind": "query", "query_id", "column"}` | `query` (current name), `broken` |
+
+On input a table is found by identity or by name ignoring case, as elsewhere in
+the relational interfaces, and its column by identity, else by name ignoring
+case; an unknown table is `TABLE_NOT_FOUND` (404) and an unknown column
+`COLUMN_NOT_FOUND`. A saved query is found by identity or name, an exact
+identity always winning over a query that is merely named like it
+(`QUERY_NOT_FOUND`, 404), and `column` must equal exactly one name in the
+query's saved result shape, else `COLUMN_NOT_FOUND`. A chart cannot supply
+parameter values, so a saved query can be charted only when every parameter it
+declares has a saved default; otherwise the source is `INVALID_SPEC`, for
+example "Saved query Param has no default for parameter m; a chart cannot
+supply parameter values". Tables, columns and saved
+queries are then held by identity, so renaming any of them needs no chart
+maintenance. A query result column is held by its name, because result columns
+have no identity.
+
+A series name is one cell, so a name source must be a `range`; a `table` or
+`query` name source is `INVALID_SPEC`, and `{"text": ...}` gives a fixed name.
+`values`, `categories` and `x` accept all three kinds, and one chart may mix
+them. Sources are lined up by position only: categories from a table come in
+stored row order, and values from a saved query come in the query's order.
+Mixing kinds can therefore label points wrongly, and nothing checks it; take a
+chart's categories and values from the same table or the same saved query. The
+same has always been true of two ranges of different lengths or orders.
+
+A `spec_patch` rebuilds table and query sources in input form by
+identity, so a rename between read and patch cannot change their target. A
+merge patch keeps keys it is not told to remove, so changing a source's kind
+with `spec_patch` sets the old kind's keys to `null` in the patch, for example
+`{"kind": "table", "table": "Sales", "column": "Units", "sheet": null, "ref":
+null}` over a range source; or replace the specification with `spec`. A
+build from before this block lists a chart that uses the new kinds with issue
+`INVALID_SPEC`; nothing has been released, so no such reader is in use.
 
 ## 5. Resolving data
 
@@ -182,9 +229,12 @@ own code, never truncated. Measurements are in the
 | Points in a pie | 1,000 (measured: 41 ms in Qt against a 75 ms budget) | `LIMIT_PIE_POINTS` |
 | Source cells per chart, all sources together | 100,000 | `LIMIT_CELLS` |
 | Values drawn by one render, all series together | 10,000 (a render result must stay under 4 MiB) | `LIMIT_RENDER_POINTS` |
+| Text and values a resolve holds, all sources together | 4 MiB, charged as each value is read and before it is kept; for a saved query only the columns the chart uses count | `LIMIT_BYTES` |
 | Chart size | 64×48 to 4,096×4,096 pixels | `INVALID_ARGUMENT` |
 | Stored payload | 256 KiB | `LIMIT` |
 | Job time and result | 30 seconds; 4 MiB | `TIMEOUT`, `CALCULATION_FAILED`; `READ_LIMIT` |
+| Calculation input, a whole chart job | 8 MiB of cell source text read by the job's one calculator | `#LIMIT!` in the cell, so `CALCULATION_FAILED` for a value or x cell |
+| A saved-query run for a chart | 20 seconds and the job's own deadline; 10,001 rows; 16 MiB of result held in memory | `CALCULATION_FAILED`; `LIMIT_POINTS`; `QUERY_LIMIT` |
 
 A chart can therefore hold more data than one render draws: an eight-series
 line chart over 10,000 rows resolves, but rendering it is refused with
@@ -226,6 +276,15 @@ value or x cell, fails the whole job with `CALCULATION_FAILED` and no series;
 the message names the cell. Ordinary formula errors (`#DIV/0!`, `#REF!`,
 `#VALUE!`, a cycle) plot as counted gaps.
 
+Because one calculator serves the whole job, the engine's cap of 8 MiB on the
+cell source text a calculation reads applies to the chart job as a whole, not
+to each read: its counter is not reset between slices. The counter grows by the
+source text of each cell the calculator evaluates or reads (formula cells in
+the sources and every cell their formulas reach), once per cell. Past 8 MiB
+the remaining formula cells come back as `#LIMIT!`, and the resolve fails with
+`CALCULATION_FAILED`. The stage 2 documents did not state this. Table and
+saved-query sources are not calculated and do not count toward it.
+
 **Following the data.** Chart sources are JSON rectangles addressed by sheet
 identity, so a sheet rename needs no maintenance. Row and column inserts and
 deletes, and the same-sheet Cut that formulas support today, are applied to
@@ -237,6 +296,79 @@ the project. Where a formula would become `unmaintained` or broken, the chart
 source is marked broken and the chart shows that; it is not silently repointed.
 Deleting a sheet deletes the charts it owns in the same operation, and breaks
 the sources of charts on other sheets that read from it.
+
+**Built: table and saved-query sources.** Range sources keep their slice
+reads. A table or saved-query source is turned into the same cell shape the
+range code classifies, so gaps are counted the same way for every kind.
+
+- *Reading a table.* Each table source is one read: under the workbook lock, a
+  read transaction on the chart job's snapshot, checked against the state the
+  snapshot was opened at (`STALE_STATE` otherwise), runs
+  `SELECT "<column>" FROM "<table>" ORDER BY "_dh_row_id" LIMIT 10,001` (or
+  1,001 for a pie) under a two-second deadline and the job's cancellation. Rows
+  come in stored row order, by the hidden `_dh_row_id`; there is no filter. A
+  timed-out read fails the job with `CALCULATION_FAILED`, as for ranges.
+- *Running a saved query.* Each saved query a chart reads runs once per chart
+  job, however many sources use it, so its series line up; a query source never
+  reuses an earlier result. The run (`QueryJobs.run_once`) repeats the checks
+  an ordinary saved run makes: the stored SQL is prepared again, its result
+  shape and dependencies must be unchanged (`QUERY_DEPENDENCY_CHANGED`), and
+  saved parameter defaults are bound. It requires the live workbook to be at
+  the state the chart job started at (`STALE_STATE`, so the job ends `stale`),
+  copies a private snapshot, and executes there under the query engine's
+  authoriser and value rules. It is bounded by its own 20 seconds, the
+  snapshot copy's 5 seconds and, for both, the chart job's absolute deadline,
+  so the job stays inside its 30 seconds; the job's cancellation stops it. It
+  takes no query job slot: a chart cannot be blocked by, or block, a person's
+  own query, and the run is not visible on the query job routes. Rows are held
+  in memory, at most 10,001 and at most 16 MiB; past 16 MiB the run fails with
+  the query engine's `QUERY_LIMIT`, although an ordinary query job would spool
+  the same result. The query engine's own codes (`QUERY_FAILED`, `QUERY_VALUE`,
+  `QUERY_DEPENDENCY_CHANGED`, `SQL_DENIED`, `INVALID_PARAMETERS`) pass through
+  with their status and details, and a `TIMEOUT` becomes `CALCULATION_FAILED`;
+  each message is prefixed with `Saved query <name>: ` so a failed job names
+  the query. `STALE_STATE` and `CANCELLED` are about the job, not the query,
+  and are not prefixed. A query saved again later with a parameter that has no
+  default fails here with `INVALID_PARAMETERS`; a chart already stored over it
+  is not marked broken. The source's column must be exactly
+  one column of the result, else `SOURCE_BROKEN` naming the query and the
+  column.
+- *Values.* From a table: integer and number columns give points; text,
+  boolean, date, time and datetime values are `text` gaps; SQL `NULL` is an
+  `empty` gap. From a query: integers and floats give points, and an integer
+  beyond 2^53 (which the query engine tags) plots as the nearest float; text is
+  a `text` gap and `NULL` an `empty` gap; a BLOB fails the job with
+  `QUERY_VALUE`. Query results carry no date or boolean type, so those arrive
+  as text or numbers, as SQLite returns them.
+- *Category text.* Text as stored; numbers through the renderer's tick format;
+  booleans as `TRUE` or `FALSE`; dates, times and datetimes as ISO text; a large
+  tagged integer as its digits; `NULL` as empty text.
+- *Limits known only when read.* A table's row count and a query's result size
+  are known only by reading them, so they are checked at resolve. A table or
+  result with more rows than a series admits is refused with `LIMIT_POINTS`
+  (`LIMIT_PIE_POINTS` for a pie's values and categories), with a message that
+  names the table or query, for example "Table Sales holds more than 10,000
+  rows; the limit for a series is 10,000". Nothing is truncated. `LIMIT_CELLS`
+  is a running total over every source of every kind as resolve reads them. A
+  table or query source adds nothing to the size checks made when a
+  specification is given, and chart listings report no `over_limit` for these
+  kinds.
+- *Breaking.* Dropping a table breaks every source on it; a schema change that
+  removes a column breaks the sources on that column; deleting a saved query
+  breaks every source on it. A broken table source has both identities `null`;
+  a broken query source has `query_id` `null` and keeps its column name. Each
+  receipt (`table_drop`, `table_schema`, `query_delete`) lists the charts in
+  `broken_charts`; each breaks the sources before its after-structure hook
+  runs, so a handler sees them already broken. Renaming or retyping a column, renaming a table or a saved
+  query, and saving a saved query again break nothing in storage. A retyped
+  column simply resolves as gaps. A saved query saved again without the
+  chart's column is reported `broken` on read and refused at resolve with
+  `SOURCE_BROKEN`; it plots no other column. A source is never repointed: a new
+  table or query of the same name does not repair a broken source. These
+  actions are structural and already clear undo history, so the chart changes
+  ride with them. Resolve refuses a broken source, or one whose table, column
+  or saved query is gone from the snapshot, with `SOURCE_BROKEN` before
+  anything is read or run.
 
 **History.** Successful structural edits and sheet rename or delete clear
 history today. Charts inherit that: a chart change made before such an edit
@@ -355,10 +487,13 @@ are not stored. The kind is documented in the native format document so direct
 SQLite readers can list charts and read their specifications.
 
 As built, the payload has exactly `name`, `anchor` (`row`, `col`), `offset`
-(`x`, `y`), `size` (`width`, `height`), `z`, `spec_version` and `spec`, and each
-stored source is `{"kind": "range", "sheet_id", "row1", "col1", "row2",
+(`x`, `y`), `size` (`width`, `height`), `z`, `spec_version` and `spec`, and a
+range source is stored as `{"kind": "range", "sheet_id", "row1", "col1", "row2",
 "col2"}`, all four coordinates `null` when broken. The row's `sheet_id` is the
-sheet the chart is placed on. See [Charts format v8](native-format-v1.md#charts-format-v8).
+sheet the chart is placed on. Table and saved-query sources add two stored
+forms, `{"kind": "table", "table_id", "column_id"}` (both `null` when broken)
+and `{"kind": "query", "query_id", "column"}` (`query_id` `null` when broken);
+the format stays v8. See [Charts format v8](native-format-v1.md#charts-format-v8).
 Duplicating a sheet does not copy its charts, as it does not copy declared
 lists.
 
@@ -394,7 +529,10 @@ operations.
 - `chart_update`: `chart_id` and at least one of `name`, `anchor`, `offset`,
   `size`, `z` or `order` (`front` or `back`), and `spec` (a replacement) or
   `spec_patch` (an RFC 7386 merge patch on the input form). A patch is refused
-  with `SOURCE_BROKEN` while a source is broken; send `spec` instead.
+  with `SOURCE_BROKEN` while a source is broken; send `spec` instead. To change
+  a source's kind with a patch, set the old kind's keys to `null` (section 4).
+  A table or query source is not admitted as a series name, and the OpenAPI
+  `ChartSpec` points the name source at `ChartRangeSource` alone.
 - `chart_delete`: `chart_id`.
 
 Each records its own change-set entry, so it undoes and redoes without clearing
@@ -410,7 +548,7 @@ Reads and jobs:
 | Route | Purpose |
 | --- | --- |
 | `POST /v1/workbooks/{workbook}/charts` | State-checked catalog: every chart, or one sheet's, or one chart |
-| `POST /v1/workbooks/{workbook}/charts/suggest` | Suggest an input-form specification from a rectangle of at most 10,000 cells |
+| `POST /v1/workbooks/{workbook}/charts/suggest` | Suggest an input-form specification from a rectangle of at most 10,000 cells, or from a table |
 | `POST /v1/workbooks/{workbook}/charts/jobs` | Start a resolve or render job (`kind`, and `width` and `height` for render) |
 | `GET /v1/workbooks/{workbook}/charts/jobs/{job}` | Poll: `running`, `completed`, `failed`, `cancelled` or `stale` |
 | `POST .../charts/jobs/{job}/cancel`, `.../release` | Cancel a job; release a finished one |
@@ -424,8 +562,22 @@ update arguments as JSON from standard input; `render --svg-out FILE` writes
 the SVG to a file through a temporary sibling. It refuses a destination that
 is the workbook or a symbolic or hard link to it, and replaces another
 existing file only with `--overwrite`. Capabilities advertise `charts`, `max_charts`,
-`chart_spec_version`, `chart_jobs`, `chart_job_seconds` and
-`max_chart_render_points`.
+`chart_spec_version`, `chart_jobs`, `chart_job_seconds`,
+`max_chart_render_points` and `max_chart_source_bytes`.
+
+**Built: suggest from a table.** The suggest route also takes
+`{expected_state, table, type?}`; giving a table with a sheet or rectangle is
+`INVALID_ARGUMENT`. It reads the table's schema and no rows. Integer and number
+columns are data columns, in schema order. The first column that is neither a
+data column nor boolean holds the categories; with none, `categories` is
+`null`. Each data column becomes a series named `{"text": <column name>}`, at
+most 64 (`LIMIT_SERIES`). For `scatter` the first data column is `x` for every
+series and at least two are needed; for `pie` only the first is used. A table
+with no data column is `INVALID_SPEC`. The suggestion names the table and its
+columns by identity and passes the same validation as create. The SDK has
+`suggest_chart(table=..., type=...)` and the CLI `charts suggest --table NAME
+[--type T]`. There is no suggestion from a saved query: its saved shape has
+names but no types, so choosing series would mean running it.
 
 Not built: rename, move, resize and reorder are fields of `chart_update`
 rather than separate operations, and there is no render of an unsaved
@@ -488,7 +640,7 @@ interchange never carry charts.
 | Stage | Delivers | Done when |
 | --- | --- | --- |
 | 1. Renderer experiment | Section 6 measurements and a written result | The evidence confirms the service SVG route or triggers the fallback. Run November 11, 2026: thresholds not all met ([result](chart-render-experiment.md)). Owner ruling November 12, 2026: service SVG route confirmed with a pie point limit and a bundled font (section 6) |
-| 2. Engine and interfaces | Storage, specification validation, resolve, render, reference maintenance, staleness, REST/CLI/SDK, history | A script creates, changes and renders all six chart types with no desktop; structural edits and undo are verified. **Done for range sources** on November 12, 2026 ([result](charts-stage-2-result.md)); table and query sources are outstanding and get their own plan |
+| 2. Engine and interfaces | Storage, specification validation, resolve, render, reference maintenance, staleness, REST/CLI/SDK, history | A script creates, changes and renders all six chart types with no desktop; structural edits and undo are verified. **Done**: range sources on November 12, 2026, table and saved-query sources on November 13, 2026 ([result](charts-stage-2-result.md), [plan](charts-table-query-sources-plan.md)) |
 | 3. Desktop and Python | Wireframes, Insert Chart, floating charts, edit panel, object browser entry, context operations | The wireframe session is completed in the installed application |
 | 4. Interchange | XLSX and ODS chart export, then import, with reports | A round trip keeps every supported chart and reports the rest |
 | 5. More chart types | Combination charts, secondary axis, histogram, trendlines, chart sheets | Per-type criteria in that stage's plan |
@@ -497,7 +649,7 @@ Each stage gets its own task-level plan when it starts.
 
 ## 13. Owner decisions
 
-Settled on November 11, 2026, with the rendering route confirmed on November 12, 2026. None remain open.
+Settled on November 11, 2026, with the rendering route confirmed on November 12, 2026 and two decisions on table and saved-query sources added on November 13, 2026. None remain open.
 
 1. **Rendering route.** The single service SVG renderer of section 6. The
    stage 1 experiment still runs and can trigger the QCustomPlot fallback
@@ -510,6 +662,13 @@ Settled on November 11, 2026, with the rendering route confirmed on November 12,
 4. **Chart events.** None in the first stages.
 5. **Source kinds.** Ranges first; table and saved-query sources as a second
    step of stage 2.
+6. **Table and saved-query sources before the desktop** (November 13, 2026).
+   They are the next block after range sources, ahead of stage 3.
+7. **A table source is the whole table** (November 13, 2026): one column in
+   stored row order, with no saved view, refused when the table holds more
+   rows than the point limit. Filtering and ordering are done with a saved
+   query. The saved view of Draft 0.4 is dropped: the code has no saved view
+   over a table, and what the project calls saved views are saved queries.
 
 ## 14. References
 
@@ -543,3 +702,33 @@ Each is recorded above where it applies. All are **Built** on branch
   names that family alone, with no fallback list, because Qt SVG cannot read a
   list.
 - **Sheet duplication does not copy charts.**
+
+## 16. Departures from Draft 0.4, as built
+
+Table and saved-query sources, **Built** on branch
+`claude/charts-table-query-sources`. Each is recorded above where it applies.
+
+- **No saved view.** A table source is the whole table in stored row order
+  (owner decision 7). Draft 0.4 read a table through a saved view.
+- **A saved-query run outside the job store.** Draft 0.4 said a query source
+  runs "as a snapshot job". It runs once per chart job through
+  `QueryJobs.run_once`, which takes no query job slot, holds at most 10,001 rows
+  and 16 MiB in memory, and is bounded by the chart job's deadline. It still
+  makes the private snapshot copy every query run makes.
+- **A query result column held by name.** If the saved query is saved again
+  without that column, the chart is refused at resolve and reported `broken` on
+  read; its stored source is not rewritten when the query is saved.
+- **Size limits at resolve only for these kinds.** A table's or result's size
+  is known only by reading it, so `LIMIT_POINTS` and `LIMIT_PIE_POINTS` are
+  checked when it is read, `LIMIT_CELLS` becomes a running total at resolve,
+  and listings report no `over_limit` for these kinds.
+- **A series name is a range or text.** A name is one cell; a table or query
+  column is many rows.
+- **Suggest from a table, not from a saved query.** Section 8 named suggest from
+  a range; a table is added, and a saved query is left out until the desktop
+  needs it.
+- **A saved query needs a default for every parameter to be charted.** Draft
+  0.4 said a query source runs with its saved parameter values; a chart has no
+  way to supply others, so a query with a parameter that has no saved default
+  is refused on input with `INVALID_SPEC`, and every error a query run raises
+  at resolve names the saved query.

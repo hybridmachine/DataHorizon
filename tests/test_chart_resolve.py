@@ -5,6 +5,7 @@ import copy
 import pathlib
 import tempfile
 import unittest
+from unittest.mock import patch
 import uuid
 import xml.etree.ElementTree as ET
 
@@ -284,6 +285,13 @@ class Resolve(unittest.TestCase):
         out = self.resolve(self.payload(spec))
         self.assertEqual(out["counts"], {"points": 2, "gaps": {"empty": 1, "text": 0, "error": 0}})
         self.assertEqual(len(chart_render.render(out["resolved"], 480, 300)["marks"]), 2)
+
+    def test_range_text_over_the_byte_budget_is_refused(self):
+        self.edit([(f"F{row}", "x" * 1000 + str(row)) for row in range(2, 22)])
+        spec = self.spec(categories={"source": source("F2:F21")}, series=[series("B2:B13")])
+        with patch.object(charts, "LIMIT_SOURCE_BYTES", 5_000), self.assertRaises(EngineError) as caught:
+            self.resolve(self.payload(spec))
+        self.assertEqual((code(caught), caught.exception.status), ("LIMIT_BYTES", 400))
 
     def test_pie_negative_is_refused(self):
         self.edit([("B4", "-3")])

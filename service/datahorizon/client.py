@@ -438,8 +438,10 @@ class WorkbookClient:
     def delete_chart(self,chart_id,*,operation_id=None):
         return self.apply('chart_delete',operation_id=operation_id,chart_id=chart_id)
 
-    def suggest_chart(self,sheet='Sheet1',*,r1,c1,r2,c2,type='column'):
+    def suggest_chart(self,sheet='Sheet1',*,r1=None,c1=None,r2=None,c2=None,table=None,type='column'):
         self._ensure_open()
+        if table is not None:return self.client.request(self.base+'/charts/suggest',dict(expected_state=self.state,table=table,type=type))
+        if None in (r1,c1,r2,c2):raise ValueError('suggest_chart requires table, or all of r1, c1, r2 and c2')
         return self.client.request(self.base+'/charts/suggest',dict(expected_state=self.state,sheet=sheet,r1=r1,c1=c1,r2=r2,c2=c2,type=type))
 
     def chart_job(self,chart_id,kind,*,width=None,height=None,job_id=None):

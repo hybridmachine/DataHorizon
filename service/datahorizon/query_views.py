@@ -26,7 +26,8 @@ def query_name(value):
 
 def query(db,identifier):
     require(isinstance(identifier,str),'INVALID_ARGUMENT','A saved query name or ID is required')
-    item=next((item for item in queries(db) if identifier==item['id'] or identifier.casefold()==item['name'].casefold()),None)
+    # An ID names exactly one query; a query that is merely NAMED like another query's ID never shadows it.
+    saved=queries(db);item=next((item for item in saved if identifier==item['id']),None) or next((item for item in saved if identifier.casefold()==item['name'].casefold()),None)
     require(item is not None,'QUERY_NOT_FOUND','Saved query does not exist',404);return item
 
 
@@ -195,5 +196,9 @@ def mutate(book,args):
         structure_hook(book,args,'before',before)
         if args['action']=='query_rename':
             name=query_name(args.get('name'));require(not any(q['id']!=item['id'] and q['name'].casefold()==name.casefold() for q in queries(book.db)),'QUERY_EXISTS','Query name already exists',409);item={**item,'name':name};store(book,'query',item);out=dict(query=item,definition_digest=definition_digest(item))
-        else:book.db.execute("DELETE FROM dh_relational WHERE kind='query' AND id=?",(item['id'],));out={}
+        else:
+            book.db.execute("DELETE FROM dh_relational WHERE kind='query' AND id=?",(item['id'],));out={}
+            from .charts import break_query
+            broken_charts=break_query(book,item['id'])
+            if broken_charts:out['broken_charts']=broken_charts
     structure_hook(book,args,'after',before);return out

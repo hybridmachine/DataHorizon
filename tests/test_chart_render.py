@@ -281,6 +281,37 @@ class Capacity(unittest.TestCase):
         self.assertEqual(bench.capacity_failures(runs), ["column_1.result_bytes", "line_8.wall_s", "pie.error"])
 
 
+class SourceKinds(unittest.TestCase):
+    def test_table_rows_have_one_text_and_four_number_columns_in_100_groups(self):
+        rows = bench.source_rows(1, bench.SOURCE_ROWS)
+        self.assertEqual(len(rows), 10_000)
+        self.assertEqual([column["type"] for column in bench.SOURCE_COLUMNS], ["text", "number", "number", "number", "number"])
+        self.assertEqual({tuple(row) for row in rows}, {tuple(column["name"] for column in bench.SOURCE_COLUMNS)})
+        self.assertEqual(len({row["Region"] for row in rows}), bench.QUERY_GROUPS)
+        self.assertTrue(all(isinstance(row[name], float) for row in rows for name in ("A", "B", "C", "D")))
+        self.assertEqual(bench.source_rows(1, 3), bench.source_rows(1, 5)[:3])
+
+    def test_an_insert_batch_stays_within_the_operation_field_limit(self):
+        self.assertLessEqual(bench.SOURCE_ROWS_PER_INSERT * len(bench.SOURCE_COLUMNS), 10_000)
+
+    def test_padding_covers_each_cell_once_in_edits_of_at_most_10000(self):
+        edits = bench.pad_edits(bench.PAD_CELLS)
+        self.assertEqual(len(edits), 20)
+        self.assertTrue(all(len(cells) <= 10_000 for cells in edits))
+        positions = [(cell["row"], cell["col"]) for cells in edits for cell in cells]
+        self.assertEqual(len(positions), 200_000)
+        self.assertEqual(len(set(positions)), 200_000)
+
+    def test_source_charts_use_the_table_and_the_saved_query(self):
+        specs = bench.source_specs()
+        kinds = {name: {item["values"]["source"]["kind"] for item in spec["series"]} for name, (spec, _) in specs.items()}
+        self.assertEqual(kinds, {"table_line_1_series": {"table"}, "table_line_4_series": {"table"}, "query_column": {"query"}})
+        self.assertEqual(len(specs["table_line_4_series"][0]["series"]), 4)
+        self.assertEqual(specs["table_line_1_series"][1], ("resolve", "render"))
+        self.assertEqual(specs["table_line_4_series"][1], ("resolve",))
+        self.assertEqual(specs["query_column"][0]["type"], "column")
+
+
 def text_extent(el, size_px):
     width = cr.estimate_text_width(el.text or "", size_px, chart_font.default_metrics())
     x = float(el.get("x"))

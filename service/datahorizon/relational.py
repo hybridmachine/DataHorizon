@@ -278,6 +278,9 @@ def mutate(book,request):
         from .bindings import scoped
         broken=scoped(book,'table',[item['id']])
         if broken:result['broken_bindings']=broken
+        from .charts import break_table
+        broken_charts=break_table(book,item['id'])
+        if broken_charts:result['broken_charts']=broken_charts
     else:raise EngineError('UNSUPPORTED_OPERATION','Unsupported table operation')
     structure_hook(book,request,'after',before)
     return result

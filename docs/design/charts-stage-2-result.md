@@ -1,4 +1,4 @@
-# Charts stage 2: result (range sources)
+# Charts stage 2: result (range, table and saved-query sources)
 
 November 12, 2026. The [stage 2 plan](charts-stage-2-plan.md) is executed for
 range sources on branch `claude/charts-stage-2`. That branch is stacked on
@@ -20,6 +20,12 @@ See [Defects found by the whole-branch review](#defects-found-by-the-whole-branc
 Table and query sources, the desktop, workbook-Python chart operations,
 interchange, and any measurement on Windows or Linux are not done.
 
+**November 13, 2026.** Table and saved-query sources, the second step of stage
+2, are now built on branch `claude/charts-table-query-sources`, which is not
+merged. See [Table and saved-query sources](#table-and-saved-query-sources).
+With them stage 2 is complete. The desktop, workbook-Python chart operations,
+interchange and any measurement on Windows or Linux are still not done.
+
 ## What was built
 
 | Part | Where | What it does |
@@ -33,9 +39,11 @@ interchange, and any measurement on Windows or Linux are not done.
 | SDK and CLI | `client.py`, `cli.py` | `charts`, `create_chart`, `update_chart`, `delete_chart`, `suggest_chart`, `chart_job`, `chart_job_status`, `resolve_chart` and `render_chart`; the CLI's `charts list\|create\|update\|delete\|suggest\|resolve\|render` |
 | Example | `examples/charts_script.py` | Suggests, creates, renders, patches, undoes and redoes all six types, then deletes one chart and undoes the delete |
 
-The format is in [Charts format v8](native-format-v1.md#charts-format-v8). The
-as-built design, with its departures from Draft 0.3, is in
-[charts-design.md](charts-design.md) (Draft 0.4).
+The format is in [Charts format v8](native-format-v1.md#charts-format-v8). On
+November 12 the as-built design for range sources, with its departures from
+Draft 0.3, was [charts-design.md](charts-design.md) Draft 0.4. The current
+as-built design is Draft 0.5, which adds table and saved-query sources and
+their departures from Draft 0.4.
 
 Behaviour worth knowing:
 
@@ -438,9 +446,350 @@ Found in review and judged minor. None changes a documented result.
   128 cells fails with `CALCULATION_FAILED`. The grid shows `#LIMIT!` for the
   same cell: a pre-existing engine limit.
 
+## Table and saved-query sources
+
+November 13, 2026. The [table and saved-query sources plan](charts-table-query-sources-plan.md)
+is executed on branch `claude/charts-table-query-sources`, cut from `main`
+after the range-source work. Nothing in it is merged or released. A chart
+series, category list or x list can now come from a column of a structured
+table or a column of a saved query's result, with the resolve, render, undo
+and interface behaviour charts already had over ranges. The as-built design is
+[charts-design.md](charts-design.md) Draft 0.5 (sections 4, 5, 8 and 16), and
+the stored forms are in [Charts format v8](native-format-v1.md#charts-format-v8).
+
+### What was built
+
+| Part | Where | What it does |
+| --- | --- | --- |
+| Source kinds | `charts.py` | Input and stored forms of `table` and `query` sources in specification version 1; `source_kind`, `is_broken`; current names and `broken` on read; `break_table` and `break_query` |
+| Breaking on drop | `relational.py`, `table_schema.py`, `query_views.py` | `table_drop`, a `table_schema` that removes a column, and `query_delete` break the chart sources that used them and list the charts in `broken_charts` |
+| Reading sources | `chart_sources.py` (new) | Reads a table column in stored row order from the job's snapshot, turns a query result column into cells, and applies the value, display and row-limit rules |
+| A saved-query run | `query_jobs.py`, `jobs.py` | `QueryJobs.run_once`: one synchronous run on a private snapshot, outside the job store, with an absolute `deadline` and a 16 MiB in-memory cap (`run_once_bytes`). The preparation job's checkpoint exposes `deadline` |
+| Resolve | `chart_resolve.py`, `chart_jobs.py` | Dispatch by kind, one run per saved query per job, a running `LIMIT_CELLS` total, and suggest from a table. The chart job passes a query runner bounded by its own deadline |
+| Interfaces | `charts_api.py`, `client.py`, `cli.py` | `ChartSource` as three input forms in OpenAPI; suggest from a table through REST, `suggest_chart(table=...)` and `charts suggest --table` |
+| Example and benchmark | `examples/charts_script.py`, `tests/chart_render_benchmark.py` | The example also charts a table and a saved query; the benchmark's `--sources` run measures them through the service |
+
+Behaviour worth knowing:
+
+- Tables, columns and saved queries are held by identity, so renaming any of
+  them needs no chart maintenance. A query's result column is held by its
+  name, because result columns have no identity.
+- A source is marked broken when its table is dropped, its column is removed
+  by a schema change, or its saved query is deleted. It is never repointed: a
+  new table or query of the same name does not repair it. Renaming or retyping
+  a column breaks nothing; a retyped column resolves as gaps.
+- A saved query saved again without the chart's column is not rewritten in
+  storage. The chart reads as `broken` and is refused at resolve with
+  `SOURCE_BROKEN`, naming the column; it never plots another column or an old
+  result.
+- Each saved query a chart reads runs once per chart job, on a private
+  snapshot copy, bounded by the chart job's 30-second deadline and its
+  cancellation, and by a 16 MiB in-memory cap on the result. It takes no query
+  job slot, so a chart and a person's own query job do not block each other.
+- Table values: integer and number columns are points; text, boolean and
+  temporal values are `text` gaps; `NULL` is an `empty` gap. Query values:
+  numbers are points, an integer beyond 2^53 plots as the nearest float, text
+  and `NULL` are gaps, and a BLOB fails the job with `QUERY_VALUE`. Category
+  text shows numbers in the tick format, booleans as `TRUE` and `FALSE`, and
+  dates as ISO text.
+- A table or result with more rows than a series admits is refused at resolve
+  with `LIMIT_POINTS` (`LIMIT_PIE_POINTS` for a pie), with a message naming the
+  table or query. Nothing is truncated. Chart listings report no `over_limit`
+  for these kinds, because knowing the size means reading the data.
+- Suggest works from a table's schema without reading rows. There is no
+  suggestion from a saved query.
+- A series name stays a range or fixed text.
+
+### A limit the earlier stage 2 documents omit
+
+The engine caps the cell source text one calculation may read at 8 MiB. The
+chart job uses one calculator for the whole job (decision 13 above), and that
+counter is not reset between reads, so the cap applies to a whole chart job,
+not to each slice. A chart whose formula sources reach more than 8 MiB of cell
+source text fails with `CALCULATION_FAILED`. The capacity run's 80,000 short
+formulas are well below it. Table and saved-query sources do not use the
+calculator and do not count toward it.
+
+### Measurements
+
+On the reference Mac only: arm64, macOS 26.6.2, Python 3.14.6, as recorded in
+the evidence file. This is one Mac; nothing was measured on Windows or Linux.
+Observed during the run but not recorded in the evidence file: the hardware
+(Apple M1, 8 GB), Qt 6.12.0 installed but not used by these measurements, no
+test suite running, a load average of about 1.4 to 1.9, and 19 GiB of free disk
+space before and after the run.
+
+`PYTHONPATH=service python3 tests/chart_render_benchmark.py --sources --work build/unused --evidence docs/design/evidence/charts-stage-2`
+creates the workbook in a temporary directory that is removed when the run
+ends (`--work` is not used). Through `LocalService`: a table `Sales` of
+10,000 rows with one text column (`Region`, 100 distinct values) and four
+number columns, filled by 10 inserts of 1,000 rows in 0.46 s, and a saved
+query `Totals`, `SELECT Region, SUM(A) AS Total FROM Sales GROUP BY Region
+ORDER BY Region`, returning 100 rows. Each job ran three times, timed end to
+end through the SDK (start, poll, release); size is the job result as JSON;
+charts are 800×500.
+
+| Chart | Job | Points | Wall time (median, worst) | Result |
+| --- | --- | --- | --- | --- |
+| Line, 1 table series, table categories | resolve | 10,000 | 0.12 s, 0.14 s | 218 KiB |
+| Line, same | render | 10,000 | 0.18 s, 0.19 s | 1.18 MiB |
+| Line, 4 table series | resolve | 40,000 | 0.15 s, 0.19 s | 459 KiB |
+| Column, query categories and values | resolve | 100 | 0.06 s, 0.06 s | 2.8 KiB |
+| Column, same | render | 100 | 0.06 s, 0.06 s | 23.7 KiB |
+
+The four-series chart was not rendered: its 40,000 values exceed the render
+limit of 10,000.
+
+**The private snapshot copy.** The same workbook was then padded with 200,000
+number cells on `Sheet1` (20 edits of 10,000 cells, 4.0 s), which took the
+workbook file from 729,088 bytes (0.70 MiB) to 13,926,400 bytes (13.3 MiB).
+
+| Chart | Job | Unpadded (median, worst) | Padded (median, worst) |
+| --- | --- | --- | --- |
+| Column over the saved query | resolve | 0.06 s, 0.06 s | 0.17 s, 0.17 s |
+| Column over the saved query | render | 0.06 s, 0.06 s | 0.17 s, 0.17 s |
+| Line, 1 table series (runs no query) | resolve | 0.12 s, 0.14 s | 0.13 s, 0.18 s |
+
+An ordinary query job over the same saved query, run once at each size,
+reports its own snapshot copy: 737,280 bytes in 1.9 ms unpadded and
+13,926,400 bytes in 22.4 ms padded, with execution 4.1 and 4.8 ms. So the copy
+grows with the workbook, about 1.6 ms per MiB here, and a table chart, which
+copies nothing, barely changes. The query chart's end-to-end time grew by
+0.11 s, more than the copy alone. The SDK polls a job every 50 ms, so times
+under about 0.2 s move in steps of roughly that size and cannot be split
+finely; a probe run outside the benchmark, timing `run_once` in-process on the
+same two workbooks, took 4 ms and 17 ms (median of five); it was observed
+during the run but is not recorded in the evidence file. In an earlier run of the same benchmark a few minutes
+before, the one-series table resolve took 0.06 s rather than 0.12 s; the other
+figures agreed within about 0.05 s.
+
+Every job finished far inside its 30-second budget and under 4 MiB, so no
+limit changed. Larger workbooks were not measured. At the rate above the copy
+of a 1 GiB workbook would take about 1.7 s on this machine, and the copy's own
+5-second limit would be reached near 3 GiB; both are extrapolations, not
+measurements. Evidence:
+[sources.json](evidence/charts-stage-2/sources.json).
+
+The example, `PYTHONPATH=service python3 examples/charts_script.py`, exits 0;
+its table chart (24 points) and saved-query chart (5 points) are each created,
+rendered to `table.svg` and `query.svg`, and deleted.
+
+### Defects found by the whole-branch review
+
+Each code defect was fixed test-first.
+
+- **A chart over a saved query with a parameter that has no saved default could
+  be created but never resolved.** The query engine needs an explicit value
+  for every declared parameter, and a chart cannot supply one, so every resolve
+  failed with `INVALID_PARAMETERS`: "Each parameter needs a unique name,
+  declared type and explicit value", naming neither the query nor the
+  parameter. Such a source is now refused on input with `INVALID_SPEC`, naming
+  the query and the parameter. At resolve, every error a saved-query run raises
+  keeps its code, status and details and is prefixed with `Saved query <name>: `,
+  which covers a query saved again later without a default. `STALE_STATE` and
+  `CANCELLED` are not prefixed; the row-limit refusal already named the query.
+- **Stale draft references.** Three lines, in the documents index, this
+  document's range-source section and the implementation status, still named
+  Draft 0.4 as the as-built design. They now say Draft 0.4 was the as-built
+  draft on November 12 and Draft 0.5 is the current one.
+- **Hook ordering.** A `table_schema` that removed a column broke chart sources
+  after its after-structure hook, while `table_drop` and `query_delete` break
+  them before theirs, so an after handler on a schema change saw the sources
+  not yet broken. All three now break before the after-structure hook.
+- **OpenAPI.** The `Receipt` schema did not list `broken_charts`; it does now.
+  The `ChartSpec` series `name` source referred to the three-kind
+  `ChartSource`; the range form is now its own schema, `ChartRangeSource`,
+  which `ChartSource` references and the name source references alone. The
+  `spec_patch` description now says how to change a source's kind.
+
+### Defects found by the pull request review
+
+The owner's review of the pull request made six findings. Each was reproduced
+by a test that failed first.
+
+- **A saved query named after another query's identity could capture a
+  chart.** Saved-query lookup matched an identity or a name in catalog order,
+  so a query whose name was another query's UUID could be found first. A chart
+  then plotted the wrong query, and a title-only `spec_patch` rewrote its
+  stored `query_id`. Lookup now prefers an exact identity over any name, for
+  every caller, and a chart's query run refuses a query that does not have
+  exactly the stored identity.
+- **A table source could load hundreds of MiB of text.** The row limit bounded
+  rows, not bytes: 10,001 rows of 64 KiB text is about 625 MiB. A resolve now
+  has a byte budget of 4 MiB across all its sources (`LIMIT_BYTES`), the same
+  size as the job result limit that would have refused the result anyway. A
+  table column is read row by row and each value is charged before it is
+  kept. Range sources are charged too, and keep only the cell fields a chart
+  uses.
+- **Query results were held whole.** Each run is capped at 16 MiB, but a chart
+  kept every result, including columns it never reads, until its resolve
+  ended. A result is now reduced at once to the columns the chart uses, and
+  what is kept is charged to the same 4 MiB budget. One run can still hold up
+  to 16 MiB while it executes.
+- **A chart's query run could not be cancelled while it waited for the
+  workbook.** The run waited on the workbook lock with no check, and the chart
+  worker also took that lock to reach the query manager. The wait now honours
+  cancellation, the job's deadline and the manager stopping, and the query
+  manager is fetched when the job starts, on the request thread.
+- **A column the saved query no longer returns was reported by running the
+  query.** The check before reading verified that the query existed but not
+  its saved result shape, so a query changed to return a BLOB in place of the
+  charted column failed with `QUERY_VALUE` while the chart listing showed the
+  source as broken. The saved shape is now checked first: such a source is
+  `SOURCE_BROKEN` and the query does not run.
+- **A suggestion from a table could answer from a newer state.** The state
+  check and the schema read were not in one read transaction, so a commit from
+  another connection between them produced a suggestion for a state the caller
+  had not asked for. Both now share one transaction.
+
+### Decisions the controller made
+
+Made while this block's plan was executed. Each is open to reversal.
+
+1. **Branch in place rather than a worktree,** because the checkout's `build/`
+   directory holds the CTest build and the Qt probe. Cost: the main checkout
+   stays on this branch.
+2. **A table read uses the workbook's own read cancellation event,** the one
+   an ordinary read passes to its SQL deadline, which is what the chart job's
+   snapshot is opened with. The plan left the event unspecified. Cost if
+   wrong: none.
+3. **A saved-query run for a chart was given a fixed 20 seconds** (reversed by
+   decision 5). The plan asked for "the time left in the job, at most 20", but
+   the job's checkpoint exposed no time left. The cost then judged: a job could
+   overrun its 30 seconds by up to the query's remaining time before failing
+   with `TIMEOUT`. Review showed that overrun could reach about 25 seconds for
+   a run started late in the job, which breaks the rule that a chart job stays
+   inside its 30-second budget.
+4. **A one-off saved-query run holds at most 16 MiB in memory,** and its row
+   bound is clamped to the query jobs' own row limit. The plan bounded it by
+   rows alone; an automated security check found that a row can carry up to
+   256 columns of 64 KiB text, so 10,001 rows could be gigabytes. Past 16 MiB
+   the run fails with `QUERY_LIMIT`. Cost if wrong: a chart over a query
+   returning more than 16 MiB is refused, although a query job would spool the
+   same result to disk.
+5. **The chart job's deadline bounds its saved-query runs,** reversing
+   decision 3. The preparation job's checkpoint now exposes its absolute
+   `deadline`, `QueryJobs.run_once` takes an optional absolute `deadline` that
+   bounds both the snapshot copy and execution, and the chart job passes it,
+   with 20 seconds kept as the run's own ceiling. Cost if wrong: one additive
+   attribute on the preparation-job checkpoint and one optional parameter on
+   `run_once`.
+6. **A saved query needs a default for every parameter to be charted.** A chart
+   over a saved query with a parameter that has no saved default was accepted
+   but could never resolve. It is refused on input with `INVALID_SPEC` naming
+   the query and the parameter, and every error a query run raises at resolve
+   names the saved query, with its code unchanged; a chart has no way to supply
+   parameter values. Cost if wrong: a query with a parameter must be given a
+   default before it can be charted.
+7. **Mixed source kinds get a documentation note, not a refusal.** Table
+   categories come in stored row order and query values in the query's order,
+   so mixing them can misalign labels. The design allows mixed kinds, ranges
+   already behave this way, and there is no join key to check. Cost if wrong: a
+   person can build a chart whose labels do not match its bars and is told only
+   by the documents.
+8. **Fixed now, re-graded by effect or cheapness:** the three document lines
+   naming Draft 0.4 as the as-built design; `break_table` called before the
+   after-structure hook in `table_schema`, as in `table_drop` and
+   `query_delete`; `broken_charts` in the OpenAPI `Receipt`; a range-only
+   series name source in the OpenAPI `ChartSpec`; how to change a source's kind
+   with `spec_patch`, in the design and OpenAPI; and the measurement figures
+   not in the evidence file labelled as such. Cost if wrong: none beyond the
+   change itself.
+
+Two questions the controller settled by checking the code rather than by a
+ruling: a stored table or query source used as a series name is
+`INVALID_SPEC`, as is a table source with only one of its two identities; and
+temporal table values are stored as canonical ISO text, so time and datetime
+categories display as ISO text, as dates do.
+
+### Known and left as they are
+
+Found in review and judged minor. None changes a documented result.
+
+**Specification and following**
+- Reading a chart's description looks up the table or saved query once per
+  source rather than once per chart.
+- Tests: no query-source counterpart to the test that a workbook without a
+  relational catalog describes cleanly; no test of one chart over two tables
+  where one is dropped; the refused-drop test for a table source sits in the
+  query source test file.
+
+**Reading tables and running queries**
+- A `TIMEOUT` from the refresh before a table read's transaction escapes as
+  `TIMEOUT`, not `CALCULATION_FAILED`, and no test drives a table read's
+  timeout through to `CALCULATION_FAILED`.
+- `LIMIT_CELLS` is checked after each source is read, so the running total can
+  overshoot by at most one read of 10,001 rows before the refusal. That
+  refusal reads "more than 100000 cells", without the thousands separator the
+  other limit messages use.
+- The refusal of a result over 10,001 rows is recognised by the query engine's
+  exact message text; a test pins it, and a drift would show `QUERY_LIMIT`
+  instead of `LIMIT_POINTS`.
+- A chart with a query source resolved without a query runner is refused with
+  `INVALID_ARGUMENT` before its broken-source checks. Only internal callers can
+  do this.
+- The pre-check that a run has not already passed its deadline uses `<` where
+  the run's own checkpoint uses `<=`.
+
+**The one-off query run and shutdown**
+- Stopping is not checked again after `run_once` takes the workbook lock, so a
+  run blocked there past `close()`'s two-second wait would surface a raw SQLite
+  error. An ordinary query job start has the same exposure.
+- `close()` can take up to two seconds longer for each run in flight.
+- A cancelled run still waiting for the workbook lock reports `CANCELLED` with
+  status 400, and one cancelled during execution with 409; this is the
+  existing behaviour of the lock helper. No test pins the status when `close()`
+  lands during execution.
+- Tests: removal of the run's temporary directory is asserted only for success
+  and `QUERY_LIMIT`; there is no test of `REPAIR_SCOPE`; one message assertion
+  only checks that the text contains "2".
+
+**Jobs and interfaces**
+- A render job's progress drops from the cell count to the point count at its
+  "Rendering" step. This predates the block.
+- The SDK's `suggest_chart(sheet=..., table=...)` ignores the sheet, where REST
+  and the CLI refuse the combination.
+- The OpenAPI `ChartSpec` series `name` referred to the three-kind
+  `ChartSource`, though only a range is accepted there. Fixed after the
+  whole-branch review: it now refers to `ChartRangeSource`.
+- Tests: `LIMIT_SERIES` for a table suggestion is tested at 65 data columns,
+  not at the boundary of 64; one refusal test repeats a call.
+- Two `ResourceWarning`s under `python3 -X dev` predate this block, and an
+  unclosed-database `ResourceWarning` from `chart_resolve` when the chart test
+  modules run together is untraced.
+
+**Found by the whole-branch review and deferred**
+- Suggest from a table reads no rows, so it can propose a chart that cannot
+  resolve or render. That is reported at resolve, and the `LIMIT_CELLS` and
+  `LIMIT_RENDER_POINTS` messages name no source.
+- `run_once` waits for the live workbook lock without a deadline or a
+  cancellation check.
+- A lowered `QueryJobs.max_rows` would surface `QUERY_LIMIT` instead of
+  `LIMIT_POINTS`.
+- When categories, values and x differ in length, the renderer pads them, and
+  the padding is not counted as gaps.
+- Query result columns match case-sensitively, while table columns match
+  ignoring case.
+- One chart job runs at a time per workbook, so a slow saved query delays
+  other charts.
+
+**Commit trailers**
+- The co-author trailers on this branch's commits do not all name the same
+  model. They are left as they are.
+
+### Still open after this block
+
+- The desktop (stage 3), and workbook-Python chart operations.
+- A suggestion from a saved query, and any filtered or ordered table source
+  other than through a saved query.
+- A measured ceiling for the private snapshot copy on a large workbook, and
+  for formula sources at the edge of the job budget.
+- Windows and Linux.
+
 ## What is open
 
 - **Table and query sources,** the second step of stage 2, with their own plan.
+  Built on November 13, 2026; see [Table and saved-query sources](#table-and-saved-query-sources).
 - **Windows and Linux.** Font loading, text layout and Qt timings were measured
   on one Mac only.
 - **The desktop** (stage 3): wireframes, Insert Chart, floating charts and the

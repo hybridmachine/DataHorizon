@@ -7,12 +7,14 @@ state is reported as ``stale`` and its result is withheld.
 """
 from contextlib import closing
 
-from . import chart_render, chart_resolve, charts
+from . import chart_render, chart_resolve, chart_sources, charts
 from .engine import EngineError, Workbook, require
 from .jobs import PreparationJobs
 from .temporal import utc_clock
 
 JOB_SECONDS = 30
+# A saved-query run's own budget; it is also bounded by the job's deadline.
+QUERY_SECONDS = 20
 KINDS = ("resolve", "render")
 FIELDS = {"job_id", "expected_state", "chart_id", "kind", "width", "height"}
 SIZE_LIMITS = {"width": (64, 4096), "height": (48, 4096)}
@@ -52,8 +54,18 @@ class ChartJobs:
             size = (request["width"], request["height"]) if kind == "render" else None
             self.metadata = {key: value for key, value in self.metadata.items() if key in self.jobs.entries}
             clock = utc_clock()
+            # Fetched here, on the request thread that already holds the workbook lock, so the worker
+            # never waits on that lock to reach the query manager.
+            queries = self.book.query_jobs()
 
             def compute(payload, checkpoint):
+                def run_query(query_id):
+                    # Runs on the live workbook, which must still be at the state the job started at,
+                    # and stops at the job's own deadline.
+                    return queries.run_once(
+                        query_id, state=state, cancel_event=checkpoint.cancel_event, seconds=QUERY_SECONDS,
+                        max_rows=chart_sources.QUERY_ROWS, deadline=checkpoint.deadline)
+
                 with closing(Workbook(self.book.path, readonly=True, cancel_event=checkpoint.cancel_event)) as snapshot:
                     base = snapshot.calculator
                     shared = []
@@ -82,7 +94,7 @@ class ChartJobs:
                     _, stored = charts.find(snapshot, chart_id)
                     # A snapshot has its own epoch. Its reads are checked against its own state;
                     # access() withholds the result when the workbook has moved on from `state`.
-                    result = chart_resolve.resolve(snapshot, stored, snapshot.state(), checkpoint)
+                    result = chart_resolve.resolve(snapshot, stored, snapshot.state(), checkpoint, run_query)
                     result["state"] = state
                 if size is not None:
                     checkpoint(result["counts"]["points"], "Rendering")

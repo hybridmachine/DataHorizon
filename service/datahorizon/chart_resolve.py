@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Read a stored chart's sources through the engine, and suggest a chart from a range.
+"""Read a stored chart's sources through the engine, and suggest a chart from a range or a table.
 
 ``resolve`` turns a stored chart payload into the plain values
 ``chart_render.render`` draws.  ``suggest`` proposes an input-form
-specification for a selected rectangle.  Neither writes anything.
+specification for a selected rectangle or a table.  Neither writes anything.
 """
 import math
 
-from . import charts
-from .chart_render import LIMIT_SERIES
+from . import chart_sources, charts, relational
+from .chart_render import LIMIT_PIE_POINTS, LIMIT_POINTS, LIMIT_SERIES
 from .engine import MAX_CELLS, EngineError, rectangle, require
 from .formula import column_name
 
@@ -17,19 +17,24 @@ GAP_CAUSES = ("empty", "text", "error")
 SLICE_CELLS = 1_000
 
 
-def _broken(source):
-    keys = ("sheet_id", "row1", "col1", "row2", "col2")
-    return any(source[key] is None for key in keys)
-
-
 def _check_sources(book, sources):
-    """Raise SOURCE_BROKEN for a source that names no rectangle or a sheet that is gone."""
-    if any(_broken(source) for source in sources):
-        raise EngineError("SOURCE_BROKEN", "A chart source no longer names a range", 409)
+    """Raise SOURCE_BROKEN for a source that names no data, or a sheet, table column or saved query that is gone."""
+    for source in sources:
+        if charts.is_broken(source):
+            raise EngineError("SOURCE_BROKEN", "A chart source no longer names its data", 409)
     with book.lock:
         existing = {row[0] for row in book.db.execute("SELECT id FROM sheets")}
-    if any(source["sheet_id"] not in existing for source in sources):
-        raise EngineError("SOURCE_BROKEN", "A chart source names a sheet that no longer exists", 409)
+        for source in sources:
+            kind = charts.source_kind(source)
+            if kind == "range" and source["sheet_id"] not in existing:
+                raise EngineError("SOURCE_BROKEN", "A chart source names a sheet that no longer exists", 409)
+            if kind == "table":
+                chart_sources.find(book, source)
+            if kind == "query":
+                # The saved shape is checked before anything runs: a column the query no longer
+                # returns is a broken source, whatever running the query would have reported.
+                item = chart_sources.find_query(book, source)
+                chart_sources.check_column(item, [column["name"] for column in item["shape"]], source["column"])
 
 
 def _slices(source):
@@ -44,10 +49,14 @@ def _slices(source):
         yield {**fixed, axis[0]: start, axis[1]: min(start + SLICE_CELLS - 1, high)}
 
 
-def _read(book, source, state, checkpoint=None):
+KEPT = ("value", "display", "calculation", "value_kind", "error")
+
+
+def _read(book, source, state, checkpoint=None, spend=lambda count: None):
     """Read one source slice by slice, each a bounded call; return its cells by position.
 
-    ``checkpoint(cells)`` is called after each slice with the cells read so far.
+    ``checkpoint(cells)`` is called after each slice with the cells read so far. Only the fields a
+    chart uses are kept, and ``spend(bytes)`` is charged for their text.
     """
     cells = {}
     done = 0
@@ -60,7 +69,9 @@ def _read(book, source, state, checkpoint=None):
             raise
         if result["state"] != state:
             raise EngineError("STALE_STATE", "Workbook changed while reading chart sources", 409)
-        cells.update(((cell["row"], cell["col"]), cell) for cell in result["cells"])
+        for cell in result["cells"]:
+            spend(chart_sources.size(cell.get("display") or "") + chart_sources.size(cell.get("error") or ""))
+            cells[(cell["row"], cell["col"])] = {key: cell[key] for key in KEPT if key in cell}
         done += (part["r2"] - part["r1"] + 1) * (part["c2"] - part["c1"] + 1)
         if checkpoint is not None:
             checkpoint(done)
@@ -72,8 +83,30 @@ def _positions(source):
             for col in range(source["col1"], source["col2"] + 1)]
 
 
-def _text(cells, source):
-    return [cells[position]["display"] if position in cells else "" for position in _positions(source)]
+def _cells(snapshot, source, state, role, chart_type, progress, query_result, spend):
+    """Return the cells of one source in order, ``None`` for an empty one.
+
+    ``progress(cells)`` is called with the number of cells read so far in this source.
+    ``query_result(source)`` returns the saved query and its result for a query source.
+    """
+    kind = charts.source_kind(source)
+    pie = chart_type == "pie" and role in ("values", "categories")
+    limit = LIMIT_PIE_POINTS if pie else LIMIT_POINTS
+    if kind == "table":
+        cells = chart_sources.read_table(snapshot, source, state, limit, spend)
+        progress(len(cells))
+        return cells
+    if kind == "query":
+        item, result = query_result(source)
+        cells = chart_sources.read_query(item, result, source["column"], limit)
+        progress(len(cells))
+        return cells
+    read = _read(snapshot, source, state, progress, spend)
+    return [read.get(position) for position in _positions(source)]
+
+
+def _text(cells):
+    return [cell["display"] if cell is not None else "" for cell in cells]
 
 
 def _classify(cell):
@@ -93,8 +126,8 @@ def _classify(cell):
 def _numbers(cells, source):
     """Return ``(values, causes)``: a number or ``None`` per cell, and why each ``None`` is a gap."""
     values, causes = [], []
-    for position in _positions(source):
-        cell = cells.get(position)
+    positions = _positions(source) if charts.source_kind(source) == "range" else [None] * len(cells)
+    for position, cell in zip(positions, cells):
         # #LIMIT! means the engine could not compute the value: the resolve cannot finish, it is not a gap.
         if cell is not None and cell.get("calculation") == "error" and cell.get("display") == "#LIMIT!":
             row, col = position
@@ -105,8 +138,12 @@ def _numbers(cells, source):
     return values, causes
 
 
-def resolve(snapshot, payload, state, checkpoint=None):
-    """Return the renderer's input for a stored chart, with point and gap counts."""
+def resolve(snapshot, payload, state, checkpoint=None, run_query=None):
+    """Return the renderer's input for a stored chart, with point and gap counts.
+
+    ``run_query(query_id)`` runs a saved query and returns ``{"columns", "rows"}``; it is needed only
+    by a chart with a saved-query source. Each saved query runs once per resolve, outside any lock.
+    """
     issue = charts.validate_stored(payload)
     if issue is not None:
         status = 409 if issue == "UNSUPPORTED_SPEC_VERSION" else 400
@@ -115,11 +152,36 @@ def resolve(snapshot, payload, state, checkpoint=None):
     limit = charts.limit_error(spec)
     if limit is not None:
         raise limit
-    _check_sources(snapshot, charts._sources(spec))
+    sources = charts._sources(spec)
+    if run_query is None and any(charts.source_kind(source) == "query" for source in sources):
+        raise EngineError("INVALID_ARGUMENT", "Saved-query chart sources need a query runner")
+    _check_sources(snapshot, sources)
 
     cells_read = 0
+    held = 0
+    query_results = {}
 
-    def fetch(source):
+    def spend(count):
+        nonlocal held
+        held += count
+        if held > charts.LIMIT_SOURCE_BYTES:
+            raise EngineError("LIMIT_BYTES", "The chart's sources hold more text than a chart may read; "
+                              f"the limit is {charts.LIMIT_SOURCE_BYTES:,} bytes across all sources")
+
+    def query_result(source):
+        query_id = source["query_id"]
+        if query_id not in query_results:
+            with snapshot.lock:
+                item = chart_sources.find_query(snapshot, source)
+            if checkpoint is not None:
+                checkpoint(cells_read, "Running saved query")
+            wanted = {other["column"] for other in sources
+                      if charts.source_kind(other) == "query" and other["query_id"] == query_id}
+            result = chart_sources.keep_columns(chart_sources.run_query(run_query, item), wanted, spend)
+            query_results[query_id] = (item, result)
+        return query_results[query_id]
+
+    def fetch(source, role):
         nonlocal cells_read
         before = cells_read
 
@@ -128,29 +190,32 @@ def resolve(snapshot, payload, state, checkpoint=None):
             cells_read = before + done
             if checkpoint is not None:
                 checkpoint(cells_read, "Reading sources")
-        return _read(snapshot, source, state, progress)
+        cells = _cells(snapshot, source, state, role, spec["type"], progress, query_result, spend)
+        cells_read = before + len(cells)
+        if cells_read > charts.LIMIT_CELLS:
+            raise EngineError("LIMIT_CELLS", f"The chart's sources hold more than {charts.LIMIT_CELLS} cells")
+        return cells
 
     categories = None
     if spec["categories"] is not None:
-        source = spec["categories"]["source"]
-        categories = _text(fetch(source), source)
+        categories = _text(fetch(spec["categories"]["source"], "categories"))
     gaps = dict.fromkeys(GAP_CAUSES, 0)
     series = []
     points = 0
     for item in spec["series"]:
         if "source" in item["name"]:
             source = item["name"]["source"]
-            name = _text(fetch(source), source)[0]
+            name = _text(fetch(source, "name"))[0]
         else:
             name = item["name"]["text"]
         source = item["values"]["source"]
-        values, causes = _numbers(fetch(source), source)
+        values, causes = _numbers(fetch(source, "values"), source)
         x = None
         if item["x"] is not None:
             # A scatter point draws only with both coordinates: a usable value whose x is missing
             # or unusable is a gap too, classified by what is wrong with the x cell.
             source = item["x"]["source"]
-            x, x_causes = _numbers(fetch(source), source)
+            x, x_causes = _numbers(fetch(source, "x"), source)
             x_causes += ["empty"] * (len(causes) - len(x_causes))
             causes = [cause or x_cause for cause, x_cause in zip(causes, x_causes)]
         for cause in causes:
@@ -170,11 +235,59 @@ def _holds_number(cell):
     return cell is not None and cell.get("calculation") != "error" and _classify(cell)[0] is not None
 
 
+def _suggest_table(book, args, chart_type):
+    """Suggest a specification over a table's columns, given by id, reading the schema only.
+
+    The state check and every read share one read transaction, so the answer is for the state asked for.
+    """
+    with book.lock:
+        book.refresh()
+        book.db.execute("BEGIN")
+        try:
+            book.refresh()
+            require(args.get("expected_state") == book.state(), "STALE_STATE", "Workbook changed. Choose the table again", 409)
+            return _table_suggestion(book, relational.table(book.db, args["table"]), chart_type)
+        finally:
+            book.db.execute("ROLLBACK")
+
+
+def _table_suggestion(book, found, chart_type):
+    def source(column):
+        return {"kind": "table", "table": found["id"], "column": column["id"]}
+
+    columns = found["columns"]
+    data = [column for column in columns if column["type"] in ("integer", "number")]
+    require(data, "INVALID_SPEC", "The table holds no numeric data column")
+    label = next((column for column in columns if column["type"] not in ("integer", "number", "boolean")), None)
+    x_column = None
+    if chart_type == "scatter":
+        x_column, data = data[0], data[1:]
+        require(data, "INVALID_SPEC", "A scatter chart needs an x column and a value column")
+    elif chart_type == "pie":
+        data = data[:1]
+    require(len(data) <= LIMIT_SERIES, "LIMIT_SERIES", f"The table would make more than {LIMIT_SERIES} series")
+    series = []
+    for column in data:
+        item = {"name": {"text": column["name"]}, "values": {"source": source(column)}}
+        if x_column is not None:
+            item["x"] = {"source": source(x_column)}
+        series.append(item)
+    spec = {"spec_version": 1, "type": chart_type, "title": {"text": None}, "series": series}
+    if chart_type != "scatter":
+        spec["categories"] = {"source": source(label)} if label is not None else None
+    charts.normalise_spec(book, spec)
+    return {"spec": spec}
+
+
 def suggest(book, args):
-    """Suggest an input-form specification for the rectangle in ``args``."""
-    require(args.get("expected_state") == book.state(), "STALE_STATE", "Workbook changed. Select the range again", 409)
+    """Suggest an input-form specification for the rectangle, or the table, in ``args``."""
     chart_type = args.get("type", "column")
     require(chart_type in charts.TYPES, "INVALID_ARGUMENT", f"type must be one of {', '.join(charts.TYPES)}")
+    if "table" in args:
+        clash = [key for key in ("sheet", "r1", "c1", "r2", "c2") if key in args]
+        require(not clash, "INVALID_ARGUMENT", f"table cannot be combined with {', '.join(clash)}")
+        return _suggest_table(book, args, chart_type)
+    require(args.get("expected_state") == book.state(), "STALE_STATE", "Workbook changed. Select the range again", 409)
     r1, c1, r2, c2 = rectangle(args, MAX_CELLS)
     result = book.read(args.get("sheet"), {"r1": r1, "c1": c1, "r2": r2, "c2": c2, "calculation": "fresh"}, limit=MAX_CELLS)
     require(result["state"] == args["expected_state"], "STALE_STATE", "Workbook changed. Select the range again", 409)

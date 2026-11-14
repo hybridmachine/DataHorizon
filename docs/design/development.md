@@ -402,6 +402,56 @@ the workbook outdates while it runs raises `STALE_STATE`; resolve or render
 again. Over-limit charts are refused with a code that names the limit
 (`LIMIT_POINTS`, `LIMIT_PIE_POINTS`, `LIMIT_CELLS`, `LIMIT_RENDER_POINTS`, …).
 
+A source can also be a column of a structured table or of a saved query's
+result. A table is read whole, in stored row order; filter or order it with a
+saved query. Each saved query a chart reads runs afresh for every resolve and
+render. Suggest works from a table, not from a saved query. These examples were
+run as written on November 13, 2026; the CLI lines run after the Python block,
+against the workbook it leaves behind.
+
+```python
+from datahorizon.client import LocalService
+
+with LocalService() as client, client.open('/tmp/chart-sources.dhwb', create=True) as book:
+    book.create_table('Sales', [dict(name='Month', type='text'), dict(name='Units', type='integer')])
+    book.insert_records('Sales', [dict(Month='Jan', Units=120), dict(Month='Feb', Units=132), dict(Month='Mar', Units=98)])
+    # Number columns become series, the first text column the categories.
+    spec = book.suggest_chart(table='Sales', type='column')['spec']
+    table_chart = book.create_chart(spec, name='Units')['chart_id']
+    open('/tmp/units.svg', 'w').write(book.render_chart(table_chart, 800, 500)['svg'])
+
+    book.save_query(book.preview_query('Best', 'SELECT Month, Units FROM Sales WHERE Units > 100 ORDER BY Units DESC'))
+    query_chart = book.create_chart({'spec_version': 1, 'type': 'bar',
+        'categories': {'source': {'kind': 'query', 'query': 'Best', 'column': 'Month'}},
+        'series': [{'name': {'text': 'Units'}, 'values': {'source': {'kind': 'query', 'query': 'Best', 'column': 'Units'}}}]},
+        name='Best months')['chart_id']
+    print(book.resolve_chart(query_chart)['counts'])  # 2 points, no gaps
+```
+
+```sh
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/chart-sources.dhwb charts suggest --table Sales --type line
+echo '{"spec": {"spec_version": 1, "type": "line", "categories": {"source": {"kind": "table", "table": "Sales", "column": "Month"}}, "series": [{"name": {"text": "Units"}, "values": {"source": {"kind": "table", "table": "Sales", "column": "Units"}}}]}}' \
+  | PYTHONPATH=service python3 -m datahorizon.cli /tmp/chart-sources.dhwb charts create
+echo '{"spec": {"spec_version": 1, "type": "pie", "categories": {"source": {"kind": "query", "query": "Best", "column": "Month"}}, "series": [{"name": {"text": "Units"}, "values": {"source": {"kind": "query", "query": "Best", "column": "Units"}}}]}}' \
+  | PYTHONPATH=service python3 -m datahorizon.cli /tmp/chart-sources.dhwb charts create
+PYTHONPATH=service python3 -m datahorizon.cli /tmp/chart-sources.dhwb charts resolve CHART_ID
+```
+
+`charts list` shows each table or query source with its current `table`,
+`column` or `query` name and `broken`. Dropping the table, removing the column
+or deleting the saved query marks the source broken; resolve then fails with
+`SOURCE_BROKEN`, and a new table or query of the same name does not repair it.
+A table or query result longer than the point limit is refused at resolve with
+`LIMIT_POINTS` or `LIMIT_PIE_POINTS`, naming it.
+
+Sources of different kinds in one chart are lined up by position only.
+Categories from a table come in stored row order; values from a saved query
+come in the query's order. Mixing them can label points wrongly, and nothing
+checks it, so take a chart's categories and values from the same table or the
+same saved query. The same has always been true of two ranges of different
+lengths or orders. A saved query can be charted only when each of its
+parameters has a saved default.
+
 ## Install smoke and measurements
 
 ```sh

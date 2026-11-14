@@ -103,8 +103,12 @@ def apply(book,args):
     for identity,before,after in prepared['rows']:
         if encoded(before)!=encoded(after) or semantic_changes:
             capture(book,target,identity,before,after,schema_changed=bool(semantic_changes),changed_columns=semantic_changes|{key for key in before.keys()&after.keys() if encoded(before[key])!=encoded(after[key])})
+    from .charts import break_table
+    result=dict(table=target,converted_records=len(prepared['rows']))
+    broken_charts=break_table(book,target['id'],set(new_columns))
+    if broken_charts:result['broken_charts']=broken_charts
     structure_hook(book,args,'after',before_catalog)
-    return dict(table=target,converted_records=len(prepared['rows']))
+    return result
 
 
 def rebuild(book,old,target,rows):

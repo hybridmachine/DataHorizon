@@ -6,7 +6,12 @@
 Starts a local service, writes twelve months of data, and for each chart type
 suggests a specification from the range, creates the chart, renders it to
 ``<out>/<type>.svg``, patches its title, and undoes and redoes the patch.
-Finally it deletes one chart and undoes the delete.
+Then it deletes one chart and undoes the delete.
+
+Finally it charts a structured table and a saved query: a table chart suggested
+from the table ``Sales`` and a chart over the saved query ``Top months`` are
+each created, rendered to ``<out>/table.svg`` and ``<out>/query.svg``, and
+deleted.
 """
 import argparse
 from pathlib import Path
@@ -24,6 +29,23 @@ def fill(book):
         cells.append({"row": row, "col": 2, "source": str(100 + row * 12)})
         cells.append({"row": row, "col": 3, "source": f"=B{row}*0.6"})
     book.apply("edit", "Sheet1", cells=cells)
+
+
+def fill_table(book):
+    book.create_table("Sales", [{"name": "Month", "type": "text"}, {"name": "Units", "type": "integer"},
+                                {"name": "Cost", "type": "number"}])
+    book.insert_records("Sales", [{"Month": month, "Units": 100 + index * 12, "Cost": round((100 + index * 12) * 0.6, 2)}
+                                  for index, month in enumerate(MONTHS, start=2)])
+    book.save_query(book.preview_query("Top months", "SELECT Month, Units FROM Sales ORDER BY Units DESC LIMIT 5"))
+
+
+def render_and_delete(book, spec, name, out):
+    chart_id = book.create_chart(spec, name=name)["chart_id"]
+    rendered = book.render_chart(chart_id, 800, 500)
+    (out / f"{name}.svg").write_text(rendered["svg"], encoding="utf-8")
+    book.delete_chart(chart_id)
+    assert chart_id not in {chart["id"] for chart in book.charts()}
+    print(f"{name}: {rendered['counts']['points']} points, {len(rendered['svg'])} bytes of SVG; deleted")
 
 
 def title(book, chart_id):
@@ -64,6 +86,18 @@ def main():
         book.apply("undo")
         assert created["pie"] in {chart["id"] for chart in book.charts()}
         print(f"{len(book.charts())} charts after deleting one and undoing the delete")
+
+        fill_table(book)
+        # Suggest from a table: number columns become series, the text column the categories.
+        spec = book.suggest_chart(table="Sales", type="line")["spec"]
+        spec["title"] = {"text": "Sales table"}
+        render_and_delete(book, spec, "table", args.out)
+        # A saved query is run afresh for every resolve and render.
+        spec = {"spec_version": 1, "type": "bar", "title": {"text": "Top five months"},
+                "categories": {"source": {"kind": "query", "query": "Top months", "column": "Month"}},
+                "series": [{"name": {"text": "Units"},
+                            "values": {"source": {"kind": "query", "query": "Top months", "column": "Units"}}}]}
+        render_and_delete(book, spec, "query", args.out)
 
 
 if __name__ == "__main__":

@@ -61,10 +61,39 @@ deleted. A source is never silently repointed. REST and the SDK accept sources
 as `{"kind": "range", "sheet", "ref"}` with A1 text and return both forms on
 read; only the integer form is stored.
 
+Two further source kinds are part of specification version 1; neither changes
+the format version:
+
+| Kind | Stored form | Broken form |
+| --- | --- | --- |
+| `table` | `{"kind": "table", "table_id": text, "column_id": text}`: one column of a structured table, by the table's and the column's identity in the relational catalog | both ids `null` (one `null` without the other is `INVALID_SPEC`) |
+| `query` | `{"kind": "query", "query_id": text, "column": text}`: one column of a saved query's result, by the saved query's identity and the result column's name, non-empty | `query_id` `null`; `column` is kept |
+
+A `table` or `query` source may be a values, categories or x source, never a
+name source; a `table` or `query` name source is `INVALID_SPEC`. The managed
+service breaks these sources, and never repoints them: dropping a table breaks
+every source on it, a table schema change that removes a column breaks the
+sources on that column, and deleting a saved query breaks every source on it.
+A new table or saved query of the same name does not repair a broken source.
+Renaming a table, a column or a saved query, retyping a column and saving a
+saved query again change no stored source. A saved query saved again without
+the source's column keeps its stored `query_id`; the service reports the source
+broken on read and refuses it at resolve. A table read is the whole column in
+`_dh_row_id` order, and a query source is resolved by running the saved query;
+neither result is stored. The size limits above are checked for these kinds
+only when they are resolved.
+
+Direct readers should treat a chart source's `kind` as open to these three
+values, `range`, `table` and `query`, and should not assume a source carries
+`sheet_id` or coordinates. A direct edit that drops a table, column or saved
+query does not break chart sources; the service finds the target gone and
+refuses the source with `SOURCE_BROKEN` when it resolves the chart.
+
 Direct readers can rely on the payload keys above, on every specification key
-being present in stored form, on sources being addressed by sheet identity so
-a sheet rename changes nothing, and on resolved values and rendered output never
-being stored. A chart's data is read from the cells its sources name.
+being present in stored form, on sources being addressed by sheet, table,
+column or saved-query identity so a rename changes nothing, and on resolved values and rendered output never
+being stored. A chart's data is read from the cells, table columns or saved
+query results its sources name.
 
 A direct SQLite edit to a chart row is not validated until the workbook is next
 opened, copied or refreshed. A payload whose envelope breaks the rules above
