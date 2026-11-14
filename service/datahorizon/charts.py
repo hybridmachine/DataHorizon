@@ -21,6 +21,8 @@ SPEC_VERSION = 1
 TYPES = ("column", "bar", "line", "area", "pie", "scatter")
 GROUPED_TYPES = ("column", "bar", "area")
 LIMIT_CELLS = 100_000
+# Text and values a resolve may hold for one chart, across all its sources: the job result limit.
+LIMIT_SOURCE_BYTES = 4 * 1024 * 1024
 LIMIT_CHARTS = 64
 
 TITLE_LENGTH = 255

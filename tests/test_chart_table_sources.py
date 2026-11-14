@@ -476,6 +476,22 @@ class Resolving(Fixture):
                 self.assertEqual(view["result"]["counts"]["points"], 12)
                 self.assertEqual(view["result"]["resolved"]["categories"][:2], ["M1", "M2"])
 
+    def test_table_text_over_the_byte_budget_is_refused_before_all_rows_are_kept(self):
+        self.apply("table_create", name="Notes", columns=[dict(name="Note", type="text"), dict(name="N", type="integer")])
+        self.apply("table_insert", table="Notes", rows=[dict(Note=str(n) * 1000, N=n) for n in range(1, 101)])
+        real, kept = chart_sources._cell, []
+
+        def counted(column, stored):
+            kept.append(1)
+            return real(column, stored)
+
+        with mock.patch.object(charts, "LIMIT_SOURCE_BYTES", 20_000), mock.patch.object(chart_sources, "_cell", counted):
+            error = self.refused_resolve(column_spec(table("Notes", "N"), categories=table("Notes", "Note")))
+        self.assertEqual((error.body["code"], error.status), ("LIMIT_BYTES", 400))
+        self.assertLess(len(kept), 100)
+        with mock.patch.object(charts, "LIMIT_SOURCE_BYTES", 20_000):
+            self.assertEqual(self.resolve(column_spec(table("Notes", "N")))["counts"]["points"], 100)
+
     @classmethod
     def setUpClass(cls):
         cls.big_dir = tempfile.mkdtemp()
@@ -527,6 +543,37 @@ class Suggesting(Fixture):
     def test_a_table_without_text_like_columns_has_no_categories(self):
         self.apply("table_create", name="Nums", columns=[dict(name="A", type="integer"), dict(name="Flag", type="boolean")])
         self.assertIsNone(self.suggest(table="Nums")["categories"])
+
+    def test_suggest_from_a_table_never_answers_from_a_newer_state_than_it_was_asked_for(self):
+        old = self.book.state()
+        real, done = self.book.state, []
+
+        def state_then_concurrent_commit():
+            current = real()
+            if not done:                      # another connection adds a numeric column right after the check
+                done.append(1)
+                other = Workbook(self.book.path)
+                try:
+                    columns = [dict(c) for c in relational.table(other.db, "Sales")["columns"]]
+                    columns.append(dict(name="Extra", type="integer"))
+                    review = schema_preview(other, dict(table="Sales", columns=columns, expected_state=other.state()))
+                    other.mutate(dict(action="table_schema", operation_id=str(uuid.uuid4()),
+                                      expected_state=other.state(), **review["source_request"],
+                                      review_digest=review["review_digest"]))
+                except Exception:             # refused while this workbook holds its read transaction
+                    pass
+                finally:
+                    other.close()
+            return current
+
+        with mock.patch.object(self.book, "state", side_effect=state_then_concurrent_commit):
+            try:
+                out = chart_resolve.suggest(self.book, dict(expected_state=old, table="Sales"))
+            except EngineError as error:
+                self.assertEqual((error.body["code"], error.status), ("STALE_STATE", 409))
+            else:
+                self.assertNotIn("Extra", [item["name"]["text"] for item in out["spec"]["series"]])
+        self.assertEqual(done, [1])
 
     def test_suggest_refusals(self):
         self.assertEqual((self.refused_suggest(table="Nope").body["code"], self.refused_suggest(table="Nope").status), ("TABLE_NOT_FOUND", 404))

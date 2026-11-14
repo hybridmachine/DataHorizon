@@ -84,12 +84,15 @@ class QueryJobs:
         with self.lock:require(not self.stopping,'SERVICE_STOPPING','Query manager is stopping',503);self.runs.add(done)
         try:
             require(time.monotonic()<bound,'TIMEOUT','Query exceeded its time budget',409)
-            with self.book.lock:
+            # Closing the manager cancels this run as it cancels job workers. The wait for the workbook is
+            # cancellable and bounded too: a long managed operation must not pin a cancelled or expired run.
+            stop=_Stop(self,cancel_event)
+            with owned(self.book,stop,min(bound,time.monotonic()+self.snapshot_seconds)):
                 self.book.refresh();require(state==self.book.state(),'STALE_STATE','Refresh before running SQL',409)
                 require(not self.book.repair,'REPAIR_SCOPE','Reopen normally before running queries',409)
-                saved,request=self._saved(dict(query=query_id));declarations,values=bindings(request['sql'],request['parameters'],request['values'])
-            # Closing the manager cancels this run as it cancels job workers.
-            directory=create();entry=dict(state=state,cancel=_Stop(self,cancel_event),directory=directory,sql=request['sql'],values=values,saved=saved,deadline=bound)
+                saved,request=self._saved(dict(query=query_id));require(saved['id']==query_id,'QUERY_NOT_FOUND','Saved query does not exist',404)
+                declarations,values=bindings(request['sql'],request['parameters'],request['values'])
+            directory=create();entry=dict(state=state,cancel=stop,directory=directory,sql=request['sql'],values=values,saved=saved,deadline=bound)
             snapshot,registered=self._snapshot(entry);deadline=min(time.monotonic()+seconds,bound);rows=[];size=0;max_rows=min(max_rows,self.max_rows)
             with closing(sqlite3.connect(snapshot,isolation_level=None)) as db:
                 configure(db);dependencies,denied=authorize(db,registered)

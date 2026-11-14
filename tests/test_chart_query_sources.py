@@ -326,6 +326,53 @@ class Resolving(Fixture):
         self.assertEqual((error.body["code"], error.status), ("QUERY_VALUE", 409))
         self.assertTrue(error.body["message"].startswith("Saved query Blob: "), error.body["message"])
 
+    def impostor(self):
+        """Two saved queries where the one with the smaller id is NAMED after the other's id; return the other's id."""
+        first = self.save("First", "SELECT Month, Units FROM Sales ORDER BY Units")
+        second = self.save("Second", "SELECT Month, Units * 100 AS Units FROM Sales ORDER BY Units")
+        victim, other = (first, second) if first > second else (second, first)
+        self.apply("query_rename", query=other, name=victim)
+        return victim, (1.0 if victim == first else 100.0)
+
+    def test_a_query_named_after_another_querys_id_does_not_capture_the_chart(self):
+        victim, scale = self.impostor()
+        chart_id = self.apply("chart_create", spec=query_spec(None, query_source(victim, "Units")))["chart_id"]
+        stored = charts.find(self.book, chart_id)[1]
+        self.assertEqual(stored["spec"]["series"][0]["values"]["source"]["query_id"], victim)
+        out = self.resolve(stored=stored)
+        self.assertEqual(self.calls, [victim])
+        self.assertEqual(out["resolved"]["series"][0]["values"], [n * scale for n in range(1, 13)])
+        self.apply("chart_update", chart_id=chart_id, spec_patch={"title": {"text": "Renamed"}})
+        patched = charts.find(self.book, chart_id)[1]
+        self.assertEqual(patched["spec"]["series"][0]["values"]["source"]["query_id"], victim)
+
+    def test_run_once_runs_the_query_with_that_exact_id(self):
+        victim, scale = self.impostor()
+        result = self.run_query(victim)
+        self.assertEqual([row[1] for row in result["rows"]], [n * scale for n in range(1, 13)])
+        missing = str(uuid.uuid4())
+        self.apply("query_rename", query="Dupe", name=missing)
+        with self.assertRaises(EngineError) as caught:
+            self.run_query(missing)          # a query merely NAMED like the id is not that query
+        self.assertEqual(caught.exception.body["code"], "QUERY_NOT_FOUND")
+
+    def test_a_column_missing_from_the_saved_shape_is_refused_before_the_query_runs(self):
+        stored = self.payload(query_spec(None, query_source("Top", "Units")))
+        self.save("Top", "SELECT Month, x'0102' AS Renamed FROM Sales", query=self.query_id)
+        error = self.refused_resolve(stored=stored)
+        self.assertEqual((error.body["code"], error.status), ("SOURCE_BROKEN", 409))
+        self.assertIn("Units", error.body["message"])
+        self.assertIn("Top", error.body["message"])
+        self.assertEqual(self.calls, [])
+
+    def test_only_the_columns_a_chart_uses_count_against_its_byte_budget(self):
+        self.save("Wide", "SELECT Units, printf('%01000d', Units) AS Pad FROM Sales ORDER BY Units")
+        with patch.object(charts, "LIMIT_SOURCE_BYTES", 2_000):
+            out = self.resolve(query_spec(None, query_source("Wide", "Units")))      # Pad is never retained
+            self.assertEqual(out["counts"]["points"], 12)
+            error = self.refused_resolve(query_spec(query_source("Wide", "Pad"), query_source("Wide", "Units")))
+        self.assertEqual((error.body["code"], error.status), ("LIMIT_BYTES", 400))
+
     def test_redefined_query_without_the_column_is_refused(self):
         stored = self.payload(query_spec(None, query_source("Top", "Units")))
         self.save("Top", "SELECT Month, Units * 1.5 AS Cost FROM Sales", query=self.query_id)
@@ -451,6 +498,19 @@ class ThroughChartJobs(Fixture):
         while not condition():
             self.assertLess(time.monotonic(), deadline, "condition not reached")
             time.sleep(0.005)
+
+    def test_the_query_manager_is_not_fetched_on_the_chart_worker_thread(self):
+        chart_id = self.create(query_spec(None, query_source("Top", "Units")))
+        real, threads = self.book.query_jobs, []
+
+        def tracked():
+            threads.append(threading.current_thread() is threading.main_thread())
+            return real()
+
+        with patch.object(self.book, "query_jobs", side_effect=tracked):
+            view = self.wait(self.start(chart_id))
+        self.assertEqual(view["status"], "completed", view)
+        self.assertEqual(set(threads), {True})      # the worker never waits on the workbook lock for it
 
     def blocked_snapshot(self):
         """Block the first private snapshot taken until ``release`` is set; return ``(entered, release)``."""

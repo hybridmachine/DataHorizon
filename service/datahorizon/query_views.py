@@ -26,7 +26,8 @@ def query_name(value):
 
 def query(db,identifier):
     require(isinstance(identifier,str),'INVALID_ARGUMENT','A saved query name or ID is required')
-    item=next((item for item in queries(db) if identifier==item['id'] or identifier.casefold()==item['name'].casefold()),None)
+    # An ID names exactly one query; a query that is merely NAMED like another query's ID never shadows it.
+    saved=queries(db);item=next((item for item in saved if identifier==item['id']),None) or next((item for item in saved if identifier.casefold()==item['name'].casefold()),None)
     require(item is not None,'QUERY_NOT_FOUND','Saved query does not exist',404);return item
 
 

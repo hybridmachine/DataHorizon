@@ -170,7 +170,8 @@ version 1; the version does not change. The three kinds have these forms:
 On input a table is found by identity or by name ignoring case, as elsewhere in
 the relational interfaces, and its column by identity, else by name ignoring
 case; an unknown table is `TABLE_NOT_FOUND` (404) and an unknown column
-`COLUMN_NOT_FOUND`. A saved query is found by identity or name
+`COLUMN_NOT_FOUND`. A saved query is found by identity or name, an exact
+identity always winning over a query that is merely named like it
 (`QUERY_NOT_FOUND`, 404), and `column` must equal exactly one name in the
 query's saved result shape, else `COLUMN_NOT_FOUND`. A chart cannot supply
 parameter values, so a saved query can be charted only when every parameter it
@@ -228,6 +229,7 @@ own code, never truncated. Measurements are in the
 | Points in a pie | 1,000 (measured: 41 ms in Qt against a 75 ms budget) | `LIMIT_PIE_POINTS` |
 | Source cells per chart, all sources together | 100,000 | `LIMIT_CELLS` |
 | Values drawn by one render, all series together | 10,000 (a render result must stay under 4 MiB) | `LIMIT_RENDER_POINTS` |
+| Text and values a resolve holds, all sources together | 4 MiB, charged as each value is read and before it is kept; for a saved query only the columns the chart uses count | `LIMIT_BYTES` |
 | Chart size | 64×48 to 4,096×4,096 pixels | `INVALID_ARGUMENT` |
 | Stored payload | 256 KiB | `LIMIT` |
 | Job time and result | 30 seconds; 4 MiB | `TIMEOUT`, `CALCULATION_FAILED`; `READ_LIMIT` |
@@ -560,8 +562,8 @@ update arguments as JSON from standard input; `render --svg-out FILE` writes
 the SVG to a file through a temporary sibling. It refuses a destination that
 is the workbook or a symbolic or hard link to it, and replaces another
 existing file only with `--overwrite`. Capabilities advertise `charts`, `max_charts`,
-`chart_spec_version`, `chart_jobs`, `chart_job_seconds` and
-`max_chart_render_points`.
+`chart_spec_version`, `chart_jobs`, `chart_job_seconds`,
+`max_chart_render_points` and `max_chart_source_bytes`.
 
 **Built: suggest from a table.** The suggest route also takes
 `{expected_state, table, type?}`; giving a table with a sheet or rectangle is

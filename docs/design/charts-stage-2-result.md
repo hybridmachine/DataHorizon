@@ -602,6 +602,46 @@ Each code defect was fixed test-first.
   which `ChartSource` references and the name source references alone. The
   `spec_patch` description now says how to change a source's kind.
 
+### Defects found by the pull request review
+
+The owner's review of the pull request made six findings. Each was reproduced
+by a test that failed first.
+
+- **A saved query named after another query's identity could capture a
+  chart.** Saved-query lookup matched an identity or a name in catalog order,
+  so a query whose name was another query's UUID could be found first. A chart
+  then plotted the wrong query, and a title-only `spec_patch` rewrote its
+  stored `query_id`. Lookup now prefers an exact identity over any name, for
+  every caller, and a chart's query run refuses a query that does not have
+  exactly the stored identity.
+- **A table source could load hundreds of MiB of text.** The row limit bounded
+  rows, not bytes: 10,001 rows of 64 KiB text is about 625 MiB. A resolve now
+  has a byte budget of 4 MiB across all its sources (`LIMIT_BYTES`), the same
+  size as the job result limit that would have refused the result anyway. A
+  table column is read row by row and each value is charged before it is
+  kept. Range sources are charged too, and keep only the cell fields a chart
+  uses.
+- **Query results were held whole.** Each run is capped at 16 MiB, but a chart
+  kept every result, including columns it never reads, until its resolve
+  ended. A result is now reduced at once to the columns the chart uses, and
+  what is kept is charged to the same 4 MiB budget. One run can still hold up
+  to 16 MiB while it executes.
+- **A chart's query run could not be cancelled while it waited for the
+  workbook.** The run waited on the workbook lock with no check, and the chart
+  worker also took that lock to reach the query manager. The wait now honours
+  cancellation, the job's deadline and the manager stopping, and the query
+  manager is fetched when the job starts, on the request thread.
+- **A column the saved query no longer returns was reported by running the
+  query.** The check before reading verified that the query existed but not
+  its saved result shape, so a query changed to return a BLOB in place of the
+  charted column failed with `QUERY_VALUE` while the chart listing showed the
+  source as broken. The saved shape is now checked first: such a source is
+  `SOURCE_BROKEN` and the query does not run.
+- **A suggestion from a table could answer from a newer state.** The state
+  check and the schema read were not in one read transaction, so a commit from
+  another connection between them produced a suggestion for a state the caller
+  had not asked for. Both now share one transaction.
+
 ### Decisions the controller made
 
 Made while this block's plan was executed. Each is open to reversal.

@@ -49,10 +49,16 @@ def _cell(column, stored):
     return cell
 
 
-def read_table(book, source, state, limit):
+def size(value):
+    """Bytes a retained cell value counts against a chart's byte budget."""
+    return len(value.encode()) if isinstance(value, str) else 8
+
+
+def read_table(book, source, state, limit, spend=lambda count: None):
     """Return one cell per row of a table column, in row order; ``None`` stands for an empty cell.
 
     Reads at most ``limit + 1`` rows and refuses a table that holds more than ``limit``.
+    ``spend(bytes)`` is called for each value before it is kept, and may refuse.
     """
     with book.lock:
         deadline = time.monotonic() + DEADLINE_SECONDS
@@ -64,9 +70,13 @@ def read_table(book, source, state, limit):
                 if book.state() != state:
                     raise EngineError("STALE_STATE", "Workbook changed while reading chart sources", 409)
                 item, column = find(book, source)
-                rows = book.db.execute(
-                    f'SELECT {relational.quote(column["name"])} FROM {relational.quote(item["name"])} '
-                    'ORDER BY "_dh_row_id" LIMIT ?', (limit + 1,)).fetchall()
+                rows = []
+                for (stored,) in book.db.execute(
+                        f'SELECT {relational.quote(column["name"])} FROM {relational.quote(item["name"])} '
+                        'ORDER BY "_dh_row_id" LIMIT ?', (limit + 1,)):
+                    if len(rows) < limit:       # the extra row only shows the table is over its limit
+                        spend(size(stored))
+                    rows.append(None if len(rows) >= limit else stored)
         except EngineError as error:
             if error.body["code"] == "TIMEOUT":
                 raise EngineError("CALCULATION_FAILED", "The chart's sources could not be calculated in time", 409) from error
@@ -75,7 +85,7 @@ def read_table(book, source, state, limit):
             book.db.execute("ROLLBACK")
     if len(rows) > limit:
         raise _limit_error("Table", item["name"], limit)
-    return [_cell(column, row[0]) for row in rows]
+    return [_cell(column, stored) for stored in rows]
 
 
 def _limit_error(kind, name, limit):
@@ -119,14 +129,35 @@ def run_query(run, item):
     return result
 
 
+def check_column(item, names, column):
+    """Raise SOURCE_BROKEN unless exactly one of a saved query's result columns is named ``column``."""
+    matches = names.count(column)
+    if matches != 1:
+        problem = "no result column" if matches == 0 else "more than one result column"
+        raise _broken(f"Saved query {item['name']} has {problem} named {column}")
+
+
+def keep_columns(result, wanted, spend):
+    """Reduce a query result to the columns named in ``wanted``, charging what is kept to ``spend``.
+
+    A chart holds a result until its resolve ends, so columns it never reads are dropped at once.
+    """
+    if result is None:
+        return None
+    indexes = [index for index, name in enumerate(result["columns"]) if name in wanted]
+    rows = []
+    for row in result["rows"]:
+        kept = [row[index] for index in indexes]
+        spend(sum(size(value["value"] if isinstance(value, dict) else value) for value in kept))
+        rows.append(kept)
+    return {"columns": [result["columns"][index] for index in indexes], "rows": rows}
+
+
 def read_query(item, result, column, limit):
     """Return one cell per result row of the named column; refuse a result over ``limit`` rows or a column that is not one."""
     if result is None or len(result["rows"]) > limit:
         raise _limit_error("Saved query", item["name"], limit)
-    matches = result["columns"].count(column)
-    if matches != 1:
-        problem = "no result column" if matches == 0 else "more than one result column"
-        raise _broken(f"Saved query {item['name']} has {problem} named {column}")
+    check_column(item, result["columns"], column)
     return query_cells(result, column)
 
 

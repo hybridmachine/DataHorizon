@@ -180,6 +180,15 @@ class QueryJobTests(unittest.TestCase):
         with patch.object(self.jobs,'_snapshot',wraps=self.jobs._snapshot) as snapshot:
             self.assertEqual(self.code(lambda:self.once(item['id'],seconds=20,deadline=time.monotonic()-1)),('TIMEOUT',409));snapshot.assert_not_called()
         self.assertEqual(self.jobs.runs,set())
+    def test_run_once_honours_cancellation_and_its_deadline_while_waiting_for_the_workbook(self):
+        item=self.save('SELECT Name FROM Customers ORDER BY ID');held=threading.Event();release=threading.Event();self.addCleanup(release.set)
+        def hold():
+            with self.book.lock:held.set();release.wait(4)
+        holder=threading.Thread(target=hold);holder.start();self.addCleanup(holder.join);self.assertTrue(held.wait(2))
+        cancel=threading.Event();timer=threading.Timer(.2,cancel.set);timer.start();self.addCleanup(timer.cancel);started=time.monotonic()
+        self.assertEqual(self.code(lambda:self.once(item['id'],cancel_event=cancel,seconds=5))[0],'CANCELLED');self.assertLess(time.monotonic()-started,2)
+        started=time.monotonic();self.assertEqual(self.code(lambda:self.once(item['id'],seconds=5,deadline=time.monotonic()+.2))[0],'TIMEOUT');self.assertLess(time.monotonic()-started,2)
+        self.assertEqual(self.jobs.runs,set());release.set();holder.join(5);self.assertEqual(self.once(item['id'])['rows'],[['Ada'],['Grace']])
     def test_run_once_refuses_blob_results(self):
         item=self.save("SELECT x'0102' AS b");self.assertEqual(self.code(lambda:self.once(item['id'])),('QUERY_VALUE',409))
     def test_run_once_uses_no_job_slot_and_leaves_no_files(self):
