@@ -1,11 +1,15 @@
 # DataHorizon application icon
 
-The application uses **3B, Shared Cell**, selected on November 3, 2026: two
-overlapping white tables share a green cell on a deep blue rounded tile.
+The application uses **4B Perspective Cylinder Grid** (`04b-slight-perspective-v2`),
+selected on November 14, 2026: a rounded white 2×2 spreadsheet grid cap (with a
+glowing emerald active cell) atop frosted cyan and steel-teal database tiers
+with an emerald horizon seam, tapered slightly in downward perspective on a deep
+ocean-teal squircle.
 
-`source.png` is the original approved 1254 × 1254 PNG generated with built-in
-imagegen. It is preserved without artwork changes. The initial exploration and
-exact prompts are in `output/imagegen/linked-table-variations/README.md`.
+`source.png` is the approved 1024 × 1024 transparent-background master PNG for
+**4B Perspective Cylinder Grid** (`04b-slight-perspective-v2`). It replaces the
+initial November 3, 2026 **3B, Shared Cell** icon (preserved in
+`output/imagegen/linked-table-variations/`).
 
 The checked-in deployment assets are derived only by resizing and encoding:
 
