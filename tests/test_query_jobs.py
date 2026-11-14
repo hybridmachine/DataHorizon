@@ -174,6 +174,12 @@ class QueryJobTests(unittest.TestCase):
         while not self.jobs.runs and time.monotonic()<deadline:time.sleep(.005)
         self.assertEqual(len(self.jobs.runs),1);self.jobs.close();runner.join(5)
         self.assertFalse(runner.is_alive());self.assertEqual(outcome,['CANCELLED']);self.assertEqual(self.code(lambda:self.once(item['id'])),('SERVICE_STOPPING',503))
+    def test_run_once_stops_at_a_caller_deadline(self):
+        item=self.save('WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n) SELECT max(i) AS top FROM n');started=time.monotonic()
+        self.assertEqual(self.code(lambda:self.once(item['id'],seconds=20,deadline=time.monotonic()+.3,max_rows=1000000)),('TIMEOUT',409));self.assertLess(time.monotonic()-started,3)
+        with patch.object(self.jobs,'_snapshot',wraps=self.jobs._snapshot) as snapshot:
+            self.assertEqual(self.code(lambda:self.once(item['id'],seconds=20,deadline=time.monotonic()-1)),('TIMEOUT',409));snapshot.assert_not_called()
+        self.assertEqual(self.jobs.runs,set())
     def test_run_once_refuses_blob_results(self):
         item=self.save("SELECT x'0102' AS b");self.assertEqual(self.code(lambda:self.once(item['id'])),('QUERY_VALUE',409))
     def test_run_once_uses_no_job_slot_and_leaves_no_files(self):

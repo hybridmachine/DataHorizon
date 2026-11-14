@@ -13,7 +13,7 @@ from .jobs import PreparationJobs
 from .temporal import utc_clock
 
 JOB_SECONDS = 30
-# The checkpoint exposes no time left, so a saved-query run gets a fixed budget inside the job's.
+# A saved-query run's own budget; it is also bounded by the job's deadline.
 QUERY_SECONDS = 20
 KINDS = ("resolve", "render")
 FIELDS = {"job_id", "expected_state", "chart_id", "kind", "width", "height"}
@@ -57,12 +57,11 @@ class ChartJobs:
 
             def compute(payload, checkpoint):
                 def run_query(query_id):
-                    # Runs on the live workbook, which must still be at the state the job started at.
-                    # The job's own deadline is enforced at its next checkpoint.
-                    checkpoint(0, "Running saved query")
+                    # Runs on the live workbook, which must still be at the state the job started at,
+                    # and stops at the job's own deadline.
                     return self.book.query_jobs().run_once(
-                        query_id, state=state, cancel_event=checkpoint.cancel_event,
-                        seconds=QUERY_SECONDS, max_rows=chart_sources.QUERY_ROWS)
+                        query_id, state=state, cancel_event=checkpoint.cancel_event, seconds=QUERY_SECONDS,
+                        max_rows=chart_sources.QUERY_ROWS, deadline=checkpoint.deadline)
 
                 with closing(Workbook(self.book.path, readonly=True, cancel_event=checkpoint.cancel_event)) as snapshot:
                     base = snapshot.calculator

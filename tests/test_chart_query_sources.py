@@ -423,6 +423,37 @@ class ThroughChartJobs(Fixture):
         self.addCleanup(patcher.stop)
         return entered, release
 
+    def recorded_progress(self):
+        """Record every progress value chart jobs report from now on."""
+        runner = self.book.chart_jobs().jobs
+        original = runner.start
+        seen = []
+
+        def start(request, prepare, *args, **kwargs):
+            def recorded(payload, checkpoint):
+                def recording(completed, phase):
+                    seen.append(completed)
+                    return checkpoint(completed, phase)
+
+                recording.cancel_event = checkpoint.cancel_event
+                recording.deadline = checkpoint.deadline
+                return prepare(payload, recording)
+            return original(request, recorded, *args, **kwargs)
+
+        patcher = patch.object(runner, "start", side_effect=start)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return seen
+
+    def test_a_query_stops_at_the_chart_jobs_deadline(self):
+        self.save("Endless", ENDLESS)
+        chart_id = self.create(query_spec(None, query_source("Endless", "top")))
+        self.book.chart_jobs().jobs.seconds = 1
+        view = self.wait(self.start(chart_id), seconds=5)
+        self.assertEqual(view["status"], "failed", view)
+        self.assertEqual(view["error"]["code"], "CALCULATION_FAILED")
+        self.until(lambda: not self.book.query_jobs().runs, seconds=2)
+
     def test_through_a_real_chart_job(self):
         self.save("Parity", "SELECT CASE Units % 2 WHEN 0 THEN 'even' ELSE 'odd' END AS Kind, sum(Units) AS Total "
                             "FROM Sales GROUP BY Kind ORDER BY Kind")
@@ -432,6 +463,16 @@ class ThroughChartJobs(Fixture):
         self.assertEqual(view["result"]["resolved"]["categories"], ["even", "odd"])
         self.assertEqual(view["result"]["resolved"]["series"][0]["values"], [42.0, 36.0])
         self.assertTrue(view["result"]["svg"].startswith("<svg"))
+        # Progress never goes backwards from a range source to a query source.
+        self.apply("edit", sheet="Sheet1", cells=[{"row": 1, "col": 1, "source": "even"},
+                                                  {"row": 2, "col": 1, "source": "odd"}])
+        mixed = query_spec({"kind": "range", "sheet": "Sheet1", "ref": "A1:A2"}, query_source("Parity", "Total"))
+        seen = self.recorded_progress()
+        view = self.wait(self.start(self.create(mixed)))
+        self.assertEqual(view["status"], "completed", view)
+        self.assertEqual(view["result"]["resolved"]["categories"], ["even", "odd"])
+        self.assertIn(2, seen)
+        self.assertEqual(seen, sorted(seen))
 
     def test_job_is_stale_when_the_workbook_changes_during_the_snapshot(self):
         chart_id = self.create(query_spec(None, query_source("Top", "Units")))
@@ -443,6 +484,9 @@ class ThroughChartJobs(Fixture):
         view = self.wait(job)
         self.assertEqual(view["status"], "stale", view)
         self.assertNotIn("result", view)
+        # The query's own snapshot caught the change: the job failed rather than completing on old data.
+        self.assertEqual(view["error"]["code"], "STALE_STATE")
+        self.assertEqual(view["error"]["message"], "Query source changed before snapshot")
 
     def test_cancelling_the_chart_job_stops_a_slow_query(self):
         self.save("Endless", ENDLESS)

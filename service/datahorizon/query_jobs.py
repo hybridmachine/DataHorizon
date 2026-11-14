@@ -3,6 +3,7 @@
 from contextlib import closing,contextmanager
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import sqlite3
@@ -75,18 +76,21 @@ class QueryJobs:
         require(isinstance(request.get('values',{}),dict),'INVALID_PARAMETERS','Parameter values must be an object')
         return saved,{**request,'sql':saved['sql'],'parameters':declarations,'values':{**saved['defaults'],**request.get('values',{})}}
 
-    def run_once(self,query_id,*,state,cancel_event,seconds,max_rows):
-        """Run a saved query synchronously on a private snapshot, outside the job store; rows are held in memory."""
-        done=threading.Event();directory=None
+    def run_once(self,query_id,*,state,cancel_event,seconds,max_rows,deadline=None):
+        """Run a saved query synchronously on a private snapshot, outside the job store; rows are held in memory.
+
+        `deadline` (a time.monotonic() value) bounds the snapshot and the execution as well as their own budgets."""
+        done=threading.Event();directory=None;bound=math.inf if deadline is None else deadline
         with self.lock:require(not self.stopping,'SERVICE_STOPPING','Query manager is stopping',503);self.runs.add(done)
         try:
+            require(time.monotonic()<bound,'TIMEOUT','Query exceeded its time budget',409)
             with self.book.lock:
                 self.book.refresh();require(state==self.book.state(),'STALE_STATE','Refresh before running SQL',409)
                 require(not self.book.repair,'REPAIR_SCOPE','Reopen normally before running queries',409)
                 saved,request=self._saved(dict(query=query_id));declarations,values=bindings(request['sql'],request['parameters'],request['values'])
             # Closing the manager cancels this run as it cancels job workers.
-            directory=create();entry=dict(state=state,cancel=_Stop(self,cancel_event),directory=directory,sql=request['sql'],values=values,saved=saved)
-            snapshot,registered=self._snapshot(entry);deadline=time.monotonic()+seconds;rows=[];size=0;max_rows=min(max_rows,self.max_rows)
+            directory=create();entry=dict(state=state,cancel=_Stop(self,cancel_event),directory=directory,sql=request['sql'],values=values,saved=saved,deadline=bound)
+            snapshot,registered=self._snapshot(entry);deadline=min(time.monotonic()+seconds,bound);rows=[];size=0;max_rows=min(max_rows,self.max_rows)
             with closing(sqlite3.connect(snapshot,isolation_level=None)) as db:
                 configure(db);dependencies,denied=authorize(db,registered)
                 with self._executing(entry,db,deadline,denied):
@@ -106,7 +110,7 @@ class QueryJobs:
         require(time.monotonic()<=deadline,'TIMEOUT','Query exceeded its time budget',409)
 
     def _snapshot(self,entry):
-        deadline=time.monotonic()+self.snapshot_seconds;destination=Path(entry['directory'].name)/'snapshot.sqlite';source=None
+        deadline=min(time.monotonic()+self.snapshot_seconds,entry.get('deadline',math.inf));destination=Path(entry['directory'].name)/'snapshot.sqlite';source=None
         try:
             with owned(self.book,entry['cancel'],deadline):
                 with sql_deadline(self.book.db,deadline,cancel_event=entry['cancel']):

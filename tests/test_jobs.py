@@ -21,6 +21,17 @@ class PreparationTests(unittest.TestCase):
             time.sleep(.005)
         self.fail("Job did not terminate")
 
+    def test_checkpoint_exposes_the_job_deadline(self):
+        jobs=PreparationJobs(seconds=7); seen=[]
+        def prepare(payload, checkpoint):
+            seen.append(checkpoint.deadline); return {}
+        try:
+            before=time.monotonic(); jobs.start({"job_id":"deadline"},prepare); after=time.monotonic()
+            self.assertEqual(self.terminal(jobs,"deadline")["status"],"completed")
+            self.assertEqual(len(seen),1); self.assertTrue(before+7<=seen[0]<=after+7)
+        finally:
+            jobs.close()
+
     def test_progress_idempotence_conflict_admission_cancel_and_release(self):
         jobs=PreparationJobs()
         entered, resume=threading.Event(), threading.Event()

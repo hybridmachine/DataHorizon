@@ -156,6 +156,8 @@ def resolve(snapshot, payload, state, checkpoint=None, run_query=None):
         if query_id not in query_results:
             with snapshot.lock:
                 item = chart_sources.find_query(snapshot, source)
+            if checkpoint is not None:
+                checkpoint(cells_read, "Running saved query")
             query_results[query_id] = (item, chart_sources.run_query(run_query, query_id))
         return query_results[query_id]
 
