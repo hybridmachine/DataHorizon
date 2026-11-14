@@ -211,6 +211,24 @@ class Spec(Fixture):
         self.assertEqual((values["table_id"], values["column_id"]), (None, None))
         self.assertEqual(categories, self.stored(column="Month"))
 
+    def test_a_schema_change_breaks_sources_before_the_after_structure_hook(self):
+        # As table_drop and query_delete do: an after-structure handler sees the source already broken.
+        from datahorizon import table_schema
+        self.make_chart()
+        columns = self.columns()
+        removed = columns.pop(1)
+        review = self.review(columns, drop_columns=[removed["id"]])
+        seen = {}
+        original = table_schema.structure_hook
+
+        def recording(book, request, phase, before):
+            seen[phase] = self.sources()[0]["column_id"]
+            return original(book, request, phase, before)
+
+        with mock.patch.object(table_schema, "structure_hook", side_effect=recording):
+            self.change(review)
+        self.assertEqual(seen, {"before": self.column_id["Units"], "after": None})
+
     def test_removing_another_column_breaks_nothing(self):
         self.make_chart()
         columns = self.columns()
