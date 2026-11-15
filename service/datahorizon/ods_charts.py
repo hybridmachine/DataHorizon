@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 
 from .conversion_report import ConversionReport
 from .engine import MAX_COLS, MAX_ROWS
+from .export_charts import format_reference
 from .import_charts import (DEFAULT_COLUMN_PX, DEFAULT_GROUPING, DEFAULT_ROW_PX, EMPTY_TITLE, LEFT_OUT, MAX_DRAFT_SERIES,
                             MAX_FRAMES, SKIPPED, STYLED, ChartParts, locate, parse_reference)
 from .ods import F as FO, O, T, X, Y, q
@@ -362,3 +363,128 @@ def table_frames(table):
 def sizes_declared(features) -> bool:
     """Whether a sheet's ``OdsSheetFeatures`` met column widths or custom row heights, which the readers do not measure."""
     return any(width is not None for width in features.widths) or "row_heights" in features.counts
+
+
+# Writing.
+#
+# ``chart_document`` and ``package`` write the parts of an export draft with literal prefixed names
+# (``chart:chart``) and ``xmlns:`` attributes, like the XLSX writer: the elements serialize as they are.  Nothing is
+# styled (the native chart has none) and no part carries a local data table or cached values: the chart names the
+# cells of the sheets it draws.  ODF has no literal series name outside such a table, so a series named by text is
+# written without a label and reads back as ``Series N``; a series named by a cell keeps its name.
+
+PIXELS_PER_INCH = 96
+CHART_MEDIA = "application/vnd.oasis.opendocument.chart"
+NAMESPACES = {"xmlns:office": O, "xmlns:style": Y, "xmlns:text": X, "xmlns:table": T, "xmlns:fo": FO,
+              "xmlns:draw": DRAW, "xmlns:chart": CHART, "xmlns:svg": SVG, "xmlns:xlink": XLINK}
+CLASSES = {"column": "chart:bar", "bar": "chart:bar", "line": "chart:line", "area": "chart:area", "pie": "chart:circle",
+           "scatter": "chart:scatter"}
+LEGEND_WORDS = {"right": "end", "bottom": "bottom"}
+UNWRITABLE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")  # what XML 1.0 cannot hold
+LINE_BREAK = re.compile("\r\n|\r|\n")
+
+
+def _clean(text):
+    """``text`` without the characters XML 1.0 cannot hold; carriage returns become line feeds, as a parser reads them."""
+    return LINE_BREAK.sub("\n", UNWRITABLE.sub("", text))
+
+
+def _add(parent, tag, text=None, **attributes):
+    element = ET.SubElement(parent, tag, attributes)
+    if text is not None:
+        element.text = text
+    return element
+
+
+def _title(parent, text):
+    title = _add(parent, "chart:title")
+    for line in text.split("\n"):
+        _add(title, "text:p", line)
+
+
+def _usable(text):
+    return text if text and _clean(text) else None
+
+
+def _length(pixels):
+    return f"{pixels / PIXELS_PER_INCH:.8f}in"
+
+
+def _style(styles, name, **properties):
+    style = _add(styles, "style:style", **{"style:name": name, "style:family": "chart"})
+    _add(style, "style:chart-properties", **properties)
+
+
+def chart_document(draft):
+    """The ``office:document-content`` of the chart object of an export draft."""
+    kind, grouping = draft["type"], draft["grouping"]
+    if not draft["series"]:
+        raise ValueError("a chart needs a series")
+    root = ET.Element("office:document-content", {**NAMESPACES, "office:version": "1.3"})
+    styles = _add(root, "office:automatic-styles")
+    chart = _add(_add(_add(root, "office:body"), "office:chart"), "chart:chart", **{"chart:class": CLASSES[kind]})
+    title = _usable(draft["title"])
+    if title is not None:
+        _title(chart, _clean(title))
+    if draft["legend"] in LEGEND_WORDS:
+        _add(chart, "chart:legend", **{"chart:legend-position": LEGEND_WORDS[draft["legend"]]})
+    flags = {}
+    if kind == "bar":
+        flags["chart:vertical"] = "true"
+    if grouping == "stacked" and kind in ("column", "bar", "area"):
+        flags["chart:stacked"] = "true"
+    area = _add(chart, "chart:plot-area")
+    if flags:
+        _style(styles, "plot", **flags)
+        area.set("chart:style-name", "plot")
+    scatter = kind == "scatter"
+    horizontal = _add(area, "chart:axis", **{"chart:dimension": "x", "chart:name": "primary-x"})
+    titles = [_usable(draft[key]) for key in ("category_title", "value_title")]
+    if kind != "pie" and titles[0] is not None:
+        _title(horizontal, _clean(titles[0]))
+    if draft["categories"] is not None and not scatter:
+        _add(horizontal, "chart:categories", **{"table:cell-range-address": format_reference(draft["categories"], "ods")})
+    if kind != "pie":
+        vertical = _add(area, "chart:axis", **{"chart:dimension": "y", "chart:name": "primary-y"})
+        limits = {f"chart:{word}": repr(float(draft[key])) for key, word in (("min", "minimum"), ("max", "maximum"))
+                  if draft[key] is not None}
+        if limits:
+            _style(styles, "axis-y", **limits)
+            vertical.set("chart:style-name", "axis-y")
+        if titles[1] is not None:
+            _title(vertical, _clean(titles[1]))
+    for item in draft["series"]:
+        attributes = {"chart:values-cell-range-address": format_reference(item["values"], "ods")}
+        if item["name"] is not None and item["name"][0] == "ref":
+            attributes["chart:label-cell-address"] = format_reference(item["name"][1], "ods")
+        series = _add(area, "chart:series", **attributes)
+        if scatter and item["x"] is not None:
+            _add(series, "chart:domain", **{"table:cell-range-address": format_reference(item["x"], "ods")})
+    return root
+
+
+def _frame(number, draft):
+    place, offset, size = draft["anchor"], draft["offset"], draft["size"]
+    frame = ET.Element("draw:frame", {"draw:name": _clean(draft["name"]), "svg:x": _length(offset["x"]),
+                                      "svg:y": _length(offset["y"]), "svg:width": _length(size["width"]),
+                                      "svg:height": _length(size["height"])})
+    _add(frame, "draw:object", **{"xlink:href": f"./Object {number}", "xlink:type": "simple", "xlink:show": "embed",
+                                  "xlink:actuate": "onLoad"})
+    return place["row"], place["col"], frame
+
+
+def package(built):
+    """The parts that carry the built charts of an export.
+
+    ``built`` is ``export_charts.build``'s ``(draft, chart document)`` pairs.  Returns ``(parts, manifest, frames)``:
+    the ``(path, element)`` of each chart object's ``Object N/content.xml`` (N counting the charts in draft order from
+    1); the manifest entries, ``(full path, media type)``, of each object directory and its content part; and, for each
+    exported sheet name, the ``(anchor row, anchor col, draw:frame)`` of its charts in draft order.  A frame is a
+    cell-anchored frame: the caller places it in the cell at its anchor, so that the sheet reads back the anchor and
+    the offset the draft has.  Lengths are inches at 96 pixels to the inch."""
+    parts, manifest, frames = [], [], {}
+    for number, (draft, document) in enumerate(built, 1):
+        parts.append((f"Object {number}/content.xml", document))
+        manifest += [(f"Object {number}/", CHART_MEDIA), (f"Object {number}/content.xml", "text/xml")]
+        frames.setdefault(draft["sheet"], []).append(_frame(number, draft))
+    return parts, manifest, frames
