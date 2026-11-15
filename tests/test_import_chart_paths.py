@@ -290,6 +290,62 @@ class ImportChartPathTests(unittest.TestCase):
         self.assertEqual(self.apply(summary)["imported"]["charts"], 2)
         self.check_sample()
 
+    def test_chart_sheet_anywhere_binds_charts_to_their_worksheets(self):
+        sheet_xml = '<sheet name="Chart Sheet" sheetId="10" r:id="rIdK1"/>'
+        last = xlsx_with_charts({"Data": data_rows(), "Other": data_rows()},
+                                [{"sheet": "Data", "name": "OnData", "xml": column_chart("Data")},
+                                 {"sheet": "Other", "name": "OnOther", "xml": column_chart("Other")},
+                                 {"sheet": "Other", "name": "Cross", "xml": column_chart("Data")}],
+                                extra_sheets=sheet_xml,
+                                workbook_rels=[f'<Relationship Id="rIdK1" Type="{CHARTSHEET}" Target="chartsheets/sheet1.xml"/>'],
+                                extra_parts={"xl/chartsheets/sheet1.xml": f'<chartsheet xmlns="{MAIN}"/>'})
+        with zipfile.ZipFile(io.BytesIO(last)) as archive:
+            workbook = archive.read("xl/workbook.xml").decode().replace(sheet_xml, "")
+        layouts = {"first": replace_part(last, "xl/workbook.xml", workbook.replace("<sheets>", "<sheets>" + sheet_xml).encode()),
+                   "middle": replace_part(last, "xl/workbook.xml", workbook.replace('<sheet name="Other"', sheet_xml + '<sheet name="Other"').encode()),
+                   "last": last}
+        expected = [("OnData", "Data", "Data"), ("Cross", "Other", "Data"), ("OnOther", "Other", "Other")]
+        for layout, data in layouts.items():
+            with self.subTest(layout):
+                order = {"first": ["Chart Sheet", "Data", "Other"], "middle": ["Data", "Chart Sheet", "Other"],
+                         "last": ["Data", "Other", "Chart Sheet"]}[layout]
+                # Selection: each worksheet's own charts, rebased to sheet 0 and shifted with the paste at C3 (row 3, col 2).
+                for index, name in enumerate(order, 1):
+                    request = {"file_base64": b64(data), "scope": "selection", "sheet_index": index, "row": 3, "col": 2}
+                    if name == "Chart Sheet":
+                        with self.assertRaises(EngineError) as raised:
+                            xlsx_preview(request)
+                        self.assertEqual(raised.exception.body["code"], "INVALID_ARGUMENT")
+                        continue
+                    preview = xlsx_preview(request)
+                    self.assertEqual(preview["sheet"], name)
+                    own = [item for item in expected if item[1] == name and item[2] == name]
+                    self.assertEqual([(record["name"], record["sheet"], record["anchor"], record["spec"]["series"][0]["values"]["source"])
+                                      for record in preview["charts"]],
+                                     [(item[0], 0, {"row": 3, "col": 4}, {"kind": "range", "sheet": 0, "ref": "C4:C10"}) for item in own])
+                    crossing = [(entry["detail"], entry["samples"]) for entry in entries(preview, "chart.skipped")]
+                    self.assertEqual(crossing, [("source", [{"sheet": "Other", "cell": "Cross"}])] if name == "Other" else [])
+                # Whole workbook, inline and staged: positions among the worksheets, then the stored sheets.
+                worksheets = ["Data", "Other"]
+                inline = xlsx_preview({"file_base64": b64(data), "scope": "workbook"})
+                self.assertEqual([sheet["name"] for sheet in inline["workbook_sheets"]], worksheets)
+                self.assertEqual(sorted((record["name"], worksheets[record["sheet"]], worksheets[record["spec"]["series"][0]["values"]["source"]["sheet"]])
+                                        for record in inline["workbook_charts"]), sorted(expected))
+                summary = self.prepare(data)
+                self.assertEqual(sorted((item["name"], item["sheet"]) for item in summary["charts"]), sorted(item[:2] for item in expected))
+                base = self.open(f"chartsheet-{layout}")
+                self.assertEqual(self.apply(summary, base=base)["imported"]["charts"], 3)
+                names = self.sheet_ids(base)
+                self.assertEqual(sorted((item["name"], names[item["sheet_id"]], names[item["spec"]["series"][0]["values"]["source"]["sheet_id"]])
+                                        for item in self.charts(base)), sorted(expected))
+                with LocalService() as client, client.open(self.temp / f"chartsheet-edit-{layout}.dhwb", create=True) as book:
+                    index = order.index("Other") + 1
+                    book.import_prepared(xlsx_preview({"file_base64": b64(data), "scope": "selection", "sheet_index": index}), "Sheet1")
+                    book.refresh()
+                    (chart,) = book.charts()
+                    self.assertEqual(chart["name"], "OnOther")
+                    self.assertEqual(book.resolve_chart(chart["id"])["resolved"]["series"][0]["values"], list(range(2, 9)))
+
     def test_chart_on_skipped_chart_sheet_and_unsupported(self):
         radar = chart_xml(plot_area=plot_xml("radar", series=[{"cat": "Data!$A$2:$A$8", "val": "Data!$B$2:$B$8"}]))
         data = xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "name": "Radar", "xml": radar}],
@@ -959,6 +1015,24 @@ class SelectionChartTests(unittest.TestCase):
             return
         for fmt in ("xlsx", "ods"):
             OAS30Validator({**schemas["SpreadsheetImportPreview"], "components": spec["components"]}).validate(self.preview(fmt, sheet_index=2))
+
+    def test_edit_at_the_workbook_chart_limit(self):
+        book = self.book()
+        record = self.preview(sheet_index=2)["charts"][0]
+        receipt = book.apply("edit", "Sheet1", cells=[{"row": 1, "col": 1, "source": "1"}],
+                             charts=[dict(record, name=f"C{n}") for n in range(63)])
+        self.assertEqual(receipt["changed_charts"], 63)
+        receipt = book.apply("edit", "Sheet1", cells=[{"row": 1, "col": 1, "source": "2"}],
+                             charts=[dict(record, name=name) for name in ("X", "Y", "Z")])
+        self.assertEqual((receipt["changed_cells"], receipt["changed_charts"], receipt["charts_left_out"]), (1, 1, ["Y", "Z"]))
+        book.refresh()
+        self.assertEqual(len(book.charts()), 64)
+        self.assertEqual(book.read(r1=1, c1=1, r2=1, c2=1)["cells"][0]["source"], "2")
+        book.apply("undo")
+        book.refresh()
+        self.assertEqual(len(book.charts()), 63)
+        self.assertEqual(book.read(r1=1, c1=1, r2=1, c2=1)["cells"][0]["source"], "1")
+        self.assertNotIn("X", [item["name"] for item in book.charts()])
 
     def test_edit_without_charts_is_unchanged(self):
         book = self.book()
