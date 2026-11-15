@@ -185,8 +185,8 @@ class SeriesNameReport(unittest.TestCase):
     def entries(self, drafts):
         report = ConversionReport()
         write(drafts, report)
-        return [(item["category"], item["severity"], item["detail"], item["sheet"], item["cell"], item.get("count", 1))
-                for item in report.entries()]
+        return [(item["category"], item["severity"], item["detail"], sample["sheet"], sample["cell"], item["count"])
+                for item in report.entries() for sample in item["samples"]]
 
     def test_text_names_give_one_entry_per_chart(self):
         self.assertEqual(self.entries([column_draft(series=[
