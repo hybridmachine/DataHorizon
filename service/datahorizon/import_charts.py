@@ -32,6 +32,7 @@ SOURCE_PARTS = ("categories", "name", "values", "x")
 DEFAULT_COLUMN_PX = 64
 DEFAULT_ROW_PX = 20
 MAX_STEPS = 20_000  # cell sizes asked of the caller, in total for one budget
+CHART_EXPANDED = 16 * 1024 * 1024  # decompressed chart, drawing and relationship bytes read for one import
 MAX_DRAFT_SERIES = LIMIT_SERIES + 1  # one more than convert accepts is enough for it to skip the chart as ``limit``
 DEFAULT_GROUPING = {"bar": "clustered", "line": "standard", "area": "standard"}
 EMPTY_TITLE = {"text": None, "from_cell": False}

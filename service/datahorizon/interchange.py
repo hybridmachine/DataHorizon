@@ -543,7 +543,7 @@ def read_book(archive):
     return book
 
 
-def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None,charts=None):
+def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None,charts=None,chart_parts=None):
     selected=integer(request.get("sheet_index",1),1,MAX_SHEET_INDEX,"sheet_index")
     selected_mode=mode(request)
     require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
@@ -601,9 +601,10 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         if sheet_names is not None:
             # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules.
             from .import_charts import Collector
-            from .xlsx_charts import worksheet_drafts
+            from .xlsx_charts import ChartParts, worksheet_drafts
             charts=Collector() if charts is None else charts
-            drafts=worksheet_drafts(archive,part,sheet_names.index(sheet_label),sheet_label,ByteBudget(MAX_EXPANDED),conversions,sheet_features)
+            chart_parts=ChartParts() if chart_parts is None else chart_parts
+            drafts=worksheet_drafts(archive,part,sheet_names.index(sheet_label),sheet_label,chart_parts,conversions,sheet_features)
             records=[record for draft in drafts if (record:=charts.add(draft,sheet_names,conversions)) is not None]
         if shared_formulas and shared_formulas.groups: report.append("Shared formulas expand to explicit per-cell sources with relative/absolute reference translation; caches are discarded.")
         report.extend(STYLE_SCOPE_LINES)
@@ -795,18 +796,20 @@ def prepare_workbook(request,checkpoint,names,prepare,indexes=None,scope=()):
     """`indexes` are the sheet_index of each name (by default 1, 2, ...): a package's sheets that are not imported
     (XLSX chart, dialog and macro sheets) take no name but keep their place in the index. `scope` are the format's
     fixed report lines after workbook_report(); the result's report is those scope lines, then one line per entry.
-    Each sheet's charts are converted against one workbook limit, carried as workbook_charts and listed in charts."""
+    Each sheet's charts are converted against one workbook limit and read against one chart allowance, carried as
+    workbook_charts and listed in charts."""
     from .import_charts import Collector, summary
+    from .xlsx_charts import ChartParts
     validate_sheet_names(names)
     require(request.get("row",1)==1 and request.get("col",1)==1,"INVALID_ARGUMENT","Whole-workbook import uses original coordinates")
     require(names,"INVALID_SPREADSHEET","Workbook has no sheets")
     result={"scope":"workbook","workbook_sheets":[],"stored_cells":0,"issues":[],"can_import":True,"workbook_charts":[]}
     conversions=ConversionReport()
-    charts=Collector()
+    charts,chart_parts=Collector(),ChartParts()
     size=0
     for index,name in enumerate(names,1):
         checkpoint(index-1,"Reading sheet "+name)
-        part=prepare({**request,"scope":"selection","sheet_index":indexes[index-1] if indexes else index},checkpoint,sheet_names=names,charts=charts)
+        part=prepare({**request,"scope":"selection","sheet_index":indexes[index-1] if indexes else index},checkpoint,sheet_names=names,charts=charts,chart_parts=chart_parts)
         result["workbook_charts"]+=part.pop("_charts")
         # Every sheet's preparation reads the same workbook features; they are reported once, first.
         wide=part.pop("_workbook")

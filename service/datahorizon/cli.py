@@ -204,7 +204,7 @@ def import_spreadsheet(client, book, args):
     try:
         print(report_text(summary), flush=True)
         if args.report_json:
-            write_report(args.report_json, summary, ("format", "mode", "stored_cells", "sheets", "totals", "report", "scope_lines", "report_entries"), args.overwrite)
+            write_report(args.report_json, summary, ("format", "mode", "stored_cells", "sheets", "charts", "totals", "report", "scope_lines", "report_entries"), args.overwrite)
         if not args.yes:
             charts = f" with {plural(len(summary['charts']), 'chart')}" if summary.get("charts") else ""
             answer = confirm(f"Import {plural(summary['stored_cells'], 'cell')} into {plural(len(summary['sheets']), 'sheet')}{charts}?")

@@ -293,7 +293,7 @@ class CliTests(unittest.TestCase):
         with LocalService() as client:
             summary = client.prepare_spreadsheet_file(FIXTURES/'fidelity.xlsx', mode='values', local=True)
             client.discard_job(summary['stage_id'])
-        self.assertEqual(written, {key: summary[key] for key in ('format', 'mode', 'stored_cells', 'sheets', 'totals', 'report', 'scope_lines', 'report_entries')})
+        self.assertEqual(written, {key: summary[key] for key in ('format', 'mode', 'stored_cells', 'sheets', 'charts', 'totals', 'report', 'scope_lines', 'report_entries')})
         self.assertEqual(written['mode'], 'values')
 
     def test_errors_are_structured_with_a_nonzero_exit(self):

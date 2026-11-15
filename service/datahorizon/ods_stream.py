@@ -178,19 +178,19 @@ class _SheetReader:
         self.row += self.repeats
 
 
-def _read_sheets(archive, names, styles, base, sink, progress, conversions, survey, package_budget):
+def _read_sheets(archive, names, styles, base, sink, progress, conversions, survey):
     """Second pass over content.xml: convert every sheet's cells into the sink and report each sheet's features; hand
-    the sink every sheet's charts, whose object parts are read under `package_budget`, after the last sheet."""
+    the sink every sheet's charts after the last sheet. Chart objects are read against their own allowance."""
     from .import_charts import Collector
     from .ods_charts import FRAME, GROUP, OBJECT, SheetFrames, sizes_declared
-    from .xlsx_charts import _read
+    from .xlsx_charts import ChartParts
     layout, workbook, panes = survey
     mapped = mapped_styles(styles.styles)
     tags, stack, elements = [], [], 0
     sheet = reader = features = frames = None
     row_depth = None
     index = 0
-    charts, read_object = Collector(), lambda archive, name: _read(archive, name, package_budget)
+    charts, read_object = Collector(), ChartParts().read
     budget = xlsx_stream.ByteBudget(xlsx_stream.LARGE_EXPANDED)  # the same bytes the first pass already bounded
     for event, item in xlsx_stream.read_part(archive, "content.xml", budget, record_tags=RECORDS):
         if event == "start":
@@ -264,7 +264,7 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink, checkpoint: Callab
         workbook.report(conversions, layout, archive.namelist())
         report_unreadable_settings(conversions, readable)
         base = {"mode": selected_mode, "sheet_names": names, "timezone_policy": policy}
-        _read_sheets(archive, names, styles, base, sink, progress, conversions, (layout, workbook, panes), budget)
+        _read_sheets(archive, names, styles, base, sink, progress, conversions, (layout, workbook, panes))
         return conversions
 
 

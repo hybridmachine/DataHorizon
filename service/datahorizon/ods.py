@@ -397,7 +397,7 @@ def convert_ods_cell(cell,*,context):
     return {"row":context.row,"col":context.col,**item}
 
 
-def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None,charts=None):
+def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None,charts=None,chart_parts=None):
     selected=integer(request.get("sheet_index",1),1,MAX_SHEET_INDEX,"sheet_index"); selected_mode=mode(request)
     require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
     report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct/inherited cell styles replace destination inputs/styles.",
@@ -470,13 +470,11 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         if sheet_names is not None:
             # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules.
             from .import_charts import Collector
-            from .interchange import MAX_EXPANDED
             from .ods_charts import SheetFrames, sizes_declared, table_frames
-            from .xlsx_charts import _read
-            from .xlsx_stream import ByteBudget
+            from .xlsx_charts import ChartParts
             charts=Collector() if charts is None else charts
-            budget=ByteBudget(MAX_EXPANDED)
-            frames=SheetFrames(archive,sheet_names.index(sheet_label),sheet_label,lambda archive,name:_read(archive,name,budget),conversions)
+            chart_parts=ChartParts() if chart_parts is None else chart_parts
+            frames=SheetFrames(archive,sheet_names.index(sheet_label),sheet_label,chart_parts.read,conversions)
             for frame,cell,grouped in table_frames(sheets[selected-1]): frames.frame(frame,cell,grouped)
             records=[record for draft in frames.finish(sizes_declared(sheet_features)) if (record:=charts.add(draft,sheet_names,conversions)) is not None]
         report.extend(conversions.lines())

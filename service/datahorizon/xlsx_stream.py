@@ -416,8 +416,8 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: 
         workbook_features(conversions, workbook, ns, archive.namelist(), string_features, skipped)
         progress = _Progress(checkpoint)
         from .import_charts import Collector
-        from .xlsx_charts import worksheet_drafts
-        charts = Collector()
+        from .xlsx_charts import ChartParts, worksheet_drafts
+        charts, chart_parts = Collector(), ChartParts()
         for position, (sheet, name) in enumerate(zip(sheets, names)):
             checkpoint(progress.cells, "Reading sheet "+name)
             # One report per sheet, merged as the tree reader merges them; styles report into the open sheet.
@@ -431,8 +431,8 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: 
             sink.sheet(name)
             _read_sheet(archive, part, budget, context, sink, progress, features)
             features.report(sheet_report, name)
-            # Charts are read under the package budget; one that cannot be read is reported, never raised.
-            for draft in worksheet_drafts(archive, part, position, name, budget, sheet_report, features):
+            # Charts are read against their own allowance, never the cells' budget; one that cannot be read is reported.
+            for draft in worksheet_drafts(archive, part, position, name, chart_parts, sheet_report, features):
                 charts.add(draft, names, sheet_report)
             conversions.merge(sheet_report)
         sink.charts(charts.records)

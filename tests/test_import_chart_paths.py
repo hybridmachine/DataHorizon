@@ -11,11 +11,12 @@ import time
 import unittest
 import uuid
 import zipfile
+from unittest.mock import patch
 
 from chart_fixtures import (chart_xml, ods_chart_xml, ods_sample_like, ods_with_charts, one_cell, plot_xml, sample_like,
                             xlsx_with_charts)
 from ods_builder import styles_document
-from datahorizon import import_stage
+from datahorizon import import_charts, import_stage, ods_stream, xlsx_stream
 from datahorizon.xlsx_charts import MAX_FRAMES
 from datahorizon.cli import report_text
 from datahorizon.client import LocalService
@@ -43,8 +44,10 @@ def data_rows(count=8):
                    for row in range(1, count + 1))
 
 
-def column_chart(sheet="Data"):
-    return chart_xml("bar", "col", "clustered", [{"cat": f"{sheet}!$A$2:$A$8", "val": f"{sheet}!$B$2:$B$8"}])
+def column_chart(sheet="Data", pad=0):
+    """A supported column chart; ``pad`` adds that many bytes of ignored extension text to its part."""
+    extras = f'<c:extLst><c:ext uri="pad">{"x" * pad}</c:ext></c:extLst>' if pad else ""
+    return chart_xml("bar", "col", "clustered", [{"cat": f"{sheet}!$A$2:$A$8", "val": f"{sheet}!$B$2:$B$8"}], extras=extras)
 
 
 def ods_data_rows(count=8):
@@ -53,8 +56,10 @@ def ods_data_rows(count=8):
                    for row in range(1, count + 1))
 
 
-def ods_column_chart():
-    return ods_chart_xml("bar", "col", "clustered", [{"cat": "Data!$A$2:$A$8", "val": "Data!$B$2:$B$8"}])
+def ods_column_chart(sheet="Data", pad=0):
+    """A supported column chart object; ``pad`` adds that many bytes of ignored text to its content.xml."""
+    return ods_chart_xml("bar", "col", "clustered", [{"cat": f"{sheet}!$A$2:$A$8", "val": f"{sheet}!$B$2:$B$8"}],
+                         chart_style=f"<pad>{'x' * pad}</pad>" if pad else "")
 
 
 def many_charts(count):
@@ -408,6 +413,144 @@ class ImportChartPathTests(unittest.TestCase):
         validate_spec(spec)
         record = xlsx_preview({"file_base64": b64(sample_like()), "scope": "workbook"})
         OAS30Validator({**schemas["SpreadsheetImportPreview"], "components": spec["components"]}).validate(record)
+
+    def test_bounded_and_streaming_skip_the_same_charts_past_the_allowance(self):
+        sheets = ("One", "Two", "Three")
+        xlsx = xlsx_with_charts({name: data_rows() for name in sheets},
+                                [{"sheet": name, "name": f"{name} {n}", "xml": column_chart(name, pad=60_000)} for name in sheets for n in (1, 2)])
+        ods = ods_with_charts({name: ods_data_rows() for name in sheets},
+                              [{"sheet": name, "name": f"{name} {n}", "xml": ods_column_chart(name, pad=60_000)} for name in sheets for n in (1, 2)])
+        with patch.object(import_charts, "CHART_EXPANDED", 300_000):
+            for fmt, data in (("xlsx", xlsx), ("ods", ods)):
+                with self.subTest(fmt):
+                    bounded = (xlsx_preview if fmt == "xlsx" else ods_preview)({"file_base64": b64(data), "scope": "workbook"})
+                    staged = self.prepare(data, fmt)
+                    self.assertEqual(bounded["charts"], staged["charts"])
+                    self.assertEqual(entries(bounded, "chart.skipped"), entries(staged, "chart.skipped"))
+                    self.assertTrue(0 < len(staged["charts"]) < 6, staged["charts"])
+                    unread = sum(entry["count"] for entry in entries(staged, "chart.skipped") if entry["detail"] == "unreadable")
+                    self.assertEqual(len(staged["charts"]) + unread, 6)
+
+    def test_bounded_ods_past_the_workbook_and_frame_limits(self):
+        for count in (66, MAX_FRAMES + 2):
+            with self.subTest(count=count):
+                frames = [{"sheet": "Data", "name": "Chart 1", "xml": ods_column_chart()}]
+                frames += [{"sheet": "Data", "name": f"Chart {n}", "missing": True, "target": "./Object 1"} for n in range(2, count + 1)]
+                preview = ods_preview({"file_base64": b64(ods_with_charts({"Data": ods_data_rows()}, frames)), "scope": "workbook"})
+                self.assertEqual([item["name"] for item in preview["charts"]], [f"Chart {n}" for n in range(1, 65)])
+                skipped = {entry["detail"]: entry for entry in entries(preview, "chart.skipped")}
+                read = min(count, MAX_FRAMES)
+                self.assertEqual(skipped["workbook_limit"]["count"], read - 64)
+                self.assertEqual(skipped["workbook_limit"]["samples"][0], {"sheet": "Data", "cell": "Chart 65"})
+                if count > MAX_FRAMES:
+                    self.assertEqual((skipped["unreadable"]["count"], skipped["unreadable"]["samples"]),
+                                     (count - MAX_FRAMES, [{"sheet": "Data", "cell": "drawing"}]))
+                else:
+                    self.assertNotIn("unreadable", skipped)
+
+    def test_default_declared_sizes_are_not_approximate(self):
+        defaults = '<sheetFormatPr defaultRowHeight="15"/><cols><col min="1" max="3" width="9.140625"/></cols>'
+        tall = data_rows().replace('<row r="1">', '<row r="1" ht="30" customHeight="1">')
+        cases = {"default widths": (data_rows(), defaults, []), "custom row height": (tall, "", [[{"sheet": "Data", "cell": "Chart 1"}]])}
+        for case, (rows, before, expected) in cases.items():
+            data = xlsx_with_charts({"Data": rows}, [{"sheet": "Data", "name": "Chart 1", "xml": column_chart()}], sheet_before={"Data": before})
+            for summary in (self.prepare(data), xlsx_preview({"file_base64": b64(data), "scope": "workbook"})):
+                with self.subTest(case):
+                    self.assertEqual(len(summary["charts"]), 1)
+                    self.assertEqual([entry["samples"] for entry in entries(summary, "chart.converted") if entry["detail"] == "size_approximate"],
+                                     expected)
+
+
+class RecordingSink:
+    """Counts each sheet's cells and keeps the chart records the reader hands over (once)."""
+    def __init__(self):
+        self.counts, self.records, self.current, self.table = {}, None, None, {}
+        self.strings = self
+
+    def put(self, index, text): self.table[index] = text
+
+    def get(self, index): return self.table[index]
+
+    def sheet(self, name): self.counts[name], self.current = 0, name
+
+    def cells(self, batch): self.counts[self.current] += len(batch)
+
+    def charts(self, records):
+        assert self.records is None, "charts is called once"
+        self.records = records
+
+
+class ChartAllowanceTests(unittest.TestCase):
+    """Chart, drawing and relationship parts are read against their own allowance, never the cells' package budget."""
+
+    def setUp(self):
+        self.temp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+    def stream(self, data, fmt="xlsx"):
+        path = self.temp / f"book-{uuid.uuid4().hex}.{fmt}"
+        path.write_bytes(data)
+        sink = RecordingSink()
+        reader = xlsx_stream.read_workbook if fmt == "xlsx" else ods_stream.read_workbook
+        return sink, reader(path, {}, sink, lambda *_: None)
+
+    def test_a_chart_part_drawn_many_times_never_fails_later_cells(self):
+        frames = [{"sheet": "Data", "name": "Chart 1", "xml": column_chart(pad=1_200_000)}]
+        frames += [{"sheet": "Data", "name": f"Chart {n}", "missing": True, "target": "../charts/chart1.xml"} for n in range(2, 251)]
+        rows = "".join(f'<row r="{row}"><c r="A{row}"><v>{row}</v></c></row>' for row in range(1, 30_001))
+        sink, report = self.stream(xlsx_with_charts({"Data": data_rows(), "Rows": rows}, frames))
+        self.assertEqual(sink.counts, {"Data": 16, "Rows": 30_000})
+        self.assertEqual(len(sink.records), 64)
+        self.assertEqual([entry["detail"] for entry in report.entries() if entry["category"] == "chart.skipped"], ["workbook_limit"])
+
+    def test_charts_past_the_allowance_are_reported_and_cells_import(self):
+        count = 20
+        xlsx = xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "name": f"Chart {n}", "xml": column_chart(pad=1_000_000)}
+                                                        for n in range(1, count + 1)])
+        ods = ods_with_charts({"Data": ods_data_rows()}, [{"sheet": "Data", "name": f"Chart {n}", "xml": ods_column_chart(pad=1_000_000)}
+                                                          for n in range(1, count + 1)])
+        for fmt, data in (("xlsx", xlsx), ("ods", ods)):
+            with self.subTest(fmt):
+                sink, report = self.stream(data, fmt)
+                self.assertEqual(sink.counts, {"Data": 16})
+                made = len(sink.records)
+                self.assertTrue(import_charts.CHART_EXPANDED // 1_100_000 <= made < count, made)
+                unread = [entry for entry in report.entries() if entry["category"] == "chart.skipped"]
+                self.assertEqual([(entry["detail"], entry["count"]) for entry in unread], [("unreadable", count - made)])
+                self.assertEqual(unread[0]["samples"][0], {"sheet": "Data", "cell": f"Chart {made + 1}"})
+
+    def test_charts_never_charge_the_package_budget(self):
+        def variants(data, chart_parts, pad):
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                parts = {name: archive.read(name) for name in archive.namelist()}
+            removed, enlarged = io.BytesIO(), io.BytesIO()
+            with zipfile.ZipFile(removed, "w", zipfile.ZIP_DEFLATED) as without, zipfile.ZipFile(enlarged, "w", zipfile.ZIP_DEFLATED) as larger:
+                for name, payload in parts.items():
+                    if name not in chart_parts:
+                        without.writestr(name, payload)
+                    larger.writestr(name, pad(payload) if name in chart_parts else payload)
+            return [data, removed.getvalue(), enlarged.getvalue()]
+
+        xlsx_pad = lambda payload: payload.replace(b"<c:plotArea>", b"<c:plotArea>" + b" " * 2_000_000)
+        ods_pad = lambda payload: payload.replace(b"<office:body>", b"<office:body>" + b" " * 2_000_000)
+        cases = {"xlsx": variants(sample_like(), {"xl/charts/chart1.xml", "xl/charts/chart2.xml"}, xlsx_pad),
+                 "ods": variants(ods_sample_like(), {"Object 1/content.xml", "Object 2/content.xml"}, ods_pad)}
+        for fmt, datas in cases.items():
+            with self.subTest(fmt):
+                used = []
+                for data in datas:
+                    budgets = []
+
+                    class Recording(xlsx_stream.ByteBudget):
+                        def __init__(self, limit):
+                            super().__init__(limit)
+                            budgets.append(self)
+                    with patch.object(xlsx_stream, "ByteBudget", Recording):
+                        sink, _ = self.stream(data, fmt)
+                    used.append([budget.used for budget in budgets])
+                    self.assertEqual(sum(sink.counts.values()), 56)
+                self.assertEqual(used[0], used[1])
+                self.assertEqual(used[0], used[2])
+                self.assertTrue(all(value > 0 for value in used[0]))
 
 
 if __name__ == "__main__":
