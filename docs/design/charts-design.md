@@ -633,7 +633,11 @@ and [the design](charts-import-view-design.md). The existing `workbook.feature`
 when the charts are imported: a known inconsistency awaiting an owner decision.
 `chart_sheets` is unchanged. Exporting a workbook that holds native charts still
 reports each one as omitted, and stage 4 export is not built. Nothing is dropped
-silently.
+silently: series names and axis titles over 255 characters are cut with a
+report entry, a chart over 64 KiB or past 1 MiB of one import's charts is
+skipped with one, and the reading of chart parts is bounded per import (256
+frames, each part parsed once, no part read once 64 charts are held), so a
+chart never fails an import.
 
 **Built.** XLSX and ODS exports (whole workbook, selection and streamed) list
 each native chart as omitted, by chart and sheet name, as they list workbook

@@ -21,9 +21,20 @@ Built, and covered by service and desktop tests:
   and `charts_left_out`. The rules and the `chart.converted` and `chart.skipped`
   vocabulary are in the [compatibility contract](compatibility-v0.md#charts).
 - Chart, drawing and relationship parts are read against their own 16 MiB
-  allowance per import, each distinct part once, apart from the package budget;
-  past it charts are reported `unreadable`. At most 256 chart frames per sheet
-  are read and a draft keeps at most 65 series.
+  allowance per import, each distinct part read and parsed once and only its
+  extracted body kept, apart from the package budget; past it charts are
+  reported `unreadable`, as is a part whose compressed data is corrupt. An XLSX
+  worksheet's charts come only from the drawing its `<drawing r:id>` names. At
+  most 256 chart frames are read per import, across all its sheets; once 64
+  charts are held no further chart part is read; a draft keeps at most 65
+  series. Both streaming readers check cancellation and the deadline for every
+  frame. Tests bound this work by count (parts parsed, bodies extracted, drafts
+  built) for repeated frames, shared drawings and many drawing relationships.
+- Series names and axis titles are cut to 255 characters; a converted chart is
+  at most 64 KiB as JSON (else `limit`) and one import's charts at most 1 MiB
+  (else `workbook_limit`), and client-supplied records past either cap are
+  refused, so a chart can no longer fail an import or push a preview past its
+  4 MiB limit.
 - Pixel sizes use default cell sizes (64x20 px); a sheet that declares custom
   sizes reports `size_approximate` (on ODS, any declared column-width style).
 - The desktop lists a sheet's charts through the existing catalog read, renders
@@ -34,10 +45,13 @@ Built, and covered by service and desktop tests:
   that cannot be drawn shows a placeholder with the reason. A failed chart list
   read is shown in the window's issue line and read again on the next refresh.
   The import dialog carries charts on "One sheet" and "All sheets" and shows the
-  chart count in the review. Qt SVG is now a required linked module (Widgets,
+  chart count in both reviews; the one-sheet import's status after the edit
+  counts its changed cells and charts. A render that failed is rendered again
+  when the window refreshes without a change. Qt SVG is now a required linked module (Widgets,
   Network, Svg, Test); [development.md](development.md) lists it.
-- The service runs one chart job per workbook, so renders run one at a time
-  although the layer allows `MaxConcurrentRenders` of 2.
+- The service runs one chart job per workbook, so the layer opens one render
+  job at a time (`MaxConcurrentRenders` is 1); a start refused because another
+  client's chart job holds the slot backs off and tries again.
 
 Measured through the real service on the reference Mac, with the owner's
 sample file `Column Chart_Complete.xlsx` (two worksheets, one clustered and one

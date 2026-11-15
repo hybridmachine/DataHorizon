@@ -448,10 +448,10 @@ cell values.
 | Clustered or standard grouping | `clustered` (`null` where the type takes none) |
 | Stacked grouping | `stacked` |
 | Chart title text (literal rich text) | `title.text`, cut to 255 characters |
-| Category and value axis titles (literal) | `axes.category.title`, `axes.value.title` |
+| Category and value axis titles (literal) | `axes.category.title`, `axes.value.title`, each cut to 255 characters |
 | Value axis fixed minimum and maximum | `axes.value.min`, `axes.value.max` (both dropped silently when minimum exceeds maximum) |
 | Legend at right; at bottom; absent | `right`; `bottom`; `none` |
-| Series name by cell reference; by literal | `name.source`; `name.text` |
+| Series name by cell reference; by literal | `name.source`; `name.text`, cut to 255 characters |
 | Series values, categories, scatter x by one contiguous single-row or single-column reference | Range sources |
 | Categories of the first series | The chart's `categories` |
 | Frame name ("Chart 1") | Chart name, made unique on its sheet |
@@ -472,7 +472,8 @@ names the chart as its sample and the sheet; `count` counts charts.
 | `series_name` | A series name that could not be bound exactly was replaced by `Series N` |
 | `legend_position` | A legend at top or left became `right` |
 | `title_from_cell` | A title or axis title taken from a cell became that cell's cached text, no longer following the cell |
-| `title_cut` | A title over 255 characters was cut |
+| `title_cut` | A chart or axis title over 255 characters was cut |
+| `series_name_cut` | A literal series name over 255 characters was cut (one entry per chart) |
 | `categories_differ` | Series with categories other than the first series' use the first series' |
 | `size_approximate` | The size was computed from default cell sizes (64x20 px) because the sheet declares custom sizes; on ODS, any declared column-width style |
 | `anchor_absolute` | An absolute anchor was placed at the nearest cell |
@@ -487,10 +488,10 @@ names the chart as its sample and the sheet; `count` counts charts.
 | `secondary_axis` | A secondary axis |
 | `pie_series` | A pie or doughnut with other than one series |
 | `source` | A source that is not one contiguous single-row or single-column range on an imported worksheet: multi-area or multi-level reference, defined name, external workbook, literal array, a sheet that is not imported, table structured reference; also a chart with no series |
-| `limit` | More than 64 series, a source over 10,000 cells (1,000 for a pie's values or categories), or over 100,000 source cells in all; a whole-column reference is over the source limit |
+| `limit` | More than 64 series, a source over 10,000 cells (1,000 for a pie's values or categories), or over 100,000 source cells in all; a whole-column reference is over the source limit; or a converted chart over 64 KiB as JSON (after a one-sheet import's offset too) |
 | `off_grid` | The anchor, or after a one-sheet import's offset any anchor or source, lies outside the grid |
-| `workbook_limit` | More than 64 charts in the imported file; the excess is left out in file order. Charts that would pass 64 once the destination's own charts are counted (`add_sheets`, one-sheet) are decided at apply and named in the receipt's `charts_left_out` instead |
-| `unreadable` | The chart or its drawing could not be parsed or read, a chart part that would pass the chart allowance, or frames past the 256th on one sheet (one entry with their count) |
+| `workbook_limit` | More than 64 charts in the imported file, or charts that would take one import's charts past 1 MiB as JSON in all; the excess is left out in file order. Once 64 charts are held no further chart part is read, so a frame whose part was not yet read is reported `workbook_limit` without being checked (on ODS even when its object is not a chart). Charts that would pass 64 once the destination's own charts are counted (`add_sheets`, one-sheet) are decided at apply and named in the receipt's `charts_left_out` instead |
+| `unreadable` | The chart or its drawing could not be parsed or read (a corrupt compressed part included), a chart part that would pass the chart allowance, a worksheet's second and later `<drawing>` elements (one entry with their count), or frames past the 256th of the import (one entry per sheet with their count) |
 | `grouped` | The chart is inside a group shape |
 
 Chart sheets keep their `workbook.feature` `chart_sheets` entry. A malformed
@@ -498,11 +499,17 @@ chart never fails the import.
 
 **Limits and budgets.** Chart, drawing and relationship parts are read against
 their own allowance of 16 MiB decompressed per import, separate from the
-package's expanded budget, and each distinct part is read once; a chart that
-would pass it is reported `unreadable`. At most 256 chart frames per worksheet
-are read. A draft keeps at most 65 series, enough for the conversion to skip
-the chart as `limit`. XML is read through the same entity-safe readers as the
-rest of the package and relationship targets resolve inside the package only.
+package's expanded budget, and each distinct part is read and parsed once; a
+chart that would pass it is reported `unreadable`. An XLSX worksheet's charts
+come only from the drawing its `<drawing r:id>` names. At most 256 chart frames
+are read per import, across all its sheets; once 64 charts are held no further
+chart part is read. A draft keeps at most 65 series, enough for the conversion
+to skip the chart as `limit`. Series names and axis titles are cut to 255
+characters like the title; a converted chart is at most 64 KiB as JSON and one
+import's charts at most 1 MiB, and records a client sends (`charts` of
+`workbook_import` and `edit`) are refused with `INVALID_ARGUMENT` past the same
+two caps. XML is read through the same entity-safe readers as the rest of the
+package and relationship targets resolve inside the package only.
 
 **Import paths.** All three apply shapes carry charts: the staged
 whole-workbook import (stage format version 2 holds a `charts` table covered by
@@ -524,6 +531,9 @@ one-sheet import, so only the SDK and the desktop carry charts on that path.
 - Pixel sizes use default cell sizes (64x20 px); where the sheet declares
   custom sizes the chart is imported with `size_approximate` and its extent can
   differ from the file's.
+- An imported chart keeps roughly its source pixel size, but because the import
+  measures cells at 64x20 px while the desktop grid's default cells are larger,
+  it covers fewer cells in the desktop than in the source.
 - A one-sheet import skips a chart with a source on another sheet (`source`) and a chart
   pushed off the grid by the offset (`off_grid`), and takes only the selected worksheet's charts.
 - Excel's colours, data labels, gap width, markers, smoothing, gridlines,

@@ -323,16 +323,29 @@ Recorded November 15, 2026. Each is also in the
   `workbook_limit`, `unreadable` and `grouped`. `chart.converted` details are
   `styling: <property>` (one entry per dropped property), `grouping`,
   `series_name`, `percent_stacked`, `three_d`, `doughnut`, `legend_position`,
-  `title_from_cell`, `title_cut`, `categories_differ`, `size_approximate`,
-  `anchor_absolute` and `name`. Section 4 said one line per chart lists what was
+  `title_from_cell`, `title_cut`, `series_name_cut`, `categories_differ`,
+  `size_approximate`, `anchor_absolute` and `name`. Section 4 said one line per chart lists what was
   dropped; the build writes one entry per property, each counting charts.
-- **Chart byte budget.** Chart, drawing and relationship parts are read against
-  their own 16 MiB allowance per import, not the package budget, each distinct
-  part once; past it charts are reported `unreadable`. At most 256 chart frames
-  per sheet are read, and a draft keeps at most 65 series.
+- **Chart byte budget and reading bounds.** Chart, drawing and relationship
+  parts are read against their own 16 MiB allowance per import, not the package
+  budget, each distinct part read and parsed once and only its extracted body
+  kept; past it, or when a part's compressed data is corrupt, charts are
+  reported `unreadable`. An XLSX worksheet follows only the drawing its
+  `<drawing r:id>` names. At most 256 chart frames are read per import, across
+  all its sheets; once 64 charts are held no further chart part is read, so the
+  rest are reported `workbook_limit` unchecked. A draft keeps at most 65 series.
+  The streaming readers check cancellation and the deadline for every frame.
+- **Text and record caps.** Series names and axis titles are cut to 255
+  characters like the title (`series_name_cut`, `title_cut`). A converted chart
+  over 64 KiB as JSON is skipped as `limit`, and one import's charts are held to
+  1 MiB in all (`workbook_limit`); `check_records` refuses client records past
+  either cap, so a chart can no longer fail an import's apply (the 256 KiB
+  payload limit) or a bounded preview (4 MiB).
 - **Sizes.** The pixel size is computed from default cell sizes (64x20 px); a
   sheet that declares custom sizes reports `size_approximate` (on ODS, any
-  declared column-width style).
+  declared column-width style). A chart keeps roughly its source pixel size, so
+  on the desktop grid, whose default cells are larger, it covers fewer cells
+  than in the source.
 - **Omitted entries still reported.** Section 4 said the `workbook.feature`
   `charts` count stays. The build also still reports `sheet.feature`
   `drawings`, so a file whose charts all imported still lists both as omitted.
@@ -340,10 +353,15 @@ Recorded November 15, 2026. Each is also in the
   behavior.
 - **Frozen panes.** A chart anchored in a frozen row or column is pinned in the
   frozen direction and may extend over the scrolling cells.
-- **Chart list failures.** A failed chart list read is shown in the window's
-  issue line and read again on the next refresh.
-- **Render concurrency.** The service runs one chart job per workbook, so renders
-  run one at a time although `ChartLayer::MaxConcurrentRenders` is 2.
+- **Chart list and render failures.** A failed chart list read is shown in the
+  window's issue line and read again on the next refresh; a chart whose render
+  failed is rendered again when the window refreshes without a change.
+- **Render concurrency.** The service runs one chart job per workbook, so the
+  layer opens one render job at a time (`ChartLayer::MaxConcurrentRenders` is
+  1); a start refused because another client's chart job holds the slot
+  (`JOB_BUSY`, `JOB_LIMIT`) backs off and tries again.
+- **One-sheet import counts.** The one-sheet import's review names its charts
+  and the status after the edit counts the changed cells and charts.
 - **CLI.** The CLI has no one-sheet import, so only the SDK and the desktop
   carry charts on that path; the CLI's whole-workbook import carries them.
 - **Not built or not verified.** Export, authoring, workbook-Python chart

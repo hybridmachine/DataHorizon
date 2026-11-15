@@ -110,7 +110,9 @@ The one-sheet path follows `edit`'s contract: one undo step that removes the
 charts too, and a failing change handler rolls back cells and charts together.
 Whole-workbook imports still clear undo. Receipts report `imported.charts`
 (`workbook_import`) or `changed_charts` (`edit`), and `charts_left_out` names
-the charts not created because the workbook already holds 64. A workbook that
+the charts not created because the workbook already holds 64. Records a client
+sends in `charts` are refused with `INVALID_ARGUMENT` when one is over 64 KiB as
+JSON or all of them are over 1 MiB; the previews never produce such records. A workbook that
 receives a chart is raised to native format v8. Creating the charts raises no
 chart events. The CLI has no one-sheet import, so only the SDK and the desktop
 carry charts on that path. OpenAPI documents the review summary, the previews,
