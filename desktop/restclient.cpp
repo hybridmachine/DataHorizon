@@ -119,7 +119,10 @@ QPointer<QNetworkReply> RestClient::upload(const QString &id, const QString &fil
     const auto generation=m_generation;
     auto *reply=m_network.put(request,file);
     file->setParent(reply);
-    if(progress)connect(reply,&QNetworkReply::uploadProgress,this,[progress,size](qint64 sent,qint64){progress(sent,size);});
+    // Queued: a progress callback may run the event loop (a modal progress
+    // dialog does). Run from inside the reply's upload accounting, that hands
+    // Qt the next chunk at a stale position and the upload stalls.
+    if(progress)connect(reply,&QNetworkReply::uploadProgress,this,[progress,size](qint64 sent,qint64){progress(sent,size);},Qt::QueuedConnection);
     connect(reply,&QNetworkReply::finished,this,[this,reply,file,id,size,generation,callback=std::move(callback)]{
         reply->deleteLater();
         if(reply->property("datahorizonCancelled").toBool()){const auto failed=cancelledError();callback(failed,failed["message"].toString());return;}

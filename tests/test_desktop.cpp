@@ -3004,6 +3004,22 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!visibleDialog(window,"largeImportReview"),5000);
         QTRY_COMPARE_WITH_TIMEOUT(serviceCall(window,"/v1/jobs/"+job,false).first["code"].toString(),QString("JOB_NOT_FOUND"),5000);
     }
+    void uploadLargerThanOneSocketChunkCompletes() {
+        // Upload progress updates a modal progress dialog, whose setValue() runs
+        // the event loop. Delivered from inside the reply's upload accounting,
+        // that made Qt drop every chunk after the first 16 KiB and the upload
+        // stalled until the inactivity timeout. The bytes are not a workbook:
+        // reaching preparation at all proves the whole body arrived.
+        QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
+        const auto path=temp.filePath("chunks.xlsx");
+        { QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly)); file.write(QByteArray(40*1024,'x')); }
+        MainWindow window(options); window.show(); openFresh(window,temp.filePath("chunks.dhwb"));
+        window.importWorkbookFile(path,"xlsx","mixed","replace_empty");
+        auto *issues=window.findChild<QPlainTextEdit *>("operationIssues"); QVERIFY(issues);
+        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("Import preparation failed"),10000);
+        QVERIFY(!issues->toPlainText().contains("Upload failed"));
+        QVERIFY(!window.findChild<QProgressDialog *>("largeImportProgress") || !window.findChild<QProgressDialog *>("largeImportProgress")->isVisible());
+    }
     void importReviewCountsInTheSingularAndPlural() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
         MainWindow window(options); window.show(); openFresh(window,temp.filePath("one.dhwb"));
