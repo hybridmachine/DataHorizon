@@ -9,9 +9,12 @@ be read is reported and omitted, never raised.
 """
 import math
 import posixpath
+import re
+import xml.etree.ElementTree as ET
 
 from .conversion_report import ConversionReport
 from .engine import MAX_COLS, MAX_ROWS
+from .export_charts import format_reference
 from .import_charts import (DEFAULT_COLUMN_PX, DEFAULT_GROUPING, DEFAULT_ROW_PX, EMPTY_TITLE, LEFT_OUT, MAX_DRAFT_SERIES,
                             MAX_FRAMES, SKIPPED, STYLED, UNUSABLE, ChartParts, locate, parse_reference)
 from .xlsx_features import local, relationships_path
@@ -476,3 +479,197 @@ def worksheet_drafts(archive, sheet_part, position, sheet_name, parts, report: C
         report.add(SKIPPED, "omitted", "unreadable", sheet=sheet_name, cell="drawing", count=features.drawings - 1)
     return read_sheet_drafts(archive, sheet_part, position, sheet_name, parts, report, features.drawing_id,
                              sizes_unknown=sizes_declared(features))
+
+
+# Writing.
+#
+# ``chart_part`` and ``package`` write the parts of an export draft with literal prefixed names (``c:chart``) and
+# ``xmlns:`` attributes, like the workbook parts of ``interchange``: the elements serialize as they are.
+
+NS_C = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+NS_A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+NS_XDR = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+NS_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+NS_PACKAGE = "http://schemas.openxmlformats.org/package/2006/relationships"
+CHART_TYPE = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+DRAWING_TYPE = "application/vnd.openxmlformats-officedocument.drawing+xml"
+LEGEND_CODES = {"right": "r", "bottom": "b"}
+UNWRITABLE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")  # what XML 1.0 cannot hold
+LINE_BREAK = re.compile("\r\n|\r|\n")
+
+
+def _text(text):
+    """``text`` without the characters XML 1.0 cannot hold; carriage returns become line feeds, as a parser reads them."""
+    return LINE_BREAK.sub("\n", UNWRITABLE.sub("", text))
+
+
+def _add(parent, tag, text=None, **attributes):
+    element = ET.SubElement(parent, tag, attributes)
+    if text is not None:
+        element.text = text
+    return element
+
+
+def _title_element(parent, text):
+    title = _add(parent, "c:title")
+    rich = _add(_add(title, "c:tx"), "c:rich")
+    _add(rich, "a:bodyPr")
+    _add(rich, "a:lstStyle")
+    for line in _text(text).split("\n"):
+        _add(_add(_add(rich, "a:p"), "a:r"), "a:t", line)
+    _add(title, "c:overlay", val="0")
+
+
+def _reference(parent, tag, kind, ref):
+    _add(_add(_add(parent, tag), "c:" + kind), "c:f", format_reference(ref, "xlsx"))
+
+
+def _series_element(plot, number, draft, item):
+    kind = draft["type"]
+    series = _add(plot, "c:ser")
+    _add(series, "c:idx", val=str(number))
+    _add(series, "c:order", val=str(number))
+    name = item["name"]
+    if name is not None:
+        if name[0] == "ref":
+            _reference(series, "c:tx", "strRef", name[1])
+        else:
+            _add(_add(series, "c:tx"), "c:v", _text(name[1]))
+    if kind == "scatter":
+        shape = _add(series, "c:spPr")
+        _add(_add(shape, "a:ln", w="19050"), "a:noFill")  # markers only: a scatter chart joins no points
+        _reference(series, "c:xVal", "numRef", item["x"])
+        _reference(series, "c:yVal", "numRef", item["values"])
+        return
+    if draft["categories"] is not None:
+        _reference(series, "c:cat", "strRef", draft["categories"])
+    _reference(series, "c:val", "numRef", item["values"])
+
+
+def _plot_element(area, draft):
+    kind, grouping = draft["type"], draft["grouping"]
+    tag = {"column": "c:barChart", "bar": "c:barChart", "line": "c:lineChart", "area": "c:areaChart",
+           "pie": "c:pieChart", "scatter": "c:scatterChart"}[kind]
+    plot = _add(area, tag)
+    if kind in ("column", "bar"):
+        _add(plot, "c:barDir", val="col" if kind == "column" else "bar")
+        _add(plot, "c:grouping", val="stacked" if grouping == "stacked" else "clustered")
+    elif kind in ("line", "area"):
+        _add(plot, "c:grouping", val="stacked" if grouping == "stacked" and kind == "area" else "standard")
+    elif kind == "scatter":
+        _add(plot, "c:scatterStyle", val="lineMarker")
+    _add(plot, "c:varyColors", val="1" if kind == "pie" else "0")
+    for number, item in enumerate(draft["series"]):
+        _series_element(plot, number, draft, item)
+    if kind != "pie":
+        _add(plot, "c:axId", val="1")
+        _add(plot, "c:axId", val="2")
+
+
+def _axis_element(area, tag, number, position, other, title, low=None, high=None, **extras):
+    axis = _add(area, tag)
+    _add(axis, "c:axId", val=str(number))
+    scaling = _add(axis, "c:scaling")
+    _add(scaling, "c:orientation", val="minMax")
+    if high is not None:
+        _add(scaling, "c:max", val=repr(float(high)))
+    if low is not None:
+        _add(scaling, "c:min", val=repr(float(low)))
+    _add(axis, "c:delete", val="0")
+    _add(axis, "c:axPos", val=position)
+    if title is not None:
+        _title_element(axis, title)
+    _add(axis, "c:crossAx", val=str(other))
+    _add(axis, "c:crosses", val="autoZero")
+    for name, value in extras.items():
+        _add(axis, "c:" + name, val=value)
+
+
+def chart_part(draft):
+    """The ``c:chartSpace`` of an export draft: no cached values, no styling (the native chart has none)."""
+    kind = draft["type"]
+    if not draft["series"]:
+        raise ValueError("a chart needs a series")
+    root = ET.Element("c:chartSpace", {"xmlns:c": NS_C, "xmlns:a": NS_A, "xmlns:r": NS_R})
+    chart = _add(root, "c:chart")
+    title = draft["title"] if draft["title"] and _text(draft["title"]) else None
+    if title is not None:
+        _title_element(chart, title)
+    _add(chart, "c:autoTitleDeleted", val="0" if title is not None else "1")
+    area = _add(chart, "c:plotArea")
+    _add(area, "c:layout")
+    _plot_element(area, draft)
+    if kind != "pie":
+        titles = [draft[key] if draft[key] and _text(draft[key]) else None for key in ("category_title", "value_title")]
+        if kind == "scatter":
+            _axis_element(area, "c:valAx", 1, "b", 2, titles[0], crossBetween="midCat")
+            _axis_element(area, "c:valAx", 2, "l", 1, titles[1], draft["min"], draft["max"], crossBetween="midCat")
+        else:
+            horizontal = kind == "bar"
+            _axis_element(area, "c:catAx", 1, "l" if horizontal else "b", 2, titles[0])
+            _axis_element(area, "c:valAx", 2, "b" if horizontal else "l", 1, titles[1], draft["min"], draft["max"],
+                          crossBetween="between")
+    if draft["legend"] in LEGEND_CODES:
+        legend = _add(chart, "c:legend")
+        _add(legend, "c:legendPos", val=LEGEND_CODES[draft["legend"]])
+        _add(legend, "c:overlay", val="0")
+    _add(chart, "c:plotVisOnly", val="1")
+    return root
+
+
+def _relationships_part(items):
+    root = ET.Element("Relationships", {"xmlns": NS_PACKAGE})
+    for identifier, kind, target in items:
+        _add(root, "Relationship", Id=identifier, Type=f"{NS_R}/{kind}", Target=target)
+    return root
+
+
+def _frame(number, draft):
+    anchor = ET.Element("xdr:oneCellAnchor")
+    corner = _add(anchor, "xdr:from")
+    place, offset, size = draft["anchor"], draft["offset"], draft["size"]
+    _add(corner, "xdr:col", str(place["col"] - 1))
+    _add(corner, "xdr:colOff", str(offset["x"] * EMU_PER_PIXEL))
+    _add(corner, "xdr:row", str(place["row"] - 1))
+    _add(corner, "xdr:rowOff", str(offset["y"] * EMU_PER_PIXEL))
+    _add(anchor, "xdr:ext", cx=str(size["width"] * EMU_PER_PIXEL), cy=str(size["height"] * EMU_PER_PIXEL))
+    frame = _add(anchor, "xdr:graphicFrame", macro="")
+    properties = _add(frame, "xdr:nvGraphicFramePr")
+    _add(properties, "xdr:cNvPr", id=str(number + 1), name=_text(draft["name"]))
+    _add(properties, "xdr:cNvGraphicFramePr")
+    transform = _add(frame, "xdr:xfrm")
+    _add(transform, "a:off", x="0", y="0")
+    _add(transform, "a:ext", cx="0", cy="0")
+    data = _add(_add(frame, "a:graphic"), "a:graphicData", uri=NS_C)
+    _add(data, "c:chart", **{"r:id": f"rId{number}"})
+    _add(anchor, "xdr:clientData")
+    return anchor
+
+
+def package(built, names):
+    """The parts that carry the built charts of an export of the sheets ``names`` (in order).
+
+    ``built`` is ``export_charts.build``'s ``(draft, chart part)`` pairs.  Returns ``(parts, rids, overrides)``: the
+    ``(path, element)`` of every chart part (``xl/charts/chartK.xml``, K counting the charts in draft order), of each
+    drawing of a sheet that has charts (``xl/drawings/drawingN.xml``, N the 1-based sheet index, frames in draft order)
+    with its relationships, and of the sheet's relationships (one, ``rId1``, to its drawing); ``rids`` maps the 1-based
+    index of each such sheet to the id its ``<drawing r:id>`` carries; ``overrides`` are the ``(part name, content
+    type)`` of the chart and drawing parts.  A sheet's relationships part is new: the caller adds the id's relationship
+    to one it already writes."""
+    charts, by_sheet = [], {}
+    for number, (draft, part) in enumerate(built, 1):
+        charts.append((f"xl/charts/chart{number}.xml", part))
+        by_sheet.setdefault(names.index(draft["sheet"]) + 1, []).append((number, draft))
+    parts, rids, overrides = list(charts), {}, [(path, CHART_TYPE) for path, _ in charts]
+    for index in sorted(by_sheet):
+        drawing = ET.Element("xdr:wsDr", {"xmlns:xdr": NS_XDR, "xmlns:a": NS_A, "xmlns:r": NS_R, "xmlns:c": NS_C})
+        links = []
+        for position, (number, draft) in enumerate(by_sheet[index], 1):
+            drawing.append(_frame(position, draft))
+            links.append((f"rId{position}", "chart", f"../charts/chart{number}.xml"))
+        parts += [(f"xl/drawings/drawing{index}.xml", drawing),
+                  (f"xl/drawings/_rels/drawing{index}.xml.rels", _relationships_part(links)),
+                  (f"xl/worksheets/_rels/sheet{index}.xml.rels", _relationships_part([("rId1", "drawing", f"../drawings/drawing{index}.xml")]))]
+        rids[index] = "rId1"
+        overrides.append((f"xl/drawings/drawing{index}.xml", DRAWING_TYPE))
+    return parts, rids, overrides
