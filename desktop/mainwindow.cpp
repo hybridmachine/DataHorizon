@@ -2136,6 +2136,8 @@ QString MainWindow::bindingRejection(const QJsonObject &result) {
 }
 
 void MainWindow::reportReferenceWarnings(const QJsonObject &receipt) {
+    QStringList chartsLeftOut;for(const auto &value:receipt["charts_left_out"].toArray())chartsLeftOut.append(value.toString().simplified().left(64));
+    if(!chartsLeftOut.isEmpty())issue(tr("Charts left out because a workbook holds at most 64 charts: %1").arg(chartsLeftOut.join(", ")));
     for(const auto &value:receipt["binding_notices"].toArray()) {
         const auto notice=value.toObject();const auto reason=notice["reason"].toString();
         issue(tr("Rule skipped: %1 (%2)").arg(notice["function"].toString(),PythonWorkspace::skippedReason(reason)));
@@ -3409,8 +3411,10 @@ void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &
         review.setDetailedText(report.join('\n')); review.button(QMessageBox::Yes)->setEnabled(allowed);
         const auto choice=review.exec(); setBusy(false);
         if(choice!=QMessageBox::Yes || !allowed || !matchesTarget(target) || m_model->projected()) return;
-        submit({{"action","edit"},{"label","Import "+format.toUpper()},{"cells",preview["cells"]},
-                {"workbook",target["workbook"]},{"sheet",target["sheet"]},{"expected_state",target["expected_state"]}});
+        QJsonObject edit{{"action","edit"},{"label","Import "+format.toUpper()},{"cells",preview["cells"]},
+                {"workbook",target["workbook"]},{"sheet",target["sheet"]},{"expected_state",target["expected_state"]}};
+        if(!preview["charts"].toArray().isEmpty()) edit["charts"]=preview["charts"];
+        submit(edit);
     },format);
 }
 
@@ -3565,7 +3569,8 @@ void MainWindow::reviewLargeImport(const std::shared_ptr<LargeImport> &run, cons
     const auto sheets=summary["sheets"].toArray();
     const qint64 cells=qint64(summary["stored_cells"].toDouble());
     const auto sheetCount=tr("%n sheet(s)",nullptr,int(sheets.size()));
-    const auto cellCount=tr("%n stored cell(s)",nullptr,int(qMin<qint64>(cells,std::numeric_limits<int>::max())));
+    auto cellCount=tr("%n stored cell(s)",nullptr,int(qMin<qint64>(cells,std::numeric_limits<int>::max())));
+    if(const int charts=int(summary["charts"].toArray().size()); charts>0) cellCount=tr("%1 and %2").arg(cellCount,tr("%n chart(s)",nullptr,charts));
     // A short summary in the desktop's own words; the service's fixed scope
     // statements are kept under Details.
     QStringList sentences;
@@ -3668,7 +3673,10 @@ void MainWindow::largeImportReceipt(const std::shared_ptr<LargeImport> &run, con
         m_selectSheetWorkbook=run->workbook;
         const auto imported=receipt["imported"].toObject();
         finishLargeImport(run);
-        m_status->setText(tr("Imported %1 and %2 • Native workbook stored").arg(tr("%n sheet(s)",nullptr,imported["sheets"].toInt()),tr("%n cell(s)",nullptr,imported["cells"].toInt())));
+        auto what=tr("%1 and %2").arg(tr("%n sheet(s)",nullptr,imported["sheets"].toInt()),tr("%n cell(s)",nullptr,imported["cells"].toInt()));
+        if(imported["charts"].toInt()>0) what=tr("%1 and %2").arg(what,tr("%n chart(s)",nullptr,imported["charts"].toInt()));
+        m_status->setText(tr("Imported %1 • Native workbook stored").arg(what));
+        reportReferenceWarnings(receipt);
         return;
     }
     run->operation.clear();

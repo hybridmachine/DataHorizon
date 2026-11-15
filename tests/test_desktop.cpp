@@ -4591,6 +4591,59 @@ private slots:
     MainWindow window(options);window.resize(1200,800);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000); \
     QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("charts.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000); \
     auto *layer=window.findChild<ChartLayer *>("chartLayer");QVERIFY(layer);auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();Q_UNUSED(model);Q_UNUSED(grid)
+    // Drives File → Import… for a chart fixture: one sheet at the selected cell (answering its review Yes) or the whole workbook.
+    static bool importChartFixture(MainWindow &window,const QString &path,bool whole) {
+        return driveImportOptions(window,path,[&](QDialog *dialog){
+            auto *scope=dialog->findChild<QComboBox *>("importScope"); scope->setCurrentIndex(scope->findData(whole?"workbook":"selection"));
+            if(!whole) answerNextDialog(QMessageBox::Yes);
+            dialog->accept();
+        });
+    }
+    void oneSheetImportShowsItsChart() {
+        CHART_WINDOW;QSignalSpy changed(&window,&MainWindow::operationFinished);
+        const auto path=temp.filePath("charts.xlsx");QVERIFY(QFile::copy(QStringLiteral(DATAHORIZON_FIXTURES "/charts-two-sheets.xlsx"),path));
+        QVERIFY(importChartFixture(window,path,false));
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,20000);QVERIFY(changed[0][0].toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        QCOMPARE(layer->overlays().first()->objectName(),QString("chartOverlay"));QCOMPARE(layer->overlays().first()->accessibleName(),QString("Chart 1"));
+    }
+    void allSheetsImportShowsCharts() {
+        CHART_WINDOW;QSignalSpy changed(&window,&MainWindow::operationFinished);
+        const auto path=temp.filePath("charts.xlsx");QVERIFY(QFile::copy(QStringLiteral(DATAHORIZON_FIXTURES "/charts-two-sheets.xlsx"),path));
+        QVERIFY(importChartFixture(window,path,true));
+        QDialog *review=nullptr;QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        const auto text=review->findChild<QLabel *>("importReviewSummary")->text();QVERIFY2(text.contains("2 charts"),qPrintable(text));
+        review->findChild<QPushButton *>("importApply")->click();
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,20000);QVERIFY(changed[0][0].toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(tabTexts(window),QStringList({"Column Chart","Stacked Column"}),10000);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        auto *tabs=window.findChild<QTabBar *>("sheets");tabs->setCurrentIndex(1);
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->currentIndex(),1,5000);QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        tabs->setCurrentIndex(0);QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+    }
+    void importReviewCountsChartsInTheSingular() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
+        MainWindow window(options);window.show();openFresh(window,temp.filePath("singular.dhwb"));
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/charts-one-sheet.xlsx"),"xlsx","mixed","replace_empty");
+        QDialog *review=nullptr;QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        auto text=review->findChild<QLabel *>("importReviewSummary")->text();
+        QVERIFY2(text.contains("1 chart") && !text.contains("1 charts") && !text.contains("(s)"),qPrintable(text));
+        review->reject();QTRY_VERIFY_WITH_TIMEOUT(!visibleDialog(window,"largeImportReview"),5000);
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/markup.xlsx"),"xlsx","mixed","replace_empty");
+        QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        text=review->findChild<QLabel *>("importReviewSummary")->text();QVERIFY2(!text.contains("chart"),qPrintable(text));
+        review->reject();
+    }
+    void chartsLeftOutAreReported() {
+        CHART_WINDOW;
+        for(int i=0;i<64;++i)QVERIFY(addChart(window,opened,QString("Filler %1").arg(i+1),2,3));
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        const auto path=temp.filePath("charts.xlsx");QVERIFY(QFile::copy(QStringLiteral(DATAHORIZON_FIXTURES "/charts-one-sheet.xlsx"),path));
+        QVERIFY(importChartFixture(window,path,false));
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,20000);QVERIFY(changed[0][0].toBool());
+        auto *issues=window.findChild<QPlainTextEdit *>("operationIssues");QVERIFY(issues);
+        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("left out") && issues->toPlainText().contains("Chart 1"),5000);
+    }
     void chartOverlayAppearsAtItsAnchor() {
         CHART_WINDOW;QSignalSpy listed(layer,&ChartLayer::listed);
         QVERIFY(addChart(window,opened,"Placed",2,3,10,5,320,200));

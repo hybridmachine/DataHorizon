@@ -10,6 +10,7 @@ import tempfile
 import time
 import unittest
 import uuid
+import sys
 import zipfile
 from unittest.mock import patch
 
@@ -30,6 +31,7 @@ from datahorizon.ods import ods_preview
 from datahorizon.service import Service, openapi
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+sys.path.insert(0, str(FIXTURES))
 SAMPLE_SUMMARY = [{"name": "Chart 1", "sheet": "Column Chart", "type": "column"},
                   {"name": "Chart 1", "sheet": "Stacked Column", "type": "column"}]
 SALES = [400586, 353095, 804585, 410434, 99699, 25539, 25156]
@@ -698,6 +700,13 @@ class SelectionChartTests(unittest.TestCase):
         self.assertEqual(receipt["changed_charts"], 0)
         self.assertNotIn("charts_left_out", receipt)
         self.assertEqual(preview["charts"], [])
+
+
+class ChartFixtureTests(unittest.TestCase):
+    def test_committed_two_sheet_fixture_is_what_its_generator_writes(self):
+        import generate_chart_workbook
+        self.assertEqual((FIXTURES / "charts-two-sheets.xlsx").read_bytes(), generate_chart_workbook.build())
+        self.assertEqual((FIXTURES / "charts-one-sheet.xlsx").read_bytes(), generate_chart_workbook.build(1))
 
 
 class SelectionRollbackTests(unittest.TestCase):

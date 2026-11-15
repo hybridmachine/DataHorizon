@@ -179,21 +179,22 @@ def _sample_series():
     return one, four
 
 
-def sample_like():
+def sample_like(sheets=2, **builder_options):
     """Two worksheets, each with a column chart named Chart 1 anchored C1 (+632114, +154565 EMU) to J16, as in the
-    sample workbook; the first sheet holds the sample's sales figures."""
+    sample workbook; the first sheet holds the sample's sales figures. ``sheets=1`` keeps only the first."""
     colours = '<c:spPr><a:solidFill><a:schemeClr val="accent1"/></a:solidFill></c:spPr>'
     labels = '<c:dLbls><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/></c:dLbls><c:gapWidth val="150"/>'
     first, second = SAMPLE_SHEETS
     one, four = ([{**item, "sppr": colours} for item in part] for part in _sample_series())
     anchor = two_cell((2, 632114, 0, 154565), (9, 0, 15, 0))
     return xlsx_with_charts(
-        {first: _sales_rows(), second: _rows(["Division", "Q1", "Q2", "Q3", "Q4"], width=5)},
+        {first: _sales_rows(), **({second: _rows(["Division", "Q1", "Q2", "Q3", "Q4"], width=5)} if sheets > 1 else {})},
         [{"sheet": first, "name": "Chart 1", "anchor": anchor,
           "xml": chart_xml("bar", "col", "clustered", one, rich_title("Sales by Division"), "r", extras=labels)},
-         {"sheet": second, "name": "Chart 1", "anchor": anchor,
-          "xml": chart_xml("bar", "col", "stacked", four, rich_title("Sales by Quarter"), "r",
-                           extras=labels + '<c:overlap val="100"/>')}])
+         *([{"sheet": second, "name": "Chart 1", "anchor": anchor,
+             "xml": chart_xml("bar", "col", "stacked", four, rich_title("Sales by Quarter"), "r",
+                              extras=labels + '<c:overlap val="100"/>')}] if sheets > 1 else [])],
+        **builder_options)
 
 
 # ODS: a chart is an object directory whose content.xml holds an office:chart, drawn by a draw:frame.
