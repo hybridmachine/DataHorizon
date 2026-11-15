@@ -263,8 +263,8 @@ owner's table and query ruling:
 | `table_source` | A source is a table column |
 | `query_source` | A source is a saved-query column |
 | `broken_source` | A source is broken |
-| `source` | A range source the format cannot express as one reference, or one on a sheet that is not in the export |
-| `unsupported` | The stored specification is a version this service cannot read |
+| `source` | A range source the format cannot express as one reference, or one on a sheet that is not in the export; in a selection export, an anchor or a source outside the selection |
+| `unsupported` | The stored chart's record or specification cannot be read: a version this service cannot read, or a malformed stored record; the export does not fail |
 | `unwritable` | Writing the chart failed for an unexpected reason; the export continues |
 
 The existing line "Charts are native-only and omitted from this export" goes
