@@ -625,6 +625,8 @@ def chart_part(draft):
     if not draft["series"]:
         raise ValueError("a chart needs a series")
     root = ET.Element("c:chartSpace", {"xmlns:c": NS_C, "xmlns:a": NS_A, "xmlns:r": NS_R})
+    # Square corners, as Excel writes them: Excel draws the border rounded when the element is absent.
+    _add(root, "c:roundedCorners", val="0")
     chart = _add(root, "c:chart")
     title = draft["title"] if draft["title"] and _text(draft["title"]) else None
     if title is not None:

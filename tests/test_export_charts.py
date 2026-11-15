@@ -156,8 +156,21 @@ class Export(unittest.TestCase):
                     text = export_charts.format_reference(ref, dialect)
                     self.assertEqual(import_charts.parse_reference(text, dialect), ref, (text, dialect))
 
+    def test_xlsx_sheet_name_is_always_quoted(self):
+        # Excel quotes R, C, TRUE and FALSE itself: unquoted, they could be read as an R1C1 reference or a value.
+        for name in ("R", "C", "TRUE", "FALSE", "Sales", "Bob's Q1", "数据", "r", "true"):
+            for ref in ((name, 2, 2, 7, 2), (name, 1, 1, 1, 1)):
+                text = export_charts.format_reference(ref, "xlsx")
+                with self.subTest(name=name, text=text):
+                    self.assertTrue(text.startswith("'" + name.replace("'", "''") + "'!"))
+                    self.assertEqual(import_charts.parse_reference(text, "xlsx"), ref)
+        self.assertEqual(export_charts.format_reference(("R", 2, 2, 7, 2), "xlsx"), "'R'!$B$2:$B$7")
+        self.assertEqual(export_charts.format_reference(("TRUE", 2, 2, 7, 2), "xlsx"), "'TRUE'!$B$2:$B$7")
+        # The ODS dialect is unchanged: a plain name stays unquoted.
+        self.assertEqual(export_charts.format_reference(("R", 2, 2, 7, 2), "ods"), "$R.$B$2:.$B$7")
+
     def test_reference_is_absolute(self):
-        self.assertEqual(export_charts.format_reference(("Sales", 2, 1, 13, 1), "xlsx"), "Sales!$A$2:$A$13")
+        self.assertEqual(export_charts.format_reference(("Sales", 2, 1, 13, 1), "xlsx"), "'Sales'!$A$2:$A$13")
         self.assertEqual(export_charts.format_reference(("Bob's Q1", 2, 2, 2, 2), "xlsx"), "'Bob''s Q1'!$B$2")
         self.assertEqual(export_charts.format_reference(("Sales", 2, 1, 13, 1), "ods"), "$Sales.$A$2:.$A$13")
 

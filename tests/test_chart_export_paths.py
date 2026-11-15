@@ -189,7 +189,7 @@ class InlineChartExportTests(ChartBooks):
                 self.assertEqual(ref(charts[0]["spec"]["categories"]["source"]), (0, "A2:A13"))
                 self.assertEqual(ref(charts[0]["spec"]["series"][1]["values"]["source"]), (0, "C2:C13"))
         with zipfile.ZipFile(io.BytesIO(base64.b64decode(book.export_spreadsheet("xlsx", sheet="Data", r1=1, c1=1, r2=20, c2=8)["file_base64"]))) as archive:
-            self.assertIn("Sheet1!$A$2:$A$13", archive.read("xl/charts/chart1.xml").decode())
+            self.assertIn("'Sheet1'!$A$2:$A$13", archive.read("xl/charts/chart1.xml").decode())
 
     def test_selection_cutting_a_source(self):
         book = self.open_book("cut")

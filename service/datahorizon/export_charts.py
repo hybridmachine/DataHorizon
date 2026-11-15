@@ -50,8 +50,6 @@ def collect(db, sheet_id=None):
 
 # References.
 
-_PLAIN_XLSX = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
-_CELL_LIKE = re.compile(r"[A-Za-z]{1,3}[0-9]+|[Rr][0-9]*[Cc][0-9]*")
 _PLAIN_ODS = re.compile(r"[^.\s'$:\[\]()]+")
 
 
@@ -73,8 +71,8 @@ def format_reference(ref, dialect):
     first, last = _cell(row1, col1), _cell(row2, col2)
     single = (row1, col1) == (row2, col2)
     if dialect == "xlsx":
-        plain = _PLAIN_XLSX.fullmatch(sheet) and not _CELL_LIKE.fullmatch(sheet)
-        name = sheet if plain else "'" + sheet.replace("'", "''") + "'"
+        # Always quoted: a bare name such as R, C, TRUE or FALSE could be read as something other than a sheet.
+        name = "'" + sheet.replace("'", "''") + "'"
         return f"{name}!{first}" if single else f"{name}!{first}:{last}"
     name = sheet if _PLAIN_ODS.fullmatch(sheet) else "'" + sheet.replace("'", "''") + "'"
     return f"${name}.{first}" if single else f"${name}.{first}:.{last}"

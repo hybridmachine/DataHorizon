@@ -275,6 +275,17 @@ class Structure(unittest.TestCase):
         self.assertEqual([local(item.tag) for item in find(present, "chart")[0] if local(item.tag) == "title"], ["title"])
         self.assertEqual(find(present, "autoTitleDeleted")[0].get("val"), "0")
 
+    def test_square_corners_come_first_and_read_back_unreported(self):
+        # Excel draws a chart with rounded corners when c:roundedCorners is absent.
+        for _, draft in drafts_for_every_fixture():
+            with self.subTest(draft["type"]):
+                chart = chart_part(draft)
+                self.assertEqual((chart[0].tag, chart[0].attrib), ("c:roundedCorners", {"val": "0"}))
+                self.assertEqual(len(find(chart, "roundedCorners")), 1)
+                records, report = read_back(packaged([draft], ["Data"]))
+                self.assertEqual(report_of(report), [])
+                self.assertEqual(as_draft(records[0]), draft)
+
     def test_legend_none_has_no_legend_element(self):
         self.assertEqual(find(self.chart(legend="none"), "legend"), [])
         self.assertEqual([item.get("val") for item in find(self.chart(legend="right"), "legendPos")], ["r"])
@@ -306,10 +317,10 @@ class Structure(unittest.TestCase):
         chart = self.chart()
         first, second = find(chart, "ser")
         tx = next(item for item in first if local(item.tag) == "tx")
-        self.assertEqual([(local(item.tag), find(item, "f")[0].text) for item in tx], [("strRef", "Data!$B$1")])
+        self.assertEqual([(local(item.tag), find(item, "f")[0].text) for item in tx], [("strRef", "'Data'!$B$1")])
         tx = next(item for item in second if local(item.tag) == "tx")
         self.assertEqual([(local(item.tag), item.text) for item in tx], [("v", "South")])
-        self.assertEqual(find(find(chart, "ser")[0], "f")[1].text, "Data!$A$2:$A$13")
+        self.assertEqual(find(find(chart, "ser")[0], "f")[1].text, "'Data'!$A$2:$A$13")
 
     def test_no_cached_values(self):
         for _, draft in drafts_for_every_fixture():
