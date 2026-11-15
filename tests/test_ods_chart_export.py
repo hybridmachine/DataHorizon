@@ -29,10 +29,10 @@ def xml_text(element):
     return ET.tostring(element, encoding="unicode")
 
 
-def write(drafts):
+def write(drafts, report=None):
     """``(parts, manifest, frames)`` of ``package`` for drafts built by ``chart_document``."""
     built = export_charts.build(drafts, chart_document, ConversionReport())
-    return package(built)
+    return package(built, ConversionReport() if report is None else report)
 
 
 def object_xml(element):
@@ -179,6 +179,32 @@ class RoundTrip(unittest.TestCase):
 
     def test_nothing_built_writes_nothing(self):
         self.assertEqual(write([]), ([], [], {}))
+
+
+class SeriesNameReport(unittest.TestCase):
+    def entries(self, drafts):
+        report = ConversionReport()
+        write(drafts, report)
+        return [(item["category"], item["severity"], item["detail"], item["sheet"], item["cell"], item.get("count", 1))
+                for item in report.entries()]
+
+    def test_text_names_give_one_entry_per_chart(self):
+        self.assertEqual(self.entries([column_draft(series=[
+            {"name": ("text", "a"), "values": ("Data", 2, 2, 5, 2), "x": None},
+            {"name": ("text", "b"), "values": ("Data", 2, 3, 5, 3), "x": None}])]),
+            [("chart.converted", "converted", "series_name", "Data", "Units", 1)])
+
+    def test_text_name_among_reference_names_is_reported(self):
+        self.assertEqual(len(self.entries([column_draft()])), 1)  # "South" is a text name
+
+    def test_reference_and_missing_names_give_no_entry(self):
+        draft = column_draft(series=[{"name": ("ref", ("Data", 1, 2, 1, 2)), "values": ("Data", 2, 2, 5, 2), "x": None},
+                                     {"name": None, "values": ("Data", 2, 3, 5, 3), "x": None}])
+        self.assertEqual(self.entries([draft]), [])
+
+    def test_two_charts_give_two_entries_naming_each(self):
+        found = self.entries([column_draft(name="First"), column_draft(name="Second" + "x" * 40)])
+        self.assertEqual([(item[3], item[4]) for item in found], [("Data", "First"), ("Data", ("Second" + "x" * 40)[:32])])
 
 
 class Structure(unittest.TestCase):

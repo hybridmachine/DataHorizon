@@ -473,7 +473,7 @@ def _frame(number, draft):
     return place["row"], place["col"], frame
 
 
-def package(built):
+def package(built, report):
     """The parts that carry the built charts of an export.
 
     ``built`` is ``export_charts.build``'s ``(draft, chart document)`` pairs.  Returns ``(parts, manifest, frames)``:
@@ -481,9 +481,16 @@ def package(built):
     1); the manifest entries, ``(full path, media type)``, of each object directory and its content part; and, for each
     exported sheet name, the ``(anchor row, anchor col, draw:frame)`` of its charts in draft order.  A frame is a
     cell-anchored frame: the caller places it in the cell at its anchor, so that the sheet reads back the anchor and
-    the offset the draft has.  Lengths are inches at 96 pixels to the inch."""
+    the offset the draft has.  Lengths are inches at 96 pixels to the inch.
+
+    ODF holds no literal series name outside a local data table, which an exported chart does not carry, so a chart
+    with a series named by text is still written, that name left out, and the import would number it ``Series N``.
+    ``report`` (a ``ConversionReport``) gets one ``chart.converted`` / ``series_name`` entry for each such chart, on its
+    sheet, named by the chart (the importer's own entry for a series name it replaced)."""
     parts, manifest, frames = [], [], {}
     for number, (draft, document) in enumerate(built, 1):
+        if any(item["name"] is not None and item["name"][0] == "text" for item in draft["series"]):
+            report.add("chart.converted", "converted", "series_name", sheet=draft["sheet"], cell=draft["name"][:32])
         parts.append((f"Object {number}/content.xml", document))
         manifest += [(f"Object {number}/", CHART_MEDIA), (f"Object {number}/content.xml", "text/xml")]
         frames.setdefault(draft["sheet"], []).append(_frame(number, draft))
