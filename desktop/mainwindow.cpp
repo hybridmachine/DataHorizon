@@ -3402,8 +3402,11 @@ void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &
         QStringList report; for(const auto &line:preview["report"].toArray()) report.append(line.toString());
         for(const auto &entry:preview["issues"].toArray()) { const auto item=entry.toObject(); report.append((item["sheet"].toString().isEmpty()?QString():item["sheet"].toString()+"!")+item["cell"].toString()+": "+item["message"].toString()); }
         const bool allowed=preview["can_import"].toBool();
+        const auto sheetName=preview["sheet"].toString().left(80);
+        auto what=tr("%1 stored cells").arg(preview["stored_cells"].toInt());
+        if(const int charts=int(preview["charts"].toArray().size()); charts>0) what=tr("%1 and %2").arg(what,tr("%n chart(s)",nullptr,charts));
         QMessageBox review(QMessageBox::Question,tr("Review spreadsheet import"),
-            tr("Import %1 stored cells from %2 at %3?").arg(preview["stored_cells"].toInt()).arg(preview["sheet"].toString().left(80)).arg(target["name"].toString()),
+            tr("Import %1 from %2 at %3?").arg(what,sheetName,target["name"].toString()),
             QMessageBox::Yes|QMessageBox::Cancel,this);
         review.setObjectName("spreadsheetImportReview");
         review.setOption(QMessageBox::Option::DontUseNativeDialog); review.setTextFormat(Qt::PlainText); review.setDefaultButton(QMessageBox::Cancel);
@@ -3414,7 +3417,24 @@ void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &
         QJsonObject edit{{"action","edit"},{"label","Import "+format.toUpper()},{"cells",preview["cells"]},
                 {"workbook",target["workbook"]},{"sheet",target["sheet"]},{"expected_state",target["expected_state"]}};
         if(!preview["charts"].toArray().isEmpty()) edit["charts"]=preview["charts"];
+        const auto previous=m_pendingId;
         submit(edit);
+        if(m_pendingId.isEmpty() || m_pendingId==previous) return;
+        // The committed edit's status names what it changed, charts included;
+        // the refresh that follows sets its own status, so it is shown again
+        // once the window is ready.
+        const auto operation=m_pendingId;auto receipts=std::make_shared<QMetaObject::Connection>();
+        *receipts=connect(this,&MainWindow::operationReceipt,this,[this,operation,sheetName,receipts](QJsonObject receipt){
+            if(receipt["operation_id"].toString()!=operation) return;
+            disconnect(*receipts);
+            if(receipt["outcome"].toString()!="committed") return;
+            auto changed=tr("%n cell(s)",nullptr,receipt["changed_cells"].toInt());
+            if(const int charts=receipt["changed_charts"].toInt(); charts>0) changed=tr("%1 and %2").arg(changed,tr("%n chart(s)",nullptr,charts));
+            const auto text=tr("Imported %1 from %2 • Stored automatically").arg(changed,sheetName);
+            m_status->setText(text);
+            auto ready=std::make_shared<QMetaObject::Connection>();
+            *ready=connect(this,&MainWindow::workbookReady,this,[this,text,ready]{disconnect(*ready);m_status->setText(text);});
+        });
     },format);
 }
 

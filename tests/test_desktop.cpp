@@ -424,10 +424,11 @@ public:
 // JobLifecycleServer counts operation jobs: which started, how many ran at
 // once by the service's answers, and which were cancelled and released.
 // While holdResults is set a completed job is answered as still running; the
-// next staleAnswers completed answers are rewritten as stale.
+// next staleAnswers completed answers are rewritten as stale; the next
+// failPolls polls of a job are answered 503, as a lost connection would be.
 class ChartJobProxy : public QTcpServer {
 public:
-    QStringList started,cancels,releases,startedCharts;QSet<QString> running;int maxRunning=0,staleAnswers=0;bool holdResults=false;
+    QStringList started,cancels,releases,startedCharts;QSet<QString> running;int maxRunning=0,staleAnswers=0,failPolls=0;bool holdResults=false;
     explicit ChartJobProxy(const QJsonObject &service) : m_upstream(this) {
         m_upstream.configure(service["url"].toString(),service["token"].toString());
         connect(this,&QTcpServer::newConnection,this,[this] {
@@ -455,6 +456,11 @@ public:
                         else if(result["status"]=="completed" && staleAnswers>0){--staleAnswers;result["status"]="stale";result.remove("result");}
                     }
                     if(!guarded) return;
+                    if(marker>=0 && !post && tail.size()==1 && failPolls>0) {
+                        --failPolls;const auto bytes=QJsonDocument(QJsonObject{{"code","UNAVAILABLE"},{"message","The proxy dropped this poll"}}).toJson(QJsonDocument::Compact);
+                        guarded->write("HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(bytes.size())+"\r\n\r\n"+bytes);
+                        guarded->disconnectFromHost();return;
+                    }
                     const auto bytes=QJsonDocument(error.isEmpty() || result.contains("code")?result:QJsonObject{{"code","UNAVAILABLE"},{"message",error}}).toJson(QJsonDocument::Compact);
                     guarded->write(QByteArray("HTTP/1.1 ")+(error.isEmpty()?"200 OK":"409 Conflict")
                         +"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(bytes.size())+"\r\n\r\n"+bytes);
@@ -4607,6 +4613,29 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
         QCOMPARE(layer->overlays().first()->objectName(),QString("chartOverlay"));QCOMPARE(layer->overlays().first()->accessibleName(),QString("Chart 1"));
     }
+    void oneSheetImportCountsItsCharts() {
+        CHART_WINDOW;QSignalSpy changed(&window,&MainWindow::operationFinished);auto *status=window.findChild<QLabel *>("storageStatus");QVERIFY(status);
+        for(const auto &[fixture,charts]:QList<QPair<QString,int>>{{"charts-one-sheet.xlsx",1},{"markup.xlsx",0}}) {
+            const auto path=temp.filePath(fixture);QVERIFY(QFile::copy(QStringLiteral(DATAHORIZON_FIXTURES "/")+fixture,path));
+            const int before=changed.count(),states=opened.count();QString review;
+            QVERIFY(driveImportOptions(window,path,[&](QDialog *dialog){
+                auto *scope=dialog->findChild<QComboBox *>("importScope");scope->setCurrentIndex(scope->findData("selection"));
+                answerNextDialog(QMessageBox::Yes,&review);dialog->accept();
+            }));
+            QTRY_COMPARE_WITH_TIMEOUT(changed.count(),before+1,20000);QVERIFY(changed.last()[0].toBool());
+            QTRY_VERIFY_WITH_TIMEOUT(opened.count()>states,10000);
+            if(charts) {
+                QVERIFY2(review.contains("16 stored cells and 1 chart from") && !review.contains("(s)"),qPrintable(review));
+                QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("16 cells and 1 chart"),5000);
+                QVERIFY2(!status->text().contains("(s)") && !status->text().contains("1 charts"),qPrintable(status->text()));
+            } else {
+                // The destination is charts.dhwb; the count names no chart.
+                QVERIFY2(review.startsWith("Import 1 stored cells from ") && !review.contains("chart from"),qPrintable(review));
+                QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Imported 1 cell from"),5000);
+                QVERIFY2(!status->text().contains("chart"),qPrintable(status->text()));
+            }
+        }
+    }
     void allSheetsImportShowsCharts() {
         CHART_WINDOW;QSignalSpy changed(&window,&MainWindow::operationFinished);
         const auto path=temp.filePath("charts.xlsx");QVERIFY(QFile::copy(QStringLiteral(DATAHORIZON_FIXTURES "/charts-two-sheets.xlsx"),path));
@@ -4850,8 +4879,23 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT((charts=[&]{QSet<QString> ids;for(const auto &args:rendered)ids.insert(args.first().toString());return ids;}()).size()==6,30000);
         QTRY_VERIFY_WITH_TIMEOUT(proxy.allReleased(),5000);
         QVERIFY(proxy.started.size()>=6);QVERIFY(proxy.maxRunning>=1);QVERIFY(proxy.maxRunning<=ChartLayer::MaxConcurrentRenders);
-        QCOMPARE(ChartLayer::MaxConcurrentRenders,2);QCOMPARE(ChartLayer::RelayoutRenderDelayMs,150);QCOMPARE(ChartLayer::PollIntervalMs,50);
+        QCOMPARE(ChartLayer::MaxConcurrentRenders,1);QCOMPARE(ChartLayer::RelayoutRenderDelayMs,150);QCOMPARE(ChartLayer::PollIntervalMs,50);
         for(auto *overlay:layer->overlays())QVERIFY(overlay->hasImage());
+    }
+    void failedRenderIsRetriedOnRefresh() {
+        PROXIED_CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        // The job runs until a poll is lost in transit: the placeholder shows the error, and it is not retried by itself.
+        proxy.holdResults=true;QVERIFY(addChart(window,opened,"Flaky",2,4));
+        QTRY_VERIFY_WITH_TIMEOUT(!proxy.started.isEmpty(),10000);proxy.failPolls=1;proxy.holdResults=false;
+        QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Flaky") && overlayNamed(layer,"Flaky")->placeholder().contains("could not be drawn"),10000);
+        auto *flaky=overlayNamed(layer,"Flaky");QVERIFY(flaky->placeholder().contains("UNAVAILABLE"));QVERIFY(!flaky->hasImage());
+        QTest::qWait(400);QCOMPARE(proxy.startedCharts.count(flaky->chartId()),1);QCOMPARE(rendered.count(),0);
+        // Refresh binds the same state again, which renders the failed chart once more.
+        const int before=opened.count();window.findChild<QAction *>("refreshStoredDataAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(rendered.count(),1,10000);QCOMPARE(rendered.first().first().toString(),flaky->chartId());
+        QVERIFY(flaky->hasImage());QCOMPARE(proxy.startedCharts.count(flaky->chartId()),2);
+        QTRY_VERIFY_WITH_TIMEOUT(proxy.allReleased(),5000);
     }
     void sheetSwitchDiscardsLateRenders() {
         PROXIED_CHART_WINDOW;QVERIFY(fillChartData(window,opened));

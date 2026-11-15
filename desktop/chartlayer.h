@@ -7,6 +7,7 @@
 #include <QList>
 #include <QPointer>
 #include <QRect>
+#include <QSet>
 #include <QTimer>
 #include <QWidget>
 
@@ -53,21 +54,27 @@ private:
 // body. Overlays are hidden while the sheet is shown through a projected list
 // view, and never cover the headers or scroll bars.
 //
-// Charts in view are rendered by service render jobs, at most
-// MaxConcurrentRenders at once, lowest z first, after relayouts settle. A
-// state change re-renders them; the previous image stays until the new one
-// arrives. Every job started is released: when it ends, or after a cancel
-// when its chart leaves view, the sheet, state or workbook changes, or the
-// layer is destroyed.
+// Charts in view are rendered by service render jobs, one at a time (the
+// service runs one chart job per workbook), lowest z first, after relayouts
+// settle. A state change re-renders them; the previous image stays until the
+// new one arrives. A render that failed is tried again when the window binds
+// the same state again (Refresh). Every job started is released: when it
+// ends, or after a cancel when its chart leaves view, the sheet, state or
+// workbook changes, or the layer is destroyed.
 class ChartLayer : public QObject {
     Q_OBJECT
 public:
-    // At most this many render jobs of the layer are open at once; a relayout
-    // checks the queue this long after the last one; a running job is polled
-    // at this interval.
-    static constexpr int MaxConcurrentRenders=2,RelayoutRenderDelayMs=150,PollIntervalMs=50;
+    // At most this many render jobs of the layer are open at once: the
+    // service refuses a second chart job on a workbook (JOB_BUSY), so one
+    // more would only cost a refused start. Another client's chart job still
+    // takes the slot at times, so a refused start backs off and tries again.
+    // A relayout checks the queue this long after the last one; a running
+    // job is polled at this interval.
+    static constexpr int MaxConcurrentRenders=1,RelayoutRenderDelayMs=150,PollIntervalMs=50;
     ChartLayer(RestClient *client,QTableView *body,FrozenPanes *frozen,QWidget *gridArea,QObject *parent);
     // workbookBase is "/v1/workbooks/{id}", empty when no workbook is open.
+    // Binding the state already bound keeps the overlays and renders again
+    // the charts whose render failed.
     void bind(const QString &workbookBase,const QString &sheet,const QString &state,bool projected);
     void relayout();
     ~ChartLayer() override;
@@ -126,4 +133,7 @@ private:
     bool m_busy=false;int m_busyDelay=PollIntervalMs;
     // The key a chart was already retried for after a stale answer.
     QHash<QString,QString> m_staleRetried;
+    // Charts whose render settled as a failure; a bind of the same state
+    // renders them again.
+    QSet<QString> m_failed;
 };

@@ -85,7 +85,14 @@ QList<ChartOverlay *> ChartLayer::overlays() const {
 
 void ChartLayer::bind(const QString &workbookBase,const QString &sheet,const QString &state,bool projected) {
     if(m_listed && workbookBase==m_base && sheet==m_sheet && state==m_state) {
-        if(projected!=m_projected){m_projected=projected;relayout();}
+        // The window refreshed without a change: charts whose render failed
+        // (a lost answer, say) are rendered again; one that fails because of
+        // its own data simply fails again.
+        bool retry=false;
+        for(const auto &chartId:std::as_const(m_failed))
+            if(auto *overlay=overlayFor(chartId)){overlay->setRenderKey({});retry=true;}
+        m_failed.clear();
+        if(projected!=m_projected || retry){m_projected=projected;relayout();}
         return;
     }
     const bool sameSheet=workbookBase==m_base && sheet==m_sheet;
@@ -151,7 +158,7 @@ void ChartLayer::accept(const QJsonArray &charts) {
 void ChartLayer::clear() {
     ++m_generation;
     for(const auto &overlay:m_overlays)delete overlay.data();
-    m_overlays.clear();m_staleRetried.clear();
+    m_overlays.clear();m_staleRetried.clear();m_failed.clear();
     abandonUnwanted();
 }
 
@@ -329,13 +336,17 @@ void ChartLayer::answer(const QString &jobId,const QJsonObject &response,const Q
     if(overlay && job.base==m_base && job.sheet==m_sheet && job.state==m_state && renderKey(overlay)==job.key) {
         const auto result=response["result"].toObject();
         if(status=="completed" && result["state"].toString()==job.state) {
-            if(overlay->setSvg(result["svg"].toString().toUtf8())){overlay->setRenderKey(job.key);emit rendered(job.chartId);}
+            if(overlay->setSvg(result["svg"].toString().toUtf8())){overlay->setRenderKey(job.key);m_failed.remove(job.chartId);emit rendered(job.chartId);}
             else fail(overlay,job.key,{{"code","INVALID_IMAGE"}},tr("The service's chart image could not be read"));
         }
         else if(status=="stale" || status=="completed") {
             // The workbook moved on while the job ran: start once more for this
-            // state; after a second stale answer the chart waits, keeping what it
-            // shows, for the window to bind the new state.
+            // state. That start is normally refused with STALE_STATE (see
+            // start), since the workbook already moved on; a second stale
+            // answer needs the workbook to change again between the retry's
+            // start and its run, a race only a test proxy produces on demand.
+            // The chart then waits, keeping what it shows, for the window to
+            // bind the new state.
             if(m_staleRetried.value(job.chartId)!=job.key)m_staleRetried.insert(job.chartId,job.key);
             else overlay->setRenderKey(job.key);
         }
@@ -352,7 +363,7 @@ void ChartLayer::answer(const QString &jobId,const QJsonObject &response,const Q
 void ChartLayer::fail(ChartOverlay *overlay,const QString &key,const QJsonObject &error,const QString &message) {
     const auto code=error["code"].toString();
     overlay->setPlaceholder(code.isEmpty()?tr("This chart could not be drawn: %1").arg(message):tr("This chart could not be drawn (%1): %2").arg(code,message));
-    overlay->setRenderKey(key);
+    overlay->setRenderKey(key);m_failed.insert(overlay->chartId());
 }
 
 namespace {
