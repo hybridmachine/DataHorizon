@@ -12,7 +12,7 @@ import re
 from . import charts
 from .chart_render import LIMIT_PIE_POINTS, LIMIT_POINTS, LIMIT_SERIES
 from .engine import MAX_COLS, MAX_ROWS, EngineError
-from .formula import column_name, split_ref
+from .formula import FormulaError, column_name, split_ref
 from .interchange import fold_name
 
 UNUSABLE = object()
@@ -169,6 +169,8 @@ class _Converter:
         if any(item.get("secondary") for item in draft["plots"]):
             raise _Skip("secondary_axis")
         series = draft["series"]
+        if not series:
+            raise _Skip("source")
         if kind == "pie" and len(series) != 1:
             raise _Skip("pie_series")
         total = 0
@@ -198,6 +200,8 @@ class _Converter:
                 ref = name.get("ref") if isinstance(name, dict) else None
                 if isinstance(ref, tuple) and self.position(ref) is not None and _extent(ref) == 1:
                     out_name = bound(ref, "name")
+                elif name is not None:
+                    self.note("series_name")
             values = bound(item.get("values"), "values")
             x = bound(item.get("x"), "x") if kind == "scatter" else None
             out_series.append({"name": out_name, "values": values, "x": x})
@@ -218,9 +222,10 @@ class _Converter:
             grouping = "stacked" if plot.get("grouping") in ("stacked", "percentStacked") else "clustered"
             if plot.get("grouping") == "percentStacked":
                 self.note("percent_stacked")
-        if draft.get("styled"):
-            listed = ", ".join(draft["styled"])
-            self.note("styling", cell=f"{self.label[:max(31 - len(listed), 0)]}: {listed}")
+        elif plot is not None and plot.get("grouping") in ("stacked", "percentStacked"):
+            self.note("grouping")
+        for item in draft.get("styled") or ():
+            self.note(f"styling: {item}")
         title = self.text(draft["title"], cut=charts.TITLE_LENGTH)
         axis = draft["axis_titles"]
         low, high = draft.get("value_min"), draft.get("value_max")
@@ -301,6 +306,32 @@ def _record_sources(spec):
     return sources
 
 
+def _check_record_shape(item):
+    name = item["name"]
+    if not isinstance(name, str) or not 1 <= len(name) <= NAME_LENGTH:
+        raise _argument(f"A chart record's name needs 1-{NAME_LENGTH} characters")
+    for key, limits in (("anchor", {"row": (1, MAX_ROWS), "col": (1, MAX_COLS)}),
+                        ("offset", {"x": (0, OFFSET_LIMIT), "y": (0, OFFSET_LIMIT)}),
+                        ("size", {"width": SIZE_LIMITS[0], "height": SIZE_LIMITS[1]})):
+        value = item[key]
+        if not isinstance(value, dict) or set(value) != set(limits):
+            raise _argument(f"A chart record's {key} needs: {', '.join(limits)}")
+        for part, (low, high) in limits.items():
+            if not _is_int(value[part]) or not low <= value[part] <= high:
+                raise _argument(f"A chart record's {key} {part} must be an integer from {low} to {high}")
+
+
+def _check_ref(ref):
+    parts = ref.split(":") if isinstance(ref, str) else []
+    try:
+        corners = [split_ref(part) for part in parts] if 1 <= len(parts) <= 2 else None
+    except FormulaError:
+        corners = None
+    if corners is None or any(corner[0] is not None or not 1 <= corner[1] <= MAX_ROWS or not 1 <= corner[2] <= MAX_COLS
+                              for corner in corners):
+        raise _argument("A chart source ref must be one cell or one rectangle such as A2:A13")
+
+
 def check_records(records, sheet_count):
     """Check chart records from a client; raises ``INVALID_ARGUMENT``.  Specification details are checked at creation."""
     if not isinstance(records, list):
@@ -317,11 +348,13 @@ def check_records(records, sheet_count):
             raise _argument("A chart record's sheet is outside the imported sheets")
         if set(item) != set(RECORD_KEYS):
             raise _argument(f"A chart record needs: {', '.join(RECORD_KEYS)}")
+        _check_record_shape(item)
         if set(item["spec"]) - set(charts.SPEC_KEYS) if isinstance(item["spec"], dict) else True:
             raise _argument("A chart record's spec must be an object with specification keys only")
         for source in _record_sources(item["spec"]):
             if source.get("kind") != "range" or not _is_int(source.get("sheet")) or not 0 <= source["sheet"] < sheet_count:
                 raise _argument("A chart source must be a range on one of the imported sheets")
+            _check_ref(source.get("ref"))
     return records
 
 

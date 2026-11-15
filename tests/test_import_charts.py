@@ -95,6 +95,11 @@ class Convert(unittest.TestCase):
         self.assertEqual(entries(self.report), [])
         self.assertEqual(self.convert(plots=[plot(grouping="percentStacked")])["spec"]["grouping"], "stacked")
         self.assertEqual(entries(self.report), [("chart.converted", "percent_stacked")])
+        for grouping in ("stacked", "percentStacked"):
+            self.report = ConversionReport()
+            record = self.convert(plots=[plot("line", None, grouping)])
+            self.assertIsNone(record["spec"]["grouping"])
+            self.assertEqual(entries(self.report), [("chart.converted", "grouping")])
 
     def test_three_d_and_doughnut(self):
         record = self.convert(plots=[plot(three_d=True)])
@@ -137,9 +142,12 @@ class Convert(unittest.TestCase):
 
         self.assertEqual(named({"text": "Sales"}), {"text": "Sales"})
         self.assertEqual(named({"ref": ("Data", 1, 2, 1, 2)}), {"source": {"kind": "range", "sheet": 0, "ref": "B1"}})
-        for bad in ({"ref": ("Data", 1, 2, 2, 2)}, {"ref": UNUSABLE}, None):
-            self.assertEqual(named(bad), {"text": "Series 1"})
+        self.assertEqual(named(None), {"text": "Series 1"})
         self.assertEqual(entries(self.report), [])
+        for bad in ({"ref": ("Data", 1, 2, 2, 2)}, {"ref": UNUSABLE}, {"ref": ("Missing", 1, 2, 1, 2)}):
+            self.report = ConversionReport()
+            self.assertEqual(named(bad), {"text": "Series 1"})
+            self.assertEqual(entries(self.report), [("chart.converted", "series_name")])
 
     def test_categories_differ(self):
         other = series_of(categories=("Data", 2, 3, 8, 3))
@@ -151,10 +159,15 @@ class Convert(unittest.TestCase):
         self.assertEqual(len(STYLED), 8)
         self.convert(styled=["colours", "data labels"])
         found = self.report.entries()
-        self.assertEqual([(entry["category"], entry["detail"]) for entry in found], [("chart.converted", "styling")])
-        text = str(found[0]["samples"])
-        self.assertTrue("colours" in text and "data labels" in text, text)
-        self.assertEqual(found[0]["samples"][0]["sheet"], "Data")
+        self.assertEqual(sorted(entry["detail"] for entry in found), ["styling: colours", "styling: data labels"])
+        self.assertEqual({entry["category"] for entry in found}, {"chart.converted"})
+        self.assertEqual(found[0]["samples"], [{"sheet": "Data", "cell": "Chart 1"}])
+        self.report = ConversionReport()
+        name = "".join(chr(97 + n % 26) for n in range(64))
+        self.convert(styled=list(STYLED), name=name)
+        found = self.report.entries()
+        self.assertEqual(sorted(entry["detail"] for entry in found), sorted(f"styling: {item}" for item in STYLED))
+        self.assertTrue(all(entry["samples"] == [{"sheet": "Data", "cell": name[:32]}] for entry in found))
 
     def test_name(self):
         self.assertEqual(self.convert(name="n" * 70)["name"], "n" * 64)
@@ -186,6 +199,7 @@ class Convert(unittest.TestCase):
             ("source", dict(series=[series_of(("Missing", 2, 2, 8, 2))])),
             ("source", dict(series=[series_of(("Data", 2, 2, 4, 4))])),
             ("source", dict(series=[series_of(None)])),
+            ("source", dict(series=[])),
             ("source", dict(plots=[plot("scatter", None, None)], series=[series_of(x=None)])),
             ("limit", dict(series=many)),
             ("limit", dict(series=[series_of(("Data", 1, 2, 10001, 2))])),
@@ -270,6 +284,32 @@ class Records(unittest.TestCase):
         bad = record(0)
         bad["spec"]["series"][0]["values"]["source"]["sheet"] = 5
         refused([bad])
+
+        def broken(change):
+            made = record(0)
+            change(made)
+            refused([made])
+
+        def source(made):
+            return made["spec"]["series"][0]["values"]["source"]
+
+        broken(lambda made: made.update(anchor="A1"))
+        broken(lambda made: made.update(anchor={"row": 0, "col": 1}))
+        broken(lambda made: made.update(anchor={"row": 1}))
+        broken(lambda made: made.update(anchor={"row": 1.5, "col": 1}))
+        broken(lambda made: made.update(offset={"x": -1, "y": 0}))
+        broken(lambda made: made.update(offset={"x": 0, "y": 4097}))
+        broken(lambda made: made.update(size={"width": 63, "height": 100}))
+        broken(lambda made: made.update(size={"width": 100, "height": 4097}))
+        broken(lambda made: made.update(size=None))
+        broken(lambda made: made.update(name=""))
+        broken(lambda made: made.update(name="n" * 65))
+        broken(lambda made: made.update(name=5))
+        broken(lambda made: source(made).pop("ref"))
+        broken(lambda made: source(made).update(ref=7))
+        broken(lambda made: source(made).update(ref="not a ref"))
+        broken(lambda made: source(made).update(ref="Data!B2"))
+        broken(lambda made: source(made).update(kind="table"))
 
     def test_summary(self):
         self.assertEqual(summary([record(0, "A"), record(1, "B")], SHEETS),
