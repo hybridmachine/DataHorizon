@@ -1,7 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Builds XLSX packages with drawings and charts for tests, on top of xlsx_builder.workbook_bytes."""
-from xml.sax.saxutils import escape
+"""Builds XLSX and ODS packages with drawings and charts for tests, on top of the xlsx_builder and ods_builder
+workbook_bytes."""
+import re
+from xml.sax.saxutils import escape, quoteattr
 
+from datahorizon import ods_features
+from ods_builder import NAMESPACES, workbook_bytes as ods_workbook_bytes
 from xlsx_builder import STRICT, TRANSITIONAL, workbook_bytes
 
 C = "http://schemas.openxmlformats.org/drawingml/2006/chart"
@@ -170,3 +174,119 @@ def sample_like():
          {"sheet": second, "name": "Chart 2", "anchor": anchor,
           "xml": chart_xml("bar", "col", "stacked", four, rich_title("Sales by Quarter"), "r",
                            extras=labels + '<c:overlap val="100"/>')}])
+
+
+# ODS: a chart is an object directory whose content.xml holds an office:chart, drawn by a draw:frame.
+
+ODS_CLASSES = {"pie": "circle", "doughnut": "ring"}
+ODS_NAMESPACES = (f'{NAMESPACES} xmlns:draw="{ods_features.DRAW}" xmlns:chart="{ods_features.CHART}" '
+                  f'xmlns:svg="{ods_features.SVG}" xmlns:xlink="{ods_features.XLINK}"')
+
+
+def ods_ref(reference):
+    """``'My Sheet'!$B$2:$B$8`` as the ODS ``$'My Sheet'.$B$2:.$B$8``; anything else is returned as it is."""
+    found = re.fullmatch(r"('(?:[^']|'')+'|[^'!]+)!(.+)", reference)
+    if found is None:
+        return reference
+    first, _, last = found.group(2).partition(":")
+    return f"${found.group(1)}.{first}" + (f":.{last}" if last else "")
+
+
+def ods_title(text):
+    return f"<chart:title><text:p>{escape(text)}</text:p></chart:title>"
+
+
+def ods_chart_xml(kind="bar", direction="col", grouping="clustered", series=(), title=None, legend=None, extras="",
+                  category_axis="", value_axis="", plot_area=None, value_min=None, value_max=None, axis_extras="",
+                  secondary=False):
+    """An object's content.xml.  The arguments follow ``chart_xml``: ``kind`` (``bar3D`` for three dimensions),
+    ``direction`` and ``grouping`` (``stacked`` and ``percentStacked`` give the plot-area flags), ``series`` (the
+    same items, with ``cat``/``val``/``x``/``name_ref`` in the XLSX form of reference, plus ``sppr``, the inner XML of
+    the series style, ``cls``, the series' own ``chart:class`` word, and ``axis``, its ``chart:attached-axis``).
+    ``title`` is plain text and ``legend`` an ODS position word.  ``extras`` is attribute text added to the plot
+    area's chart-properties, ``axis_extras`` to the value axis'; ``category_axis`` and ``value_axis`` are raw child
+    XML of the axes; ``plot_area`` replaces the whole plot area content; ``secondary`` adds a second value axis."""
+    three_d = kind.endswith("3D")
+    base = kind[:-2] if three_d else kind
+    flags = ""
+    if direction == "bar" and base == "bar":
+        flags += ' chart:vertical="true"'
+    if grouping == "stacked":
+        flags += ' chart:stacked="true"'
+    elif grouping == "percentStacked":
+        flags += ' chart:percentage="true"'
+    if three_d:
+        flags += ' chart:three-dimensional="true"'
+    limits = "".join(f' chart:{name}="{value}"' for name, value in (("minimum", value_min), ("maximum", value_max))
+                     if value is not None)
+    styles = [f'<style:style style:name="plot" style:family="chart"><style:chart-properties{flags} {extras}/></style:style>',
+              f'<style:style style:name="axis-y" style:family="chart"><style:chart-properties{limits} {axis_extras}/></style:style>',
+              '<style:style style:name="axis-x" style:family="chart"><style:chart-properties/></style:style>']
+    members = []
+    scatter = base in ("scatter", "bubble")
+    categories = next((item["cat"] for item in series if item.get("cat")), None)
+    for number, item in enumerate(series):
+        styles.append(f'<style:style style:name="s{number}" style:family="chart">{item.get("sppr", "")}</style:style>')
+        attributes = f'chart:style-name="s{number}"'
+        if item.get("val"):
+            attributes += f' chart:values-cell-range-address={quoteattr(ods_ref(item["val"]))}'
+        if item.get("name_ref"):
+            attributes += f' chart:label-cell-address={quoteattr(ods_ref(item["name_ref"]))}'
+        if item.get("cls"):
+            attributes += f' chart:class="chart:{item["cls"]}"'
+        if item.get("axis"):
+            attributes += f' chart:attached-axis="{item["axis"]}"'
+        domain = (f'<chart:domain table:cell-range-address={quoteattr(ods_ref(item["x"]))}/>'
+                  if scatter and item.get("x") else "")
+        members.append(f"<chart:series {attributes}>{domain}</chart:series>")
+    x_inner = category_axis + (f'<chart:categories table:cell-range-address={quoteattr(ods_ref(categories))}/>'
+                               if categories and not scatter else "")
+    area = plot_area if plot_area is not None else (
+        f'<chart:axis chart:dimension="x" chart:name="primary-x" chart:style-name="axis-x">{x_inner}</chart:axis>'
+        + ("" if base in ("pie", "doughnut") else
+           f'<chart:axis chart:dimension="y" chart:name="primary-y" chart:style-name="axis-y">{value_axis}</chart:axis>')
+        + ('<chart:axis chart:dimension="y" chart:name="secondary-y"/>' if secondary else "") + "".join(members))
+    legend_xml = "" if legend is None else f'<chart:legend chart:legend-position="{legend}"/>'
+    return (f'<office:document-content {ODS_NAMESPACES}><office:automatic-styles>{"".join(styles)}</office:automatic-styles>'
+            f'<office:body><office:chart><chart:chart chart:class="chart:{ODS_CLASSES.get(base, base)}" '
+            f'svg:width="12cm" svg:height="8cm">{ods_title(title) if title else ""}{legend_xml}'
+            f'<chart:plot-area chart:style-name="plot">{area}</chart:plot-area></chart:chart></office:chart></office:body>'
+            f'</office:document-content>')
+
+
+def ods_frame(number, name, x="0cm", y="0cm", width="12cm", height="8cm", href=None):
+    href = f"./Object {number}" if href is None else href
+    return (f'<draw:frame draw:name={quoteattr(name)} svg:x="{x}" svg:y="{y}" svg:width="{width}" svg:height="{height}">'
+            f'<draw:object xlink:href={quoteattr(href)} xlink:type="simple"/></draw:frame>')
+
+
+def ods_with_charts(sheets, charts, **builder_options):
+    """A workbook of ``sheets`` ({name: rows XML}) with chart objects drawn on them.
+
+    Each chart is ``{"sheet", "xml", "name", "x", "y", "width", "height"}`` (lengths as ODS writes them) plus
+    optional ``cell`` (``(row, col)``, 1-based: the frame sits in that cell of a sheet whose own rows are empty;
+    without it the frame is in ``table:shapes``), ``missing`` (no content.xml is written) and ``target`` (the
+    frame's ``xlink:href``)."""
+    parts, tables, number = {}, [], 0
+    for name, rows in sheets.items():
+        shapes, placed = [], ""
+        for item in (c for c in charts if c["sheet"] == name):
+            number += 1
+            frame = ods_frame(number, item.get("name", f"Chart {number}"), item.get("x", "0cm"), item.get("y", "0cm"),
+                              item.get("width", "12cm"), item.get("height", "8cm"), item.get("target"))
+            if not item.get("missing"):
+                parts[f"Object {number}/content.xml"] = item["xml"]
+            if item.get("cell"):
+                row, col = item["cell"]
+                before = f'<table:table-cell table:number-columns-repeated="{col - 1}"/>' if col > 1 else ""
+                skip = (f'<table:table-row table:number-rows-repeated="{row - 1}"><table:table-cell/></table:table-row>'
+                        if row > 1 else "")
+                placed += f"{skip}<table:table-row>{before}<table:table-cell>{frame}</table:table-cell></table:table-row>"
+            else:
+                shapes.append(frame)
+        head = f"<table:shapes>{''.join(shapes)}</table:shapes>" if shapes else ""
+        tables.append(f'<table:table table:name={quoteattr(name)}>{head}{rows}{placed}</table:table>')
+    content = (f'<office:document-content {ODS_NAMESPACES}><office:automatic-styles/><office:body><office:spreadsheet>'
+               f'{"".join(tables)}</office:spreadsheet></office:body></office:document-content>')
+    extra = {**parts, **(builder_options.pop("extra_parts", None) or {})}
+    return ods_workbook_bytes(sheets, content=content, extra_parts=extra, **builder_options)

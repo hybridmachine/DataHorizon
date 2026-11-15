@@ -29,6 +29,9 @@ TABLE_STYLE_BYTES = 1024*1024  # style names of the sheets, kept to tell hidden 
 
 CALCEXT = "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0"
 DRAW = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+CHART = "urn:oasis:names:tc:opendocument:xmlns:chart:1.0"
+SVG = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
+XLINK = "http://www.w3.org/1999/xlink"
 FORM = "urn:oasis:names:tc:opendocument:xmlns:form:1.0"
 CONFIG = "urn:oasis:names:tc:opendocument:xmlns:config:1.0"
 DRAW_PREFIX = "{" + DRAW + "}"
