@@ -296,10 +296,16 @@ ROW_GROUPS = (q(T, "table-row-group"), q(T, "table-header-rows"), q(T, "table-ro
 Z_INDEX = q(DRAW, "z-index")
 
 
+Z_INDEX_DIGITS = 9  # longer text is not converted: an untrusted attribute never fails the import
+
+
 def _z_index(frame):
-    """A frame's ``draw:z-index`` (a non-negative integer), or ``None``."""
+    """A frame's ``draw:z-index`` when it is a plain non-negative decimal of at most ``Z_INDEX_DIGITS`` ASCII digits,
+    else ``None`` (the sheet's charts then keep document order)."""
     text = frame.get(Z_INDEX)
-    return int(text) if text is not None and text.isascii() and text.isdigit() else None
+    if text is None or not 0 < len(text) <= Z_INDEX_DIGITS or not text.isascii() or not text.isdigit():
+        return None
+    return int(text)
 
 
 class SheetFrames:

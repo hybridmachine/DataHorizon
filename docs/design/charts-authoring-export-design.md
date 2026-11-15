@@ -278,7 +278,10 @@ the charts reads the table, query and sheet catalogs at most once per export (it
 had looked the catalog up once per source, so 64 table-sourced charts could time
 out an export that writes none of them), and a selection export collects only
 its sheet's charts. A stored payload that is JSON but not an object is reported
-`unsupported` instead of failing the export. ODS chart objects say their data
+`unsupported` instead of failing the export; that path is reached only when
+charts are collected from a database the engine has not validated, because
+through the service such a record is refused when the workbook is opened or
+refreshed. ODS chart objects say their data
 comes from the sheet (`xlink:href=".."` on `chart:chart`, the source ranges in
 the plot area's `table:cell-range-address`), and each ODS frame carries
 `draw:z-index`, which the importer orders a sheet's charts by, because frames

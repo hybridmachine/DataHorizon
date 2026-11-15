@@ -326,6 +326,22 @@ class StackingOrder(unittest.TestCase):
                 frame.set("draw:z-index", "-1")
         self.assertEqual(self.sheet_drafts(packaged(self.drafts(), ["Data"], adjust=adjust)), ["Front", "Middle", "Back"])
 
+    def test_reader_keeps_document_order_when_a_z_index_is_too_long(self):
+        def adjust(frame):
+            if frame.get("draw:name") == "Middle":
+                frame.set("draw:z-index", "1" * 5000)
+        self.assertEqual(self.sheet_drafts(packaged(self.drafts(), ["Data"], adjust=adjust)), ["Front", "Middle", "Back"])
+
+    def test_values_that_are_not_a_short_plain_decimal_are_absent(self):
+        for value in ("-1", "1.5", " 3", "3 ", "\u0663", "", "+3", "1" * 10, "1e3"):
+            def adjust(frame, value=value):
+                if frame.get("draw:name") == "Middle":
+                    frame.set("draw:z-index", value)
+            with self.subTest(value=value[:12]):
+                self.assertEqual(self.sheet_drafts(packaged(self.drafts(), ["Data"], adjust=adjust)), ["Front", "Middle", "Back"])
+        nine = packaged(self.drafts(), ["Data"], adjust=lambda frame: frame.set("draw:z-index", {"Back": "0", "Middle": "999999998", "Front": "999999999"}[frame.get("draw:name")]))
+        self.assertEqual(self.sheet_drafts(nine), ["Back", "Middle", "Front"])
+
     def test_ties_keep_document_order(self):
         data = packaged(self.drafts(), ["Data"], adjust=lambda frame: frame.set("draw:z-index", "5"))
         self.assertEqual(self.sheet_drafts(data), ["Front", "Middle", "Back"])

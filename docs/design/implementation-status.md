@@ -45,7 +45,10 @@ Built, and covered by service tests:
   export collects only its sheet's charts, so table-sourced charts no longer
   time out an export (60 tables and 64 charts of 64 table-sourced series: a
   20-cell selection export went from failing after 2 s to about 0.05 s); a
-  stored payload that is JSON but not an object is reported `unsupported`; ODS
+  stored payload that is JSON but not an object is reported `unsupported`
+  (reached only when charts are collected from a database the engine has not
+  validated; through the service such a record is refused when the workbook is
+  opened or refreshed); ODS
   chart objects say their data comes from the sheet (`xlink:href=".."`, the
   plot area's `table:cell-range-address`); each ODS frame carries
   `draw:z-index` and the importer orders a sheet's charts by it, so stacking

@@ -1225,6 +1225,16 @@ class ImportReportCleanUpTests(unittest.TestCase):
         preview = xlsx_preview({"file_base64": b64(data), "scope": "workbook"})
         self.assertEqual([chart["name"] for chart in preview["workbook_charts"]], ["A"])
 
+    def test_an_ods_z_index_too_long_to_read_is_ignored(self):
+        # 5,000 digits: past Python's 4,300-digit int conversion limit. The chart imports, in document order.
+        ods = ods_with_charts({"Data": ods_data_rows()}, [{"sheet": "Data", "name": "A", "xml": ods_column_chart()}])
+        with zipfile.ZipFile(io.BytesIO(ods)) as archive:
+            content = archive.read("content.xml").decode()
+        data = replace_part(ods, "content.xml", content.replace("<draw:frame", '<draw:frame draw:z-index="' + "9" * 5000 + '"', 1).encode())
+        preview = ods_preview({"file_base64": b64(data), "scope": "workbook"})
+        self.assertEqual([chart["name"] for chart in preview["workbook_charts"]], ["A"])
+        self.assertEqual([chart["name"] for chart in self.staged(data, "ods")["charts"]], ["A"])
+
     def test_a_drawing_past_the_chart_allowance_is_still_reported(self):
         xlsx = xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "name": "A", "xml": column_chart()}])
         with patch.object(import_charts, "CHART_EXPANDED", 200):  # less than the sheet's relationships and its drawing
