@@ -3,6 +3,7 @@
 #include "keyboardgrid.h"
 #include "servicepaths.h"
 #include "frozenpanes.h"
+#include "chartlayer.h"
 #include "listcriteriadialog.h"
 #include "namedlistviews.h"
 #include "functionhelp.h"
@@ -865,6 +866,11 @@ void MainWindow::buildUi() {
     gridLayout->addWidget(m_frozenTop,0,1);gridLayout->addWidget(m_frozenTop->cornerView(),0,0);
     gridLayout->addWidget(m_frozenTop->leftWidget(),1,0);gridLayout->addWidget(m_grid,1,1);
     gridLayout->setRowStretch(1,1);gridLayout->setColumnStretch(1,1);layout->addWidget(gridArea,1);
+    // Charts follow every model bind and projection change: a sheet shown,
+    // a new workbook state, a list view applied or cleared.
+    m_charts=new ChartLayer(m_client,m_grid,m_frozenTop,gridArea,this);
+    connect(m_model,&QAbstractItemModel::modelReset,this,[this]{
+        m_charts->bind(m_model->workbook().isEmpty()?QString():"/v1/workbooks/"+m_model->workbook(),m_model->sheet(),m_model->state(),m_model->projected());});
     m_freezeAction=add(view,tr("Freeze top row"),{},[this]{
         if(m_busy || m_unknown || m_info.isEmpty() || m_model->projected() || m_hiddenRows.contains(0)) {
             QSignalBlocker blocker(m_freezeAction); m_freezeAction->setChecked(m_frozenTop->active());

@@ -22,6 +22,7 @@ class QPlainTextEdit;
 class QToolBar;
 class QPushButton;
 class FrozenPanes;
+class ChartLayer;
 class QTimer;
 class QMenu;
 class QStackedWidget;
@@ -354,6 +355,7 @@ private:
     QSet<int> m_hiddenRows, m_hiddenColumns, m_hiddenViewRows, m_hiddenViewColumns;
     QPushButton *m_hiddenButton = nullptr;
     FrozenPanes *m_frozenTop = nullptr;
+    ChartLayer *m_charts = nullptr;
     QAction *m_freezeAction = nullptr, *m_freezeColumnAction = nullptr, *m_freezePanesAction = nullptr, *m_unfreezePanesAction = nullptr;
     int m_frozenRows = 0, m_frozenColumns = 0;
     bool m_frozenSizeIssue = false;

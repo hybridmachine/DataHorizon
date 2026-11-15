@@ -47,6 +47,7 @@ add_library(datahorizon_desktop STATIC
 target_sources(datahorizon_desktop PRIVATE desktop/relationalworkbench.cpp desktop/relationalworkbench.h)
 target_sources(datahorizon_desktop PRIVATE desktop/tablerecordeditor.cpp desktop/recordinputdialog.h)
 target_sources(datahorizon_desktop PRIVATE desktop/tablerelationships.cpp)
+target_sources(datahorizon_desktop PRIVATE desktop/chartlayer.cpp desktop/chartlayer.h)
 target_sources(datahorizon_desktop PRIVATE desktop/queryworkbench.cpp desktop/queryworkbench.h)
 target_sources(datahorizon_desktop PRIVATE desktop/querydefinitions.cpp desktop/relationalexport.h)
 target_sources(datahorizon_desktop PRIVATE desktop/pythonworkspace.cpp desktop/pythonworkspace.h

@@ -14,6 +14,9 @@
 #include "queryworkbench.h"
 #include "conversionreportview.h"
 #include "restclient.h"
+#include "chartlayer.h"
+#include <QHeaderView>
+#include <QScrollBar>
 #include <QEventLoop>
 #include <QTextDocument>
 #include <QToolButton>
@@ -4528,8 +4531,150 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("new"),5000);
     }
+// A new workbook in a shown window with the chart layer, grid and model at hand.
+#define CHART_WINDOW \
+    QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini"); \
+    MainWindow window(options);window.resize(1200,800);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000); \
+    QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("charts.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000); \
+    auto *layer=window.findChild<ChartLayer *>("chartLayer");QVERIFY(layer);auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();Q_UNUSED(model);Q_UNUSED(grid)
+    void chartOverlayAppearsAtItsAnchor() {
+        CHART_WINDOW;QSignalSpy listed(layer,&ChartLayer::listed);
+        QVERIFY(addChart(window,opened,"Placed",2,3,10,5,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();
+        QCOMPARE(overlay->objectName(),QString("chartOverlay"));QCOMPARE(overlay->accessibleName(),QString("Placed"));
+        QVERIFY(!overlay->property("chartId").toString().isEmpty());
+        QVERIFY(overlay->testAttribute(Qt::WA_TransparentForMouseEvents));QCOMPARE(overlay->focusPolicy(),Qt::NoFocus);
+        QVERIFY(!listed.isEmpty());QCOMPARE(listed.last().first().toInt(),1);
+        QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        QCOMPARE(offsetIn(overlay,grid->viewport()),QPoint(grid->columnViewportPosition(2),grid->rowViewportPosition(1))+QPoint(10,5));
+        QCOMPARE(overlay->size(),QSize(320,200));QCOMPARE(window.findChildren<ChartOverlay *>().size(),1);
+    }
+    void chartOverlayFollowsScrollAndResize() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Moving",2,3));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const QPoint start=overlay->pos();const int heights=grid->rowHeight(0)+grid->rowHeight(1)+grid->rowHeight(2);
+        scrollGrid(grid,3,0);QCOMPARE(grid->rowAt(0),3);
+        QCOMPARE(overlay->pos(),start-QPoint(0,heights));QVERIFY(overlay->isVisible());
+        const QPoint scrolled=overlay->pos();grid->setColumnWidth(0,grid->columnWidth(0)+40);
+        QCOMPARE(overlay->pos(),scrolled+QPoint(40,0));
+    }
+    void chartOverlaysStackByZ() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Lower",2,2));QVERIFY(addChart(window,opened,"Upper",3,3));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);
+        auto *lower=overlayNamed(layer,"Lower"),*upper=overlayNamed(layer,"Upper");QVERIFY(lower && upper);
+        QTRY_VERIFY_WITH_TIMEOUT(lower->isVisible() && upper->isVisible(),5000);QVERIFY(lower->geometry().intersects(upper->geometry()));
+        auto order=[](QWidget *overlay){return overlay->parentWidget()->children().indexOf(overlay);};
+        QVERIFY(order(upper)>order(lower));
+        // The overlays are above every pane of the grid area.
+        for(auto *pane:QList<QWidget *>{grid,window.findChild<QTableView *>("frozenTopRow")->parentWidget()})QVERIFY(order(lower)>order(pane));
+        window.submit({{"action","chart_update"},{"chart_id",lower->property("chartId").toString()},{"z",5}});
+        QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Lower") && order(overlayNamed(layer,"Lower"))>order(overlayNamed(layer,"Upper")),10000);
+    }
+    void chartOverlayDoesNotInterceptClicks() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Covering",2,2,0,0,400,300));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        auto *area=overlay->parentWidget();const QPoint point(grid->columnViewportPosition(3)+5,grid->rowViewportPosition(3)+5);
+        const QPoint inArea=grid->viewport()->mapTo(area,point);
+        QVERIFY(overlay->geometry().contains(inArea));QVERIFY(!qobject_cast<ChartOverlay *>(area->childAt(inArea)));
+        QTest::mouseClick(grid->viewport(),Qt::LeftButton,Qt::NoModifier,point);
+        QCOMPARE(grid->currentIndex(),model->index(3,3));
+    }
+    void chartsOnOtherSheetsAreNotShown() {
+        CHART_WINDOW;window.submit({{"action","sheet_add"},{"name","Other"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QVERIFY(addChart(window,opened,"First",2,2));
+        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->accessibleName()=="First",5000);
+        auto *tabs=window.findChild<QTabBar *>("sheets");const auto first=model->sheet();tabs->setCurrentIndex(1);QVERIFY(model->sheet()!=first);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,5000);
+        QVERIFY(addChart(window,opened,"Second",2,2));
+        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->accessibleName()=="Second",5000);
+        QCOMPARE(window.findChildren<ChartOverlay *>().size(),1);
+        tabs->setCurrentIndex(0);QCOMPARE(model->sheet(),first);
+        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->accessibleName()=="First",5000);
+        QCOMPARE(window.findChildren<ChartOverlay *>().size(),1);
+    }
+    void chartAnchoredInFrozenRowStaysVisible() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Frozen",1,3,0,0,300,150));QVERIFY(addChart(window,opened,"Body",5,3,0,0,300,150));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);
+        window.findChild<QAction *>("freezeTopRowAction")->trigger();auto *top=window.findChild<QTableView *>("frozenTopRow");
+        QVERIFY(top->isVisible());QVERIFY(grid->isRowHidden(0));
+        auto *frozen=overlayNamed(layer,"Frozen"),*body=overlayNamed(layer,"Body");auto *area=frozen->parentWidget();
+        QTRY_VERIFY_WITH_TIMEOUT(frozen->isVisible() && body->isVisible(),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(offsetIn(frozen,top->viewport()),QPoint(top->columnViewportPosition(2),top->rowViewportPosition(0)),5000);
+        QCOMPARE(offsetIn(body,grid->viewport()),QPoint(grid->columnViewportPosition(2),grid->rowViewportPosition(4)));
+        const QPoint frozenAt=frozen->pos(),bodyAt=body->pos();
+        scrollGrid(grid,6,0);QCOMPARE(grid->rowAt(0),6);
+        QCOMPARE(frozen->pos(),frozenAt);QVERIFY(frozen->isVisible());
+        QVERIFY(body->pos().y()<bodyAt.y());QVERIFY(body->isVisible());
+        const int bodyTop=grid->viewport()->mapTo(area,QPoint()).y();
+        QVERIFY(top->viewport()->mapTo(area,QPoint(0,top->rowViewportPosition(0)+top->rowHeight(0))).y()<=bodyTop);
+        QVERIFY(body->y()<bodyTop);QCOMPARE(body->y()+body->mask().boundingRect().top(),bodyTop);
+    }
+    void chartsHideInProjectedView() {
+        CHART_WINDOW;
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","3"}},QJsonObject{{"row",2},{"col",1},{"source","1"}},QJsonObject{{"row",3},{"col",1},{"source","2"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QVERIFY(addChart(window,opened,"Listed",2,3));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const int before=opened.count();
+        window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"header",false},{"sort",QJsonArray{QJsonObject{{"col",1}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);QVERIFY(model->projected());
+        for(auto *chart:layer->overlays())QVERIFY(!chart->isVisible());
+        window.findChild<QAction *>("clearListAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+2,10000);QVERIFY(!model->projected());
+        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->isVisible(),5000);
+    }
+    void chartOverlayNeverCoversHeaders() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Header",2,3,0,0,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        scrollGrid(grid,3,3);QCOMPARE(grid->rowAt(0),3);QCOMPARE(grid->columnAt(0),3);QVERIFY(overlay->isVisible());
+        auto global=[](QWidget *widget){return QRect(widget->mapToGlobal(QPoint()),widget->size());};
+        QVERIFY(overlay->mapToGlobal(QPoint()).y()<grid->viewport()->mapToGlobal(QPoint()).y());
+        QVERIFY(overlay->mapToGlobal(QPoint()).x()<grid->viewport()->mapToGlobal(QPoint()).x());
+        const auto shown=overlay->mask().translated(overlay->mapToGlobal(QPoint()));QVERIFY(!shown.isEmpty());
+        QVERIFY(!shown.intersects(global(grid->horizontalHeader())));QVERIFY(!shown.intersects(global(grid->verticalHeader())));
+        QVERIFY(global(grid->viewport()).contains(shown.boundingRect()));
+    }
+    void brokenChartShowsPlaceholder() {
+        CHART_WINDOW;window.submit({{"action","sheet_add"},{"name","Data"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QVERIFY(addChart(window,opened,"Waiting chart",2,2));QVERIFY(addChart(window,opened,"Broken chart",12,2,0,0,320,200,"Data"));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);
+        auto *waiting=overlayNamed(layer,"Waiting chart");QVERIFY(!waiting->hasImage());
+        QVERIFY(waiting->placeholder().contains("Waiting chart"));QVERIFY(waiting->placeholder().contains("Loading"));
+        for(auto *chart:layer->overlays())QVERIFY(chart->hasImage() || !chart->placeholder().isEmpty());
+        auto *tabs=window.findChild<QTabBar *>("sheets");tabs->setCurrentIndex(1);QCOMPARE(tabs->tabText(1),QString("Data"));
+        const int before=opened.count();window.submit({{"action","sheet_delete"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Broken chart") && overlayNamed(layer,"Broken chart")->placeholder().contains("source"),5000);
+        auto *broken=overlayNamed(layer,"Broken chart");QVERIFY(broken->placeholder().contains("Broken chart"));QVERIFY(!broken->hasImage());
+        QVERIFY(overlayNamed(layer,"Waiting chart")->placeholder().contains("Loading"));
+        for(auto *chart:layer->overlays())QVERIFY(chart->hasImage() || !chart->placeholder().isEmpty());
+    }
+#undef CHART_WINDOW
 private:
     bool m_originalDialogAttribute=false;
+    static QJsonObject chartSpec(const QString &sheet) {
+        auto range=[sheet](const QString &ref){return QJsonObject{{"source",QJsonObject{{"kind","range"},{"sheet",sheet},{"ref",ref}}}};};
+        return {{"spec_version",1},{"type","column"},{"categories",range("A2:A4")},{"series",QJsonArray{QJsonObject{{"name",range("B1")},{"values",range("B2:B4")}}}}};
+    }
+    // Creates a chart on the current sheet through the service and waits for
+    // the window to accept the new state.
+    static bool addChart(MainWindow &window,QSignalSpy &opened,const QString &name,int row,int col,int x=0,int y=0,int width=320,int height=200,const QString &source="Sheet1") {
+        const auto before=opened.count();
+        window.submit({{"action","chart_create"},{"name",name},{"anchor",QJsonObject{{"row",row},{"col",col}}},{"offset",QJsonObject{{"x",x},{"y",y}}},
+                       {"size",QJsonObject{{"width",width},{"height",height}}},{"spec",chartSpec(source)}});
+        for(int i=0;i<1000 && opened.count()==before;++i)QTest::qWait(10);
+        return opened.count()>before;
+    }
+    static ChartOverlay *overlayNamed(ChartLayer *layer,const QString &name) {
+        for(auto *overlay:layer->overlays())if(overlay->accessibleName()==name)return overlay;
+        return nullptr;
+    }
+    static QPoint offsetIn(QWidget *widget,QWidget *reference){return widget->mapToGlobal(QPoint())-reference->mapToGlobal(QPoint());}
+    // Scrolls so row and col are the first shown, in either scroll mode.
+    static void scrollGrid(QTableView *grid,int row,int col) {
+        int hidden=0;for(int above=0;above<row;++above)hidden+=grid->isRowHidden(above);  // per-item values count shown rows
+        grid->verticalScrollBar()->setValue(grid->verticalScrollMode()==QAbstractItemView::ScrollPerItem?row-hidden:grid->verticalHeader()->sectionPosition(row));
+        grid->horizontalScrollBar()->setValue(grid->horizontalScrollMode()==QAbstractItemView::ScrollPerItem?col:grid->horizontalHeader()->sectionPosition(col));
+    }
     static QJsonObject syncRequest(RestClient *client,const QString &path,const QJsonObject &body,bool post=true) {
         auto response=std::make_shared<QJsonObject>();auto done=std::make_shared<bool>(false);
         client->request(path,body,[response,done](QJsonObject result,QString error){*response=result;if(!error.isEmpty())(*response)["_error"]=error;*done=true;},post);
