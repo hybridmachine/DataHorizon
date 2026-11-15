@@ -12,7 +12,7 @@ import re
 from . import charts
 from .conversion_report import ConversionReport
 from .chart_render import LIMIT_PIE_POINTS, LIMIT_POINTS, LIMIT_SERIES
-from .engine import MAX_COLS, MAX_ROWS, EngineError
+from .engine import MAX_COLS, MAX_ROWS, EngineError, encoded
 from .formula import FormulaError, column_name, split_ref
 from .interchange import fold_name
 
@@ -25,6 +25,9 @@ CONVERTED = "chart.converted"
 NAME_LENGTH = 64
 SIZE_LIMITS = ((64, 4096), (48, 4096))
 OFFSET_LIMIT = 4096
+TEXT_LENGTH = charts.TITLE_LENGTH  # series names and axis titles are cut like the chart title
+RECORD_BYTES = 64 * 1024  # one record, as JSON
+RECORDS_BYTES = 1024 * 1024  # every record of one import, as JSON
 RECORD_KEYS = ("sheet", "name", "anchor", "offset", "size", "spec")
 SOURCE_PARTS = ("categories", "name", "values", "x")
 
@@ -231,10 +234,12 @@ class _Converter:
                 if any(item.get("categories") is not None and item["categories"] != first for item in series):
                     self.note("categories_differ")
         out_series = []
+        cut_names = 0
         for number, item in enumerate(series, 1):
             name = item.get("name")
             if isinstance(name, dict) and isinstance(name.get("text"), str):
-                out_name = {"text": name["text"]}
+                out_name = {"text": name["text"][:TEXT_LENGTH]}
+                cut_names += len(name["text"]) > TEXT_LENGTH
             else:
                 out_name = {"text": f"Series {number}"}
                 ref = name.get("ref") if isinstance(name, dict) else None
@@ -255,7 +260,10 @@ class _Converter:
         if not (1 <= place["row"] <= MAX_ROWS and 1 <= place["col"] <= MAX_COLS):
             raise _Skip("off_grid")
 
-        # Nothing below can skip the chart.
+        # Below, only the record's size can skip the chart; its notes are kept apart until it is known to fit.
+        report, self.report = self.report, ConversionReport()
+        if cut_names:
+            self.note("series_name_cut")
         if plot is not None and plot.get("kind") == "doughnut":
             self.note("doughnut")
         if any(item.get("three_d") for item in draft["plots"]):
@@ -269,7 +277,7 @@ class _Converter:
             self.note("grouping")
         for item in draft.get("styled") or ():
             self.note(f"styling: {item}")
-        title = self.text(draft["title"], cut=charts.TITLE_LENGTH)
+        title = self.text(draft["title"], cut=TEXT_LENGTH)
         axis = draft["axis_titles"]
         low, high = draft.get("value_min"), draft.get("value_max")
         if not all(charts._is_number(value) for value in (low, high) if value is not None) or (
@@ -287,16 +295,21 @@ class _Converter:
         if name != draft.get("name"):
             self.note("name")
         size, anchor, offset = draft["size"], draft["anchor"], draft["offset"]
-        return {
+        record = {
             "sheet": draft["sheet"], "name": name,
             "anchor": {"row": _clamp(anchor["row"], 1, MAX_ROWS), "col": _clamp(anchor["col"], 1, MAX_COLS)},
             "offset": {"x": _clamp(offset["x"], 0, OFFSET_LIMIT), "y": _clamp(offset["y"], 0, OFFSET_LIMIT)},
             "size": {"width": _clamp(size["width"], *SIZE_LIMITS[0]), "height": _clamp(size["height"], *SIZE_LIMITS[1])},
             "spec": {"spec_version": charts.SPEC_VERSION, "type": kind, "grouping": grouping,
                      "title": {"text": title}, "categories": categories, "series": out_series,
-                     "axes": {"category": {"title": self.text(axis["category"])},
-                              "value": {"title": self.text(axis["value"]), "min": low, "max": high}},
+                     "axes": {"category": {"title": self.text(axis["category"], cut=TEXT_LENGTH)},
+                              "value": {"title": self.text(axis["value"], cut=TEXT_LENGTH), "min": low, "max": high}},
                      "legend": {"position": position}}}
+        notes, self.report = self.report, report
+        if record_size(record) > RECORD_BYTES:
+            raise _Skip("limit")
+        report.merge(notes)
+        return record
 
     def text(self, item, cut=None):
         text = item.get("text")
@@ -310,6 +323,11 @@ class _Converter:
         return text
 
 
+def record_size(record):
+    """The bytes of a record as JSON, the size ``RECORD_BYTES`` and ``RECORDS_BYTES`` bound."""
+    return len(encoded(record).encode())
+
+
 def convert(draft, sheet_names, report):
     """The record for a reader's draft, or ``None`` (with a ``chart.skipped`` report entry) when it cannot be imported."""
     worker = _Converter(draft, sheet_names, report)
@@ -321,24 +339,45 @@ def convert(draft, sheet_names, report):
 
 
 class Collector:
-    """The records of one whole-workbook import, in file order, up to the workbook's chart limit.
+    """The records of one import, in file order, up to the workbook's chart limit and ``RECORDS_BYTES`` in all.
 
-    Every draft is converted; a chart ``convert`` accepts once ``charts.LIMIT_CHARTS`` records are held is reported
-    as ``chart.skipped`` / ``workbook_limit`` instead, without the conversion notes of a chart that is not imported."""
-    def __init__(self, limit=charts.LIMIT_CHARTS):
-        self.limit = limit
+    Every draft is converted; a chart ``convert`` accepts once ``charts.LIMIT_CHARTS`` records are held, or whose
+    record would take the records past ``RECORDS_BYTES``, is reported as ``chart.skipped`` / ``workbook_limit``
+    instead, without the conversion notes of a chart that is not imported.
+
+    A reader that holds drafts before adding them (an ODS sheet's, until the sheet ends) ``claim``s each, so ``full``
+    counts them and the reader stops reading chart parts as soon as no further chart could be imported."""
+    def __init__(self, limit=charts.LIMIT_CHARTS, budget=RECORDS_BYTES):
+        self.limit, self.budget = limit, budget
         self.records = []
+        self.size = 0  # bytes of the records held
+        self.claimed = 0  # drafts claimed and not yet added that ``convert`` accepts
+
+    @property
+    def full(self):
+        """Whether the records held and the drafts claimed for them reach the chart limit."""
+        return len(self.records) + self.claimed >= self.limit
+
+    def claim(self, draft, sheet_names):
+        """Count ``draft``, which is added later, toward ``full`` when ``convert`` accepts it."""
+        if convert(draft, sheet_names, ConversionReport()) is not None:
+            self.claimed += 1
 
     def add(self, draft, sheet_names, report):
         """Convert ``draft`` into ``report``; the record, or ``None`` when the chart is skipped."""
         notes = ConversionReport()
         record = convert(draft, sheet_names, notes)
-        if record is not None and len(self.records) >= self.limit:
+        if record is None:
+            report.merge(notes)
+            return None
+        self.claimed = max(self.claimed - 1, 0)
+        size = record_size(record)
+        if len(self.records) >= self.limit or self.size + size > self.budget:
             _Converter(draft, sheet_names, report).note("workbook_limit", "omitted", SKIPPED)
             return None
         report.merge(notes)
-        if record is not None:
-            self.records.append(record)
+        self.records.append(record)
+        self.size += size
         return record
 
 
@@ -403,6 +442,7 @@ def check_records(records, sheet_count):
         raise _argument("charts must be a list")
     if len(records) > charts.LIMIT_CHARTS:
         raise _argument(f"charts holds more than {charts.LIMIT_CHARTS} records")
+    total = 0
     for item in records:
         if not isinstance(item, dict):
             raise _argument("A chart record must be an object")
@@ -420,13 +460,25 @@ def check_records(records, sheet_count):
             if source.get("kind") != "range" or not _is_int(source.get("sheet")) or not 0 <= source["sheet"] < sheet_count:
                 raise _argument("A chart source must be a range on one of the imported sheets")
             _check_ref(source.get("ref"))
+        try:
+            size = record_size(item)
+        except (TypeError, ValueError) as error:
+            raise _argument("A chart record must be plain JSON") from error
+        if size > RECORD_BYTES:
+            raise _argument(f"A chart record exceeds {RECORD_BYTES // 1024} KiB")
+        total += size
+        if total > RECORDS_BYTES:
+            raise _argument(f"charts exceeds {RECORDS_BYTES // 1024} KiB in all")
     return records
 
 
 def for_sheet(records, position, row, col, sheet_name, report):
-    """Records of one worksheet rebased to sheet 0 and shifted for a paste at ``row``, ``col``."""
+    """Records of one worksheet rebased to sheet 0 and shifted for a paste at ``row``, ``col``.
+
+    Shifting lengthens references, so the shifted records are held to ``RECORD_BYTES`` each (``limit``) and
+    ``RECORDS_BYTES`` in all (``workbook_limit``) again, as ``check_records`` holds them."""
     down, right = row - 1, col - 1
-    kept = []
+    kept, total = [], 0
     for item in records:
         if item["sheet"] != position:
             continue
@@ -447,10 +499,16 @@ def for_sheet(records, position, row, col, sheet_name, report):
             fits = fits and max(rows) <= MAX_ROWS and max(cols) <= MAX_COLS
             first, last = column_name(cols[0]) + str(rows[0]), column_name(cols[-1]) + str(rows[-1])
             source["ref"] = first if len(corners) == 1 else f"{first}:{last}"
-        if fits:
-            kept.append(chart)
-        else:
+        size = record_size(chart)
+        if not fits:
             report.add(SKIPPED, "omitted", "off_grid", **where)
+        elif size > RECORD_BYTES:
+            report.add(SKIPPED, "omitted", "limit", **where)
+        elif total + size > RECORDS_BYTES:
+            report.add(SKIPPED, "omitted", "workbook_limit", **where)
+        else:
+            kept.append(chart)
+            total += size
     return kept
 
 

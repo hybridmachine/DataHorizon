@@ -14,8 +14,8 @@ import sys
 import zipfile
 from unittest.mock import patch
 
-from chart_fixtures import (chart_xml, two_cell, ods_chart_xml, ods_sample_like, ods_with_charts, one_cell, plot_xml, sample_like,
-                            xlsx_with_charts)
+from chart_fixtures import (chart_xml, two_cell, ods_chart_xml, ods_sample_like, ods_title, ods_with_charts, one_cell, plot_xml,
+                            rich_title, sample_like, xlsx_with_charts)
 from ods_builder import styles_document
 from datahorizon import import_charts, import_stage, ods_stream, xlsx_stream
 from datahorizon.xlsx_charts import MAX_FRAMES
@@ -451,6 +451,66 @@ class ImportChartPathTests(unittest.TestCase):
                                      (count - MAX_FRAMES, [{"sheet": "Data", "cell": "drawing"}]))
                 else:
                     self.assertNotIn("unreadable", skipped)
+
+    def test_long_chart_text_never_fails_an_import(self):
+        long = "N" * 300_000
+        named = [{"cat": "Data!$A$2:$A$8", "val": "Data!$B$2:$B$8", "name_text": long}]
+        cases = {
+            "series name": (xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "xml": chart_xml("bar", "col", "clustered", named)}]),
+                            "xlsx", "series_name_cut"),
+            "axis title": (xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "xml": chart_xml(
+                "bar", "col", "clustered", [{**named[0], "name_text": "S"}], category_axis=rich_title(long))}]),
+                           "xlsx", "title_cut"),
+            "ods axis title": (ods_with_charts({"Data": ods_data_rows()}, [{"sheet": "Data", "xml": ods_chart_xml(
+                "bar", "col", "clustered", [{"cat": "Data!$A$2:$A$8", "val": "Data!$B$2:$B$8"}], category_axis=ods_title(long))}]),
+                               "ods", "title_cut")}
+        for case, (data, fmt, detail) in cases.items():
+            preview = xlsx_preview if fmt == "xlsx" else ods_preview
+            with self.subTest(case, path="staged"):
+                summary = self.prepare(data, fmt)
+                self.assertEqual(len(summary["charts"]), 1)
+                self.assertIn(detail, [entry["detail"] for entry in entries(summary, "chart.converted")])
+                base = self.open(f"staged-{fmt}-{case}")
+                self.assertEqual(self.apply(summary, base=base)["imported"], {"sheets": 1, "cells": 16, "charts": 1})
+                (chart,) = self.charts(base)
+                spec = chart["spec"]
+                texts = [spec["series"][0]["name"].get("text"), spec["axes"]["category"]["title"]]
+                self.assertIn("N" * 255, texts)
+            with LocalService() as client:
+                with self.subTest(case, path="inline"), client.open(self.temp / f"inline-{fmt}-{case}.dhwb", create=True) as book:
+                    workbook = preview({"file_base64": b64(data), "scope": "workbook"})
+                    self.assertEqual(book.import_prepared(workbook)["imported"], {"sheets": 1, "cells": 16, "charts": 1})
+                with self.subTest(case, path="edit"), client.open(self.temp / f"edit-{fmt}-{case}.dhwb", create=True) as book:
+                    selection = preview({"file_base64": b64(data), "scope": "selection"})
+                    self.assertIn(detail, [entry["detail"] for entry in entries(selection, "chart.converted")])
+                    receipt = book.import_prepared(selection, "Sheet1")
+                    self.assertEqual((receipt["changed_cells"], receipt["changed_charts"]), (16, 1))
+
+    def test_many_long_series_names_stay_inside_the_preview_limits(self):
+        series = [{"cat": "Data!$A$2:$A$8", "val": "Data!$B$2:$B$8", "name_text": "S" * 1200} for _ in range(60)]
+        many = [{"sheet": "Data", "name": f"C{n}", "xml": chart_xml("bar", "col", "clustered", series)} for n in range(64)]
+        snow = [{"cat": "Data!$A$2:$A$8", "val": "Data!$B$2:$B$8", "name_text": "☃" * 300} for _ in range(60)]
+        wide = [{"sheet": "Data", "name": "Wide", "xml": chart_xml("bar", "col", "clustered", snow)}]
+        for case, charts, detail in (("total", many, "workbook_limit"), ("one record", wide, "limit")):
+            data = xlsx_with_charts({"Data": data_rows()}, charts)
+            with self.subTest(case):
+                summary = self.prepare(data)
+                workbook = xlsx_preview({"file_base64": b64(data), "scope": "workbook"})
+                selection = xlsx_preview({"file_base64": b64(data), "scope": "selection"})
+                self.assertLessEqual(sum(import_charts.record_size(item) for item in workbook["workbook_charts"]),
+                                     import_charts.RECORDS_BYTES)
+                self.assertLess(len(summary["charts"]), len(charts))
+                self.assertEqual(len(summary["charts"]), len(workbook["charts"]))
+                self.assertEqual(len(selection["charts"]), len(workbook["charts"]))
+                for found in (summary, workbook, selection):
+                    self.assertIn(detail, [entry["detail"] for entry in entries(found, "chart.skipped")])
+                base = self.open(f"many-{case}")
+                self.assertEqual(self.apply(summary, base=base)["imported"]["cells"], 16)
+                with LocalService() as client:
+                    with client.open(self.temp / f"many-inline-{case}.dhwb", create=True) as book:
+                        self.assertEqual(book.import_prepared(workbook)["imported"]["charts"], len(workbook["charts"]))
+                    with client.open(self.temp / f"many-edit-{case}.dhwb", create=True) as book:
+                        self.assertEqual(book.import_prepared(selection, "Sheet1")["changed_charts"], len(selection["charts"]))
 
     def test_default_declared_sizes_are_not_approximate(self):
         defaults = '<sheetFormatPr defaultRowHeight="15"/><cols><col min="1" max="3" width="9.140625"/></cols>'

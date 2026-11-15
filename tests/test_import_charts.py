@@ -9,9 +9,9 @@ import uuid
 
 from datahorizon import charts
 from datahorizon.conversion_report import ConversionReport
-from datahorizon.engine import EngineError, Workbook
-from datahorizon.import_charts import (STYLED, UNUSABLE, check_records, convert, create, for_sheet, parse_reference,
-                                       summary)
+from datahorizon.engine import EngineError, Workbook, encoded
+from datahorizon.import_charts import (RECORD_BYTES, RECORDS_BYTES, STYLED, UNUSABLE, Collector, check_records, convert,
+                                       create, for_sheet, parse_reference, summary)
 
 SHEETS = ["Data", "Other"]
 
@@ -149,6 +149,30 @@ class Convert(unittest.TestCase):
             self.assertEqual(named(bad), {"text": "Series 1"})
             self.assertEqual(entries(self.report), [("chart.converted", "series_name")])
 
+    def test_series_names_and_axis_titles_are_cut(self):
+        long = "N" * 300_000
+        record = self.convert(series=[series_of(name={"text": long})],
+                              axis_titles={"category": {"text": "C" * 300, "from_cell": False},
+                                           "value": {"text": "V" * 300_000, "from_cell": False}})
+        spec = record["spec"]
+        self.assertEqual(spec["series"][0]["name"], {"text": "N" * charts.TITLE_LENGTH})
+        self.assertEqual((spec["axes"]["category"]["title"], spec["axes"]["value"]["title"]),
+                         ("C" * charts.TITLE_LENGTH, "V" * charts.TITLE_LENGTH))
+        found = {(entry["category"], entry["detail"]): entry["count"] for entry in self.report.entries()}
+        self.assertEqual(found, {("chart.converted", "series_name_cut"): 1, ("chart.converted", "title_cut"): 2})
+        self.report = ConversionReport()
+        self.convert(series=[series_of(name={"text": "N" * charts.TITLE_LENGTH})])
+        self.assertEqual(entries(self.report), [])
+
+    def test_oversized_record_is_skipped(self):
+        # 60 names of 255 characters that JSON writes as six bytes each: about 92 KB, past RECORD_BYTES.
+        wide = [series_of(name={"text": "☃" * 300}) for _ in range(60)]
+        self.assertIsNone(self.convert(series=wide, styled=["colours"]))
+        self.assertEqual(entries(self.report), [("chart.skipped", "limit")])
+        self.report = ConversionReport()
+        record = self.convert(series=wide[:30])
+        self.assertLessEqual(len(encoded(record).encode()), RECORD_BYTES)
+
     def test_categories_differ(self):
         other = series_of(categories=("Data", 2, 3, 8, 3))
         record = self.convert(series=[series_of(), other])
@@ -227,6 +251,15 @@ def record(position=0, name="Chart 1", **spec_overrides):
                                                                       categories=None)]), SHEETS, ConversionReport())
     made["spec"].update(spec_overrides)
     return made
+
+
+def wide_draft():
+    """A supported chart of 64 series named with 255 characters: about 20 KB as a record."""
+    return draft(series=[series_of(name={"text": chr(65 + n % 26) * 255}, categories=None) for n in range(64)])
+
+
+def wide_record():
+    return convert(wide_draft(), SHEETS, ConversionReport())
 
 
 class Records(unittest.TestCase):
@@ -313,6 +346,58 @@ class Records(unittest.TestCase):
         broken(lambda made: source(made).update(ref="not a ref"))
         broken(lambda made: source(made).update(ref="Data!B2"))
         broken(lambda made: source(made).update(kind="table"))
+
+    def test_check_records_refuses_malformed_refs(self):
+        for ref in ("A1:", "", ":", "A1:B2:C3", "Data!A1", "A:A", "1:1", "A0", "XFE1", "A1048577", None, 5):
+            made = record(0)
+            made["spec"]["series"][0]["values"]["source"]["ref"] = ref
+            with self.subTest(ref=ref), self.assertRaises(EngineError) as caught:
+                check_records([made], 2)
+            self.assertEqual(caught.exception.body["code"], "INVALID_ARGUMENT")
+
+    def test_check_records_size_caps(self):
+        def refused(records):
+            with self.assertRaises(EngineError) as caught:
+                check_records(records, 2)
+            self.assertEqual(caught.exception.body["code"], "INVALID_ARGUMENT")
+            self.assertIn("KiB", caught.exception.body["message"])
+
+        big = record(0)
+        big["spec"]["series"] = [dict(big["spec"]["series"][0], name={"text": "☃" * 255}) for _ in range(60)]
+        self.assertGreater(len(encoded(big).encode()), RECORD_BYTES)
+        refused([big])
+        wide = wide_record()
+        size = len(encoded(wide).encode())
+        self.assertLessEqual(size, RECORD_BYTES)
+        fits = RECORDS_BYTES // size
+        self.assertEqual(len(check_records([wide] * fits, 2)), fits)
+        refused([wide] * (fits + 1))
+
+    def test_collector_total_budget(self):
+        report = ConversionReport()
+        collector = Collector()
+        wide = wide_draft()
+        size = len(encoded(convert(wide, SHEETS, ConversionReport())).encode())
+        fits = RECORDS_BYTES // size
+        self.assertLess(fits, charts.LIMIT_CHARTS)
+        made = [collector.add(dict(wide, name=f"C{n}"), SHEETS, report) for n in range(fits + 2)]
+        self.assertEqual(sum(item is not None for item in made), fits)
+        self.assertLessEqual(sum(len(encoded(item).encode()) for item in collector.records), RECORDS_BYTES)
+        skipped = [entry for entry in report.entries() if entry["category"] == "chart.skipped"]
+        self.assertEqual([(entry["detail"], entry["count"], entry["samples"][0]["cell"]) for entry in skipped],
+                         [("workbook_limit", 2, f"C{fits}")])
+        # A small chart still fits in what is left.
+        self.assertIsNotNone(collector.add(draft(name="Small"), SHEETS, report))
+
+    def test_for_sheet_keeps_the_record_caps(self):
+        report = ConversionReport()
+        wide = wide_record()
+        fits = RECORDS_BYTES // len(encoded(wide).encode())
+        # Moving the sources down lengthens every reference; the records still pass check_records.
+        kept = for_sheet([wide] * (fits + 1), 0, 1_000_000, 1_000, "Data", report)
+        self.assertLessEqual(len(kept), fits)
+        self.assertEqual(check_records(kept, 1), kept)
+        self.assertIn(("chart.skipped", "workbook_limit"), entries(report))
 
     def test_summary(self):
         self.assertEqual(summary([record(0, "A"), record(1, "B")], SHEETS),
