@@ -869,6 +869,9 @@ void MainWindow::buildUi() {
     // Charts follow every model bind and projection change: a sheet shown,
     // a new workbook state, a list view applied or cleared.
     m_charts=new ChartLayer(m_client,m_grid,m_frozenTop,gridArea,this);
+    connect(m_charts,&ChartLayer::failed,this,&MainWindow::issue);
+    // A stale read refreshes, as other stale reads do; the refresh lists again.
+    connect(m_charts,&ChartLayer::stale,m_model,&SheetModel::externalChange);
     connect(m_model,&QAbstractItemModel::modelReset,this,[this]{
         m_charts->bind(m_model->workbook().isEmpty()?QString():"/v1/workbooks/"+m_model->workbook(),m_model->sheet(),m_model->state(),m_model->projected());});
     m_freezeAction=add(view,tr("Freeze top row"),{},[this]{

@@ -23,7 +23,8 @@ public:
     void setSvg(const QByteArray &svg);
     void setPlaceholder(const QString &reason);
     bool hasImage() const { return !m_svg.isEmpty(); }
-    // The text shown while there is no image: the name and the reason.
+    // The text shown while there is no image: the name and the reason, or
+    // "Loading" while no reason is set.
     QString placeholder() const;
     QString chartId() const { return property("chartId").toString(); }
     void setChart(const QJsonObject &chart);
@@ -51,6 +52,10 @@ public:
     QList<ChartOverlay *> overlays() const;
 signals:
     void listed(int count);
+    // The catalog read failed; the next bind of the same sheet and state reads again.
+    void failed(const QString &message);
+    // The workbook changed while the catalog was read.
+    void stale();
 protected:
     bool eventFilter(QObject *object,QEvent *event) override;
 private:
@@ -59,13 +64,16 @@ private:
     void clear();
     void restack();
     void queueRelayout();
+    // Why a chart cannot be drawn; empty for a readable chart.
     static QString reasonFor(const QJsonObject &chart);
+    bool attached() const { return m_body && m_frozen && m_gridArea; }
     RestClient *m_client;
-    QTableView *m_body;
-    FrozenPanes *m_frozen;
-    QWidget *m_gridArea;
+    // The grid widgets go before the layer when the window is destroyed.
+    QPointer<QTableView> m_body;
+    QPointer<FrozenPanes> m_frozen;
+    QPointer<QWidget> m_gridArea;
     QString m_base,m_sheet,m_state;
-    bool m_projected=false,m_queued=false;
+    bool m_projected=false,m_queued=false,m_listed=false;
     quint64 m_generation=0;
     QList<QPointer<ChartOverlay>> m_overlays;
 };

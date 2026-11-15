@@ -15,7 +15,6 @@
 ChartOverlay::ChartOverlay(const QString &chartId,QWidget *parent):QWidget(parent) {
     setObjectName("chartOverlay");setProperty("chartId",chartId);
     setAttribute(Qt::WA_TransparentForMouseEvents);setFocusPolicy(Qt::NoFocus);
-    m_reason=tr("Loading");
 }
 
 void ChartOverlay::setChart(const QJsonObject &chart) {
@@ -28,11 +27,11 @@ void ChartOverlay::setSvg(const QByteArray &svg) {
 }
 
 void ChartOverlay::setPlaceholder(const QString &reason) {
-    m_svg.clear();m_reason=reason.isEmpty()?tr("Loading"):reason;update();
+    m_svg.clear();m_reason=reason;update();
 }
 
 QString ChartOverlay::placeholder() const {
-    return hasImage()?QString():m_chart["name"].toString()+"\n"+m_reason;
+    return hasImage()?QString():m_chart["name"].toString()+"\n"+(m_reason.isEmpty()?tr("Loading"):m_reason);
 }
 
 void ChartOverlay::paintEvent(QPaintEvent *) {
@@ -77,12 +76,12 @@ QList<ChartOverlay *> ChartLayer::overlays() const {
 }
 
 void ChartLayer::bind(const QString &workbookBase,const QString &sheet,const QString &state,bool projected) {
-    if(workbookBase==m_base && sheet==m_sheet && state==m_state) {
+    if(m_listed && workbookBase==m_base && sheet==m_sheet && state==m_state) {
         if(projected!=m_projected){m_projected=projected;relayout();}
         return;
     }
     const bool sameSheet=workbookBase==m_base && sheet==m_sheet;
-    m_base=workbookBase;m_sheet=sheet;m_state=state;m_projected=projected;
+    m_base=workbookBase;m_sheet=sheet;m_state=state;m_projected=projected;m_listed=true;
     // Another sheet's charts never stay on screen while this one's are read;
     // a new state of the same sheet keeps the overlays until the list lands.
     if(!sameSheet)clear();else ++m_generation;
@@ -96,9 +95,12 @@ void ChartLayer::list() {
     m_client->request(base+"/charts",{{"expected_state",state},{"sheet",sheet}},[self,generation,clientGeneration,base,sheet,state](QJsonObject result,QString error){
         if(!self || generation!=self->m_generation || clientGeneration!=self->m_client->generation()
            || base!=self->m_base || sheet!=self->m_sheet || state!=self->m_state)return;
-        // A stale or failed read is not shown: the window refreshes on a stale
-        // state, and each later bind lists again.
-        if(!error.isEmpty() || result["state"].toString()!=state)return;
+        // After a failed or stale read the next bind of this key reads again;
+        // a stale state refreshes the window, which binds again.
+        const bool stale=error.isEmpty()?result["state"].toString()!=state:result["code"]=="STALE_STATE";
+        if(stale || !error.isEmpty()){self->m_listed=false;}
+        if(stale){emit self->stale();return;}
+        if(!error.isEmpty()){emit self->failed(tr("The charts on this sheet could not be read: %1. They are read again when the workbook refreshes.").arg(error));return;}
         self->accept(result["charts"].toArray());
     });
 }
@@ -112,10 +114,11 @@ QString ChartLayer::reasonFor(const QJsonObject &chart) {
     for(const auto &value:spec["series"].toArray())
         for(const auto &part:QStringList{"name","values","x"})sources.append(value.toObject()[part].toObject()["source"].toObject());
     for(const auto &source:sources)if(source["broken"].toBool())return tr("A source of this chart no longer exists");
-    return tr("Loading");
+    return {};
 }
 
 void ChartLayer::accept(const QJsonArray &charts) {
+    if(!attached())return;
     QHash<QString,ChartOverlay *> existing;
     for(const auto &overlay:m_overlays)if(overlay)existing.insert(overlay->chartId(),overlay);
     QList<QPointer<ChartOverlay>> kept;
@@ -127,7 +130,7 @@ void ChartLayer::accept(const QJsonArray &charts) {
         overlay->setChart(chart);
         const auto reason=reasonFor(chart);
         // A readable chart keeps its previous image until a new one arrives.
-        if(reason!=tr("Loading") || !overlay->hasImage())overlay->setPlaceholder(reason);
+        if(!reason.isEmpty() || !overlay->hasImage())overlay->setPlaceholder(reason);
         kept.append(overlay);
     }
     for(auto *overlay:existing)delete overlay;
@@ -155,7 +158,7 @@ void ChartLayer::queueRelayout() {
 }
 
 bool ChartLayer::eventFilter(QObject *object,QEvent *event) {
-    switch(event->type()) {
+    if(attached())switch(event->type()) {
     case QEvent::Resize: case QEvent::Move: case QEvent::Show: case QEvent::Hide: case QEvent::LayoutRequest: queueRelayout();break;
     default: break;
     }
@@ -169,7 +172,7 @@ bool ChartLayer::eventFilter(QObject *object,QEvent *event) {
 // includes a header or a scroll bar.
 void ChartLayer::relayout() {
     m_queued=false;
-    const auto items=overlays();if(items.isEmpty())return;
+    const auto items=overlays();if(items.isEmpty() || !attached())return;
     auto *model=m_body->model();const int rows=model?model->rowCount():0,columns=model?model->columnCount():0;
     const int frozenRows=m_frozen->frozenRows(),frozenColumns=m_frozen->frozenColumns();
     auto area=[this](QWidget *viewport){return QRect(viewport->mapTo(m_gridArea,QPoint()),viewport->size());};
@@ -188,7 +191,7 @@ void ChartLayer::relayout() {
         while(col<columns && columnHidden(col))++col;
         if(row>=rows || col>=columns){overlay->hide();continue;}
         const bool rowFrozen=row<frozenRows,columnFrozen=col<frozenColumns;
-        QTableView *view=rowFrozen && columnFrozen?m_frozen->cornerView():rowFrozen?m_frozen->view():columnFrozen?m_frozen->leftView():m_body;
+        QTableView *view=rowFrozen && columnFrozen?m_frozen->cornerView():rowFrozen?m_frozen->view():columnFrozen?m_frozen->leftView():m_body.data();
         const QPoint cell=view->viewport()->mapTo(m_gridArea,QPoint(view->columnViewportPosition(col),view->rowViewportPosition(row)));
         const QRect chartRect(cell+QPoint(offset["x"].toInt(),offset["y"].toInt()),QSize(size["width"].toInt(),size["height"].toInt()));
         const QRect clip(QPoint(columnFrozen?left:body.left(),rowFrozen?top:body.top()),body.bottomRight());

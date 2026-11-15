@@ -276,11 +276,13 @@ private:
 
 class DelayedCloseProxy : public QTcpServer {
 public:
-    struct Pending { QPointer<QTcpSocket> socket; QJsonObject result; QString error; };
+    struct Pending { QPointer<QTcpSocket> socket; QJsonObject result; QString error; QString code="UNAVAILABLE"; };
     Pending closeReply, metadataReply, rangeReply, openReply;
     bool holdMetadata = false, holdRange = false, holdOpen = false;
     QString closeFailure, closedHandle;
     int mutations = 0, opens = 0, closes = 0, metadataReads = 0;
+    // The next failCharts chart catalog reads fail with chartFailure as code.
+    int failCharts = 0, chartReads = 0; QString chartFailure = "UNAVAILABLE";
     DelayedCloseProxy(const QJsonObject &service) : m_upstream(this) {
         m_upstream.configure(service["url"].toString(),service["token"].toString());
         connect(this,&QTcpServer::newConnection,this,[this] {
@@ -298,6 +300,10 @@ public:
                 if(path=="/v1/open") ++opens;
                 if(path.endsWith("/operations")) ++mutations;
                 if(metadata) ++metadataReads;
+                if(path.endsWith("/charts")) {
+                    ++chartReads;
+                    if(failCharts>0){--failCharts;send({socket,{},chartFailure=="STALE_STATE"?"Refresh charts before inspection":"Chart catalog unavailable",chartFailure});return;}
+                }
                 if(path.endsWith("/close")) {
                     ++closes; closedHandle=parts[2];
                     if(!closeFailure.isEmpty()) {
@@ -305,6 +311,10 @@ public:
                         if(m_closeFailureReleased) failClose(failed); else closeReply=failed;
                         return;
                     }
+                }
+                if(path.endsWith("/charts")) {
+                    ++chartReads;
+                    if(failCharts>0){--failCharts;send({socket,{},chartFailure=="STALE_STATE"?"Refresh charts before inspection":"Chart catalog unavailable",chartFailure});return;}
                 }
                 const QPointer<QTcpSocket> guarded=socket;
                 m_upstream.request(path,QJsonDocument::fromJson(request.mid(end+4)).object(),
@@ -333,7 +343,7 @@ private:
         if(closeFailure=="disconnect") response.socket->abort(); else send(response);
     }
     static void send(const Pending &response) {
-        const auto body=QJsonDocument(response.error.isEmpty()?response.result:QJsonObject{{"code","UNAVAILABLE"},{"message",response.error}})
+        const auto body=QJsonDocument(response.error.isEmpty()?response.result:QJsonObject{{"code",response.code},{"message",response.error}})
             .toJson(QJsonDocument::Compact);
         response.socket->write(QByteArray("HTTP/1.1 ")+(response.error.isEmpty()?"200 OK":"503 Service Unavailable")
             +"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(body.size())+"\r\n\r\n"+body);
@@ -4647,6 +4657,50 @@ private slots:
         auto *broken=overlayNamed(layer,"Broken chart");QVERIFY(broken->placeholder().contains("Broken chart"));QVERIFY(!broken->hasImage());
         QVERIFY(overlayNamed(layer,"Waiting chart")->placeholder().contains("Loading"));
         for(auto *chart:layer->overlays())QVERIFY(chart->hasImage() || !chart->placeholder().isEmpty());
+    }
+    void chartListFailureIsReportedAndListedAgain_data() {
+        QTest::addColumn<QString>("failure");
+        QTest::newRow("unavailable")<<QString("UNAVAILABLE");QTest::newRow("stale")<<QString("STALE_STATE");
+    }
+    void chartListFailureIsReportedAndListedAgain() {
+        QFETCH(QString,failure);
+        QTemporaryDir temp;QJsonObject service;StartupOptions ownerOptions;ownerOptions.automaticWorkbook=false;
+        MainWindow owner(ownerOptions);observeOwnedServiceStartup(owner,service);QSignalSpy serviceReady(&owner,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceReady.count(),1,10000);const auto path=temp.filePath("charts.dhwb");
+        QSignalSpy ownerOpened(&owner,&MainWindow::workbookReady);owner.openBook(path,true);QTRY_COMPARE_WITH_TIMEOUT(ownerOpened.count(),1,10000);
+        QVERIFY(addChart(owner,ownerOpened,"Remote",2,3));
+        DelayedCloseProxy proxy(service);proxy.failCharts=1;proxy.chartFailure=failure;QVERIFY(proxy.listen(QHostAddress::LocalHost,0));
+        StartupOptions options;options.automaticWorkbook=false;options.url="http://127.0.0.1:"+QString::number(proxy.serverPort());
+        options.token=service["token"].toString();options.recoveryDirectory=temp.filePath("recovery");options.viewStatePath=temp.filePath("views.ini");
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *layer=window.findChild<ChartLayer *>("chartLayer");auto *issues=window.findChild<QPlainTextEdit *>("operationIssues");
+        QTRY_COMPARE_WITH_TIMEOUT(proxy.failCharts,0,5000);
+        if(failure=="STALE_STATE") {
+            // A stale read refreshes the window, as other stale reads do, and the refresh lists again.
+            QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,10000);QVERIFY(proxy.chartReads>=2);
+            QVERIFY(!issues->toPlainText().contains("could not be read"));return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("Chart catalog unavailable"),5000);
+        QVERIFY(issues->toPlainText().contains("charts on this sheet could not be read"));
+        QTest::qWait(200);QCOMPARE(layer->overlays().size(),0);QCOMPARE(proxy.chartReads,1);
+        const int before=opened.count();window.findChild<QAction *>("refreshStoredDataAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);QVERIFY(proxy.chartReads>=2);
+        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().first()->isVisible(),5000);
+    }
+    void chartLayerSurvivesWindowTeardown() {
+        QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support propagateSizeHints|Populating font family).*"));
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");
+        auto window=std::make_unique<MainWindow>(options);window->resize(1200,800);window->show();
+        QSignalSpy ready(window.get(),&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(window.get(),&MainWindow::workbookReady);window->openBook(temp.filePath("teardown.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QVERIFY(addChart(*window,opened,"Teardown",2,3));
+        QPointer<ChartLayer> layer=window->findChild<ChartLayer *>("chartLayer");QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        QPointer<ChartOverlay> overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        // A resize queues a relayout that is still pending when the window goes.
+        window->resize(900,600);window->findChild<QTableView *>("grid")->resize(500,400);
+        window.reset();QVERIFY(!layer);QVERIFY(!overlay);QTest::qWait(50);
     }
 #undef CHART_WINDOW
 private:
