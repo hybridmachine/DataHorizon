@@ -246,12 +246,23 @@ def _filled(element):
     return element is not None and any(local(child.tag) in FILLS for child in element)
 
 
+def _overlap_is_full(element):
+    try:
+        return float(element.get("val")) == 100
+    except (TypeError, ValueError):
+        return False
+
+
 def _styled(root):
     """The dropped styling a chart carries, in the order of ``STYLED``."""
     found = set()
     if _filled(_kid(root, "spPr")):
         found.add("colours")
+    whole = {id(overlap) for plot in root.iter() if local(plot.tag) == "barChart" and _val(plot, "grouping") == "stacked"
+             for overlap in _kids(plot, "overlap") if _overlap_is_full(overlap)}  # what stacked means, not styling
     for element in root.iter():
+        if id(element) in whole:
+            continue
         name = local(element.tag)
         if name in ("ser", "dPt") and _filled(_kid(element, "spPr")):
             found.add("colours")
@@ -561,6 +572,8 @@ def _plot_element(area, draft):
     _add(plot, "c:varyColors", val="1" if kind == "pie" else "0")
     for number, item in enumerate(draft["series"]):
         _series_element(plot, number, draft, item)
+    if kind in ("column", "bar") and grouping == "stacked":
+        _add(plot, "c:overlap", val="100")  # Excel draws stacked bars side by side without it
     if kind != "pie":
         _add(plot, "c:axId", val="1")
         _add(plot, "c:axId", val="2")

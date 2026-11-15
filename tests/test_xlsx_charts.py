@@ -185,6 +185,25 @@ class ChartPartTests(unittest.TestCase):
         self.assertEqual(one(chart_xml(series=outline))["styled"], [])
 
 
+class OverlapTests(unittest.TestCase):
+    def styled(self, grouping, overlap, direction="col"):
+        xml = chart_xml(direction=direction, grouping=grouping, series=SERIES, extras=f'<c:overlap val="{overlap}"/>')
+        return one(xml)["styled"]
+
+    def test_full_overlap_on_a_stacked_chart_is_not_styling(self):
+        for direction in ("col", "bar"):
+            self.assertEqual(self.styled("stacked", 100, direction), [])
+
+    def test_other_overlaps_are_still_styling(self):
+        self.assertEqual(self.styled("stacked", 50), ["gap width"])
+        self.assertEqual(self.styled("clustered", 100), ["gap width"])
+        self.assertEqual(self.styled("percentStacked", 100), ["gap width"])
+
+    def test_gap_width_on_a_stacked_chart_is_still_styling(self):
+        xml = chart_xml(grouping="stacked", series=SERIES, extras='<c:gapWidth val="50"/><c:overlap val="100"/>')
+        self.assertEqual(one(xml)["styled"], ["gap width"])
+
+
 class BoundTests(unittest.TestCase):
     def test_frame_cap(self):
         charts = [{"sheet": SHEET, "name": f"C{n}", "xml": chart_xml(series=SERIES)} for n in range(300)]

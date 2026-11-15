@@ -280,6 +280,19 @@ class Structure(unittest.TestCase):
         self.assertEqual([item.get("val") for item in find(self.chart(legend="right"), "legendPos")], ["r"])
         self.assertEqual([item.get("val") for item in find(self.chart(legend="bottom"), "legendPos")], ["b"])
 
+    def test_stacked_bars_overlap_fully_and_read_back_unreported(self):
+        for kind in ("column", "bar"):
+            for grouping, overlap in (("stacked", ["100"]), ("clustered", [])):
+                with self.subTest(kind, grouping=grouping):
+                    draft = column_draft(type=kind, grouping=grouping)
+                    chart = chart_part(draft)
+                    self.assertEqual([item.get("val") for item in find(chart, "overlap")], overlap)
+                    records, report = read_back(packaged([draft], ["Data"]))
+                    self.assertEqual(report_of(report), [])
+                    self.assertEqual(as_draft(records[0]), draft)
+        for kind in ("area", "line"):
+            self.assertEqual(find(chart_part(column_draft(type=kind, grouping="stacked" if kind == "area" else None)), "overlap"), [])
+
     def test_limits_go_on_the_value_axis_scaling(self):
         chart = self.chart()
         axis = find(chart, "valAx")[0]
