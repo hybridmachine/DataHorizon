@@ -7,7 +7,7 @@ from chart_fixtures import (absolute, axes_xml, cell_title, chart_xml, one_cell,
                             two_cell, xlsx_with_charts)
 from datahorizon.conversion_report import ConversionReport
 from datahorizon import xlsx_charts
-from datahorizon.import_charts import UNUSABLE, convert
+from datahorizon.import_charts import MAX_DRAFT_SERIES, UNUSABLE, convert
 from datahorizon.xlsx_charts import read_sheet_drafts
 from datahorizon.xlsx_stream import ByteBudget
 
@@ -218,6 +218,19 @@ class BoundTests(unittest.TestCase):
         report = ConversionReport()
         self.assertIsNone(convert(chart, [SHEET], report))
         self.assertEqual(skipped(report), [("off_grid", [{"sheet": SHEET, "cell": "Chart 1"}])])
+
+
+class SeriesCapTests(unittest.TestCase):
+    def test_series_cap(self):
+        many = [{"val": "Data!$B$2:$B$8"} for _ in range(5000)]
+        chart = one(chart_xml(series=many))
+        self.assertEqual(len(chart["series"]), MAX_DRAFT_SERIES)
+        report = ConversionReport()
+        self.assertIsNone(convert(chart, [SHEET], report))
+        self.assertEqual([item[0] for item in skipped(report)], ["limit"])
+        area = "".join(plot_xml("bar", series=many[:40], axes=("1", "2")) for _ in range(5)) + axes_xml("bar")
+        chart = one(chart_xml(plot_area=area))
+        self.assertEqual(len(chart["series"]), MAX_DRAFT_SERIES)
 
 
 class DrawingTests(unittest.TestCase):

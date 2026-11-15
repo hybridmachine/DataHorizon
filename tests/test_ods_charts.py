@@ -6,7 +6,7 @@ import zipfile
 from chart_fixtures import ods_chart_xml, ods_title, ods_with_charts, sample_like
 from datahorizon import ods_charts
 from datahorizon.conversion_report import ConversionReport
-from datahorizon.import_charts import UNUSABLE
+from datahorizon.import_charts import MAX_DRAFT_SERIES, UNUSABLE, convert
 from datahorizon.interchange import read_xml
 from datahorizon.ods import O, T, q
 from datahorizon.ods_charts import read_frame_draft
@@ -201,6 +201,45 @@ class ChartPartTests(unittest.TestCase):
                                            '<style:graphic-properties draw:fill-color="#ff0000"/>'),
                                 extras='chart:interpolation="b-spline"', value_axis="<chart:grid/>"),
                          ["colours", "data labels", "smoothing", "gridlines"])
+
+
+class StyleAndBoundTests(unittest.TestCase):
+    def test_more_styling_is_reported(self):
+        def styled(**options):
+            return one(ods_chart_xml(series=options.pop("series", SERIES), **options))["styled"]
+        for attribute in ("svg:stroke-color", "draw:stroke-color"):
+            line = [{**SERIES[0], "sppr": f'<style:graphic-properties {attribute}="#ff0000"/>'}]
+            self.assertEqual(styled(series=line), ["colours"], attribute)
+            self.assertEqual(styled(chart_style=f'<style:graphic-properties {attribute}="#ff0000"/>'), ["colours"])
+        self.assertEqual(styled(chart_style='<style:graphic-properties draw:stroke="none" svg:stroke-color="#b3b3b3"/>'), [])
+        text = '<style:text-properties {}="x"/>'
+        for attribute in ("fo:font-size", "fo:font-family", "style:font-name", "fo:font-weight", "fo:font-style", "fo:color"):
+            self.assertEqual(styled(chart_style=text.format(attribute)), ["fonts"], attribute)
+        self.assertEqual(styled(axis_style=text.format("fo:font-size")), ["fonts"])
+        self.assertEqual(styled(title="T", title_style=text.format("fo:color")), ["fonts"])
+        self.assertEqual(styled(legend="end", legend_style=text.format("fo:font-weight")), ["fonts"])
+        self.assertEqual(styled(chart_style='<style:text-properties fo:language="en"/>'), [])
+        self.assertEqual(styled(axis_attributes='style:data-style-name="N10"'), ["number formats"])
+        self.assertEqual(styled(series=[{**SERIES[0], "style_attributes": 'style:data-style-name="N10"'}]), ["number formats"])
+
+    def test_title_from_cell(self):
+        chart = one(ods_chart_xml(series=SERIES, title="Cached", title_attributes='table:cell-range="$Data.$D$1"'))
+        self.assertEqual(chart["title"], {"text": "Cached", "from_cell": True})
+        chart = one(ods_chart_xml(series=SERIES, category_axis=ods_title("Axis", 'table:cell-range="$Data.$D$2"'),
+                                  value_axis=ods_title("Plain")))
+        self.assertEqual(chart["axis_titles"]["category"], {"text": "Axis", "from_cell": True})
+        self.assertEqual(chart["axis_titles"]["value"], {"text": "Plain", "from_cell": False})
+
+    def test_series_cap(self):
+        many = [{"val": f"Data!$B$2:$B${n % 7 + 3}"} for n in range(5000)]
+        chart = one(ods_chart_xml(series=many))
+        self.assertEqual(len(chart["series"]), MAX_DRAFT_SERIES)
+        report = ConversionReport()
+        self.assertIsNone(convert(chart, [SHEET], report))
+        self.assertEqual([item[0] for item in skipped(report)], ["limit"])
+        classes = [{"val": "Data!$B$2:$B$8", "cls": f"kind{n}"} for n in range(5000)]
+        chart = one(ods_chart_xml(series=classes))
+        self.assertEqual((len(chart["series"]), len(chart["plots"])), (MAX_DRAFT_SERIES, MAX_DRAFT_SERIES))
 
 
 class PlacementTests(unittest.TestCase):

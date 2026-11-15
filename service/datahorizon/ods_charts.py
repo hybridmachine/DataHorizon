@@ -13,20 +13,17 @@ import xml.etree.ElementTree as ET
 
 from .conversion_report import ConversionReport
 from .engine import MAX_COLS, MAX_ROWS
-from .import_charts import SKIPPED, STYLED, parse_reference
-from .ods import O, T, X, Y, q
+from .import_charts import (DEFAULT_COLUMN_PX, DEFAULT_GROUPING, DEFAULT_ROW_PX, EMPTY_TITLE, MAX_DRAFT_SERIES, MAX_STEPS,
+                            SKIPPED, STYLED, Steps, locate, parse_reference)
+from .ods import F as FO, O, T, X, Y, q
 from .ods_features import CHART, DRAW, SVG, XLINK
-from .xlsx_charts import DEFAULT_COLUMN, DEFAULT_ROW, _locate
 
-MAX_STEPS = 20_000  # cell sizes asked of the caller, in total for one frame
 MAX_PIXELS = 1 << 30
 PIXELS = {"in": 96.0, "cm": 96 / 2.54, "mm": 96 / 25.4, "pt": 96 / 72, "pc": 16.0, "px": 1.0}
 LENGTH = re.compile(r"\s*(-?(?:\d+(?:\.\d*)?|\.\d+))\s*(in|cm|mm|pt|pc|px)\s*")
 LEGEND_POSITIONS = {"end": "right", "start": "left", "top": "top", "bottom": "bottom", "top-start": "top",
                     "top-end": "top", "bottom-start": "bottom", "bottom-end": "bottom"}
 KINDS = {"circle": "pie", "ring": "doughnut"}
-DEFAULT_GROUPING = {"bar": "clustered", "line": "standard", "area": "standard"}
-EMPTY_TITLE = {"text": None, "from_cell": False}
 
 NAME = q(DRAW, "name")
 HREF = q(XLINK, "href")
@@ -34,6 +31,10 @@ STYLE_NAME, CLASS = q(CHART, "style-name"), q(CHART, "class")
 STYLE_FAMILY = q(Y, "family")
 BODY, DOCUMENT = q(O, "body"), q(O, "document-content")
 SERIES_STYLED = frozenset(q(CHART, name) for name in ("chart", "plot-area", "axis", "series", "data-point"))
+FONT_STYLED = frozenset(q(CHART, name) for name in ("chart", "title", "legend", "axis"))
+FORMAT_STYLED = frozenset(q(CHART, name) for name in ("axis", "series"))
+STROKE_COLOURS = (q(SVG, "stroke-color"), q(DRAW, "stroke-color"))
+FONTS = (q(FO, "font-size"), q(FO, "font-family"), q(Y, "font-name"), q(FO, "font-weight"), q(FO, "font-style"), q(FO, "color"))
 
 
 class _Unreadable(Exception):
@@ -85,20 +86,6 @@ def _pixels(text, default=0):
     return max(0, min(int(float(found.group(1)) * PIXELS[found.group(2)] + 0.5), MAX_PIXELS))
 
 
-class _Steps:
-    """What is left of a frame's budget of per-cell size lookups, and whether it ever ran out."""
-    def __init__(self):
-        self.left = MAX_STEPS
-        self.exhausted = False
-
-    def take(self):
-        if self.left <= 0:
-            self.exhausted = True
-            return False
-        self.left -= 1
-        return True
-
-
 def _placement(frame, cell, widths):
     """``(row, col), (x, y), (width, height), absolute, approximate`` of a frame."""
     x, y = _pixels(frame.get(q(SVG, "x"))), _pixels(frame.get(q(SVG, "y")))
@@ -106,9 +93,9 @@ def _placement(frame, cell, widths):
     if cell is not None:
         return (cell[0], cell[1]), (x, y), size, False, False
     column, row = widths if widths is not None else (None, None)
-    steps = _Steps()
-    col, offset_x = _locate(x, column, DEFAULT_COLUMN, MAX_COLS, steps)
-    number, offset_y = _locate(y, row, DEFAULT_ROW, MAX_ROWS, steps)
+    steps = Steps()
+    col, offset_x = locate(x, column, DEFAULT_COLUMN_PX, MAX_COLS, steps)
+    number, offset_y = locate(y, row, DEFAULT_ROW_PX, MAX_ROWS, steps)
     return (number, col), (offset_x, offset_y), size, True, steps.exhausted
 
 
@@ -119,7 +106,7 @@ def _styles(root):
     found = {}
     for styles in _kids(root, O, "automatic-styles"):
         for style in _kids(styles, Y, "style"):
-            merged = found.setdefault(style.get(q(Y, "name")), {})
+            merged = found.setdefault(style.get(q(Y, "name")), dict(style.attrib))
             for properties in style:
                 merged.update(properties.attrib)
     return found
@@ -130,7 +117,7 @@ def _text(element):
     if element is None:
         return dict(EMPTY_TITLE)
     paragraphs = ["".join(paragraph.itertext()) for paragraph in element.iter(q(X, "p"))]
-    return {"text": "\n".join(paragraphs) or None, "from_cell": False}
+    return {"text": "\n".join(paragraphs) or None, "from_cell": element.get(q(T, "cell-range")) is not None}
 
 
 def _flag(properties, name):
@@ -169,10 +156,16 @@ def _styled(chart, styles):
     if any(element.tag == q(CHART, "grid") for element in chart.iter()):
         found.add("gridlines")
     for element in chart.iter():
+        properties = styles.get(element.get(STYLE_NAME), {})
+        if element.tag in FONT_STYLED and any(name in properties for name in FONTS):
+            found.add("fonts")
+        if element.tag in FORMAT_STYLED and q(Y, "data-style-name") in properties:
+            found.add("number formats")
         if element.tag not in SERIES_STYLED:
             continue
-        properties = styles.get(element.get(STYLE_NAME), {})
         if q(DRAW, "fill-color") in properties and properties.get(q(DRAW, "fill")) != "none":
+            found.add("colours")
+        if properties.get(q(DRAW, "stroke")) != "none" and any(name in properties for name in STROKE_COLOURS):
             found.add("colours")
         if properties.get(q(CHART, "data-label-number"), "none") != "none":
             found.add("data labels")
@@ -215,12 +208,15 @@ def _read_chart(root):
         categories = next(area.iter(q(CHART, "categories")), None)
     shared = _reference(categories, T, "cell-range-address")
     chart_kind = _kind(chart.get(CLASS))
-    plots, series = [], []
+    plots, series, seen = [], [], set()
     for element in _kids(area, CHART, "series"):
+        if len(series) >= MAX_DRAFT_SERIES:
+            break
         kind = _kind(element.get(CLASS)) or chart_kind
         attached = element.get(q(CHART, "attached-axis"))
         secondary = attached is not None and attached in names and attached != primary
-        if (kind, secondary) not in [(item["kind"], item["secondary"]) for item in plots]:
+        if (kind, secondary) not in seen:
+            seen.add((kind, secondary))
             plots.append(_plot(kind, own, secondary))
         scatter = kind in ("scatter", "bubble")
         label = _reference(element, CHART, "label-cell-address")

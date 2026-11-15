@@ -27,6 +27,44 @@ OFFSET_LIMIT = 4096
 RECORD_KEYS = ("sheet", "name", "anchor", "offset", "size", "spec")
 SOURCE_PARTS = ("categories", "name", "values", "x")
 
+# Shared by the format readers: default cell sizes, the measurement budget, series cap and draft defaults.
+DEFAULT_COLUMN_PX = 64
+DEFAULT_ROW_PX = 20
+MAX_STEPS = 20_000  # cell sizes asked of the caller, in total for one budget
+MAX_DRAFT_SERIES = LIMIT_SERIES + 1  # one more than convert accepts is enough for it to skip the chart as ``limit``
+DEFAULT_GROUPING = {"bar": "clustered", "line": "standard", "area": "standard"}
+EMPTY_TITLE = {"text": None, "from_cell": False}
+
+
+class Steps:
+    """What is left of a budget of per-cell size lookups, and whether it ever ran out."""
+    def __init__(self, limit=MAX_STEPS):
+        self.left = limit
+        self.exhausted = False
+
+    def take(self):
+        if self.left <= 0:
+            self.exhausted = True
+            return False
+        self.left -= 1
+        return True
+
+
+def locate(position, size, default, limit, steps):
+    """The 1-based cell containing pixel ``position`` and the offset into it.
+
+    ``size(index)`` is the pixel size of the 1-based cell ``index`` (``None`` for the default sizes); it is asked
+    only while ``steps`` allows, and past that the cells are measured with ``default``."""
+    index = 1
+    while size is not None and index < limit and steps.take():
+        step = size(index)
+        if step <= 0 or position < step:
+            return index, position
+        position -= step
+        index += 1
+    skipped, offset = divmod(position, default)
+    return min(index + skipped, limit), offset
+
 
 # References.
 

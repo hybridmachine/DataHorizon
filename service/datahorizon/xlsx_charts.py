@@ -11,14 +11,12 @@ import posixpath
 
 from .conversion_report import ConversionReport
 from .engine import MAX_COLS, MAX_ROWS, EngineError
-from .import_charts import SKIPPED, STYLED, UNUSABLE, parse_reference
+from .import_charts import (DEFAULT_COLUMN_PX, DEFAULT_GROUPING, DEFAULT_ROW_PX, EMPTY_TITLE, MAX_DRAFT_SERIES, MAX_STEPS,
+                            SKIPPED, STYLED, UNUSABLE, Steps, locate, parse_reference)
 from .xlsx_features import local, relationships_path
 from .xlsx_stream import _read_whole
 
 EMU_PER_PIXEL = 9525
-DEFAULT_COLUMN = 64
-DEFAULT_ROW = 20
-MAX_STEPS = 20_000  # cell sizes asked of the caller, in total for one worksheet
 MAX_FRAMES = 256  # graphic frames met in one worksheet drawing
 MAX_EMU = 1 << 40
 CHARTEX = "chartex"
@@ -26,8 +24,6 @@ ANCHORS = ("twoCellAnchor", "oneCellAnchor", "absoluteAnchor")
 LEGEND_POSITIONS = {"r": "right", "b": "bottom", "t": "top", "l": "left", "tr": "right"}
 FILLS = ("solidFill", "gradFill", "pattFill", "blipFill")
 LABEL_FLAGS = ("showLegendKey", "showVal", "showCatName", "showSerName", "showPercent", "showBubbleSize")
-DEFAULT_GROUPING = {"bar": "clustered", "line": "standard", "area": "standard"}
-EMPTY_TITLE = {"text": None, "from_cell": False}
 
 
 class _Unreadable(Exception):
@@ -136,20 +132,6 @@ def _attribute_pair(element, first, second):
     return _pixels(_number(element.get(first))), _pixels(_number(element.get(second)))
 
 
-class _Steps:
-    """What is left of a worksheet's budget of per-cell size lookups, and whether it ever ran out."""
-    def __init__(self):
-        self.left = MAX_STEPS
-        self.exhausted = False
-
-    def take(self):
-        if self.left <= 0:
-            self.exhausted = True
-            return False
-        self.left -= 1
-        return True
-
-
 def _distance(first, offset_first, last, offset_last, size, default, steps):
     """Pixels from ``offset_first`` into 0-based cell ``first`` to ``offset_last`` into cell ``last``."""
     total = offset_last - offset_first
@@ -160,19 +142,6 @@ def _distance(first, offset_first, last, offset_last, size, default, steps):
     return total + max(last - index, 0) * default
 
 
-def _locate(position, size, default, limit, steps):
-    """The 1-based cell containing pixel ``position`` and the offset into it."""
-    index = 1
-    while size is not None and index < limit and steps.take():
-        step = size(index)
-        if step <= 0 or position < step:
-            return index, position
-        position -= step
-        index += 1
-    skipped, offset = divmod(position, default)
-    return min(index + skipped, limit), offset
-
-
 def _placement(anchor, widths, steps):
     """``(row, col), (x, y), (width, height), absolute`` of a drawing anchor element."""
     column, row = widths if widths is not None else (None, None)
@@ -180,16 +149,16 @@ def _placement(anchor, widths, steps):
     if kind == "twoCellAnchor":
         col1, x1, row1, y1 = _corner(_kid(anchor, "from"))
         col2, x2, row2, y2 = _corner(_kid(anchor, "to"))
-        size = (max(_distance(col1, x1, col2, x2, column, DEFAULT_COLUMN, steps), 0),
-                max(_distance(row1, y1, row2, y2, row, DEFAULT_ROW, steps), 0))
+        size = (max(_distance(col1, x1, col2, x2, column, DEFAULT_COLUMN_PX, steps), 0),
+                max(_distance(row1, y1, row2, y2, row, DEFAULT_ROW_PX, steps), 0))
         return (row1 + 1, col1 + 1), (x1, y1), size, False
     size = _attribute_pair(_kid(anchor, "ext"), "cx", "cy")
     if kind == "oneCellAnchor":
         col1, x1, row1, y1 = _corner(_kid(anchor, "from"))
         return (row1 + 1, col1 + 1), (x1, y1), size, False
     x, y = _attribute_pair(_kid(anchor, "pos"), "x", "y")
-    col, offset_x = _locate(x, column, DEFAULT_COLUMN, MAX_COLS, steps)
-    number, offset_y = _locate(y, row, DEFAULT_ROW, MAX_ROWS, steps)
+    col, offset_x = locate(x, column, DEFAULT_COLUMN_PX, MAX_COLS, steps)
+    number, offset_y = locate(y, row, DEFAULT_ROW_PX, MAX_ROWS, steps)
     return (number, col), (offset_x, offset_y), size, True
 
 
@@ -233,7 +202,8 @@ def _series_name(element):
     return {"text": literal} if literal else None
 
 
-def _series(plot, kind):
+def _series(plot, kind, room):
+    """The first ``room`` series of a plot, in series order (``room`` bounds the work done on an oversized chart)."""
     items = []
     for number, element in enumerate(_kids(plot, "ser")):
         try:
@@ -245,7 +215,7 @@ def _series(plot, kind):
     return [{"name": _series_name(element), "values": _source(_kid(element, "yVal" if scatter else "val")),
              "categories": None if scatter else _source(_kid(element, "cat")),
              "x": _source(_kid(element, "xVal")) if scatter else None}
-            for _, _, element in sorted(items, key=lambda item: item[:2])]
+            for _, _, element in sorted(items, key=lambda item: item[:2])[:room]]
 
 
 def _plots(area):
@@ -323,6 +293,14 @@ def _styled(root):
     return [item for item in STYLED if item in found]
 
 
+def _all_series(plots):
+    """The series of every plot, stopping at ``MAX_DRAFT_SERIES``: one past the limit is enough for ``convert`` to skip."""
+    found = []
+    for element, plot, _ in plots:
+        found += _series(element, plot["kind"], MAX_DRAFT_SERIES - len(found))
+    return found
+
+
 def _read_chart(root):
     """The chart-specific part of a draft from a ``c:chartSpace`` root; raises ``_Unreadable``."""
     chart = _kid(root, "chart") if local(root.tag) == "chartSpace" else None
@@ -339,7 +317,7 @@ def _read_chart(root):
             "axis_titles": {"category": _title(_kid(category, "title")), "value": _title(_kid(value, "title"))},
             "value_min": _limit(value, "min"), "value_max": _limit(value, "max"),
             "legend": None if legend is None else LEGEND_POSITIONS.get(_val(legend, "legendPos", "r")),
-            "series": [item for element, plot, _ in plots for item in _series(element, plot["kind"])],
+            "series": _all_series(plots),
             "styled": _styled(root)}
 
 
@@ -433,7 +411,7 @@ def read_sheet_drafts(archive, sheet_part, position, sheet_name, budget, report:
     if related is None:
         skip("unreadable", "drawing")
         return []
-    drafts, steps = [], _Steps()
+    drafts, steps = [], Steps()
     for kind, target in related.values():
         if kind != "drawing":
             continue

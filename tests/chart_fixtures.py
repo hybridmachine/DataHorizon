@@ -192,20 +192,24 @@ def ods_ref(reference):
     return f"${found.group(1)}.{first}" + (f":.{last}" if last else "")
 
 
-def ods_title(text):
-    return f"<chart:title><text:p>{escape(text)}</text:p></chart:title>"
+def ods_title(text, attributes=""):
+    return f"<chart:title {attributes}><text:p>{escape(text)}</text:p></chart:title>"
 
 
 def ods_chart_xml(kind="bar", direction="col", grouping="clustered", series=(), title=None, legend=None, extras="",
                   category_axis="", value_axis="", plot_area=None, value_min=None, value_max=None, axis_extras="",
-                  secondary=False):
+                  secondary=False, chart_style="", title_style="", legend_style="", axis_style="", axis_attributes="",
+                  title_attributes=""):
     """An object's content.xml.  The arguments follow ``chart_xml``: ``kind`` (``bar3D`` for three dimensions),
     ``direction`` and ``grouping`` (``stacked`` and ``percentStacked`` give the plot-area flags), ``series`` (the
     same items, with ``cat``/``val``/``x``/``name_ref`` in the XLSX form of reference, plus ``sppr``, the inner XML of
     the series style, ``cls``, the series' own ``chart:class`` word, and ``axis``, its ``chart:attached-axis``).
     ``title`` is plain text and ``legend`` an ODS position word.  ``extras`` is attribute text added to the plot
     area's chart-properties, ``axis_extras`` to the value axis'; ``category_axis`` and ``value_axis`` are raw child
-    XML of the axes; ``plot_area`` replaces the whole plot area content; ``secondary`` adds a second value axis."""
+    XML of the axes; ``plot_area`` replaces the whole plot area content; ``secondary`` adds a second value axis.
+    ``chart_style``, ``title_style``, ``legend_style`` and ``axis_style`` are the inner XML of those elements' styles
+    (the last is the value axis'), ``axis_attributes`` extra attributes of the value axis' ``style:style`` and
+    ``title_attributes`` of the chart's ``chart:title``."""
     three_d = kind.endswith("3D")
     base = kind[:-2] if three_d else kind
     flags = ""
@@ -220,13 +224,18 @@ def ods_chart_xml(kind="bar", direction="col", grouping="clustered", series=(), 
     limits = "".join(f' chart:{name}="{value}"' for name, value in (("minimum", value_min), ("maximum", value_max))
                      if value is not None)
     styles = [f'<style:style style:name="plot" style:family="chart"><style:chart-properties{flags} {extras}/></style:style>',
-              f'<style:style style:name="axis-y" style:family="chart"><style:chart-properties{limits} {axis_extras}/></style:style>',
+              f'<style:style style:name="axis-y" style:family="chart" {axis_attributes}><style:chart-properties{limits} {axis_extras}/>'
+              f'{axis_style}</style:style>',
+              f'<style:style style:name="chart" style:family="chart">{chart_style}</style:style>',
+              f'<style:style style:name="title" style:family="chart">{title_style}</style:style>',
+              f'<style:style style:name="legend" style:family="chart">{legend_style}</style:style>',
               '<style:style style:name="axis-x" style:family="chart"><style:chart-properties/></style:style>']
     members = []
     scatter = base in ("scatter", "bubble")
     categories = next((item["cat"] for item in series if item.get("cat")), None)
     for number, item in enumerate(series):
-        styles.append(f'<style:style style:name="s{number}" style:family="chart">{item.get("sppr", "")}</style:style>')
+        styles.append(f'<style:style style:name="s{number}" style:family="chart" {item.get("style_attributes", "")}>'
+                      f'{item.get("sppr", "")}</style:style>')
         attributes = f'chart:style-name="s{number}"'
         if item.get("val"):
             attributes += f' chart:values-cell-range-address={quoteattr(ods_ref(item["val"]))}'
@@ -246,10 +255,11 @@ def ods_chart_xml(kind="bar", direction="col", grouping="clustered", series=(), 
         + ("" if base in ("pie", "doughnut") else
            f'<chart:axis chart:dimension="y" chart:name="primary-y" chart:style-name="axis-y">{value_axis}</chart:axis>')
         + ('<chart:axis chart:dimension="y" chart:name="secondary-y"/>' if secondary else "") + "".join(members))
-    legend_xml = "" if legend is None else f'<chart:legend chart:legend-position="{legend}"/>'
+    legend_xml = "" if legend is None else f'<chart:legend chart:style-name="legend" chart:legend-position="{legend}"/>'
     return (f'<office:document-content {ODS_NAMESPACES}><office:automatic-styles>{"".join(styles)}</office:automatic-styles>'
             f'<office:body><office:chart><chart:chart chart:class="chart:{ODS_CLASSES.get(base, base)}" '
-            f'svg:width="12cm" svg:height="8cm">{ods_title(title) if title else ""}{legend_xml}'
+            f'chart:style-name="chart" svg:width="12cm" svg:height="8cm">'
+            f'{ods_title(title, "chart:style-name=" + chr(34) + "title" + chr(34) + " " + title_attributes) if title else ""}{legend_xml}'
             f'<chart:plot-area chart:style-name="plot">{area}</chart:plot-area></chart:chart></office:chart></office:body>'
             f'</office:document-content>')
 
