@@ -102,8 +102,11 @@ def _repeats(item, name):
 
 class OdsSheetFeatures:
     """Counts the unimported features of one table:table as its elements end, then reports them."""
-    def __init__(self, layout, mapped=frozenset(), pane=None):
+    def __init__(self, layout, mapped=frozenset(), pane=None, charts=None):
+        """`charts` is the set of frames the chart reading has found to be charts (ods_charts.SheetFrames.charts); a
+        frame in it is not a drawing left out, and is removed from it as it is met."""
         self.layout, self.mapped, self.pane = layout, mapped, pane
+        self.charts = set() if charts is None else charts
         self.counts, self.widths = {}, {}  # widths: by layout width, so at most MAX_LAYOUT_STYLES+1 keys
         self.validations, self.mapped_used = DistinctCount(), set()
         self.rich_cell = False
@@ -143,7 +146,9 @@ class OdsSheetFeatures:
             if item.get(q(T, "protected")) == "true": self.add("sheet_protection")
             if item.get(q(T, "print-ranges")): self.counts["page_setup"] = 1
         elif tag.startswith(DRAW_PREFIX):
-            if ancestors and ancestors[-1] in (SHAPES, CELL): self.add("drawings")
+            if ancestors and ancestors[-1] in (SHAPES, CELL):
+                if item in self.charts: self.charts.discard(item)
+                else: self.add("drawings")
         elif CELL in ancestors or COVERED in ancestors:
             inside_note = ANNOTATION in ancestors
             if tag == ANNOTATION: self.add("comments")

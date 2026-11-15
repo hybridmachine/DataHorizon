@@ -208,8 +208,8 @@ def _read_sheets(archive, names, styles, base, sink, progress, conversions, surv
                 context = OdsCellContext(report=sheet, sheet=name, styles=styles, **base)
                 sink.sheet(name)
                 reader = _SheetReader(sink, context, progress)
-                features = OdsSheetFeatures(layout, mapped, panes.get(name))
                 frames = SheetFrames(archive, index-1, name, chart_parts, sheet)
+                features = OdsSheetFeatures(layout, mapped, panes.get(name), frames.charts)
             elif (item.tag == ROW and reader is not None and row_depth is None and len(tags) >= 5 and tags[:4] == SHEET_PATH
                   and all(tag in ROW_GROUPS for tag in tags[4:-1])):
                 row_depth = len(tags)

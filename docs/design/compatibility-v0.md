@@ -357,8 +357,8 @@ end of their sheet.
 | `cell.*` | A cell value converted or skipped: `error_value`, `invalid_value`, `missing_cache`, `number_out_of_range`, `text_too_long`, `unsupported_type`, `date_conversion` |
 | `formula.*` | A formula kept unevaluable, replaced by its cache or skipped: `unsupported_function`, `name`, `missing_sheet`, `external_reference`, `unsupported_reference`, `syntax`, `unsupported_syntax`, `array`, `data_table`, `untranslatable`, `unmaintained` (export), `cache_omitted` and `display_not_evaluated` (large export) |
 | `style.*` | Formatting outside the native style tier: `number_format`, `font`, `fill`, `border`, `alignment`, `named_style` |
-| `sheet.feature` | A worksheet feature not imported; the detail is its feature id (`merged_cells`, `column_widths`, `row_heights`, `hidden_rows_columns`, `frozen_panes`, `conditional_formatting`, `data_validation`, `hyperlinks`, `comments`, `excel_tables`, `auto_filter`, `sheet_protection`, `page_setup`, `drawings` (still reported when the charts import; see [Charts](#charts)) and others); the count is items (ranges, rules, links, rows or columns) |
-| `workbook.feature` | A workbook feature or package part not imported: `defined_names`, `external_references`, `hidden_sheets`, `workbook_protection`, `calculation_settings`, `charts` (still reported when the charts import; see [Charts](#charts)), `pivot_tables`, `vba`, `custom_xml`, `rich_text` and others |
+| `sheet.feature` | A worksheet feature not imported; the detail is its feature id (`merged_cells`, `column_widths`, `row_heights`, `hidden_rows_columns`, `frozen_panes`, `conditional_formatting`, `data_validation`, `hyperlinks`, `comments`, `excel_tables`, `auto_filter`, `sheet_protection`, `page_setup`, `drawings` (not reported for a drawing that held only charts; see [Charts](#charts)) and others); the count is items (ranges, rules, links, rows or columns) |
+| `workbook.feature` | A workbook feature or package part not imported: `defined_names`, `external_references`, `hidden_sheets`, `workbook_protection`, `calculation_settings`, `pivot_tables`, `vba`, `custom_xml`, `rich_text` and others |
 | `chart.*` | A chart converted or skipped on import: `chart.converted` and `chart.skipped`, see [Charts](#charts) |
 | `report.truncated` | Further distinct entries beyond 200, counted but not itemized |
 
@@ -529,10 +529,14 @@ one-sheet import, so only the SDK and the desktop carry charts on that path.
 
 **Known limits and inconsistencies.**
 
-- The existing `workbook.feature` `charts` and `sheet.feature` `drawings`
-  omitted entries are still reported even when the charts import, so a file
-  whose charts all imported still lists them as omitted. This is a known
-  inconsistency awaiting an owner decision, not intended behavior.
+- An import reports no `workbook.feature` `charts` entry, so chart parts
+  that no drawing reaches (orphans) are not itemized. It reports a sheet's
+  `drawings` unless that sheet's one drawing was read and held only chart
+  frames (imported, or skipped with their own `chart.skipped` entry); a
+  picture, shape, connector, group or other object keeps it, as does a drawing
+  that was not read. On ODS the count is of the sheet's drawing items that are
+  not charts read as such, and `embedded_objects` still counts a chart's
+  `Object N` directory.
 - Pixel sizes use default cell sizes (64x20 px); where the sheet declares
   custom sizes the chart is imported with `size_approximate` and its extent can
   differ from the file's.

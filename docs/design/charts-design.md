@@ -628,10 +628,11 @@ whole-workbook path, the inline whole-workbook path and the one-sheet path
 (`edit` with `charts`), and reports every chart it converts or skips as
 `chart.converted` and `chart.skipped`. The mapping, the report vocabulary and
 the known limits are in the [compatibility contract](compatibility-v0.md#charts)
-and [the design](charts-import-view-design.md). The existing `workbook.feature`
-`charts` and `sheet.feature` `drawings` omitted entries are still reported even
-when the charts are imported: a known inconsistency awaiting an owner decision.
-`chart_sheets` is unchanged. Exporting a workbook that holds native charts still
+and [the design](charts-import-view-design.md). An import no longer
+reports `workbook.feature` `charts`, and reports `sheet.feature` `drawings` for
+a sheet only when its drawing held something besides charts (a picture, a shape,
+a group) or was not read; every chart still has its `chart.converted` or
+`chart.skipped` entry. `chart_sheets` is unchanged. Exporting a workbook that holds native charts still
 reports each one as omitted, and stage 4 export is not built. Nothing is dropped
 silently: series names and axis titles over 255 characters are cut with a
 report entry, a chart over 64 KiB or past 1 MiB of one import's charts is

@@ -244,7 +244,7 @@ def _chart_body(root):
 
 
 def read_frame_draft(archive, frame: ET.Element, position: int, sheet_name: str, order: int, parts,
-                     report: ConversionReport, cell, *, claim=True):
+                     report: ConversionReport, cell, *, claim=True, on_chart=None):
     """The draft of the chart a ``draw:frame`` holds, or ``None``.
 
     ``None`` without a report: the frame is not a chart object.  ``None`` with a ``chart.skipped`` entry: the object
@@ -254,7 +254,8 @@ def read_frame_draft(archive, frame: ET.Element, position: int, sheet_name: str,
     root of a part gets a reader of its own).  ``cell`` is the 1-based ``(row, col)`` of the cell holding the frame,
     or ``None`` for a frame in ``table:shapes``, which is placed by its absolute position on the default cell sizes,
     64 and 20 pixels.  ``claim=False`` keeps the draft from counting toward the import's chart limit (a grouped chart,
-    which is reported and left out)."""
+    which is reported and left out).  ``on_chart()`` is called once the frame's object is known to be a chart,
+    whatever becomes of the chart after (a placement that cannot be read, or an import that is full, skips it)."""
     if not isinstance(parts, ChartParts):
         parts = ChartParts(reader=parts)
     label = frame.get(NAME) or f"Chart {order + 1}"
@@ -271,6 +272,8 @@ def read_frame_draft(archive, frame: ET.Element, position: int, sheet_name: str,
             return None
         if body is None:
             raise _Unreadable
+        if on_chart is not None:
+            on_chart()
         (row, col), (x, y), (width, height), absolute = _placement(frame, cell)
         return parts.draft(body, {"sheet": position, "name": label, "order": order,
                                   "anchor": {"row": row, "col": col}, "offset": {"x": x, "y": y},
@@ -294,10 +297,13 @@ class SheetFrames:
 
     ``parts`` is the import's ``ChartParts``: at most ``MAX_FRAMES`` object frames are read in the whole import; this
     sheet's frames past that are reported once, with their count, by ``finish``.  A chart in a ``draw:g`` group is
-    reported as ``grouped`` and left out."""
+    reported as ``grouped`` and left out.  ``charts`` holds the frames known to be charts that are not grouped: a
+    frame is added when its object has been read and is removed by ``OdsSheetFeatures`` when the frame ends, so that
+    the sheet's ``drawings`` count leaves it out (a frame that was not read, or whose object is not a chart, stays in)."""
     def __init__(self, archive, position, sheet_name, parts, report):
         self.archive, self.position, self.sheet_name, self.parts, self.report = archive, position, sheet_name, parts, report
         self.drafts, self.order, self.unread, self.last = [], 0, 0, None
+        self.charts = set()
 
     def frame(self, frame, cell, grouped):
         """A ``draw:frame`` holding a ``draw:object``; ``cell`` as ``read_frame_draft`` takes it.  A frame is read once."""
@@ -310,7 +316,7 @@ class SheetFrames:
             return
         self.parts.frames += 1
         draft = read_frame_draft(self.archive, frame, self.position, self.sheet_name, self.order, self.parts, self.report, cell,
-                                 claim=not grouped)
+                                 claim=not grouped, on_chart=None if grouped else lambda: self.charts.add(frame))
         self.order += 1
         if draft is None:
             return

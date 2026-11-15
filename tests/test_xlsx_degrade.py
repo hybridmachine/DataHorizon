@@ -498,7 +498,7 @@ class FeatureReportTests(unittest.TestCase):
                 found = features(self.preview(output.getvalue(), scope=scope), "workbook.feature")
                 self.assertEqual({detail: entry["count"] for detail, entry in found.items()},
                                  {"defined_names": 3, "external_references": 1, "hidden_sheets": 2, "workbook_protection": 1,
-                                  "calculation_settings": 1, "charts": 2, "vba": 1, "pivot_tables": 1, "custom_xml": 1, "connections": 1})
+                                  "calculation_settings": 1, "vba": 1, "pivot_tables": 1, "custom_xml": 1, "connections": 1})
                 self.assertEqual(found["hidden_sheets"]["samples"], [{"sheet": "Hidden", "cell": None}, {"sheet": "Secret", "cell": None}])
                 self.assertEqual(found["defined_names"]["samples"], [])
 

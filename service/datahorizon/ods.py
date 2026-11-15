@@ -463,11 +463,9 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
                 col+=count
             for offset in range(row_count if template else 0): edits.extend({**item,"row":row+offset} for item in template)
             row+=row_count
-        sheet_features=OdsSheetFeatures(layout,mapped_styles(styles.styles),panes.get(sheet_label))
-        scan_table(sheets[selected-1],sheet_features)
-        sheet_features.report(conversions,sheet_label,workbook_features.sheet_extra(sheet_label))
         # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules, against the
         # shared allowance and workbook limit. A selection reads this sheet's charts alone, then rebases and shifts them.
+        # The frames are read before the sheet's features are scanned: a frame that is a chart is not a drawing left out.
         from .interchange import _apply_cells, fit_charts, selection_charts
         from .ods_charts import SheetFrames, sizes_declared, table_frames
         names=sheet_names if sheet_names is not None else [s.get(q(T,"name"),"") for s in sheets]
@@ -475,6 +473,9 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         if chart_parts is None: chart_parts=selection_charts(names,position,shift,sheet_label,checkpoint)
         frames=SheetFrames(archive,position,sheet_label,chart_parts,conversions)
         for frame,cell,grouped in table_frames(sheets[selected-1]): frames.frame(frame,cell,grouped)
+        sheet_features=OdsSheetFeatures(layout,mapped_styles(styles.styles),panes.get(sheet_label),frames.charts)
+        scan_table(sheets[selected-1],sheet_features)
+        sheet_features.report(conversions,sheet_label,workbook_features.sheet_extra(sheet_label))
         records=[record for draft in frames.finish(sizes_declared(sheet_features)) if (record:=chart_parts.collector.add(draft,names,conversions)) is not None]
         lines=list(report)
         def build(charts):

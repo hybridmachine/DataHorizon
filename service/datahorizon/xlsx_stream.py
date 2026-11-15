@@ -431,10 +431,11 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: 
             features = SheetFeatures(ns, relationship_summary(archive, part, budget))
             sink.sheet(name)
             _read_sheet(archive, part, budget, context, sink, progress, features)
-            features.report(sheet_report, name)
             # Charts are read against their own allowance, never the cells' budget; one that cannot be read is reported.
+            # The drawing's features are reported after, since a drawing that held only charts is not one.
             for draft in worksheet_drafts(archive, part, position, name, chart_parts, sheet_report, features):
                 charts.add(draft, names, sheet_report)
+            features.report(sheet_report, name)
             conversions.merge(sheet_report)
         sink.charts(charts.records)
         return conversions

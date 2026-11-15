@@ -597,7 +597,6 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
             edit=convert_xlsx_cell(cell,context=context)
             if edit is not None: edits.append(edit)
         scan_tree(root,sheet_features)
-        sheet_features.report(conversions,sheet_label)
         # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules, against the
         # shared allowance and workbook limit. A selection reads this sheet's charts alone, then rebases and shifts them.
         from .xlsx_charts import worksheet_drafts
@@ -606,6 +605,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         if chart_parts is None: chart_parts=selection_charts(names,position,shift,sheet_label,checkpoint)
         drafts=worksheet_drafts(archive,part,position,sheet_label,chart_parts,conversions,sheet_features)
         records=[record for draft in drafts if (record:=chart_parts.collector.add(draft,names,conversions)) is not None]
+        sheet_features.report(conversions,sheet_label)  # after the charts: a drawing that held only charts is not reported
         if shared_formulas and shared_formulas.groups: report.append("Shared formulas expand to explicit per-cell sources with relative/absolute reference translation; caches are discarded.")
         report.extend(STYLE_SCOPE_LINES)
         scope=list(report)

@@ -63,10 +63,10 @@ SVGs are 2,509 and 3,376 bytes. The whole-file conversion report holds seven
 `sheet.feature` `drawings` as omitted. The full suite result is in the evidence
 file.
 
-Known inconsistency, awaiting an owner decision: the `workbook.feature`
-`charts` and `sheet.feature` `drawings` omitted entries are still reported when
-the charts import, so a file whose charts all imported still lists charts as
-omitted.
+The run above predates the owner's decision on the `workbook.feature` `charts`
+and `sheet.feature` `drawings` entries, now built: an import no longer reports
+`charts`, and reports a sheet's `drawings` only when its drawing held something
+besides charts or was not read.
 
 Not verified: the application window on the sample file (overlays over the
 grid, the import dialog) was not driven in this run; LibreOffice was not

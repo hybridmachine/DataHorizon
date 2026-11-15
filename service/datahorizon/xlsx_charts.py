@@ -332,9 +332,14 @@ def _choose(content):
     return (regular or frames or [None])[0]
 
 
+# The children of an anchor that place its object and are not one.
+PLACEMENT = ("from", "to", "pos", "ext", "clientData")
+
+
 def _frames(anchor):
-    """``(graphicFrame, grouped)`` for each chart-bearing frame of an anchor, in document order."""
-    found = []
+    """``(found, others)``: ``(graphicFrame, grouped)`` for each chart-bearing frame of an anchor, in document order,
+    and whether the anchor holds anything else (a picture, a shape, a connector, a group, a frame that is not a chart)."""
+    found, others = [], []
 
     def visit(element, grouped):
         for child in element:
@@ -342,13 +347,18 @@ def _frames(anchor):
             if name == "graphicFrame" and _chart_element(child) is not None:
                 found.append((child, grouped))
             elif name == "grpSp":
+                others.append(name)
                 visit(child, True)
             elif name == "AlternateContent":
                 chosen = _choose(_kids(child, "Choice") + _kids(child, "Fallback"))
                 if chosen is not None:
                     found.append((chosen, grouped))
+                else:
+                    others.append(name)
+            elif name not in PLACEMENT:
+                others.append(name)
     visit(anchor, False)
-    return found
+    return found, bool(others)
 
 
 def _anchors(root):
@@ -386,17 +396,19 @@ def _frame_entry(anchor, frame, grouped, label, placed, drawing, links, names):
 
 
 def _drawing_frames(archive, drawing, parts, names, room):
-    """``(entries, count)`` of a drawing part: the ``_frame_entry`` of its first ``room`` chart frames and how many
-    chart frames it holds, or ``None`` when the drawing or its relationships cannot be read.  The parsed drawing is
-    released when this returns."""
+    """``(entries, count, charts_only)`` of a drawing part: the ``_frame_entry`` of its first ``room`` chart frames, how
+    many chart frames it holds and whether it holds nothing but chart frames, or ``None`` when the drawing or its
+    relationships cannot be read.  The parsed drawing is released when this returns."""
     root = parts.read(archive, drawing)
     links = _relationships(archive, drawing, parts, names) if root is not None else None
     if links is None:
         return None
-    entries, count = [], 0
+    entries, count, charts_only = [], 0, True
     for anchor in _anchors(root):
         placement = []  # the anchor's placement (None: unreadable), computed on its first frame that is kept
-        for frame, grouped in _frames(anchor):
+        frames, others = _frames(anchor)
+        charts_only = charts_only and not others
+        for frame, grouped in frames:
             if count < room:
                 if not placement and not grouped:
                     try:
@@ -406,11 +418,11 @@ def _drawing_frames(archive, drawing, parts, names, room):
                 entries.append(_frame_entry(anchor, frame, grouped, _frame_name(frame, count + 1),
                                             placement[0] if placement else None, drawing, links, names))
             count += 1
-    return entries, count
+    return entries, count, charts_only
 
 
 def read_sheet_drafts(archive, sheet_part, position, sheet_name, parts, report: ConversionReport, drawing_id, *,
-                      sizes_unknown=False) -> list:
+                      sizes_unknown=False, held=None) -> list:
     """Drafts of the charts in a worksheet's drawing, in drawing order.
 
     ``drawing_id`` is the ``r:id`` of the worksheet's ``<drawing>`` (``None``: the sheet has none); only that
@@ -418,7 +430,9 @@ def read_sheet_drafts(archive, sheet_part, position, sheet_name, parts, report: 
     with a reader of its own).  Unreadable and grouped charts are reported (``chart.skipped``) and left out, as are
     the frames past the import's ``MAX_FRAMES``, counted in one entry.  Charts are measured with the default cell
     sizes, 64 and 20 pixels; ``sizes_unknown`` says the worksheet declares other cell sizes, so every draft placed by
-    measuring cells (all but one-cell anchors) is marked ``approximate_size``."""
+    measuring cells (all but one-cell anchors) is marked ``approximate_size``.  ``held``, a dict, gets
+    ``charts_only=True`` when the drawing was read and held only chart frames (taken from the read that finds the
+    frames, never a second one)."""
     def skip(detail, label, count=1):
         report.add(SKIPPED, "omitted", detail, sheet=sheet_name, cell=label[:32], count=count)
 
@@ -435,7 +449,9 @@ def read_sheet_drafts(archive, sheet_part, position, sheet_name, parts, report: 
     if found is None:
         skip("unreadable", "drawing")
         return []
-    entries, count = found
+    entries, count, charts_only = found
+    if held is not None and charts_only:
+        held["charts_only"] = True
     drafts, unread = [], count - len(entries)
     for order, entry in enumerate(entries):
         parts.tick()
@@ -478,18 +494,23 @@ def sizes_declared(features) -> bool:
 
 
 def worksheet_drafts(archive, sheet_part, position, sheet_name, parts, report: ConversionReport, features) -> list:
-    """``read_sheet_drafts`` for a worksheet the whole-workbook readers have read, given its ``SheetFeatures``.
-
-    ``features`` must have reported.  Only a worksheet with a ``<drawing>`` element shows charts, so no other is read,
+    """``read_sheet_drafts`` for a worksheet the whole-workbook readers have read, given its ``SheetFeatures``, which it
+    settles and tells (``charts_only``) whether the drawing held only charts; ``features.report`` comes after.  Only a worksheet with a ``<drawing>`` element shows charts, so no other is read,
     and only the relationship its first ``<drawing>`` names is followed (a worksheet has at most one; any other is
     reported as one unreadable drawing).  Its column widths and row heights are not kept per cell, so a sheet with
     custom sizes has its measured drafts marked ``approximate_size``.  ``parts`` is the import's ``ChartParts``."""
+    features.settle()
     if "drawings" not in features.counts:
         return []
     if features.drawings > 1:
         report.add(SKIPPED, "omitted", "unreadable", sheet=sheet_name, cell="drawing", count=features.drawings - 1)
-    return read_sheet_drafts(archive, sheet_part, position, sheet_name, parts, report, features.drawing_id,
-                             sizes_unknown=sizes_declared(features))
+    held = {}
+    drafts = read_sheet_drafts(archive, sheet_part, position, sheet_name, parts, report, features.drawing_id,
+                               sizes_unknown=sizes_declared(features), held=held)
+    # The sheet's drawing is not an omitted feature when it was read and held only charts, each imported or reported
+    # (a second <drawing> is not followed, so a sheet with two keeps its entry).
+    features.charts_only = features.drawings == 1 and held.get("charts_only", False)
+    return drafts
 
 
 # Writing.
