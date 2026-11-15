@@ -1304,6 +1304,11 @@ class Workbook:
                     else:self.db.execute('DELETE FROM dh_objects WHERE namespace=? AND sheet_id=? AND id=?',(namespace,identity,identifier))
                 elif kind == "edit":
                     self.apply_edit(sheet, request.get("cells"))
+                    if "charts" in request:
+                        # A one-sheet import's charts join the edit's operation: one undo step, one rollback.
+                        from .import_charts import check_records, create
+                        made = create(self, check_records(request["charts"], 1), [sheet])
+                        if made["left_out"]: reference_report["charts_left_out"] = made["left_out"]
                 elif kind == "paste":
                     rows = request.get("rows")
                     require(isinstance(rows, list) and len(rows) > 0 and all(isinstance(row, list) for row in rows), "INVALID_ARGUMENT", "Paste rows must be a nonempty matrix")

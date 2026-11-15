@@ -597,15 +597,17 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
             if edit is not None: edits.append(edit)
         scan_tree(root,sheet_features)
         sheet_features.report(conversions,sheet_label)
-        records=[]
-        if sheet_names is not None:
-            # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules.
-            from .import_charts import Collector
-            from .xlsx_charts import ChartParts, worksheet_drafts
-            charts=Collector() if charts is None else charts
-            chart_parts=ChartParts() if chart_parts is None else chart_parts
-            drafts=worksheet_drafts(archive,part,sheet_names.index(sheet_label),sheet_label,chart_parts,conversions,sheet_features)
-            records=[record for draft in drafts if (record:=charts.add(draft,sheet_names,conversions)) is not None]
+        # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules, against the
+        # shared allowance and workbook limit. A selection reads this sheet's charts alone, then rebases and shifts them.
+        from .import_charts import Collector, for_sheet
+        from .xlsx_charts import ChartParts, worksheet_drafts
+        names=sheet_names if sheet_names is not None else [name for _,name in book.worksheets()]
+        position=names.index(sheet_label) if sheet_names is not None else [index for index,_ in book.worksheets()].index(selected)
+        charts=Collector() if charts is None else charts
+        chart_parts=ChartParts() if chart_parts is None else chart_parts
+        drafts=worksheet_drafts(archive,part,position,sheet_label,chart_parts,conversions,sheet_features)
+        records=[record for draft in drafts if (record:=charts.add(draft,names,conversions)) is not None]
+        if sheet_names is None: records=for_sheet(records,position,shift[0]+1,shift[1]+1,sheet_label,conversions)
         if shared_formulas and shared_formulas.groups: report.append("Shared formulas expand to explicit per-cell sources with relative/absolute reference translation; caches are discarded.")
         report.extend(STYLE_SCOPE_LINES)
         scope=list(report)
@@ -613,6 +615,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         result={"cells":edits,"can_import":bool(edits),"issues":issues,
                 "sheet":sheet_label,"sheets":[s.get("name","") for s in sheets],"report":report,"scope_lines":scope,"report_entries":conversions.entries(),
                 "totals":conversions.totals(),"stored_cells":count}
+        if sheet_names is None: result["charts"]=records
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Spreadsheet preview exceeds 4 MiB")
         if result["can_import"]:
             result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))

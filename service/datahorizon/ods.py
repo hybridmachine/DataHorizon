@@ -466,21 +466,24 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         sheet_features=OdsSheetFeatures(layout,mapped_styles(styles.styles),panes.get(sheet_label))
         scan_table(sheets[selected-1],sheet_features)
         sheet_features.report(conversions,sheet_label,workbook_features.sheet_extra(sheet_label))
-        records=[]
-        if sheet_names is not None:
-            # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules.
-            from .import_charts import Collector
-            from .ods_charts import SheetFrames, sizes_declared, table_frames
-            from .xlsx_charts import ChartParts
-            charts=Collector() if charts is None else charts
-            chart_parts=ChartParts() if chart_parts is None else chart_parts
-            frames=SheetFrames(archive,sheet_names.index(sheet_label),sheet_label,chart_parts.read,conversions)
-            for frame,cell,grouped in table_frames(sheets[selected-1]): frames.frame(frame,cell,grouped)
-            records=[record for draft in frames.finish(sizes_declared(sheet_features)) if (record:=charts.add(draft,sheet_names,conversions)) is not None]
+        # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules, against the
+        # shared allowance and workbook limit. A selection reads this sheet's charts alone, then rebases and shifts them.
+        from .import_charts import Collector, for_sheet
+        from .ods_charts import SheetFrames, sizes_declared, table_frames
+        from .xlsx_charts import ChartParts
+        names=sheet_names if sheet_names is not None else [s.get(q(T,"name"),"") for s in sheets]
+        position=names.index(sheet_label) if sheet_names is not None else selected-1
+        charts=Collector() if charts is None else charts
+        chart_parts=ChartParts() if chart_parts is None else chart_parts
+        frames=SheetFrames(archive,position,sheet_label,chart_parts.read,conversions)
+        for frame,cell,grouped in table_frames(sheets[selected-1]): frames.frame(frame,cell,grouped)
+        records=[record for draft in frames.finish(sizes_declared(sheet_features)) if (record:=charts.add(draft,names,conversions)) is not None]
+        if sheet_names is None: records=for_sheet(records,position,shift[0]+1,shift[1]+1,sheet_label,conversions)
         report.extend(conversions.lines())
         result={"cells":edits,"stored_cells":len(edits),"can_import":bool(edits),"issues":[],"sheet":sheet_label,
                 "sheets":[s.get(q(T,"name"),"") for s in sheets],"report":report,"scope_lines":scope,"report_entries":conversions.entries(),
                 "totals":conversions.totals()}
+        if sheet_names is None: result["charts"]=records
         if result["can_import"]: result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","ODS preview exceeds 4 MiB")
         if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=wide; result["_charts"]=records

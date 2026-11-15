@@ -262,7 +262,8 @@ def openapi():
         "name":{"type":"string"},"sheet":{"type":"string","description":"The imported sheet the chart is placed on"},"type":{"type":"string"}}},
         "description":"The charts the import creates, in file order (at most 64 per workbook; skipped charts are in the report)"}
     actions = {
-        "edit": (["cells"],{"sheet":sheet,"cells":{"type":"array","minItems":1,"maxItems":MAX_CELLS,"items":{"$ref":"#/components/schemas/CellEdit"}}},
+        "edit": (["cells"],{"sheet":sheet,"cells":{"type":"array","minItems":1,"maxItems":MAX_CELLS,"items":{"$ref":"#/components/schemas/CellEdit"}},
+                  "charts":{**chart_records,"description":"Reviewed charts from a one-sheet preview's charts, created on this sheet after the cells in the same operation (one undo step, one rollback); every record's sheet is 0 and its sources are on this sheet"}},
                  {"cells":[{"row":1,"col":1,"source":"7"}]}),
         "paste": (["row","col","rows"],{"sheet":sheet,"row":row,"col":col,"origin_row":row,"origin_col":col,
                   "mode":{"type":"string","enum":["all","values","formats"],"default":"all"},
@@ -511,7 +512,7 @@ def openapi():
         "cells":{"type":"array","items":{"$ref":"#/components/schemas/CellEdit"},"description":"Reviewed edits for one managed edit (selection scope)"},
         "workbook_sheets":{"type":"array","items":{"type":"object","required":["name","cells"],"properties":{"name":name,"cells":{"type":"array","items":{"$ref":"#/components/schemas/CellEdit"}}}},
                            "description":"Reviewed sheets for workbook_import (workbook scope)"},
-        "charts":{**chart_listing,"description":"The charts workbook_charts holds (workbook scope)"},
+        "charts":{"anyOf":[chart_listing,chart_records],"description":"Workbook scope: the charts workbook_charts holds, listed. Selection scope: the selected worksheet's reviewed chart records, rebased to sheet 0 and shifted by row and col, for edit's charts"},
         "workbook_charts":{**chart_records,"description":"Reviewed charts for workbook_import's charts (workbook scope)"}},
         "description":"The completed result of a bounded inline (file_base64) preparation.",
         "example":{"can_import":True,"issues":[],"report":[],"report_entries":[],"totals":dict.fromkeys(severities,0),"stored_cells":1,"scope":"workbook",
@@ -542,7 +543,7 @@ def openapi():
     schemas["Receipt"]["properties"]["imported"]={"type":"object","required":["sheets","cells","charts"],"properties":{"sheets":{"type":"integer","minimum":0},"cells":{"type":"integer","minimum":0},
         "charts":{"type":"integer","minimum":0,"maximum":64}},"description":"workbook_import only: sheets, stored cells and charts imported"}
     schemas["Receipt"]["properties"]["charts_left_out"]={"type":"array","minItems":1,"maxItems":64,"items":{"type":"string"},
-        "description":"workbook_import only, when not empty: names of the reviewed charts left out because the workbook reached 64 charts"}
+        "description":"workbook_import and edit with charts, when not empty: names of the reviewed charts left out because the workbook reached 64 charts"}
     location={"type":"object","required":["sheet","row","col"],"properties":{"sheet":{"type":"string"},"row":row,"col":col}}
     def counted(description,**extra):
         return {"type":"object","required":["count","samples"],"description":description,"properties":{"count":{"type":"integer","minimum":0},

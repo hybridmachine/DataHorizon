@@ -715,7 +715,9 @@ class WorkbookClient:
             # The reviewed charts travel with the reviewed sheets; a preview from an older service has none.
             charts={"charts":preview["workbook_charts"]} if preview.get("workbook_charts") else {}
             return self.apply("workbook_import",sheets=preview["workbook_sheets"],label="Import workbook",**charts)
-        return self.apply("edit",sheet,cells=preview["cells"],label="Import spreadsheet")
+        # The selected sheet's charts are created in the same operation as its cells.
+        charts={"charts":preview["charts"]} if preview.get("charts") else {}
+        return self.apply("edit",sheet,cells=preview["cells"],label="Import spreadsheet",**charts)
 
     def apply(self, action, sheet="Sheet1", operation_id=None, *, request_timeout=REQUEST_SECONDS, **arguments):
         self._ensure_open()

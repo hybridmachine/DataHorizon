@@ -13,15 +13,17 @@ import uuid
 import zipfile
 from unittest.mock import patch
 
-from chart_fixtures import (chart_xml, ods_chart_xml, ods_sample_like, ods_with_charts, one_cell, plot_xml, sample_like,
+from chart_fixtures import (chart_xml, two_cell, ods_chart_xml, ods_sample_like, ods_with_charts, one_cell, plot_xml, sample_like,
                             xlsx_with_charts)
 from ods_builder import styles_document
 from datahorizon import import_charts, import_stage, ods_stream, xlsx_stream
 from datahorizon.xlsx_charts import MAX_FRAMES
 from datahorizon.cli import report_text
-from datahorizon.client import LocalService
+from datahorizon import charts as charts_module
+from datahorizon.client import APIError, LocalService
 from datahorizon.conversion_report import ConversionReport
-from datahorizon.engine import EngineError
+from datahorizon.engine import EngineError, Workbook
+from datahorizon.workbook_code import activation, fingerprint
 from datahorizon.import_stage import ImportStage, open_readonly
 from datahorizon.interchange import workbook_report, xlsx_preview
 from datahorizon.ods import ods_preview
@@ -551,6 +553,176 @@ class ChartAllowanceTests(unittest.TestCase):
                 self.assertEqual(used[0], used[1])
                 self.assertEqual(used[0], used[2])
                 self.assertTrue(all(value > 0 for value in used[0]))
+
+
+STACKED = "Stacked Column"
+
+
+class SelectionChartTests(unittest.TestCase):
+    """The one-sheet import: a bounded selection preview, then a plain edit that carries its charts."""
+    def setUp(self):
+        self.temp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.formats = {"xlsx": (sample_like(), xlsx_preview), "ods": (ods_sample_like(), ods_preview)}
+
+    def preview(self, fmt="xlsx", data=None, **request):
+        source, function = self.formats[fmt]
+        return function({"file_base64": b64(data or source), "scope": "selection", **request})
+
+    def book(self, name="book"):
+        client = self.enterContext(LocalService())
+        return self.enterContext(client.open(self.temp / f"{name}.dhwb", create=True))
+
+    def resolved(self, book, chart):
+        book.refresh()
+        return book.resolve_chart(chart["id"])["resolved"]
+
+    def test_selection_preview_and_edit(self):
+        preview = self.preview(sheet_index=2, row=1, col=1)
+        self.assertEqual(len(preview["charts"]), 1)
+        self.assertEqual((preview["charts"][0]["sheet"], preview["charts"][0]["name"]), (0, "Chart 1"))
+        book = self.book()
+        receipt = book.import_prepared(preview, "Sheet1")
+        self.assertEqual(receipt["changed_charts"], 1)
+        self.assertNotIn("charts_left_out", receipt)
+        book.refresh()
+        (chart,) = book.charts()
+        self.assertEqual(book.info["sheets"][0]["id"], chart["sheet_id"])
+        resolved = self.resolved(book, chart)
+        self.assertEqual(resolved["series"][0]["values"], [2, 3, 4, 5, 6, 7, 8])
+        self.assertEqual(resolved["categories"][0], "Division 2")
+
+    def test_selection_offset_shifts_chart(self):
+        preview = self.preview(sheet_index=2, row=5, col=3)
+        (record,) = preview["charts"]
+        self.assertEqual(record["anchor"], {"row": 5, "col": 5})
+        spec = record["spec"]
+        self.assertEqual(spec["categories"]["source"]["ref"], "C6:C12")
+        self.assertEqual(spec["series"][0]["values"]["source"]["ref"], "D6:D12")
+        self.assertEqual({source["sheet"] for source in (spec["categories"]["source"], spec["series"][0]["values"]["source"])}, {0})
+        book = self.book()
+        book.import_prepared(preview, "Sheet1")
+        book.refresh()
+        resolved = self.resolved(book, book.charts()[0])
+        self.assertEqual(resolved["series"][0]["values"], [2, 3, 4, 5, 6, 7, 8])
+        self.assertEqual(resolved["categories"][0], "Division 2")
+
+    def test_selection_chart_on_other_sheet_is_skipped(self):
+        data = xlsx_with_charts({"First": data_rows(), "Second": data_rows()},
+                                [{"sheet": "First", "name": "Elsewhere", "xml": column_chart("Second")}])
+        preview = self.preview(data=data, sheet_index=1)
+        self.assertEqual(preview["charts"], [])
+        self.assertEqual([(entry["detail"], entry["samples"]) for entry in entries(preview, "chart.skipped")],
+                         [("source", [{"sheet": "First", "cell": "Elsewhere"}])])
+
+    def test_selection_off_grid(self):
+        far = xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "name": "Far", "xml": column_chart(),
+                                                        "anchor": two_cell((16379, 0, 0, 0), (16383, 0, 15, 0))}])
+        plain = xlsx_with_charts({"Data": data_rows()}, [])
+        with_chart = self.preview(data=far, row=1, col=10)
+        without = self.preview(data=plain, row=1, col=10)
+        self.assertEqual(with_chart["charts"], [])
+        self.assertEqual([(entry["detail"], entry["samples"]) for entry in entries(with_chart, "chart.skipped")],
+                         [("off_grid", [{"sheet": "Data", "cell": "Far"}])])
+        for key in ("cells", "can_import", "stored_cells"):
+            self.assertEqual(with_chart[key], without[key], key)
+
+    def test_charts_never_change_the_selection_cells(self):
+        for fmt in ("xlsx", "ods"):
+            source, function = self.formats[fmt]
+            with self.subTest(fmt):
+                full = self.preview(fmt, sheet_index=2, row=3, col=2)
+                self.assertEqual(len(full["charts"]), 1)
+                if fmt == "xlsx":
+                    with zipfile.ZipFile(io.BytesIO(source)) as archive:
+                        part = archive.read("xl/charts/chart2.xml")
+                    broken = replace_part(source, "xl/charts/chart2.xml", part[:len(part) // 2])
+                else:
+                    broken = source.replace(b"chart:plot-area", b"chart:plot-ared")
+                bad = self.preview(fmt, broken, sheet_index=2, row=3, col=2)
+                for key in ("cells", "can_import", "stored_cells"):
+                    self.assertEqual(full[key], bad[key], key)
+
+    def test_edit_with_charts_is_one_undo_step(self):
+        book = self.book()
+        record = self.preview(sheet_index=2)["charts"]
+        cells = [{"row": 1, "col": 1, "source": "1"}]
+        receipt = book.apply("edit", "Sheet1", cells=cells, charts=record, label="Import spreadsheet")
+        self.assertEqual((receipt["changed_cells"], receipt["changed_charts"]), (1, 1))
+        book.refresh()
+        (chart,) = book.charts()
+        book.apply("undo")
+        book.refresh()
+        self.assertEqual(book.charts(), [])
+        book.apply("redo")
+        book.refresh()
+        self.assertEqual([item["id"] for item in book.charts()], [chart["id"]])
+
+    def test_edit_charts_validation(self):
+        book = self.book()
+        record = self.preview(sheet_index=2)["charts"][0]
+        cells = [{"row": 1, "col": 1, "source": "1"}]
+        for bad in ([{**record, "sheet": 1}], record, "x", [3]):
+            with self.subTest(bad=bad), self.assertRaises(APIError) as caught:
+                book.apply("edit", "Sheet1", cells=cells, charts=bad)
+            self.assertEqual(caught.exception.body["code"], "INVALID_ARGUMENT")
+        book.refresh()
+        self.assertEqual(book.charts(), [])
+
+    def test_ods_selection(self):
+        preview = self.preview("ods", sheet_index=2, row=5, col=3)
+        (record,) = preview["charts"]
+        self.assertEqual(record["anchor"], {"row": 5, "col": 5})
+        self.assertEqual(record["spec"]["categories"]["source"]["ref"], "C6:C12")
+        book = self.book("ods")
+        self.assertEqual(book.import_prepared(preview, "Sheet1")["changed_charts"], 1)
+        book.refresh()
+        self.assertEqual(self.resolved(book, book.charts()[0])["series"][0]["values"], [2, 3, 4, 5, 6, 7, 8])
+
+    def test_openapi_describes_selection_charts(self):
+        spec = openapi()
+        schemas = spec["components"]["schemas"]
+        self.assertEqual(schemas["EditOperation"]["properties"]["charts"]["maxItems"], 64)
+        self.assertIn("charts", schemas["SpreadsheetImportPreview"]["properties"])
+        self.assertIn("edit", schemas["Receipt"]["properties"]["charts_left_out"]["description"])
+        try:
+            from openapi_schema_validator import OAS30Validator
+        except ImportError:
+            return
+        for fmt in ("xlsx", "ods"):
+            OAS30Validator({**schemas["SpreadsheetImportPreview"], "components": spec["components"]}).validate(self.preview(fmt, sheet_index=2))
+
+    def test_edit_without_charts_is_unchanged(self):
+        book = self.book()
+        preview = self.preview(data=xlsx_with_charts({"Data": data_rows()}, []))
+        receipt = book.import_prepared(preview, "Sheet1")
+        self.assertEqual(receipt["changed_charts"], 0)
+        self.assertNotIn("charts_left_out", receipt)
+        self.assertEqual(preview["charts"], [])
+
+
+class SelectionRollbackTests(unittest.TestCase):
+    def test_failing_change_handler_rolls_back_charts(self):
+        source = "def refuse(ctx, changes):\n    raise ValueError('binding was called')\n"
+        with tempfile.TemporaryDirectory() as temp:
+            book = Workbook(Path(temp) / "run.dhwb", create=True)
+            self.addCleanup(book.close)
+
+            def apply(action, **args):
+                return book.mutate({"action": action, "operation_id": str(uuid.uuid4()), "expected_state": book.state(), **args})
+
+            apply("sheet_rename", sheet="Sheet1", name="Data")
+            apply("module_save", name="rules", source=source, macros=[], fingerprint=fingerprint(book.db))
+            apply("binding_save", event="cell_change", scope={"kind": "range", "reference": "'Data'!A1:Z40"}, module="rules",
+                  function="refuse", required=True, fingerprint=fingerprint(book.db))
+            book.approved_code = frozenset([activation(book)["activation_key"]])
+            records = xlsx_preview({"file_base64": b64(sample_like()), "sheet_index": 2})["charts"]
+            self.assertEqual(len(records), 1)
+            with self.assertRaises(EngineError) as caught:
+                apply("edit", sheet="Data", cells=[{"row": 1, "col": 1, "source": "1"}], charts=records)
+            self.assertEqual(caught.exception.body["code"], "BINDING_FAILED")
+            self.assertEqual(caught.exception.body["outcome"], "rolled_back")
+            self.assertEqual(charts_module.objects(book), [])
+            self.assertIsNone(book.raw(book.sheet("Data"), 1, 1))
 
 
 if __name__ == "__main__":
