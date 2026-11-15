@@ -1201,6 +1201,30 @@ class ImportReportCleanUpTests(unittest.TestCase):
                                      [[{"sheet": "Data", "cell": "drawing" if fmt == "xlsx" else "A"}]])
                     self.assertEqual([entry["count"] for entry in self.found(report, "sheet.feature", "drawings")], [1])
 
+    def test_an_empty_drawing_is_still_reported(self):
+        xlsx = xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "name": "A", "xml": column_chart()}])
+        empty = replace_part(xlsx, "xl/drawings/drawing1.xml", f'<xdr:wsDr xmlns:xdr="{XDR}" xmlns:a="{A}"/>'.encode())
+        for path, report in self.reports(empty, "xlsx").items():
+            with self.subTest(path=path):
+                self.assertEqual([entry["count"] for entry in self.found(report, "sheet.feature", "drawings")], [1])
+                self.assertEqual(self.found(report, "workbook.feature", "charts"), [])
+
+    def test_a_drawing_with_an_alternate_content_shape_is_still_reported(self):
+        # A root mc:AlternateContent whose branches hold no anchor (here only a shape) is not consumed as an anchor.
+        mc = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+        shape = (f'<mc:AlternateContent xmlns:mc="{mc}"><mc:Choice Requires="a"><xdr:sp xmlns:xdr="{XDR}"><xdr:nvSpPr>'
+                 '<xdr:cNvPr id="9" name="Shape 1"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr/></xdr:sp></mc:Choice></mc:AlternateContent>')
+        xlsx = xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "name": "A", "xml": column_chart()}])
+        with zipfile.ZipFile(io.BytesIO(xlsx)) as archive:
+            drawing = archive.read("xl/drawings/drawing1.xml").decode()
+        data = replace_part(xlsx, "xl/drawings/drawing1.xml", drawing.replace("</xdr:wsDr>", shape + "</xdr:wsDr>").encode())
+        for path, report in self.reports(data, "xlsx").items():
+            with self.subTest(path=path):
+                self.assertEqual([entry["count"] for entry in self.found(report, "sheet.feature", "drawings")], [1])
+                self.assertEqual(self.found(report, "chart.skipped", "unreadable"), [])
+        preview = xlsx_preview({"file_base64": b64(data), "scope": "workbook"})
+        self.assertEqual([chart["name"] for chart in preview["workbook_charts"]], ["A"])
+
     def test_a_drawing_past_the_chart_allowance_is_still_reported(self):
         xlsx = xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "name": "A", "xml": column_chart()}])
         with patch.object(import_charts, "CHART_EXPANDED", 200):  # less than the sheet's relationships and its drawing

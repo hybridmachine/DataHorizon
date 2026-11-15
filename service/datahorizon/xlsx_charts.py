@@ -361,7 +361,9 @@ def _frames(anchor):
     return found, bool(others)
 
 
-def _anchors(root):
+def _anchors(root, leftover):
+    """The anchors of a drawing's root, in document order; ``leftover`` (a list) gets the name of each root child not
+    consumed as an anchor (an ``AlternateContent`` with no anchor in any branch included)."""
     for child in root:
         if local(child.tag) in ANCHORS:
             yield child
@@ -371,6 +373,10 @@ def _anchors(root):
                 if inner:
                     yield from inner
                     break
+            else:
+                leftover.append(local(child.tag))
+        else:
+            leftover.append(local(child.tag))
 
 
 def _frame_name(frame, number):
@@ -397,14 +403,15 @@ def _frame_entry(anchor, frame, grouped, label, placed, drawing, links, names):
 
 def _drawing_frames(archive, drawing, parts, names, room):
     """``(entries, count, charts_only)`` of a drawing part: the ``_frame_entry`` of its first ``room`` chart frames, how
-    many chart frames it holds and whether it holds nothing but chart frames, or ``None`` when the drawing or its
-    relationships cannot be read.  The parsed drawing is released when this returns."""
+    many chart frames it holds and whether it holds nothing but chart frames (at least one, and no root child that is
+    not consumed as an anchor), or ``None`` when the drawing or its relationships cannot be read.  The parsed drawing
+    is released when this returns."""
     root = parts.read(archive, drawing)
     links = _relationships(archive, drawing, parts, names) if root is not None else None
     if links is None:
         return None
-    entries, count, charts_only = [], 0, True
-    for anchor in _anchors(root):
+    entries, count, charts_only, leftover = [], 0, True, []
+    for anchor in _anchors(root, leftover):
         placement = []  # the anchor's placement (None: unreadable), computed on its first frame that is kept
         frames, others = _frames(anchor)
         charts_only = charts_only and not others
@@ -418,7 +425,7 @@ def _drawing_frames(archive, drawing, parts, names, room):
                 entries.append(_frame_entry(anchor, frame, grouped, _frame_name(frame, count + 1),
                                             placement[0] if placement else None, drawing, links, names))
             count += 1
-    return entries, count, charts_only
+    return entries, count, charts_only and count > 0 and not leftover
 
 
 def read_sheet_drafts(archive, sheet_part, position, sheet_name, parts, report: ConversionReport, drawing_id, *,
