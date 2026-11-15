@@ -1043,6 +1043,48 @@ class SelectionChartTests(unittest.TestCase):
         self.assertEqual(preview["charts"], [])
 
 
+class SelectionChartLimitTests(unittest.TestCase):
+    """What a one-sheet preview may not let charts do: use up the chart limit with charts it then drops, or
+    take the room the cells need."""
+    def test_charts_the_selection_drops_do_not_count_toward_the_limit(self):
+        elsewhere = [{"sheet": "First", "name": f"Elsewhere {n}", "xml": column_chart("Second")} for n in range(1, 65)]
+        eligible = [{"sheet": "First", "name": "Eligible", "xml": column_chart("First")}]
+        xlsx = xlsx_with_charts({"First": data_rows(), "Second": data_rows()}, elsewhere + eligible)
+        shared = [{"sheet": "First", "name": "Elsewhere 1", "xml": ods_column_chart("Second")}]
+        shared += [{"sheet": "First", "name": f"Elsewhere {n}", "missing": True, "target": "./Object 1"} for n in range(2, 65)]
+        ods = ods_with_charts({"First": ods_data_rows(), "Second": ods_data_rows()},
+                              shared + [{"sheet": "First", "name": "Eligible", "xml": ods_column_chart("First")}])
+        for fmt, data, function in (("xlsx", xlsx, xlsx_preview), ("ods", ods, ods_preview)):
+            with self.subTest(fmt):
+                preview = function({"file_base64": b64(data), "scope": "selection", "sheet_index": 1})
+                self.assertEqual([item["name"] for item in preview["charts"]], ["Eligible"])
+                skipped = {entry["detail"]: entry["count"] for entry in entries(preview, "chart.skipped")}
+                self.assertEqual(skipped, {"source": 64})
+
+    def test_charts_never_take_the_room_the_cells_need(self):
+        text = "x" * 300
+        rows = "".join(f'<row r="{row}">' + "".join(f'<c r="{column}{row}" t="inlineStr"><is><t>{text}</t></is></c>'
+                                                    for column in "ABCDEFGH") + "</row>" for row in range(1, 1201))
+        series = [{"cat": "Data!$A$2:$A$8", "val": "Data!$B$2:$B$8", "name_text": "S" * 250} for _ in range(60)]
+        charts = [{"sheet": "Data", "name": f"Chart {n}", "xml": chart_xml("bar", "col", "clustered", series)} for n in range(1, 33)]
+        plain = xlsx_preview({"file_base64": b64(xlsx_with_charts({"Data": rows}, [])), "scope": "selection"})
+        self.assertGreater(len(json.dumps(plain)), 3 * 1024 * 1024)
+        preview = xlsx_preview({"file_base64": b64(xlsx_with_charts({"Data": rows}, charts)), "scope": "selection"})
+        self.assertLessEqual(len(json.dumps(preview, separators=(",", ":")).encode()), 4 * 1024 * 1024)
+        for key in ("cells", "can_import", "stored_cells"):
+            self.assertEqual(preview[key], plain[key], key)
+        self.assertTrue(preview["can_import"])
+        kept = [item["name"] for item in preview["charts"]]
+        self.assertEqual(kept, [f"Chart {n}" for n in range(1, len(kept) + 1)])
+        self.assertLess(len(kept), 32)
+        skipped = {entry["detail"]: entry["count"] for entry in entries(preview, "chart.skipped")}
+        self.assertEqual(skipped, {"workbook_limit": 32 - len(kept)})
+        with LocalService() as client, tempfile.TemporaryDirectory() as folder:
+            with client.open(Path(folder) / "room.dhwb", create=True) as book:
+                receipt = book.import_prepared(preview, "Sheet1")
+                self.assertEqual(receipt["changed_charts"], len(kept))
+
+
 class ChartFixtureTests(unittest.TestCase):
     def test_committed_two_sheet_fixture_is_what_its_generator_writes(self):
         import generate_chart_workbook

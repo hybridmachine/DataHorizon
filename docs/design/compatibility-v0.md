@@ -490,7 +490,7 @@ names the chart as its sample and the sheet; `count` counts charts.
 | `source` | A source that is not one contiguous single-row or single-column range on an imported worksheet: multi-area or multi-level reference, defined name, external workbook, literal array, a sheet that is not imported, table structured reference; also a chart with no series |
 | `limit` | More than 64 series, a source over 10,000 cells (1,000 for a pie's values or categories), or over 100,000 source cells in all; a whole-column reference is over the source limit; or a converted chart over 64 KiB as JSON (after a one-sheet import's offset too) |
 | `off_grid` | The anchor, or after a one-sheet import's offset any anchor or source, lies outside the grid |
-| `workbook_limit` | More than 64 charts in the imported file, or charts that would take one import's charts past 1 MiB as JSON in all; the excess is left out in file order. Once 64 charts are held no further chart part is read, so a frame whose part was not yet read is reported `workbook_limit` without being checked (on ODS even when its object is not a chart). Charts that would pass 64 once the destination's own charts are counted (`add_sheets`, one-sheet) are decided at apply and named in the receipt's `charts_left_out` instead |
+| `workbook_limit` | More than 64 charts in the imported file, or charts that would take one import's charts past 1 MiB as JSON in all, or past the room a bounded preview's cells leave; the excess is left out in file order. Once 64 charts are held no further chart part is read, so a frame whose part was not yet read is reported `workbook_limit` without being checked (on ODS even when its object is not a chart). Charts that would pass 64 once the destination's own charts are counted (`add_sheets`, one-sheet) are decided at apply and named in the receipt's `charts_left_out` instead |
 | `unreadable` | The chart or its drawing could not be parsed or read (a corrupt compressed part included), a chart part that would pass the chart allowance, a worksheet's second and later `<drawing>` elements (one entry with their count), or frames past the 256th of the import (one entry per sheet with their count) |
 | `grouped` | The chart is inside a group shape |
 
@@ -508,8 +508,13 @@ to skip the chart as `limit`. Series names and axis titles are cut to 255
 characters like the title; a converted chart is at most 64 KiB as JSON and one
 import's charts at most 1 MiB, and records a client sends (`charts` of
 `workbook_import` and `edit`) are refused with `INVALID_ARGUMENT` past the same
-two caps. XML is read through the same entity-safe readers as the rest of the
-package and relationship targets resolve inside the package only.
+two caps. A bounded preview answers within 4 MiB and its cells come first:
+charts get the room the cells and their report leave, and on a one-sheet
+import also the room the cells leave in the `edit` request that applies them,
+so a preview that fits without charts is never refused because of them. The
+charts that do not fit are left out in file order and reported as
+`workbook_limit`. XML is read through the same entity-safe readers as the rest
+of the package and relationship targets resolve inside the package only.
 
 **Import paths.** All three apply shapes carry charts: the staged
 whole-workbook import (stage format version 2 holds a `charts` table covered by
@@ -536,6 +541,7 @@ one-sheet import, so only the SDK and the desktop carry charts on that path.
   it covers fewer cells in the desktop than in the source.
 - A one-sheet import skips a chart with a source on another sheet (`source`) and a chart
   pushed off the grid by the offset (`off_grid`), and takes only the selected worksheet's charts.
+  A chart it skips this way does not count toward the 64-chart limit.
 - Excel's colours, data labels, gap width, markers, smoothing, gridlines,
   number formats and fonts are not carried; specification version 1 has no
   place for them.

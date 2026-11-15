@@ -115,7 +115,8 @@ private:
     // Cancels (when asked) and releases a job that is no longer the layer's;
     // a running job is polled until it stops, since it cannot be released.
     static void retire(QPointer<RestClient> client,const QString &path,bool cancel);
-    bool attached() const { return m_body && m_frozen && m_gridArea; }
+    // Defined in the source file: testing m_frozen needs the complete FrozenPanes type.
+    bool attached() const;
     // The client goes before the layer when the window is destroyed.
     QPointer<RestClient> m_client;
     // The grid widgets go before the layer when the window is destroyed.

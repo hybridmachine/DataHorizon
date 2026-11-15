@@ -442,30 +442,39 @@ class Collector:
     instead, without the conversion notes of a chart that is not imported.
 
     A reader that holds drafts before adding them (an ODS sheet's, until the sheet ends) ``claim``s each, so ``full``
-    counts them and the reader stops reading chart parts as soon as no further chart could be imported."""
-    def __init__(self, limit=charts.LIMIT_CHARTS, budget=RECORDS_BYTES):
-        self.limit, self.budget = limit, budget
+    counts them and the reader stops reading chart parts as soon as no further chart could be imported.
+
+    ``accept`` is what the import does to a converted record before it can be imported: it returns the record to
+    hold, or ``None`` after reporting why the chart is dropped. A one-sheet import rebases and shifts each record
+    this way (``rebase``), so a chart it drops never counts toward the limit."""
+    def __init__(self, limit=charts.LIMIT_CHARTS, budget=RECORDS_BYTES, accept=None):
+        self.limit, self.budget, self.accept = limit, budget, accept
         self.records = []
         self.size = 0  # bytes of the records held
-        self.claimed = 0  # drafts claimed and not yet added that ``convert`` accepts
+        self.claimed = 0  # drafts claimed and not yet added that ``convert`` and ``accept`` take
 
     @property
     def full(self):
         """Whether the records held and the drafts claimed for them reach the chart limit."""
         return len(self.records) + self.claimed >= self.limit
 
+    def _accepted(self, record, report):
+        return record if self.accept is None else self.accept(record, report)
+
     def claim(self, draft, sheet_names):
-        """Count ``draft``, which is added later, toward ``full`` when ``convert`` accepts it."""
-        if convert(draft, sheet_names, ConversionReport()) is not None:
+        """Count ``draft``, which is added later, toward ``full`` when ``convert`` and ``accept`` take it."""
+        record = convert(draft, sheet_names, ConversionReport())
+        if record is not None and self._accepted(record, ConversionReport()) is not None:
             self.claimed += 1
 
     def refuse(self, draft, sheet_names, report):
         """Report ``draft`` as ``add`` reports a chart once the collector is full: ``workbook_limit`` for a chart
-        ``convert`` accepts, else its skip."""
+        that would be imported, else its skip."""
         notes = ConversionReport()
-        if convert(draft, sheet_names, notes) is None:
+        record = convert(draft, sheet_names, notes)
+        if record is None:
             report.merge(notes)
-        else:
+        elif self._accepted(record, report) is not None:
             _Converter(draft, sheet_names, report).note("workbook_limit", "omitted", SKIPPED)
 
     def add(self, draft, sheet_names, report):
@@ -474,6 +483,9 @@ class Collector:
         record = convert(draft, sheet_names, notes)
         if record is None:
             report.merge(notes)
+            return None
+        record = self._accepted(record, report)
+        if record is None:
             return None
         self.claimed = max(self.claimed - 1, 0)
         size = record_size(record)
@@ -577,42 +589,62 @@ def check_records(records, sheet_count):
     return records
 
 
-def for_sheet(records, position, row, col, sheet_name, report):
-    """Records of one worksheet rebased to sheet 0 and shifted for a paste at ``row``, ``col``.
+def rebase(record, position, row, col, sheet_name, report):
+    """``record`` of the worksheet at ``position`` rebased to sheet 0 and shifted for a paste at ``row``, ``col``.
 
-    Shifting lengthens references, so the shifted records are held to ``RECORD_BYTES`` each (``limit``) and
-    ``RECORDS_BYTES`` in all (``workbook_limit``) again, as ``check_records`` holds them."""
+    ``None`` for a record of another worksheet (unreported: it is not this import's) and, with its skip in
+    ``report``, for one with a source on another sheet (``source``), one the shift moves off the grid
+    (``off_grid``) or one the shift, which lengthens references, takes past ``RECORD_BYTES`` (``limit``)."""
+    if record["sheet"] != position:
+        return None
     down, right = row - 1, col - 1
-    kept, total = [], 0
-    for item in records:
-        if item["sheet"] != position:
-            continue
-        chart = copy.deepcopy(item)
-        where = {"sheet": sheet_name, "cell": chart["name"][:32]}
-        sources = _record_sources(chart["spec"])
-        if any(source["sheet"] != position for source in sources):
-            report.add(SKIPPED, "omitted", "source", **where)
-            continue
-        chart["sheet"] = 0
-        chart["anchor"] = {"row": chart["anchor"]["row"] + down, "col": chart["anchor"]["col"] + right}
-        fits = chart["anchor"]["row"] <= MAX_ROWS and chart["anchor"]["col"] <= MAX_COLS
-        for source in sources:
-            source["sheet"] = 0
-            corners = [split_ref(part) for part in source["ref"].split(":")]
-            rows = [corner[1] + down for corner in corners]
-            cols = [corner[2] + right for corner in corners]
-            fits = fits and max(rows) <= MAX_ROWS and max(cols) <= MAX_COLS
-            first, last = column_name(cols[0]) + str(rows[0]), column_name(cols[-1]) + str(rows[-1])
-            source["ref"] = first if len(corners) == 1 else f"{first}:{last}"
-        size = record_size(chart)
-        if not fits:
-            report.add(SKIPPED, "omitted", "off_grid", **where)
-        elif size > RECORD_BYTES:
-            report.add(SKIPPED, "omitted", "limit", **where)
-        elif total + size > RECORDS_BYTES:
-            report.add(SKIPPED, "omitted", "workbook_limit", **where)
+    chart = copy.deepcopy(record)
+    where = {"sheet": sheet_name, "cell": chart["name"][:32]}
+    sources = _record_sources(chart["spec"])
+    if any(source["sheet"] != position for source in sources):
+        report.add(SKIPPED, "omitted", "source", **where)
+        return None
+    chart["sheet"] = 0
+    chart["anchor"] = {"row": chart["anchor"]["row"] + down, "col": chart["anchor"]["col"] + right}
+    fits = chart["anchor"]["row"] <= MAX_ROWS and chart["anchor"]["col"] <= MAX_COLS
+    for source in sources:
+        source["sheet"] = 0
+        corners = [split_ref(part) for part in source["ref"].split(":")]
+        rows = [corner[1] + down for corner in corners]
+        cols = [corner[2] + right for corner in corners]
+        fits = fits and max(rows) <= MAX_ROWS and max(cols) <= MAX_COLS
+        first, last = column_name(cols[0]) + str(rows[0]), column_name(cols[-1]) + str(rows[-1])
+        source["ref"] = first if len(corners) == 1 else f"{first}:{last}"
+    if not fits:
+        report.add(SKIPPED, "omitted", "off_grid", **where)
+        return None
+    if record_size(chart) > RECORD_BYTES:
+        report.add(SKIPPED, "omitted", "limit", **where)
+        return None
+    return chart
+
+
+def for_sheet(records, position, row, col, sheet_name, report):
+    """Records of one worksheet rebased to sheet 0 and shifted for a paste at ``row``, ``col`` (``rebase``), and
+    held to ``RECORDS_BYTES`` in all (``workbook_limit``) again, as ``check_records`` holds them."""
+    return fit([chart for item in records if (chart := rebase(item, position, row, col, sheet_name, report)) is not None],
+               RECORDS_BYTES, [sheet_name], report)
+
+
+def fit(records, room, sheet_names, report, measure=record_size):
+    """The leading ``records`` that fit ``room`` bytes in all; each later one is reported ``workbook_limit``.
+
+    A bounded preview answers within a fixed size, and its cells come first: charts get the room the cells and
+    their report leave, so a chart is left out and reported before it can make the cells unimportable.
+    ``measure`` sizes one record (by default as ``RECORDS_BYTES`` counts it)."""
+    kept, total, over = [], 0, False
+    for record in records:
+        size = measure(record)
+        over = over or total + size > room
+        if over:
+            report.add(SKIPPED, "omitted", "workbook_limit", sheet=sheet_names[record["sheet"]], cell=record["name"][:32])
         else:
-            kept.append(chart)
+            kept.append(record)
             total += size
     return kept
 

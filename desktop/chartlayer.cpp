@@ -72,6 +72,8 @@ ChartLayer::ChartLayer(RestClient *client,QTableView *body,FrozenPanes *frozen,Q
 }
 
 // A job still being started is retired by its start answer.
+bool ChartLayer::attached() const { return m_body && m_frozen && m_gridArea; }
+
 ChartLayer::~ChartLayer() {
     for(const auto &job:std::as_const(m_jobs))
         if(job.started && m_client && job.clientGeneration==m_client->generation())retire(m_client,job.base+"/charts/jobs/"+job.id,true);
