@@ -135,8 +135,11 @@ neither chart is visible.
 Report lines use a new `chart.*` category family (**Builder**: exact category
 names and wording, following the existing conversion report conventions). The
 existing `workbook.feature` `charts` count stays, so nothing that reads it
-breaks, and is joined by the per-chart lines. Each line names the chart and its
-sheet.
+breaks, and is joined by the per-chart lines. (As built the count stayed; the
+owner dropped it on November 15, 2026, a later change recorded in
+[charts-authoring-export-design.md](charts-authoring-export-design.md#6-export)
+section 6 and in the bullet "Omitted entries" under the as-built notes.) Each
+line names the chart and its sheet.
 
 Cached values in the file (`c:numCache`, `c:strCache`) are never used as data;
 the chart reads the imported cells. In values mode the cells hold values and
@@ -346,11 +349,18 @@ Recorded November 15, 2026. Each is also in the
   declared column-width style). A chart keeps roughly its source pixel size, so
   on the desktop grid, whose default cells are larger, it covers fewer cells
   than in the source.
-- **Omitted entries still reported.** Section 4 said the `workbook.feature`
-  `charts` count stays. The build also still reports `sheet.feature`
-  `drawings`, so a file whose charts all imported still lists both as omitted.
-  This is a known inconsistency awaiting an owner decision, not a desired
-  behavior.
+- **Omitted entries (a later change).** As first built, the `workbook.feature`
+  `charts` count stayed and `sheet.feature` `drawings` was reported too, so a
+  file whose charts all imported still listed both as omitted. The owner
+  settled this on November 15, 2026 (see
+  [charts-authoring-export-design.md](charts-authoring-export-design.md#6-export)
+  section 6), after this record was written. The rule as now built: there is no
+  `workbook.feature` `charts` entry; `sheet.feature` `drawings` is reported for
+  a sheet only when its drawing was not read or held something other than chart
+  frames (a picture, shape, connector, group or other object); on ODS,
+  `embedded_objects` does not count an object read as a chart; `chart_sheets`
+  is unchanged. Every chart still has its `chart.converted` or `chart.skipped`
+  entry.
 - **Frozen panes.** A chart anchored in a frozen row or column is pinned in the
   frozen direction and may extend over the scrolling cells.
 - **Chart list and render failures.** A failed chart list read is shown in the
