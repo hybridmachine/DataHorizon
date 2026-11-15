@@ -1,7 +1,11 @@
 # Charts: desktop authoring and export
 
-Status: **Draft 0.1** (November 15, 2026), approved by the owner on November
-15, 2026. Nothing in this document is built.
+Status: **Draft 0.2** (November 15, 2026), approved by the owner on November
+15, 2026. **Export is built** on branch `claude/charts-export` (not merged; see
+[the status document](implementation-status.md#charts-export--november-15-2026)
+and the [export plan](charts-export-plan.md)); the as-built rules are in
+sections 6 and 7 and the [compatibility contract](compatibility-v0.md#charts).
+**Authoring (sections 4 and 5) is not built.**
 Marks: **Owner** is a decision the owner made; **Call** is the author's
 proposal, open to correction; **Builder** is left to the implementation plans.
 
@@ -234,13 +238,21 @@ anchored at its cell with its offset and size, in z order, with:
 | Title, axis titles | Literal text |
 | Value axis `min`, `max` | Fixed minimum and maximum |
 | Legend `right`, `bottom`, `none` | Legend position, or no legend |
-| Series name by cell or by text | A cell reference or literal text |
+| Series name by cell or by text | XLSX: a cell reference or literal text. ODS: a cell reference only (see the change below) |
 | Values, categories, scatter x | Cell references by sheet name |
 | Name, anchor, offset, size, z | Frame name, anchor, extent and drawing order |
 
 This is the inverse of the "what an imported chart keeps" table in the
 compatibility contract. Nothing native is approximated, because specification
 version 1 holds nothing the two formats cannot express.
+
+**Change made during the build (November 15, 2026).** ODS cannot carry a series
+name given as text: it would need an embedded copy of the data in the chart
+object, which the export does not write. The chart is still written, the export
+reports `chart.converted` with detail `series_name` for it, and on import the
+series is named "Series N". A series named by a cell reference round-trips in
+both formats; XLSX keeps both kinds. The "Done when" tests use cell-reference
+names for ODS and pin this difference in a test of its own.
 
 **What is left out.** The whole chart is left out, never part of it, and the
 report names it with one of these reasons. **Call** for the list beyond the
@@ -290,6 +302,12 @@ report noise. `charts` is no longer reported as an omitted workbook feature
 (`chart.converted` and `chart.skipped` already account for every chart), and
 `drawings` is reported only for a sheet whose drawing holds something other
 than charts.
+
+**Change made during the build (November 15, 2026).** Two cases the paragraph
+above left out are part of the rule as built: `sheet.feature` `drawings` is also
+reported for a sheet whose drawing was not read (so nothing was imported from
+it), and the ODS `embedded_objects` count does not include an object that was
+read as a chart. `chart_sheets` is unchanged.
 
 ## 7. Done when
 

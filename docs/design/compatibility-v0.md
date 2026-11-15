@@ -427,14 +427,17 @@ compatibility claim.
 ### Charts
 
 Chart import was built on November 14-15, 2026 on branch `claude/charts-import-view`
-(not merged; the design is [charts-import-view-design.md](charts-import-view-design.md)).
+(merged to `main` through pull request 140; the design is [charts-import-view-design.md](charts-import-view-design.md)).
 The development preview imports charts from XLSX (DrawingML `c:chartSpace`
 reached from a worksheet's drawing) and ODS (a `draw:frame` holding a
 `draw:object` with a `chart:chart` sub-document) as native charts, and the
 desktop draws them view-only ([status](implementation-status.md#charts-import-and-view-only-display--november-15-2026)).
-It is not a qualified cross-platform release. **Export still omits charts**: an
-XLSX or ODS export reports each native chart as omitted, and no chart is
-written. CSV carries no charts.
+Chart export was built on November 15, 2026 on branch `claude/charts-export`
+(not merged; the design is [charts-authoring-export-design.md](charts-authoring-export-design.md#6-export),
+the record is the [status](implementation-status.md#charts-export--november-15-2026)
+and the [evidence](evidence/charts-export-verification.txt)); see
+[Chart export](#chart-export) below. Neither is a qualified cross-platform
+release. CSV carries no charts.
 
 Cached values in the file (`c:numCache`, `c:strCache`) are never used as data;
 the chart reads the imported cells, so in `values` mode it reads the cached
@@ -555,6 +558,83 @@ one-sheet import, so only the SDK and the desktop carry charts on that path.
   through the service; the evidence file lists what was not verified (the
   desktop window on that file, Windows, Linux, LibreOffice).
   See the [evidence](evidence/charts-import-view-verification.txt).
+
+### Chart export
+
+The whole-workbook XLSX and ODS exports (inline and the streamed export job) and
+the selection export write each native chart whose data comes from cell ranges
+as a live chart: a DrawingML chart in XLSX, a chart object in ODS, anchored at
+its cell with its offset and size, in drawing order. List, relational and CSV
+exports never carry charts.
+
+**What is written**
+
+| Native | In the file |
+| --- | --- |
+| `column`, `bar`, `line`, `area`, `pie`, `scatter` | The matching chart type |
+| `clustered`, `stacked` | The matching grouping; XLSX stacked column and bar charts also carry full overlap (`c:overlap` 100) |
+| Title, axis titles | Literal text; an empty title is written as no title |
+| Value axis `min`, `max` | Fixed minimum and maximum |
+| Legend `right`, `bottom`, `none` | Legend position, or no legend |
+| Series name by cell reference | A cell reference, in XLSX and ODS |
+| Series name by text | XLSX: literal text. ODS: not carried (see below) |
+| Values, categories, scatter x | Cell references by sheet name |
+| Name, anchor, offset, size, drawing order | Frame name, anchor, extent and drawing order |
+
+No markers or gridlines are written (specification version 1 holds neither).
+Characters XML 1.0 cannot hold are dropped from written text; a literal tab in a
+title is written as is. ODS chart objects carry `draw:notify-on-update-of-ranges`
+listing their source ranges, and the frame sits in its anchor cell.
+
+**ODS series named by text.** ODS cannot carry a series name given as text
+without an embedded copy of the data. The chart is still written, the export
+reports `chart.converted` with detail `series_name` for it, and on import the
+series is named "Series N". A series named by a cell reference round-trips.
+
+**No cached values.** The export writes no cached values for charts in either
+format, as for formulas ("Formula caches are omitted; target recalculation is
+requested"). A chart shows its data once the other application recalculates on
+open.
+
+**Left out.** A chart is left out whole, never in part, and reported
+`chart.skipped` with one of six reasons; a chart with several reasons is
+reported under the first that applies, checked in the order `unsupported`,
+`broken_source`, `table_source`, `query_source`, `source`.
+
+| Reason | Meaning |
+| --- | --- |
+| `table_source` | A source is a table column |
+| `query_source` | A source is a saved-query column |
+| `broken_source` | A source is broken |
+| `source` | A range source the format cannot express as one reference, a source on a sheet that is not in the export, or (selection export) a chart whose anchor or a source lies outside the selection |
+| `unsupported` | The stored chart's envelope or JSON cannot be read (for example a specification version this service does not know); the export does not fail |
+| `unwritable` | Writing the chart failed for an unexpected reason; the export continues |
+
+**Report.** `Charts: N written.` or `Charts: N written, M left out; each is
+listed below with its reason.`; no line when the workbook has no charts.
+`ConversionReport` merges entries with the same reason: the chart names are in
+an entry's `samples` and `count` counts charts.
+
+**Selection export.** A chart is written only when its anchor and every source
+lie inside the selection. The selection is written at its original coordinates
+on a sheet named `Sheet1`, so the chart keeps its anchor and its references name
+`Sheet1`. Charts on other sheets are not reported.
+
+**Round trip.** Exported and imported again, a chart keeps its type, grouping,
+title, axes, legend, sources, series names, name, anchor, offset, size and
+order, in both formats and through both export routes
+(`tests/test_chart_round_trip.py`). Three differences come from the importer's
+own rules and are documented, not fixed: text over 255 characters (an axis
+title or a series name given as text) is cut on import; duplicate chart names on
+a sheet are made unique; an empty series name comes back as "Series N". The
+fourth, an ODS series named by text, is above. An import reads XLSX stacked
+column and bar charts written with full overlap without reporting a dropped
+`gap width` style (only that exact case, stacked grouping with overlap 100).
+
+**Not verified.** The files were not opened in Excel or LibreOffice (neither is
+installed on the machine that ran the checks), and the owner's sample
+`Column Chart_Complete.xlsx` was not exported. Two sample files are written for
+the owner to open; see the [evidence](evidence/charts-export-verification.txt).
 
 ## Whole-workbook interchange
 

@@ -1,5 +1,7 @@
 # Charts Export Implementation Plan
 
+> **Executed November 15, 2026** on branch `claude/charts-export` (not merged). The record is [the status section](implementation-status.md#charts-export--november-15-2026) and the [verification evidence](evidence/charts-export-verification.txt). This file stays as the plan of record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** XLSX and ODS exports write every native chart whose data comes from cell ranges as a live chart, and report every chart they leave out by name and reason.

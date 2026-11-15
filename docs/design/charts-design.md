@@ -1,6 +1,6 @@
 # Charts design
 
-Draft 0.6 | November 15, 2026 | Status: approved by the owner on November 11, 2026; rendering route confirmed with two changes on November 12, 2026; table and saved-query sources decided on November 13, 2026. Stage 1 (the experiment) and stage 2 are built: range sources on branch `claude/charts-stage-2`, and table and saved-query sources on branch `claude/charts-table-query-sources`, which is not merged. Chart import from XLSX and ODS and a view-only chart display in the desktop were pulled ahead of stages 3 and 4 and are built on branch `claude/charts-import-view`, which is not merged ([design](charts-import-view-design.md), [plan](charts-import-view-plan.md), [section 11](#11-interchange)). Desktop authoring and workbook Python are not built. Sections marked **Built** record what the code does; [section 15](#15-departures-from-draft-03-as-built) lists where it departs from Draft 0.3, and [section 16](#16-departures-from-draft-04-as-built) where table and saved-query sources depart from Draft 0.4.
+Draft 0.7 | November 15, 2026 | Status: approved by the owner on November 11, 2026; rendering route confirmed with two changes on November 12, 2026; table and saved-query sources decided on November 13, 2026. Stage 1 (the experiment) and stage 2 are built: range sources on branch `claude/charts-stage-2`, and table and saved-query sources on branch `claude/charts-table-query-sources`; both, with chart import and the view-only display below, were merged to `main` through pull request 140. Chart import from XLSX and ODS and a view-only chart display in the desktop were pulled ahead of stages 3 and 4 and are built on branch `claude/charts-import-view` ([design](charts-import-view-design.md), [plan](charts-import-view-plan.md), [section 11](#11-interchange)). Chart export to XLSX and ODS (stage 4's export half) is built on branch `claude/charts-export`, which is not merged ([design](charts-authoring-export-design.md#6-export), [plan](charts-export-plan.md), [section 11](#11-interchange)). Desktop authoring and workbook Python are not built. Sections marked **Built** record what the code does; [section 15](#15-departures-from-draft-03-as-built) lists where it departs from Draft 0.3, and [section 16](#16-departures-from-draft-04-as-built) where table and saved-query sources depart from Draft 0.4.
 
 This document proposes how DataHorizon stores, renders and exposes charts. It is
 a design to plan from. It is not an implementation plan; each stage gets a
@@ -51,11 +51,12 @@ packages ([LICENSES.md](../../LICENSES.md)), which Plotly would end.
 
 - XLSX and ODS chart import and export. The Excel fidelity programme lists
   charts as a non-goal ([section 2](excel-fidelity-plan.md)); this design keeps
-  them out until stage 4. Until then charts are reported as omitted on export.
+  them out until stage 4. Until then charts were reported as omitted on export.
   Exception, November 14, 2026 (**Owner**): chart import, and a view-only
   display of native charts in the desktop, were pulled ahead of stage 3
   authoring and stage 4 export; see [section 11](#11-interchange) and
-  [section 12](#12-stages). Export is unchanged and still omits charts.
+  [section 12](#12-stages). Export was built later, on November 15, 2026, and
+  writes charts; see [section 11](#11-interchange).
 - Pivot charts, sparklines, 3D charts, maps, stock, radar, surface, treemap,
   sunburst and waterfall charts.
 - Zoom, pan, brushing and other exploratory interaction.
@@ -632,24 +633,29 @@ and [the design](charts-import-view-design.md). An import no longer
 reports `workbook.feature` `charts`, and reports `sheet.feature` `drawings` for
 a sheet only when its drawing held something besides charts (a picture, a shape,
 a group) or was not read; every chart still has its `chart.converted` or
-`chart.skipped` entry. `chart_sheets` is unchanged. Exporting a workbook that holds native charts still
-reports each one as omitted, and stage 4 export is not built. Nothing is dropped
+`chart.skipped` entry. `chart_sheets` is unchanged. Export is built as of November 15, 2026 (below).
+Nothing is dropped
 silently: series names and axis titles over 255 characters are cut with a
 report entry, a chart over 64 KiB or past 1 MiB of one import's charts is
 skipped with one, and the reading of chart parts is bounded per import (256
 frames, each part parsed once, no part read once 64 charts are held), so a
 chart never fails an import.
 
-**Built.** XLSX and ODS exports (whole workbook, selection and streamed) list
-each native chart as omitted, by chart and sheet name, as they list workbook
-names and event bindings: "Charts are native-only and omitted from this
-export: Sales on Sheet1, …". CSV export reports nothing about charts. A
+**Built (export, November 15, 2026).** XLSX and ODS exports (whole workbook,
+selection and streamed) write each native chart whose data comes from cell
+ranges as a DrawingML chart or an ODS chart object, with no cached values, and
+report `Charts: N written.` plus each chart left out by name and one of six
+reasons (`table_source`, `query_source`, `broken_source`, `source`,
+`unsupported`, `unwritable`). The rules, the ODS difference for series named by
+text and the round-trip differences are in the
+[compatibility contract](compatibility-v0.md#chart-export). CSV export reports
+nothing about charts. A
 whole-workbook import with `replace_empty` counts charts as content and is
 refused with `DESTINATION_NOT_EMPTY`.
 
 Stage 4 maps the specification to and from DrawingML charts and OpenDocument
 chart objects: export first, because it only has to write what DataHorizon
-holds; import second, with unsupported chart types and options degraded and
+holds (built November 15, 2026); import second (built earlier, the same day), with unsupported chart types and options degraded and
 reported under the Excel fidelity programme's rules. CSV and other tabular
 interchange never carry charts.
 
@@ -660,7 +666,7 @@ interchange never carry charts.
 | 1. Renderer experiment | Section 6 measurements and a written result | The evidence confirms the service SVG route or triggers the fallback. Run November 11, 2026: thresholds not all met ([result](chart-render-experiment.md)). Owner ruling November 12, 2026: service SVG route confirmed with a pie point limit and a bundled font (section 6) |
 | 2. Engine and interfaces | Storage, specification validation, resolve, render, reference maintenance, staleness, REST/CLI/SDK, history | A script creates, changes and renders all six chart types with no desktop; structural edits and undo are verified. **Done**: range sources on November 12, 2026, table and saved-query sources on November 13, 2026 ([result](charts-stage-2-result.md), [plan](charts-table-query-sources-plan.md)) |
 | 3. Desktop and Python | Wireframes, Insert Chart, floating charts, edit panel, object browser entry, context operations | The wireframe session is completed in the installed application. **Partly pulled ahead, November 15, 2026**: a view-only slice draws every native chart over its sheet in the desktop (no Insert Chart, selection, move, resize, delete, edit panel or object browser entry); the full wireframe session is still owed before authoring is built ([design](charts-import-view-design.md#6-desktop-display)) |
-| 4. Interchange | XLSX and ODS chart export, then import, with reports | A round trip keeps every supported chart and reports the rest. **Import pulled ahead, November 15, 2026** ([plan](charts-import-view-plan.md), [evidence](evidence/charts-import-view-verification.txt)); export is not built, so no round trip exists yet |
+| 4. Interchange | XLSX and ODS chart export, then import, with reports | A round trip keeps every supported chart and reports the rest. **Import pulled ahead, November 15, 2026** ([plan](charts-import-view-plan.md), [evidence](evidence/charts-import-view-verification.txt)); export built on branch `claude/charts-export`, November 15, 2026, with the round trip tested through both formats and both routes ([evidence](evidence/charts-export-verification.txt)); not opened in Excel or LibreOffice |
 | 5. More chart types | Combination charts, secondary axis, histogram, trendlines, chart sheets | Per-type criteria in that stage's plan |
 
 Each stage gets its own task-level plan when it starts.

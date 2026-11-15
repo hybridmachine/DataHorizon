@@ -1,6 +1,6 @@
 # Charts on open: import and view-only display
 
-Status: **As built** (November 15, 2026), on branch `claude/charts-import-view`, not merged. Drafted November 14, 2026 (Draft 0.1). Where the build differs from the text below, [compatibility-v0.md](compatibility-v0.md#charts), [implementation-status.md](implementation-status.md#charts-import-and-view-only-display--november-15-2026) and the [evidence](evidence/charts-import-view-verification.txt) are the record; the sections below are the design as agreed.
+Status: **As built** (November 15, 2026), on branch `claude/charts-import-view`, merged to `main` through pull request 140. Drafted November 14, 2026 (Draft 0.1). Where the build differs from the text below, [compatibility-v0.md](compatibility-v0.md#charts), [implementation-status.md](implementation-status.md#charts-import-and-view-only-display--november-15-2026) and the [evidence](evidence/charts-import-view-verification.txt) are the record; the sections below are the design as agreed.
 Marks: **Owner** is a decision the owner made; **Call** is the author's
 proposal, open to correction; **Builder** is left to the implementation plan.
 
@@ -39,7 +39,7 @@ neither chart is visible.
 
 - Authoring in the desktop: Insert Chart, the edit panel, select, move, resize,
   delete, the object browser entry. They stay in charts stage 3.
-- Chart export to XLSX or ODS. Export keeps reporting each chart as omitted.
+- Chart export to XLSX or ODS. At the time, export kept reporting each chart as omitted. Export was built later, on November 15, 2026; see [charts-authoring-export-design.md](charts-authoring-export-design.md#6-export) and the [compatibility contract](compatibility-v0.md#chart-export).
 - New chart types or options. Specification version 1 is unchanged; nothing is
   added to carry Excel colours, data labels or gap width.
 - Chart sheets, pivot charts, combination charts, secondary axes.
