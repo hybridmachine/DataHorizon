@@ -6,7 +6,7 @@ framework, bundled Python runtime, or licenses for the service/SDK.
 
 | Area | Baseline | Evidence |
 | --- | --- | --- |
-| Desktop | Qt Widgets/Network/Test, C++17; Qt 6.8+ build requirement | Hosted Qt 6.8.3, local Qt 6.12.0; Qt contract tests and grid measurements |
+| Desktop | Qt Widgets/Network/SVG/Test, C++17; Qt 6.8+ build requirement | Hosted Qt 6.8.3, local Qt 6.12.0; Qt contract tests and grid measurements |
 | Build | CMake 3.24+, native C++17 compiler | Configure records actual CMake, generator, compiler ID/version, system and Qt version |
 | Service/SDK/CLI | Python 3.11+ with stdlib sqlite3 | All Python contracts run on Python 3.11 in Windows/macOS/Linux CI; desktop jobs use Python 3.13 |
 | Complete experiment suite | SQLite 3.35+ for RETURNING fixtures | Runtime reports record the actual SQLite library; this is not a new engine-side version gate |
@@ -50,9 +50,10 @@ Desktop, Python workspace and Python service whole-suite budgets are 600
 seconds each on all systems in CTest. The service budget on macOS/Linux was 180
 until the Excel fidelity increment 1 suites took it to about 290 seconds locally
 and 375 seconds on the hosted macOS runner. The standalone
-minimum-runtime CI job has a ten-minute job ceiling. The optional
-`chart_svg_probe_smoke` test, registered only where Qt SVG is found, has a
-30-second budget. Operation, hook and HTTP
+minimum-runtime CI job has a ten-minute job ceiling. The
+`chart_svg_probe_smoke` test has a 30-second budget. Qt SVG is a required,
+linked desktop module (it renders service-produced chart SVG) and must be
+installed on every build platform. Operation, hook and HTTP
 deadlines remain separate and unchanged. Timings are evidence rather than
 variable-host performance gates.
 The Windows budget follows two 180-second timeouts and a passing 171.77-second
