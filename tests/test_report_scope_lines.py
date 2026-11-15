@@ -61,6 +61,17 @@ class ClientFallbackTests(unittest.TestCase):
         older = {"report": ["scope", "entry line"], "report_entries": [entry]}
         self.assertEqual(report_scope_lines(older), ["scope"])
 
+    def test_the_cli_names_every_chart_left_out(self):
+        samples = [{"sheet": "Data", "cell": "By table"}, {"sheet": "Data", "cell": "Other table"}]
+        skipped = {"category": "chart.skipped", "severity": "omitted", "detail": "table_source", "count": 2, "samples": samples}
+        other = {"category": "cell.format", "severity": "converted", "detail": "d", "count": 2, "samples": [{"sheet": "Data", "cell": "A1"}, {"sheet": "Data", "cell": "A2"}]}
+        text = report_text({"report": [], "scope_lines": [], "report_entries": [skipped, other], "totals": {}})
+        self.assertIn("chart.skipped: table_source; Data!By table, Data!Other table", text)
+        self.assertIn("cell.format: d; first at Data!A1", text)
+        self.assertNotIn("Data!A2", text)
+        more = report_text({"report": [], "scope_lines": [], "report_entries": [{**skipped, "count": 5}], "totals": {}})
+        self.assertIn("Data!By table, Data!Other table and 3 more", more)
+
     def test_a_saturated_count_reads_as_a_lower_bound_in_the_cli(self):
         entry = {"category": "sheet.feature", "severity": "omitted", "detail": "data_validation", "count": 9, "samples": [], "at_least": True}
         self.assertIn(">=9", report_text({"report": [], "scope_lines": [], "report_entries": [entry], "totals": {}}))

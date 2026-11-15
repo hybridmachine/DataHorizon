@@ -266,6 +266,7 @@ owner's table and query ruling:
 | `source` | A range source the format cannot express as one reference, or one on a sheet that is not in the export; in a selection export, an anchor or a source outside the selection |
 | `unsupported` | A stored specification this service cannot read: an unsupported specification version or an invalid specification inside a valid stored record; the export does not fail. A stored chart record that is itself malformed (not JSON, not an object, or a bad envelope) is refused when the workbook is opened or refreshed, before any export runs, as it was before chart export |
 | `unwritable` | Writing the chart failed for an unexpected reason; the export continues |
+| `size_limit` | (Inline exports) The chart was built, but the file or its response had no room for it within the size limits; the cells and the charts before it are exported |
 
 The existing line "Charts are native-only and omitted from this export" goes
 away; each export report instead says how many charts were written and lists
@@ -292,6 +293,15 @@ the built charts fails, the export continues without charts and reports each one
 scatter chart is not given LibreOffice's points-only marker settings: the
 importer would report them as a dropped `markers` style. The details are in the
 [compatibility contract](compatibility-v0.md#chart-export).
+
+**Changes made in pull request review (November 15, 2026).** The owner decided
+the size-limit question: an inline export whose cells fit never fails because of
+its charts; the leading charts that fit are written and each other one is
+reported `size_limit` (`export_charts.fit`, both formats). A bounded package may
+hold 384 parts, so a bounded export with charts on many sheets reads back
+through the bounded import. An ODS title of several lines is one paragraph with
+`text:line-break`, which the importer reads back. The CLI names every chart
+left out.
 
 **Routes.** The whole-workbook exports, inline and streamed, write charts.
 **Call**: a selection export writes a chart only when its anchor and every

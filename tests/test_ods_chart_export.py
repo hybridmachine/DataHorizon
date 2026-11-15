@@ -429,6 +429,23 @@ class Structure(unittest.TestCase):
         self.assertEqual(report_of(report), [])
         self.assertEqual((records[0]["spec"]["title"]["text"], records[0]["spec"]["axes"]["category"]["title"]), (None, None))
 
+    def test_a_title_of_several_lines_is_one_paragraph_with_line_breaks(self):
+        # ODF allows chart:title at most one text:p; LibreOffice joins the lines of a title written as several.
+        draft = named(column_draft(title="First line\nSecond line", category_title="a\n\nb", value_title="v\n"))
+        document = chart_document(draft)
+        titles = [element for element in document.iter() if local(element.tag) == "title"]
+        self.assertEqual(len(titles), 3)
+        for title in titles:
+            self.assertEqual([local(child.tag) for child in title], ["p"])
+        shapes = [(title[0].text, [(local(child.tag), child.tail) for child in title[0]]) for title in titles]
+        self.assertEqual(shapes, [("First line", [("line-break", "Second line")]),
+                                  ("a", [("line-break", ""), ("line-break", "b")]), ("v", [("line-break", "")])])
+        records, report = read_back(packaged([draft], ["Data"]))
+        self.assertEqual(report_of(report), [])
+        spec = records[0]["spec"]
+        self.assertEqual((spec["title"]["text"], spec["axes"]["category"]["title"], spec["axes"]["value"]["title"]),
+                         ("First line\nSecond line", "a\n\nb", "v\n"))
+
     def test_carriage_returns_read_back_as_line_breaks(self):
         records, _ = read_back(packaged([column_draft(title="a\r\nb\rc")], ["Data"]))
         self.assertEqual(records[0]["spec"]["title"]["text"], "a\nb\nc")

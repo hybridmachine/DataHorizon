@@ -388,7 +388,7 @@ ODS validation names in a sheet). Section 5.2 of the
 | --- | --- | --- |
 | Scope | Selection (one sheet at an offset, or one rectangle) and whole workbook | Whole workbook only |
 | Transport | base64 in a JSON body of at most 4 MiB | `PUT /v1/uploads/{upload}` raw body (or `source_path` on the same machine), staged preparation job, `GET /v1/exports/{export}` download |
-| Limits | 10,000 stored cells, 64 worksheets for a whole workbook (chart, dialog and macro sheets do not count; a selection can name any worksheet), 3 MiB package, 16 MiB expanded, 128 parts, 100,000 XML nodes per part | 1,000,000 stored cells, 255 worksheets, 48 MiB package, 256 MiB expanded, 4,096 parts, 1 MiB of XML per cell or record, 65,536 shared-formula groups open at once per sheet, 300 s per phase, 2 concurrent uploads and downloads, 1,024 distinct styles per export |
+| Limits | 10,000 stored cells, 64 worksheets for a whole workbook (chart, dialog and macro sheets do not count; a selection can name any worksheet), 3 MiB package, 16 MiB expanded, 384 parts (enough for this service's own bounded export of 64 sheets and 64 charts, 325 parts), 100,000 XML nodes per part | 1,000,000 stored cells, 255 worksheets, 48 MiB package, 256 MiB expanded, 4,096 parts, 1 MiB of XML per cell or record, 65,536 shared-formula groups open at once per sheet, 300 s per phase, 2 concurrent uploads and downloads, 1,024 distinct styles per export |
 | Review | Every prepared cell | The report and a bounded sample; cells are staged on disk |
 | Apply | One managed edit (selection) or one atomic `workbook_import` | One atomic `workbook_import` from the stage |
 
@@ -583,7 +583,10 @@ exports never carry charts.
 
 No markers or gridlines are written (specification version 1 holds neither).
 Characters XML 1.0 cannot hold are dropped from written text; a literal tab in a
-title is written as is.
+title is written as is. A line break in an ODS chart or axis title is written as
+`text:line-break` inside the title's one paragraph (ODF allows a title one
+`text:p`, and LibreOffice joins the lines of a title written as several), and
+the ODS importer reads `text:line-break` in a title as a line break.
 
 **Format details.** XLSX references always quote the sheet name
 (`'Sales'!$A$2:$A$13`, a `'` in the name doubled), so a sheet named `R`, `C`,
@@ -616,7 +619,7 @@ Excel fills the caches on load, when it recalculates on open. In ODS the chart
 reads the sheet's cells directly.
 
 **Left out.** A chart is left out whole, never in part, and reported
-`chart.skipped` with one of six reasons; a chart with several reasons is
+`chart.skipped` with one of seven reasons; a chart with several reasons is
 reported under the first that applies, checked in the order `unsupported`,
 `broken_source`, `table_source`, `query_source`, `source`.
 
@@ -628,18 +631,29 @@ reported under the first that applies, checked in the order `unsupported`,
 | `source` | A range source the format cannot express as one reference, a source on a sheet that is not in the export, or (selection export) a chart whose anchor or a source lies outside the selection |
 | `unsupported` | A stored specification this service cannot read: an unsupported specification version or an invalid specification inside a valid stored record; the export does not fail. A stored chart record that is itself malformed (not JSON, not an object, or a bad envelope) is refused when the workbook is opened or refreshed, before any export runs, as it was before chart export |
 | `unwritable` | Writing the chart failed for an unexpected reason; the export continues. If packaging the built charts fails, every chart is left out with this reason and the export continues without charts |
+| `size_limit` | (Inline exports) The chart was built, but the file or its response had no room for it within the size limits; the cells and the charts before it are exported |
 
 **Report.** `Charts: N written.` or `Charts: N written, M left out; each is
 listed below with its reason.`; no line when the workbook has no charts.
 `ConversionReport` merges entries with the same reason: the chart names are in
-an entry's `samples` and `count` counts charts.
+an entry's `samples` and `count` counts charts. The CLI's report names every
+chart of a `chart.skipped` entry, not only the first.
 
-**Size limits (known limitation).** Chart parts count against the inline
-exports' 16 MiB expanded limit and 4 MiB response limit (64 charts of 64 series
-add about 1.8 MB expanded and 100 KB compressed), so an inline export just under
-a limit can fail with `LIMIT` or `READ_LIMIT` because of its charts. The export
-does not retry without charts; this awaits an owner decision. The streamed export
-job counts chart parts against its own, larger expanded budget.
+**Size limits.** Chart parts count against the inline exports' 16 MiB expanded
+limit and 4 MiB response limit (64 charts of 64 series add about 1.8 MB expanded
+and 100 KB compressed). Charts never fail an inline export that its cells alone
+would pass: when the export with every chart is over a limit, the charts are
+kept in order as far as they fit and each later one is left out and reported
+`size_limit`. Cells that are over a limit on their own fail with `LIMIT` or
+`READ_LIMIT`, as before charts were written. The limits themselves are
+unchanged. Finding what fits assembles the export again (at most eight more
+times for 64 charts), only in this case. The streamed export job counts chart
+parts against its own, larger expanded budget and has no such fallback.
+
+**Bounded import of a bounded export.** A bounded package may hold 384 parts
+(it was 128): an XLSX export writes a drawing, two relationship parts and a
+chart part per sheet with one chart, so charts spread over 25 sheets already
+made 130 parts, which the bounded import refused.
 
 **Selection export.** A chart is written only when its anchor and every source
 lie inside the selection. The selection is written at its original coordinates

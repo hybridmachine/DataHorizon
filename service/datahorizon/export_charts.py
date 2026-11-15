@@ -214,6 +214,43 @@ def package(built, package_one, empty, report):
     return packaged, built
 
 
+SIZE_CODES = ("LIMIT", "READ_LIMIT")  # an inline export's expanded-size and response-size failures
+
+
+def fit(built, attempt):
+    """``attempt(kept)`` for the most leading charts of ``built`` whose inline export fits its size limits.
+
+    ``attempt`` assembles the whole export with the charts ``kept`` (a prefix of ``built``), reporting the rest as left
+    out (``oversize``), and raises an ``EngineError`` when the file or its response is over a limit.  The export with
+    every chart is tried first, so an export that fits is assembled once.  When it does not fit, the export without
+    charts decides: if the cells alone are over a limit that failure is raised, as it was before charts were written;
+    otherwise the charts are what did not fit, and the longest prefix that does is kept."""
+    try:
+        return attempt(built)
+    except EngineError as error:
+        if not built or error.body["code"] not in SIZE_CODES:
+            raise
+    result = attempt([])
+    fits, over = 0, len(built)
+    while over - fits > 1:
+        middle = (fits + over) // 2
+        try:
+            result = attempt(built[:middle])
+            fits = middle
+        except EngineError as error:
+            if error.body["code"] not in SIZE_CODES:
+                raise
+            over = middle
+    return result
+
+
+def oversize(pairs, report):
+    """Report each built chart of ``pairs`` as left out because the export had no room for it; how many there were."""
+    for draft, _ in pairs:
+        report.add(SKIPPED, "omitted", "size_limit", sheet=draft["sheet"], cell=draft["name"][:CELL_LENGTH])
+    return len(pairs)
+
+
 def lines(written, left_out):
     """The report's one summary line for the charts of an export, or none when there were none."""
     if not written and not left_out:

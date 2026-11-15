@@ -46,8 +46,12 @@ def namespaces(workbook_root):
 MAX_PACKAGE = 3*1024*1024
 MAX_EXPANDED = 16*1024*1024
 MAX_SOURCE_BYTES = 65_536  # typed() limit on a managed cell source
-# A selection's sheet_index names any sheet of the package's workbook list (a bounded package holds at most 128
-# parts); only worksheets count toward whole-workbook scope's 64-sheet limit.
+# What a bounded package may hold.  This service's own bounded XLSX export of 64 sheets with 64 charts spread over
+# them writes 325 entries (per sheet with a chart: the sheet, its relationships, a drawing and its relationships; one
+# part per chart; five package parts), so a bounded export always reads back through the bounded import.
+MAX_PARTS = 384
+# A selection's sheet_index names any sheet of the package's workbook list (a bounded package holds at most
+# MAX_PARTS parts); only worksheets count toward whole-workbook scope's 64-sheet limit.
 MAX_SHEET_INDEX = 4096
 
 
@@ -85,7 +89,7 @@ def package(request):
         archive=zipfile.ZipFile(io.BytesIO(data))
         normalise_part_names(archive)
         items=archive.infolist()
-        require(len(items)<=128 and len({i.filename for i in items})==len(items),"INVALID_SPREADSHEET","Package has too many or duplicate entries")
+        require(len(items)<=MAX_PARTS and len({i.filename for i in items})==len(items),"INVALID_SPREADSHEET","Package has too many or duplicate entries")
         require(sum(i.file_size for i in items)<=MAX_EXPANDED,"LIMIT","Expanded spreadsheet exceeds 16 MiB")
         require(all(not i.flag_bits & 1 and i.compress_type in (zipfile.ZIP_STORED,zipfile.ZIP_DEFLATED) for i in items),
                 "INVALID_SPREADSHEET","Encrypted or unsupported package compression")
@@ -730,12 +734,22 @@ def xlsx_export(snapshot,request):
     names=validate_sheet_names([s["name"] for s in snapshots])
     if selected_mode=="values": blocked_values(snapshots,whole)
     if whole: head=workbook_report()+[WHOLE_EXPORT_CACHES]
-    from .export_charts import lines as chart_lines, package as package_charts, snapshot_charts
-    from .xlsx_charts import chart_part, package as chart_package
-    conversions=ConversionReport()
-    built,left_out=snapshot_charts(snapshot,chart_part,conversions)
-    (chart_parts,drawings,overrides),written=package_charts(built,lambda pairs,notes:chart_package(pairs,names),([],{},[]),conversions)
-    left_out+=len(built)-len(written)
+    from .export_charts import fit, snapshot_charts
+    from .xlsx_charts import chart_part
+    found=ConversionReport()
+    built,left_out=snapshot_charts(snapshot,chart_part,found)
+    # Charts are written only as far as the file and its response stay within the size limits the cells are held to.
+    return fit(built,lambda kept:_xlsx_file(snapshot,snapshots,names,selected_mode,whole,head,found,left_out,built,kept))
+
+
+def _xlsx_file(snapshot,snapshots,names,selected_mode,whole,head,found,left_out,built,kept):
+    """The export result holding the built charts `kept`; the other charts of `built` are reported as left out for size."""
+    from .export_charts import lines as chart_lines, oversize, package as package_charts
+    from .xlsx_charts import package as chart_package
+    conversions=ConversionReport(); conversions.merge(found)
+    left_out+=oversize(built[len(kept):],conversions)
+    (chart_parts,drawings,overrides),written=package_charts(kept,lambda pairs,notes:chart_package(pairs,names),([],{},[]),conversions)
+    left_out+=len(kept)-len(written)
     report=export_report(head,snapshot,selected_mode=="formulas" and any(uses_future_prefix(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"),
                          chart_lines(len(written),left_out))
     from .xlsx_styles import export_styles

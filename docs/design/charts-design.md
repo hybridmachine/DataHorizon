@@ -644,9 +644,9 @@ chart never fails an import.
 **Built (export, November 15, 2026).** XLSX and ODS exports (whole workbook,
 selection and streamed) write each native chart whose data comes from cell
 ranges as a DrawingML chart or an ODS chart object, with no cached values, and
-report `Charts: N written.` plus each chart left out by name and one of six
+report `Charts: N written.` plus each chart left out by name and one of seven
 reasons (`table_source`, `query_source`, `broken_source`, `source`,
-`unsupported`, `unwritable`). The rules, the ODS difference for series named by
+`unsupported`, `unwritable`, `size_limit`). The rules, the ODS difference for series named by
 text and the round-trip differences are in the
 [compatibility contract](compatibility-v0.md#chart-export). CSV export reports
 nothing about charts. A

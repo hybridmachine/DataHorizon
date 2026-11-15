@@ -97,3 +97,17 @@ Not verified (unchanged, with one addition):
   LibreOffice's known output; they are unverified until a file is opened there.
 - The owner's Column Chart_Complete.xlsx: not on the machine.
 - openpyxl and odfpy reading the files: neither is installed.
+
+Pull request review fixes (November 15, 2026; run on the working tree committed after 87b1595)
+Fixes: a bounded package may hold 384 parts (was 128); an inline export whose cells fit keeps the leading charts that
+fit and reports the rest `size_limit` instead of failing; an ODS title of several lines is one text:p with
+text:line-break, read back by the importer; the CLI report names every chart of a chart.skipped entry.
+New tests: 25 sheets with one chart each read back through the bounded import (XLSX 130 parts, ODS); the reviewer's
+size case (25 cells of 64 KiB of ampersands, 64 charts of 64 series) exports to ODS against the real 16 MiB limit with
+the charts that fit; the XLSX route with the limit lowered in an in-process service (a read snapshot cannot hold cells
+that fill 16 MiB of XLSX), whole workbook and selection; `fit` for every prefix length and both size codes; the title
+shape and round trip; the CLI line.
+Whole service suite: PYTHONPATH=service python3 -m unittest discover -s tests
+  Ran 1716 tests in 355.425s, OK (skipped=28).
+Not verified here: the title fix in LibreOffice and against the ODF 1.3 schema (LibreOffice is not installed on this
+machine and the schema was not fetched); the reviewer reported both checks failing before the fix.

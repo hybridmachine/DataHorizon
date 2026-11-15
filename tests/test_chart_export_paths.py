@@ -229,6 +229,79 @@ class InlineChartExportTests(ChartBooks):
                 self.assertEqual(len(preview["workbook_charts"]), 64)
                 self.assertEqual({len(c["spec"]["series"]) for c in preview["workbook_charts"]}, {64})
 
+    def test_charts_spread_over_many_sheets_read_back_through_the_bounded_import(self):
+        # One chart on each of 25 sheets: the XLSX package holds a drawing, two relationship parts and a chart part
+        # per sheet (130 entries), which the bounded import must accept as it accepts the same workbook without charts.
+        book = self.open_book("spread")
+        for number in range(25):
+            name = "Data" if number == 0 else f"S{number}"
+            if number:
+                book.apply("sheet_add", name=name)
+            book.apply("edit", name, cells=[{"row": 1, "col": 1, "source": str(number)}])
+            book.create_chart({"spec_version": 1, "type": "column",
+                               "series": [{"name": {"text": "n"}, "values": {"source": {"kind": "range", "sheet": name, "ref": "A1"}}}]},
+                              sheet=name, name=f"Chart {number}")
+        for fmt in FORMATS:
+            with self.subTest(fmt):
+                result = book.export_spreadsheet(fmt, scope="workbook")
+                self.assertIn("Charts: 25 written.", result["report"])
+                preview = read_back(fmt, result)
+                self.assertEqual(len(preview["workbook_sheets"]), 25)
+                self.assertEqual(sorted(c["name"] for c in preview["workbook_charts"]), sorted(f"Chart {n}" for n in range(25)))
+
+    def size_book(self, name, cells, length=65536):
+        """``cells`` texts of ``length`` ampersands in column A, and what 64 charts of 64 series (about 1.8 MiB) need."""
+        book = self.open_book(name)
+        for row in range(1, cells + 1):
+            book.apply("edit", "Data", cells=[{"row": row, "col": 1, "source": "&" * length}])
+        series = [{"name": {"source": {"kind": "range", "sheet": "Data", "ref": "A1"}},
+                   "values": {"source": {"kind": "range", "sheet": "Data", "ref": f"A{1 + n}:A{9 + n}"}}} for n in range(64)]
+        return book, {"spec_version": 1, "type": "line", "series": series}
+
+    def assert_leading_charts_kept(self, fmt, result, cells, limit):
+        left = skipped(result)
+        written = 64 - len(left)
+        self.assertTrue(0 < written < 64, written)
+        self.assertEqual(left, [("size_limit", f"Chart {number:02}", "Data") for number in range(written + 1, 65)])
+        self.assertEqual(chart_lines(result), [f"Charts: {written} written, {64 - written} left out; each is listed below with its reason."])
+        with zipfile.ZipFile(io.BytesIO(base64.b64decode(result["file_base64"]))) as archive:
+            self.assertLessEqual(sum(item.file_size for item in archive.infolist()), limit)
+        preview = read_back(fmt, result)
+        self.assertEqual(len(preview["workbook_sheets"][0]["cells"]), cells)
+        self.assertEqual([c["name"] for c in preview["workbook_charts"]], [f"Chart {number:02}" for number in range(1, written + 1)])
+
+    def test_ods_charts_that_do_not_fit_the_size_limit_are_left_out_and_the_cells_exported(self):
+        # The cells alone come within 0.4 MiB of the 16 MiB expanded limit (an ampersand is written as five bytes and
+        # ODS writes a text twice): the export keeps the leading charts that fit and names every other one.
+        book, spec = self.size_book("size-ods", 25)
+        self.assertEqual(chart_lines(book.export_spreadsheet("ods", scope="workbook")), [])
+        for number in range(1, 65):
+            book.create_chart(spec, sheet="Data", name=f"Chart {number:02}", anchor={"row": number, "col": 3})
+        self.assert_leading_charts_kept("ods", book.export_spreadsheet("ods", scope="workbook"), 25, 16 * 1024 * 1024)
+
+    def test_xlsx_charts_that_do_not_fit_the_size_limit_are_left_out_and_the_cells_exported(self):
+        # A read snapshot cannot hold cells that fill 16 MiB of XLSX, so the limit is lowered to 0.4 MiB over what the
+        # cells take; the selection route is held to the same rule.
+        book, spec = self.size_book("size-xlsx", 4, 32767)
+        plain = book.export_spreadsheet("xlsx", scope="workbook")
+        with zipfile.ZipFile(io.BytesIO(base64.b64decode(plain["file_base64"]))) as archive:
+            limit = sum(item.file_size for item in archive.infolist()) + 400_000
+        for number in range(1, 65):
+            book.create_chart(spec, sheet="Data", name=f"Chart {number:02}", anchor={"row": number, "col": 3})
+        book.close()
+        # The limit is patched in this process, so the export runs in an in-process service.
+        server = self.enterContext(Service(staging_root=Path(self.temp.name) / "staging-size"))
+        base = "/v1/workbooks/" + server.dispatch("POST", "/v1/open", {"path": str(Path(self.temp.name) / "size-xlsx.dhwb")})["id"]
+        export = lambda scope: server.dispatch("POST", f"{base}/export/xlsx", scope)
+        with patch("datahorizon.interchange.MAX_EXPANDED", limit):
+            self.assert_leading_charts_kept("xlsx", export({"scope": "workbook"}), 4, limit)
+            selection = export({"sheet": "Data", "r1": 1, "c1": 1, "r2": 80, "c2": 3})
+            self.assertEqual({detail for detail, _, _ in skipped(selection)}, {"size_limit"})
+            self.assertEqual(len(read_back("xlsx", selection)["workbook_sheets"][0]["cells"]), 4)
+        with patch("datahorizon.interchange.MAX_EXPANDED", 1000), self.assertRaises(EngineError) as raised:
+            export({"scope": "workbook"})
+        self.assertEqual(raised.exception.body["code"], "LIMIT")
+
     def test_many_table_sourced_charts_do_not_slow_the_export(self):
         # 60 tables of 20 columns and 64 charts of 64 table-sourced series, all within the engine's limits: collecting
         # the charts must not look the table catalog up once per source (that took over 2 s for a 20-cell selection).

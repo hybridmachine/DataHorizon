@@ -27,6 +27,61 @@ def column_spec(**overrides):
     return base
 
 
+class FitTests(unittest.TestCase):
+    """``fit`` keeps the most leading charts whose export is within its size limits."""
+    def run_fit(self, charts, room, cells_fit=True, code="LIMIT"):
+        tried = []
+
+        def attempt(kept):
+            tried.append(len(kept))
+            if not cells_fit or len(kept) > room:
+                raise EngineError(code, "too large")
+            return list(kept)
+
+        return export_charts.fit(list(range(charts)), attempt), tried
+
+    def test_an_export_that_fits_is_assembled_once(self):
+        self.assertEqual(self.run_fit(5, 5), ([0, 1, 2, 3, 4], [5]))
+        self.assertEqual(self.run_fit(0, 0), ([], [0]))
+
+    def test_the_longest_prefix_that_fits_is_kept(self):
+        for code in export_charts.SIZE_CODES:
+            for charts in (1, 2, 7, 64):
+                for room in range(charts):
+                    with self.subTest(code=code, charts=charts, room=room):
+                        kept, tried = self.run_fit(charts, room, code=code)
+                        self.assertEqual(kept, list(range(room)))
+                        self.assertLessEqual(len(tried), 9)
+
+    def test_cells_over_the_limit_still_fail(self):
+        with self.assertRaises(EngineError) as raised:
+            self.run_fit(3, 3, cells_fit=False)
+        self.assertEqual(raised.exception.body["code"], "LIMIT")
+
+    def test_another_failure_is_raised_as_it_is(self):
+        calls = []
+
+        def attempt(kept):
+            calls.append(len(kept))
+            raise EngineError("INVALID_ARGUMENT", "no")
+
+        with self.assertRaises(EngineError) as raised:
+            export_charts.fit([1, 2], attempt)
+        self.assertEqual((raised.exception.body["code"], calls), ("INVALID_ARGUMENT", [2]))
+
+    def test_no_charts_and_over_the_limit_fails_once(self):
+        with self.assertRaises(EngineError):
+            self.run_fit(0, 0, cells_fit=False)
+
+    def test_oversize_reports_each_chart(self):
+        report = ConversionReport()
+        pairs = [({"sheet": "Data", "name": name}, None) for name in ("One", "Two")]
+        self.assertEqual(export_charts.oversize(pairs, report), 2)
+        entry, = report.entries()
+        self.assertEqual((entry["category"], entry["severity"], entry["detail"], entry["count"]), ("chart.skipped", "omitted", "size_limit", 2))
+        self.assertEqual(entry["samples"], [{"sheet": "Data", "cell": "One"}, {"sheet": "Data", "cell": "Two"}])
+
+
 class Export(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -668,13 +668,23 @@ def ods_export(snapshot,request):
     names=validate_sheet_names([s["name"] for s in snapshots])
     if selected_mode=="values": blocked_values(snapshots,whole)
     if whole: head=workbook_report()+[WHOLE_FORMULA_LINE]
-    from .export_charts import lines as chart_lines, package as package_charts, snapshot_charts
-    from .ods_charts import chart_document, package as chart_package
+    from .export_charts import fit, snapshot_charts
+    from .ods_charts import chart_document
+    found=ConversionReport()
+    built,left_out=snapshot_charts(snapshot,chart_document,found)
+    # Charts are written only as far as the file and its response stay within the size limits the cells are held to.
+    return fit(built,lambda kept:_ods_file(snapshot,snapshots,names,selected_mode,whole,head,found,left_out,built,kept))
+
+
+def _ods_file(snapshot,snapshots,names,selected_mode,whole,head,found,left_out,built,kept):
+    """The export result holding the built charts `kept`; the other charts of `built` are reported as left out for size."""
+    from .export_charts import lines as chart_lines, oversize, package as package_charts
+    from .ods_charts import package as chart_package
     from .ods_features import DRAW, SVG, XLINK
-    conversions=ConversionReport()
-    built,left_out=snapshot_charts(snapshot,chart_document,conversions)
-    (objects,entries,frames),written=package_charts(built,chart_package,([],[],{}),conversions)
-    left_out+=len(built)-len(written)
+    conversions=ConversionReport(); conversions.merge(found)
+    left_out+=oversize(built[len(kept):],conversions)
+    (objects,entries,frames),written=package_charts(kept,chart_package,([],[],{}),conversions)
+    left_out+=len(kept)-len(written)
     report=export_lines(head,snapshot,selected_mode=="formulas" and any(uses_modern_function(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"),
                         chart_lines(len(written),left_out))
     # The chart frames carry prefixed names without declarations; the document declares their namespaces.

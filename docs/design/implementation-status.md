@@ -22,13 +22,14 @@ Built, and covered by service tests:
   are written with titles, axis titles, value axis minimum and maximum, legend
   position, series names by cell reference, sources by sheet name, anchor,
   offset, size and drawing order. XLSX also writes literal series names.
-- A chart is left out whole, with `chart.skipped` and one of six reasons:
+- A chart is left out whole, with `chart.skipped` and one of seven reasons:
   `table_source`, `query_source`, `broken_source`, `source`, `unsupported` (a
   stored specification this service cannot read: an unsupported version or an
   invalid specification; a stored chart record that is itself malformed is
   refused when the workbook is opened or refreshed, before any export, as
   before) and `unwritable` (including every chart, when packaging the built
-  charts fails; the export continues without them). The report says
+  charts fails; the export continues without them), and `size_limit` (inline
+  exports: no room within the size limits). The report says
   `Charts: N written.` or `Charts: N written, M left out; each is listed below
   with its reason.`, and nothing when there are no charts. A selection export
   writes a chart only when its anchor and every source lie inside the
@@ -57,11 +58,16 @@ Built, and covered by service tests:
   packaging failure leaves every chart out instead of failing the export. An
   ODS scatter chart is not given LibreOffice's points-only marker settings,
   because the importer would report them as a dropped `markers` style.
-- Known limitation, awaiting an owner decision: chart parts count against the
-  inline exports' 16 MiB expanded and 4 MiB response limits (64 charts of 64
-  series add about 1.8 MB expanded, 100 KB compressed), so an inline export
-  just under a limit can fail with `LIMIT` or `READ_LIMIT` because of its
-  charts. There is no retry without charts.
+- Changes in pull request review: chart parts still count against the inline
+  exports' 16 MiB expanded and 4 MiB response limits, but an export whose cells
+  fit no longer fails because of its charts: the leading charts that fit are
+  written and each other one is reported `size_limit` (owner decision; 25 cells
+  of 64 KiB of ampersands and 64 charts of 64 series now export to ODS with
+  the charts that fit). A bounded package may hold 384 parts (was 128), so
+  an XLSX export with one chart on each of 25 sheets (130 parts) reads back
+  through the bounded import. An ODS title of several lines is written as one
+  paragraph with `text:line-break` and read back. The CLI report names every
+  chart left out.
 - Import report clean-up: no `workbook.feature` `charts`; `sheet.feature`
   `drawings` only for a sheet whose drawing was not read, holds no chart frame,
   or holds something besides chart frames (an XLSX drawing root element that is

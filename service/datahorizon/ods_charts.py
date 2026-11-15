@@ -112,11 +112,20 @@ def _styles(root):
     return found
 
 
+def _paragraph_text(element):
+    """The text of a paragraph or of a span inside it; each ``text:line-break`` reads as a newline."""
+    parts = [element.text or ""]
+    for child in element:
+        parts.append("\n" if child.tag == q(X, "line-break") else _paragraph_text(child))
+        parts.append(child.tail or "")
+    return "".join(parts)
+
+
 def _text(element):
-    """The paragraphs of a ``chart:title`` joined by newlines, or ``None``."""
+    """The text of a ``chart:title`` (line breaks and further paragraphs as newlines), or ``None``."""
     if element is None:
         return dict(EMPTY_TITLE)
-    paragraphs = ["".join(paragraph.itertext()) for paragraph in element.iter(q(X, "p"))]
+    paragraphs = [_paragraph_text(paragraph) for paragraph in element.iter(q(X, "p"))]
     return {"text": "\n".join(paragraphs) or None, "from_cell": element.get(q(T, "cell-range")) is not None}
 
 
@@ -428,9 +437,11 @@ def _add(parent, tag, text=None, **attributes):
 
 
 def _title(parent, text):
-    title = _add(parent, "chart:title")
-    for line in text.split("\n"):
-        _add(title, "text:p", line)
+    # ODF allows a title one paragraph: the lines of a title are separated by line breaks inside it.
+    first, *rest = text.split("\n")
+    paragraph = _add(_add(parent, "chart:title"), "text:p", first)
+    for line in rest:
+        _add(paragraph, "text:line-break").tail = line
 
 
 def _usable(text):
