@@ -211,6 +211,9 @@ class _Converter:
         for role, count in counts:
             if role != "name" and count > (LIMIT_PIE_POINTS if pie_limit and role in ("values", "categories") else LIMIT_POINTS):
                 raise _Skip("limit")
+        place = draft["anchor"]
+        if not (1 <= place["row"] <= MAX_ROWS and 1 <= place["col"] <= MAX_COLS):
+            raise _Skip("off_grid")
 
         # Nothing below can skip the chart.
         if plot is not None and plot.get("kind") == "doughnut":

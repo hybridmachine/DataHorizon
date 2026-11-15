@@ -6,7 +6,8 @@ import zipfile
 from chart_fixtures import (absolute, axes_xml, cell_title, chart_xml, one_cell, plot_xml, rich_title, sample_like,
                             two_cell, xlsx_with_charts)
 from datahorizon.conversion_report import ConversionReport
-from datahorizon.import_charts import UNUSABLE
+from datahorizon import xlsx_charts
+from datahorizon.import_charts import UNUSABLE, convert
 from datahorizon.xlsx_charts import read_sheet_drafts
 from datahorizon.xlsx_stream import ByteBudget
 
@@ -183,6 +184,40 @@ class ChartPartTests(unittest.TestCase):
         self.assertEqual(styled(value_axis='<c:numFmt formatCode="General" sourceLinked="1"/>'), [])
         outline = [{"val": "Data!$B$2:$B$8", "sppr": '<c:spPr><a:ln/></c:spPr>'}]
         self.assertEqual(one(chart_xml(series=outline))["styled"], [])
+
+
+class BoundTests(unittest.TestCase):
+    def test_frame_cap(self):
+        charts = [{"sheet": SHEET, "name": f"C{n}", "xml": chart_xml(series=SERIES)} for n in range(300)]
+        drafts, report = read(xlsx_with_charts({SHEET: ""}, charts))
+        self.assertEqual((xlsx_charts.MAX_FRAMES, len(drafts)), (256, 256))
+        entries = [item for item in report.entries() if item["category"] == "chart.skipped"]
+        self.assertEqual([(item["detail"], item["count"], item["samples"]) for item in entries],
+                         [("unreadable", 44, [{"sheet": SHEET, "cell": "drawing"}])])
+
+    def test_measurement_steps_are_a_total(self):
+        anchor = two_cell((0, 0, 0, 0), (5000, 0, 0, 0))
+        charts = [{"sheet": SHEET, "xml": chart_xml(series=SERIES), "anchor": anchor} for _ in range(10)]
+        calls = []
+
+        def column(index):
+            calls.append(index)
+            return 10
+        drafts, _ = read(xlsx_with_charts({SHEET: ""}, charts), widths=(column, lambda row: 20))
+        self.assertLessEqual(len(calls), xlsx_charts.MAX_STEPS)
+        self.assertEqual(len(drafts), 10)
+        flags = [item["approximate_size"] for item in drafts]
+        self.assertEqual(flags[:3], [False] * 3)
+        self.assertTrue(all(flags[5:]))
+        self.assertEqual(drafts[-1]["size"]["width"], 5000 * 64)
+
+    def test_off_grid_anchor_is_skipped_by_convert(self):
+        anchor = two_cell((19999, 0, 0, 0), (20005, 0, 5, 0))
+        chart = one(chart_xml(series=SERIES), anchor)
+        self.assertEqual(chart["anchor"]["col"], 20000)
+        report = ConversionReport()
+        self.assertIsNone(convert(chart, [SHEET], report))
+        self.assertEqual(skipped(report), [("off_grid", [{"sheet": SHEET, "cell": "Chart 1"}])])
 
 
 class DrawingTests(unittest.TestCase):

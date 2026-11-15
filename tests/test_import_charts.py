@@ -206,6 +206,9 @@ class Convert(unittest.TestCase):
             ("limit", dict(plots=[plot("pie", None, None)], series=[series_of(("Data", 1, 2, 1001, 2))])),
             ("limit", dict(series=eleven)),
             ("limit", dict(series=[series_of(("Data", 1, 2, 1048576, 2))])),
+            ("off_grid", dict(anchor={"row": 1, "col": 20000})),
+            ("off_grid", dict(anchor={"row": 1048577, "col": 1})),
+            ("off_grid", dict(anchor={"row": 0, "col": 1})),
         ]
         for detail, overrides in cases:
             self.report = ConversionReport()

@@ -18,7 +18,8 @@ from .xlsx_stream import _read_whole
 EMU_PER_PIXEL = 9525
 DEFAULT_COLUMN = 64
 DEFAULT_ROW = 20
-MAX_STEPS = 20_000  # cell sizes asked of the caller for one measurement
+MAX_STEPS = 20_000  # cell sizes asked of the caller, in total for one worksheet
+MAX_FRAMES = 256  # graphic frames met in one worksheet drawing
 MAX_EMU = 1 << 40
 CHARTEX = "chartex"
 ANCHORS = ("twoCellAnchor", "oneCellAnchor", "absoluteAnchor")
@@ -135,48 +136,60 @@ def _attribute_pair(element, first, second):
     return _pixels(_number(element.get(first))), _pixels(_number(element.get(second)))
 
 
-def _distance(first, offset_first, last, offset_last, size, default):
+class _Steps:
+    """What is left of a worksheet's budget of per-cell size lookups, and whether it ever ran out."""
+    def __init__(self):
+        self.left = MAX_STEPS
+        self.exhausted = False
+
+    def take(self):
+        if self.left <= 0:
+            self.exhausted = True
+            return False
+        self.left -= 1
+        return True
+
+
+def _distance(first, offset_first, last, offset_last, size, default, steps):
     """Pixels from ``offset_first`` into 0-based cell ``first`` to ``offset_last`` into cell ``last``."""
-    if size is None:
-        return (last - first) * default + offset_last - offset_first
     total = offset_last - offset_first
-    for index in range(first, min(last, first + MAX_STEPS)):
+    index = first
+    while size is not None and index < last and steps.take():
         total += size(index + 1)
-    return total
+        index += 1
+    return total + max(last - index, 0) * default
 
 
-def _locate(position, size, default, limit):
+def _locate(position, size, default, limit, steps):
     """The 1-based cell containing pixel ``position`` and the offset into it."""
-    if size is None:
-        index, offset = divmod(position, default)
-        return min(index + 1, limit), offset
     index = 1
-    while index < limit and index <= MAX_STEPS:
+    while size is not None and index < limit and steps.take():
         step = size(index)
         if step <= 0 or position < step:
-            break
+            return index, position
         position -= step
         index += 1
-    return index, position
+    skipped, offset = divmod(position, default)
+    return min(index + skipped, limit), offset
 
 
-def _placement(anchor, widths):
+def _placement(anchor, widths, steps):
     """``(row, col), (x, y), (width, height), absolute`` of a drawing anchor element."""
     column, row = widths if widths is not None else (None, None)
     kind = local(anchor.tag)
     if kind == "twoCellAnchor":
         col1, x1, row1, y1 = _corner(_kid(anchor, "from"))
         col2, x2, row2, y2 = _corner(_kid(anchor, "to"))
-        size = (max(_distance(col1, x1, col2, x2, column, DEFAULT_COLUMN), 0),
-                max(_distance(row1, y1, row2, y2, row, DEFAULT_ROW), 0))
+        size = (max(_distance(col1, x1, col2, x2, column, DEFAULT_COLUMN, steps), 0),
+                max(_distance(row1, y1, row2, y2, row, DEFAULT_ROW, steps), 0))
         return (row1 + 1, col1 + 1), (x1, y1), size, False
     size = _attribute_pair(_kid(anchor, "ext"), "cx", "cy")
     if kind == "oneCellAnchor":
         col1, x1, row1, y1 = _corner(_kid(anchor, "from"))
         return (row1 + 1, col1 + 1), (x1, y1), size, False
     x, y = _attribute_pair(_kid(anchor, "pos"), "x", "y")
-    col, offset_x = _locate(x, column, DEFAULT_COLUMN, MAX_COLS)
-    number, offset_y = _locate(y, row, DEFAULT_ROW, MAX_ROWS)
+    col, offset_x = _locate(x, column, DEFAULT_COLUMN, MAX_COLS, steps)
+    number, offset_y = _locate(y, row, DEFAULT_ROW, MAX_ROWS, steps)
     return (number, col), (offset_x, offset_y), size, True
 
 
@@ -387,9 +400,9 @@ def _frame_name(frame, number):
     return name or f"Chart {number}"
 
 
-def _draft(archive, drawing, links, anchor, frame, order, position, label, budget, widths, names):
+def _draft(archive, drawing, links, placed, frame, order, position, label, budget, names):
     element = _chart_element(frame)
-    cell, offset, size, absolute = _placement(anchor, widths)
+    (cell, offset, size, absolute), approximate = placed
     if CHARTEX in _namespace(element.tag):
         body = _extended()
     else:
@@ -401,24 +414,26 @@ def _draft(archive, drawing, links, anchor, frame, order, position, label, budge
         body = _read_chart(root)
     return {"sheet": position, "name": label, "order": order, **body,
             "anchor": {"row": cell[0], "col": cell[1]}, "offset": {"x": offset[0], "y": offset[1]},
-            "size": {"width": size[0], "height": size[1]}, "approximate_size": False, "absolute_anchor": absolute}
+            "size": {"width": size[0], "height": size[1]}, "approximate_size": approximate, "absolute_anchor": absolute}
 
 
 def read_sheet_drafts(archive, sheet_part, position, sheet_name, budget, report: ConversionReport, widths=None) -> list:
     """Drafts of the charts in a worksheet's drawing, in drawing order.
 
-    Unreadable and grouped charts are reported (``chart.skipped``) and left out.  ``widths`` is an optional
-    ``(column_width_px(col), row_height_px(row))`` pair of callables over 1-based indexes; without it the
-    default cell sizes, 64 and 20 pixels, are used."""
-    def skip(detail, label):
-        report.add(SKIPPED, "omitted", detail, sheet=sheet_name, cell=label[:32])
+    Unreadable and grouped charts are reported (``chart.skipped``) and left out, as are the frames past
+    ``MAX_FRAMES``.  ``widths`` is an optional ``(column_width_px(col), row_height_px(row))`` pair of callables
+    over 1-based indexes; without it the default cell sizes, 64 and 20 pixels, are used.  The callables are asked
+    at most ``MAX_STEPS`` times for the whole worksheet; spans measured after that use the default sizes and
+    their drafts are marked ``approximate_size``."""
+    def skip(detail, label, count=1):
+        report.add(SKIPPED, "omitted", detail, sheet=sheet_name, cell=label[:32], count=count)
 
     names = set(archive.namelist())
     related = _relationships(archive, sheet_part, budget, names)
     if related is None:
         skip("unreadable", "drawing")
         return []
-    drafts = []
+    drafts, steps = [], _Steps()
     for kind, target in related.values():
         if kind != "drawing":
             continue
@@ -428,17 +443,24 @@ def read_sheet_drafts(archive, sheet_part, position, sheet_name, budget, report:
         if links is None:
             skip("unreadable", "drawing")
             continue
-        order = 0
+        order = unread = 0
         for anchor in _anchors(root):
+            placed = None  # computed once for the anchor, on its first frame that is read
             for frame, grouped in _frames(anchor):
                 label = _frame_name(frame, order + 1)
-                if grouped:
+                if order >= MAX_FRAMES:
+                    unread += 1
+                elif grouped:
                     skip("grouped", label)
                 else:
                     try:
-                        drafts.append(_draft(archive, drawing, links, anchor, frame, order, position, label,
-                                             budget, widths, names))
+                        if placed is None:
+                            steps.exhausted = False
+                            placed = (_placement(anchor, widths, steps), steps.exhausted)
+                        drafts.append(_draft(archive, drawing, links, placed, frame, order, position, label, budget, names))
                     except Exception:  # an untrusted chart never fails the import, whatever is wrong with it
                         skip("unreadable", label)
                 order += 1
+        if unread:
+            skip("unreadable", "drawing", unread)
     return drafts
