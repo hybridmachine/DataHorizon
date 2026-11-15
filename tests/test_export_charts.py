@@ -198,6 +198,32 @@ class Export(unittest.TestCase):
             export_charts.build([{"name": "One", "sheet": "Sales"}], build_one, ConversionReport())
         self.assertEqual(caught.exception.body["code"], "CANCELLED")
 
+    def test_package_failure_leaves_every_built_chart_out(self):
+        built = [({"name": "One", "sheet": "Sales"}, "one"), ({"name": "Two" * 20, "sheet": "Sales"}, "two")]
+
+        def failing(pairs, notes):
+            notes.add("chart.converted", "converted", "series_name", sheet="Sales", cell="One")
+            raise ValueError("boom")
+
+        report = ConversionReport()
+        self.assertEqual(export_charts.package(built, failing, ([], {}), report), (([], {}), []))
+        self.assertEqual([(entry["category"], entry["detail"], entry["count"], entry["samples"]) for entry in report.entries()],
+                         [("chart.skipped", "unwritable", 2, [{"sheet": "Sales", "cell": "One"}, {"sheet": "Sales", "cell": ("Two" * 20)[:32]}])])
+
+        def working(pairs, notes):
+            notes.add("chart.converted", "converted", "series_name", sheet="Sales", cell="One")
+            return len(pairs)
+
+        report = ConversionReport()
+        self.assertEqual(export_charts.package(built, working, 0, report), (2, built))
+        self.assertEqual([entry["detail"] for entry in report.entries()], ["series_name"])
+
+        def cancelled(pairs, notes):
+            raise EngineError("CANCELLED", "stopped")
+
+        with self.assertRaises(EngineError):
+            export_charts.package(built, cancelled, 0, ConversionReport())
+
     def test_lines(self):
         self.assertEqual(export_charts.lines(0, 0), [])
         self.assertEqual(export_charts.lines(3, 0), ["Charts: 3 written."])

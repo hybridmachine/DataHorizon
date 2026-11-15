@@ -384,7 +384,8 @@ def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Cal
     `charts` are the export drafts of the charts to write (export_charts.workbook_drafts). Each is built by
     ods_charts.chart_document after a checkpoint, before any table is written, and packaged as the bounded export
     packages its charts, so both write the same chart objects; each frame is written in its anchor cell. A chart that
-    cannot be built is reported (export_charts.build) and left out. Chart objects count against LARGE_EXPANDED with
+    cannot be built is reported (export_charts.build) and left out; if packaging the built charts fails, every
+    one is reported and left out (export_charts.package). Chart objects count against LARGE_EXPANDED with
     every other part.
 
     Returns {"bytes", "sha256", "sheets", "cells", "formulas", "modern_functions", "unevaluated_formulas", "charts"}."""
@@ -398,10 +399,10 @@ def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Cal
         automatic = ET.Element(q(O, "automatic-styles"))
         context = {"styles": OdsStyleTable(automatic), "report": report, "names": names, "modern": False, "formulas": 0, "unevaluated": 0}
         expanded, progress = xlsx_stream._Expanded("ODS"), xlsx_stream._WriteProgress(checkpoint)
-        from .export_charts import build
+        from .export_charts import build, package as package_charts
         from .ods_charts import chart_document, package as chart_package
         built = build(charts, chart_document, report, step=lambda: checkpoint(progress.cells, "Writing charts"))
-        objects, entries, frames = chart_package(built, report)
+        (objects, entries, frames), built = package_charts(built, chart_package, ([], [], {}), report)
         if owned:
             descriptor, name = tempfile.mkstemp(prefix="ods-body-", suffix=".part")
             os.close(descriptor)

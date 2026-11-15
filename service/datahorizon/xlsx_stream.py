@@ -543,7 +543,8 @@ def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Cal
     `charts` are the export drafts of the charts to write (export_charts.workbook_drafts). Each is built by
     xlsx_charts.chart_part after a checkpoint, before any sheet is written, and packaged as the bounded export packages
     its charts, so both write the same chart parts; a chart that cannot be built is reported (export_charts.build) and
-    left out. Chart parts count against LARGE_EXPANDED with every other part.
+    left out, and if packaging the built charts fails every one is reported and left out (export_charts.package).
+    Chart parts count against LARGE_EXPANDED with every other part.
 
     Returns {"bytes", "sha256", "sheets", "cells", "future_functions", "unevaluated_formulas", "charts"}: the file's
     size and digest, the counts written, whether any formula uses an _xlfn identifier, how many formulas without a
@@ -559,10 +560,11 @@ def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Cal
         flags = os.O_WRONLY|os.O_CREAT|os.O_TRUNC|getattr(os, "O_NOFOLLOW", 0)|getattr(os, "O_BINARY", 0)
         with open(os.open(path, flags, 0o600), "wb") as output:
             with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-                from .export_charts import build
+                from .export_charts import build, package as package_charts
                 from .xlsx_charts import chart_part, package as chart_package
                 built = build(charts, chart_part, report, step=lambda: checkpoint(progress.cells, "Writing charts"))
-                chart_parts, drawings, overrides = chart_package(built, names)
+                (chart_parts, drawings, overrides), built = package_charts(
+                    built, lambda pairs, notes: chart_package(pairs, names), ([], {}, []), report)
                 for index, (name, cells) in enumerate(sheets, 1):
                     with archive.open(f"xl/worksheets/sheet{index}.xml", "w") as part:
                         checkpoint(progress.cells, "Writing sheet "+name)

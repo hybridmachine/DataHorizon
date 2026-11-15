@@ -668,14 +668,15 @@ def ods_export(snapshot,request):
     names=validate_sheet_names([s["name"] for s in snapshots])
     if selected_mode=="values": blocked_values(snapshots,whole)
     if whole: head=workbook_report()+[WHOLE_FORMULA_LINE]
-    from .export_charts import lines as chart_lines, snapshot_charts
+    from .export_charts import lines as chart_lines, package as package_charts, snapshot_charts
     from .ods_charts import chart_document, package as chart_package
     from .ods_features import DRAW, SVG, XLINK
     conversions=ConversionReport()
     built,left_out=snapshot_charts(snapshot,chart_document,conversions)
-    objects,entries,frames=chart_package(built,conversions)
+    (objects,entries,frames),written=package_charts(built,chart_package,([],[],{}),conversions)
+    left_out+=len(built)-len(written)
     report=export_lines(head,snapshot,selected_mode=="formulas" and any(uses_modern_function(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"),
-                        chart_lines(len(built),left_out))
+                        chart_lines(len(written),left_out))
     # The chart frames carry prefixed names without declarations; the document declares their namespaces.
     root=ET.Element(q(O,"document-content"),{q(O,"version"):"1.3","xmlns:of":OF,**({"xmlns:draw":DRAW,"xmlns:svg":SVG,"xmlns:xlink":XLINK} if frames else {})})
     automatic=node(root,q(O,"automatic-styles"))

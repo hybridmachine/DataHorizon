@@ -730,13 +730,14 @@ def xlsx_export(snapshot,request):
     names=validate_sheet_names([s["name"] for s in snapshots])
     if selected_mode=="values": blocked_values(snapshots,whole)
     if whole: head=workbook_report()+[WHOLE_EXPORT_CACHES]
-    from .export_charts import lines as chart_lines, snapshot_charts
+    from .export_charts import lines as chart_lines, package as package_charts, snapshot_charts
     from .xlsx_charts import chart_part, package as chart_package
     conversions=ConversionReport()
     built,left_out=snapshot_charts(snapshot,chart_part,conversions)
-    chart_parts,drawings,overrides=chart_package(built,names)
+    (chart_parts,drawings,overrides),written=package_charts(built,lambda pairs,notes:chart_package(pairs,names),([],{},[]),conversions)
+    left_out+=len(built)-len(written)
     report=export_report(head,snapshot,selected_mode=="formulas" and any(uses_future_prefix(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"),
-                         chart_lines(len(built),left_out))
+                         chart_lines(len(written),left_out))
     from .xlsx_styles import export_styles
     styles,style_ids=export_styles([c for s in snapshots for c in s["cells"]])
     worksheets=[]

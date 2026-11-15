@@ -194,6 +194,26 @@ def build(drafts, build_one, report, *, step=None):
     return built
 
 
+def package(built, package_one, empty, report):
+    """``(packaged, written)``: ``package_one(built, notes)``, the format's packaging of the built charts, and the pairs
+    it holds.
+
+    ``notes`` is a ``ConversionReport`` merged into ``report`` once packaging succeeds.  When packaging raises anything
+    but an ``EngineError``, the export goes on without any chart: ``(empty, [])`` is returned and every built chart is
+    reported ``unwritable`` in ``report``, so the caller counts it as left out."""
+    notes = ConversionReport()
+    try:
+        packaged = package_one(built, notes)
+    except EngineError:
+        raise
+    except Exception:
+        for draft, _ in built:
+            report.add(SKIPPED, "omitted", "unwritable", sheet=draft["sheet"], cell=draft["name"][:CELL_LENGTH])
+        return empty, []
+    report.merge(notes)
+    return packaged, built
+
+
 def lines(written, left_out):
     """The report's one summary line for the charts of an export, or none when there were none."""
     if not written and not left_out:

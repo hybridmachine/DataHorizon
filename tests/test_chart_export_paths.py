@@ -284,6 +284,30 @@ class InlineChartExportTests(ChartBooks):
                 self.assertEqual(imported_charts(fmt, result), [])
                 self.assertEqual(len(read_back(fmt, result)["workbook_sheets"][0]["cells"]), 39)
 
+    def test_a_chart_packaging_failure_does_not_fail_the_export(self):
+        self.data_book("packaging").close()
+        server = self.enterContext(Service(staging_root=Path(self.temp.name) / "staging-packaging"))
+        base = "/v1/workbooks/" + server.dispatch("POST", "/v1/open", {"path": str(Path(self.temp.name) / "packaging.dhwb")})["id"]
+        for fmt in FORMATS:
+            for scope in ({"scope": "workbook"}, {"sheet": "Data", "r1": 1, "c1": 1, "r2": 20, "c2": 8}):
+                with self.subTest(fmt, **scope), patch(PACKAGERS[fmt], side_effect=ValueError("x")):
+                    result = server.dispatch("POST", f"{base}/export/{fmt}", scope)
+                    assert_packaging_failure(self, fmt, result, "Data" if "scope" in scope else "Sheet1")
+
+
+PACKAGERS = {"xlsx": "datahorizon.xlsx_charts.package", "ods": "datahorizon.ods_charts.package"}
+
+
+def assert_packaging_failure(case, fmt, result, sheet):
+    """Packaging the built charts failed: the export holds every cell and no chart part, and reports each chart."""
+    case.assertEqual(skipped(result), [("unwritable", "Chart 1", sheet), ("unwritable", "Chart 2", sheet)])
+    case.assertEqual(chart_lines(result), ["Charts: 0 written, 2 left out; each is listed below with its reason."])
+    case.assertEqual([e for e in result["report_entries"] if e["category"] == "chart.converted"], [])
+    case.assertEqual(imported_charts(fmt, result), [])
+    case.assertEqual(len(read_back(fmt, result)["workbook_sheets"][0]["cells"]), 39)
+    with zipfile.ZipFile(io.BytesIO(base64.b64decode(result["file_base64"]))) as archive:
+        case.assertEqual([name for name in archive.namelist() if "chart" in name.lower() or "drawing" in name or "Object" in name], [])
+
 
 def chart_parts(fmt, data):
     """``{part name: bytes}`` of the parts that carry an export's charts, with the content types or manifest."""
@@ -474,6 +498,13 @@ class StreamedChartExportTests(ChartBooks):
                 self.assertEqual(chart_lines(result), ["Charts: 0 written, 2 left out; each is listed below with its reason."])
                 self.assertEqual(imported_charts(fmt, result), [])
                 self.assertEqual(len(read_back(fmt, result)["workbook_sheets"][0]["cells"]), 39)
+
+    def test_a_chart_packaging_failure_does_not_fail_the_export(self):
+        self.data_book("packaging-streamed").close()
+        base = self.base("packaging-streamed")
+        for fmt in FORMATS:
+            with self.subTest(fmt), patch(PACKAGERS[fmt], side_effect=ValueError("x")):
+                assert_packaging_failure(self, fmt, self.export_job(base, fmt), "Data")
 
     def test_workbook_without_charts_reports_nothing_about_charts(self):
         book = self.open_book("plain-streamed")
