@@ -1,10 +1,10 @@
 # Charts on open: import and view-only display
 
-Status: **Draft 0.1, awaiting owner approval** (November 14, 2026).
+Status: **As built** (November 15, 2026), on branch `claude/charts-import-view`, not merged. Drafted November 14, 2026 (Draft 0.1). Where the build differs from the text below, [compatibility-v0.md](compatibility-v0.md#charts), [implementation-status.md](implementation-status.md#charts-import-and-view-only-display--november-15-2026) and the [evidence](evidence/charts-import-view-verification.txt) are the record; the sections below are the design as agreed.
 Marks: **Owner** is a decision the owner made; **Call** is the author's
 proposal, open to correction; **Builder** is left to the implementation plan.
 
-Read with the [charts design](charts-design.md) (Draft 0.5), the
+Read with the [charts design](charts-design.md) (Draft 0.6), the
 [native format](native-format-v1.md#charts-format-v8) and the
 [compatibility contract](compatibility-v0.md).
 
@@ -312,3 +312,41 @@ Module layout and names; the stage file's chart table and digest encoding; the
 given; how pixel extents are computed from column widths and row heights in
 each format; render queue and debounce values; widget class structure and how
 positions track the bounded grid model and frozen panes; test fixture design.
+
+## 11. As built: departures from this design
+
+Recorded November 15, 2026. Each is also in the
+[compatibility contract](compatibility-v0.md#charts).
+
+- **Report vocabulary.** `chart.skipped` details are `type`, `combination`,
+  `secondary_axis`, `pie_series`, `source`, `limit`, `off_grid`,
+  `workbook_limit`, `unreadable` and `grouped`. `chart.converted` details are
+  `styling: <property>` (one entry per dropped property), `grouping`,
+  `series_name`, `percent_stacked`, `three_d`, `doughnut`, `legend_position`,
+  `title_from_cell`, `title_cut`, `categories_differ`, `size_approximate`,
+  `anchor_absolute` and `name`. Section 4 said one line per chart lists what was
+  dropped; the build writes one entry per property, each counting charts.
+- **Chart byte budget.** Chart, drawing and relationship parts are read against
+  their own 16 MiB allowance per import, not the package budget, each distinct
+  part once; past it charts are reported `unreadable`. At most 256 chart frames
+  per sheet are read, and a draft keeps at most 65 series.
+- **Sizes.** The pixel size is computed from default cell sizes (64x20 px); a
+  sheet that declares custom sizes reports `size_approximate` (on ODS, any
+  declared column-width style).
+- **Omitted entries still reported.** Section 4 said the `workbook.feature`
+  `charts` count stays. The build also still reports `sheet.feature`
+  `drawings`, so a file whose charts all imported still lists both as omitted.
+  This is a known inconsistency awaiting an owner decision, not a desired
+  behavior.
+- **Frozen panes.** A chart anchored in a frozen row or column is pinned in the
+  frozen direction and may extend over the scrolling cells.
+- **Chart list failures.** A failed chart list read is shown in the window's
+  issue line and read again on the next refresh.
+- **Render concurrency.** The service runs one chart job per workbook, so renders
+  run one at a time although `ChartLayer::MaxConcurrentRenders` is 2.
+- **CLI.** The CLI has no one-sheet import, so only the SDK and the desktop
+  carry charts on that path; the CLI's whole-workbook import carries them.
+- **Not built or not verified.** Export, authoring, workbook-Python chart
+  operations, and any verification on Windows and Linux. The manual desktop
+  check of section 8 and the LibreOffice cross-format check were not run; see
+  the [evidence](evidence/charts-import-view-verification.txt).

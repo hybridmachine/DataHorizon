@@ -4,6 +4,65 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## Charts import and view-only display — November 15, 2026
+
+The [design](charts-import-view-design.md) and [plan](charts-import-view-plan.md)
+are executed on branch `claude/charts-import-view`, which is not merged. They
+pull chart import and a view-only desktop display ahead of charts stage 3
+authoring and stage 4 export. The [verification evidence](evidence/charts-import-view-verification.txt)
+records the commands and results.
+
+Built, and covered by service and desktop tests:
+- XLSX and ODS import reads chart parts into drafts and converts them to native
+  charts (`import_charts.py`, `xlsx_charts.py`, `ods_charts.py`) through the
+  staged whole-workbook path (stage format version 2 with a `charts` table in
+  the digest), the inline whole-workbook path and the one-sheet path, where
+  `edit` takes `charts`. Receipts report `imported.charts`, `changed_charts`
+  and `charts_left_out`. The rules and the `chart.converted` and `chart.skipped`
+  vocabulary are in the [compatibility contract](compatibility-v0.md#charts).
+- Chart, drawing and relationship parts are read against their own 16 MiB
+  allowance per import, each distinct part once, apart from the package budget;
+  past it charts are reported `unreadable`. At most 256 chart frames per sheet
+  are read and a draft keeps at most 65 series.
+- Pixel sizes use default cell sizes (64x20 px); a sheet that declares custom
+  sizes reports `size_approximate` (on ODS, any declared column-width style).
+- The desktop lists a sheet's charts through the existing catalog read, renders
+  them through chart jobs and shows the service's SVG in mouse-transparent
+  overlays over the grid (`chartlayer.h`, `chartlayer.cpp`). A chart anchored
+  in a frozen row or column is pinned in that frozen direction and may extend
+  over the scrolling cells. Charts are hidden in a projected list view. A chart
+  that cannot be drawn shows a placeholder with the reason. A failed chart list
+  read is shown in the window's issue line and read again on the next refresh.
+  The import dialog carries charts on "One sheet" and "All sheets" and shows the
+  chart count in the review. Qt SVG is now a required linked module (Widgets,
+  Network, Svg, Test); [development.md](development.md) lists it.
+- The service runs one chart job per workbook, so renders run one at a time
+  although the layer allows `MaxConcurrentRenders` of 2.
+
+Measured through the real service on the reference Mac, with the owner's
+sample file `Column Chart_Complete.xlsx` (two worksheets, one clustered and one
+stacked column chart): the whole-workbook import and each one-sheet import
+create the charts, and their resolved series equal the sheet cells. The chart
+SVGs are 2,509 and 3,376 bytes. The whole-file conversion report holds seven
+`chart.*` entries (dropped colours, data labels, gap width, gridlines and fonts;
+`size_approximate`; one `legend_position`) among 18 entries, and still lists `workbook.feature` `charts` and
+`sheet.feature` `drawings` as omitted. The full suite result is in the evidence
+file.
+
+Known inconsistency, awaiting an owner decision: the `workbook.feature`
+`charts` and `sheet.feature` `drawings` omitted entries are still reported when
+the charts import, so a file whose charts all imported still lists charts as
+omitted.
+
+Not verified: the application window on the sample file (overlays over the
+grid, the import dialog) was not driven in this run; LibreOffice was not
+installed, so no cross-format check ran; Windows and Linux. Chart authoring
+(Insert Chart, select, move, resize, delete, edit panel, object browser),
+workbook-Python chart operations and chart export are not built; export still
+omits charts. The stage 3 wireframe session is still owed. CLI one-sheet
+import does not exist, so only the SDK and the desktop carry charts on that
+path.
+
 ## Charts table and saved-query sources — November 13, 2026
 
 The [table and saved-query sources plan](charts-table-query-sources-plan.md) is
