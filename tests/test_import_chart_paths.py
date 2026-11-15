@@ -5,6 +5,7 @@ from contextlib import closing
 import io
 import json
 from pathlib import Path
+import random
 import sqlite3
 import tempfile
 import time
@@ -12,13 +13,14 @@ import unittest
 import uuid
 import sys
 import zipfile
+import zlib
 from unittest.mock import patch
 
 from chart_fixtures import (chart_xml, two_cell, ods_chart_xml, ods_sample_like, ods_title, ods_with_charts, one_cell, plot_xml,
                             rich_title, sample_like, xlsx_with_charts)
 from ods_builder import styles_document
 from datahorizon import import_charts, import_stage, ods_stream, xlsx_stream
-from datahorizon.xlsx_charts import MAX_FRAMES
+from datahorizon.import_charts import MAX_FRAMES
 from datahorizon.cli import report_text
 from datahorizon import charts as charts_module
 from datahorizon.client import APIError, LocalService
@@ -615,6 +617,211 @@ class ChartAllowanceTests(unittest.TestCase):
                 self.assertEqual(used[0], used[1])
                 self.assertEqual(used[0], used[2])
                 self.assertTrue(all(value > 0 for value in used[0]))
+
+
+PKG = "http://schemas.openxmlformats.org/package/2006/relationships"
+REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+def shared_drawing(sheets=1, frames=256, drawing_rels=1, series=1, distinct=1, pad=0):
+    """Every sheet's relationships hold ``drawing_rels`` drawing relationships, all to one drawing of ``frames`` one-cell
+    frames, which cycle over ``distinct`` chart parts of ``series`` series each, padded with ``pad`` empty elements."""
+    from xlsx_builder import workbook_bytes
+    names = {f"S{n}": data_rows() for n in range(1, sheets + 1)}
+    extras = "<c:extLst>" + "<c:ext/>" * pad + "</c:extLst>" if pad else ""
+    items = [{"cat": "S1!$A$2:$A$8", "val": "S1!$B$2:$B$8"} for _ in range(series)]
+    parts = {f"xl/charts/chart{k}.xml": chart_xml("bar", "col", "clustered", items, extras=extras) for k in range(1, distinct + 1)}
+    from chart_fixtures import A, C, XDR, frame_xml
+    anchors = "".join(one_cell().replace("{frame}", frame_xml(f"rId{n % distinct + 1}", f"F{n}")) for n in range(frames))
+    parts["xl/drawings/drawing1.xml"] = f'<xdr:wsDr xmlns:xdr="{XDR}" xmlns:a="{A}" xmlns:r="{REL}" xmlns:c="{C}">{anchors}</xdr:wsDr>'
+    parts["xl/drawings/_rels/drawing1.xml.rels"] = f'<Relationships xmlns="{PKG}">' + "".join(
+        f'<Relationship Id="rId{k}" Type="{REL}/chart" Target="../charts/chart{k}.xml"/>' for k in range(1, distinct + 1)) + "</Relationships>"
+    for number in range(1, sheets + 1):
+        parts[f"xl/worksheets/_rels/sheet{number}.xml.rels"] = f'<Relationships xmlns="{PKG}">' + "".join(
+            f'<Relationship Id="rId{k}" Type="{REL}/drawing" Target="../drawings/drawing1.xml"/>' for k in range(1, drawing_rels + 1)) + "</Relationships>"
+    return workbook_bytes(names, extra_parts=parts, sheet_after={name: '<drawing r:id="rId1"/>' for name in names})
+
+
+def shared_object(sheets=1, frames=256, distinct=1):
+    """ODS: ``frames`` frames on each sheet, cycling over ``distinct`` chart objects."""
+    charts = [{"sheet": f"S{s}", "name": f"F{s}-{n}", "xml": ods_column_chart("S1"), "missing": n >= distinct or s > 1,
+               "target": f"./Object {n % distinct + 1}"} for s in range(1, sheets + 1) for n in range(frames)]
+    return ods_with_charts({f"S{s}": ods_data_rows() for s in range(1, sheets + 1)}, charts)
+
+
+class ChartWorkBoundTests(unittest.TestCase):
+    """The work of reading charts is bounded per import, whatever the package repeats: counted, not timed."""
+
+    def setUp(self):
+        self.temp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+    def readers(self, data, fmt="xlsx", path="streaming", checkpoint=lambda *_: None):
+        """The ChartParts the import used and the report, read by the streaming reader or the bounded preview."""
+        made = []
+
+        class Recording(import_charts.ChartParts):
+            def __init__(self, *args, **options):
+                super().__init__(*args, **options)
+                made.append(self)
+        with patch.object(import_charts, "ChartParts", Recording):
+            if path == "streaming":
+                file = self.temp / f"book-{uuid.uuid4().hex}.{fmt}"
+                file.write_bytes(data)
+                sink = RecordingSink()
+                report = (xlsx_stream.read_workbook if fmt == "xlsx" else ods_stream.read_workbook)(file, {}, sink, checkpoint)
+                records, entries_found = sink.records, report.entries()
+            else:
+                preview = (xlsx_preview if fmt == "xlsx" else ods_preview)({"file_base64": b64(data), "scope": path}, checkpoint)
+                records = preview["workbook_charts"] if path == "workbook" else preview["charts"]
+                entries_found = preview["report_entries"]
+        (parts,) = made
+        skipped = {entry["detail"]: entry["count"] for entry in entries_found if entry["category"] == "chart.skipped"}
+        return parts, records, skipped
+
+    def check(self, data, fmt, expected, paths=("streaming", "workbook", "selection")):
+        for path in paths:
+            with self.subTest(fmt=fmt, path=path):
+                parts, records, skipped = self.readers(data, fmt, path)
+                found = {"parses": parts.parses, "walks": parts.walks, "drafts": parts.drafts, "listings": parts.listings,
+                         "records": len(records), "skipped": skipped}
+                want = dict(expected)
+                if path == "selection":
+                    want.update(want.pop("selection", {}))
+                want.pop("selection", None)
+                self.assertEqual(found, want)
+
+    def test_many_frames_of_one_chart_part(self):
+        # Sheet relationships, drawing, drawing relationships and the chart: each read once.
+        self.check(shared_drawing(frames=300, pad=20_000), "xlsx",
+                   {"parses": 4, "walks": 1, "drafts": 64, "listings": 1, "records": 64,
+                    "skipped": {"workbook_limit": 256 - 64, "unreadable": 300 - 256}})
+
+    def test_sheets_sharing_a_drawing(self):
+        # The frame cap is a total: the first sheet reads 256 frames, the others none.
+        self.check(shared_drawing(sheets=4, pad=20_000), "xlsx",
+                   {"parses": 7, "walks": 1, "drafts": 64, "listings": 1, "records": 64,
+                    "skipped": {"workbook_limit": 256 - 64, "unreadable": 3 * 256},
+                    "selection": {"parses": 4, "skipped": {"workbook_limit": 256 - 64}}})
+
+    def test_a_sheet_with_many_drawing_relationships(self):
+        # Only the drawing the worksheet's <drawing r:id> names is read; the 65-series chart is skipped as limit.
+        self.check(shared_drawing(drawing_rels=200, series=65), "xlsx",
+                   {"parses": 4, "walks": 1, "drafts": 256, "listings": 1, "records": 0, "skipped": {"limit": 256}})
+        self.check(shared_drawing(drawing_rels=8, pad=20_000), "xlsx",
+                   {"parses": 4, "walks": 1, "drafts": 64, "listings": 1, "records": 64, "skipped": {"workbook_limit": 192}})
+
+    def test_no_chart_part_is_read_once_no_chart_could_be_imported(self):
+        # The chart parts cycle: the first 64 are read; the next 36 are never read; the rest are repeats.
+        self.check(shared_drawing(distinct=100), "xlsx",
+                   {"parses": 3 + 64, "walks": 64, "drafts": 64, "listings": 1, "records": 64,
+                    "skipped": {"workbook_limit": 256 - 64}})
+
+    def test_ods_objects(self):
+        self.check(shared_object(frames=300), "ods",
+                   {"parses": 1, "walks": 1, "drafts": 64, "listings": 1, "records": 64,
+                    "skipped": {"workbook_limit": 256 - 64, "unreadable": 300 - 256}})
+        self.check(shared_object(sheets=3, frames=100), "ods",
+                   {"parses": 1, "walks": 1, "drafts": 64, "listings": 1, "records": 64,
+                    "skipped": {"workbook_limit": 256 - 64, "unreadable": 300 - 256},
+                    "selection": {"skipped": {"workbook_limit": 100 - 64}}}, paths=("streaming", "workbook", "selection"))
+        self.check(shared_object(frames=256, distinct=100), "ods",
+                   {"parses": 64, "walks": 64, "drafts": 64, "listings": 1, "records": 64,
+                    "skipped": {"workbook_limit": 256 - 64}})
+
+    def test_no_parsed_tree_is_kept(self):
+        import xml.etree.ElementTree as ET
+
+        def trees(value):
+            if isinstance(value, ET.Element):
+                return 1
+            if isinstance(value, dict):
+                return sum(trees(item) for item in value.values())
+            if isinstance(value, (list, tuple)):
+                return sum(trees(item) for item in value)
+            return 0
+        for fmt, data in (("xlsx", shared_drawing(distinct=10, pad=20_000)), ("ods", shared_object(distinct=10))):
+            for path in ("streaming", "workbook"):
+                with self.subTest(fmt=fmt, path=path):
+                    parts, records, _ = self.readers(data, fmt, path)
+                    self.assertEqual(len(records), 64)
+                    self.assertEqual(parts.walks, 10)
+                    self.assertEqual(trees(vars(parts)), 0)
+
+    def test_charts_are_read_between_checkpoints(self):
+        for fmt, data in (("xlsx", shared_drawing(distinct=10)), ("ods", shared_object(distinct=10))):
+            with self.subTest(fmt):
+                phases = []
+                self.readers(data, fmt, checkpoint=lambda completed, phase: phases.append(phase))
+                self.assertGreaterEqual(phases.count("Reading charts"), 256)
+
+                def cancel(completed, phase):
+                    if phase == "Reading charts":
+                        raise EngineError("CANCELLED", "Preparation cancelled; no workbook changes were made")
+                with self.assertRaises(EngineError) as raised:
+                    self.readers(data, fmt, checkpoint=cancel)
+                self.assertEqual(raised.exception.body["code"], "CANCELLED")
+
+
+def corrupted(data, name):
+    """``data`` with part ``name`` padded by a long comment of random text, then four bytes flipped three quarters into
+    its compressed stream: reading the part fails with a zlib, CRC or end-of-stream error, never with clean XML."""
+    choose = random.Random(7).choice
+    junk = "".join(choose("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(400_000))
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        text = archive.read(name).decode()
+    close = text.rindex("</")
+    padded = replace_part(data, name, (text[:close] + f"<!--{junk}-->" + text[close:]).encode())
+    with zipfile.ZipFile(io.BytesIO(padded)) as archive:
+        info = archive.getinfo(name)
+        start = info.header_offset + 30 + len(info.filename.encode()) + len(info.extra)
+        first = start + info.compress_size * 3 // 4
+    # Most flips only break the CRC (BadZipFile, which interchange.read_xml already reports); the first position, in a
+    # fixed order, whose flip breaks the deflate stream itself gives the raw zlib.error a reader has to contain.
+    for position in range(first, start + info.compress_size - 4, 97):
+        raw = bytearray(padded)
+        for offset in range(4):
+            raw[position + offset] ^= 0xFF
+        with zipfile.ZipFile(io.BytesIO(bytes(raw))) as archive:
+            try:
+                archive.read(name)
+            except zlib.error:
+                return bytes(raw)
+            except (zipfile.BadZipFile, EOFError):
+                continue
+    raise AssertionError(f"no flip in {name} breaks its deflate stream")
+
+
+class CorruptChartPartTests(unittest.TestCase):
+    """A chart, drawing or relationship part whose compressed bytes are corrupt is reported, and the cells import."""
+
+    def setUp(self):
+        self.temp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+    def stream(self, data, fmt):
+        path = self.temp / f"book-{uuid.uuid4().hex}.{fmt}"
+        path.write_bytes(data)
+        sink = RecordingSink()
+        report = (xlsx_stream.read_workbook if fmt == "xlsx" else ods_stream.read_workbook)(path, {}, sink, lambda *_: None)
+        return sum(sink.counts.values()), len(sink.records), report.entries()
+
+    def test_corrupt_chart_parts(self):
+        xlsx = xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "name": "Bar", "xml": column_chart()}])
+        ods = ods_with_charts({"Data": ods_data_rows()}, [{"sheet": "Data", "name": "Bar", "xml": ods_column_chart()}])
+        cases = (("xlsx", xlsx, "xl/drawings/drawing1.xml", "drawing"), ("xlsx", xlsx, "xl/drawings/_rels/drawing1.xml.rels", "drawing"),
+                 ("xlsx", xlsx, "xl/charts/chart1.xml", "Bar"), ("ods", ods, "Object 1/content.xml", "Bar"))
+        for fmt, source, name, label in cases:
+            data = corrupted(source, name)
+            preview = xlsx_preview if fmt == "xlsx" else ods_preview
+            found = {"streaming": self.stream(data, fmt)}
+            for scope in ("workbook", "selection"):
+                result = preview({"file_base64": b64(data), "scope": scope})
+                found[scope] = (result["stored_cells"], len(result["workbook_charts" if scope == "workbook" else "charts"]),
+                                result["report_entries"])
+            for path, (cells, charts, report) in found.items():
+                with self.subTest(part=name, path=path):
+                    self.assertEqual((cells, charts), (16, 0))
+                    self.assertEqual([(entry["detail"], entry["samples"]) for entry in report if entry["category"] == "chart.skipped"],
+                                     [("unreadable", [{"sheet": "Data", "cell": label}])])
 
 
 STACKED = "Stacked Column"

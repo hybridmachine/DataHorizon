@@ -8,6 +8,8 @@ one-sheet import and ``create`` stores them on a workbook inside an operation.
 """
 import copy
 import re
+import zipfile
+import zlib
 
 from . import charts
 from .conversion_report import ConversionReport
@@ -15,8 +17,18 @@ from .chart_render import LIMIT_PIE_POINTS, LIMIT_POINTS, LIMIT_SERIES
 from .engine import MAX_COLS, MAX_ROWS, EngineError, encoded
 from .formula import FormulaError, column_name, split_ref
 from .interchange import fold_name
+from .xlsx_stream import ByteBudget, _read_whole
 
-UNUSABLE = object()
+class _Unusable:
+    """A source a draft cannot bind; one object, kept by the copies drafts are built with."""
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        return self
+
+
+UNUSABLE = _Unusable()
 # What a chart converts without; the vocabulary of a draft's ``styled`` list.
 STYLED = ("colours", "data labels", "gap width", "markers", "smoothing", "gridlines", "number formats", "fonts")
 
@@ -31,44 +43,128 @@ RECORDS_BYTES = 1024 * 1024  # every record of one import, as JSON
 RECORD_KEYS = ("sheet", "name", "anchor", "offset", "size", "spec")
 SOURCE_PARTS = ("categories", "name", "values", "x")
 
-# Shared by the format readers: default cell sizes, the measurement budget, series cap and draft defaults.
+# Shared by the format readers: default cell sizes, the reading bounds, series cap and draft defaults.
 DEFAULT_COLUMN_PX = 64
 DEFAULT_ROW_PX = 20
-MAX_STEPS = 20_000  # cell sizes asked of the caller, in total for one budget
 CHART_EXPANDED = 16 * 1024 * 1024  # decompressed chart, drawing and relationship bytes read for one import
+MAX_FRAMES = 256  # chart frames read in one import, across all its sheets
 MAX_DRAFT_SERIES = LIMIT_SERIES + 1  # one more than convert accepts is enough for it to skip the chart as ``limit``
 DEFAULT_GROUPING = {"bar": "clustered", "line": "standard", "area": "standard"}
 EMPTY_TITLE = {"text": None, "from_cell": False}
 
 
-class Steps:
-    """What is left of a budget of per-cell size lookups, and whether it ever ran out."""
-    def __init__(self, limit=MAX_STEPS):
-        self.left = limit
-        self.exhausted = False
-
-    def take(self):
-        if self.left <= 0:
-            self.exhausted = True
-            return False
-        self.left -= 1
-        return True
-
-
-def locate(position, size, default, limit, steps):
-    """The 1-based cell containing pixel ``position`` and the offset into it.
-
-    ``size(index)`` is the pixel size of the 1-based cell ``index`` (``None`` for the default sizes); it is asked
-    only while ``steps`` allows, and past that the cells are measured with ``default``."""
-    index = 1
-    while size is not None and index < limit and steps.take():
-        step = size(index)
-        if step <= 0 or position < step:
-            return index, position
-        position -= step
-        index += 1
+def locate(position, default, limit):
+    """The 1-based cell containing pixel ``position`` on cells of ``default`` pixels, at most ``limit``, and the offset into it."""
     skipped, offset = divmod(position, default)
-    return min(index + skipped, limit), offset
+    return min(1 + skipped, limit), offset
+
+
+# Reading chart parts.
+
+LEFT_OUT = object()  # what ``ChartParts.body`` gives for a part it did not read because no further chart can be imported
+UNREADABLE_PART_ERRORS = (EngineError, zlib.error, EOFError, zipfile.BadZipFile, OSError)
+
+
+def read_chart_part(archive, name, budget):
+    """The root of a package part, or ``None`` when it is missing, malformed, corrupt or would exceed ``budget``.
+
+    A part that would not fit is not charged, so the budget is never exceeded and nothing is raised."""
+    try:
+        size = archive.getinfo(name).file_size
+    except (KeyError, ValueError):
+        return None
+    if budget.used + size > budget.limit:
+        return None
+    try:
+        return _read_whole(archive, name, budget)
+    except UNREADABLE_PART_ERRORS:  # a corrupt deflate stream raises zlib.error from read_xml
+        return None
+
+
+class ChartParts:
+    """The chart reading of one import of one package, shared by every sheet and both formats' readers.
+
+    Parts are read against their own allowance (``CHART_EXPANDED`` decompressed bytes unless a ``budget`` is given),
+    so the package budget that bounds the cells is never charged.  Parsed trees are not kept: each distinct chart part
+    is parsed once and its draft body (``body``) is kept instead; each frame drawing it gets a copy (``draft``).  At
+    most ``MAX_FRAMES`` frames are read in all (``frames`` counts them).  Given the import's ``collector`` and sheet
+    names, the drafts built are claimed on it, and once it is ``full`` no further chart part is parsed and no further
+    draft is built.  ``checkpoint`` (no arguments) is called for every frame, so cancellation and the deadline are
+    honoured while charts are read.  ``reader(archive, name)`` replaces ``read_chart_part`` (tests).
+
+    ``parses``, ``walks``, ``drafts`` and ``listings`` count the parts parsed, the chart bodies extracted, the drafts
+    built and the package name lists made, so tests can bound the work by count."""
+    def __init__(self, budget=None, *, collector=None, sheet_names=None, checkpoint=None, reader=None):
+        self.budget = ByteBudget(CHART_EXPANDED) if budget is None else budget
+        self.collector, self.sheet_names = collector, sheet_names
+        self.checkpoint, self.reader = checkpoint, reader
+        self.frames = 0
+        self.parses = self.walks = self.drafts = self.listings = 0
+        self._bodies, self._drawings, self._names = {}, {}, None
+
+    def names(self, archive):
+        """The set of the package's part names, made once."""
+        if self._names is None:
+            self._names = set(archive.namelist())
+            self.listings += 1
+        return self._names
+
+    def tick(self):
+        if self.checkpoint is not None:
+            self.checkpoint()
+
+    @property
+    def full(self):
+        """Whether no further chart could be imported (always ``False`` without a collector)."""
+        return self.collector is not None and self.collector.full
+
+    def read(self, archive, name):
+        """The parsed root of a part, or ``None``; the caller keeps it only as long as it needs it."""
+        self.parses += 1
+        return (read_chart_part(archive, name, self.budget) if self.reader is None else self.reader(archive, name))
+
+    def body(self, archive, name, extract):
+        """``extract(root)`` of the chart part ``name``, computed once: ``None`` when the part cannot be read or
+        ``extract`` fails, ``LEFT_OUT`` when the part was not read because the import is ``full``."""
+        if name in self._bodies:
+            return self._bodies[name]
+        if self.full:
+            return LEFT_OUT
+        try:
+            root = self.read(archive, name)
+            found = None if root is None else extract(root)
+        except Exception:  # an untrusted chart never fails the import, whatever is wrong with it
+            found = None
+        if found is not None:
+            self.walks += 1
+        self._bodies[name] = found
+        return found
+
+    def drawing(self, name, extract):
+        """``extract()`` for the drawing part ``name``, computed once (``None`` when it fails); see ``body``."""
+        if name not in self._drawings:
+            try:
+                self._drawings[name] = extract()
+            except Exception:  # as for a chart part
+                self._drawings[name] = None
+        return self._drawings[name]
+
+    def draft(self, body, placement, report, *, claim=True):
+        """A draft of ``body`` placed by ``placement``, claimed on the collector; ``None`` when the import is ``full``,
+        in which case the chart is reported as ``convert`` and the collector would report it (``workbook_limit`` for a
+        chart it would accept) without a draft being built.  ``claim=False`` is for a chart that is reported and never
+        added (a grouped one): its placed view is returned as it is, neither built nor claimed."""
+        view = {**body, **placement}
+        if not claim:
+            return view
+        if self.full:
+            self.collector.refuse(view, self.sheet_names, report)
+            return None
+        draft = copy.deepcopy(view)
+        self.drafts += 1
+        if self.collector is not None:
+            self.collector.claim(draft, self.sheet_names)
+        return draft
 
 
 # References.
@@ -362,6 +458,15 @@ class Collector:
         """Count ``draft``, which is added later, toward ``full`` when ``convert`` accepts it."""
         if convert(draft, sheet_names, ConversionReport()) is not None:
             self.claimed += 1
+
+    def refuse(self, draft, sheet_names, report):
+        """Report ``draft`` as ``add`` reports a chart once the collector is full: ``workbook_limit`` for a chart
+        ``convert`` accepts, else its skip."""
+        notes = ConversionReport()
+        if convert(draft, sheet_names, notes) is None:
+            report.merge(notes)
+        else:
+            _Converter(draft, sheet_names, report).note("workbook_limit", "omitted", SKIPPED)
 
     def add(self, draft, sheet_names, report):
         """Convert ``draft`` into ``report``; the record, or ``None`` when the chart is skipped."""

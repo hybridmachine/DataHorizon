@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import io
 import unittest
+import xml.etree.ElementTree as ET
 import zipfile
 
 from chart_fixtures import (absolute, axes_xml, cell_title, chart_xml, one_cell, plot_xml, rich_title, sample_like,
                             two_cell, xlsx_with_charts)
 from datahorizon.conversion_report import ConversionReport
-from datahorizon import xlsx_charts
-from datahorizon.import_charts import MAX_DRAFT_SERIES, UNUSABLE, convert
+from datahorizon.import_charts import MAX_DRAFT_SERIES, MAX_FRAMES, UNUSABLE, convert
 from datahorizon.xlsx_charts import read_sheet_drafts
 from datahorizon.xlsx_stream import ByteBudget
 
@@ -16,13 +16,19 @@ SERIES = [{"name_ref": "Data!$B$1", "cat": "Data!$A$2:$A$8", "val": "Data!$B$2:$
 BIG = 64*1024*1024
 
 
-def read(data, sheet=1, name=None, widths=None, budget=None, names=None):
+def read(data, sheet=1, name=None, budget=None):
     """Drafts and the report of the ``sheet``-th (1-based) worksheet of a package."""
     archive = zipfile.ZipFile(io.BytesIO(data))
     report = ConversionReport()
-    drafts = read_sheet_drafts(archive, f"xl/worksheets/sheet{sheet}.xml", sheet - 1, name or SHEET,
-                               budget or ByteBudget(BIG), report, widths)
+    part = f"xl/worksheets/sheet{sheet}.xml"
+    drafts = read_sheet_drafts(archive, part, sheet - 1, name or SHEET, budget or ByteBudget(BIG), report, drawing_id(archive, part))
     return drafts, report
+
+
+def drawing_id(archive, part):
+    """The ``r:id`` of a worksheet's ``<drawing>``, as the sheet readers' features find it, or ``None``."""
+    found = next((item for item in ET.fromstring(archive.read(part)).iter() if item.tag.endswith("}drawing")), None)
+    return None if found is None else next(value for key, value in found.attrib.items() if key.endswith("}id"))
 
 
 def one(xml, anchor=None, **options):
@@ -76,9 +82,6 @@ class AnchorTests(unittest.TestCase):
         drafts, _ = read(data)
         self.assertEqual(drafts[0]["size"], {"width": 448, "height": 300})
         self.assertFalse(drafts[0]["approximate_size"])
-        drafts, _ = read(data, widths=(lambda col: 100, lambda row: 30))
-        self.assertEqual(drafts[0]["size"], {"width": 700, "height": 450})
-        self.assertFalse(drafts[0]["approximate_size"])
         self.assertFalse(drafts[0]["absolute_anchor"])
 
     def test_one_cell_and_absolute_anchor(self):
@@ -90,10 +93,6 @@ class AnchorTests(unittest.TestCase):
         self.assertEqual((chart["anchor"], chart["offset"]), ({"row": 3, "col": 3}, {"x": 0, "y": 0}))
         self.assertEqual(chart["size"], {"width": 480, "height": 288})
         self.assertTrue(chart["absolute_anchor"])
-        data = xlsx_with_charts({SHEET: ""}, [{"sheet": SHEET, "xml": chart_xml(series=SERIES),
-                                               "anchor": absolute((1219200, 381000))}])
-        drafts, _ = read(data, widths=(lambda col: 100, lambda row: 30))
-        self.assertEqual((drafts[0]["anchor"], drafts[0]["offset"]), ({"row": 2, "col": 2}, {"x": 28, "y": 10}))
 
 
 class ChartPartTests(unittest.TestCase):
@@ -190,26 +189,15 @@ class BoundTests(unittest.TestCase):
     def test_frame_cap(self):
         charts = [{"sheet": SHEET, "name": f"C{n}", "xml": chart_xml(series=SERIES)} for n in range(300)]
         drafts, report = read(xlsx_with_charts({SHEET: ""}, charts))
-        self.assertEqual((xlsx_charts.MAX_FRAMES, len(drafts)), (256, 256))
+        self.assertEqual((MAX_FRAMES, len(drafts)), (256, 256))
         entries = [item for item in report.entries() if item["category"] == "chart.skipped"]
         self.assertEqual([(item["detail"], item["count"], item["samples"]) for item in entries],
                          [("unreadable", 44, [{"sheet": SHEET, "cell": "drawing"}])])
 
-    def test_measurement_steps_are_a_total(self):
+    def test_wide_anchor_is_measured_with_default_sizes(self):
         anchor = two_cell((0, 0, 0, 0), (5000, 0, 0, 0))
-        charts = [{"sheet": SHEET, "xml": chart_xml(series=SERIES), "anchor": anchor} for _ in range(10)]
-        calls = []
-
-        def column(index):
-            calls.append(index)
-            return 10
-        drafts, _ = read(xlsx_with_charts({SHEET: ""}, charts), widths=(column, lambda row: 20))
-        self.assertLessEqual(len(calls), xlsx_charts.MAX_STEPS)
-        self.assertEqual(len(drafts), 10)
-        flags = [item["approximate_size"] for item in drafts]
-        self.assertEqual(flags[:3], [False] * 3)
-        self.assertTrue(all(flags[5:]))
-        self.assertEqual(drafts[-1]["size"]["width"], 5000 * 64)
+        drafts, _ = read(xlsx_with_charts({SHEET: ""}, [{"sheet": SHEET, "xml": chart_xml(series=SERIES), "anchor": anchor}]))
+        self.assertEqual((drafts[0]["size"]["width"], drafts[0]["approximate_size"]), (5000 * 64, False))
 
     def test_off_grid_anchor_is_skipped_by_convert(self):
         anchor = two_cell((19999, 0, 0, 0), (20005, 0, 5, 0))

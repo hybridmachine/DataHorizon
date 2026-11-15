@@ -1,23 +1,22 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Read a worksheet's drawing and chart parts into format-neutral chart drafts (see import_charts.convert).
 
-Path: worksheet part -> its relationships -> the ``drawing`` relationship -> drawing part -> each anchor's
-graphicFrame -> ``r:id`` -> chart part.  Elements are matched by local name, so Transitional and Strict
-packages read alike.  Packages are untrusted: every part is read through a ``ChartParts`` allowance, relationship
-targets must stay inside the package, and a chart that cannot be read is reported and omitted, never raised.
+Path: worksheet part -> its relationships -> the relationship its ``<drawing r:id>`` names -> drawing part -> each
+anchor's graphicFrame -> ``r:id`` -> chart part.  Elements are matched by local name, so Transitional and Strict
+packages read alike.  Packages are untrusted: every part is read through the import's ``ChartParts`` (its
+allowance, its frame cap and its caches), relationship targets must stay inside the package, and a chart that cannot
+be read is reported and omitted, never raised.
 """
 import math
 import posixpath
 
 from .conversion_report import ConversionReport
-from .engine import MAX_COLS, MAX_ROWS, EngineError
-from .import_charts import (DEFAULT_COLUMN_PX, DEFAULT_GROUPING, DEFAULT_ROW_PX, EMPTY_TITLE, MAX_DRAFT_SERIES, MAX_STEPS,
-                            SKIPPED, STYLED, UNUSABLE, Steps, locate, parse_reference)
+from .engine import MAX_COLS, MAX_ROWS
+from .import_charts import (DEFAULT_COLUMN_PX, DEFAULT_GROUPING, DEFAULT_ROW_PX, EMPTY_TITLE, LEFT_OUT, MAX_DRAFT_SERIES,
+                            MAX_FRAMES, SKIPPED, STYLED, UNUSABLE, ChartParts, locate, parse_reference)
 from .xlsx_features import local, relationships_path
-from .xlsx_stream import ByteBudget, _read_whole
 
 EMU_PER_PIXEL = 9525
-MAX_FRAMES = 256  # graphic frames met in one worksheet drawing
 MAX_EMU = 1 << 40
 CHARTEX = "chartex"
 ANCHORS = ("twoCellAnchor", "oneCellAnchor", "absoluteAnchor")
@@ -56,40 +55,6 @@ def _namespace(tag):
 
 
 # Package access.
-
-def read_chart_part(archive, name, budget):
-    """The root of a package part, or ``None`` when it is missing, malformed or would exceed ``budget``.
-
-    A part that would not fit is not charged, so the budget is never exceeded and nothing is raised."""
-    try:
-        size = archive.getinfo(name).file_size
-    except (KeyError, ValueError):
-        return None
-    if budget.used + size > budget.limit:
-        return None
-    try:
-        return _read_whole(archive, name, budget)
-    except EngineError:
-        return None
-
-
-class ChartParts:
-    """The chart, drawing and relationship parts of one import, read against their own allowance.
-
-    One reader serves every sheet of an import, so the allowance (``import_charts.CHART_EXPANDED`` decompressed bytes
-    unless a ``budget`` is given) bounds the whole import, and the package budget that bounds the cells is never
-    charged.  Each distinct part is read, parsed and charged at most once; a part that is unreadable or would not fit
-    reads as ``None``, also once.  Parsed parts are only read, never changed."""
-    def __init__(self, budget=None):
-        from . import import_charts
-        self.budget = ByteBudget(import_charts.CHART_EXPANDED) if budget is None else budget
-        self.parts = {}
-
-    def read(self, archive, name):
-        if name not in self.parts:
-            self.parts[name] = read_chart_part(archive, name, self.budget)
-        return self.parts[name]
-
 
 def _resolve(base, target, names):
     """The package part a relationship of ``base`` names, or ``None`` if it leaves the package or is absent."""
@@ -150,33 +115,26 @@ def _attribute_pair(element, first, second):
     return _pixels(_number(element.get(first))), _pixels(_number(element.get(second)))
 
 
-def _distance(first, offset_first, last, offset_last, size, default, steps):
-    """Pixels from ``offset_first`` into 0-based cell ``first`` to ``offset_last`` into cell ``last``."""
-    total = offset_last - offset_first
-    index = first
-    while size is not None and index < last and steps.take():
-        total += size(index + 1)
-        index += 1
-    return total + max(last - index, 0) * default
+def _distance(first, offset_first, last, offset_last, default):
+    """Pixels from ``offset_first`` into 0-based cell ``first`` to ``offset_last`` into cell ``last``, on cells of ``default`` pixels."""
+    return offset_last - offset_first + max(last - first, 0) * default
 
 
-def _placement(anchor, widths, steps):
-    """``(row, col), (x, y), (width, height), absolute`` of a drawing anchor element."""
-    column, row = widths if widths is not None else (None, None)
+def _placement(anchor):
+    """``(row, col), (x, y), (width, height), absolute`` of a drawing anchor element, measured with default cell sizes."""
     kind = local(anchor.tag)
     if kind == "twoCellAnchor":
         col1, x1, row1, y1 = _corner(_kid(anchor, "from"))
         col2, x2, row2, y2 = _corner(_kid(anchor, "to"))
-        size = (max(_distance(col1, x1, col2, x2, column, DEFAULT_COLUMN_PX, steps), 0),
-                max(_distance(row1, y1, row2, y2, row, DEFAULT_ROW_PX, steps), 0))
+        size = (max(_distance(col1, x1, col2, x2, DEFAULT_COLUMN_PX), 0), max(_distance(row1, y1, row2, y2, DEFAULT_ROW_PX), 0))
         return (row1 + 1, col1 + 1), (x1, y1), size, False
     size = _attribute_pair(_kid(anchor, "ext"), "cx", "cy")
     if kind == "oneCellAnchor":
         col1, x1, row1, y1 = _corner(_kid(anchor, "from"))
         return (row1 + 1, col1 + 1), (x1, y1), size, False
     x, y = _attribute_pair(_kid(anchor, "pos"), "x", "y")
-    col, offset_x = locate(x, column, DEFAULT_COLUMN_PX, MAX_COLS, steps)
-    number, offset_y = locate(y, row, DEFAULT_ROW_PX, MAX_ROWS, steps)
+    col, offset_x = locate(x, DEFAULT_COLUMN_PX, MAX_COLS)
+    number, offset_y = locate(y, DEFAULT_ROW_PX, MAX_ROWS)
     return (number, col), (offset_x, offset_y), size, True
 
 
@@ -396,75 +354,104 @@ def _frame_name(frame, number):
     return name or f"Chart {number}"
 
 
-def _draft(archive, drawing, links, placed, frame, order, position, label, parts, names):
+EXTENDED = "extended"  # a frame's chart that is a ``cx:chart``, whose part is not read
+
+
+def _frame_entry(anchor, frame, grouped, label, placed, drawing, links, names):
+    """What reading a frame needs, kept instead of the drawing's tree: its label and, unless it is grouped, its
+    placement (``None`` when unreadable) and its chart (``EXTENDED``, the chart part, or ``None`` when unresolvable)."""
+    if grouped:
+        return {"label": label, "grouped": True}
     element = _chart_element(frame)
-    (cell, offset, size, absolute), approximate = placed
     if CHARTEX in _namespace(element.tag):
-        body = _extended()
+        chart = EXTENDED
     else:
         link = links.get(_relationship_id(element))
-        part = _resolve(drawing, link[1], names) if link is not None and link[0] == "chart" else None
-        root = parts.read(archive, part) if part is not None else None
-        if root is None:
-            raise _Unreadable
-        body = _read_chart(root)
-    return {"sheet": position, "name": label, "order": order, **body,
-            "anchor": {"row": cell[0], "col": cell[1]}, "offset": {"x": offset[0], "y": offset[1]},
-            "size": {"width": size[0], "height": size[1]}, "approximate_size": approximate, "absolute_anchor": absolute}
+        chart = _resolve(drawing, link[1], names) if link is not None and link[0] == "chart" else None
+    return {"label": label, "grouped": False, "placed": placed, "one_cell": local(anchor.tag) == "oneCellAnchor", "chart": chart}
 
 
-def read_sheet_drafts(archive, sheet_part, position, sheet_name, parts, report: ConversionReport, widths=None, *,
+def _drawing_frames(archive, drawing, parts, names, room):
+    """``(entries, count)`` of a drawing part: the ``_frame_entry`` of its first ``room`` chart frames and how many
+    chart frames it holds, or ``None`` when the drawing or its relationships cannot be read.  The parsed drawing is
+    released when this returns."""
+    root = parts.read(archive, drawing)
+    links = _relationships(archive, drawing, parts, names) if root is not None else None
+    if links is None:
+        return None
+    entries, count = [], 0
+    for anchor in _anchors(root):
+        placement = []  # the anchor's placement (None: unreadable), computed on its first frame that is kept
+        for frame, grouped in _frames(anchor):
+            if count < room:
+                if not placement and not grouped:
+                    try:
+                        placement.append(_placement(anchor))
+                    except _Unreadable:
+                        placement.append(None)
+                entries.append(_frame_entry(anchor, frame, grouped, _frame_name(frame, count + 1),
+                                            placement[0] if placement else None, drawing, links, names))
+            count += 1
+    return entries, count
+
+
+def read_sheet_drafts(archive, sheet_part, position, sheet_name, parts, report: ConversionReport, drawing_id, *,
                       sizes_unknown=False) -> list:
     """Drafts of the charts in a worksheet's drawing, in drawing order.
 
-    ``parts`` is the import's ``ChartParts`` (a ``ByteBudget`` reads under that budget, with a reader of its own).
-    Unreadable and grouped charts are reported (``chart.skipped``) and left out, as are the frames past
-    ``MAX_FRAMES``.  ``widths`` is an optional ``(column_width_px(col), row_height_px(row))`` pair of callables
-    over 1-based indexes; without it the default cell sizes, 64 and 20 pixels, are used.  The callables are asked
-    at most ``MAX_STEPS`` times for the whole worksheet; spans measured after that use the default sizes and
-    their drafts are marked ``approximate_size``.  ``sizes_unknown`` says the worksheet declares cell sizes that
-    ``widths`` does not supply: every draft placed by measuring cells (all but one-cell anchors) is then marked too."""
+    ``drawing_id`` is the ``r:id`` of the worksheet's ``<drawing>`` (``None``: the sheet has none); only that
+    relationship is followed.  ``parts`` is the import's ``ChartParts`` (a ``ByteBudget`` reads under that budget,
+    with a reader of its own).  Unreadable and grouped charts are reported (``chart.skipped``) and left out, as are
+    the frames past the import's ``MAX_FRAMES``, counted in one entry.  Charts are measured with the default cell
+    sizes, 64 and 20 pixels; ``sizes_unknown`` says the worksheet declares other cell sizes, so every draft placed by
+    measuring cells (all but one-cell anchors) is marked ``approximate_size``."""
     def skip(detail, label, count=1):
         report.add(SKIPPED, "omitted", detail, sheet=sheet_name, cell=label[:32], count=count)
 
     if not isinstance(parts, ChartParts):
         parts = ChartParts(parts)
-    names = set(archive.namelist())
+    if drawing_id is None:
+        return []
+    names = parts.names(archive)
     related = _relationships(archive, sheet_part, parts, names)
-    if related is None:
+    link = related.get(drawing_id) if related is not None else None
+    drawing = _resolve(sheet_part, link[1], names) if link is not None and link[0] == "drawing" else None
+    room = MAX_FRAMES - parts.frames
+    found = parts.drawing(drawing, lambda: _drawing_frames(archive, drawing, parts, names, room)) if drawing is not None else None
+    if found is None:
         skip("unreadable", "drawing")
         return []
-    drafts, steps = [], Steps()
-    for kind, target in related.values():
-        if kind != "drawing":
+    entries, count = found
+    drafts, unread = [], count - len(entries)
+    for order, entry in enumerate(entries):
+        parts.tick()
+        if parts.frames >= MAX_FRAMES:
+            unread += 1
             continue
-        drawing = _resolve(sheet_part, target, names)
-        root = parts.read(archive, drawing) if drawing is not None else None
-        links = _relationships(archive, drawing, parts, names) if root is not None else None
-        if links is None:
-            skip("unreadable", "drawing")
+        parts.frames += 1
+        label = entry["label"]
+        if entry["grouped"]:
+            skip("grouped", label)
             continue
-        order = unread = 0
-        for anchor in _anchors(root):
-            placed = None  # computed once for the anchor, on its first frame that is read
-            for frame, grouped in _frames(anchor):
-                label = _frame_name(frame, order + 1)
-                if order >= MAX_FRAMES:
-                    unread += 1
-                elif grouped:
-                    skip("grouped", label)
-                else:
-                    try:
-                        if placed is None:
-                            steps.exhausted = False
-                            measured = sizes_unknown and local(anchor.tag) != "oneCellAnchor"
-                            placed = (_placement(anchor, widths, steps), steps.exhausted or measured)
-                        drafts.append(_draft(archive, drawing, links, placed, frame, order, position, label, parts, names))
-                    except Exception:  # an untrusted chart never fails the import, whatever is wrong with it
-                        skip("unreadable", label)
-                order += 1
-        if unread:
-            skip("unreadable", "drawing", unread)
+        chart = entry["chart"]
+        body = None
+        if entry["placed"] is not None and chart is not None:
+            body = _extended() if chart is EXTENDED else parts.body(archive, chart, _read_chart)
+        if body is LEFT_OUT:
+            skip("workbook_limit", label)
+            continue
+        if body is None:
+            skip("unreadable", label)
+            continue
+        cell, offset, size, absolute = entry["placed"]
+        draft = parts.draft(body, {"sheet": position, "name": label, "order": order,
+                                   "anchor": {"row": cell[0], "col": cell[1]}, "offset": {"x": offset[0], "y": offset[1]},
+                                   "size": {"width": size[0], "height": size[1]},
+                                   "approximate_size": sizes_unknown and not entry["one_cell"], "absolute_anchor": absolute}, report)
+        if draft is not None:
+            drafts.append(draft)
+    if unread:
+        skip("unreadable", "drawing", unread)
     return drafts
 
 
@@ -479,9 +466,13 @@ def sizes_declared(features) -> bool:
 def worksheet_drafts(archive, sheet_part, position, sheet_name, parts, report: ConversionReport, features) -> list:
     """``read_sheet_drafts`` for a worksheet the whole-workbook readers have read, given its ``SheetFeatures``.
 
-    ``features`` must have reported.  Only a worksheet with a ``<drawing>`` element shows charts, so no other is read.
-    Its column widths and row heights are not kept per cell, so a sheet with custom sizes has its measured drafts marked
-    ``approximate_size``.  ``parts`` is the import's ``ChartParts``."""
+    ``features`` must have reported.  Only a worksheet with a ``<drawing>`` element shows charts, so no other is read,
+    and only the relationship its first ``<drawing>`` names is followed (a worksheet has at most one; any other is
+    reported as one unreadable drawing).  Its column widths and row heights are not kept per cell, so a sheet with
+    custom sizes has its measured drafts marked ``approximate_size``.  ``parts`` is the import's ``ChartParts``."""
     if "drawings" not in features.counts:
         return []
-    return read_sheet_drafts(archive, sheet_part, position, sheet_name, parts, report, sizes_unknown=sizes_declared(features))
+    if features.drawings > 1:
+        report.add(SKIPPED, "omitted", "unreadable", sheet=sheet_name, cell="drawing", count=features.drawings - 1)
+    return read_sheet_drafts(archive, sheet_part, position, sheet_name, parts, report, features.drawing_id,
+                             sizes_unknown=sizes_declared(features))

@@ -153,6 +153,7 @@ class SheetFeatures:
         self.counts = {}
         self.relationships = relationships or Relationships()
         self.legacy_drawing = False
+        self.drawing_id, self.drawings = None, 0  # the r:id of the first <drawing>, and how many the sheet holds
         self._found_in_extension = False
         self.default_width = None
         self.rows = self.columns = 0  # <row> and <col> elements seen
@@ -278,6 +279,12 @@ class SheetFeatures:
             if numbered or any(item.get(key) is not None and item.get(key) not in values for key, values in PAGE_DEFAULTS.items()):
                 self.counts["page_setup"] = 1
         elif name in SHEET_ELEMENTS:
+            if name == "drawing":
+                # The chart readers follow the relationship the first <drawing> names (xlsx_charts.worksheet_drafts).
+                self.drawings += 1
+                if self.drawings == 1:
+                    self.drawing_id = next((value for key, value in item.attrib.items()
+                                            if key.startswith("{") and key.endswith("}id") and "relationships" in key), None)
             feature = SHEET_ELEMENTS[name]
             if feature == "page_setup": self.counts["page_setup"] = 1
             else: self.add(feature)

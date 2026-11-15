@@ -2,10 +2,10 @@
 """Read a ``draw:frame`` chart object of an ODS worksheet into a format-neutral chart draft (see import_charts.convert).
 
 The frame names an object directory of the package; its ``content.xml`` holds ``office:chart`` with one
-``chart:chart``.  Packages are untrusted: the object's part is read only through the ``read_part`` callable the
-caller passes (so the caller's budget applies), the object's path must stay inside the package, and a chart that
-cannot be read is reported and omitted, never raised.  A frame that holds something else (an image, a formula, an
-embedded document) is not a chart and is passed over without a report.
+``chart:chart``.  Packages are untrusted: the object's part is read only through the import's ``ChartParts`` (its
+allowance, its frame cap and its caches), the object's path must stay inside the package, and a chart that cannot be
+read is reported and omitted, never raised.  A frame that holds something else (an image, a formula, an embedded
+document) is not a chart and is passed over without a report.
 """
 import math
 import re
@@ -13,8 +13,8 @@ import xml.etree.ElementTree as ET
 
 from .conversion_report import ConversionReport
 from .engine import MAX_COLS, MAX_ROWS
-from .import_charts import (DEFAULT_COLUMN_PX, DEFAULT_GROUPING, DEFAULT_ROW_PX, EMPTY_TITLE, MAX_DRAFT_SERIES, MAX_STEPS,
-                            SKIPPED, STYLED, Steps, locate, parse_reference)
+from .import_charts import (DEFAULT_COLUMN_PX, DEFAULT_GROUPING, DEFAULT_ROW_PX, EMPTY_TITLE, LEFT_OUT, MAX_DRAFT_SERIES,
+                            MAX_FRAMES, SKIPPED, STYLED, ChartParts, locate, parse_reference)
 from .ods import F as FO, O, T, X, Y, q
 from .ods_features import CHART, DRAW, SVG, XLINK
 
@@ -86,17 +86,16 @@ def _pixels(text, default=0):
     return max(0, min(int(float(found.group(1)) * PIXELS[found.group(2)] + 0.5), MAX_PIXELS))
 
 
-def _placement(frame, cell, widths):
-    """``(row, col), (x, y), (width, height), absolute, approximate`` of a frame."""
+def _placement(frame, cell):
+    """``(row, col), (x, y), (width, height), absolute`` of a frame; a frame outside a cell is placed by its absolute
+    position, measured with the default cell sizes."""
     x, y = _pixels(frame.get(q(SVG, "x"))), _pixels(frame.get(q(SVG, "y")))
     size = (_pixels(frame.get(q(SVG, "width"))), _pixels(frame.get(q(SVG, "height"))))
     if cell is not None:
-        return (cell[0], cell[1]), (x, y), size, False, False
-    column, row = widths if widths is not None else (None, None)
-    steps = Steps()
-    col, offset_x = locate(x, column, DEFAULT_COLUMN_PX, MAX_COLS, steps)
-    number, offset_y = locate(y, row, DEFAULT_ROW_PX, MAX_ROWS, steps)
-    return (number, col), (offset_x, offset_y), size, True, steps.exhausted
+        return (cell[0], cell[1]), (x, y), size, False
+    col, offset_x = locate(x, DEFAULT_COLUMN_PX, MAX_COLS)
+    number, offset_y = locate(y, DEFAULT_ROW_PX, MAX_ROWS)
+    return (number, col), (offset_x, offset_y), size, True
 
 
 # The chart.
@@ -233,33 +232,49 @@ def _read_chart(root):
             "series": series, "styled": _styled(chart, styles)}
 
 
-def read_frame_draft(archive, frame: ET.Element, position: int, sheet_name: str, order: int, read_part,
-                     report: ConversionReport, cell, widths=None):
+NOT_CHART = object()  # the body of an object that is not a chart
+
+
+def _chart_body(root):
+    try:
+        return _read_chart(root)
+    except _NotChart:
+        return NOT_CHART
+
+
+def read_frame_draft(archive, frame: ET.Element, position: int, sheet_name: str, order: int, parts,
+                     report: ConversionReport, cell, *, claim=True):
     """The draft of the chart a ``draw:frame`` holds, or ``None``.
 
-    ``None`` without a report: the frame is not a chart object.  ``None`` with a ``chart.skipped`` entry
-    (``unreadable``): the object cannot be read.  ``read_part(archive, name)`` returns the parsed root of a package
-    part under the caller's budget.  ``cell`` is the 1-based ``(row, col)`` of the cell holding the frame, or
-    ``None`` for a frame in ``table:shapes``, which is placed by its absolute position.  ``widths`` is an optional
-    ``(column_width_px(col), row_height_px(row))`` pair of callables over 1-based indexes; without it the default
-    cell sizes, 64 and 20 pixels, are used.  The callables are asked at most ``MAX_STEPS`` times for a frame; past
-    that the default sizes are used and the draft is marked ``approximate_size``."""
+    ``None`` without a report: the frame is not a chart object.  ``None`` with a ``chart.skipped`` entry: the object
+    cannot be read (``unreadable``), or no further chart can be imported (``workbook_limit`` and whatever ``convert``
+    would report; an object not yet read is then not read, so it is reported ``workbook_limit`` even if it is not a
+    chart).  ``parts`` is the import's ``ChartParts`` (a callable ``read_part(archive, name)`` returning the parsed
+    root of a part gets a reader of its own).  ``cell`` is the 1-based ``(row, col)`` of the cell holding the frame,
+    or ``None`` for a frame in ``table:shapes``, which is placed by its absolute position on the default cell sizes,
+    64 and 20 pixels.  ``claim=False`` keeps the draft from counting toward the import's chart limit (a grouped chart,
+    which is reported and left out)."""
+    if not isinstance(parts, ChartParts):
+        parts = ChartParts(reader=parts)
     label = frame.get(NAME) or f"Chart {order + 1}"
     try:
         element = _kid(frame, DRAW, "object")
         if element is None:
             return None
-        part = _object_content(element.get(HREF), set(archive.namelist()))
-        root = read_part(archive, part) if part is not None else None
-        if root is None:
+        part = _object_content(element.get(HREF), parts.names(archive))
+        body = parts.body(archive, part, _chart_body) if part is not None else None
+        if body is NOT_CHART:
+            return None
+        if body is LEFT_OUT:
+            report.add(SKIPPED, "omitted", "workbook_limit", sheet=sheet_name, cell=label[:32], count=1)
+            return None
+        if body is None:
             raise _Unreadable
-        body = _read_chart(root)
-        (row, col), (x, y), (width, height), absolute, approximate = _placement(frame, cell, widths)
-        return {"sheet": position, "name": label, "order": order, **body,
-                "anchor": {"row": row, "col": col}, "offset": {"x": x, "y": y},
-                "size": {"width": width, "height": height}, "approximate_size": approximate, "absolute_anchor": absolute}
-    except _NotChart:
-        return None
+        (row, col), (x, y), (width, height), absolute = _placement(frame, cell)
+        return parts.draft(body, {"sheet": position, "name": label, "order": order,
+                                  "anchor": {"row": row, "col": col}, "offset": {"x": x, "y": y},
+                                  "size": {"width": width, "height": height}, "approximate_size": False,
+                                  "absolute_anchor": absolute}, report, claim=claim)
     except Exception:  # an untrusted chart never fails the import, whatever is wrong with it
         report.add(SKIPPED, "omitted", "unreadable", sheet=sheet_name, cell=label[:32], count=1)
         return None
@@ -276,22 +291,25 @@ ROW_GROUPS = (q(T, "table-row-group"), q(T, "table-header-rows"), q(T, "table-ro
 class SheetFrames:
     """The drafts of one ``table:table``'s chart frames, read in document order as a reader meets them.
 
-    At most ``xlsx_charts.MAX_FRAMES`` object frames are read per sheet; the rest are reported once, with their count,
-    by ``finish``.  A chart in a ``draw:g`` group is reported as ``grouped`` and left out."""
-    def __init__(self, archive, position, sheet_name, read_part, report):
-        self.archive, self.position, self.sheet_name, self.read_part, self.report = archive, position, sheet_name, read_part, report
+    ``parts`` is the import's ``ChartParts``: at most ``MAX_FRAMES`` object frames are read in the whole import; this
+    sheet's frames past that are reported once, with their count, by ``finish``.  A chart in a ``draw:g`` group is
+    reported as ``grouped`` and left out."""
+    def __init__(self, archive, position, sheet_name, parts, report):
+        self.archive, self.position, self.sheet_name, self.parts, self.report = archive, position, sheet_name, parts, report
         self.drafts, self.order, self.unread, self.last = [], 0, 0, None
 
     def frame(self, frame, cell, grouped):
         """A ``draw:frame`` holding a ``draw:object``; ``cell`` as ``read_frame_draft`` takes it.  A frame is read once."""
-        from .xlsx_charts import MAX_FRAMES
         if frame is self.last:
             return
         self.last = frame
-        if self.order >= MAX_FRAMES:
+        self.parts.tick()
+        if self.parts.frames >= MAX_FRAMES:
             self.unread += 1
             return
-        draft = read_frame_draft(self.archive, frame, self.position, self.sheet_name, self.order, self.read_part, self.report, cell)
+        self.parts.frames += 1
+        draft = read_frame_draft(self.archive, frame, self.position, self.sheet_name, self.order, self.parts, self.report, cell,
+                                 claim=not grouped)
         self.order += 1
         if draft is None:
             return

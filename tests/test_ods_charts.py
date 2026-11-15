@@ -4,7 +4,6 @@ import unittest
 import zipfile
 
 from chart_fixtures import ods_chart_xml, ods_title, ods_with_charts, sample_like
-from datahorizon import ods_charts
 from datahorizon.conversion_report import ConversionReport
 from datahorizon.import_charts import MAX_DRAFT_SERIES, UNUSABLE, convert
 from datahorizon.interchange import read_xml
@@ -42,7 +41,7 @@ def frames(archive):
     return found
 
 
-def read(data, widths=None, order=None, report=None):
+def read(data, order=None, report=None):
     """Drafts (``None`` for an unread frame) of every frame of a package, with the report."""
     archive = zipfile.ZipFile(io.BytesIO(data))
     report = report or ConversionReport()
@@ -50,7 +49,7 @@ def read(data, widths=None, order=None, report=None):
     for number, (name, frame, cell) in enumerate(frames(archive)):
         sheets = [item.get(q(T, "name")) for item in read_xml(archive, "content.xml").iter(q(T, "table"))]
         drafts.append(read_frame_draft(archive, frame, sheets.index(name), name, number if order is None else order,
-                                       read_part, report, cell, widths))
+                                       read_part, report, cell))
     return drafts, report
 
 
@@ -97,7 +96,7 @@ class SampleTests(unittest.TestCase):
 def _xlsx_drafts(data, number, name):
     archive = zipfile.ZipFile(io.BytesIO(data))
     report = ConversionReport()
-    return read_sheet_drafts(archive, f"xl/worksheets/sheet{number}.xml", number - 1, name, ByteBudget(BIG), report), report
+    return read_sheet_drafts(archive, f"xl/worksheets/sheet{number}.xml", number - 1, name, ByteBudget(BIG), report, "rId1"), report
 
 
 class ChartPartTests(unittest.TestCase):
@@ -264,12 +263,11 @@ class PlacementTests(unittest.TestCase):
                 chart = one(ods_chart_xml(series=SERIES), cell=(1, 1), x=value, y="0cm", width=value, height=value)
                 self.assertEqual((chart["offset"]["x"], chart["size"]), (96, {"width": 96, "height": 96}))
 
-    def test_absolute_position_uses_the_cell_sizes_asked_for(self):
+    def test_absolute_position_uses_the_default_cell_sizes(self):
         chart = one(ods_chart_xml(series=SERIES), x="2.54cm", y="1.27cm")
-        self.assertEqual(chart["anchor"], {"row": 3, "col": 2})
-        data = ods_with_charts({SHEET: ""}, [{"sheet": SHEET, "xml": ods_chart_xml(series=SERIES), "x": "2.54cm", "y": "1.27cm"}])
-        drafts, _ = read(data, widths=(lambda col: 100, lambda row: 30))
-        self.assertEqual((drafts[0]["anchor"], drafts[0]["offset"]), ({"row": 2, "col": 1}, {"x": 96, "y": 18}))
+        self.assertEqual((chart["anchor"], chart["offset"]), ({"row": 3, "col": 2}, {"x": 32, "y": 8}))
+        far = one(ods_chart_xml(series=SERIES), x="10px", y="5000000px")
+        self.assertEqual((far["anchor"], far["offset"], far["approximate_size"]), ({"row": 250001, "col": 1}, {"x": 10, "y": 0}, False))
 
     def test_unreadable_lengths(self):
         for label, extra in (("percent", {"width": "50%"}), ("words", {"x": "left"}), ("malformed", {"y": "1.2.3cm"}),
@@ -278,27 +276,6 @@ class PlacementTests(unittest.TestCase):
                 drafts, report = read(ods_with_charts({SHEET: ""}, [{"sheet": SHEET, "xml": ods_chart_xml(series=SERIES), **extra}]))
                 self.assertEqual(drafts, [None])
                 self.assertEqual([item[0] for item in skipped(report)], ["unreadable"])
-
-
-class BoundTests(unittest.TestCase):
-    def test_measurement_steps_are_a_total(self):
-        calls = []
-        # 5,000,000 px down is far past MAX_STEPS rows of 1 px: the rest is measured with the default 20 px rows.
-        data = ods_with_charts({SHEET: ""}, [{"sheet": SHEET, "xml": ods_chart_xml(series=SERIES), "x": "10px", "y": "5000000px"}])
-        drafts, _ = read(data, widths=(lambda col: calls.append(col) or 64, lambda row: calls.append(row) or 1))
-        self.assertEqual(len(calls), ods_charts.MAX_STEPS)
-        self.assertTrue(drafts[0]["approximate_size"])
-        self.assertTrue(drafts[0]["absolute_anchor"])
-        walked = ods_charts.MAX_STEPS - 1  # the first step went to the column
-        self.assertEqual(drafts[0]["anchor"], {"row": 1 + walked + (5_000_000 - walked) // 20, "col": 1})
-
-    def test_steps_do_not_carry_between_calls(self):
-        calls = []
-        y = "5000000px"
-        data = ods_with_charts({SHEET: ""}, [{"sheet": SHEET, "xml": ods_chart_xml(series=SERIES), "x": "0px", "y": y}] * 2)
-        drafts, _ = read(data, widths=(lambda col: 64, lambda row: calls.append(row) or 1))
-        self.assertEqual(len(calls), 2 * (ods_charts.MAX_STEPS - 1))  # one step of each frame went to a column
-        self.assertEqual([item["approximate_size"] for item in drafts], [True, True])
 
 
 class ObjectTests(unittest.TestCase):

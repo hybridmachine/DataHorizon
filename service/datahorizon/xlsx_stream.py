@@ -415,9 +415,10 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: 
         conversions = ConversionReport()
         workbook_features(conversions, workbook, ns, archive.namelist(), string_features, skipped)
         progress = _Progress(checkpoint)
-        from .import_charts import Collector
-        from .xlsx_charts import ChartParts, worksheet_drafts
-        charts, chart_parts = Collector(), ChartParts()
+        from .import_charts import ChartParts, Collector
+        from .xlsx_charts import worksheet_drafts
+        charts = Collector()
+        chart_parts = ChartParts(collector=charts, sheet_names=names, checkpoint=lambda: checkpoint(progress.cells, "Reading charts"))
         for position, (sheet, name) in enumerate(zip(sheets, names)):
             checkpoint(progress.cells, "Reading sheet "+name)
             # One report per sheet, merged as the tree reader merges them; styles report into the open sheet.

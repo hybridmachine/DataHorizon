@@ -181,16 +181,16 @@ class _SheetReader:
 def _read_sheets(archive, names, styles, base, sink, progress, conversions, survey):
     """Second pass over content.xml: convert every sheet's cells into the sink and report each sheet's features; hand
     the sink every sheet's charts after the last sheet. Chart objects are read against their own allowance."""
-    from .import_charts import Collector
+    from .import_charts import ChartParts, Collector
     from .ods_charts import FRAME, GROUP, OBJECT, SheetFrames, sizes_declared
-    from .xlsx_charts import ChartParts
     layout, workbook, panes = survey
     mapped = mapped_styles(styles.styles)
     tags, stack, elements = [], [], 0
     sheet = reader = features = frames = None
     row_depth = None
     index = 0
-    charts, read_object = Collector(), ChartParts().read
+    charts = Collector()
+    chart_parts = ChartParts(collector=charts, sheet_names=names, checkpoint=lambda: progress.checkpoint(progress.cells, "Reading charts"))
     budget = xlsx_stream.ByteBudget(xlsx_stream.LARGE_EXPANDED)  # the same bytes the first pass already bounded
     for event, item in xlsx_stream.read_part(archive, "content.xml", budget, record_tags=RECORDS):
         if event == "start":
@@ -209,7 +209,7 @@ def _read_sheets(archive, names, styles, base, sink, progress, conversions, surv
                 sink.sheet(name)
                 reader = _SheetReader(sink, context, progress)
                 features = OdsSheetFeatures(layout, mapped, panes.get(name))
-                frames = SheetFrames(archive, index-1, name, read_object, sheet)
+                frames = SheetFrames(archive, index-1, name, chart_parts, sheet)
             elif (item.tag == ROW and reader is not None and row_depth is None and len(tags) >= 5 and tags[:4] == SHEET_PATH
                   and all(tag in ROW_GROUPS for tag in tags[4:-1])):
                 row_depth = len(tags)

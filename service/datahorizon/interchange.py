@@ -543,7 +543,7 @@ def read_book(archive):
     return book
 
 
-def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None,charts=None,chart_parts=None):
+def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None,chart_parts=None):
     selected=integer(request.get("sheet_index",1),1,MAX_SHEET_INDEX,"sheet_index")
     selected_mode=mode(request)
     require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
@@ -599,14 +599,13 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         sheet_features.report(conversions,sheet_label)
         # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules, against the
         # shared allowance and workbook limit. A selection reads this sheet's charts alone, then rebases and shifts them.
-        from .import_charts import Collector, for_sheet
-        from .xlsx_charts import ChartParts, worksheet_drafts
+        from .import_charts import for_sheet
+        from .xlsx_charts import worksheet_drafts
         names=sheet_names if sheet_names is not None else [name for _,name in book.worksheets()]
         position=names.index(sheet_label) if sheet_names is not None else [index for index,_ in book.worksheets()].index(selected)
-        charts=Collector() if charts is None else charts
-        chart_parts=ChartParts() if chart_parts is None else chart_parts
+        if chart_parts is None: chart_parts=chart_reader(names,checkpoint)
         drafts=worksheet_drafts(archive,part,position,sheet_label,chart_parts,conversions,sheet_features)
-        records=[record for draft in drafts if (record:=charts.add(draft,names,conversions)) is not None]
+        records=[record for draft in drafts if (record:=chart_parts.collector.add(draft,names,conversions)) is not None]
         if sheet_names is None: records=for_sheet(records,position,shift[0]+1,shift[1]+1,sheet_label,conversions)
         if shared_formulas and shared_formulas.groups: report.append("Shared formulas expand to explicit per-cell sources with relative/absolute reference translation; caches are discarded.")
         report.extend(STYLE_SCOPE_LINES)
@@ -795,24 +794,29 @@ def preparation_scope(request):
     return value
 
 
+def chart_reader(names,checkpoint):
+    """The chart reading of one bounded preparation (import_charts.ChartParts) over its worksheet names, with its collector."""
+    from .import_charts import ChartParts, Collector
+    return ChartParts(collector=Collector(),sheet_names=names,checkpoint=lambda:checkpoint(0,"Reading charts"))
+
+
 def prepare_workbook(request,checkpoint,names,prepare,indexes=None,scope=()):
     """`indexes` are the sheet_index of each name (by default 1, 2, ...): a package's sheets that are not imported
     (XLSX chart, dialog and macro sheets) take no name but keep their place in the index. `scope` are the format's
     fixed report lines after workbook_report(); the result's report is those scope lines, then one line per entry.
     Each sheet's charts are converted against one workbook limit and read against one chart allowance, carried as
     workbook_charts and listed in charts."""
-    from .import_charts import Collector, summary
-    from .xlsx_charts import ChartParts
+    from .import_charts import summary
     validate_sheet_names(names)
     require(request.get("row",1)==1 and request.get("col",1)==1,"INVALID_ARGUMENT","Whole-workbook import uses original coordinates")
     require(names,"INVALID_SPREADSHEET","Workbook has no sheets")
     result={"scope":"workbook","workbook_sheets":[],"stored_cells":0,"issues":[],"can_import":True,"workbook_charts":[]}
     conversions=ConversionReport()
-    charts,chart_parts=Collector(),ChartParts()
+    chart_parts=chart_reader(names,checkpoint)
     size=0
     for index,name in enumerate(names,1):
         checkpoint(index-1,"Reading sheet "+name)
-        part=prepare({**request,"scope":"selection","sheet_index":indexes[index-1] if indexes else index},checkpoint,sheet_names=names,charts=charts,chart_parts=chart_parts)
+        part=prepare({**request,"scope":"selection","sheet_index":indexes[index-1] if indexes else index},checkpoint,sheet_names=names,chart_parts=chart_parts)
         result["workbook_charts"]+=part.pop("_charts")
         # Every sheet's preparation reads the same workbook features; they are reported once, first.
         wide=part.pop("_workbook")
