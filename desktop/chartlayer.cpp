@@ -10,9 +10,10 @@
 #include <QSvgRenderer>
 #include <QTableView>
 #include <QTimer>
+#include <QUuid>
 #include <algorithm>
 
-ChartOverlay::ChartOverlay(const QString &chartId,QWidget *parent):QWidget(parent) {
+ChartOverlay::ChartOverlay(const QString &chartId,QWidget *parent):QWidget(parent),m_renderer(new QSvgRenderer(this)) {
     setObjectName("chartOverlay");setProperty("chartId",chartId);
     setAttribute(Qt::WA_TransparentForMouseEvents);setFocusPolicy(Qt::NoFocus);
 }
@@ -21,9 +22,9 @@ void ChartOverlay::setChart(const QJsonObject &chart) {
     m_chart=chart;setAccessibleName(chart["name"].toString());update();
 }
 
-void ChartOverlay::setSvg(const QByteArray &svg) {
-    if(svg.isEmpty())return;
-    m_svg=svg;update();
+bool ChartOverlay::setSvg(const QByteArray &svg) {
+    if(svg.isEmpty() || !QSvgRenderer(svg).isValid())return false;
+    m_svg=svg;m_renderer->load(svg);update();return true;
 }
 
 void ChartOverlay::setPlaceholder(const QString &reason) {
@@ -37,10 +38,7 @@ QString ChartOverlay::placeholder() const {
 void ChartOverlay::paintEvent(QPaintEvent *) {
     QPainter painter(this);
     painter.fillRect(rect(),palette().base());
-    if(hasImage()) {
-        QSvgRenderer renderer(m_svg);
-        if(renderer.isValid()){renderer.render(&painter,rect());return;}
-    }
+    if(hasImage()){m_renderer->render(&painter,QRectF(rect()));return;}
     painter.setPen(palette().color(QPalette::Mid));painter.drawRect(rect().adjusted(0,0,-1,-1));
     painter.setPen(palette().color(QPalette::Text));
     painter.drawText(rect().adjusted(8,8,-8,-8),Qt::AlignCenter|Qt::TextWordWrap,placeholder());
@@ -67,6 +65,16 @@ ChartLayer::ChartLayer(RestClient *client,QTableView *body,FrozenPanes *frozen,Q
     connect(model,&QAbstractItemModel::columnsInserted,this,&ChartLayer::queueRelayout);
     connect(model,&QAbstractItemModel::columnsRemoved,this,&ChartLayer::queueRelayout);
     for(QWidget *widget:{gridArea,static_cast<QWidget *>(frozen),frozen->leftWidget()})widget->installEventFilter(this);
+    m_renderTimer.setSingleShot(true);m_renderTimer.setInterval(RelayoutRenderDelayMs);
+    connect(&m_renderTimer,&QTimer::timeout,this,&ChartLayer::renderQueued);
+    m_busyTimer.setSingleShot(true);
+    connect(&m_busyTimer,&QTimer::timeout,this,[this]{m_busy=false;renderQueued();});
+}
+
+// A job still being started is retired by its start answer.
+ChartLayer::~ChartLayer() {
+    for(const auto &job:std::as_const(m_jobs))
+        if(job.started && m_client && job.clientGeneration==m_client->generation())retire(m_client,job.base+"/charts/jobs/"+job.id,true);
 }
 
 QList<ChartOverlay *> ChartLayer::overlays() const {
@@ -85,6 +93,8 @@ void ChartLayer::bind(const QString &workbookBase,const QString &sheet,const QSt
     // Another sheet's charts never stay on screen while this one's are read;
     // a new state of the same sheet keeps the overlays until the list lands.
     if(!sameSheet)clear();else ++m_generation;
+    // Renders of another sheet, workbook or state are never shown.
+    abandonUnwanted();
     if(!m_base.isEmpty() && !m_sheet.isEmpty() && !m_state.isEmpty())list();
     relayout();
 }
@@ -130,18 +140,19 @@ void ChartLayer::accept(const QJsonArray &charts) {
         overlay->setChart(chart);
         const auto reason=reasonFor(chart);
         // A readable chart keeps its previous image until a new one arrives.
-        if(!reason.isEmpty() || !overlay->hasImage())overlay->setPlaceholder(reason);
+        if(!reason.isEmpty() || !overlay->hasImage()){overlay->setPlaceholder(reason);overlay->setRenderKey({});}
         kept.append(overlay);
     }
     for(auto *overlay:existing)delete overlay;
-    m_overlays=kept;restack();relayout();
+    m_overlays=kept;abandonUnwanted();restack();relayout();
     emit listed(int(m_overlays.size()));
 }
 
 void ChartLayer::clear() {
     ++m_generation;
     for(const auto &overlay:m_overlays)delete overlay.data();
-    m_overlays.clear();
+    m_overlays.clear();m_staleRetried.clear();
+    abandonUnwanted();
 }
 
 // Overlays sit above every pane of the grid area, lowest z first; raise()
@@ -172,7 +183,10 @@ bool ChartLayer::eventFilter(QObject *object,QEvent *event) {
 // includes a header or a scroll bar.
 void ChartLayer::relayout() {
     m_queued=false;
-    const auto items=overlays();if(items.isEmpty() || !attached())return;
+    const auto items=overlays();
+    // Restarted on each relayout, so scrolling renders once it settles.
+    if(!items.isEmpty() || !m_jobs.isEmpty())m_renderTimer.start();
+    if(items.isEmpty() || !attached())return;
     auto *model=m_body->model();const int rows=model?model->rowCount():0,columns=model?model->columnCount():0;
     const int frozenRows=m_frozen->frozenRows(),frozenColumns=m_frozen->frozenColumns();
     auto area=[this](QWidget *viewport){return QRect(viewport->mapTo(m_gridArea,QPoint()),viewport->size());};
@@ -199,4 +213,163 @@ void ChartLayer::relayout() {
         if(shown.isEmpty()){overlay->hide();continue;}
         overlay->setGeometry(chartRect);overlay->setMask(QRegion(shown.translated(-chartRect.topLeft())));overlay->show();
     }
+}
+
+// A chart is rendered while it is shown, readable and not projected away.
+bool ChartLayer::wanted(ChartOverlay *overlay) const {
+    return overlay && attached() && !overlay->isHidden() && !m_projected && !m_base.isEmpty() && !m_sheet.isEmpty() && !m_state.isEmpty()
+        && reasonFor(overlay->chart()).isEmpty();
+}
+
+QString ChartLayer::renderKey(ChartOverlay *overlay) const {
+    const auto size=overlay->chart()["size"].toObject();
+    return m_state+"|"+QString::number(size["width"].toInt())+"x"+QString::number(size["height"].toInt());
+}
+
+ChartOverlay *ChartLayer::overlayFor(const QString &chartId) const {
+    for(const auto &overlay:m_overlays)if(overlay && overlay->chartId()==chartId)return overlay;
+    return nullptr;
+}
+
+int ChartLayer::jobIndex(const QString &jobId) const {
+    for(int i=0;i<m_jobs.size();++i)if(m_jobs[i].id==jobId)return i;
+    return -1;
+}
+
+int ChartLayer::jobForChart(const QString &chartId) const {
+    for(int i=0;i<m_jobs.size();++i)if(m_jobs[i].chartId==chartId && !m_jobs[i].abandoned)return i;
+    return -1;
+}
+
+// Cancels the jobs whose result would no longer be shown: their chart went,
+// left view or changed size, or the sheet, state or workbook changed. Jobs of
+// a previous service session get no answers and are dropped.
+void ChartLayer::abandonUnwanted() {
+    const auto generation=m_client?m_client->generation():0;
+    for(int i=int(m_jobs.size())-1;i>=0;--i) {
+        const auto &job=m_jobs[i];
+        if(!m_client || job.clientGeneration!=generation){m_jobs.removeAt(i);continue;}
+        if(job.abandoned)continue;
+        auto *overlay=overlayFor(job.chartId);
+        if(job.base!=m_base || job.sheet!=m_sheet || job.state!=m_state || !wanted(overlay) || renderKey(overlay)!=job.key)abandon(i);
+    }
+}
+
+void ChartLayer::abandon(int index) {
+    if(!m_jobs[index].started){m_jobs[index].abandoned=true;return;}
+    const auto job=m_jobs.takeAt(index);
+    retire(m_client,job.base+"/charts/jobs/"+job.id,true);
+}
+
+// Starts the renders still needed, lowest z first, while slots are free.
+void ChartLayer::renderQueued() {
+    if(!attached() || !m_client)return;
+    abandonUnwanted();
+    if(m_busy)return;
+    auto ordered=overlays();
+    std::stable_sort(ordered.begin(),ordered.end(),[](ChartOverlay *a,ChartOverlay *b){return a->chart()["z"].toInt()<b->chart()["z"].toInt();});
+    for(auto *overlay:ordered) {
+        if(m_jobs.size()>=MaxConcurrentRenders)break;
+        if(wanted(overlay) && overlay->renderKey()!=renderKey(overlay) && jobForChart(overlay->chartId())<0)start(overlay);
+    }
+}
+
+void ChartLayer::start(ChartOverlay *overlay) {
+    const auto size=overlay->chart()["size"].toObject();
+    Job job{QUuid::createUuid().toString(QUuid::WithoutBraces),overlay->chartId(),m_base,m_sheet,m_state,renderKey(overlay),m_client->generation()};
+    m_jobs.append(job);
+    const auto path=job.base+"/charts/jobs/"+job.id;QPointer<ChartLayer> self(this);QPointer<RestClient> client(m_client);
+    m_client->request(m_base+"/charts/jobs",{{"job_id",job.id},{"expected_state",job.state},{"chart_id",job.chartId},{"kind","render"},
+                                            {"width",size["width"].toInt()},{"height",size["height"].toInt()}},
+        [self,client,id=job.id,path](QJsonObject result,QString error){
+        // A refusal names its code; an answer lost in transit may still have started the job.
+        const auto code=result["code"].toString();const bool created=error.isEmpty() || code.isEmpty();
+        const int index=self?self->jobIndex(id):-1;
+        if(index<0 || self->m_jobs[index].abandoned) {
+            if(created)retire(client,path,true);
+            if(index>=0){self->m_jobs.removeAt(index);self->renderQueued();}
+            return;
+        }
+        if(error.isEmpty()){self->m_jobs[index].started=true;self->m_busyDelay=PollIntervalMs;self->answer(id,result,error);return;}
+        const auto job=self->m_jobs.takeAt(index);auto *overlay=self->overlayFor(job.chartId);
+        if(code=="JOB_BUSY" || code=="JOB_LIMIT") {
+            // The service's chart job slots are taken: try again shortly, backing
+            // off, or as soon as one of this layer's jobs ends.
+            self->m_busy=true;self->m_busyTimer.start(self->m_busyDelay);self->m_busyDelay=qMin(self->m_busyDelay*2,1000);
+            return;
+        }
+        if(created)retire(client,path,true);
+        if(code=="STALE_STATE") {
+            // The window is behind the workbook, as for a stale catalog read: its
+            // refresh binds the new state, which renders again.
+            if(overlay)overlay->setRenderKey(job.key);
+            emit self->stale();
+        }
+        else if(overlay)self->fail(overlay,job.key,result,error);
+        self->renderQueued();
+    });
+}
+
+void ChartLayer::poll(const QString &jobId) {
+    const int index=jobIndex(jobId);if(index<0 || !m_client)return;
+    QPointer<ChartLayer> self(this);
+    m_client->request(m_jobs[index].base+"/charts/jobs/"+jobId,{},[self,jobId](QJsonObject result,QString error){if(self)self->answer(jobId,result,error);},false);
+}
+
+// A job's answer: polled again while running; otherwise released, and its
+// result shown only while its chart, sheet, state and size are current.
+void ChartLayer::answer(const QString &jobId,const QJsonObject &response,const QString &error) {
+    const int index=jobIndex(jobId);if(index<0)return;
+    const auto status=error.isEmpty()?response["status"].toString():QString();
+    if(status=="running"){QTimer::singleShot(PollIntervalMs,this,[this,jobId]{poll(jobId);});return;}
+    const auto job=m_jobs.takeAt(index);m_busy=false;m_busyTimer.stop();
+    // An unreadable answer leaves the job's fate unknown, so it is cancelled first.
+    retire(m_client,job.base+"/charts/jobs/"+job.id,!error.isEmpty());
+    auto *overlay=overlayFor(job.chartId);
+    if(overlay && job.base==m_base && job.sheet==m_sheet && job.state==m_state && renderKey(overlay)==job.key) {
+        const auto result=response["result"].toObject();
+        if(status=="completed" && result["state"].toString()==job.state) {
+            if(overlay->setSvg(result["svg"].toString().toUtf8())){overlay->setRenderKey(job.key);emit rendered(job.chartId);}
+            else fail(overlay,job.key,{{"code","INVALID_IMAGE"}},tr("The service's chart image could not be read"));
+        }
+        else if(status=="stale" || status=="completed") {
+            // The workbook moved on while the job ran: start once more for this
+            // state; after a second stale answer the chart waits, keeping what it
+            // shows, for the window to bind the new state.
+            if(m_staleRetried.value(job.chartId)!=job.key)m_staleRetried.insert(job.chartId,job.key);
+            else overlay->setRenderKey(job.key);
+        }
+        else if(!error.isEmpty())fail(overlay,job.key,response,error);
+        else {
+            const auto failure=response["error"].toObject();
+            fail(overlay,job.key,failure.isEmpty()?QJsonObject{{"code","CHART_JOB_"+status.toUpper()}}:failure,failure["message"].toString(tr("Chart job %1").arg(status)));
+        }
+    }
+    renderQueued();
+}
+
+// A failure is never an empty space: the placeholder names the code and message.
+void ChartLayer::fail(ChartOverlay *overlay,const QString &key,const QJsonObject &error,const QString &message) {
+    const auto code=error["code"].toString();
+    overlay->setPlaceholder(code.isEmpty()?tr("This chart could not be drawn: %1").arg(message):tr("This chart could not be drawn (%1): %2").arg(code,message));
+    overlay->setRenderKey(key);
+}
+
+namespace {
+// Polls a cancelled job for up to ten seconds before releasing it regardless.
+constexpr int RetireAttempts=200;
+void release(QPointer<RestClient> client,const QString &path){if(client)client->request(path+"/release",{},[](QJsonObject,QString){});}
+void releaseWhenStopped(QPointer<RestClient> client,const QString &path,const QJsonObject &job,const QString &error,int attempts) {
+    if(!client)return;
+    if(!error.isEmpty() || job["status"]!="running" || attempts<=0){release(client,path);return;}
+    QTimer::singleShot(ChartLayer::PollIntervalMs,client.data(),[client,path,attempts]{
+        if(client)client->request(path,{},[client,path,attempts](QJsonObject job,QString error){releaseWhenStopped(client,path,job,error,attempts-1);},false);
+    });
+}
+}
+
+void ChartLayer::retire(QPointer<RestClient> client,const QString &path,bool cancel) {
+    if(!client)return;
+    if(!cancel){release(client,path);return;}
+    client->request(path+"/cancel",{},[client,path](QJsonObject job,QString error){releaseWhenStopped(client,path,job,error,RetireAttempts);});
 }
