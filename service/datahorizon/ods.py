@@ -428,8 +428,6 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
             with archive.open(name) as stream: _check_declaration(stream.read(65536))
             return read_xml(archive,name)
         panes,readable=read_panes(archive,read_settings)
-        wide=ConversionReport(); workbook_features.report(wide,layout,archive.namelist()); report_unreadable_settings(wide,readable)
-        if sheet_names is None: conversions.merge(wide)
         report.append("ISO shorthand normalizes to native seconds; explicit timezone_policy=utc normalizes offset timestamps to UTC civil values and omits the original offset.")
         scope=list(report)
         edits=[]; row=1; processed=0; staged_bytes=0
@@ -473,6 +471,11 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         if chart_parts is None: chart_parts=selection_charts(names,position,shift,sheet_label,checkpoint)
         frames=SheetFrames(archive,position,sheet_label,chart_parts,conversions)
         for frame,cell,grouped in table_frames(sheets[selected-1]): frames.frame(frame,cell,grouped)
+        def workbook_wide():
+            # Read once the charts are: an object read as a chart is not an embedded object left out.
+            wide=ConversionReport(); workbook_features.report(wide,layout,archive.namelist(),chart_parts.objects); report_unreadable_settings(wide,readable)
+            return wide
+        if sheet_names is None: conversions.merge(workbook_wide())
         sheet_features=OdsSheetFeatures(layout,mapped_styles(styles.styles),panes.get(sheet_label),frames.charts)
         scan_table(sheets[selected-1],sheet_features)
         sheet_features.report(conversions,sheet_label,workbook_features.sheet_extra(sheet_label))
@@ -489,7 +492,7 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         result=fit_charts(build,records,[sheet_label],conversions,_apply_cells(edits,request)) if sheet_names is None else build(records)
         if result["can_import"]: result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","ODS preview exceeds 4 MiB")
-        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=wide; result["_charts"]=records
+        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=workbook_wide; result["_charts"]=records
         return result
 
 

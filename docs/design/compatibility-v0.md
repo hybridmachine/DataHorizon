@@ -535,8 +535,10 @@ one-sheet import, so only the SDK and the desktop carry charts on that path.
   frames (imported, or skipped with their own `chart.skipped` entry); a
   picture, shape, connector, group or other object keeps it, as does a drawing
   that was not read. On ODS the count is of the sheet's drawing items that are
-  not charts read as such, and `embedded_objects` still counts a chart's
-  `Object N` directory.
+  not charts read as such, and `embedded_objects` does not count an object
+  directory read as a chart (imported, or skipped with a `chart.skipped` entry);
+  a formula or OLE object, an object that could not be read and an object never
+  reached because of a reading bound are still counted.
 - Pixel sizes use default cell sizes (64x20 px); where the sheet declares
   custom sizes the chart is imported with `size_approximate` and its extent can
   differ from the file's.

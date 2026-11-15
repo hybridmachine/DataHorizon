@@ -100,6 +100,7 @@ class ChartParts:
         self.checkpoint, self.reader = checkpoint, reader
         self.frames = 0
         self.parses = self.walks = self.drafts = self.listings = 0
+        self.objects = set()  # ODS: the object parts (``Object 1/content.xml``) read as charts, whatever became of them
         self._bodies, self._drawings, self._names = {}, {}, None
 
     def names(self, archive):

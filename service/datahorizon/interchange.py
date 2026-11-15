@@ -874,13 +874,15 @@ def prepare_workbook(request,checkpoint,names,prepare,indexes=None,scope=()):
         result["workbook_charts"]+=part.pop("_charts")
         # Every sheet's preparation reads the same workbook features; they are reported once, first.
         wide=part.pop("_workbook")
-        if index==1: conversions.merge(wide)
+        if index==1: first=wide
         conversions.merge(part.pop("_conversions"))
         result["stored_cells"]+=part["stored_cells"]
         require(result["stored_cells"]<=MAX_CELLS,"LIMIT","Whole-workbook import exceeds 10,000 stored cells")
         size+=len(encoded(part["cells"]).encode())
         require(size<=3*1024*1024,"READ_LIMIT","Workbook input payload exceeds 3 MiB")
         result["workbook_sheets"].append({"name":name,"cells":part["cells"]})
+    # An ODS preparation gives its workbook features as a function, read once every sheet's charts have been.
+    conversions.merge(first() if callable(first) else first)
     # Sheets whose cells all degraded or were skipped are still created; their details are itemized here.
     result["scope_lines"]=workbook_report()+list(scope)
     def build(charts):

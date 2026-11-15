@@ -237,6 +237,7 @@ def _read_sheets(archive, names, styles, base, sink, progress, conversions, surv
             conversions.merge(sheet)
             reader = features = frames = None
     require(index == len(names), "INVALID_SPREADSHEET", "ODS content changed between reads")
+    workbook.report(conversions, layout, archive.namelist(), chart_parts.objects)  # after the charts: they are not embedded objects
     sink.charts(charts.records)
 
 
@@ -261,7 +262,6 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink, checkpoint: Callab
         panes, readable = read_panes(archive, lambda archive, name: xlsx_stream._read_whole(archive, name, budget))
         progress = xlsx_stream._Progress(checkpoint)
         conversions = ConversionReport()
-        workbook.report(conversions, layout, archive.namelist())
         report_unreadable_settings(conversions, readable)
         base = {"mode": selected_mode, "sheet_names": names, "timezone_policy": policy}
         _read_sheets(archive, names, styles, base, sink, progress, conversions, (layout, workbook, panes))

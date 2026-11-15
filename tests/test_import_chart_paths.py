@@ -1093,6 +1093,7 @@ class ChartFixtureTests(unittest.TestCase):
         self.assertEqual((FIXTURES / "charts-one-sheet.xlsx").read_bytes(), generate_chart_workbook.build(1))
 
 
+MAX_CHARTS_HELD = 64
 PICTURE_ANCHOR = (f'<xdr:twoCellAnchor xmlns:xdr="{XDR}" xmlns:a="{A}" xmlns:r="{REL}"><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff>'
                   '<xdr:row>20</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>2</xdr:col><xdr:colOff>0</xdr:colOff>'
                   '<xdr:row>22</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="9" name="Picture 1"/>'
@@ -1208,6 +1209,33 @@ class ImportReportCleanUpTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual([entry["samples"] for entry in self.found(report, "chart.skipped", "unreadable")], [[{"sheet": "Data", "cell": "drawing"}]])
                 self.assertEqual([entry["count"] for entry in self.found(report, "sheet.feature", "drawings")], [1])
+
+    def embedded(self, charts):
+        """The ``embedded_objects`` counts, by path, of an ODS file with ``charts`` on one sheet."""
+        data = ods_with_charts({"Data": ods_data_rows()}, charts)
+        return {path: [entry["count"] for entry in self.found(report, "workbook.feature", "embedded_objects")]
+                for path, report in self.reports(data, "ods").items()}
+
+    def test_ods_chart_objects_are_not_listed_as_embedded_objects(self):
+        found = self.embedded([{"sheet": "Data", "name": "A", "xml": ods_column_chart()},
+                               {"sheet": "Data", "name": "B", "xml": ods_column_chart(), "cell": (3, 3)}])
+        self.assertEqual(found, {"staged": [], "inline": [], "one sheet": []})
+
+    def test_a_non_chart_object_is_still_an_embedded_object(self):
+        formula = '<math:math xmlns:math="http://www.w3.org/1998/Math/MathML"/>'
+        found = self.embedded([{"sheet": "Data", "name": "A", "xml": ods_column_chart()},
+                               {"sheet": "Data", "name": "Formula", "xml": formula, "cell": (3, 3)}])
+        self.assertEqual(found, {"staged": [1], "inline": [1], "one sheet": [1]})
+
+    def test_an_unreadable_chart_object_is_still_an_embedded_object(self):
+        found = self.embedded([{"sheet": "Data", "name": "A", "xml": ods_column_chart().replace("chart:plot-area", "chart:plot-ared")}])
+        self.assertEqual(found, {"staged": [1], "inline": [1], "one sheet": [1]})
+
+    def test_a_chart_object_never_reached_is_still_an_embedded_object(self):
+        # Once 64 charts are held no further object is read, so the 65th is not known to be a chart.
+        charts = [{"sheet": "Data", "name": f"C{n}", "xml": ods_column_chart()} for n in range(MAX_CHARTS_HELD + 1)]
+        found = self.embedded(charts)
+        self.assertEqual(found, {"staged": [1], "inline": [1], "one sheet": [1]})
 
     def test_chart_sheets_are_still_reported(self):
         data = (FIXTURES / "corpus" / "chart-sheet.xlsx").read_bytes()

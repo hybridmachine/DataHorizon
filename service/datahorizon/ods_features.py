@@ -241,10 +241,13 @@ class OdsWorkbookFeatures:
         count = self.filters.get(sheet, 0)
         return (("auto_filter", count),) if count else ()
 
-    def report(self, report, layout, package_names):
+    def report(self, report, layout, package_names, chart_objects=()):
+        """`chart_objects` are the object parts the chart reading read as charts (ChartParts.objects): such an object
+        is a chart, reported with the charts, not an embedded object left out."""
+        charts = {part.rsplit("/", 1)[0] for part in chart_objects}
         hidden = [name for name, style in self.tables if style in layout.hidden_tables]
         self.add("hidden_sheets", len(hidden))
-        self.add("embedded_objects", len({m[1] for m in (OBJECT_DIRECTORY.match(n) for n in package_names) if m}))
+        self.add("embedded_objects", len({m[1] for m in (OBJECT_DIRECTORY.match(n) for n in package_names) if m} - charts))
         if any(MACRO_DIRECTORY.match(name) for name in package_names): self.add("macros")
         for feature in WORKBOOK_FEATURES:
             if feature in self.counts:

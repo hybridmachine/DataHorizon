@@ -272,6 +272,7 @@ def read_frame_draft(archive, frame: ET.Element, position: int, sheet_name: str,
             return None
         if body is None:
             raise _Unreadable
+        parts.objects.add(part)
         if on_chart is not None:
             on_chart()
         (row, col), (x, y), (width, height), absolute = _placement(frame, cell)
