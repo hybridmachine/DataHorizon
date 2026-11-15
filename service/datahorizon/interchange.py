@@ -625,12 +625,14 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         return result
 
 
-def native_only_report(snapshot):
-    """Report lines for workbook names, event bindings and charts, which no interchange format carries."""
+def native_only_report(snapshot,charts=()):
+    """Report lines for workbook names and event bindings, which no interchange format carries, then for charts: the
+    export's own chart lines `charts` (export_charts.lines), or the native-only line of a streamed export's native_charts."""
     report=[]
     if snapshot.get('native_names'):report.append('Workbook names are native-only and omitted from this export: '+', '.join(snapshot['native_names']))
     if snapshot.get('native_bindings'):report.append('Event bindings are native-only and omitted from this export: '+', '.join(snapshot['native_bindings']))
     if snapshot.get('native_charts'):report.append('Charts are native-only and omitted from this export: '+', '.join(snapshot['native_charts']))
+    report.extend(charts)
     return report
 
 
@@ -646,11 +648,12 @@ def uses_future_prefix(source):
     return map_formula_functions(source,FUTURE_PREFIX)!=source
 
 
-def export_report(head,catalog,future_functions):
-    """The fixed report lines of an XLSX export after its scope lines `head`; the conversion report's lines follow them."""
+def export_report(head,catalog,future_functions,charts=()):
+    """The fixed report lines of an XLSX export after its scope lines `head`, with its chart lines `charts`; the
+    conversion report's lines follow them."""
     report=list(head)
     if catalog.get('native_omissions'):report.append('Native relational objects omitted from this sheet export: '+', '.join(catalog['native_omissions']))
-    report.extend(native_only_report(catalog))
+    report.extend(native_only_report(catalog,charts))
     report.append(TEMPORAL_EXPORT_LINE)
     if future_functions:report.append(FUTURE_FUNCTIONS_LINE)
     return report
@@ -693,8 +696,9 @@ def export_cell(cell,style,*,sheet,mode,report,whole,bounds=None,names=None):
     return out
 
 
-def package_parts(names):
-    """The content types, package relationships, workbook and workbook relationships of an export of sheets `names`.
+def package_parts(names,extra=(),overrides=()):
+    """The content types, package relationships, workbook and workbook relationships of an export of sheets `names`,
+    then the `extra` (name, element) parts, whose content types `overrides` lists as (part name, content type).
 
     Worksheets are xl/worksheets/sheet<N>.xml and the stylesheet xl/styles.xml; the workbook requests full recalculation on load."""
     workbook=ET.Element("workbook",xmlns=S,**{"xmlns:r":R})
@@ -712,7 +716,8 @@ def package_parts(names):
     node(types,"Override",PartName="/xl/workbook.xml",ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml")
     for index in range(1,len(names)+1): node(types,"Override",PartName=f"/xl/worksheets/sheet{index}.xml",ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml")
     node(types,"Override",PartName="/xl/styles.xml",ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml")
-    return [("[Content_Types].xml",types),("_rels/.rels",mainrels),("xl/workbook.xml",workbook),("xl/_rels/workbook.xml.rels",relationships)]
+    for name,kind in overrides: node(types,"Override",PartName="/"+name,ContentType=kind)
+    return [("[Content_Types].xml",types),("_rels/.rels",mainrels),("xl/workbook.xml",workbook),("xl/_rels/workbook.xml.rels",relationships),*extra]
 
 
 def xlsx_export(snapshot,request):
@@ -726,12 +731,18 @@ def xlsx_export(snapshot,request):
     names=validate_sheet_names([s["name"] for s in snapshots])
     if selected_mode=="values": blocked_values(snapshots,whole)
     if whole: head=workbook_report()+[WHOLE_EXPORT_CACHES]
-    report=export_report(head,snapshot,selected_mode=="formulas" and any(uses_future_prefix(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"))
+    from .export_charts import lines as chart_lines, snapshot_charts
+    from .xlsx_charts import chart_part, package as chart_package
+    conversions=ConversionReport()
+    built,left_out=snapshot_charts(snapshot,chart_part,conversions)
+    chart_parts,drawings,overrides=chart_package(built,names)
+    report=export_report(head,snapshot,selected_mode=="formulas" and any(uses_future_prefix(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"),
+                         chart_lines(len(built),left_out))
     from .xlsx_styles import export_styles
     styles,style_ids=export_styles([c for s in snapshots for c in s["cells"]])
-    worksheets=[];conversions=ConversionReport()
-    for sheet in snapshots:
-        root=ET.Element("worksheet",xmlns=S)
+    worksheets=[]
+    for index,sheet in enumerate(snapshots,1):
+        root=ET.Element("worksheet",xmlns=S,**({"xmlns:r":R} if index in drawings else {}))
         data=node(root,"sheetData")
         current=None
         for cell in sheet["cells"]:
@@ -739,10 +750,12 @@ def xlsx_export(snapshot,request):
                 current=cell["row"]; row=node(data,"row",r=str(current))
             row.append(export_cell(cell,style_ids[encoded(cell.get("style",{}))],sheet=sheet["name"],mode=selected_mode,report=conversions,
                                    whole=whole,bounds=sheet.get("range"),names=names))
+        if index in drawings: node(root,"drawing",**{"r:id":drawings[index]})
         worksheets.append(root)
     output=io.BytesIO()
     with zipfile.ZipFile(output,"w",compression=zipfile.ZIP_DEFLATED) as archive:
-        parts=package_parts(names)+[("xl/styles.xml",styles)]
+        # The chart parts count against the expanded size with every other part.
+        parts=package_parts(names,chart_parts,overrides)+[("xl/styles.xml",styles)]
         parts.extend((f"xl/worksheets/sheet{index}.xml",part) for index,part in enumerate(worksheets,1))
         payload=[(name,xml(part)) for name,part in parts]
         require(sum(len(data) for _,data in payload)<=MAX_EXPANDED,"LIMIT","Expanded XLSX export exceeds 16 MiB")

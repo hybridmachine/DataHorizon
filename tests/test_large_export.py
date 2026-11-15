@@ -82,6 +82,7 @@ def snapshot(engine):
     and the existing exporter writes it as Python float text (42 becomes 42.0), as the bounded export does."""
     result = engine.read_workbook()
     result.pop('state')
+    result.pop('chart_sheets')  # keyed by sheet id, which differs between workbooks
     for sheet in result['sheets']:
         for cell in sheet['cells']:
             if cell['kind'] == 'number': cell['source'] = float(cell['source'])

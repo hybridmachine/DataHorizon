@@ -504,11 +504,12 @@ def uses_modern_function(source):
     return map_formula_functions(source,MODERN_FUNCTIONS)!=source
 
 
-def export_lines(head,catalog,modern_functions):
-    """The fixed report lines of an ODS export after its scope lines `head`; the conversion report's lines follow them."""
+def export_lines(head,catalog,modern_functions,charts=()):
+    """The fixed report lines of an ODS export after its scope lines `head`, with its chart lines `charts`; the
+    conversion report's lines follow them."""
     report=list(head)
     if catalog.get('native_omissions'):report.append('Native relational objects omitted from this sheet export: '+', '.join(catalog['native_omissions']))
-    report.extend(native_only_report(catalog))
+    report.extend(native_only_report(catalog,charts))
     report.append(TEMPORAL_EXPORT_LINE)
     if modern_functions:report.append(MODERN_FUNCTIONS_LINE)
     return report
@@ -642,13 +643,14 @@ def export_ods_cell(cell,style_name,*,sheet,mode,report,whole,bounds=None,names=
     return out,text_nodes
 
 
-def package_parts():
-    """The styles and manifest parts of an ODS export, after its mimetype and content.xml."""
+def package_parts(extra=(),manifest=()):
+    """The styles and manifest parts of an ODS export, after its mimetype and content.xml, then the `extra` (path,
+    element) parts, whose manifest entries `manifest` lists as (full path, media type)."""
     styles=ET.Element(q(O,"document-styles"),{q(O,"version"):"1.3"}); node(styles,q(O,"styles"))
-    manifest=ET.Element(q(M,"manifest"),{q(M,"version"):"1.3"})
-    for name,mime in (("/",MIME),("content.xml","text/xml"),("styles.xml","text/xml")):
-        node(manifest,q(M,"file-entry"),**{q(M,"full-path"):name,q(M,"media-type"):mime})
-    return [("styles.xml",styles),("META-INF/manifest.xml",manifest)]
+    listing=ET.Element(q(M,"manifest"),{q(M,"version"):"1.3"})
+    for name,mime in (("/",MIME),("content.xml","text/xml"),("styles.xml","text/xml"),*manifest):
+        node(listing,q(M,"file-entry"),**{q(M,"full-path"):name,q(M,"media-type"):mime})
+    return [("styles.xml",styles),("META-INF/manifest.xml",listing),*extra]
 
 
 def ods_export(snapshot,request):
@@ -662,31 +664,47 @@ def ods_export(snapshot,request):
     names=validate_sheet_names([s["name"] for s in snapshots])
     if selected_mode=="values": blocked_values(snapshots,whole)
     if whole: head=workbook_report()+[WHOLE_FORMULA_LINE]
-    report=export_lines(head,snapshot,selected_mode=="formulas" and any(uses_modern_function(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"))
-    root=ET.Element(q(O,"document-content"),{q(O,"version"):"1.3","xmlns:of":OF})
+    from .export_charts import lines as chart_lines, snapshot_charts
+    from .ods_charts import chart_document, package as chart_package
+    from .ods_features import DRAW, SVG, XLINK
+    conversions=ConversionReport()
+    built,left_out=snapshot_charts(snapshot,chart_document,conversions)
+    objects,entries,frames=chart_package(built,conversions)
+    report=export_lines(head,snapshot,selected_mode=="formulas" and any(uses_modern_function(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"),
+                        chart_lines(len(built),left_out))
+    # The chart frames carry prefixed names without declarations; the document declares their namespaces.
+    root=ET.Element(q(O,"document-content"),{q(O,"version"):"1.3","xmlns:of":OF,**({"xmlns:draw":DRAW,"xmlns:svg":SVG,"xmlns:xlink":XLINK} if frames else {})})
     automatic=node(root,q(O,"automatic-styles"))
     style_table=OdsStyleTable(automatic)
     for cell in [c for s in snapshots for c in s["cells"]]: style_table.name(cell.get("style",{}))
-    body=node(root,q(O,"body")); spreadsheet=node(body,q(O,"spreadsheet")); text_nodes=0; conversions=ConversionReport()
+    body=node(root,q(O,"body")); spreadsheet=node(body,q(O,"spreadsheet")); text_nodes=0
     for sheet in snapshots:
         table=node(spreadsheet,q(T,"table"),**{q(T,"name"):sheet["name"]})
         previous_row=0; previous_col=0; row_node=None
-        for cell in sheet["cells"]:
-            row,col=cell["row"],cell["col"]
+        # A chart frame sits in its anchor cell, which may hold no stored cell (or be on a sheet without cells).
+        placed={}
+        for row,col,frame in frames.get(sheet["name"],()): placed.setdefault((row,col),[]).append(frame)
+        stored={(cell["row"],cell["col"]):cell for cell in sheet["cells"]}
+        for row,col in sorted(stored.keys()|placed.keys()):
+            cell=stored.get((row,col))
             if row!=previous_row:
                 if row-previous_row>1: node(table,q(T,"table-row"),**{q(T,"number-rows-repeated"):str(row-previous_row-1)})
                 row_node=node(table,q(T,"table-row")); previous_row=row; previous_col=0
             if col-previous_col>1: node(row_node,q(T,"table-cell"),**{q(T,"number-columns-repeated"):str(col-previous_col-1)})
             previous_col=col
-            out,whitespace=export_ods_cell(cell,style_table.name(cell.get("style",{})),sheet=sheet["name"],mode=selected_mode,report=conversions,
-                                           whole=whole,bounds=sheet.get("range"),names=names)
-            text_nodes+=whitespace
-            require(text_nodes<=50000,"LIMIT","ODS text structure exceeds 50,000 whitespace nodes")
+            if cell is None: out=ET.Element(q(T,"table-cell"))
+            else:
+                out,whitespace=export_ods_cell(cell,style_table.name(cell.get("style",{})),sheet=sheet["name"],mode=selected_mode,report=conversions,
+                                               whole=whole,bounds=sheet.get("range"),names=names)
+                text_nodes+=whitespace
+                require(text_nodes<=50000,"LIMIT","ODS text structure exceeds 50,000 whitespace nodes")
+            out.extend(placed.get((row,col),()))
             row_node.append(out)
     output=io.BytesIO()
     with zipfile.ZipFile(output,"w",compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("mimetype",MIME,compress_type=zipfile.ZIP_STORED)
-        parts=[(name,xml(part)) for name,part in [("content.xml",root),*package_parts()]]
+        # The chart objects count against the expanded size with every other part.
+        parts=[(name,xml(part)) for name,part in [("content.xml",root),*package_parts(objects,entries)]]
         require(sum(len(data) for _,data in parts)<=16*1024*1024,"LIMIT","Expanded ODS export exceeds 16 MiB")
         for name,data in parts: archive.writestr(name,data)
     result={"file_base64":base64.b64encode(output.getvalue()).decode(),"state":snapshot["state"],"report":report+conversions.lines(),

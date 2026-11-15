@@ -243,6 +243,7 @@ class ServiceStageImportTests(unittest.TestCase):
             engine = self.service.workbooks[book]
             snapshot = engine.read_workbook()
             snapshot.pop('state')
+            snapshot.pop('chart_sheets')  # keyed by sheet id, which differs between workbooks
             exported.append(snapshot)
         self.assertEqual(exported[0], exported[1])
         self.assertEqual(sum(len(sheet['cells']) for sheet in exported[0]['sheets']), summary['stored_cells'])

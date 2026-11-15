@@ -9,6 +9,7 @@ import json
 import re
 
 from . import charts
+from .conversion_report import ConversionReport
 from .engine import EngineError
 
 SKIPPED = "chart.skipped"
@@ -190,3 +191,20 @@ def lines(written, left_out):
     if not left_out:
         return [f"Charts: {written} written."]
     return [f"Charts: {written} written, {left_out} left out; each is listed below with its reason."]
+
+
+def snapshot_charts(snapshot, build_one, report, *, name="Sheet1"):
+    """``(built, left_out)`` for the charts of an inline export's read snapshot: ``build``'s pairs and how many charts
+    were left out, each reported in ``report``.
+
+    A whole-workbook snapshot (``sheets``) writes the charts of every sheet; a selection snapshot (``sheet``, ``range``)
+    writes those of its sheet that it holds whole, on the sheet ``name``.  A snapshot without ``chart_entries`` (the
+    list and relational exports) has no charts."""
+    entries = snapshot.get("chart_entries")
+    if not entries:
+        return [], 0
+    selection = None if "sheets" in snapshot else {"sheet_id": snapshot["sheet"], "range": snapshot["range"], "name": name}
+    found = ConversionReport()
+    built = build(drafts(entries, snapshot["chart_sheets"], found, selection=selection), build_one, found)
+    report.merge(found)
+    return built, sum(entry["count"] for entry in found.entries() if entry["category"] == SKIPPED)
