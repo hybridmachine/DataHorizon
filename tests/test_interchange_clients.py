@@ -59,7 +59,7 @@ class SdkTests(unittest.TestCase):
                     self.assertEqual([sheet['name'] for sheet in summary['sheets']], FIDELITY_SHEETS)
                     gone(self, lambda: client.release_upload(uploads[0]))  # Released after preparation.
                     receipt = book.import_staged(summary)
-                    self.assertEqual(receipt['imported'], {'sheets': 3, 'cells': 49})
+                    self.assertEqual(receipt['imported'], {'sheets': 3, 'cells': 49, 'charts': 0})
                     gone(self, lambda: client.preparation(summary['stage_id']))  # The service consumed the stage.
                     written = book.export_spreadsheet_file(exported)
                     self.assertEqual(set(written), {'path', 'bytes', 'sha256', 'state', 'report', 'scope_lines', 'report_entries', 'totals'})
@@ -83,7 +83,7 @@ class SdkTests(unittest.TestCase):
                 summary = client.prepare_spreadsheet_file(FIXTURES/'fidelity.ods', local=True, mode='formulas')
             self.assertEqual(summary['source'], {**summary['source'], 'kind': 'path', 'path': str((FIXTURES/'fidelity.ods').resolve())})
             self.assertEqual(summary['mode'], 'formulas')
-            self.assertEqual(book.import_staged(summary)['imported'], {'sheets': 3, 'cells': 49})
+            self.assertEqual(book.import_staged(summary)['imported'], {'sheets': 3, 'cells': 49, 'charts': 0})
 
     def test_format_comes_from_the_extension(self):
         with LocalService() as client:
@@ -293,7 +293,7 @@ class CliTests(unittest.TestCase):
         with LocalService() as client:
             summary = client.prepare_spreadsheet_file(FIXTURES/'fidelity.xlsx', mode='values', local=True)
             client.discard_job(summary['stage_id'])
-        self.assertEqual(written, {key: summary[key] for key in ('format', 'mode', 'stored_cells', 'sheets', 'totals', 'report', 'scope_lines', 'report_entries')})
+        self.assertEqual(written, {key: summary[key] for key in ('format', 'mode', 'stored_cells', 'sheets', 'charts', 'totals', 'report', 'scope_lines', 'report_entries')})
         self.assertEqual(written['mode'], 'values')
 
     def test_errors_are_structured_with_a_nonzero_exit(self):

@@ -4,6 +4,7 @@ import base64
 import binascii
 import heapq
 import io
+import json
 import posixpath
 import re
 import zipfile
@@ -543,7 +544,7 @@ def read_book(archive):
     return book
 
 
-def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None):
+def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None,chart_parts=None):
     selected=integer(request.get("sheet_index",1),1,MAX_SHEET_INDEX,"sheet_index")
     selected_mode=mode(request)
     require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
@@ -597,17 +598,30 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
             if edit is not None: edits.append(edit)
         scan_tree(root,sheet_features)
         sheet_features.report(conversions,sheet_label)
+        # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules, against the
+        # shared allowance and workbook limit. A selection reads this sheet's charts alone, then rebases and shifts them.
+        from .xlsx_charts import worksheet_drafts
+        names=sheet_names if sheet_names is not None else [name for _,name in book.worksheets()]
+        position=names.index(sheet_label) if sheet_names is not None else [index for index,_ in book.worksheets()].index(selected)
+        if chart_parts is None: chart_parts=selection_charts(names,position,shift,sheet_label,checkpoint)
+        drafts=worksheet_drafts(archive,part,position,sheet_label,chart_parts,conversions,sheet_features)
+        records=[record for draft in drafts if (record:=chart_parts.collector.add(draft,names,conversions)) is not None]
         if shared_formulas and shared_formulas.groups: report.append("Shared formulas expand to explicit per-cell sources with relative/absolute reference translation; caches are discarded.")
         report.extend(STYLE_SCOPE_LINES)
         scope=list(report)
-        report.extend(conversions.lines())
-        result={"cells":edits,"can_import":bool(edits),"issues":issues,
-                "sheet":sheet_label,"sheets":[s.get("name","") for s in sheets],"report":report,"scope_lines":scope,"report_entries":conversions.entries(),
-                "totals":conversions.totals(),"stored_cells":count}
+        def build(charts):
+            # The report is read after the charts are fitted, so it names each chart left out for room.
+            built={"cells":edits,"can_import":bool(edits),"issues":issues,
+                   "sheet":sheet_label,"sheets":[s.get("name","") for s in sheets],"report":scope+conversions.lines(),"scope_lines":scope,
+                   "report_entries":conversions.entries(),"totals":conversions.totals(),"stored_cells":count}
+            if sheet_names is None: built["charts"]=charts
+            return built
+        # A selection's records are already rebased to sheet 0, the selected sheet.
+        result=fit_charts(build,records,[sheet_label],conversions,_apply_cells(edits,request)) if sheet_names is None else build(records)
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Spreadsheet preview exceeds 4 MiB")
         if result["can_import"]:
             result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
-        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=wide
+        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=wide; result["_charts"]=records
         return result
 
 
@@ -783,19 +797,69 @@ def preparation_scope(request):
     return value
 
 
+# What a bounded preview keeps free of chart records for the report entries of the charts it leaves out.
+CHART_REPORT_ROOM=64*1024
+
+
+def chart_reader(names,checkpoint,accept=None):
+    """The chart reading of one bounded preparation (import_charts.ChartParts) over its worksheet names, with its
+    collector. `accept` is the collector's: what a one-sheet preview does to each record before it counts."""
+    from .import_charts import ChartParts, Collector
+    return ChartParts(collector=Collector(accept=accept),sheet_names=names,checkpoint=lambda:checkpoint(0,"Reading charts"))
+
+
+def selection_charts(names,position,shift,sheet_label,checkpoint):
+    """The chart reader of a one-sheet preview: each record is rebased to the selected sheet and shifted with the
+    cells before it counts toward the chart limit, so a chart the selection drops takes no other chart's place."""
+    from .import_charts import rebase
+    return chart_reader(names,checkpoint,lambda record,report:rebase(record,position,shift[0]+1,shift[1]+1,sheet_label,report))
+
+
+# What an apply request holds besides its cells and charts: action, sheet, operation id, expected state and label.
+APPLY_ENVELOPE=4096
+
+
+def _request_size(value):
+    """The bytes `value` takes in a client's request: the SDK sends spaced, ASCII-escaped JSON, the largest form in use."""
+    return len(json.dumps(value,allow_nan=False).encode())
+
+
+def _apply_cells(edits,request):
+    """The cells a one-sheet import sends for `edits`: offset to the request's destination, as import_edits offsets them."""
+    if not edits: return []
+    return import_edits({"can_import":True,"cells":edits},integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
+
+
+def fit_charts(build,records,sheet_names,conversions,apply_cells=None,limit=4*1024*1024):
+    """`build(records)` with the leading chart records that fit beside everything else it holds. The cells and
+    their report come first: a preview that fits without charts is never refused because of them. `apply_cells` are
+    the cells a one-sheet import then sends with its charts in one request of the same limit; the charts must fit
+    beside them too, so the reviewed import can be applied."""
+    from .import_charts import fit
+    if not records: return build(records)
+    room=limit-len(encoded(build([])).encode())-CHART_REPORT_ROOM
+    if apply_cells is not None: room=min(room,limit-_request_size(apply_cells)-APPLY_ENVELOPE)
+    return build(fit(records,max(room,0),sheet_names,conversions,lambda record:_request_size(record)+2))
+
+
 def prepare_workbook(request,checkpoint,names,prepare,indexes=None,scope=()):
     """`indexes` are the sheet_index of each name (by default 1, 2, ...): a package's sheets that are not imported
     (XLSX chart, dialog and macro sheets) take no name but keep their place in the index. `scope` are the format's
-    fixed report lines after workbook_report(); the result's report is those scope lines, then one line per entry."""
+    fixed report lines after workbook_report(); the result's report is those scope lines, then one line per entry.
+    Each sheet's charts are converted against one workbook limit and read against one chart allowance, carried as
+    workbook_charts and listed in charts."""
+    from .import_charts import summary
     validate_sheet_names(names)
     require(request.get("row",1)==1 and request.get("col",1)==1,"INVALID_ARGUMENT","Whole-workbook import uses original coordinates")
     require(names,"INVALID_SPREADSHEET","Workbook has no sheets")
-    result={"scope":"workbook","workbook_sheets":[],"stored_cells":0,"issues":[],"can_import":True}
+    result={"scope":"workbook","workbook_sheets":[],"stored_cells":0,"issues":[],"can_import":True,"workbook_charts":[]}
     conversions=ConversionReport()
+    chart_parts=chart_reader(names,checkpoint)
     size=0
     for index,name in enumerate(names,1):
         checkpoint(index-1,"Reading sheet "+name)
-        part=prepare({**request,"scope":"selection","sheet_index":indexes[index-1] if indexes else index},checkpoint,sheet_names=names)
+        part=prepare({**request,"scope":"selection","sheet_index":indexes[index-1] if indexes else index},checkpoint,sheet_names=names,chart_parts=chart_parts)
+        result["workbook_charts"]+=part.pop("_charts")
         # Every sheet's preparation reads the same workbook features; they are reported once, first.
         wide=part.pop("_workbook")
         if index==1: conversions.merge(wide)
@@ -807,9 +871,10 @@ def prepare_workbook(request,checkpoint,names,prepare,indexes=None,scope=()):
         result["workbook_sheets"].append({"name":name,"cells":part["cells"]})
     # Sheets whose cells all degraded or were skipped are still created; their details are itemized here.
     result["scope_lines"]=workbook_report()+list(scope)
-    result["report"]=result["scope_lines"]+conversions.lines()
-    result["report_entries"]=conversions.entries()
-    result["totals"]=conversions.totals()
+    def build(charts):
+        return {**result,"workbook_charts":charts,"report":result["scope_lines"]+conversions.lines(),
+                "report_entries":conversions.entries(),"totals":conversions.totals(),"charts":summary(charts,names)}
+    result=fit_charts(build,result["workbook_charts"],names,conversions)
     require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Workbook preview exceeds 4 MiB")
     return result
 
@@ -823,6 +888,7 @@ def xlsx_preview(request,checkpoint=lambda completed,phase:None):
         # Only chart, dialog or macro sheets: nothing to import. As for any workbook without sheets, Apply is refused.
         result={"scope":"workbook","workbook_sheets":[],"stored_cells":0,"can_import":False,
                 "issues":["The workbook has no worksheets; its other sheets are not imported"],
-                "report":workbook_report()+book.report.lines(),"scope_lines":workbook_report(),"report_entries":book.report.entries(),"totals":book.report.totals()}
+                "report":workbook_report()+book.report.lines(),"scope_lines":workbook_report(),"report_entries":book.report.entries(),"totals":book.report.totals(),
+                "charts":[],"workbook_charts":[]}
         return result
     return prepare_workbook(request,checkpoint,[name for _,name in worksheets],_xlsx_preview,[index for index,_ in worksheets])

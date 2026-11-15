@@ -6,7 +6,7 @@ milestone as complete. The PDFs are historical design snapshots.
 
 ## Build
 
-Requirements: CMake 3.24+, C++17 compiler, Qt 6.8+ Widgets/Network/Test, Python
+Requirements: CMake 3.24+, C++17 compiler, Qt 6.8+ Widgets/Network/Svg/Test, Python
 3.11+ with sqlite3. The local verified configuration is Qt 6.12.0, Apple Clang
 17, Python 3.14.6 and CMake 4.4.2 on Apple Silicon macOS. No pip packages are
 required. Qt's other installed toolchains can be selected with CMAKE_PREFIX_PATH.

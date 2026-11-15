@@ -1,0 +1,139 @@
+Charts import and view-only display: verification
+Run November 15, 2026 on the reference Mac (Apple Silicon, macOS 26.6.2, Python 3.14.6, Qt 6.12.0).
+Branch claude/charts-import-view at commit b6c0a99 plus the document changes of the commit that adds this file.
+Design: docs/design/charts-import-view-design.md. Plan: docs/design/charts-import-view-plan.md.
+
+1. Full suites
+--------------
+Commands, from the repository root (build/ was already configured):
+  cmake --build build --parallel
+  ctest --test-dir build --output-on-failure
+
+Result: the build completed with no errors, and ctest reported
+  1/5 development_bundle_signature  Passed    0.23 sec
+  2/5 chart_svg_probe_smoke         Passed    0.10 sec
+  3/5 desktop                       Passed  229.41 sec
+  4/5 python_workspace              Passed   62.55 sec
+  5/5 service                       Passed  338.27 sec
+  100% tests passed out of 5. Total Test time (real) = 630.57 sec.
+The service test is the full Python suite (unittest discovery of tests/); the desktop test is
+the Qt Test binary desktop_tests. Run on macOS only.
+
+2. Sample-file check through the real service
+---------------------------------------------
+What this is and is not. The application window could not be driven in this run, so the
+owner's sample file was imported through the real service with the SDK (the calls the
+desktop's import dialog makes: a staged whole-workbook import for "All sheets", a bounded
+selection preview then a one-sheet edit for "One sheet"). The desktop overlays and the
+import dialog were therefore NOT exercised on this file (see section 4).
+
+Sample: "Column Chart_Complete.xlsx" (29,584 bytes, owner-supplied, untrusted). Two
+worksheets, "Column Chart" and "Stacked Column", each with one column chart. It was copied
+into a scratch directory outside the repository, read from there, and is not committed.
+Script and outputs live in the session scratchpad, not in the repository:
+  script  .../scratchpad/sample-check-script/check.py
+  output  .../scratchpad/sample-check/run.txt
+  files   .../scratchpad/sample-check/out/   (throwaway workbooks and SVGs)
+Command (from the repository root, isolated interpreter, file name passed as an argument):
+  python3 -I <scratchpad>/sample-check-script/check.py "<scratchpad>/sample-check/in/Column Chart_Complete.xlsx" <scratchpad>/sample-check/out
+It starts a LocalService, then:
+  (a) prepare_spreadsheet_file (mode mixed) and import_staged into a fresh workbook;
+  (b) for sheet_index 1 and for sheet_index 2: a selection-scope preview at row 1, column 1
+      (POST /v1/import/xlsx/jobs), then import_prepared into Sheet1 of its own fresh
+      workbook (one workbook per sheet index).
+For every workbook it lists the catalog, runs a resolve job and a render job through
+resolve_chart and render_chart, and saves the SVG.
+
+2a. Whole workbook ("All sheets")
+Review summary charts: Chart 1 on "Column Chart" (column), Chart 1 on "Stacked Column" (column).
+Receipt: imported {sheets 2, cells 40, charts 2}; changed_charts 2.
+Catalog (name, sheet, type, grouping, anchor row/col, offset px, size px, legend):
+  Chart 1  Column Chart    column clustered  anchor (1,3)  offset (66,16)  420x302  legend none   title "Sales by Division"
+  Chart 1  Stacked Column  column stacked    anchor (2,4)  offset (58,12)  461x303  legend right  title "Sales by Division"
+Resolved series and categories (resolve job):
+  Column Chart:   "Sales" [400586, 353095, 804585, 410434, 99699, 25539, 25156]
+                  categories [Sports, Arts, Electronics, Office, Celebration, Food, Other]
+  Stacked Column: "Q1" [240352, 183609, 321834, 229843, 89729, 13280, 14087]
+                  "Q2" [160234, 169486, 482751, 180591, 9970, 12259, 11069]
+                  categories [Sports, Arts, Electronics, Office, Celebration, Food, Other]
+Sheet cells read back from the imported workbook (rows 2 to 8):
+  Column Chart:   A = Sports, Arts, Electronics, Office, Celebration, Food, Other
+                  B = 400586, 353095, 804585, 410434, 99699, 25539, 25156   (B1 "Sales")
+  Stacked Column: A = the same seven divisions
+                  B = 240352, 183609, 321834, 229843, 89729, 13280, 14087   (B1 "Q1")
+                  C = 160234, 169486, 482751, 180591, 9970, 12259, 11069    (C1 "Q2")
+Comparison: every resolved series and category list equals the cells. They match.
+Rendered SVG (render job at the chart's own size):
+  whole-Column_Chart-Chart_1.svg    2,509 bytes
+  whole-Stacked_Column-Chart_1.svg  3,376 bytes
+
+2b. One sheet ("One sheet at the selected cell"), sheet_index 1 and 2, each into a fresh workbook
+  sheet_index 1: preview charts 1 (Chart 1, column, clustered, anchor (1,3), offset (66,16), 420x302);
+                 receipt changed_charts 1, changed_cells 16; resolved "Sales" values and
+                 categories identical to section 2a and to the cells; SVG 2,509 bytes
+                 (onesheet1-Sheet1-Chart_1.svg).
+  sheet_index 2: preview charts 1 (Chart 1, column, stacked, anchor (2,4), offset (58,12), 461x303,
+                 legend right); receipt changed_charts 1, changed_cells 24; resolved "Q1" and "Q2"
+                 values and categories identical to section 2a and to the cells; SVG 3,376 bytes
+                 (onesheet2-Sheet1-Chart_1.svg).
+Result: each scope created the expected charts (two for the whole workbook, one for each
+one-sheet import) and the resolved values match the cells. Nothing was off-grid or skipped.
+
+2c. Conversion report lines that mention charts, quoted
+Whole workbook (the full report holds 18 entries; totals approximated 9, converted 13,
+omitted 89, unevaluable 0, almost all from other features of the file):
+  sheet.feature  omitted    drawings                 count 2  samples: Column Chart, Stacked Column
+  workbook.feature omitted  charts                   count 2
+  chart.converted converted styling: colours         count 2  samples: Chart 1 on Column Chart, Chart 1 on Stacked Column
+  chart.converted converted styling: data labels     count 2  (same samples)
+  chart.converted converted styling: gap width       count 2  (same samples)
+  chart.converted converted styling: gridlines       count 2  (same samples)
+  chart.converted converted styling: fonts           count 2  (same samples)
+  chart.converted converted size_approximate         count 2  (same samples)
+  chart.converted converted legend_position          count 1  sample: Chart 1 on Stacked Column
+There are no chart.skipped entries.
+One sheet, sheet_index 1 (the preview report): workbook.feature omitted charts (count 2, the
+whole file's charts); sheet.feature omitted drawings (count 1, Column Chart); chart.converted
+styling: colours, data labels, gap width, gridlines, fonts, and size_approximate, each count 1
+on Column Chart.
+One sheet, sheet_index 2: workbook.feature omitted charts (count 2); sheet.feature omitted
+drawings (count 1, Stacked Column); chart.converted styling: colours, data labels, gap width,
+gridlines, fonts, legend_position and size_approximate, each count 1 on Stacked Column.
+
+How noisy: seven chart.converted entries for the two charts (five styling entries, one
+size_approximate, one legend_position), none skipped. Each entry names its charts, so a
+reader can tell what was dropped. The existing workbook.feature charts and sheet.feature
+drawings omitted entries ARE STILL REPORTED for this file even though both charts
+imported, so the report both says the charts were omitted and lists them as converted. This
+is the known inconsistency noted in compatibility-v0.md, awaiting an owner decision. Also
+seen: a one-sheet preview reports workbook.feature charts with the whole file's count (2),
+not the selected sheet's.
+size_approximate is reported for both charts because each worksheet declares a custom width
+for column A (customWidth) and a default row height of 14.4, so the pixel size comes from
+default cell sizes (64x20 px) and may differ from the size Excel shows.
+
+3. LibreOffice cross-format check
+---------------------------------
+not run: LibreOffice is not installed on this machine (no soffice on PATH, none in
+/Applications). Nothing was installed. The cross-format check of the design (one document
+saved by LibreOffice as XLSX and as ODS, imported, resolved series compared) is still owed.
+Without LibreOffice-produced files, the ODS reader is covered only by fixtures built in code
+(tests/test_ods_charts.py, tests/test_import_chart_paths.py).
+
+4. Not verified
+---------------
+- The application window on this file: overlays over the grid, their placement, scrolling,
+  frozen panes, the placeholder, and the import dialog's scope choice and review chart count.
+  No screenshots were taken. The desktop is covered by the automated desktop tests only.
+- Windows and Linux. All runs above are on macOS only. This is not a qualified
+  cross-platform result.
+- LibreOffice and Excel round trips (section 3). The sample is a single Excel-style file; no
+  other producer's files were imported.
+- ODS import on any file not built by the project's own fixtures.
+- Chart export, which still omits charts, and chart authoring, which is not built.
+- Values and formulas modes beyond "mixed" for the sample.
+
+5. Not committed
+----------------
+The sample file and every file under the scratchpad (workbooks, SVGs, script output) are
+outside the repository and are not committed.

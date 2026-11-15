@@ -145,11 +145,14 @@ class ListSink:
             self._seen.add((item['row'], item['col']))
         self.sheets[-1][1].extend(batch); self.batches.append(len(batch))
 
+    def charts(self, records): self.chart_records = records
+
 
 class CountingSink:
     def __init__(self): self.count = 0; self.names = []
     def sheet(self, name): self.names.append(name)
     def cells(self, batch): self.count += len(batch)
+    def charts(self, records): pass
 
 
 def sorted_entries(entries):

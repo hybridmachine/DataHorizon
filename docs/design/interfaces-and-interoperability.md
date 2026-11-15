@@ -94,6 +94,33 @@ job routes. The query engine's error codes pass through in the chart job's
 error, except that a timeout becomes `CALCULATION_FAILED` and a result too long
 for a series `LIMIT_POINTS`.
 
+### Chart import paths
+
+As built November 14-15, 2026 (branch `claude/charts-import-view`, not merged;
+[design](charts-import-view-design.md), [conversion rules](compatibility-v0.md#charts)).
+XLSX and ODS imports create native charts through every managed import shape:
+
+| Path | How charts travel |
+| --- | --- |
+| Whole workbook, staged (`prepare_spreadsheet_file` then `import_staged`; CLI `import-spreadsheet`; desktop "All sheets") | Records are held in the import stage (stage format version 2, a `charts` table covered by the stage digest), listed as `charts` (name, sheet, type) in the review summary, and created by the `workbook_import` apply |
+| Whole workbook, inline (bounded preview, at most 10,000 cells) | The preview returns `workbook_charts` beside `workbook_sheets`; `workbook_import` takes `charts` with `sheets` and rejects `charts` together with a stage |
+| One sheet at a cell (bounded selection preview, then `edit`; SDK `import_prepared`; desktop "One sheet") | The preview returns `charts` for the selected worksheet, sources and anchor shifted by the paste offset. `edit` takes an optional `charts` field of the same record form (`sheet` 0, `name`, `anchor`, `offset`, `size`, `spec` with range sources as `{"kind": "range", "sheet": 0, "ref": "B2:B8"}`) and creates them in the same operation as the cells |
+
+The one-sheet path follows `edit`'s contract: one undo step that removes the
+charts too, and a failing change handler rolls back cells and charts together.
+Whole-workbook imports still clear undo. Receipts report `imported.charts`
+(`workbook_import`) or `changed_charts` (`edit`), and `charts_left_out` names
+the charts not created because the workbook already holds 64. Records a client
+sends in `charts` are refused with `INVALID_ARGUMENT` when one is over 64 KiB as
+JSON or all of them are over 1 MiB; the previews never produce such records. A workbook that
+receives a chart is raised to native format v8. Creating the charts raises no
+chart events. The CLI has no one-sheet import, so only the SDK and the desktop
+carry charts on that path. OpenAPI documents the review summary, the previews,
+the inline request, `edit` and the receipts.
+
+Desktop display uses only the existing chart catalog read and chart jobs; no
+endpoint was added. Qt SVG is now a required desktop module.
+
 Server-local paths and remote client paths are different. Remote open/import
 operations need a defined upload or registered-workbook mechanism; a client's
 filesystem path must not be interpreted as an arbitrary server file request.

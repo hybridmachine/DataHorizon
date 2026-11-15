@@ -190,7 +190,7 @@ class ServiceStageImportTests(unittest.TestCase):
         summary = self.prepare(FIDELITY)
         receipt = self.apply(summary, 'add_sheets')
         self.assertEqual(receipt['outcome'], 'committed')
-        self.assertEqual(receipt['imported'], {'sheets': 3, 'cells': summary['stored_cells']})
+        self.assertEqual(receipt['imported'], {'sheets': 3, 'cells': summary['stored_cells'], 'charts': 0})
         after = self.info()
         self.assertEqual([s['name'] for s in after['sheets']], ['Sheet1', 'Notes', 'Inputs', 'Summary', 'Empty'])
         self.assertEqual(after['sheets'][:2], before['sheets'][:2])
@@ -255,7 +255,7 @@ class ServiceStageImportTests(unittest.TestCase):
         staged_receipt = self.apply(summary)
         small = self.open(self.temp/'small.dhwb', create=True)
         small_receipt = self.operate({'action': 'workbook_import', 'sheets': [{'name': 'Inputs', 'cells': copy.deepcopy(NORMALISED)}]}, small)
-        self.assertEqual(staged_receipt['imported'], {'sheets': 1, 'cells': len(NORMALISED)-1})
+        self.assertEqual(staged_receipt['imported'], {'sheets': 1, 'cells': len(NORMALISED)-1, 'charts': 0})
         self.assertEqual(small_receipt['imported'], staged_receipt['imported'])
         self.assertEqual(small_receipt['changed_cells'], staged_receipt['changed_cells'])
         staged_rows = stored_rows(self.service.workbooks[self.book])
@@ -270,7 +270,7 @@ class ServiceStageImportTests(unittest.TestCase):
         self.assertEqual(summary['stored_cells'], 60_000)
         before = self.state()
         receipt = self.apply(summary)
-        self.assertEqual(receipt['imported'], {'sheets': 1, 'cells': 60_000})
+        self.assertEqual(receipt['imported'], {'sheets': 1, 'cells': 60_000, 'charts': 0})
         self.assertEqual(receipt['changed_cells'], 60_000)
         self.assertNotEqual(receipt['state'], before)
         self.assertEqual(self.state(), receipt['state'])
@@ -335,7 +335,7 @@ class ServiceStageImportTests(unittest.TestCase):
         self.assertEqual(self.call('/v1/jobs/reused', method='GET')['result'], second)
         self.assertEqual(second['sheets'], [{'name': 'Big', 'stored_cells': 30}])
         other = self.open(self.temp/'other.dhwb', create=True)
-        self.assertEqual(self.apply(second, book=other)['imported'], {'sheets': 1, 'cells': 30})
+        self.assertEqual(self.apply(second, book=other)['imported'], {'sheets': 1, 'cells': 30, 'charts': 0})
         self.assertFalse(self.stage_exists('reused'))
 
     def test_replayed_receipt_leaves_a_new_completed_stage_with_the_same_id(self):
@@ -473,10 +473,10 @@ class EngineStageImportTests(unittest.TestCase):
         self.book.handler = str(IMPORT_HOOK)
         path, summary = self.stage([('One', number_cells(30)), ('Two', number_cells(2))])
         receipt = self.book.mutate(self.request(path, summary, target='add_sheets'))
-        self.assertEqual(receipt['imported'], {'sheets': 2, 'cells': 32})
+        self.assertEqual(receipt['imported'], {'sheets': 2, 'cells': 32, 'charts': 0})
         marker = self.book.raw(self.book.sheet('Sheet1'), 1, 30)
         self.assertEqual(json.loads(marker['source']), {'phases': ['before', 'after'], 'target': 'add_sheets',
-                                                        'sheets': [{'name': 'One', 'cells': 30}, {'name': 'Two', 'cells': 2}]})
+                                                        'sheets': [{'name': 'One', 'cells': 30}, {'name': 'Two', 'cells': 2}], 'charts': 0})
         self.assertEqual([name for _, name in self.catalog()], ['Sheet1', 'One', 'Two'])
         veto_path, veto = self.stage([('Veto', number_cells(3))], 'veto')
         before, revision = self.catalog(), self.revision()
@@ -486,14 +486,14 @@ class EngineStageImportTests(unittest.TestCase):
         self.assertEqual((self.catalog(), self.revision()), (before, revision))
         small = {'action': 'workbook_import', 'target': 'add_sheets', 'operation_id': 'small', 'expected_state': self.book.state(),
                  'sheets': [{'name': 'Three', 'cells': [{'row': 1, 'col': 1, 'source': '7'}]}]}
-        self.assertEqual(self.book.mutate(small)['imported'], {'sheets': 1, 'cells': 1})
+        self.assertEqual(self.book.mutate(small)['imported'], {'sheets': 1, 'cells': 1, 'charts': 0})
         marker = self.book.raw(self.book.sheet('Sheet1'), 1, 30)
         self.assertEqual(json.loads(marker['source'])['sheets'], [{'name': 'Three', 'cells': 1}])
 
     def test_reopen_after_staged_import_finds_the_data(self):
         path, summary = self.stage([('Data', number_cells(25)), ('Empty', [])])
         receipt = self.book.mutate(self.request(path, summary))
-        self.assertEqual(receipt['imported'], {'sheets': 2, 'cells': 25})
+        self.assertEqual(receipt['imported'], {'sheets': 2, 'cells': 25, 'charts': 0})
         self.assertIsNone(self.book.info()['undo'])
         self.book.close()
         self.book = Workbook(self.temp/'book.dhwb')

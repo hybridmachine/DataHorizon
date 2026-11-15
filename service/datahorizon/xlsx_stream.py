@@ -74,6 +74,8 @@ class Sink(Protocol):
     strings: StringStore
     def sheet(self, name: str) -> None: ...
     def cells(self, batch: list[dict]) -> None: ...
+    def charts(self, records: list[dict]) -> None:
+        """Called once, after the last sheet, with every chart record (see import_charts) the import carries."""
 
 
 class ByteBudget:
@@ -413,7 +415,11 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: 
         conversions = ConversionReport()
         workbook_features(conversions, workbook, ns, archive.namelist(), string_features, skipped)
         progress = _Progress(checkpoint)
-        for sheet, name in zip(sheets, names):
+        from .import_charts import ChartParts, Collector
+        from .xlsx_charts import worksheet_drafts
+        charts = Collector()
+        chart_parts = ChartParts(collector=charts, sheet_names=names, checkpoint=lambda: checkpoint(progress.cells, "Reading charts"))
+        for position, (sheet, name) in enumerate(zip(sheets, names)):
             checkpoint(progress.cells, "Reading sheet "+name)
             # One report per sheet, merged as the tree reader merges them; styles report into the open sheet.
             sheet_report = styles.report = ConversionReport()
@@ -426,7 +432,11 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink: Sink, checkpoint: 
             sink.sheet(name)
             _read_sheet(archive, part, budget, context, sink, progress, features)
             features.report(sheet_report, name)
+            # Charts are read against their own allowance, never the cells' budget; one that cannot be read is reported.
+            for draft in worksheet_drafts(archive, part, position, name, chart_parts, sheet_report, features):
+                charts.add(draft, names, sheet_report)
             conversions.merge(sheet_report)
+        sink.charts(charts.records)
         return conversions
 
 

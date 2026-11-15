@@ -3,6 +3,7 @@
 #include "keyboardgrid.h"
 #include "servicepaths.h"
 #include "frozenpanes.h"
+#include "chartlayer.h"
 #include "listcriteriadialog.h"
 #include "namedlistviews.h"
 #include "functionhelp.h"
@@ -865,6 +866,14 @@ void MainWindow::buildUi() {
     gridLayout->addWidget(m_frozenTop,0,1);gridLayout->addWidget(m_frozenTop->cornerView(),0,0);
     gridLayout->addWidget(m_frozenTop->leftWidget(),1,0);gridLayout->addWidget(m_grid,1,1);
     gridLayout->setRowStretch(1,1);gridLayout->setColumnStretch(1,1);layout->addWidget(gridArea,1);
+    // Charts follow every model bind and projection change: a sheet shown,
+    // a new workbook state, a list view applied or cleared.
+    m_charts=new ChartLayer(m_client,m_grid,m_frozenTop,gridArea,this);
+    connect(m_charts,&ChartLayer::failed,this,&MainWindow::issue);
+    // A stale read refreshes, as other stale reads do; the refresh lists again.
+    connect(m_charts,&ChartLayer::stale,m_model,&SheetModel::externalChange);
+    connect(m_model,&QAbstractItemModel::modelReset,this,[this]{
+        m_charts->bind(m_model->workbook().isEmpty()?QString():"/v1/workbooks/"+m_model->workbook(),m_model->sheet(),m_model->state(),m_model->projected());});
     m_freezeAction=add(view,tr("Freeze top row"),{},[this]{
         if(m_busy || m_unknown || m_info.isEmpty() || m_model->projected() || m_hiddenRows.contains(0)) {
             QSignalBlocker blocker(m_freezeAction); m_freezeAction->setChecked(m_frozenTop->active());
@@ -2127,6 +2136,8 @@ QString MainWindow::bindingRejection(const QJsonObject &result) {
 }
 
 void MainWindow::reportReferenceWarnings(const QJsonObject &receipt) {
+    QStringList chartsLeftOut;for(const auto &value:receipt["charts_left_out"].toArray())chartsLeftOut.append(value.toString().simplified().left(64));
+    if(!chartsLeftOut.isEmpty())issue(tr("Charts left out because a workbook holds at most 64 charts: %1").arg(chartsLeftOut.join(", ")));
     for(const auto &value:receipt["binding_notices"].toArray()) {
         const auto notice=value.toObject();const auto reason=notice["reason"].toString();
         issue(tr("Rule skipped: %1 (%2)").arg(notice["function"].toString(),PythonWorkspace::skippedReason(reason)));
@@ -3391,8 +3402,11 @@ void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &
         QStringList report; for(const auto &line:preview["report"].toArray()) report.append(line.toString());
         for(const auto &entry:preview["issues"].toArray()) { const auto item=entry.toObject(); report.append((item["sheet"].toString().isEmpty()?QString():item["sheet"].toString()+"!")+item["cell"].toString()+": "+item["message"].toString()); }
         const bool allowed=preview["can_import"].toBool();
+        const auto sheetName=preview["sheet"].toString().left(80);
+        auto what=tr("%1 stored cells").arg(preview["stored_cells"].toInt());
+        if(const int charts=int(preview["charts"].toArray().size()); charts>0) what=tr("%1 and %2").arg(what,tr("%n chart(s)",nullptr,charts));
         QMessageBox review(QMessageBox::Question,tr("Review spreadsheet import"),
-            tr("Import %1 stored cells from %2 at %3?").arg(preview["stored_cells"].toInt()).arg(preview["sheet"].toString().left(80)).arg(target["name"].toString()),
+            tr("Import %1 from %2 at %3?").arg(what,sheetName,target["name"].toString()),
             QMessageBox::Yes|QMessageBox::Cancel,this);
         review.setObjectName("spreadsheetImportReview");
         review.setOption(QMessageBox::Option::DontUseNativeDialog); review.setTextFormat(Qt::PlainText); review.setDefaultButton(QMessageBox::Cancel);
@@ -3400,8 +3414,27 @@ void MainWindow::importSpreadsheetBytes(const QByteArray &bytes, const QString &
         review.setDetailedText(report.join('\n')); review.button(QMessageBox::Yes)->setEnabled(allowed);
         const auto choice=review.exec(); setBusy(false);
         if(choice!=QMessageBox::Yes || !allowed || !matchesTarget(target) || m_model->projected()) return;
-        submit({{"action","edit"},{"label","Import "+format.toUpper()},{"cells",preview["cells"]},
-                {"workbook",target["workbook"]},{"sheet",target["sheet"]},{"expected_state",target["expected_state"]}});
+        QJsonObject edit{{"action","edit"},{"label","Import "+format.toUpper()},{"cells",preview["cells"]},
+                {"workbook",target["workbook"]},{"sheet",target["sheet"]},{"expected_state",target["expected_state"]}};
+        if(!preview["charts"].toArray().isEmpty()) edit["charts"]=preview["charts"];
+        const auto previous=m_pendingId;
+        submit(edit);
+        if(m_pendingId.isEmpty() || m_pendingId==previous) return;
+        // The committed edit's status names what it changed, charts included;
+        // the refresh that follows sets its own status, so it is shown again
+        // once the window is ready.
+        const auto operation=m_pendingId;auto receipts=std::make_shared<QMetaObject::Connection>();
+        *receipts=connect(this,&MainWindow::operationReceipt,this,[this,operation,sheetName,receipts](QJsonObject receipt){
+            if(receipt["operation_id"].toString()!=operation) return;
+            disconnect(*receipts);
+            if(receipt["outcome"].toString()!="committed") return;
+            auto changed=tr("%n cell(s)",nullptr,receipt["changed_cells"].toInt());
+            if(const int charts=receipt["changed_charts"].toInt(); charts>0) changed=tr("%1 and %2").arg(changed,tr("%n chart(s)",nullptr,charts));
+            const auto text=tr("Imported %1 from %2 • Stored automatically").arg(changed,sheetName);
+            m_status->setText(text);
+            auto ready=std::make_shared<QMetaObject::Connection>();
+            *ready=connect(this,&MainWindow::workbookReady,this,[this,text,ready]{disconnect(*ready);m_status->setText(text);});
+        });
     },format);
 }
 
@@ -3556,7 +3589,8 @@ void MainWindow::reviewLargeImport(const std::shared_ptr<LargeImport> &run, cons
     const auto sheets=summary["sheets"].toArray();
     const qint64 cells=qint64(summary["stored_cells"].toDouble());
     const auto sheetCount=tr("%n sheet(s)",nullptr,int(sheets.size()));
-    const auto cellCount=tr("%n stored cell(s)",nullptr,int(qMin<qint64>(cells,std::numeric_limits<int>::max())));
+    auto cellCount=tr("%n stored cell(s)",nullptr,int(qMin<qint64>(cells,std::numeric_limits<int>::max())));
+    if(const int charts=int(summary["charts"].toArray().size()); charts>0) cellCount=tr("%1 and %2").arg(cellCount,tr("%n chart(s)",nullptr,charts));
     // A short summary in the desktop's own words; the service's fixed scope
     // statements are kept under Details.
     QStringList sentences;
@@ -3659,7 +3693,10 @@ void MainWindow::largeImportReceipt(const std::shared_ptr<LargeImport> &run, con
         m_selectSheetWorkbook=run->workbook;
         const auto imported=receipt["imported"].toObject();
         finishLargeImport(run);
-        m_status->setText(tr("Imported %1 and %2 • Native workbook stored").arg(tr("%n sheet(s)",nullptr,imported["sheets"].toInt()),tr("%n cell(s)",nullptr,imported["cells"].toInt())));
+        auto what=tr("%1 and %2").arg(tr("%n sheet(s)",nullptr,imported["sheets"].toInt()),tr("%n cell(s)",nullptr,imported["cells"].toInt()));
+        if(imported["charts"].toInt()>0) what=tr("%1 and %2").arg(what,tr("%n chart(s)",nullptr,imported["charts"].toInt()));
+        m_status->setText(tr("Imported %1 • Native workbook stored").arg(what));
+        reportReferenceWarnings(receipt);
         return;
     }
     run->operation.clear();

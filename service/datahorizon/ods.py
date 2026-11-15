@@ -397,7 +397,7 @@ def convert_ods_cell(cell,*,context):
     return {"row":context.row,"col":context.col,**item}
 
 
-def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None):
+def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None,chart_parts=None):
     selected=integer(request.get("sheet_index",1),1,MAX_SHEET_INDEX,"sheet_index"); selected_mode=mode(request)
     require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
     report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct/inherited cell styles replace destination inputs/styles.",
@@ -466,13 +466,29 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         sheet_features=OdsSheetFeatures(layout,mapped_styles(styles.styles),panes.get(sheet_label))
         scan_table(sheets[selected-1],sheet_features)
         sheet_features.report(conversions,sheet_label,workbook_features.sheet_extra(sheet_label))
-        report.extend(conversions.lines())
-        result={"cells":edits,"stored_cells":len(edits),"can_import":bool(edits),"issues":[],"sheet":sheet_label,
-                "sheets":[s.get(q(T,"name"),"") for s in sheets],"report":report,"scope_lines":scope,"report_entries":conversions.entries(),
-                "totals":conversions.totals()}
+        # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules, against the
+        # shared allowance and workbook limit. A selection reads this sheet's charts alone, then rebases and shifts them.
+        from .interchange import _apply_cells, fit_charts, selection_charts
+        from .ods_charts import SheetFrames, sizes_declared, table_frames
+        names=sheet_names if sheet_names is not None else [s.get(q(T,"name"),"") for s in sheets]
+        position=names.index(sheet_label) if sheet_names is not None else selected-1
+        if chart_parts is None: chart_parts=selection_charts(names,position,shift,sheet_label,checkpoint)
+        frames=SheetFrames(archive,position,sheet_label,chart_parts,conversions)
+        for frame,cell,grouped in table_frames(sheets[selected-1]): frames.frame(frame,cell,grouped)
+        records=[record for draft in frames.finish(sizes_declared(sheet_features)) if (record:=chart_parts.collector.add(draft,names,conversions)) is not None]
+        lines=list(report)
+        def build(charts):
+            # The report is read after the charts are fitted, so it names each chart left out for room.
+            built={"cells":edits,"stored_cells":len(edits),"can_import":bool(edits),"issues":[],"sheet":sheet_label,
+                   "sheets":[s.get(q(T,"name"),"") for s in sheets],"report":lines+conversions.lines(),"scope_lines":scope,
+                   "report_entries":conversions.entries(),"totals":conversions.totals()}
+            if sheet_names is None: built["charts"]=charts
+            return built
+        # A selection's records are already rebased to sheet 0, the selected sheet.
+        result=fit_charts(build,records,[sheet_label],conversions,_apply_cells(edits,request)) if sheet_names is None else build(records)
         if result["can_import"]: result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","ODS preview exceeds 4 MiB")
-        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=wide
+        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=wide; result["_charts"]=records
         return result
 
 

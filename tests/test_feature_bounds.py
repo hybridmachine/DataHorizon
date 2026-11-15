@@ -61,6 +61,7 @@ class Sink:
     def cells(self, batch):
         if self.digest is not None:
             for cell in batch: self.digest.update(f"{cell['row']},{cell['col']},{cell['source']}\n".encode())
+    def charts(self, records): pass
 
 sink = Sink()
 reader = xlsx_stream.read_workbook if sys.argv[1] == "xlsx" else ods_stream.read_workbook
@@ -345,6 +346,7 @@ class SaturationAgreementTests(unittest.TestCase):
                     put = staticmethod(lambda index, text: None)
                 def sheet(self, name): pass
                 def cells(self, batch): pass
+                def charts(self, records): pass
             streamed = ods_stream.read_workbook(path, {"scope": "workbook"}, Sink(), lambda completed, phase: None).entries()
         self.assertEqual(tree["report_entries"], streamed)
         entry = next(e for e in streamed if e["detail"] == "data_validation")

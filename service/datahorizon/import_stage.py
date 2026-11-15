@@ -12,11 +12,12 @@ from pathlib import Path
 import sqlite3
 from urllib.parse import quote
 
+from . import import_charts
 from .conversion_report import ConversionReport
 from .engine import EngineError, TEMPORAL_KINDS, encoded, require, stored_edit
 from .xlsx_stream import LARGE_CELLS, LARGE_SHEETS, scope_lines
 
-VERSION = 1
+VERSION = 2  # 2: chart records
 SUMMARY_LIMIT = 1024*1024
 # fit_summary measures compact JSON; the service's response encoding is not pinned here, so aim for 900 KiB to
 # leave about 12% headroom for a more spacious serialisation.
@@ -31,7 +32,8 @@ CREATE TABLE sheets(position INTEGER PRIMARY KEY, name TEXT NOT NULL);
 CREATE TABLE styles(id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
 CREATE TABLE cells(sheet INTEGER NOT NULL, row INTEGER NOT NULL, col INTEGER NOT NULL, source TEXT NOT NULL,
                    kind TEXT NOT NULL, style_id INTEGER NOT NULL, PRIMARY KEY(sheet, row, col)) WITHOUT ROWID;
-CREATE TABLE strings(idx INTEGER PRIMARY KEY, text TEXT NOT NULL);"""
+CREATE TABLE strings(idx INTEGER PRIMARY KEY, text TEXT NOT NULL);
+CREATE TABLE charts(position INTEGER PRIMARY KEY, payload TEXT NOT NULL);"""
 SELECT_CELLS = ("SELECT cells.row, cells.col, cells.source, cells.kind, styles.payload FROM cells "
                 "JOIN styles ON styles.id = cells.style_id WHERE cells.sheet = ? ORDER BY cells.row, cells.col")
 
@@ -64,6 +66,10 @@ class StageReader:
             "SELECT count(cells.row) FROM sheets LEFT JOIN cells ON cells.sheet = sheets.position "
             "GROUP BY sheets.position ORDER BY sheets.position")]
 
+    def chart_records(self):
+        """The chart records (see import_charts) the import creates, in file order."""
+        return [json.loads(payload) for (payload,) in self.db.execute("SELECT payload FROM charts ORDER BY position")]
+
     def has_temporal(self):
         marks = ",".join("?"*len(TEMPORAL_KINDS))
         return self.db.execute(f"SELECT 1 FROM cells WHERE kind IN ({marks}) LIMIT 1", tuple(TEMPORAL_KINDS)).fetchone() is not None
@@ -76,12 +82,13 @@ class StageReader:
             yield rows
 
     def digest(self):
-        """SHA-256 over the sheet names in order and every cell in primary-key order, with resolved styles."""
+        """SHA-256 over the sheet names in order, every cell in primary-key order, with resolved styles, then the chart records."""
         hasher = hashlib.sha256(encoded(self.sheets()).encode())
         for position in range(len(self.sheets())):
             for rows in self.iter_cells(position):
                 for row in rows:
                     hasher.update(b"\n"+json.dumps([position, *row], separators=(",", ":")).encode())
+        hasher.update(b"\n"+encoded(self.chart_records()).encode())
         return hasher.hexdigest()
 
     def sample(self, per_sheet=100, *, source_limit=None):
@@ -119,6 +126,10 @@ class _ReadOnlyStage(StageReader):
         except (sqlite3.Error, ValueError) as error:
             if db is not None: db.close()
             raise EngineError("INVALID_STAGE", "The import stage is not a readable stage database", 409) from error
+        if meta is not None and isinstance(meta.get("version"), int) and 1 <= meta["version"] < VERSION:
+            db.close()
+            # Stages are throwaway: one from an earlier service holds no chart records, so it is prepared again.
+            raise EngineError("STALE_PLAN", "The import stage was prepared by an earlier version; prepare the workbook again", 409)
         if meta is None or meta.get("version") != VERSION:
             db.close()
             raise EngineError("JOB_CONFLICT", "The import stage is unfinished or of an unsupported version", 409)
@@ -153,7 +164,7 @@ class _Strings:
 
 
 class ImportStage(StageReader):
-    """The sink for xlsx_stream.read_workbook: sheet(), cells(batch) and strings.put/get."""
+    """The sink for xlsx_stream.read_workbook: sheet(), cells(batch), charts(records) and strings.put/get."""
 
     def __init__(self, path):
         path = Path(path)
@@ -229,6 +240,13 @@ class ImportStage(StageReader):
         self._execute_many("INSERT INTO cells(sheet, row, col, source, kind, style_id) VALUES (?, ?, ?, ?, ?, ?)", rows)
         self._count += len(rows)
 
+    def charts(self, records):
+        """Store the import's chart records, once, after the last sheet."""
+        self._writable()
+        require(not self.chart_records(), "JOB_CONFLICT", "The import stage already holds its charts", 409)
+        self.db.executemany("INSERT INTO charts(position, payload) VALUES (?, ?)",
+                            [(position, encoded(record)) for position, record in enumerate(records)])
+
     def finish(self, report: ConversionReport, extra: dict, *, scope: list[str] | None = None) -> dict:
         """Drop the string table, seal the stage and return the review summary (always under 1 MiB).
 
@@ -240,7 +258,7 @@ class ImportStage(StageReader):
             fixed = scope_lines({}) if scope is None else list(scope)
             summary = {"scope": "workbook", "stage_id": self.stage_id(), "stage_digest": None, "sheets": [],
                        "stored_cells": self._count, "report": fixed+report.lines(), "scope_lines": fixed,
-                       "report_entries": report.entries(), "totals": report.totals(), "sample": [],
+                       "report_entries": report.entries(), "totals": report.totals(), "sample": [], "charts": [],
                        # A package with no worksheets (only chart, dialog or macro sheets) stages nothing to apply.
                        "can_import": bool(self.sheets())}
             clash = set(extra) & set(summary)
@@ -248,6 +266,7 @@ class ImportStage(StageReader):
             require(len(encoded(extra).encode()) <= MAX_EXTRA, "LIMIT", "Import summary extras exceed 64 KiB")
             summary["stage_digest"] = self.digest()
             summary["sheets"] = [{"name": name, "stored_cells": total} for name, total in zip(self.sheets(), self.sheet_counts())]
+            summary["charts"] = import_charts.summary(self.chart_records(), self.sheets())
             summary.update(extra)
             summary["sample"] = self.sample(100, source_limit=SAMPLE_SOURCE)
             summary = fit_summary(summary)

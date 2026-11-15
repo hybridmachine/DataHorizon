@@ -97,6 +97,8 @@ class ListSink:
             self._seen.add((cell["row"], cell["col"]))
         self.sheets[-1][1].extend(batch); self.batches.append(len(batch))
 
+    def charts(self, records): self.chart_records = records
+
 
 class CountingSink:
     """Discards cells so memory measurements see only the reader."""
@@ -106,6 +108,8 @@ class CountingSink:
     def sheet(self, name): pass
 
     def cells(self, batch): self.count += len(batch)
+
+    def charts(self, records): pass
 
 
 class StreamingReaderTests(unittest.TestCase):

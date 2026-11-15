@@ -9,7 +9,8 @@ the licensing state they recorded at the time.
 
 Third-party dependencies retain their own copyrights and licenses. The macOS
 ARM64 distribution candidate dynamically links Qt Core, GUI, Widgets, Network,
-DBus and SVG, including deployed platform/image plugins. Qt Test is build/test
+DBus and SVG (the desktop links Qt SVG for chart rendering, under the same Qt
+licensing as the other modules), including deployed platform/image plugins. Qt Test is build/test
 only. Qt 6.12.0 source license texts, attribution records and vendor SBOMs are
 preserved under `packaging/qt/6.12.0`, with official source URLs and SHA-256 values.
 These source records are a superset of the deployed dependencies, not a claim

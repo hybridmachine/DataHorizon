@@ -357,8 +357,9 @@ end of their sheet.
 | `cell.*` | A cell value converted or skipped: `error_value`, `invalid_value`, `missing_cache`, `number_out_of_range`, `text_too_long`, `unsupported_type`, `date_conversion` |
 | `formula.*` | A formula kept unevaluable, replaced by its cache or skipped: `unsupported_function`, `name`, `missing_sheet`, `external_reference`, `unsupported_reference`, `syntax`, `unsupported_syntax`, `array`, `data_table`, `untranslatable`, `unmaintained` (export), `cache_omitted` and `display_not_evaluated` (large export) |
 | `style.*` | Formatting outside the native style tier: `number_format`, `font`, `fill`, `border`, `alignment`, `named_style` |
-| `sheet.feature` | A worksheet feature not imported; the detail is its feature id (`merged_cells`, `column_widths`, `row_heights`, `hidden_rows_columns`, `frozen_panes`, `conditional_formatting`, `data_validation`, `hyperlinks`, `comments`, `excel_tables`, `auto_filter`, `sheet_protection`, `page_setup`, `drawings` and others); the count is items (ranges, rules, links, rows or columns) |
-| `workbook.feature` | A workbook feature or package part not imported: `defined_names`, `external_references`, `hidden_sheets`, `workbook_protection`, `calculation_settings`, `charts`, `pivot_tables`, `vba`, `custom_xml`, `rich_text` and others |
+| `sheet.feature` | A worksheet feature not imported; the detail is its feature id (`merged_cells`, `column_widths`, `row_heights`, `hidden_rows_columns`, `frozen_panes`, `conditional_formatting`, `data_validation`, `hyperlinks`, `comments`, `excel_tables`, `auto_filter`, `sheet_protection`, `page_setup`, `drawings` (still reported when the charts import; see [Charts](#charts)) and others); the count is items (ranges, rules, links, rows or columns) |
+| `workbook.feature` | A workbook feature or package part not imported: `defined_names`, `external_references`, `hidden_sheets`, `workbook_protection`, `calculation_settings`, `charts` (still reported when the charts import; see [Charts](#charts)), `pivot_tables`, `vba`, `custom_xml`, `rich_text` and others |
+| `chart.*` | A chart converted or skipped on import: `chart.converted` and `chart.skipped`, see [Charts](#charts) |
 | `report.truncated` | Further distinct entries beyond 200, counted but not itemized |
 
 The [specification coverage table](excel-spec-coverage.md) lists every
@@ -422,6 +423,132 @@ report review (see the [automation guide](python-automation-guide.md#importing-a
 listed feature is dropped without a report entry. The corpus has no file saved
 by Excel or LibreOffice yet, so this is not an Excel or LibreOffice
 compatibility claim.
+
+### Charts
+
+Chart import was built on November 14-15, 2026 on branch `claude/charts-import-view`
+(not merged; the design is [charts-import-view-design.md](charts-import-view-design.md)).
+The development preview imports charts from XLSX (DrawingML `c:chartSpace`
+reached from a worksheet's drawing) and ODS (a `draw:frame` holding a
+`draw:object` with a `chart:chart` sub-document) as native charts, and the
+desktop draws them view-only ([status](implementation-status.md#charts-import-and-view-only-display--november-15-2026)).
+It is not a qualified cross-platform release. **Export still omits charts**: an
+XLSX or ODS export reports each native chart as omitted, and no chart is
+written. CSV carries no charts.
+
+Cached values in the file (`c:numCache`, `c:strCache`) are never used as data;
+the chart reads the imported cells, so in `values` mode it reads the cached
+cell values.
+
+**What an imported chart keeps**
+
+| In the file | Native result |
+| --- | --- |
+| Bar chart, vertical; bar chart, horizontal; line; area; pie; scatter | `column`; `bar`; `line`; `area`; `pie`; `scatter` |
+| Clustered or standard grouping | `clustered` (`null` where the type takes none) |
+| Stacked grouping | `stacked` |
+| Chart title text (literal rich text) | `title.text`, cut to 255 characters |
+| Category and value axis titles (literal) | `axes.category.title`, `axes.value.title`, each cut to 255 characters |
+| Value axis fixed minimum and maximum | `axes.value.min`, `axes.value.max` (both dropped silently when minimum exceeds maximum) |
+| Legend at right; at bottom; absent | `right`; `bottom`; `none` |
+| Series name by cell reference; by literal | `name.source`; `name.text`, cut to 255 characters |
+| Series values, categories, scatter x by one contiguous single-row or single-column reference | Range sources |
+| Categories of the first series | The chart's `categories` |
+| Frame name ("Chart 1") | Chart name, made unique on its sheet |
+| Top-left anchor cell and offset | `anchor`, `offset` in pixels at 96 DPI, offset clamped to 0..4096 |
+| Frame extent | `size` in pixels, clamped to 64x48..4096x4096 |
+| Drawing order on the sheet | `z` |
+
+**Converted (`chart.converted`; the chart is still imported).** Each entry
+names the chart as its sample and the sheet; `count` counts charts.
+
+| Detail | Meaning |
+| --- | --- |
+| `styling: <property>` | One entry per dropped property: `colours`, `data labels`, `gap width`, `markers`, `smoothing`, `gridlines`, `number formats`, `fonts` |
+| `grouping` | A stacked grouping on a type that takes none (line, pie, scatter) became none |
+| `percent_stacked` | Percent-stacked became `stacked` |
+| `three_d` | A 3D variant became the 2D type |
+| `doughnut` | A one-series doughnut became `pie` |
+| `series_name` | A series name that could not be bound exactly was replaced by `Series N` |
+| `legend_position` | A legend at top or left became `right` |
+| `title_from_cell` | A title or axis title taken from a cell became that cell's cached text, no longer following the cell |
+| `title_cut` | A chart or axis title over 255 characters was cut |
+| `series_name_cut` | A literal series name over 255 characters was cut (one entry per chart) |
+| `categories_differ` | Series with categories other than the first series' use the first series' |
+| `size_approximate` | The size was computed from default cell sizes (64x20 px) because the sheet declares custom sizes; on ODS, any declared column-width style |
+| `anchor_absolute` | An absolute anchor was placed at the nearest cell |
+| `name` | A name over 64 characters, empty or unprintable was cut or replaced by `Chart` |
+
+**Skipped (`chart.skipped`; no chart is created, the cells import).**
+
+| Detail | Meaning |
+| --- | --- |
+| `type` | Any other chart type: radar, stock, surface, bubble, treemap, sunburst, waterfall, histogram, funnel, map, and Excel's extended (`cx:`) charts |
+| `combination` | A plot area with more than one chart type |
+| `secondary_axis` | A secondary axis |
+| `pie_series` | A pie or doughnut with other than one series |
+| `source` | A source that is not one contiguous single-row or single-column range on an imported worksheet: multi-area or multi-level reference, defined name, external workbook, literal array, a sheet that is not imported, table structured reference; also a chart with no series |
+| `limit` | More than 64 series, a source over 10,000 cells (1,000 for a pie's values or categories), or over 100,000 source cells in all; a whole-column reference is over the source limit; or a converted chart over 64 KiB as JSON (after a one-sheet import's offset too) |
+| `off_grid` | The anchor, or after a one-sheet import's offset any anchor or source, lies outside the grid |
+| `workbook_limit` | More than 64 charts in the imported file, or charts that would take one import's charts past 1 MiB as JSON in all, or past the room a bounded preview's cells leave; the excess is left out in file order. Once 64 charts are held no further chart part is read, so a frame whose part was not yet read is reported `workbook_limit` without being checked (on ODS even when its object is not a chart). Charts that would pass 64 once the destination's own charts are counted (`add_sheets`, one-sheet) are decided at apply and named in the receipt's `charts_left_out` instead |
+| `unreadable` | The chart or its drawing could not be parsed or read (a corrupt compressed part included), a chart part that would pass the chart allowance, a worksheet's second and later `<drawing>` elements (one entry with their count), or frames past the 256th of the import (one entry per sheet with their count) |
+| `grouped` | The chart is inside a group shape |
+
+Chart sheets keep their `workbook.feature` `chart_sheets` entry. A malformed
+chart never fails the import.
+
+**Limits and budgets.** Chart, drawing and relationship parts are read against
+their own allowance of 16 MiB decompressed per import, separate from the
+package's expanded budget, and each distinct part is read and parsed once; a
+chart that would pass it is reported `unreadable`. An XLSX worksheet's charts
+come only from the drawing its `<drawing r:id>` names. At most 256 chart frames
+are read per import, across all its sheets; once 64 charts are held no further
+chart part is read. A draft keeps at most 65 series, enough for the conversion
+to skip the chart as `limit`. Series names and axis titles are cut to 255
+characters like the title; a converted chart is at most 64 KiB as JSON and one
+import's charts at most 1 MiB, and records a client sends (`charts` of
+`workbook_import` and `edit`) are refused with `INVALID_ARGUMENT` past the same
+two caps. A bounded preview answers within 4 MiB and its cells come first:
+charts get the room the cells and their report leave, and on a one-sheet
+import also the room the cells leave in the `edit` request that applies them,
+so a preview that fits without charts is never refused because of them. The
+charts that do not fit are left out in file order and reported as
+`workbook_limit`. XML is read through the same entity-safe readers as the rest
+of the package and relationship targets resolve inside the package only.
+
+**Import paths.** All three apply shapes carry charts: the staged
+whole-workbook import (stage format version 2 holds a `charts` table covered by
+the stage digest; the review summary lists `charts` as name, sheet and type),
+the inline whole-workbook import (the bounded preview returns
+`workbook_charts`, the `workbook_import` request carries `charts`), and the
+one-sheet import, where `edit` takes `charts` (see
+[interfaces](interfaces-and-interoperability.md#chart-import-paths)). Receipts
+report `imported.charts` (whole workbook) or `changed_charts` (one sheet), and
+`charts_left_out` names charts past the workbook's chart limit. The CLI has no
+one-sheet import, so only the SDK and the desktop carry charts on that path.
+
+**Known limits and inconsistencies.**
+
+- The existing `workbook.feature` `charts` and `sheet.feature` `drawings`
+  omitted entries are still reported even when the charts import, so a file
+  whose charts all imported still lists them as omitted. This is a known
+  inconsistency awaiting an owner decision, not intended behavior.
+- Pixel sizes use default cell sizes (64x20 px); where the sheet declares
+  custom sizes the chart is imported with `size_approximate` and its extent can
+  differ from the file's.
+- An imported chart keeps roughly its source pixel size, but because the import
+  measures cells at 64x20 px while the desktop grid's default cells are larger,
+  it covers fewer cells in the desktop than in the source.
+- A one-sheet import skips a chart with a source on another sheet (`source`) and a chart
+  pushed off the grid by the offset (`off_grid`), and takes only the selected worksheet's charts.
+  A chart it skips this way does not count toward the 64-chart limit.
+- Excel's colours, data labels, gap width, markers, smoothing, gridlines,
+  number formats and fonts are not carried; specification version 1 has no
+  place for them.
+- Verified against fixtures built in code and one owner-supplied XLSX sample
+  through the service; the evidence file lists what was not verified (the
+  desktop window on that file, Windows, Linux, LibreOffice).
+  See the [evidence](evidence/charts-import-view-verification.txt).
 
 ## Whole-workbook interchange
 

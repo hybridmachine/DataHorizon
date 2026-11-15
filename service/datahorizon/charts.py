@@ -706,8 +706,8 @@ def _input_form(db, sheet_id, chart_id, payload):
     return spec
 
 
-def _create(book, request):
-    sheet_id = book.sheet(request.get("sheet", "Sheet1"))
+def create_chart(book, sheet_id, request):
+    """Create one chart on a resolved sheet from a ``chart_create`` request; it names, stacks and stores the chart."""
     require("spec" in request, "INVALID_ARGUMENT", "chart_create needs spec")
     spec = normalise_spec(book, request["spec"])
     siblings = [payload for sheet, _, payload in objects(book) if sheet == sheet_id]
@@ -725,6 +725,10 @@ def _create(book, request):
     chart_id = str(uuid.uuid4())
     store(book, sheet_id, chart_id, payload)
     return {"chart_id": chart_id}
+
+
+def _create(book, request):
+    return create_chart(book, book.sheet(request.get("sheet", "Sheet1")), request)
 
 
 def _update(book, request):

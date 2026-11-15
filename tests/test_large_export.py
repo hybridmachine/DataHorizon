@@ -68,6 +68,8 @@ class CollectingSink:
 
     def cells(self, batch): self.sheets[-1]['cells'].extend(batch)
 
+    def charts(self, records): self.chart_records = records
+
 
 def stored_rows(engine):
     with engine.lock:

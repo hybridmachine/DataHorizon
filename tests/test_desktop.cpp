@@ -14,6 +14,9 @@
 #include "queryworkbench.h"
 #include "conversionreportview.h"
 #include "restclient.h"
+#include "chartlayer.h"
+#include <QHeaderView>
+#include <QScrollBar>
 #include <QEventLoop>
 #include <QTextDocument>
 #include <QToolButton>
@@ -273,11 +276,13 @@ private:
 
 class DelayedCloseProxy : public QTcpServer {
 public:
-    struct Pending { QPointer<QTcpSocket> socket; QJsonObject result; QString error; };
+    struct Pending { QPointer<QTcpSocket> socket; QJsonObject result; QString error; QString code="UNAVAILABLE"; };
     Pending closeReply, metadataReply, rangeReply, openReply;
     bool holdMetadata = false, holdRange = false, holdOpen = false;
     QString closeFailure, closedHandle;
     int mutations = 0, opens = 0, closes = 0, metadataReads = 0;
+    // The next failCharts chart catalog reads fail with chartFailure as code.
+    int failCharts = 0, chartReads = 0; QString chartFailure = "UNAVAILABLE";
     DelayedCloseProxy(const QJsonObject &service) : m_upstream(this) {
         m_upstream.configure(service["url"].toString(),service["token"].toString());
         connect(this,&QTcpServer::newConnection,this,[this] {
@@ -295,6 +300,10 @@ public:
                 if(path=="/v1/open") ++opens;
                 if(path.endsWith("/operations")) ++mutations;
                 if(metadata) ++metadataReads;
+                if(path.endsWith("/charts")) {
+                    ++chartReads;
+                    if(failCharts>0){--failCharts;send({socket,{},chartFailure=="STALE_STATE"?"Refresh charts before inspection":"Chart catalog unavailable",chartFailure});return;}
+                }
                 if(path.endsWith("/close")) {
                     ++closes; closedHandle=parts[2];
                     if(!closeFailure.isEmpty()) {
@@ -330,7 +339,7 @@ private:
         if(closeFailure=="disconnect") response.socket->abort(); else send(response);
     }
     static void send(const Pending &response) {
-        const auto body=QJsonDocument(response.error.isEmpty()?response.result:QJsonObject{{"code","UNAVAILABLE"},{"message",response.error}})
+        const auto body=QJsonDocument(response.error.isEmpty()?response.result:QJsonObject{{"code",response.code},{"message",response.error}})
             .toJson(QJsonDocument::Compact);
         response.socket->write(QByteArray("HTTP/1.1 ")+(response.error.isEmpty()?"200 OK":"503 Service Unavailable")
             +"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(body.size())+"\r\n\r\n"+body);
@@ -409,6 +418,60 @@ public:
             const auto body=QJsonDocument(result).toJson(QJsonDocument::Compact);socket->write(QByteArray("HTTP/1.1 ")+(failed?"503 Unavailable":"200 OK")+"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(body.size())+"\r\n\r\n"+body);socket->disconnectFromHost();
         });});
     }
+};
+
+// Forwards every request to the service and counts chart jobs, as
+// JobLifecycleServer counts operation jobs: which started, how many ran at
+// once by the service's answers, and which were cancelled and released.
+// While holdResults is set a completed job is answered as still running; the
+// next staleAnswers completed answers are rewritten as stale; the next
+// failPolls polls of a job are answered 503, as a lost connection would be.
+class ChartJobProxy : public QTcpServer {
+public:
+    QStringList started,cancels,releases,startedCharts;QSet<QString> running;int maxRunning=0,staleAnswers=0,failPolls=0;bool holdResults=false;
+    explicit ChartJobProxy(const QJsonObject &service) : m_upstream(this) {
+        m_upstream.configure(service["url"].toString(),service["token"].toString());
+        connect(this,&QTcpServer::newConnection,this,[this] {
+            auto *socket=nextPendingConnection(); connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
+            connect(socket,&QTcpSocket::readyRead,socket,[this,socket] {
+                const auto request=socket->property("request").toByteArray()+socket->readAll(); socket->setProperty("request",request);
+                const auto end=request.indexOf("\r\n\r\n"); if(end<0 || socket->property("handled").toBool()) return;
+                const auto length=QRegularExpression("Content-Length: (\\d+)",QRegularExpression::CaseInsensitiveOption)
+                    .match(QString::fromLatin1(request.left(end))).captured(1).toInt();
+                if(request.size()<end+4+length) return;
+                socket->setProperty("handled",true);
+                const auto path=QString::fromLatin1(request.left(request.indexOf("\r\n")).split(' ').at(1));
+                const bool post=request.startsWith("POST ");const auto body=QJsonDocument::fromJson(request.mid(end+4)).object();
+                const auto marker=path.indexOf("/charts/jobs");const auto tail=marker<0?QStringList():path.mid(marker+12).split('/',Qt::SkipEmptyParts);
+                const auto job=tail.isEmpty()?body["job_id"].toString():tail.first();
+                if(tail.size()==2 && tail[1]=="cancel")cancels.append(job);
+                if(tail.size()==2 && tail[1]=="release"){releases.append(job);running.remove(job);}
+                const QPointer<QTcpSocket> guarded=socket;
+                m_upstream.request(path,body,[this,guarded,marker,tail,job,post,body](QJsonObject result,QString error) {
+                    if(marker>=0 && error.isEmpty() && result["status"].isString()) {
+                        if(tail.isEmpty() && post){started.append(job);startedCharts.append(body["chart_id"].toString());}
+                        if(result["status"]=="running" && (tail.isEmpty() || !releases.contains(job)))running.insert(job);else running.remove(job);
+                        maxRunning=qMax(maxRunning,int(running.size()));
+                        if(result["status"]=="completed" && holdResults){result["status"]="running";result.remove("result");}
+                        else if(result["status"]=="completed" && staleAnswers>0){--staleAnswers;result["status"]="stale";result.remove("result");}
+                    }
+                    if(!guarded) return;
+                    if(marker>=0 && !post && tail.size()==1 && failPolls>0) {
+                        --failPolls;const auto bytes=QJsonDocument(QJsonObject{{"code","UNAVAILABLE"},{"message","The proxy dropped this poll"}}).toJson(QJsonDocument::Compact);
+                        guarded->write("HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(bytes.size())+"\r\n\r\n"+bytes);
+                        guarded->disconnectFromHost();return;
+                    }
+                    const auto bytes=QJsonDocument(error.isEmpty() || result.contains("code")?result:QJsonObject{{"code","UNAVAILABLE"},{"message",error}}).toJson(QJsonDocument::Compact);
+                    guarded->write(QByteArray("HTTP/1.1 ")+(error.isEmpty()?"200 OK":"409 Conflict")
+                        +"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(bytes.size())+"\r\n\r\n"+bytes);
+                    guarded->disconnectFromHost();
+                },post);
+            });
+        });
+    }
+    bool allReleased() const { for(const auto &job:started)if(!releases.contains(job))return false; return true; }
+private:
+    RestClient m_upstream;
 };
 
 class DesktopTests : public QObject {
@@ -4528,8 +4591,398 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),5,10000);
         QTRY_COMPARE_WITH_TIMEOUT(window.model()->data(window.model()->index(0,0)).toString(),QString("new"),5000);
     }
+// A new workbook in a shown window with the chart layer, grid and model at hand.
+#define CHART_WINDOW \
+    QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini"); \
+    MainWindow window(options);window.resize(1200,800);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000); \
+    QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("charts.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000); \
+    auto *layer=window.findChild<ChartLayer *>("chartLayer");QVERIFY(layer);auto *grid=window.findChild<QTableView *>("grid");auto *model=window.model();Q_UNUSED(model);Q_UNUSED(grid)
+    // Drives File → Import… for a chart fixture: one sheet at the selected cell (answering its review Yes) or the whole workbook.
+    static bool importChartFixture(MainWindow &window,const QString &path,bool whole) {
+        return driveImportOptions(window,path,[&](QDialog *dialog){
+            auto *scope=dialog->findChild<QComboBox *>("importScope"); scope->setCurrentIndex(scope->findData(whole?"workbook":"selection"));
+            if(!whole) answerNextDialog(QMessageBox::Yes);
+            dialog->accept();
+        });
+    }
+    void oneSheetImportShowsItsChart() {
+        CHART_WINDOW;QSignalSpy changed(&window,&MainWindow::operationFinished);
+        const auto path=temp.filePath("charts.xlsx");QVERIFY(QFile::copy(QStringLiteral(DATAHORIZON_FIXTURES "/charts-two-sheets.xlsx"),path));
+        QVERIFY(importChartFixture(window,path,false));
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,20000);QVERIFY(changed[0][0].toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        QCOMPARE(layer->overlays().first()->objectName(),QString("chartOverlay"));QCOMPARE(layer->overlays().first()->accessibleName(),QString("Chart 1"));
+    }
+    void oneSheetImportCountsItsCharts() {
+        CHART_WINDOW;QSignalSpy changed(&window,&MainWindow::operationFinished);auto *status=window.findChild<QLabel *>("storageStatus");QVERIFY(status);
+        for(const auto &[fixture,charts]:QList<QPair<QString,int>>{{"charts-one-sheet.xlsx",1},{"markup.xlsx",0}}) {
+            const auto path=temp.filePath(fixture);QVERIFY(QFile::copy(QStringLiteral(DATAHORIZON_FIXTURES "/")+fixture,path));
+            const int before=changed.count(),states=opened.count();QString review;
+            QVERIFY(driveImportOptions(window,path,[&](QDialog *dialog){
+                auto *scope=dialog->findChild<QComboBox *>("importScope");scope->setCurrentIndex(scope->findData("selection"));
+                answerNextDialog(QMessageBox::Yes,&review);dialog->accept();
+            }));
+            QTRY_COMPARE_WITH_TIMEOUT(changed.count(),before+1,20000);QVERIFY(changed.last()[0].toBool());
+            QTRY_VERIFY_WITH_TIMEOUT(opened.count()>states,10000);
+            if(charts) {
+                QVERIFY2(review.contains("16 stored cells and 1 chart from") && !review.contains("(s)"),qPrintable(review));
+                QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("16 cells and 1 chart"),5000);
+                QVERIFY2(!status->text().contains("(s)") && !status->text().contains("1 charts"),qPrintable(status->text()));
+            } else {
+                // The destination is charts.dhwb; the count names no chart.
+                QVERIFY2(review.startsWith("Import 1 stored cells from ") && !review.contains("chart from"),qPrintable(review));
+                QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Imported 1 cell from"),5000);
+                QVERIFY2(!status->text().contains("chart"),qPrintable(status->text()));
+            }
+        }
+    }
+    void allSheetsImportShowsCharts() {
+        CHART_WINDOW;QSignalSpy changed(&window,&MainWindow::operationFinished);
+        const auto path=temp.filePath("charts.xlsx");QVERIFY(QFile::copy(QStringLiteral(DATAHORIZON_FIXTURES "/charts-two-sheets.xlsx"),path));
+        QVERIFY(importChartFixture(window,path,true));
+        QDialog *review=nullptr;QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        const auto text=review->findChild<QLabel *>("importReviewSummary")->text();QVERIFY2(text.contains("2 charts"),qPrintable(text));
+        review->findChild<QPushButton *>("importApply")->click();
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,20000);QVERIFY(changed[0][0].toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(tabTexts(window),QStringList({"Column Chart","Stacked Column"}),10000);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        auto *tabs=window.findChild<QTabBar *>("sheets");tabs->setCurrentIndex(1);
+        QTRY_COMPARE_WITH_TIMEOUT(tabs->currentIndex(),1,5000);QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        tabs->setCurrentIndex(0);QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+    }
+    void importReviewCountsChartsInTheSingular() {
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;
+        MainWindow window(options);window.show();openFresh(window,temp.filePath("singular.dhwb"));
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/charts-one-sheet.xlsx"),"xlsx","mixed","replace_empty");
+        QDialog *review=nullptr;QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        auto text=review->findChild<QLabel *>("importReviewSummary")->text();
+        QVERIFY2(text.contains("1 chart") && !text.contains("1 charts") && !text.contains("(s)"),qPrintable(text));
+        review->reject();QTRY_VERIFY_WITH_TIMEOUT(!visibleDialog(window,"largeImportReview"),5000);
+        window.importWorkbookFile(QStringLiteral(DATAHORIZON_FIXTURES "/markup.xlsx"),"xlsx","mixed","replace_empty");
+        QTRY_VERIFY_WITH_TIMEOUT((review=visibleDialog(window,"largeImportReview")),20000);
+        text=review->findChild<QLabel *>("importReviewSummary")->text();QVERIFY2(!text.contains("chart"),qPrintable(text));
+        review->reject();
+    }
+    void chartsLeftOutAreReported() {
+        CHART_WINDOW;
+        for(int i=0;i<64;++i)QVERIFY(addChart(window,opened,QString("Filler %1").arg(i+1),2,3));
+        QSignalSpy changed(&window,&MainWindow::operationFinished);
+        const auto path=temp.filePath("charts.xlsx");QVERIFY(QFile::copy(QStringLiteral(DATAHORIZON_FIXTURES "/charts-one-sheet.xlsx"),path));
+        QVERIFY(importChartFixture(window,path,false));
+        QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,20000);QVERIFY(changed[0][0].toBool());
+        auto *issues=window.findChild<QPlainTextEdit *>("operationIssues");QVERIFY(issues);
+        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("left out") && issues->toPlainText().contains("Chart 1"),5000);
+    }
+    void chartOverlayAppearsAtItsAnchor() {
+        CHART_WINDOW;QSignalSpy listed(layer,&ChartLayer::listed);
+        QVERIFY(addChart(window,opened,"Placed",2,3,10,5,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();
+        QCOMPARE(overlay->objectName(),QString("chartOverlay"));QCOMPARE(overlay->accessibleName(),QString("Placed"));
+        QVERIFY(!overlay->property("chartId").toString().isEmpty());
+        QVERIFY(overlay->testAttribute(Qt::WA_TransparentForMouseEvents));QCOMPARE(overlay->focusPolicy(),Qt::NoFocus);
+        QVERIFY(!listed.isEmpty());QCOMPARE(listed.last().first().toInt(),1);
+        QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        QCOMPARE(offsetIn(overlay,grid->viewport()),QPoint(grid->columnViewportPosition(2),grid->rowViewportPosition(1))+QPoint(10,5));
+        QCOMPARE(overlay->size(),QSize(320,200));QCOMPARE(window.findChildren<ChartOverlay *>().size(),1);
+    }
+    void chartOverlayFollowsScrollAndResize() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Moving",2,3));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const QPoint start=overlay->pos();const int heights=grid->rowHeight(0)+grid->rowHeight(1)+grid->rowHeight(2);
+        scrollGrid(grid,3,0);QCOMPARE(grid->rowAt(0),3);
+        QCOMPARE(overlay->pos(),start-QPoint(0,heights));QVERIFY(overlay->isVisible());
+        const QPoint scrolled=overlay->pos();grid->setColumnWidth(0,grid->columnWidth(0)+40);
+        QCOMPARE(overlay->pos(),scrolled+QPoint(40,0));
+    }
+    void chartOverlaysStackByZ() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Lower",2,2));QVERIFY(addChart(window,opened,"Upper",3,3));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);
+        auto *lower=overlayNamed(layer,"Lower"),*upper=overlayNamed(layer,"Upper");QVERIFY(lower && upper);
+        QTRY_VERIFY_WITH_TIMEOUT(lower->isVisible() && upper->isVisible(),5000);QVERIFY(lower->geometry().intersects(upper->geometry()));
+        auto order=[](QWidget *overlay){return overlay->parentWidget()->children().indexOf(overlay);};
+        QVERIFY(order(upper)>order(lower));
+        // The overlays are above every pane of the grid area.
+        for(auto *pane:QList<QWidget *>{grid,window.findChild<QTableView *>("frozenTopRow")->parentWidget()})QVERIFY(order(lower)>order(pane));
+        window.submit({{"action","chart_update"},{"chart_id",lower->property("chartId").toString()},{"z",5}});
+        QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Lower") && order(overlayNamed(layer,"Lower"))>order(overlayNamed(layer,"Upper")),10000);
+    }
+    void chartOverlayDoesNotInterceptClicks() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Covering",2,2,0,0,400,300));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        auto *area=overlay->parentWidget();const QPoint point(grid->columnViewportPosition(3)+5,grid->rowViewportPosition(3)+5);
+        const QPoint inArea=grid->viewport()->mapTo(area,point);
+        QVERIFY(overlay->geometry().contains(inArea));QVERIFY(!qobject_cast<ChartOverlay *>(area->childAt(inArea)));
+        QTest::mouseClick(grid->viewport(),Qt::LeftButton,Qt::NoModifier,point);
+        QCOMPARE(grid->currentIndex(),model->index(3,3));
+    }
+    void chartsOnOtherSheetsAreNotShown() {
+        CHART_WINDOW;window.submit({{"action","sheet_add"},{"name","Other"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QVERIFY(addChart(window,opened,"First",2,2));
+        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->accessibleName()=="First",5000);
+        auto *tabs=window.findChild<QTabBar *>("sheets");const auto first=model->sheet();tabs->setCurrentIndex(1);QVERIFY(model->sheet()!=first);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,5000);
+        QVERIFY(addChart(window,opened,"Second",2,2));
+        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->accessibleName()=="Second",5000);
+        QCOMPARE(window.findChildren<ChartOverlay *>().size(),1);
+        tabs->setCurrentIndex(0);QCOMPARE(model->sheet(),first);
+        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->accessibleName()=="First",5000);
+        QCOMPARE(window.findChildren<ChartOverlay *>().size(),1);
+    }
+    void chartAnchoredInFrozenRowStaysVisible() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Frozen",1,3,0,0,300,150));QVERIFY(addChart(window,opened,"Body",5,3,0,0,300,150));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);
+        window.findChild<QAction *>("freezeTopRowAction")->trigger();auto *top=window.findChild<QTableView *>("frozenTopRow");
+        QVERIFY(top->isVisible());QVERIFY(grid->isRowHidden(0));
+        auto *frozen=overlayNamed(layer,"Frozen"),*body=overlayNamed(layer,"Body");auto *area=frozen->parentWidget();
+        QTRY_VERIFY_WITH_TIMEOUT(frozen->isVisible() && body->isVisible(),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(offsetIn(frozen,top->viewport()),QPoint(top->columnViewportPosition(2),top->rowViewportPosition(0)),5000);
+        QCOMPARE(offsetIn(body,grid->viewport()),QPoint(grid->columnViewportPosition(2),grid->rowViewportPosition(4)));
+        const QPoint frozenAt=frozen->pos(),bodyAt=body->pos();
+        scrollGrid(grid,6,0);QCOMPARE(grid->rowAt(0),6);
+        QCOMPARE(frozen->pos(),frozenAt);QVERIFY(frozen->isVisible());
+        QVERIFY(body->pos().y()<bodyAt.y());QVERIFY(body->isVisible());
+        const int bodyTop=grid->viewport()->mapTo(area,QPoint()).y();
+        QVERIFY(top->viewport()->mapTo(area,QPoint(0,top->rowViewportPosition(0)+top->rowHeight(0))).y()<=bodyTop);
+        QVERIFY(body->y()<bodyTop);QCOMPARE(body->y()+body->mask().boundingRect().top(),bodyTop);
+    }
+    void chartsHideInProjectedView() {
+        CHART_WINDOW;
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","3"}},QJsonObject{{"row",2},{"col",1},{"source","1"}},QJsonObject{{"row",3},{"col",1},{"source","2"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QVERIFY(addChart(window,opened,"Listed",2,3));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const int before=opened.count();
+        window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"header",false},{"sort",QJsonArray{QJsonObject{{"col",1}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);QVERIFY(model->projected());
+        for(auto *chart:layer->overlays())QVERIFY(!chart->isVisible());
+        window.findChild<QAction *>("clearListAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+2,10000);QVERIFY(!model->projected());
+        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->isVisible(),5000);
+    }
+    void chartOverlayNeverCoversHeaders() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Header",2,3,0,0,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        scrollGrid(grid,3,3);QCOMPARE(grid->rowAt(0),3);QCOMPARE(grid->columnAt(0),3);QVERIFY(overlay->isVisible());
+        auto global=[](QWidget *widget){return QRect(widget->mapToGlobal(QPoint()),widget->size());};
+        QVERIFY(overlay->mapToGlobal(QPoint()).y()<grid->viewport()->mapToGlobal(QPoint()).y());
+        QVERIFY(overlay->mapToGlobal(QPoint()).x()<grid->viewport()->mapToGlobal(QPoint()).x());
+        const auto shown=overlay->mask().translated(overlay->mapToGlobal(QPoint()));QVERIFY(!shown.isEmpty());
+        QVERIFY(!shown.intersects(global(grid->horizontalHeader())));QVERIFY(!shown.intersects(global(grid->verticalHeader())));
+        QVERIFY(global(grid->viewport()).contains(shown.boundingRect()));
+    }
+    void brokenChartShowsPlaceholder() {
+        CHART_WINDOW;window.submit({{"action","sheet_add"},{"name","Data"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QVERIFY(addChart(window,opened,"Waiting chart",2,2));QVERIFY(addChart(window,opened,"Broken chart",12,2,0,0,320,200,"Data"));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);
+        // Until its render arrives a readable chart shows its name and Loading.
+        ChartOverlay unrendered("unrendered");unrendered.setChart({{"name","Unrendered"}});
+        QVERIFY(unrendered.placeholder().contains("Unrendered"));QVERIFY(unrendered.placeholder().contains("Loading"));
+        auto *waiting=overlayNamed(layer,"Waiting chart");
+        QVERIFY(waiting->hasImage() || (waiting->placeholder().contains("Waiting chart") && waiting->placeholder().contains("Loading")));
+        for(auto *chart:layer->overlays())QVERIFY(chart->hasImage() || !chart->placeholder().isEmpty());
+        auto *tabs=window.findChild<QTabBar *>("sheets");tabs->setCurrentIndex(1);QCOMPARE(tabs->tabText(1),QString("Data"));
+        const int before=opened.count();window.submit({{"action","sheet_delete"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Broken chart") && overlayNamed(layer,"Broken chart")->placeholder().contains("source"),5000);
+        auto *broken=overlayNamed(layer,"Broken chart");QVERIFY(broken->placeholder().contains("Broken chart"));QVERIFY(!broken->hasImage());
+        // A readable chart is drawn once rendered; until then it is Loading, never blank.
+        auto *readable=overlayNamed(layer,"Waiting chart");QVERIFY(readable->hasImage() || readable->placeholder().contains("Loading"));
+        for(auto *chart:layer->overlays())QVERIFY(chart->hasImage() || !chart->placeholder().isEmpty());
+    }
+    void chartListFailureIsReportedAndListedAgain_data() {
+        QTest::addColumn<QString>("failure");
+        QTest::newRow("unavailable")<<QString("UNAVAILABLE");QTest::newRow("stale")<<QString("STALE_STATE");
+    }
+    void chartListFailureIsReportedAndListedAgain() {
+        QFETCH(QString,failure);
+        QTemporaryDir temp;QJsonObject service;StartupOptions ownerOptions;ownerOptions.automaticWorkbook=false;
+        MainWindow owner(ownerOptions);observeOwnedServiceStartup(owner,service);QSignalSpy serviceReady(&owner,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceReady.count(),1,10000);const auto path=temp.filePath("charts.dhwb");
+        QSignalSpy ownerOpened(&owner,&MainWindow::workbookReady);owner.openBook(path,true);QTRY_COMPARE_WITH_TIMEOUT(ownerOpened.count(),1,10000);
+        QVERIFY(addChart(owner,ownerOpened,"Remote",2,3));
+        DelayedCloseProxy proxy(service);proxy.failCharts=1;proxy.chartFailure=failure;QVERIFY(proxy.listen(QHostAddress::LocalHost,0));
+        StartupOptions options;options.automaticWorkbook=false;options.url="http://127.0.0.1:"+QString::number(proxy.serverPort());
+        options.token=service["token"].toString();options.recoveryDirectory=temp.filePath("recovery");options.viewStatePath=temp.filePath("views.ini");
+        MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        auto *layer=window.findChild<ChartLayer *>("chartLayer");auto *issues=window.findChild<QPlainTextEdit *>("operationIssues");
+        QTRY_COMPARE_WITH_TIMEOUT(proxy.failCharts,0,5000);
+        if(failure=="STALE_STATE") {
+            // A stale read refreshes the window, as other stale reads do, and the refresh lists again.
+            QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,10000);QCOMPARE(proxy.chartReads,2);
+            QVERIFY(!issues->toPlainText().contains("could not be read"));return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("Chart catalog unavailable"),5000);
+        QVERIFY(issues->toPlainText().contains("charts on this sheet could not be read"));
+        QTest::qWait(200);QCOMPARE(layer->overlays().size(),0);QCOMPARE(proxy.chartReads,1);
+        const int before=opened.count();window.findChild<QAction *>("refreshStoredDataAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);QCOMPARE(proxy.chartReads,2);
+        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().first()->isVisible(),5000);
+    }
+    void chartLayerSurvivesWindowTeardown() {
+        QTest::failOnWarning(QRegularExpression("^(?!This plugin does not support propagateSizeHints|Populating font family).*"));
+        QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");
+        auto window=std::make_unique<MainWindow>(options);window->resize(1200,800);window->show();
+        QSignalSpy ready(window.get(),&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(window.get(),&MainWindow::workbookReady);window->openBook(temp.filePath("teardown.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QVERIFY(addChart(*window,opened,"Teardown",2,3));
+        QPointer<ChartLayer> layer=window->findChild<ChartLayer *>("chartLayer");QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        QPointer<ChartOverlay> overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        // A resize queues a relayout that is still pending when the window goes.
+        window->resize(900,600);window->findChild<QTableView *>("grid")->resize(500,400);
+        window.reset();QVERIFY(!layer);QVERIFY(!overlay);QTest::qWait(50);
+    }
+    void chartRendersTheServiceSvg() {
+        CHART_WINDOW;QSignalSpy rendered(layer,&ChartLayer::rendered);QVERIFY(fillChartData(window,opened));
+        QVERIFY(addChart(window,opened,"Drawn",2,4));
+        QTRY_COMPARE_WITH_TIMEOUT(rendered.count(),1,10000);auto *overlay=overlayNamed(layer,"Drawn");QVERIFY(overlay);
+        QCOMPARE(rendered.first().first().toString(),overlay->chartId());QVERIFY(overlay->hasImage());QVERIFY(overlay->placeholder().isEmpty());
+        QVERIFY(!uniform(overlay));
+    }
+    void chartRerendersAfterAnEdit() {
+        CHART_WINDOW;QSignalSpy rendered(layer,&ChartLayer::rendered);QVERIFY(fillChartData(window,opened));
+        QVERIFY(addChart(window,opened,"Edited",2,4));QTRY_COMPARE_WITH_TIMEOUT(rendered.count(),1,10000);
+        // Nothing changed: the image is current and is not drawn again.
+        QTest::qWait(400);QCOMPARE(rendered.count(),1);
+        QPointer<ChartOverlay> overlay=overlayNamed(layer,"Edited");QVERIFY(overlay && overlay->hasImage());const auto before=overlay->grab().toImage();
+        bool blank=false;QTimer sampler;sampler.setInterval(1);connect(&sampler,&QTimer::timeout,&window,[&]{if(!overlay || !overlay->hasImage())blank=true;});sampler.start();
+        const int states=opened.count();QVERIFY(model->setData(model->index(2,1),"900",Qt::EditRole));
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),states+1,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(rendered.count(),2,10000);sampler.stop();
+        QVERIFY(!blank);QVERIFY(overlay);QCOMPARE(rendered.last().first().toString(),overlay->chartId());
+        QVERIFY(overlay->grab().toImage()!=before);
+    }
+    void onlyVisibleChartsRender() {
+        CHART_WINDOW;QSignalSpy rendered(layer,&ChartLayer::rendered);QVERIFY(fillChartData(window,opened));
+        QVERIFY(addChart(window,opened,"Near",2,4));QVERIFY(addChart(window,opened,"Far",500,4));
+        QTRY_COMPARE_WITH_TIMEOUT(rendered.count(),1,10000);auto *near=overlayNamed(layer,"Near"),*far=overlayNamed(layer,"Far");
+        QCOMPARE(rendered.first().first().toString(),near->chartId());
+        QTest::qWait(500);QCOMPARE(rendered.count(),1);QVERIFY(!far->hasImage());QVERIFY(far->isHidden());
+        scrollGrid(grid,499,0);QTRY_VERIFY_WITH_TIMEOUT(!far->isHidden(),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(rendered.count(),2,10000);QCOMPARE(rendered.last().first().toString(),far->chartId());QVERIFY(far->hasImage());
+    }
+// A window reaching the service through a ChartJobProxy; a second window owns the service.
+#define PROXIED_CHART_WINDOW \
+    QTemporaryDir temp;QJsonObject service;StartupOptions ownerOptions;ownerOptions.automaticWorkbook=false; \
+    MainWindow owner(ownerOptions);observeOwnedServiceStartup(owner,service);QSignalSpy serviceReady(&owner,&MainWindow::serviceReady); \
+    QTRY_COMPARE_WITH_TIMEOUT(serviceReady.count(),1,10000); \
+    ChartJobProxy proxy(service);QVERIFY(proxy.listen(QHostAddress::LocalHost,0)); \
+    StartupOptions options;options.automaticWorkbook=false;options.url="http://127.0.0.1:"+QString::number(proxy.serverPort()); \
+    options.token=service["token"].toString();options.recoveryDirectory=temp.filePath("recovery");options.viewStatePath=temp.filePath("views.ini"); \
+    MainWindow window(options);window.resize(1200,800);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000); \
+    QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("charts.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000); \
+    auto *layer=window.findChild<ChartLayer *>("chartLayer");QVERIFY(layer);QSignalSpy rendered(layer,&ChartLayer::rendered)
+    void renderQueueIsBounded() {
+        PROXIED_CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        for(int i=0;i<6;++i)QVERIFY(addChart(window,opened,"Queued "+QString::number(i),2+i,4+i,0,0,240,160));
+        QSet<QString> charts;
+        QTRY_VERIFY_WITH_TIMEOUT((charts=[&]{QSet<QString> ids;for(const auto &args:rendered)ids.insert(args.first().toString());return ids;}()).size()==6,30000);
+        QTRY_VERIFY_WITH_TIMEOUT(proxy.allReleased(),5000);
+        QVERIFY(proxy.started.size()>=6);QVERIFY(proxy.maxRunning>=1);QVERIFY(proxy.maxRunning<=ChartLayer::MaxConcurrentRenders);
+        QCOMPARE(ChartLayer::MaxConcurrentRenders,1);QCOMPARE(ChartLayer::RelayoutRenderDelayMs,150);QCOMPARE(ChartLayer::PollIntervalMs,50);
+        for(auto *overlay:layer->overlays())QVERIFY(overlay->hasImage());
+    }
+    void failedRenderIsRetriedOnRefresh() {
+        PROXIED_CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        // The job runs until a poll is lost in transit: the placeholder shows the error, and it is not retried by itself.
+        proxy.holdResults=true;QVERIFY(addChart(window,opened,"Flaky",2,4));
+        QTRY_VERIFY_WITH_TIMEOUT(!proxy.started.isEmpty(),10000);proxy.failPolls=1;proxy.holdResults=false;
+        QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Flaky") && overlayNamed(layer,"Flaky")->placeholder().contains("could not be drawn"),10000);
+        auto *flaky=overlayNamed(layer,"Flaky");QVERIFY(flaky->placeholder().contains("UNAVAILABLE"));QVERIFY(!flaky->hasImage());
+        QTest::qWait(400);QCOMPARE(proxy.startedCharts.count(flaky->chartId()),1);QCOMPARE(rendered.count(),0);
+        // Refresh binds the same state again, which renders the failed chart once more.
+        const int before=opened.count();window.findChild<QAction *>("refreshStoredDataAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(rendered.count(),1,10000);QCOMPARE(rendered.first().first().toString(),flaky->chartId());
+        QVERIFY(flaky->hasImage());QCOMPARE(proxy.startedCharts.count(flaky->chartId()),2);
+        QTRY_VERIFY_WITH_TIMEOUT(proxy.allReleased(),5000);
+    }
+    void sheetSwitchDiscardsLateRenders() {
+        PROXIED_CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        window.submit({{"action","sheet_add"},{"name","Other"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,10000);
+        proxy.holdResults=true;
+        QVERIFY(addChart(window,opened,"Left",2,4));QVERIFY(addChart(window,opened,"Behind",3,5));
+        QTRY_VERIFY_WITH_TIMEOUT(!proxy.started.isEmpty(),10000);QTest::qWait(200);
+        auto *tabs=window.findChild<QTabBar *>("sheets");tabs->setCurrentIndex(1);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,5000);QCOMPARE(window.findChildren<ChartOverlay *>().size(),0);
+        QTRY_VERIFY_WITH_TIMEOUT(proxy.allReleased(),5000);for(const auto &job:proxy.started)QVERIFY(proxy.cancels.contains(job));
+        proxy.holdResults=false;QTest::qWait(300);QCOMPARE(rendered.count(),0);
+        // The same when another workbook is opened while the first's renders are held.
+        proxy.holdResults=true;const auto jobs=proxy.started.size();tabs->setCurrentIndex(0);
+        QTRY_VERIFY_WITH_TIMEOUT(proxy.started.size()>jobs,10000);QVERIFY(!layer->overlays().isEmpty());
+        const int states=opened.count();window.openBook(temp.filePath("other.dhwb"),true);QTRY_VERIFY_WITH_TIMEOUT(opened.count()>states,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,5000);QCOMPARE(window.findChildren<ChartOverlay *>().size(),0);
+        QTRY_VERIFY_WITH_TIMEOUT(proxy.allReleased(),5000);for(const auto &job:proxy.started)QVERIFY(proxy.cancels.contains(job));
+        proxy.holdResults=false;QTest::qWait(300);QCOMPARE(rendered.count(),0);
+    }
+    void renderFailureShowsPlaceholder() {
+        PROXIED_CHART_WINDOW;QVERIFY(fillChartData(window,opened));auto *issues=window.findChild<QPlainTextEdit *>("operationIssues");
+        // A job answered stale is started once more against the current state.
+        proxy.staleAnswers=1;QVERIFY(addChart(window,opened,"Retried",2,4));
+        QTRY_COMPARE_WITH_TIMEOUT(rendered.count(),1,10000);auto *retried=overlayNamed(layer,"Retried");QVERIFY(retried->hasImage());
+        QCOMPARE(proxy.startedCharts.count(retried->chartId()),2);QCOMPARE(proxy.staleAnswers,0);
+        // Only once: when every answer is stale each chart in view is started twice for the new state,
+        // then waits, keeping its previous image or "Loading", not failed.
+        proxy.staleAnswers=1000;QVERIFY(addChart(window,opened,"Waiting",2,9));QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Waiting"),5000);auto *waiting=overlayNamed(layer,"Waiting");
+        QTRY_COMPARE_WITH_TIMEOUT(proxy.startedCharts.count(waiting->chartId()),2,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(proxy.startedCharts.count(retried->chartId()),4,10000);QTest::qWait(400);
+        QCOMPARE(proxy.startedCharts.count(waiting->chartId()),2);QCOMPARE(proxy.startedCharts.count(retried->chartId()),4);
+        QVERIFY(!waiting->hasImage());QVERIFY(waiting->placeholder().contains("Loading"));QVERIFY(retried->hasImage());QCOMPARE(rendered.count(),1);
+        QVERIFY(!issues->toPlainText().contains("Independent changes"));QVERIFY(!issues->toPlainText().contains("could not be drawn"));
+        proxy.staleAnswers=0;
+        // A render over the point limit shows the job's error code in its placeholder.
+        auto range=[](const QString &ref){return QJsonObject{{"source",QJsonObject{{"kind","range"},{"sheet","Sheet1"},{"ref",ref}}}};};
+        const auto before=opened.count();
+        window.submit({{"action","chart_create"},{"name","Dense"},{"anchor",QJsonObject{{"row",12},{"col",4}}},{"offset",QJsonObject{{"x",0},{"y",0}}},
+                       {"size",QJsonObject{{"width",320},{"height",200}}},{"spec",QJsonObject{{"spec_version",1},{"type","column"},
+                       {"series",QJsonArray{QJsonObject{{"name",QJsonObject{{"text","One"}}},{"values",range("F1:F5001")}},QJsonObject{{"name",QJsonObject{{"text","Two"}}},{"values",range("G1:G5001")}}}}}}});
+        QTRY_VERIFY_WITH_TIMEOUT(opened.count()>before,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Dense") && overlayNamed(layer,"Dense")->placeholder().contains("LIMIT_RENDER_POINTS"),20000);
+        auto *dense=overlayNamed(layer,"Dense");QVERIFY(!dense->hasImage());QVERIFY(dense->placeholder().contains("Dense"));
+        QVERIFY(!uniform(dense));QTRY_VERIFY_WITH_TIMEOUT(proxy.allReleased(),5000);
+    }
+#undef PROXIED_CHART_WINDOW
+#undef CHART_WINDOW
 private:
+    // Labels in A2:A4, a series name in B1 and values in B2:B4, as chartSpec reads them.
+    static bool fillChartData(MainWindow &window,QSignalSpy &opened) {
+        const auto before=opened.count();QJsonArray cells{QJsonObject{{"row",1},{"col",2},{"source","Sales"}}};
+        for(int row=2;row<=4;++row){cells.append(QJsonObject{{"row",row},{"col",1},{"source","Item "+QString::number(row)}});cells.append(QJsonObject{{"row",row},{"col",2},{"source",QString::number(row*100)}});}
+        window.submit({{"action","edit"},{"cells",cells}});
+        for(int i=0;i<1000 && opened.count()==before;++i)QTest::qWait(10);
+        return opened.count()>before;
+    }
+    // True when every pixel of the widget's grab is the base colour.
+    static bool uniform(QWidget *widget) {
+        const auto image=widget->grab().toImage();const auto base=widget->palette().color(QPalette::Base).rgb();
+        for(int y=0;y<image.height();++y)for(int x=0;x<image.width();++x)if(image.pixel(x,y)!=base)return false;
+        return true;
+    }
     bool m_originalDialogAttribute=false;
+    static QJsonObject chartSpec(const QString &sheet) {
+        auto range=[sheet](const QString &ref){return QJsonObject{{"source",QJsonObject{{"kind","range"},{"sheet",sheet},{"ref",ref}}}};};
+        return {{"spec_version",1},{"type","column"},{"categories",range("A2:A4")},{"series",QJsonArray{QJsonObject{{"name",range("B1")},{"values",range("B2:B4")}}}}};
+    }
+    // Creates a chart on the current sheet through the service and waits for
+    // the window to accept the new state.
+    static bool addChart(MainWindow &window,QSignalSpy &opened,const QString &name,int row,int col,int x=0,int y=0,int width=320,int height=200,const QString &source="Sheet1") {
+        const auto before=opened.count();
+        window.submit({{"action","chart_create"},{"name",name},{"anchor",QJsonObject{{"row",row},{"col",col}}},{"offset",QJsonObject{{"x",x},{"y",y}}},
+                       {"size",QJsonObject{{"width",width},{"height",height}}},{"spec",chartSpec(source)}});
+        for(int i=0;i<1000 && opened.count()==before;++i)QTest::qWait(10);
+        return opened.count()>before;
+    }
+    static ChartOverlay *overlayNamed(ChartLayer *layer,const QString &name) {
+        for(auto *overlay:layer->overlays())if(overlay->accessibleName()==name)return overlay;
+        return nullptr;
+    }
+    static QPoint offsetIn(QWidget *widget,QWidget *reference){return widget->mapToGlobal(QPoint())-reference->mapToGlobal(QPoint());}
+    // Scrolls so row and col are the first shown, in either scroll mode.
+    static void scrollGrid(QTableView *grid,int row,int col) {
+        int hidden=0;for(int above=0;above<row;++above)hidden+=grid->isRowHidden(above);  // per-item values count shown rows
+        grid->verticalScrollBar()->setValue(grid->verticalScrollMode()==QAbstractItemView::ScrollPerItem?row-hidden:grid->verticalHeader()->sectionPosition(row));
+        grid->horizontalScrollBar()->setValue(grid->horizontalScrollMode()==QAbstractItemView::ScrollPerItem?col:grid->horizontalHeader()->sectionPosition(col));
+    }
     static QJsonObject syncRequest(RestClient *client,const QString &path,const QJsonObject &body,bool post=true) {
         auto response=std::make_shared<QJsonObject>();auto done=std::make_shared<bool>(false);
         client->request(path,body,[response,done](QJsonObject result,QString error){*response=result;if(!error.isEmpty())(*response)["_error"]=error;*done=true;},post);

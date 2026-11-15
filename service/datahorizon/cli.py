@@ -123,10 +123,15 @@ def report_text(review):
         where = "" if first is None else "; first at " + place(first)
         count = f"{'>=' if entry.get('at_least') else ''}{entry['count']}"
         lines.append(f"  {entry['severity']:<12} {count:>7}  {entry['category']}: {entry['detail']}{where}")
+    charts = review.get("charts") or []
+    if charts:
+        lines.append("Charts:")
+        lines += [f"  {chart['name']} on {chart['sheet']} ({chart['type']})" for chart in charts]
     if "sheets" in review:
         lines.append("Sheets:")
         lines += [f"  {sheet['name']}: {plural(sheet['stored_cells'], 'cell')}" for sheet in review["sheets"]]
-        lines.append(f"Total: {plural(review['stored_cells'], 'cell')} in {plural(len(review['sheets']), 'sheet')}")
+        lines.append(f"Total: {plural(review['stored_cells'], 'cell')} in {plural(len(review['sheets']), 'sheet')}"
+                     + (f", {plural(len(charts), 'chart')}" if charts else ""))
     return "\n".join(terminal_text(line) for line in lines)
 
 
@@ -199,9 +204,10 @@ def import_spreadsheet(client, book, args):
     try:
         print(report_text(summary), flush=True)
         if args.report_json:
-            write_report(args.report_json, summary, ("format", "mode", "stored_cells", "sheets", "totals", "report", "scope_lines", "report_entries"), args.overwrite)
+            write_report(args.report_json, summary, ("format", "mode", "stored_cells", "sheets", "charts", "totals", "report", "scope_lines", "report_entries"), args.overwrite)
         if not args.yes:
-            answer = confirm(f"Import {plural(summary['stored_cells'], 'cell')} into {plural(len(summary['sheets']), 'sheet')}?")
+            charts = f" with {plural(len(summary['charts']), 'chart')}" if summary.get("charts") else ""
+            answer = confirm(f"Import {plural(summary['stored_cells'], 'cell')} into {plural(len(summary['sheets']), 'sheet')}{charts}?")
             if answer is not True:
                 body = ({"code": "CONFIRMATION_REQUIRED", "message": "No confirmation on standard input; pass --yes to import without asking. Nothing was imported.", "outcome": "rejected"}
                         if answer is None else {"code": "DECLINED", "message": "Import declined; nothing was imported.", "outcome": "rejected"})
@@ -211,7 +217,10 @@ def import_spreadsheet(client, book, args):
     finally:
         if receipt is None: client.discard_job(job)  # The service releases the stage only after a successful apply.
     imported = receipt["imported"]
-    return terminal_text(f"Imported {plural(imported['cells'], 'cell')} into {plural(imported['sheets'], 'sheet')} "
+    charts = f" with {plural(imported['charts'], 'chart')}" if imported.get("charts") else ""
+    # Charts past the destination's chart limit are not created; the receipt names them.
+    left_out = f"; left out at the workbook's chart limit: {', '.join(receipt['charts_left_out'])}" if receipt.get("charts_left_out") else ""
+    return terminal_text(f"Imported {plural(imported['cells'], 'cell')} into {plural(imported['sheets'], 'sheet')}{charts}{left_out} "
                          f"(operation {receipt['operation_id']}, state {receipt['state']})"), receipt
 
 
