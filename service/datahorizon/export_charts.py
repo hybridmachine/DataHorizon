@@ -25,9 +25,17 @@ def collect(db):
                       "JOIN sheets s ON s.id = o.sheet_id WHERE o.namespace = 'chart'")
     found = []
     for position, sheet_id, sheet, chart_id, text in rows:
-        payload = json.loads(text)
-        found.append(((position, sheet_id, payload["z"], chart_id),
-                      {"sheet_id": sheet_id, "sheet": sheet, "chart": charts.describe(db, sheet_id, chart_id, payload)}))
+        z, payload = 0, None
+        try:
+            payload = json.loads(text)
+            chart = charts.describe(db, sheet_id, chart_id, payload)
+            z = payload["z"]
+        except (ValueError, EngineError):
+            # An unreadable chart stays an entry so that ``drafts`` can report it; nothing else is contained.
+            name = payload.get("name") if isinstance(payload, dict) else None
+            chart = {"id": chart_id, "sheet_id": sheet_id, "issue": "INVALID_FORMAT",
+                     "name": name if isinstance(name, str) and name else "Chart"}
+        found.append(((position, sheet_id, z, chart_id), {"sheet_id": sheet_id, "sheet": sheet, "chart": chart}))
     found.sort(key=lambda item: item[0])
     return [entry for _, entry in found]
 

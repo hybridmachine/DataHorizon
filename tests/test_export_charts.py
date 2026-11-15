@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Tests for the format-neutral chart export step."""
 
+import json
 import pathlib
 import tempfile
 import unittest
@@ -198,6 +199,29 @@ class Export(unittest.TestCase):
                          [("Sheet1", "c"), ("Sheet1", "a"), ("Sheet1", "b"), ("Other", "a")])
         self.assertEqual((found[0]["sheet_id"], found[0]["chart"]["sheet_id"], found[0]["chart"]["issue"]),
                          (self.sheet, self.sheet, None))
+
+    def test_collect_contains_an_unreadable_chart_and_drafts_reports_it(self):
+        self.book.changes = {}
+        for chart_id, name in (("good", "Good"), ("bad", "Bent"), ("junk", "Junk")):
+            charts.store(self.book, self.sheet, chart_id, self.payload(name=name))
+        broken = self.payload(name="Bent")
+        del broken["z"]
+        self.book.db.execute("UPDATE dh_objects SET payload=? WHERE id='bad'", (json.dumps(broken),))
+        self.book.db.execute("UPDATE dh_objects SET payload='{not json' WHERE id='junk'")
+        found = export_charts.collect(self.book.db)
+        self.assertEqual(len(found), 3)
+        by_name = {item["chart"]["name"]: item for item in found}
+        self.assertEqual(set(by_name), {"Good", "Bent", "Chart"})
+        self.assertIsNone(by_name["Good"]["chart"]["issue"])
+        self.assertIsNotNone(by_name["Bent"]["chart"]["issue"])
+        report = ConversionReport()
+        result = export_charts.drafts(found, self.names, report)
+        self.assertEqual([draft["name"] for draft in result], ["Good"])
+        entries = report.entries()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual((entries[0]["detail"], entries[0]["count"]), ("unsupported", 2))
+        self.assertEqual(sorted(sample["cell"] for sample in entries[0]["samples"]), ["Bent", "Chart"])
+        self.assertEqual({sample["sheet"] for sample in entries[0]["samples"]}, {"Sales"})
 
 
 if __name__ == "__main__":
