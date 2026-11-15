@@ -200,6 +200,19 @@ class ChartRoundTripTests(RoundTripCase):
                 self.assertEqual([(item["name"], item["grouping"]) for item in again["charts"]], [("Column", "stacked"), ("Bar", "stacked")])
                 self.assertEqual([entry for entry in entries if "gap" in f"{entry['category']} {entry['detail']}".lower()], [])
 
+    def test_stacking_order_survives_when_anchors_disagree(self):
+        # The chart created first (lower z) sits further down the sheet: the anchors' order is the reverse of z order.
+        book = self.new_book("z-order", sheets=("Data",))
+        book.create_chart(spec_of("column"), sheet="Data", name="Low z far", anchor={"row": 30, "col": 6})
+        book.create_chart(spec_of("line"), sheet="Data", name="High z near", anchor={"row": 2, "col": 6})
+        expected = comparable(book)
+        self.assertEqual([item["name"] for item in expected], ["Low z far", "High z near"])
+        for fmt, route in product(FORMATS, ROUTES):
+            with self.subTest(fmt=fmt, route=route):
+                again, _, entries = self.travel(book, fmt, route)
+                self.assertEqual(again["charts"], expected)
+                self.assertEqual(chart_entries(entries), [])
+
     def test_ods_names_a_text_series_series_n(self):
         book = self.new_book("text-names", sheets=("Data",))
         spec = spec_of("column")

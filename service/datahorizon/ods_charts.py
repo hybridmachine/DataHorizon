@@ -293,6 +293,15 @@ ROW = q(T, "table-row")
 ROW_GROUPS = (q(T, "table-row-group"), q(T, "table-header-rows"), q(T, "table-rows"))
 
 
+Z_INDEX = q(DRAW, "z-index")
+
+
+def _z_index(frame):
+    """A frame's ``draw:z-index`` (a non-negative integer), or ``None``."""
+    text = frame.get(Z_INDEX)
+    return int(text) if text is not None and text.isascii() and text.isdigit() else None
+
+
 class SheetFrames:
     """The drafts of one ``table:table``'s chart frames, read in document order as a reader meets them.
 
@@ -305,6 +314,7 @@ class SheetFrames:
         self.archive, self.position, self.sheet_name, self.parts, self.report = archive, position, sheet_name, parts, report
         self.drafts, self.order, self.unread, self.last = [], 0, 0, None
         self.charts = set()
+        self.stacking = []  # each draft's ``draw:z-index``, or ``None`` where its frame has none that can be read
 
     def frame(self, frame, cell, grouped):
         """A ``draw:frame`` holding a ``draw:object``; ``cell`` as ``read_frame_draft`` takes it.  A frame is read once."""
@@ -325,9 +335,17 @@ class SheetFrames:
             self.report.add(SKIPPED, "omitted", "grouped", sheet=self.sheet_name, cell=draft["name"][:32], count=1)
         else:
             self.drafts.append(draft)
+            self.stacking.append(_z_index(frame))
 
     def finish(self, sizes_unknown=False):
-        """The drafts read; ``sizes_unknown`` marks those placed by absolute position as ``approximate_size``."""
+        """The drafts read; ``sizes_unknown`` marks those placed by absolute position as ``approximate_size``.
+
+        When every chart frame read carries a ``draw:z-index``, the drafts are in that order (document order breaks
+        ties); otherwise, as for files from applications that do not write one, they stay in document order."""
+        if self.drafts and None not in self.stacking:
+            ranked = sorted(range(len(self.drafts)), key=lambda number: (self.stacking[number], number))
+            self.drafts = [self.drafts[number] for number in ranked]
+            self.stacking = [self.stacking[number] for number in ranked]
         if self.unread:
             self.report.add(SKIPPED, "omitted", "unreadable", sheet=self.sheet_name, cell="drawing", count=self.unread)
         for draft in self.drafts:
@@ -429,7 +447,10 @@ def chart_document(draft):
         raise ValueError("a chart needs a series")
     root = ET.Element("office:document-content", {**NAMESPACES, "office:version": "1.3"})
     styles = _add(root, "office:automatic-styles")
-    chart = _add(_add(_add(root, "office:body"), "office:chart"), "chart:chart", **{"chart:class": CLASSES[kind]})
+    # As LibreOffice Calc writes it: ``xlink:href=".."`` says the data comes from the spreadsheet holding the object, not
+    # from a table of the chart's own (which an exported chart does not carry).
+    chart = _add(_add(_add(root, "office:body"), "office:chart"), "chart:chart",
+                 **{"chart:class": CLASSES[kind], "xlink:href": "..", "xlink:type": "simple"})
     title = _usable(draft["title"])
     if title is not None:
         _title(chart, _clean(title))
@@ -440,7 +461,8 @@ def chart_document(draft):
         flags["chart:vertical"] = "true"
     if grouping == "stacked" and kind in ("column", "bar", "area"):
         flags["chart:stacked"] = "true"
-    area = _add(chart, "chart:plot-area")
+    area = _add(chart, "chart:plot-area", **{"table:cell-range-address": " ".join(_sources(draft)),
+                                             "chart:data-source-has-labels": "none"})
     if flags:
         _style(styles, "plot", **flags)
         area.set("chart:style-name", "plot")
@@ -483,11 +505,12 @@ def _sources(draft):
     return found
 
 
-def _frame(number, draft):
+def _frame(number, z, draft):
     place, offset, size = draft["anchor"], draft["offset"], draft["size"]
-    frame = ET.Element("draw:frame", {"draw:name": _clean(draft["name"]), "svg:x": _length(offset["x"]),
-                                      "svg:y": _length(offset["y"]), "svg:width": _length(size["width"]),
-                                      "svg:height": _length(size["height"])})
+    # A frame sits in its anchor cell, so document order is anchor order; ``draw:z-index`` keeps the stacking order.
+    frame = ET.Element("draw:frame", {"draw:name": _clean(draft["name"]), "draw:z-index": str(z),
+                                      "svg:x": _length(offset["x"]), "svg:y": _length(offset["y"]),
+                                      "svg:width": _length(size["width"]), "svg:height": _length(size["height"])})
     # As LibreOffice writes it: the chart listens to its source ranges, so it redraws when those cells change.
     _add(frame, "draw:object", **{"draw:notify-on-update-of-ranges": " ".join(_sources(draft)),
                                   "xlink:href": f"./Object {number}", "xlink:type": "simple", "xlink:show": "embed",
@@ -503,7 +526,8 @@ def package(built, report):
     1); the manifest entries, ``(full path, media type)``, of each object directory and its content part; and, for each
     exported sheet name, the ``(anchor row, anchor col, draw:frame)`` of its charts in draft order.  A frame is a
     cell-anchored frame: the caller places it in the cell at its anchor, so that the sheet reads back the anchor and
-    the offset the draft has.  Lengths are inches at 96 pixels to the inch.
+    the offset the draft has; its ``draw:z-index`` is its place in draft order on its sheet, from 0, which the reader
+    orders the sheet's charts by.  Lengths are inches at 96 pixels to the inch.
 
     ODF holds no literal series name outside a local data table, which an exported chart does not carry, so a chart
     with a series named by text is still written, that name left out, and the import would number it ``Series N``.
@@ -515,5 +539,6 @@ def package(built, report):
             report.add("chart.converted", "converted", "series_name", sheet=draft["sheet"], cell=draft["name"][:32])
         parts.append((f"Object {number}/content.xml", document))
         manifest += [(f"Object {number}/", CHART_MEDIA), (f"Object {number}/content.xml", "text/xml")]
-        frames.setdefault(draft["sheet"], []).append(_frame(number, draft))
+        placed = frames.setdefault(draft["sheet"], [])
+        placed.append(_frame(number, len(placed), draft))
     return parts, manifest, frames

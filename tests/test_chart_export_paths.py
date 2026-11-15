@@ -358,13 +358,20 @@ class StreamedChartExportTests(ChartBooks):
         spec = book.suggest_chart("Data", r1=1, c1=1, r2=13, c2=2)["spec"]
         book.create_chart(spec, sheet="Summary", name="Overview", anchor={"row": 4, "col": 3}, offset={"x": 5, "y": 6})
         book.create_chart(spec, sheet="Data", name="Below", anchor={"row": 20, "col": 1})
+        # One anchored before the first stored cell of its sheet (A1, first cell B1), one between two stored cells of a
+        # row (B5, between A5 and C5).
+        book.apply("sheet_add", name="Gaps")
+        book.apply("edit", "Gaps", cells=[{"row": 1, "col": 2, "source": "b1"}, {"row": 5, "col": 1, "source": "a5"},
+                                          {"row": 5, "col": 3, "source": "c5"}])
+        book.create_chart(spec, sheet="Gaps", name="Before", anchor={"row": 1, "col": 1})
+        book.create_chart(spec, sheet="Gaps", name="Between", anchor={"row": 5, "col": 2})
         book.close()
         base = self.base("same")
         for fmt in FORMATS:
             with self.subTest(fmt):
                 streamed = self.export_job(base, fmt)
                 inline = self.server.dispatch("POST", f"{base}/export/{fmt}", {"scope": "workbook"})
-                self.assertEqual(chart_lines(streamed), ["Charts: 4 written."])
+                self.assertEqual(chart_lines(streamed), ["Charts: 6 written."])
                 self.assertEqual(chart_lines(streamed), chart_lines(inline))
                 left, right = (chart_parts(fmt, base64.b64decode(r["file_base64"])) for r in (streamed, inline))
                 self.assertGreater(len([name for name in right if "chart" in name.lower() or "Object" in name]), 3)
@@ -381,6 +388,12 @@ class StreamedChartExportTests(ChartBooks):
                 self.assertEqual(imported_charts(fmt, streamed), imported_charts(fmt, inline))
                 # No stored cell moves for a frame's anchor cell.
                 self.assertEqual(cells_of(fmt, streamed), cells_of(fmt, inline))
+                for result in (streamed, inline):
+                    gaps = dict(cells_of(fmt, result))["Gaps"]
+                    self.assertEqual(sorted((cell["row"], cell["col"], cell["source"]) for cell in gaps),
+                                     [(1, 2, "b1"), (5, 1, "a5"), (5, 3, "c5")])
+                    placed = {c["name"]: c["anchor"] for c in imported_charts(fmt, result)}
+                    self.assertEqual((placed["Before"], placed["Between"]), ({"row": 1, "col": 1}, {"row": 5, "col": 2}))
 
     def test_sixty_four_charts_of_sixty_four_series(self):
         book = self.open_book("many")

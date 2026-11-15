@@ -11,8 +11,8 @@ from datahorizon import export_charts
 from datahorizon.conversion_report import ConversionReport
 from datahorizon.interchange import read_xml
 from datahorizon.ods import T, q
-from datahorizon.import_charts import convert
-from datahorizon.ods_charts import chart_document, package, read_frame_draft, table_frames
+from datahorizon.import_charts import ChartParts, convert
+from datahorizon.ods_charts import SheetFrames, chart_document, package, read_frame_draft, table_frames
 from chart_fixtures import ODS_NAMESPACES
 from ods_builder import manifest_document, workbook_bytes
 from test_xlsx_chart_export import as_draft, column_draft, drafts_for_every_fixture, find, local, report_of
@@ -39,9 +39,14 @@ def object_xml(element):
     return ET.tostring(element, encoding="utf-8", xml_declaration=True)
 
 
-def packaged(drafts, names):
-    """A minimal ODS with one sheet per name, each frame placed in the cell ``package`` says, plus the object parts."""
+def packaged(drafts, names, adjust=None):
+    """A minimal ODS with one sheet per name, each frame placed in the cell ``package`` says, plus the object parts;
+    ``adjust(frame)``, when given, is applied to each frame first."""
     parts, manifest, frames = write(drafts)
+    for found in frames.values():
+        for _, _, frame in found:
+            if adjust is not None:
+                adjust(frame)
     tables = []
     for name in names:
         rows, current = "", 0
@@ -236,6 +241,94 @@ class NotifyRanges(unittest.TestCase):
     def test_values_only_chart_lists_its_values(self):
         draft = column_draft(categories=None, series=[{"name": None, "values": ("Data", 2, 2, 5, 2), "x": None}])
         self.assertEqual(self.notified(draft), "$Data.$B$2:.$B$5")
+
+    def test_sheet_name_with_a_space_is_quoted(self):
+        names = ["Q1 Sales"]
+        draft = column_draft(sheet="Q1 Sales", categories=("Q1 Sales", 2, 1, 13, 1),
+                             series=[{"name": ("ref", ("Q1 Sales", 1, 2, 1, 2)), "values": ("Q1 Sales", 2, 2, 13, 2), "x": None}])
+        _, _, frames = write([draft])
+        expected = "$'Q1 Sales'.$A$2:.$A$13 $'Q1 Sales'.$B$1 $'Q1 Sales'.$B$2:.$B$13"
+        self.assertEqual(frames["Q1 Sales"][0][2][0].get("draw:notify-on-update-of-ranges"), expected)
+        self.assertEqual(find(chart_document(draft), "plot-area")[0].get("table:cell-range-address"), expected)
+        records, report = read_back(packaged([draft], names), names)
+        self.assertEqual(report_of(report), [])
+        self.assertEqual(as_draft(records[0], names), draft)
+
+
+class DataBinding(unittest.TestCase):
+    """The chart object says that its data comes from the spreadsheet, as LibreOffice Calc writes it."""
+    def check(self, draft, ranges):
+        document = chart_document(draft)
+        [chart] = [item for item in document.iter() if item.tag == "chart:chart"]
+        self.assertEqual((chart.get("xlink:href"), chart.get("xlink:type")), ("..", "simple"))
+        self.assertEqual(document.get("xmlns:xlink"), "http://www.w3.org/1999/xlink")
+        self.assertEqual(document.get("xmlns:table"), "urn:oasis:names:tc:opendocument:xmlns:table:1.0")
+        [area] = find(document, "plot-area")
+        self.assertEqual(area.get("table:cell-range-address"), ranges)
+        self.assertEqual(area.get("chart:data-source-has-labels"), "none")
+        _, _, frames = write([draft])
+        self.assertEqual(frames["Data"][0][2][0].get("draw:notify-on-update-of-ranges"), ranges)
+        records, report = read_back(packaged([draft], ["Data"]))
+        self.assertEqual(report_of(report), [])
+        self.assertEqual(as_draft(records[0]), draft)
+
+    def test_column_chart(self):
+        draft = column_draft(series=[{"name": ("ref", ("Data", 1, 2, 1, 2)), "values": ("Data", 2, 2, 13, 2), "x": None},
+                                     {"name": ("ref", ("Data", 1, 3, 1, 3)), "values": ("Data", 2, 3, 13, 3), "x": None}])
+        self.check(draft, "$Data.$A$2:.$A$13 $Data.$B$1 $Data.$B$2:.$B$13 $Data.$C$1 $Data.$C$2:.$C$13")
+
+    def test_scatter_chart(self):
+        draft = column_draft(type="scatter", grouping=None, categories=None,
+                             series=[{"name": ("ref", ("Data", 1, 3, 1, 3)), "values": ("Data", 2, 3, 13, 3), "x": ("Data", 2, 2, 13, 2)}])
+        self.check(draft, "$Data.$C$1 $Data.$C$2:.$C$13 $Data.$B$2:.$B$13")
+
+
+Z_INDEX = "{urn:oasis:names:tc:opendocument:xmlns:drawing:1.0}z-index"
+
+
+class StackingOrder(unittest.TestCase):
+    """Frames sit in their anchor cells, so document order is anchor order; ``draw:z-index`` carries the chart order."""
+    def drafts(self):
+        # Draft order (stacking order) is the reverse of anchor order.
+        return [named(column_draft(name=name, anchor={"row": row, "col": 2})) for name, row in (("Back", 30), ("Middle", 9), ("Front", 2))]
+
+    def sheet_drafts(self, data):
+        archive = zipfile.ZipFile(io.BytesIO(data))
+        table = next(read_xml(archive, "content.xml").iter(q(T, "table")))
+        frames = SheetFrames(archive, 0, "Data", ChartParts(reader=read_part), ConversionReport())
+        for frame, cell, grouped in table_frames(table):
+            frames.frame(frame, cell, grouped)
+        return [draft["name"] for draft in frames.finish()]
+
+    def test_each_frame_carries_its_place_in_draft_order_on_its_sheet(self):
+        drafts = self.drafts() + [named(column_draft(name="Elsewhere", sheet="Other", categories=("Other", 2, 1, 13, 1),
+                                                     series=[{"name": ("ref", ("Other", 1, 2, 1, 2)), "values": ("Other", 2, 2, 13, 2), "x": None}]))]
+        _, _, frames = write(drafts)
+        self.assertEqual({name: [(frame.get("draw:name"), frame.get("draw:z-index")) for _, _, frame in found] for name, found in frames.items()},
+                         {"Data": [("Back", "0"), ("Middle", "1"), ("Front", "2")], "Other": [("Elsewhere", "0")]})
+
+    def test_reader_orders_a_sheet_by_z_index(self):
+        self.assertEqual(self.sheet_drafts(packaged(self.drafts(), ["Data"])), ["Back", "Middle", "Front"])
+
+    def test_reader_keeps_document_order_without_z_index(self):
+        data = packaged(self.drafts(), ["Data"], adjust=lambda frame: frame.attrib.pop("draw:z-index"))
+        self.assertEqual(self.sheet_drafts(data), ["Front", "Middle", "Back"])
+
+    def test_reader_keeps_document_order_when_one_frame_lacks_z_index(self):
+        def adjust(frame):
+            if frame.get("draw:name") == "Middle":
+                del frame.attrib["draw:z-index"]
+        self.assertEqual(self.sheet_drafts(packaged(self.drafts(), ["Data"], adjust=adjust)), ["Front", "Middle", "Back"])
+
+    def test_reader_keeps_document_order_when_a_z_index_cannot_be_read(self):
+        def adjust(frame):
+            if frame.get("draw:name") == "Middle":
+                frame.set("draw:z-index", "-1")
+        self.assertEqual(self.sheet_drafts(packaged(self.drafts(), ["Data"], adjust=adjust)), ["Front", "Middle", "Back"])
+
+    def test_ties_keep_document_order(self):
+        data = packaged(self.drafts(), ["Data"], adjust=lambda frame: frame.set("draw:z-index", "5"))
+        self.assertEqual(self.sheet_drafts(data), ["Front", "Middle", "Back"])
 
 
 class Structure(unittest.TestCase):
