@@ -16,27 +16,34 @@ SKIPPED = "chart.skipped"
 CELL_LENGTH = 32  # the chart name a report entry carries
 
 
-def collect(db):
-    """Every stored chart, described, as ``{"sheet_id", "sheet", "chart"}``, by sheet position, then ``z``, then id.
+def collect(db, sheet_id=None):
+    """Every stored chart, described, as ``{"sheet_id", "sheet", "chart"}``, by sheet position, then ``z``, then id; only
+    those on the sheet ``sheet_id`` when it is given (a selection export).
 
-    Empty when the workbook format is below the one that stores charts."""
+    The table, query and sheet catalogs are each read at most once, however many sources the charts have.  A stored
+    chart that cannot be read (not JSON, not an object, or not a valid stored chart) is an entry with the issue
+    ``INVALID_FORMAT``, which ``drafts`` reports.  Empty when the workbook format is below the one that stores charts."""
     if db.execute("SELECT format_version FROM dh_meta").fetchone()[0] < charts.FORMAT_VERSION:
         return []
-    rows = db.execute("SELECT s.position, s.id, s.name, o.id, o.payload FROM dh_objects o "
-                      "JOIN sheets s ON s.id = o.sheet_id WHERE o.namespace = 'chart'")
+    query = ("SELECT s.position, s.id, s.name, o.id, o.payload FROM dh_objects o "
+             "JOIN sheets s ON s.id = o.sheet_id WHERE o.namespace = 'chart'")
+    rows = db.execute(query) if sheet_id is None else db.execute(query + " AND o.sheet_id = ?", (sheet_id,))
+    lookups = {}
     found = []
-    for position, sheet_id, sheet, chart_id, text in rows:
+    for position, chart_sheet, sheet, chart_id, text in rows:
         z, payload = 0, None
         try:
-            payload = json.loads(text)
-            chart = charts.describe(db, sheet_id, chart_id, payload)
+            payload = json.loads(text) if isinstance(text, (str, bytes)) else None
+            if not isinstance(payload, dict):
+                raise ValueError("a stored chart is an object")
+            chart = charts.describe(db, chart_sheet, chart_id, payload, lookups)
             z = payload["z"]
         except (ValueError, EngineError):
             # An unreadable chart stays an entry so that ``drafts`` can report it; nothing else is contained.
             name = payload.get("name") if isinstance(payload, dict) else None
-            chart = {"id": chart_id, "sheet_id": sheet_id, "issue": "INVALID_FORMAT",
+            chart = {"id": chart_id, "sheet_id": chart_sheet, "issue": "INVALID_FORMAT",
                      "name": name if isinstance(name, str) and name else "Chart"}
-        found.append(((position, sheet_id, z, chart_id), {"sheet_id": sheet_id, "sheet": sheet, "chart": chart}))
+        found.append(((position, chart_sheet, z, chart_id), {"sheet_id": chart_sheet, "sheet": sheet, "chart": chart}))
     found.sort(key=lambda item: item[0])
     return [entry for _, entry in found]
 

@@ -229,6 +229,34 @@ class InlineChartExportTests(ChartBooks):
                 self.assertEqual(len(preview["workbook_charts"]), 64)
                 self.assertEqual({len(c["spec"]["series"]) for c in preview["workbook_charts"]}, {64})
 
+    def test_many_table_sourced_charts_do_not_slow_the_export(self):
+        # 60 tables of 20 columns and 64 charts of 64 table-sourced series, all within the engine's limits: collecting
+        # the charts must not look the table catalog up once per source (that took over 2 s for a 20-cell selection).
+        book = self.open_book("table-sources")
+        fill_data(book)
+        for number in range(60):
+            book.create_table(f"T{number}", [dict(name=f"C{column}", type="integer") for column in range(20)])
+        book.insert_records("T0", [{f"C{column}": row for column in range(20)} for row in range(5)])
+        spec = {"spec_version": 1, "type": "line",
+                "series": [{"name": {"text": f"s{n}"}, "values": {"source": {"kind": "table", "table": "T0", "column": f"C{n % 20}"}}}
+                           for n in range(64)]}
+        for number in range(64):
+            book.create_chart(spec, sheet="Data", name=f"T {number}", anchor={"row": number + 1, "col": 5})
+        for fmt in FORMATS:
+            with self.subTest(fmt, scope="selection"):
+                started = time.monotonic()
+                result = book.export_spreadsheet(fmt, sheet="Data", r1=1, c1=1, r2=10, c2=2)
+                self.assertLess(time.monotonic() - started, 1.0)
+                self.assertEqual(chart_lines(result), ["Charts: 0 written, 64 left out; each is listed below with its reason."])
+                self.assertEqual(len(read_back(fmt, result)["workbook_sheets"][0]["cells"]), 20)
+            with self.subTest(fmt, scope="workbook"):
+                started = time.monotonic()
+                result = book.export_spreadsheet(fmt, scope="workbook")
+                self.assertLess(time.monotonic() - started, 1.0)
+                self.assertEqual(chart_lines(result), ["Charts: 0 written, 64 left out; each is listed below with its reason."])
+                self.assertEqual({detail for detail, _, _ in skipped(result)}, {"table_source"})
+                self.assertEqual(len(read_back(fmt, result)["workbook_sheets"][0]["cells"]), 39)
+
     def test_workbook_without_charts_reports_nothing_about_charts(self):
         book = self.open_book("plain")
         fill_data(book)

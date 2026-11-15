@@ -695,7 +695,7 @@ class Workbook:
                         require(response_bytes <= 4 * 1024 * 1024, "READ_LIMIT", "Read response exceeds 4 MiB; request a smaller range")
                         cells.append(result)
                     # The stored charts are attached after the cells are sized: they never count against the read's limit.
-                    if native: response.update(self.native_catalog(charts=True))
+                    if native: response.update(self.native_catalog(charts=True,chart_sheet=sheet))
                     return response
             finally:
                 self.db.execute("ROLLBACK")
@@ -805,11 +805,11 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
-    def native_catalog(self, *, omissions=False, charts=False, db=None):
+    def native_catalog(self, *, omissions=False, charts=False, db=None, chart_sheet=None):
         """Names and binding labels (and optionally other native objects and charts) in the current read snapshot, for export reports.
 
         `charts` adds chart_entries (export_charts.collect) and chart_sheets (sheet id to name), which an export writes
-        charts from."""
+        charts from; with `chart_sheet` (a selection export) only that sheet's charts are collected."""
         from .relational import objects
         from .bindings import label as binding_label
         db=self.db if db is None else db
@@ -819,7 +819,7 @@ class Workbook:
         if omissions:result['native_omissions']=[item['name'] for kind,item in found if kind not in ('name','binding')]
         if charts:
             from .export_charts import collect
-            result.update(chart_entries=collect(db),chart_sheets=dict(db.execute("SELECT id,name FROM sheets")))
+            result.update(chart_entries=collect(db,chart_sheet),chart_sheets=dict(db.execute("SELECT id,name FROM sheets")))
         return result
 
     def read_workbook(self):

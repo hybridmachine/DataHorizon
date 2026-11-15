@@ -3,10 +3,13 @@
 
 import json
 import pathlib
+import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
+import uuid
 
-from datahorizon import charts, export_charts, import_charts
+from datahorizon import charts, export_charts, import_charts, query_views, relational
 from datahorizon.conversion_report import ConversionReport
 from datahorizon.engine import EngineError, Workbook
 
@@ -222,6 +225,65 @@ class Export(unittest.TestCase):
         self.assertEqual((entries[0]["detail"], entries[0]["count"]), ("unsupported", 2))
         self.assertEqual(sorted(sample["cell"] for sample in entries[0]["samples"]), ["Bent", "Chart"])
         self.assertEqual({sample["sheet"] for sample in entries[0]["samples"]}, {"Sales"})
+
+    def apply(self, action, **args):
+        return self.book.mutate(dict(action=action, operation_id=str(uuid.uuid4()), expected_state=self.book.state(), **args))
+
+    def test_collect_reads_each_catalog_at_most_once(self):
+        self.apply("table_create", name="Sales", columns=[dict(name=f"C{n}", type="integer") for n in range(4)])
+        self.apply("table_create", name="Other", columns=[dict(name="N", type="integer")])
+        table_spec = {"spec_version": 1, "type": "line",
+                      "series": [{"name": {"text": f"s{n}"}, "values": {"source": {"kind": "table", "table": "Sales", "column": f"C{n % 4}"}}}
+                                 for n in range(8)]}
+        self.book.changes = {}
+        for number in range(5):
+            charts.store(self.book, self.sheet, f"t{number}", self.payload(table_spec, name=f"T{number}"))
+            charts.store(self.book, self.sheet, f"r{number}", self.payload(name=f"R{number}"))
+        with patch.object(relational, "tables", wraps=relational.tables) as tables, \
+                patch.object(query_views, "queries", wraps=query_views.queries) as queries:
+            found = export_charts.collect(self.book.db)
+        self.assertEqual(len(found), 10)
+        self.assertEqual(tables.call_count, 1)
+        self.assertEqual(queries.call_count, 0)
+        described = {item["chart"]["name"]: item["chart"] for item in found}
+        self.assertEqual(described["T0"]["spec"]["series"][5]["values"]["source"]["column"], "C1")
+        self.assertEqual(described["R0"]["spec"]["series"][0]["values"]["source"]["ref"], "B2:B13")
+        report = ConversionReport()
+        self.assertEqual(len(export_charts.drafts(found, self.names, report)), 5)
+        self.assertEqual([(entry["detail"], entry["count"]) for entry in report.entries()], [("table_source", 5)])
+
+    def test_collect_for_one_sheet(self):
+        self.book.db.execute("INSERT INTO sheets(id, name, position) VALUES ('s2', 'Other', 99)")
+        self.book.changes = {}
+        charts.store(self.book, "s2", "a", self.payload(name="Elsewhere"))
+        charts.store(self.book, self.sheet, "b", self.payload(name="Here"))
+        self.assertEqual([item["chart"]["name"] for item in export_charts.collect(self.book.db, self.sheet)], ["Here"])
+        self.assertEqual([item["chart"]["name"] for item in export_charts.collect(self.book.db, "s2")], ["Elsewhere"])
+        self.assertEqual(len(export_charts.collect(self.book.db)), 2)
+
+    def test_collect_contains_a_payload_that_is_not_an_object(self):
+        # A bare database: the engine's workbook validation would refuse these payloads before any export runs.
+        good = self.payload(name="Good")
+        good["spec"]["series"][0]["values"]["source"]["sheet_id"] = "s1"
+        good["spec"]["series"][0]["name"]["source"]["sheet_id"] = "s1"
+        good["spec"]["categories"]["source"]["sheet_id"] = "s1"
+        for label, text in (("list", "[]"), ("number", "5"), ("text", '"x"'), ("null", "null"), ("empty", "{}"),
+                            ("not json", "{nope")):
+            with self.subTest(label):
+                db = sqlite3.connect(":memory:")
+                self.addCleanup(db.close)
+                db.executescript(f"CREATE TABLE dh_meta(format_version); INSERT INTO dh_meta VALUES({charts.FORMAT_VERSION});"
+                                 "CREATE TABLE sheets(id, position, name); INSERT INTO sheets VALUES('s1', 0, 'Data');"
+                                 "CREATE TABLE dh_objects(id, sheet_id, namespace, payload);")
+                db.execute("INSERT INTO dh_objects VALUES('bad', 's1', 'chart', ?)", (text,))
+                db.execute("INSERT INTO dh_objects VALUES('good', 's1', 'chart', ?)", (json.dumps(good),))
+                found = export_charts.collect(db)
+                self.assertEqual(len(found), 2)
+                report = ConversionReport()
+                result = export_charts.drafts(found, {"s1": "Data"}, report)
+                self.assertEqual([draft["name"] for draft in result], ["Good"])
+                self.assertEqual([(entry["detail"], entry["samples"]) for entry in report.entries()],
+                                 [("unsupported", [{"sheet": "Data", "cell": "Chart"}])])
 
 
 if __name__ == "__main__":
