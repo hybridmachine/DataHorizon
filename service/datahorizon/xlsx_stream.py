@@ -23,7 +23,7 @@ from typing import BinaryIO, Callable, Iterator, Protocol
 
 from .conversion_report import ConversionReport
 from .engine import EngineError, require
-from .interchange import (CellPositions, normalise_part_names, MAX_EXPANDED, S, WHOLE_EXPORT_CACHES, SharedFormulas, XlsxCellContext, convert_xlsx_cell,
+from .interchange import (CellPositions, normalise_part_names, MAX_EXPANDED, R, S, WHOLE_EXPORT_CACHES, SharedFormulas, XlsxCellContext, convert_xlsx_cell,
                           date_system, export_cell, export_report, mode, namespaces, package_parts, read_xml,
                           shared_strings_path, styles_path, uses_future_prefix, validate_sheet_names, workbook_report,
                           worksheet_path, xlsx_text, xml)
@@ -452,11 +452,13 @@ FORMULA_DISPLAY_CATEGORY = "formula.display_not_evaluated"
 FORMULA_DISPLAY_DETAIL = "result not evaluated; a date or time result takes no calendar display"
 
 
-def export_lines(native: dict, future_functions: bool, unevaluated_formulas: int) -> list[str]:
-    """The fixed report lines of a whole-workbook streamed export; the conversion report's lines follow them.
+def export_lines(native: dict, future_functions: bool, unevaluated_formulas: int, charts: int = 0, left_out: int = 0) -> list[str]:
+    """The fixed report lines of a whole-workbook streamed export, with its chart line for `charts` written and
+    `left_out` left out; the conversion report's lines follow them.
     The formula-display line appears only when an unformatted formula was written."""
+    from .export_charts import lines as chart_lines
     head = workbook_report()+[WHOLE_EXPORT_CACHES]+([FORMULA_DISPLAY_LINE] if unevaluated_formulas else [])
-    return export_report(head, native, future_functions)
+    return export_report(head, native, future_functions, chart_lines(charts, left_out))
 
 
 class _Expanded:
@@ -470,8 +472,9 @@ class _Expanded:
         require(self.used <= LARGE_EXPANDED, "LIMIT", f"Expanded {self.label} export exceeds {LARGE_EXPANDED//(1024*1024)} MiB")
 
 
-def _write_sheet(part, name, cells, context, expanded, progress):
-    """Write one worksheet part cell by cell; only a bounded buffer of XML text is held."""
+def _write_sheet(part, name, cells, context, expanded, progress, drawing=None):
+    """Write one worksheet part cell by cell; only a bounded buffer of XML text is held. `drawing` is the relationship
+    id of the sheet's chart drawing, written after the cells as the bounded export writes it."""
     pending, size = [], 0
 
     def emit(text):
@@ -490,7 +493,7 @@ def _write_sheet(part, name, cells, context, expanded, progress):
 
     expanded.charge(len(_DECLARATION))
     part.write(_DECLARATION)
-    emit(f'<worksheet xmlns="{S}">')
+    emit(f'<worksheet xmlns="{S}" xmlns:r="{R}">' if drawing else f'<worksheet xmlns="{S}">')
     current = None
     for cell in cells:
         progress.cell(name)
@@ -510,6 +513,7 @@ def _write_sheet(part, name, cells, context, expanded, progress):
                               report=context["report"], whole=True, names=context["names"])
         emit(ET.tostring(element, encoding="unicode"))
     emit("<sheetData />" if current is None else "</row></sheetData>")
+    if drawing: emit(f'<drawing r:id="{drawing}" />')
     emit("</worksheet>")
     flush()
 
@@ -525,7 +529,7 @@ class _WriteProgress:
         if self.cells % BATCH == 0: self.checkpoint(self.cells, "Writing sheet "+name)
 
 
-def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Callable[[int, str], None]) -> dict:
+def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Callable[[int, str], None], *, charts=()) -> dict:
     """Write a whole workbook as an XLSX package at `path`, formulas without cached values, cell by cell.
 
     `sheets` yields (sheet name, iterator of cells) as Workbook.stream_workbook does; only the pairs are taken up
@@ -535,9 +539,15 @@ def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Cal
     Approximations go to `report`. More than LARGE_CELLS cells, LARGE_SHEETS sheets, LARGE_EXPANDED uncompressed
     bytes or 1,024 distinct styles is LIMIT. On any failure the partial file is removed.
 
-    Returns {"bytes", "sha256", "sheets", "cells", "future_functions", "unevaluated_formulas"}: the file's size and
-    digest, the counts written, whether any formula uses an _xlfn identifier, and how many formulas without a number
-    format were written (each itemized in `report` as FORMULA_DISPLAY_CATEGORY, approximated)."""
+    `charts` are the export drafts of the charts to write (export_charts.workbook_drafts). Each is built by
+    xlsx_charts.chart_part after a checkpoint, before any sheet is written, and packaged as the bounded export packages
+    its charts, so both write the same chart parts; a chart that cannot be built is reported (export_charts.build) and
+    left out. Chart parts count against LARGE_EXPANDED with every other part.
+
+    Returns {"bytes", "sha256", "sheets", "cells", "future_functions", "unevaluated_formulas", "charts"}: the file's
+    size and digest, the counts written, whether any formula uses an _xlfn identifier, how many formulas without a
+    number format were written (each itemized in `report` as FORMULA_DISPLAY_CATEGORY, approximated) and how many
+    charts were written."""
     path = Path(path)
     try:
         sheets = list(sheets)
@@ -548,12 +558,16 @@ def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Cal
         flags = os.O_WRONLY|os.O_CREAT|os.O_TRUNC|getattr(os, "O_NOFOLLOW", 0)|getattr(os, "O_BINARY", 0)
         with open(os.open(path, flags, 0o600), "wb") as output:
             with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                from .export_charts import build
+                from .xlsx_charts import chart_part, package as chart_package
+                built = build(charts, chart_part, report, step=lambda: checkpoint(progress.cells, "Writing charts"))
+                chart_parts, drawings, overrides = chart_package(built, names)
                 for index, (name, cells) in enumerate(sheets, 1):
                     with archive.open(f"xl/worksheets/sheet{index}.xml", "w") as part:
                         checkpoint(progress.cells, "Writing sheet "+name)
-                        _write_sheet(part, name, cells, context, expanded, progress)
+                        _write_sheet(part, name, cells, context, expanded, progress, drawings.get(index))
                 checkpoint(progress.cells, "Writing workbook")
-                for part_name, root in package_parts(names)+[("xl/styles.xml", stylesheet(context["styles"].styles))]:
+                for part_name, root in package_parts(names, chart_parts, overrides)+[("xl/styles.xml", stylesheet(context["styles"].styles))]:
                     data = xml(root)
                     expanded.charge(len(data))
                     archive.writestr(part_name, data)
@@ -563,7 +577,7 @@ def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Cal
                 digest.update(chunk); size += len(chunk)
                 checkpoint(progress.cells, "Checking export")
         return {"bytes": size, "sha256": digest.hexdigest(), "sheets": len(names), "cells": progress.cells,
-                "future_functions": context["future"], "unevaluated_formulas": context["unevaluated"]}
+                "future_functions": context["future"], "unevaluated_formulas": context["unevaluated"], "charts": len(built)}
     except BaseException:
         path.unlink(missing_ok=True)
         raise

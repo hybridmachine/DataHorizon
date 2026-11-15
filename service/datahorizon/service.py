@@ -37,6 +37,7 @@ from .list_export import export_list
 from .functions import function_catalog
 from .staging import IDENTIFIER, Staging, sweep_terminated
 from .conversion_report import ConversionReport
+from .export_charts import workbook_drafts
 from .xlsx_stream import LARGE_CELLS, LARGE_EXPANDED, LARGE_PACKAGE, LARGE_SHEETS, export_lines, read_workbook, write_workbook
 from . import ods_stream
 from .ods_stream import read_workbook as ods_read_workbook, write_workbook as ods_write_workbook
@@ -1010,18 +1011,22 @@ class Service(ThreadingHTTPServer):
 
     def _write_export(self, fmt, job_id, target, stream, report, progress):
         """Write the snapshot as format `fmt` into `target`; return the written summary and the fixed report lines.
-        The ODS writer's body scratch file is a staging entry of the job, released whatever happens."""
+        The ODS writer's body scratch file is a staging entry of the job, released whatever happens. The charts no
+        file can hold are reported before writing; one the writer cannot build is left out too."""
+        charts,left_out = workbook_drafts(stream.native,report)
         if fmt == "xlsx":
-            written = write_workbook(target,stream,report,progress)
-            return written,export_lines(stream.native,written["future_functions"],written["unevaluated_formulas"])
+            written = write_workbook(target,stream,report,progress,charts=charts)
+            return written,export_lines(stream.native,written["future_functions"],written["unevaluated_formulas"],
+                                        written["charts"],left_out+len(charts)-written["charts"])
         def reserve():
             self.staging.release("part",job_id)  # Left over from a crash: the job's id is held by its export file.
             return self.staging.new("part",job_id)
         try:
-            written = ods_write_workbook(target,stream,report,progress,scratch=reserve)
+            written = ods_write_workbook(target,stream,report,progress,scratch=reserve,charts=charts)
         finally:
             self.staging.release("part",job_id)
-        return written,ods_stream.export_lines(stream.native,written["modern_functions"],written["formulas"],written["unevaluated_formulas"])
+        return written,ods_stream.export_lines(stream.native,written["modern_functions"],written["formulas"],written["unevaluated_formulas"],
+                                               written["charts"],left_out+len(charts)-written["charts"])
 
     def _export_job(self, book, job_id, fmt):
         """The job body: snapshot the workbook, write the package into the reserved file and return its summary."""

@@ -29,7 +29,7 @@ from .interchange import mode, validate_sheet_names, workbook_report, xml
 from .ods import (CACHE_CATEGORY, CACHE_DETAIL, F, M, MIME, N, O, OF, STYLE_DEFINITION_TAGS, T, WORKBOOK_IMPORT_LINE, WHOLE_FORMULA_LINE, X, Y, OdsCellContext, external_cache_table,
                   OdsStyles, OdsStyleTable, convert_ods_cell, export_lines as ods_export_lines, export_ods_cell, package_parts, q,
                   repeat, uses_modern_function)
-from .ods_features import (DRAW_PREFIX, SHEET_TAGS, TABLE_SOURCE, WORKBOOK_TAGS, LayoutStyles, OdsSheetFeatures, OdsWorkbookFeatures,
+from .ods_features import (DRAW, DRAW_PREFIX, SVG, XLINK, SHEET_TAGS, TABLE_SOURCE, WORKBOOK_TAGS, LayoutStyles, OdsSheetFeatures, OdsWorkbookFeatures,
                            mapped_styles, read_panes, report_unreadable_settings)
 from .temporal import export_temporal_style
 
@@ -274,16 +274,21 @@ FORMULA_LINE = ("OpenFormula uses canonical named sheet references; formula resu
                 "formulas carry no cached values and the target must recalculate them. Sheet-relative movement semantics are not retained. NULL becomes empty.")
 _ROOT = (f'<office:document-content xmlns:office="{O}" xmlns:style="{Y}" xmlns:text="{X}" xmlns:table="{T}" '
          f'xmlns:fo="{F}" xmlns:number="{N}" xmlns:of="{OF}" office:version="1.3">')
+# The chart frames carry prefixed names without declarations; a document with charts declares their namespaces.
+_CHART_ROOT = _ROOT[:-len(' office:version="1.3">')]+f' xmlns:draw="{DRAW}" xmlns:svg="{SVG}" xmlns:xlink="{XLINK}" office:version="1.3">'
 _WRAPPER = q(O, "wrapper")
 _WRAPPER_END = "</office:wrapper>"
 
 
-def export_lines(native: dict, modern_functions: bool, formulas: int, unevaluated_formulas: int) -> list[str]:
-    """The fixed report lines of a whole-workbook streamed ODS export; the conversion report's lines follow them.
+def export_lines(native: dict, modern_functions: bool, formulas: int, unevaluated_formulas: int, charts: int = 0,
+                 left_out: int = 0) -> list[str]:
+    """The fixed report lines of a whole-workbook streamed ODS export, with its chart line for `charts` written and
+    `left_out` left out; the conversion report's lines follow them.
     The formula lines appear only when a formula was written."""
+    from .export_charts import lines as chart_lines
     head = workbook_report()+[FORMULA_LINE if formulas else WHOLE_FORMULA_LINE]
     if unevaluated_formulas: head.append(xlsx_stream.FORMULA_DISPLAY_LINE)
-    return ods_export_lines(head, native, modern_functions)
+    return ods_export_lines(head, native, modern_functions, chart_lines(charts, left_out))
 
 
 def _markup(element):
@@ -313,20 +318,37 @@ class _Output:
         self.file.write(data)
 
 
-def _write_table(out, name, cells, context, progress):
-    """One table:table, cell by cell, laid out exactly as ods.ods_export lays it out."""
+def _write_table(out, name, cells, context, progress, frames=()):
+    """One table:table, cell by cell, laid out exactly as ods.ods_export lays it out.
+
+    `frames` are the (anchor row, anchor col, draw:frame) of the sheet's charts (ods_charts.package): each is written
+    inside its anchor cell, and an anchor without a stored cell gets an empty cell at exactly its row and column, so no
+    stored cell moves. Only the anchors are held; the cells are still read as a stream."""
     opening = _markup(ET.Element(TABLE, {q(T, "name"): name}))
     previous_row = previous_col = 0
-    for cell in cells:
-        progress.cell(name)
-        cell = export_temporal_style(cell)
-        row, col = cell["row"], cell["col"]
+    placed = {}
+    for row, col, frame in frames: placed.setdefault((row, col), []).append(frame)
+    anchors = iter(sorted(placed))
+    anchor = next(anchors, None)
+
+    def write(row, col, element):
+        nonlocal previous_row, previous_col
         if row != previous_row:
             out.emit(opening[:-len(" />")]+">" if previous_row == 0 else "</table:table-row>")
             if row-previous_row > 1: out.emit(f'<table:table-row table:number-rows-repeated="{row-previous_row-1}" />')
             out.emit("<table:table-row>"); previous_row = row; previous_col = 0
         if col-previous_col > 1: out.emit(f'<table:table-cell table:number-columns-repeated="{col-previous_col-1}" />')
         previous_col = col
+        element.extend(placed.get((row, col), ()))
+        out.emit(_markup(element))
+
+    for cell in cells:
+        progress.cell(name)
+        cell = export_temporal_style(cell)
+        row, col = cell["row"], cell["col"]
+        while anchor is not None and anchor < (row, col):
+            write(*anchor, ET.Element(CELL)); anchor = next(anchors, None)
+        if anchor == (row, col): anchor = next(anchors, None)
         element, _ = export_ods_cell(cell, context["styles"].name(cell.get("style", {})), sheet=name, mode="formulas",
                                      report=context["report"], whole=True, names=context["names"], caches=False)
         # A formula that does not translate is written empty (reported by export_ods_cell), so only a written
@@ -339,12 +361,14 @@ def _write_table(out, name, cells, context, progress):
             if cell.get("style", {}).get("format", "general") == "general":
                 context["report"].add(xlsx_stream.FORMULA_DISPLAY_CATEGORY, "approximated", xlsx_stream.FORMULA_DISPLAY_DETAIL, **where)
                 context["unevaluated"] += 1
-        out.emit(_markup(element))
+        write(row, col, element)
+    while anchor is not None:
+        write(*anchor, ET.Element(CELL)); anchor = next(anchors, None)
     out.emit(opening if previous_row == 0 else "</table:table-row></table:table>")
 
 
 def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Callable[[int, str], None], *,
-                   scratch: Callable[[], Path] | None = None) -> dict:
+                   scratch: Callable[[], Path] | None = None, charts=()) -> dict:
     """Write a whole workbook as an ODS package at `path`, formulas without cached values, cell by cell.
 
     `sheets` yields (sheet name, iterator of cells) as Workbook.stream_workbook does; only the pairs are taken up
@@ -357,7 +381,13 @@ def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Cal
     LARGE_EXPANDED uncompressed bytes or 1,024 distinct styles is LIMIT. On any failure the partial file is removed and
     the scratch file emptied.
 
-    Returns {"bytes", "sha256", "sheets", "cells", "formulas", "modern_functions", "unevaluated_formulas"}."""
+    `charts` are the export drafts of the charts to write (export_charts.workbook_drafts). Each is built by
+    ods_charts.chart_document after a checkpoint, before any table is written, and packaged as the bounded export
+    packages its charts, so both write the same chart objects; each frame is written in its anchor cell. A chart that
+    cannot be built is reported (export_charts.build) and left out. Chart objects count against LARGE_EXPANDED with
+    every other part.
+
+    Returns {"bytes", "sha256", "sheets", "cells", "formulas", "modern_functions", "unevaluated_formulas", "charts"}."""
     path = Path(path)
     body = None
     owned = scratch is None
@@ -368,6 +398,10 @@ def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Cal
         automatic = ET.Element(q(O, "automatic-styles"))
         context = {"styles": OdsStyleTable(automatic), "report": report, "names": names, "modern": False, "formulas": 0, "unevaluated": 0}
         expanded, progress = xlsx_stream._Expanded("ODS"), xlsx_stream._WriteProgress(checkpoint)
+        from .export_charts import build
+        from .ods_charts import chart_document, package as chart_package
+        built = build(charts, chart_document, report, step=lambda: checkpoint(progress.cells, "Writing charts"))
+        objects, entries, frames = chart_package(built, report)
         if owned:
             descriptor, name = tempfile.mkstemp(prefix="ods-body-", suffix=".part")
             os.close(descriptor)
@@ -380,11 +414,11 @@ def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Cal
             out.emit("<office:body><office:spreadsheet>")
             for name, cells in sheets:
                 checkpoint(progress.cells, "Writing sheet "+name)
-                _write_table(out, name, cells, context, progress)
+                _write_table(out, name, cells, context, progress, frames.get(name, ()))
             out.emit("</office:spreadsheet></office:body></office:document-content>")
             out.flush()
         checkpoint(progress.cells, "Writing workbook")
-        head = xlsx_stream._DECLARATION+(_ROOT+_markup(automatic)).encode("utf-8")
+        head = xlsx_stream._DECLARATION+((_CHART_ROOT if frames else _ROOT)+_markup(automatic)).encode("utf-8")
         expanded.charge(len(head))
         flags = os.O_WRONLY|os.O_CREAT|os.O_TRUNC|getattr(os, "O_NOFOLLOW", 0)|getattr(os, "O_BINARY", 0)
         with open(os.open(path, flags, 0o600), "wb") as output:
@@ -395,7 +429,7 @@ def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Cal
                     while chunk := source.read(1024*1024):
                         part.write(chunk)
                         checkpoint(progress.cells, "Writing workbook")
-                for part_name, root in package_parts():
+                for part_name, root in package_parts(objects, entries):
                     data = xml(root)
                     expanded.charge(len(data))
                     archive.writestr(part_name, data)
@@ -405,7 +439,8 @@ def write_workbook(path: Path, sheets, report: ConversionReport, checkpoint: Cal
                 digest.update(chunk); size += len(chunk)
                 checkpoint(progress.cells, "Checking export")
         return {"bytes": size, "sha256": digest.hexdigest(), "sheets": len(names), "cells": progress.cells,
-                "formulas": context["formulas"], "modern_functions": context["modern"], "unevaluated_formulas": context["unevaluated"]}
+                "formulas": context["formulas"], "modern_functions": context["modern"], "unevaluated_formulas": context["unevaluated"],
+                "charts": len(built)}
     except BaseException:
         path.unlink(missing_ok=True)
         raise

@@ -626,12 +626,11 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
 
 
 def native_only_report(snapshot,charts=()):
-    """Report lines for workbook names and event bindings, which no interchange format carries, then for charts: the
-    export's own chart lines `charts` (export_charts.lines), or the native-only line of a streamed export's native_charts."""
+    """Report lines for workbook names and event bindings, which no interchange format carries, then the export's own
+    chart lines `charts` (export_charts.lines)."""
     report=[]
     if snapshot.get('native_names'):report.append('Workbook names are native-only and omitted from this export: '+', '.join(snapshot['native_names']))
     if snapshot.get('native_bindings'):report.append('Event bindings are native-only and omitted from this export: '+', '.join(snapshot['native_bindings']))
-    if snapshot.get('native_charts'):report.append('Charts are native-only and omitted from this export: '+', '.join(snapshot['native_charts']))
     report.extend(charts)
     return report
 

@@ -242,7 +242,7 @@ class ChartClientTests(unittest.TestCase):
         self.assertFalse([line for line in csv if "Chart" in line])
         empty = self.open_book("no-charts.dhwb")
         for form in ("xlsx", "ods"):
-            self.assertFalse([line for line in empty.export_spreadsheet(form, scope="workbook")["report"] if line.startswith("Charts ")])
+            self.assertFalse([line for line in empty.export_spreadsheet(form, scope="workbook")["report"] if line.startswith("Charts")])
 
     def fill_table(self, book):
         book.create_table("Sales", [dict(name="Month", type="text"), dict(name="Units", type="integer"), dict(name="Cost", type="number")])

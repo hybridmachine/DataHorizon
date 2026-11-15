@@ -1,15 +1,20 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""XLSX and ODS exports write native charts: the inline (bounded) whole-workbook and selection routes, through the
-service, read back with the project's own import previews."""
+"""XLSX and ODS exports write native charts: the inline (bounded) whole-workbook and selection routes and the streamed
+whole-workbook export job, through the service, read back with the project's own import previews."""
 import base64
 import io
 from pathlib import Path
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
+import uuid
 import zipfile
 
+from datahorizon import service as service_module
 from datahorizon.client import LocalService
+from datahorizon.engine import EngineError
 from datahorizon.interchange import xlsx_preview
 from datahorizon.ods import ods_preview
 from datahorizon.service import Service
@@ -54,7 +59,8 @@ def ref(source):
     return (source["sheet"], source["ref"])
 
 
-class InlineChartExportTests(unittest.TestCase):
+class ChartBooks(unittest.TestCase):
+    """A local service for building workbooks with charts."""
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
@@ -83,6 +89,26 @@ class InlineChartExportTests(unittest.TestCase):
         book.create_chart(line, sheet="Data", name="Chart 2", anchor={"row": 13, "col": 2})
         return book
 
+    def left_out_book(self, name):
+        """data_book with three charts no file can hold: a table chart, a query chart and one whose sheet was deleted."""
+        book = self.data_book(name)
+        book.create_table("Sales", [dict(name="Month", type="text"), dict(name="Units", type="integer")])
+        book.insert_records("Sales", [dict(Month=f"M{n}", Units=n * 10) for n in range(1, 7)])
+        book.create_chart(book.suggest_chart(table="Sales", type="bar")["spec"], sheet="Data", name="By table")
+        book.save_query(book.preview_query("Totals", "SELECT Month, Units * 2 AS Doubled FROM Sales ORDER BY Month"))
+        book.create_chart({"spec_version": 1, "type": "column",
+                           "categories": {"source": {"kind": "query", "query": "Totals", "column": "Month"}},
+                           "series": [{"name": {"text": "Doubled"},
+                                       "values": {"source": {"kind": "query", "query": "Totals", "column": "Doubled"}}}]},
+                          sheet="Data", name="By query")
+        book.apply("sheet_add", name="Scratch")
+        fill_data(book, "Scratch")
+        book.create_chart(book.suggest_chart("Scratch", r1=1, c1=1, r2=13, c2=2)["spec"], sheet="Data", name="Broken")
+        book.apply("sheet_delete", sheet="Scratch")
+        return book
+
+
+class InlineChartExportTests(ChartBooks):
     def test_whole_workbook_export_writes_range_charts(self):
         book = self.data_book("whole")
         for fmt in FORMATS:
@@ -102,20 +128,7 @@ class InlineChartExportTests(unittest.TestCase):
                 self.assertNotIn("anchor_absolute", [e["detail"] for e in preview["report_entries"]])
 
     def test_left_out_charts_are_named(self):
-        book = self.data_book("left-out")
-        book.create_table("Sales", [dict(name="Month", type="text"), dict(name="Units", type="integer")])
-        book.insert_records("Sales", [dict(Month=f"M{n}", Units=n * 10) for n in range(1, 7)])
-        book.create_chart(book.suggest_chart(table="Sales", type="bar")["spec"], sheet="Data", name="By table")
-        book.save_query(book.preview_query("Totals", "SELECT Month, Units * 2 AS Doubled FROM Sales ORDER BY Month"))
-        book.create_chart({"spec_version": 1, "type": "column",
-                           "categories": {"source": {"kind": "query", "query": "Totals", "column": "Month"}},
-                           "series": [{"name": {"text": "Doubled"},
-                                       "values": {"source": {"kind": "query", "query": "Totals", "column": "Doubled"}}}]},
-                          sheet="Data", name="By query")
-        book.apply("sheet_add", name="Scratch")
-        fill_data(book, "Scratch")
-        book.create_chart(book.suggest_chart("Scratch", r1=1, c1=1, r2=13, c2=2)["spec"], sheet="Data", name="Broken")
-        book.apply("sheet_delete", sheet="Scratch")
+        book = self.left_out_book("left-out")
         written = {}
         for fmt in FORMATS:
             with self.subTest(fmt):
@@ -242,6 +255,197 @@ class InlineChartExportTests(unittest.TestCase):
                 self.assertIn("Charts: 0 written, 2 left out; each is listed below with its reason.", result["report"])
                 self.assertEqual(imported_charts(fmt, result), [])
                 self.assertEqual(len(read_back(fmt, result)["workbook_sheets"][0]["cells"]), 39)
+
+
+def chart_parts(fmt, data):
+    """``{part name: bytes}`` of the parts that carry an export's charts, with the content types or manifest."""
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        if fmt == "xlsx":
+            wanted = [name for name in archive.namelist()
+                      if name.startswith(("xl/charts/", "xl/drawings/", "xl/worksheets/_rels/")) or name == "[Content_Types].xml"]
+        else:
+            wanted = [name for name in archive.namelist() if name.startswith("Object ") or name == "META-INF/manifest.xml"]
+        return {name: archive.read(name) for name in wanted}
+
+
+class StreamedChartExportTests(ChartBooks):
+    """The streamed whole-workbook export job, run in an in-process service so that its writers can be patched."""
+
+    def setUp(self):
+        self.staging = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.server = self.enterContext(Service(staging_root=self.staging / "staging"))
+
+    def base(self, name):
+        """Open the workbook ``name`` (built, then closed, in the local service) in the in-process service."""
+        info = self.server.dispatch("POST", "/v1/open", {"path": str(Path(self.temp.name) / f"{name}.dhwb")})
+        return f"/v1/workbooks/{info['id']}"
+
+    def start(self, base, fmt):
+        job = uuid.uuid4().hex
+        self.server.dispatch("POST", f"{base}/export/{fmt}/jobs", {"job_id": job, "mode": "formulas"})
+        return job
+
+    def finish(self, job):
+        """The job's terminal view, waited for."""
+        deadline = time.monotonic() + 120
+        view = self.server.dispatch("GET", "/v1/jobs/" + job, {})
+        while view["status"] == "running":
+            self.assertLess(time.monotonic(), deadline, "job did not finish")
+            time.sleep(0.01)
+            view = self.server.dispatch("GET", "/v1/jobs/" + job, {})
+        return view
+
+    def export_job(self, base, fmt):
+        """The completed job's result, with its file as ``file_base64`` for the read-back helpers."""
+        job = self.start(base, fmt)
+        view = self.finish(job)
+        self.assertEqual(view["status"], "completed", view)
+        data = self.server.staging.path("export", job).read_bytes()
+        return {**view["result"], "file_base64": base64.b64encode(data).decode()}
+
+    def test_streamed_export_writes_charts(self):
+        self.data_book("streamed").close()
+        base = self.base("streamed")
+        for fmt in FORMATS:
+            with self.subTest(fmt):
+                result = self.export_job(base, fmt)
+                self.assertIn("Charts: 2 written.", result["report"])
+                self.assertEqual(chart_lines(result), ["Charts: 2 written."])
+                self.assertFalse(any("native-only" in line and "Charts" in line for line in result["report"]))
+                self.assertEqual(skipped(result), [])
+                charts = imported_charts(fmt, result)
+                self.assertEqual([c["name"] for c in charts], ["Chart 1", "Chart 2"])
+                self.assertEqual([(c["anchor"], c["offset"]) for c in charts],
+                                 [({"row": 2, "col": 5}, {"x": 7, "y": 9}), ({"row": 13, "col": 2}, {"x": 0, "y": 0})])
+                self.assertEqual(ref(charts[0]["spec"]["categories"]["source"]), (0, "A2:A13"))
+                self.assertEqual([ref(item["values"]["source"]) for item in charts[0]["spec"]["series"]], [(0, "B2:B13"), (0, "C2:C13")])
+                self.assertEqual(len(read_back(fmt, result)["workbook_sheets"][0]["cells"]), 39)
+
+    def test_streamed_and_inline_exports_hold_the_same_charts(self):
+        book = self.data_book("same")
+        book.apply("sheet_add", name="Summary")
+        book.apply("sheet_add", name="Tail")
+        book.apply("edit", "Tail", cells=[{"row": 1, "col": 1, "source": "last"}])
+        # A chart on a sheet with no cells, and one anchored past the last stored cell of its row and sheet.
+        spec = book.suggest_chart("Data", r1=1, c1=1, r2=13, c2=2)["spec"]
+        book.create_chart(spec, sheet="Summary", name="Overview", anchor={"row": 4, "col": 3}, offset={"x": 5, "y": 6})
+        book.create_chart(spec, sheet="Data", name="Below", anchor={"row": 20, "col": 1})
+        book.close()
+        base = self.base("same")
+        for fmt in FORMATS:
+            with self.subTest(fmt):
+                streamed = self.export_job(base, fmt)
+                inline = self.server.dispatch("POST", f"{base}/export/{fmt}", {"scope": "workbook"})
+                self.assertEqual(chart_lines(streamed), ["Charts: 4 written."])
+                self.assertEqual(chart_lines(streamed), chart_lines(inline))
+                left, right = (chart_parts(fmt, base64.b64decode(r["file_base64"])) for r in (streamed, inline))
+                self.assertGreater(len([name for name in right if "chart" in name.lower() or "Object" in name]), 3)
+                self.assertEqual(sorted(left), sorted(right))
+                for name in right:
+                    self.assertEqual(left[name], right[name], name)
+                if fmt == "xlsx":
+                    # Without formulas the two XLSX packages agree byte for byte, worksheets and their drawing included.
+                    with zipfile.ZipFile(io.BytesIO(base64.b64decode(streamed["file_base64"]))) as one, \
+                            zipfile.ZipFile(io.BytesIO(base64.b64decode(inline["file_base64"]))) as other:
+                        self.assertEqual(sorted(one.namelist()), sorted(other.namelist()))
+                        for name in other.namelist():
+                            self.assertEqual(one.read(name), other.read(name), name)
+                self.assertEqual(imported_charts(fmt, streamed), imported_charts(fmt, inline))
+                # No stored cell moves for a frame's anchor cell.
+                self.assertEqual(cells_of(fmt, streamed), cells_of(fmt, inline))
+
+    def test_sixty_four_charts_of_sixty_four_series(self):
+        book = self.open_book("many")
+        cells = [{"row": 1, "col": col, "source": f"S{col}"} for col in range(1, 11)]
+        cells += [{"row": row, "col": 1, "source": str(row)} for row in range(2, 215)]
+        book.apply("edit", "Data", cells=cells)
+        series = [{"name": {"source": {"kind": "range", "sheet": "Data", "ref": f"{chr(65 + n % 10)}1"}},
+                   "values": {"source": {"kind": "range", "sheet": "Data", "ref": f"A{2 + n}:A{150 + n}"}}} for n in range(64)]
+        spec = {"spec_version": 1, "type": "line", "title": {"text": "T" * 255},
+                "categories": {"source": {"kind": "range", "sheet": "Data", "ref": "A2:A150"}}, "series": series}
+        for number in range(1, 65):
+            book.create_chart(spec, sheet="Data", name=f"Chart {number}", anchor={"row": number, "col": 2})
+        book.close()
+        base = self.base("many")
+        for fmt in FORMATS:
+            with self.subTest(fmt):
+                result = self.export_job(base, fmt)
+                self.assertEqual(chart_lines(result), ["Charts: 64 written."])
+                charts = imported_charts(fmt, result)
+                self.assertEqual([c["name"] for c in charts], [f"Chart {n}" for n in range(1, 65)])
+                self.assertEqual({len(c["spec"]["series"]) for c in charts}, {64})
+                self.assertEqual(len(read_back(fmt, result)["workbook_sheets"][0]["cells"]), 223)
+
+    def test_cancel_while_writing_charts_removes_the_file(self):
+        self.data_book("cancel").close()
+        base = self.base("cancel")
+        writers = {"xlsx": "write_workbook", "ods": "ods_write_workbook"}
+        for fmt in FORMATS:
+            with self.subTest(fmt):
+                reached, proceed, phases = threading.Event(), threading.Event(), []
+                real = getattr(service_module, writers[fmt])
+
+                def wrapper(path, sheets, report, checkpoint, **options):
+                    def gate(completed, phase):
+                        phases.append(phase)
+                        if "chart" in phase.lower() and not reached.is_set():
+                            reached.set()
+                            proceed.wait(30)
+                        checkpoint(completed, phase)
+                    return real(path, sheets, report, gate, **options)
+
+                with patch.object(service_module, writers[fmt], wrapper):
+                    job = self.start(base, fmt)
+                    try:
+                        self.assertTrue(reached.wait(30), "the writer reached no chart checkpoint")
+                        self.server.dispatch("POST", f"/v1/jobs/{job}/cancel", {})
+                    finally:
+                        proceed.set()
+                    view = self.finish(job)
+                self.assertEqual((view["status"], view["error"]["code"]), ("cancelled", "CANCELLED"), view)
+                # The cancel took effect at the first chart's checkpoint.
+                self.assertEqual(len([phase for phase in phases if "chart" in phase.lower()]), 1, phases)
+                # Neither the export file nor its snapshot or scratch body is left in staging.
+                self.assertEqual([p.name for p in self.server.staging.root.iterdir()], [])
+                with self.assertRaises(EngineError) as raised:
+                    self.server.staging.path("export", job)
+                self.assertEqual(raised.exception.body["code"], "JOB_NOT_FOUND")
+
+    def test_left_out_charts_are_named(self):
+        self.left_out_book("left-out-streamed").close()
+        base = self.base("left-out-streamed")
+        for fmt in FORMATS:
+            with self.subTest(fmt):
+                result = self.export_job(base, fmt)
+                self.assertEqual(chart_lines(result), ["Charts: 2 written, 3 left out; each is listed below with its reason."])
+                self.assertEqual(skipped(result), [("broken_source", "Broken", "Data"), ("query_source", "By query", "Data"),
+                                                   ("table_source", "By table", "Data")])
+                self.assertEqual([c["name"] for c in imported_charts(fmt, result)], ["Chart 1", "Chart 2"])
+
+    def test_a_chart_writer_failure_does_not_fail_the_export(self):
+        self.data_book("failure-streamed").close()
+        base = self.base("failure-streamed")
+        writers = {"xlsx": "datahorizon.xlsx_charts.chart_part", "ods": "datahorizon.ods_charts.chart_document"}
+        for fmt in FORMATS:
+            with self.subTest(fmt), patch(writers[fmt], side_effect=ValueError("x")):
+                result = self.export_job(base, fmt)
+                self.assertEqual(skipped(result), [("unwritable", "Chart 1", "Data"), ("unwritable", "Chart 2", "Data")])
+                self.assertEqual(chart_lines(result), ["Charts: 0 written, 2 left out; each is listed below with its reason."])
+                self.assertEqual(imported_charts(fmt, result), [])
+                self.assertEqual(len(read_back(fmt, result)["workbook_sheets"][0]["cells"]), 39)
+
+    def test_workbook_without_charts_reports_nothing_about_charts(self):
+        book = self.open_book("plain-streamed")
+        fill_data(book)
+        book.close()
+        base = self.base("plain-streamed")
+        for fmt in FORMATS:
+            with self.subTest(fmt):
+                result = self.export_job(base, fmt)
+                self.assertEqual([line for line in result["report"] if "Chart" in line], [])
+                self.assertEqual([e for e in result["report_entries"] if e["category"].startswith("chart.")], [])
+                with zipfile.ZipFile(io.BytesIO(base64.b64decode(result["file_base64"]))) as archive:
+                    self.assertEqual([name for name in archive.namelist() if "chart" in name.lower() or "drawing" in name or "Object" in name], [])
 
 
 if __name__ == "__main__":

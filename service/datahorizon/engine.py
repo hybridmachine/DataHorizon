@@ -805,11 +805,11 @@ class Workbook:
             finally:
                 self.db.execute("ROLLBACK")
 
-    def native_catalog(self, *, omissions=False, charts=False, chart_names=False, db=None):
+    def native_catalog(self, *, omissions=False, charts=False, db=None):
         """Names and binding labels (and optionally other native objects and charts) in the current read snapshot, for export reports.
 
         `charts` adds chart_entries (export_charts.collect) and chart_sheets (sheet id to name), which an export writes
-        charts from; `chart_names` adds native_charts, the "name on sheet" labels the streamed export still reports."""
+        charts from."""
         from .relational import objects
         from .bindings import label as binding_label
         db=self.db if db is None else db
@@ -820,9 +820,6 @@ class Workbook:
         if charts:
             from .export_charts import collect
             result.update(chart_entries=collect(db),chart_sheets=dict(db.execute("SELECT id,name FROM sheets")))
-        if chart_names and db.execute("SELECT format_version FROM dh_meta").fetchone()[0]>=8:
-            rows=db.execute("SELECT s.position,s.id,s.name,o.payload FROM dh_objects o JOIN sheets s ON s.id=o.sheet_id WHERE o.namespace='chart'")
-            result['native_charts']=[f"{name} on {sheet}" for _,_,name,sheet in sorted((position,identity,json.loads(payload)['name'],sheet) for position,identity,sheet,payload in rows)]
         return result
 
     def read_workbook(self):
@@ -924,7 +921,7 @@ class Workbook:
                 catalog=list(db.execute("SELECT id,name FROM sheets ORDER BY position,id LIMIT ?",(LARGE_SHEETS+1,)))
                 from .interchange import validate_sheet_names
                 validate_sheet_names([name for _,name in catalog],LARGE_SHEETS)
-                yield WorkbookStream(db,state,catalog,self.native_catalog(omissions=True,chart_names=True,db=db))
+                yield WorkbookStream(db,state,catalog,self.native_catalog(omissions=True,charts=True,db=db))
             finally:
                 db.close()
         finally:

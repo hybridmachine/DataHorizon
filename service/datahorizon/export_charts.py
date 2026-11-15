@@ -171,10 +171,15 @@ def drafts(entries, sheet_names, report, *, selection=None):
     return result
 
 
-def build(drafts, build_one, report):
-    """``(draft, built)`` for each draft ``build_one`` accepts; one that fails (not an ``EngineError``) is reported."""
+def build(drafts, build_one, report, *, step=None):
+    """``(draft, built)`` for each draft ``build_one`` accepts; one that fails (not an ``EngineError``) is reported.
+
+    ``step()``, when given, is called before each chart is built (a streamed export's checkpoint: what it raises, a
+    cancellation included, stops the build)."""
     built = []
     for draft in drafts:
+        if step is not None:
+            step()
         try:
             built.append((draft, build_one(draft)))
         except EngineError:
@@ -207,4 +212,22 @@ def snapshot_charts(snapshot, build_one, report, *, name="Sheet1"):
     found = ConversionReport()
     built = build(drafts(entries, snapshot["chart_sheets"], found, selection=selection), build_one, found)
     report.merge(found)
-    return built, sum(entry["count"] for entry in found.entries() if entry["category"] == SKIPPED)
+    return built, _left_out(found)
+
+
+def workbook_drafts(catalog, report):
+    """``(drafts, left_out)`` for the charts of a streamed whole-workbook export, from its native ``catalog``
+    (``Workbook.native_catalog(charts=True)``): the drafts its writer builds, each checkpointed, and how many charts no
+    file can hold, each reported in ``report``.  A chart the writer then fails to build is reported by ``build`` and
+    left out too: the writer returns how many it wrote."""
+    entries = catalog.get("chart_entries")
+    if not entries:
+        return [], 0
+    found = ConversionReport()
+    result = drafts(entries, catalog["chart_sheets"], found)
+    report.merge(found)
+    return result, _left_out(found)
+
+
+def _left_out(report):
+    return sum(entry["count"] for entry in report.entries() if entry["category"] == SKIPPED)
