@@ -264,7 +264,7 @@ owner's table and query ruling:
 | `query_source` | A source is a saved-query column |
 | `broken_source` | A source is broken |
 | `source` | A range source the format cannot express as one reference, or one on a sheet that is not in the export; in a selection export, an anchor or a source outside the selection |
-| `unsupported` | The stored chart's record or specification cannot be read: a version this service cannot read, or a malformed stored record; the export does not fail |
+| `unsupported` | A stored specification this service cannot read: an unsupported specification version or an invalid specification inside a valid stored record; the export does not fail. A stored chart record that is itself malformed (not JSON, not an object, or a bad envelope) is refused when the workbook is opened or refreshed, before any export runs, as it was before chart export |
 | `unwritable` | Writing the chart failed for an unexpected reason; the export continues |
 
 The existing line "Charts are native-only and omitted from this export" goes
@@ -272,6 +272,23 @@ away; each export report instead says how many charts were written and lists
 each chart left out with its sheet and reason. **Builder**: the entry names and
 the report form, matching the import's `chart.*` vocabulary and each export
 route's existing report shape.
+
+**Changes made after the whole-branch review (November 15, 2026).** Collecting
+the charts reads the table, query and sheet catalogs at most once per export (it
+had looked the catalog up once per source, so 64 table-sourced charts could time
+out an export that writes none of them), and a selection export collects only
+its sheet's charts. A stored payload that is JSON but not an object is reported
+`unsupported` instead of failing the export. ODS chart objects say their data
+comes from the sheet (`xlink:href=".."` on `chart:chart`, the source ranges in
+the plot area's `table:cell-range-address`), and each ODS frame carries
+`draw:z-index`, which the importer orders a sheet's charts by, because frames
+sit in their anchor cells and document order is anchor order. XLSX references
+always quote the sheet name, and XLSX charts have square corners. If packaging
+the built charts fails, the export continues without charts and reports each one
+`unwritable` (one helper, `export_charts.package`, on every route). An ODS
+scatter chart is not given LibreOffice's points-only marker settings: the
+importer would report them as a dropped `markers` style. The details are in the
+[compatibility contract](compatibility-v0.md#chart-export).
 
 **Routes.** The whole-workbook exports, inline and streamed, write charts.
 **Call**: a selection export writes a chart only when its anchor and every

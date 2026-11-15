@@ -96,7 +96,7 @@ for a series `LIMIT_POINTS`.
 
 ### Chart import paths
 
-As built November 14-15, 2026 (branch `claude/charts-import-view`, not merged;
+As built November 14-15, 2026 (branch `claude/charts-import-view`, merged to `main` through pull request 140;
 [design](charts-import-view-design.md), [conversion rules](compatibility-v0.md#charts)).
 XLSX and ODS imports create native charts through every managed import shape:
 

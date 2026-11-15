@@ -24,27 +24,52 @@ Built, and covered by service tests:
   offset, size and drawing order. XLSX also writes literal series names.
 - A chart is left out whole, with `chart.skipped` and one of six reasons:
   `table_source`, `query_source`, `broken_source`, `source`, `unsupported` (a
-  stored chart that cannot be read) and `unwritable`. The report says
+  stored specification this service cannot read: an unsupported version or an
+  invalid specification; a stored chart record that is itself malformed is
+  refused when the workbook is opened or refreshed, before any export, as
+  before) and `unwritable` (including every chart, when packaging the built
+  charts fails; the export continues without them). The report says
   `Charts: N written.` or `Charts: N written, M left out; each is listed below
   with its reason.`, and nothing when there are no charts. A selection export
   writes a chart only when its anchor and every source lie inside the
   selection.
-- No cached values are written; a chart shows its data once the other
-  application recalculates on open. No markers or gridlines are written. ODS
+- No cached values and no ODS local data table are written. In XLSX a chart
+  shows its data once Excel fills the caches on load; in ODS the chart reads the
+  sheet's cells directly. No markers or gridlines are written. ODS
   cannot carry a series name given as text: the chart is written, the export
   reports `chart.converted` / `series_name`, and the series comes back "Series
   N". XLSX stacked column and bar charts carry full overlap, and the importer no
   longer reports that case as a dropped `gap width` style.
+- Changes after the whole-branch review: collecting charts reads each catalog
+  (tables, saved queries, sheets) at most once per export, and a selection
+  export collects only its sheet's charts, so table-sourced charts no longer
+  time out an export (60 tables and 64 charts of 64 table-sourced series: a
+  20-cell selection export went from failing after 2 s to about 0.05 s); a
+  stored payload that is JSON but not an object is reported `unsupported`; ODS
+  chart objects say their data comes from the sheet (`xlink:href=".."`, the
+  plot area's `table:cell-range-address`); each ODS frame carries
+  `draw:z-index` and the importer orders a sheet's charts by it, so stacking
+  order survives when anchors disagree with it; XLSX references always quote
+  the sheet name; XLSX charts have square corners (`c:roundedCorners` 0); a
+  packaging failure leaves every chart out instead of failing the export. An
+  ODS scatter chart is not given LibreOffice's points-only marker settings,
+  because the importer would report them as a dropped `markers` style.
+- Known limitation, awaiting an owner decision: chart parts count against the
+  inline exports' 16 MiB expanded and 4 MiB response limits (64 charts of 64
+  series add about 1.8 MB expanded, 100 KB compressed), so an inline export
+  just under a limit can fail with `LIMIT` or `READ_LIMIT` because of its
+  charts. There is no retry without charts.
 - Import report clean-up: no `workbook.feature` `charts`; `sheet.feature`
-  `drawings` only for a sheet whose drawing was not read or holds something
-  besides chart frames; ODS `embedded_objects` does not count an object read as
+  `drawings` only for a sheet whose drawing was not read, holds no chart frame,
+  or holds something besides chart frames (an XLSX drawing root element that is
+  not an anchor included); ODS `embedded_objects` does not count an object read as
   a chart; `chart_sheets` is unchanged.
 - The rules are in the [compatibility contract](compatibility-v0.md#chart-export).
   The OpenAPI document (`openapi` in `service.py`) did not describe charts as
   omitted from export, so it is unchanged.
 
 Measured on the reference Mac (system Python 3.14.6, no openpyxl or odfpy):
-- `tests/test_chart_round_trip.py`: 7 tests, OK. Ten charts of every type and
+- `tests/test_chart_round_trip.py`: 8 tests, OK. Ten charts of every type and
   grouping on two sheets, exported and imported again through XLSX and ODS, the
   inline and the streamed routes, come back equal in type, grouping, title,
   axes, legend, sources, series names, name, anchor, offset, size and order,
@@ -53,16 +78,27 @@ Measured on the reference Mac (system Python 3.14.6, no openpyxl or odfpy):
   again with the same charts and cells. Three differences from the importer's
   own rules are pinned, one test each: text over 255 characters is cut, duplicate
   chart names on a sheet are made unique, and an empty series name comes back
-  "Series N".
-- The whole service suite: 1,681 tests, OK, 28 skipped, 374 s.
+  "Series N". The eighth: two charts whose anchor order is the reverse of their
+  z order come back in z order in both formats and routes.
+- The whole service suite, after the review fixes (run on commit 6c05e56):
+  1,702 tests, OK, 28 skipped, 363 s. The chart modules: 482 tests, OK, 2
+  skipped.
 - The desktop suite (this branch changes no desktop code): passed, 255 s.
 - Two sample files, `output/charts-export-samples/charts.xlsx` and `charts.ods`
-  (not tracked by git), hold ten charts each; every XML part of each parses.
+  (not tracked by git), regenerated after the review fixes, hold seven charts
+  each (the six types and a stacked column chart); every XML part of each
+  parses and both import again with the seven charts.
 
-Not verified: opening the exports in Excel; opening them in LibreOffice; the
-owner's sample file `Column Chart_Complete.xlsx` (not on the machine). The two
-sample files are there for the owner to open. openpyxl and odfpy are not
-installed, so the tests that use them skipped. Windows and Linux. Desktop
+Not verified:
+- Opening the exports in Excel (not installed).
+- Opening them in LibreOffice (not installed). The ODS chart data binding
+  (`xlink:href=".."`, the plot area's `table:cell-range-address`) and
+  `draw:z-index` were written from the format's documentation and LibreOffice's
+  known output, and are unverified until a file is opened there.
+- The owner's sample file `Column Chart_Complete.xlsx` (not on the machine).
+  The two sample files are there for the owner to open.
+- openpyxl and odfpy reading the files: neither is installed, so the tests that
+  use them skipped. Windows and Linux. Desktop
 authoring and workbook-Python chart operations are not built.
 
 ## Charts import and view-only display — November 15, 2026

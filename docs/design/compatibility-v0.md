@@ -583,8 +583,26 @@ exports never carry charts.
 
 No markers or gridlines are written (specification version 1 holds neither).
 Characters XML 1.0 cannot hold are dropped from written text; a literal tab in a
-title is written as is. ODS chart objects carry `draw:notify-on-update-of-ranges`
-listing their source ranges, and the frame sits in its anchor cell.
+title is written as is.
+
+**Format details.** XLSX references always quote the sheet name
+(`'Sales'!$A$2:$A$13`, a `'` in the name doubled), so a sheet named `R`, `C`,
+`TRUE` or `FALSE` cannot be read as something else, and the chart is written
+with square corners (`c:roundedCorners` 0; Excel draws rounded corners when it
+is absent). An ODS chart object says its data comes from the spreadsheet
+(`xlink:href=".."` on `chart:chart`) and lists its source ranges, space-separated
+and in the same order, in the plot area's `table:cell-range-address` (with
+`chart:data-source-has-labels="none"`) and the frame's
+`draw:notify-on-update-of-ranges`, as LibreOffice Calc writes them. The frame
+sits in its anchor cell, so document order is anchor order; each frame carries
+`draw:z-index`, its place in drawing order on its sheet. The importer orders a
+sheet's ODS charts by `draw:z-index` when every chart frame on the sheet carries
+one (document order breaks ties) and keeps document order otherwise, so files
+from applications that write no `draw:z-index` read as before. An ODS scatter
+chart carries no marker or line settings: LibreOffice's points-only form
+(`chart:symbol-type` and `chart:lines`) would make the importer report a dropped
+`markers` style, so how an application draws it by default is not controlled
+(the XLSX scatter chart is markers only).
 
 **ODS series named by text.** ODS cannot carry a series name given as text
 without an embedded copy of the data. The chart is still written, the export
@@ -593,8 +611,9 @@ series is named "Series N". A series named by a cell reference round-trips.
 
 **No cached values.** The export writes no cached values for charts in either
 format, as for formulas ("Formula caches are omitted; target recalculation is
-requested"). A chart shows its data once the other application recalculates on
-open.
+requested"), and no ODS local data table. In XLSX a chart shows its data once
+Excel fills the caches on load, when it recalculates on open. In ODS the chart
+reads the sheet's cells directly.
 
 **Left out.** A chart is left out whole, never in part, and reported
 `chart.skipped` with one of six reasons; a chart with several reasons is
@@ -607,13 +626,20 @@ reported under the first that applies, checked in the order `unsupported`,
 | `query_source` | A source is a saved-query column |
 | `broken_source` | A source is broken |
 | `source` | A range source the format cannot express as one reference, a source on a sheet that is not in the export, or (selection export) a chart whose anchor or a source lies outside the selection |
-| `unsupported` | The stored chart's envelope or JSON cannot be read (for example a specification version this service does not know); the export does not fail |
-| `unwritable` | Writing the chart failed for an unexpected reason; the export continues |
+| `unsupported` | A stored specification this service cannot read: an unsupported specification version or an invalid specification inside a valid stored record; the export does not fail. A stored chart record that is itself malformed (not JSON, not an object, or a bad envelope) is refused when the workbook is opened or refreshed, before any export runs, as it was before chart export |
+| `unwritable` | Writing the chart failed for an unexpected reason; the export continues. If packaging the built charts fails, every chart is left out with this reason and the export continues without charts |
 
 **Report.** `Charts: N written.` or `Charts: N written, M left out; each is
 listed below with its reason.`; no line when the workbook has no charts.
 `ConversionReport` merges entries with the same reason: the chart names are in
 an entry's `samples` and `count` counts charts.
+
+**Size limits (known limitation).** Chart parts count against the inline
+exports' 16 MiB expanded limit and 4 MiB response limit (64 charts of 64 series
+add about 1.8 MB expanded and 100 KB compressed), so an inline export just under
+a limit can fail with `LIMIT` or `READ_LIMIT` because of its charts. The export
+does not retry without charts; this awaits an owner decision. The streamed export
+job counts chart parts against its own, larger expanded budget.
 
 **Selection export.** A chart is written only when its anchor and every source
 lie inside the selection. The selection is written at its original coordinates
@@ -633,7 +659,9 @@ column and bar charts written with full overlap without reporting a dropped
 
 **Not verified.** The files were not opened in Excel or LibreOffice (neither is
 installed on the machine that ran the checks), and the owner's sample
-`Column Chart_Complete.xlsx` was not exported. Two sample files are written for
+`Column Chart_Complete.xlsx` was not exported. The ODS chart data binding and
+`draw:z-index` were written from the format's documentation and LibreOffice's
+known output and are unverified until a file is opened there. Two sample files are written for
 the owner to open; see the [evidence](evidence/charts-export-verification.txt).
 
 ## Whole-workbook interchange

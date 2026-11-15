@@ -2,8 +2,8 @@
 
 November 12, 2026. The [stage 2 plan](charts-stage-2-plan.md) is executed for
 range sources on branch `claude/charts-stage-2`. That branch is stacked on
-`claude/charts-stage-1`, an open pull request. Nothing here is merged or
-released. A script with no desktop can now create, change, resolve, render,
+`claude/charts-stage-1`. Both were later merged to `main` through pull
+request 140; nothing here is released. A script with no desktop can now create, change, resolve, render,
 undo and delete all six chart types over cell ranges through the engine, REST,
 the managed CLI and the SDK, with charts stored in the native workbook at
 format v8.
@@ -21,8 +21,8 @@ Table and query sources, the desktop, workbook-Python chart operations,
 interchange, and any measurement on Windows or Linux are not done.
 
 **November 13, 2026.** Table and saved-query sources, the second step of stage
-2, are now built on branch `claude/charts-table-query-sources`, which is not
-merged. See [Table and saved-query sources](#table-and-saved-query-sources).
+2, are now built on branch `claude/charts-table-query-sources`, later merged
+to `main` through pull request 140. See [Table and saved-query sources](#table-and-saved-query-sources).
 With them stage 2 is complete. The desktop, workbook-Python chart operations,
 interchange and any measurement on Windows or Linux are still not done.
 
@@ -450,7 +450,8 @@ Found in review and judged minor. None changes a documented result.
 
 November 13, 2026. The [table and saved-query sources plan](charts-table-query-sources-plan.md)
 is executed on branch `claude/charts-table-query-sources`, cut from `main`
-after the range-source work. Nothing in it is merged or released. A chart
+after the range-source work, and later merged to `main` through pull request
+140. Nothing in it is released. A chart
 series, category list or x list can now come from a column of a structured
 table or a column of a saved query's result, with the resolve, render, undo
 and interface behaviour charts already had over ranges. The as-built design is
