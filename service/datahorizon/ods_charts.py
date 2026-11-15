@@ -463,12 +463,27 @@ def chart_document(draft):
     return root
 
 
+def _sources(draft):
+    """The source ranges of a draft in the ODS dialect: categories, then each series' name cell, values and x; once each."""
+    refs = [draft["categories"]]
+    for item in draft["series"]:
+        refs += [item["name"][1] if item["name"] is not None and item["name"][0] == "ref" else None, item["values"], item["x"]]
+    found = []
+    for ref in refs:
+        text = None if ref is None else format_reference(ref, "ods")
+        if text is not None and text not in found:
+            found.append(text)
+    return found
+
+
 def _frame(number, draft):
     place, offset, size = draft["anchor"], draft["offset"], draft["size"]
     frame = ET.Element("draw:frame", {"draw:name": _clean(draft["name"]), "svg:x": _length(offset["x"]),
                                       "svg:y": _length(offset["y"]), "svg:width": _length(size["width"]),
                                       "svg:height": _length(size["height"])})
-    _add(frame, "draw:object", **{"xlink:href": f"./Object {number}", "xlink:type": "simple", "xlink:show": "embed",
+    # As LibreOffice writes it: the chart listens to its source ranges, so it redraws when those cells change.
+    _add(frame, "draw:object", **{"draw:notify-on-update-of-ranges": " ".join(_sources(draft)),
+                                  "xlink:href": f"./Object {number}", "xlink:type": "simple", "xlink:show": "embed",
                                   "xlink:actuate": "onLoad"})
     return place["row"], place["col"], frame
 

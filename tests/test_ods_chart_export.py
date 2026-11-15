@@ -207,6 +207,37 @@ class SeriesNameReport(unittest.TestCase):
         self.assertEqual([(item[3], item[4]) for item in found], [("Data", "First"), ("Data", ("Second" + "x" * 40)[:32])])
 
 
+class NotifyRanges(unittest.TestCase):
+    def notified(self, draft):
+        _, _, frames = write([draft])
+        return frames["Data"][0][2][0].get("draw:notify-on-update-of-ranges")
+
+    def test_column_chart_lists_categories_names_and_values(self):
+        draft = column_draft(series=[{"name": ("ref", ("Data", 1, 2, 1, 2)), "values": ("Data", 2, 2, 13, 2), "x": None},
+                                     {"name": ("ref", ("Data", 1, 3, 1, 3)), "values": ("Data", 2, 3, 13, 3), "x": None}])
+        self.assertEqual(self.notified(draft), "$Data.$A$2:.$A$13 $Data.$B$1 $Data.$B$2:.$B$13 $Data.$C$1 $Data.$C$2:.$C$13")
+        records, report = read_back(packaged([draft], ["Data"]))
+        self.assertEqual(report_of(report), [])
+        self.assertEqual(as_draft(records[0]), draft)
+
+    def test_repeated_ranges_are_listed_once(self):
+        draft = column_draft(series=[{"name": None, "values": ("Data", 2, 2, 13, 2), "x": None},
+                                     {"name": None, "values": ("Data", 2, 2, 13, 2), "x": None}])
+        self.assertEqual(self.notified(draft), "$Data.$A$2:.$A$13 $Data.$B$2:.$B$13")
+
+    def test_scatter_chart_lists_values_and_x(self):
+        draft = column_draft(type="scatter", grouping=None, categories=None,
+                             series=[{"name": ("ref", ("Data", 1, 3, 1, 3)), "values": ("Data", 2, 3, 13, 3), "x": ("Data", 2, 2, 13, 2)}])
+        self.assertEqual(self.notified(draft), "$Data.$C$1 $Data.$C$2:.$C$13 $Data.$B$2:.$B$13")
+        records, report = read_back(packaged([draft], ["Data"]))
+        self.assertEqual(report_of(report), [])
+        self.assertEqual(as_draft(records[0]), draft)
+
+    def test_values_only_chart_lists_its_values(self):
+        draft = column_draft(categories=None, series=[{"name": None, "values": ("Data", 2, 2, 5, 2), "x": None}])
+        self.assertEqual(self.notified(draft), "$Data.$B$2:.$B$5")
+
+
 class Structure(unittest.TestCase):
     def test_parts_and_manifest(self):
         parts, manifest, frames = write([column_draft(name="A"), column_draft(name="B")])
