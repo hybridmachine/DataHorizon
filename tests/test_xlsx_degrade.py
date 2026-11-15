@@ -732,6 +732,7 @@ class WorksheetCountTests(unittest.TestCase):
                     put = staticmethod(lambda index, text: None)
                 def sheet(self, name): names.append(name)
                 def cells(self, batch): pass
+                def charts(self, records): pass
             read_workbook(path, {}, Sink(), lambda completed, phase: None)
             self.assertEqual(len(names), 64)
 

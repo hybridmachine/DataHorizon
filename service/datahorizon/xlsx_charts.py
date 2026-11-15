@@ -395,14 +395,16 @@ def _draft(archive, drawing, links, placed, frame, order, position, label, budge
             "size": {"width": size[0], "height": size[1]}, "approximate_size": approximate, "absolute_anchor": absolute}
 
 
-def read_sheet_drafts(archive, sheet_part, position, sheet_name, budget, report: ConversionReport, widths=None) -> list:
+def read_sheet_drafts(archive, sheet_part, position, sheet_name, budget, report: ConversionReport, widths=None, *,
+                      sizes_unknown=False) -> list:
     """Drafts of the charts in a worksheet's drawing, in drawing order.
 
     Unreadable and grouped charts are reported (``chart.skipped``) and left out, as are the frames past
     ``MAX_FRAMES``.  ``widths`` is an optional ``(column_width_px(col), row_height_px(row))`` pair of callables
     over 1-based indexes; without it the default cell sizes, 64 and 20 pixels, are used.  The callables are asked
     at most ``MAX_STEPS`` times for the whole worksheet; spans measured after that use the default sizes and
-    their drafts are marked ``approximate_size``."""
+    their drafts are marked ``approximate_size``.  ``sizes_unknown`` says the worksheet declares cell sizes that
+    ``widths`` does not supply: every draft placed by measuring cells (all but one-cell anchors) is then marked too."""
     def skip(detail, label, count=1):
         report.add(SKIPPED, "omitted", detail, sheet=sheet_name, cell=label[:32], count=count)
 
@@ -434,7 +436,8 @@ def read_sheet_drafts(archive, sheet_part, position, sheet_name, budget, report:
                     try:
                         if placed is None:
                             steps.exhausted = False
-                            placed = (_placement(anchor, widths, steps), steps.exhausted)
+                            measured = sizes_unknown and local(anchor.tag) != "oneCellAnchor"
+                            placed = (_placement(anchor, widths, steps), steps.exhausted or measured)
                         drafts.append(_draft(archive, drawing, links, placed, frame, order, position, label, budget, names))
                     except Exception:  # an untrusted chart never fails the import, whatever is wrong with it
                         skip("unreadable", label)
@@ -442,3 +445,19 @@ def read_sheet_drafts(archive, sheet_part, position, sheet_name, budget, report:
         if unread:
             skip("unreadable", "drawing", unread)
     return drafts
+
+
+def sizes_declared(features) -> bool:
+    """Whether a worksheet's ``SheetFeatures`` met column widths or row heights, which the readers do not keep per cell."""
+    return bool(features.width_shares or features.default_width is not None
+                or {"row_heights", "sheet_format_defaults"} & set(features.counts))
+
+
+def worksheet_drafts(archive, sheet_part, position, sheet_name, budget, report: ConversionReport, features) -> list:
+    """``read_sheet_drafts`` for a worksheet the whole-workbook readers have read, given its ``SheetFeatures``.
+
+    Only a worksheet with a ``<drawing>`` element shows charts, so no other is read.  Its column widths and row heights
+    are not kept per cell, so a sheet that declares any has its measured drafts marked ``approximate_size``."""
+    if "drawings" not in features.counts:
+        return []
+    return read_sheet_drafts(archive, sheet_part, position, sheet_name, budget, report, sizes_unknown=sizes_declared(features))

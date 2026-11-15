@@ -927,6 +927,7 @@ class Workbook:
         from a prepared stage, which is opened in one read snapshot and must still be what was reviewed: its content
         digest, and for a local file the source's recorded size and modification time."""
         from .interchange import validate_sheet_names
+        from .import_charts import check_records
         target=request.get("target","replace_empty")
         require(target in ("replace_empty","add_sheets"),"INVALID_ARGUMENT","target must be replace_empty or add_sheets")
         if "stage_id" not in request:
@@ -936,8 +937,11 @@ class Workbook:
             validate_sheet_names([s.get("name") for s in sheets])
             require(all(isinstance(s.get("cells"),list) for s in sheets),"INVALID_ARGUMENT","Each sheet needs cells")
             require(sum(len(s["cells"]) for s in sheets)<=MAX_CELLS,"LIMIT","Workbook import exceeds 10,000 stored cells")
-            return {"target":target,"sheets":sheets,"stage":None,"names":[s["name"] for s in sheets],"counts":[len(s["cells"]) for s in sheets]}
+            # Reviewed chart records name their sheets by position among the imported sheets.
+            charts=check_records(request.get("charts",[]),len(sheets))
+            return {"target":target,"sheets":sheets,"stage":None,"names":[s["name"] for s in sheets],"counts":[len(s["cells"]) for s in sheets],"charts":charts}
         require("sheets" not in request,"INVALID_ARGUMENT","Supply sheets or stage_id, not both")
+        require("charts" not in request,"INVALID_ARGUMENT","charts come with sheets; a prepared stage holds its own")
         require(isinstance(request["stage_id"],str) and bool(request["stage_id"]),"INVALID_ARGUMENT","stage_id must be text")
         digest=request.get("stage_digest")
         require(isinstance(digest,str) and re.fullmatch(r"[0-9a-f]{64}",digest) is not None,"INVALID_ARGUMENT","stage_digest must be the reviewed SHA-256 digest")
@@ -960,17 +964,19 @@ class Workbook:
                         raise EngineError("STALE_PLAN","The source file is no longer available; prepare it again",409) from error
                     require((info.st_size,info.st_mtime_ns)==(source.get("size"),source.get("mtime_ns")),"STALE_PLAN",
                             "The source file changed after it was reviewed; prepare it again",409)
-                names=stage.sheets(); counts=stage.sheet_counts(); temporal=stage.has_temporal()
+                names=stage.sheets(); counts=stage.sheet_counts(); temporal=stage.has_temporal(); charts=stage.chart_records()
             validate_sheet_names(names,limit=LARGE_SHEETS)
+            check_records(charts,len(names))
         except BaseException:
             stage.close()
             raise
-        return {"target":target,"sheets":None,"stage":stage,"names":names,"counts":counts,"temporal":temporal}
+        return {"target":target,"sheets":None,"stage":stage,"names":names,"counts":counts,"temporal":temporal,"charts":charts}
 
     @staticmethod
     def import_arguments(plan):
-        """The structure event's description of an import: its target and each sheet's name and cell count."""
-        return {"target":plan["target"],"sheets":[{"name":name,"cells":count} for name,count in zip(plan["names"],plan["counts"])]}
+        """The structure event's description of an import: its target, each sheet's name and cell count, and its chart count."""
+        return {"target":plan["target"],"sheets":[{"name":name,"cells":count} for name,count in zip(plan["names"],plan["counts"])],
+                "charts":len(plan["charts"])}
 
     def import_workbook(self,plan):
         """Load a planned import in the open operation: replace an empty workbook's sheets, or add sheets after the existing ones."""
@@ -1010,7 +1016,12 @@ class Workbook:
         else:
             cells=self.load_stage(plan["stage"],identities,names,start)
             if plan["temporal"]:self.db.execute("UPDATE dh_meta SET format_version=2 WHERE format_version=1")
-        return {"imported":{"sheets":len(names),"cells":cells}}
+        # Charts bind to the new sheets in this operation; past the workbook's chart limit they are left out and listed.
+        from .import_charts import create
+        made=create(self,plan["charts"],identities)
+        result={"imported":{"sheets":len(names),"cells":cells,"charts":made["created"]}}
+        if made["left_out"]:result["charts_left_out"]=made["left_out"]
+        return result
 
     def load_stage(self,stage,identities,names,start):
         """Insert every staged cell straight into cells, in batches, without per-cell change images; the stage was

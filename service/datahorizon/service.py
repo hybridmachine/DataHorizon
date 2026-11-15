@@ -248,6 +248,19 @@ def openapi():
     common = {"operation_id":{"type":"string","minLength":1,"maxLength":100,"description":"Valid Unicode text; preserve before sending and reconcile lost responses by this ID"},
               "expected_state":{"type":"string","description":"State from the reviewed workbook; stale writes roll back"},"label":{"type":"string"}}
     search = {"needle":{"type":"string","minLength":1},"field":{"type":"string","enum":["source","display"],"default":"source"}}
+    # A reviewed chart of a whole-workbook import: a chart_create request whose range sources name a sheet by position.
+    chart_record = {"type":"object","required":["sheet","name","anchor","offset","size","spec"],"additionalProperties":False,"properties":{
+        "sheet":{"type":"integer","minimum":0,"description":"Position of the chart's sheet among the imported sheets, from 0"},
+        "name":{"type":"string","minLength":1,"maxLength":64},
+        "anchor":{"type":"object","required":["row","col"],"properties":{"row":row,"col":col}},
+        "offset":{"type":"object","required":["x","y"],"properties":{"x":{"type":"integer","minimum":0,"maximum":4096},"y":{"type":"integer","minimum":0,"maximum":4096}}},
+        "size":{"type":"object","required":["width","height"],"properties":{"width":{"type":"integer","minimum":64,"maximum":4096},"height":{"type":"integer","minimum":48,"maximum":4096}}},
+        "spec":{"type":"object","description":"chart_create's specification, except that each range source is {kind: range, sheet: <position of an imported sheet>, ref}"}},
+        "description":"A chart a whole-workbook preparation read from the file; send it back unchanged"}
+    chart_records = {"type":"array","maxItems":64,"items":chart_record}
+    chart_listing = {"type":"array","maxItems":64,"items":{"type":"object","required":["name","sheet","type"],"properties":{
+        "name":{"type":"string"},"sheet":{"type":"string","description":"The imported sheet the chart is placed on"},"type":{"type":"string"}}},
+        "description":"The charts the import creates, in file order (at most 64 per workbook; skipped charts are in the report)"}
     actions = {
         "edit": (["cells"],{"sheet":sheet,"cells":{"type":"array","minItems":1,"maxItems":MAX_CELLS,"items":{"$ref":"#/components/schemas/CellEdit"}}},
                  {"cells":[{"row":1,"col":1,"source":"7"}]}),
@@ -263,6 +276,7 @@ def openapi():
                         {"r1":1,"c1":1,"r2":3,"c2":1,"needle":"7","replacement":"9"}),
         "undo": ([],{},{}), "redo": ([],{},{}),
         "workbook_import": ([],{"sheets":{"type":"array","minItems":1,"maxItems":64,"description":"Reviewed sheets from a bounded preparation, at most 10,000 cells in all","items":{"type":"object","required":["name","cells"],"properties":{"name":name,"cells":{"type":"array","items":{"$ref":"#/components/schemas/CellEdit"}}}}},
+            "charts":{**chart_records,"description":"Reviewed charts from a bounded preparation's workbook_charts, created on the imported sheets in the same operation; only with sheets (a stage holds its own)"},
             "stage_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$","description":"A completed upload or source_path preparation's stage_id; a missing or released stage is JOB_NOT_FOUND (404) unless this operation_id already has a receipt"},
             "stage_digest":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"The reviewed summary's stage_digest; it must equal the digest recomputed from the stage, and a source_path stage's file must keep its recorded size and modification time, otherwise STALE_PLAN (409) with nothing changed"},
             "target":{"type":"string","enum":["replace_empty","add_sheets"],"default":"replace_empty","description":"replace_empty replaces the sheets of a workbook with no cells, tables, queries, names, modules or bindings (DESTINATION_NOT_EMPTY otherwise). add_sheets appends the sheets after the existing ones and leaves everything else untouched; a name equal to an existing sheet's, ignoring ASCII case, rejects the whole import with SHEET_NAME_CONFLICT (409) listing conflicts. Formulas naming an existing sheet refer to it."}},
@@ -307,18 +321,20 @@ def openapi():
     schemas["WorkbookImportOperation"].update(oneOf=[
         {"title":"Reviewed sheets","required":["sheets"],"not":{"anyOf":[{"required":["stage_id"]},{"required":["stage_digest"]}]},
          "example":schemas["WorkbookImportOperation"]["example"]},
-        {"title":"Prepared stage","required":["stage_id","stage_digest"],"not":{"required":["sheets"]},
+        {"title":"Prepared stage","required":["stage_id","stage_digest"],"not":{"anyOf":[{"required":["sheets"]},{"required":["charts"]}]},
          "example":{"operation_id":"generate-a-uuid","expected_state":"copy-from-workbook-info","action":"workbook_import",
                     "stage_id":"example-xlsx-apply","stage_digest":"copy-from-the-review-summary","target":"replace_empty"}}],
         description="Imports a whole workbook as one operation that clears Undo/Redo, raises the structural before/after event "
-            "(arguments: target and each imported sheet's name and cell count) and no cell change events; an activated required handler "
+            "(arguments: target, each imported sheet's name and cell count, and the chart count) and no cell change events; an activated required handler "
             "without on_structure rejects before any change. Supply reviewed sheets (at most 10,000 cells) or a prepared stage (up to "
             "1,000,000 cells and 255 sheets, a 300-second budget with cooperative cancellation). A stage is loaded in one transaction "
             "that holds the workbook's writer lock for the whole load (up to 300 seconds); other writers wait for it or time out; "
             "cancellation or any failure rolls back sheets and cells and records a rolled-back receipt. Temporal inputs raise the native "
             "format to 2. A successful apply deletes the stage and its preparation job; a refused or failed apply keeps the stage. "
             "Staged cells are stored exactly as the same cells applied as edits would be. A retry with the same operation_id returns the "
-            "stored receipt and releases nothing. The receipt adds imported: {sheets, cells}.")
+            "stored receipt and releases nothing. The reviewed charts (inline charts, or the stage's) are created on the imported sheets in the "
+            "same operation, raising the native format to 8 and no chart events; charts past the workbook's 64-chart limit are left out and "
+            "named in charts_left_out. The receipt adds imported: {sheets, cells, charts}.")
     schemas["OperationRequest"] = {"oneOf":[{"$ref":ref} for ref in mapping.values()],
         "discriminator":{"propertyName":"action","mapping":mapping},
         "description":"Atomic operations: at most 10,000 affected cells and a 4 MiB request. Range endpoints are inclusive and must be ordered. Copy fill uses the top-left input; series requires a numeric seed. Same-sheet Move retargets supported scalar/fully-contained range references into the cut rectangle; partially intersecting referenced ranges and unsupported syntax reject atomically. Sheet rename updates qualified name references while preserving stable UUID references, scanning at most 10,000 formulas/8 MiB. Sheet duplication preserves other-sheet references and retargets copied self-references, including UUIDs; it copies at most 10,000 stored cells/8 MiB. Sheet deletion replaces surviving name/UUID references and inherited ranges with permanent #REF! errors and reports affected locations; deleted and rewritten cells share the 10,000-cell limit. Unsupported syntax and required hooks reject reference-changing structure operations. Row/column changes retarget absolute and relative A1 references across sheets, expand/contract ranges and report newly broken references; required handlers, unsupported formula syntax and grid overflow reject atomically. Structure changes clear history. No managed SQL or chunked commits.",
@@ -382,7 +398,7 @@ def openapi():
     staged=(f"Reads the package with the streaming reader into a private import stage (at most {LARGE_CELLS:,} stored cells, {LARGE_SHEETS} sheets, "
             f"{LARGE_PACKAGE//(1024*1024)} MiB packed, {LARGE_EXPANDED//(1024*1024)} MiB expanded) "
             "within 300 seconds. The completed job result is the review summary (scope, stage_id equal to job_id, stage_digest, sheets, stored_cells, report, report_entries, totals, "
-            "sample of the first 100 cells per sheet, can_import, format, mode, source), always under 1 MiB, never the cells. No workbook changes. "
+            "sample of the first 100 cells per sheet, can_import, charts, format, mode, source), always under 1 MiB, never the cells. No workbook changes. "
             "Cancelling or releasing the job, or its five-minute expiry, deletes the stage; at most four stages exist at once (JOB_LIMIT).")
     schemas["SpreadsheetPreparation"].update(title="Inline package",example={"job_id":"example-xlsx-inline","file_base64":"UEsDBA==","scope":"workbook"},
         **{"not":{"anyOf":[{"required":["upload_id"]},{"required":["source_path"]}]}})
@@ -467,7 +483,8 @@ def openapi():
         "example":{"export_id":"example-xlsx-export","bytes":5120,"sha256":"0"*64,"state":"copy-from-workbook-info","report":["Formulas are written without cached values."],
                    "scope_lines":["Formulas are written without cached values."],"report_entries":report_example,"totals":totals_example}}
     schemas["XlsxExportJobResult"]=schemas["ExportJobResult"]  # The earlier name of the same result, kept for clients.
-    schemas["StagedImportSummary"]={"type":"object","required":["scope","stage_id","stage_digest","sheets","stored_cells","report","scope_lines","report_entries","totals","sample","can_import","format","mode","source"],"properties":{
+    schemas["StagedImportSummary"]={"type":"object","required":["scope","stage_id","stage_digest","sheets","stored_cells","report","scope_lines","report_entries","totals","sample","can_import","charts","format","mode","source"],"properties":{
+        "charts":chart_listing,
         "scope":{"type":"string","enum":["workbook"]},"stage_id":{**upload_id,"description":"Equal to the job_id; names the stage for workbook_import"},
         "stage_digest":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"Send unchanged with stage_id to workbook_import"},
         "sheets":{"type":"array","maxItems":LARGE_SHEETS,"items":{"type":"object","required":["name","stored_cells"],"properties":{"name":name,"stored_cells":{"type":"integer","minimum":0}}}},
@@ -484,7 +501,7 @@ def openapi():
         "example":{"scope":"workbook","stage_id":"example-xlsx-upload","stage_digest":"0"*64,"sheets":[{"name":"Sheet1","stored_cells":1}],"stored_cells":1,
                    "report":["All sheets, names, stored inputs and mapped direct cell styles from one consistent workbook state."],
                    "scope_lines":["All sheets, names, stored inputs and mapped direct cell styles from one consistent workbook state."],"report_entries":report_example,"totals":totals_example,
-                   "sample":[{"sheet":"Sheet1","cells":[{"row":1,"col":1,"source":"7","kind":"number","style":{}}]}],"can_import":True,"format":"xlsx","mode":"mixed",
+                   "sample":[{"sheet":"Sheet1","cells":[{"row":1,"col":1,"source":"7","kind":"number","style":{}}]}],"can_import":True,"charts":[],"format":"xlsx","mode":"mixed",
                    "source":{"kind":"upload","upload_id":"example-upload","sha256":"0"*64}}}
     schemas["SpreadsheetImportPreview"]={"type":"object","required":["can_import","report","report_entries","totals","stored_cells","issues"],"properties":{
         "can_import":{"type":"boolean"},"issues":{"type":"array","items":{"type":"string"},"description":"Problems that block Apply"},"report":lines,"scope_lines":scope,
@@ -493,7 +510,9 @@ def openapi():
         "sheet":{"type":"string","description":"The selected sheet (selection scope)"},"sheets":{"type":"array","items":{"type":"string"},"description":"Every sheet name in the package (selection scope)"},
         "cells":{"type":"array","items":{"$ref":"#/components/schemas/CellEdit"},"description":"Reviewed edits for one managed edit (selection scope)"},
         "workbook_sheets":{"type":"array","items":{"type":"object","required":["name","cells"],"properties":{"name":name,"cells":{"type":"array","items":{"$ref":"#/components/schemas/CellEdit"}}}},
-                           "description":"Reviewed sheets for workbook_import (workbook scope)"}},
+                           "description":"Reviewed sheets for workbook_import (workbook scope)"},
+        "charts":{**chart_listing,"description":"The charts workbook_charts holds (workbook scope)"},
+        "workbook_charts":{**chart_records,"description":"Reviewed charts for workbook_import's charts (workbook scope)"}},
         "description":"The completed result of a bounded inline (file_base64) preparation.",
         "example":{"can_import":True,"issues":[],"report":[],"report_entries":[],"totals":dict.fromkeys(severities,0),"stored_cells":1,"scope":"workbook",
                    "workbook_sheets":[{"name":"Sheet1","cells":[{"row":1,"col":1,"source":"7","kind":"number"}]}]}}
@@ -520,8 +539,10 @@ def openapi():
                        "(formula.unsupported_syntax converted) or as an empty cell (omitted). Selection scope stays strict. values mode needs every cell current and "
                        "error-free, else CALCULATION_ERROR names the first 100 blocking cells (cells, blocked_count).",
         "example":{"file_base64":"UEsDBA==","report":[],"report_entries":[],"state":"copy-from-workbook-info"}}
-    schemas["Receipt"]["properties"]["imported"]={"type":"object","required":["sheets","cells"],"properties":{"sheets":{"type":"integer","minimum":0},"cells":{"type":"integer","minimum":0}},
-        "description":"workbook_import only: sheets and stored cells imported"}
+    schemas["Receipt"]["properties"]["imported"]={"type":"object","required":["sheets","cells","charts"],"properties":{"sheets":{"type":"integer","minimum":0},"cells":{"type":"integer","minimum":0},
+        "charts":{"type":"integer","minimum":0,"maximum":64}},"description":"workbook_import only: sheets, stored cells and charts imported"}
+    schemas["Receipt"]["properties"]["charts_left_out"]={"type":"array","minItems":1,"maxItems":64,"items":{"type":"string"},
+        "description":"workbook_import only, when not empty: names of the reviewed charts left out because the workbook reached 64 charts"}
     location={"type":"object","required":["sheet","row","col"],"properties":{"sheet":{"type":"string"},"row":row,"col":col}}
     def counted(description,**extra):
         return {"type":"object","required":["count","samples"],"description":description,"properties":{"count":{"type":"integer","minimum":0},

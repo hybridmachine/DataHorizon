@@ -397,7 +397,7 @@ def convert_ods_cell(cell,*,context):
     return {"row":context.row,"col":context.col,**item}
 
 
-def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None):
+def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None,charts=None):
     selected=integer(request.get("sheet_index",1),1,MAX_SHEET_INDEX,"sheet_index"); selected_mode=mode(request)
     require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
     report=["Selected sheet stored cells only; absent cells leave the destination unchanged. Explicit input types and mapped direct/inherited cell styles replace destination inputs/styles.",
@@ -466,13 +466,26 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         sheet_features=OdsSheetFeatures(layout,mapped_styles(styles.styles),panes.get(sheet_label))
         scan_table(sheets[selected-1],sheet_features)
         sheet_features.report(conversions,sheet_label,workbook_features.sheet_extra(sheet_label))
+        records=[]
+        if sheet_names is not None:
+            # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules.
+            from .import_charts import Collector
+            from .interchange import MAX_EXPANDED
+            from .ods_charts import SheetFrames, sizes_declared, table_frames
+            from .xlsx_charts import _read
+            from .xlsx_stream import ByteBudget
+            charts=Collector() if charts is None else charts
+            budget=ByteBudget(MAX_EXPANDED)
+            frames=SheetFrames(archive,sheet_names.index(sheet_label),sheet_label,lambda archive,name:_read(archive,name,budget),conversions)
+            for frame,cell,grouped in table_frames(sheets[selected-1]): frames.frame(frame,cell,grouped)
+            records=[record for draft in frames.finish(sizes_declared(sheet_features)) if (record:=charts.add(draft,sheet_names,conversions)) is not None]
         report.extend(conversions.lines())
         result={"cells":edits,"stored_cells":len(edits),"can_import":bool(edits),"issues":[],"sheet":sheet_label,
                 "sheets":[s.get(q(T,"name"),"") for s in sheets],"report":report,"scope_lines":scope,"report_entries":conversions.entries(),
                 "totals":conversions.totals()}
         if result["can_import"]: result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","ODS preview exceeds 4 MiB")
-        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=wide
+        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=wide; result["_charts"]=records
         return result
 
 

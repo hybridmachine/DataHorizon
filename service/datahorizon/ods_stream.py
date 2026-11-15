@@ -178,18 +178,24 @@ class _SheetReader:
         self.row += self.repeats
 
 
-def _read_sheets(archive, names, styles, base, sink, progress, conversions, survey):
-    """Second pass over content.xml: convert every sheet's cells into the sink and report each sheet's features."""
+def _read_sheets(archive, names, styles, base, sink, progress, conversions, survey, package_budget):
+    """Second pass over content.xml: convert every sheet's cells into the sink and report each sheet's features; hand
+    the sink every sheet's charts, whose object parts are read under `package_budget`, after the last sheet."""
+    from .import_charts import Collector
+    from .ods_charts import FRAME, GROUP, OBJECT, SheetFrames, sizes_declared
+    from .xlsx_charts import _read
     layout, workbook, panes = survey
     mapped = mapped_styles(styles.styles)
-    tags, elements = [], 0
-    sheet = reader = features = None
+    tags, stack, elements = [], [], 0
+    sheet = reader = features = frames = None
     row_depth = None
     index = 0
+    charts, read_object = Collector(), lambda archive, name: _read(archive, name, package_budget)
     budget = xlsx_stream.ByteBudget(xlsx_stream.LARGE_EXPANDED)  # the same bytes the first pass already bounded
     for event, item in xlsx_stream.read_part(archive, "content.xml", budget, record_tags=RECORDS):
         if event == "start":
             tags.append(item.tag)
+            stack.append(item)
             elements += 1
             if elements % ELEMENTS_PER_CHECKPOINT == 0:
                 if reader is not None: reader.flush()
@@ -203,12 +209,20 @@ def _read_sheets(archive, names, styles, base, sink, progress, conversions, surv
                 sink.sheet(name)
                 reader = _SheetReader(sink, context, progress)
                 features = OdsSheetFeatures(layout, mapped, panes.get(name))
+                frames = SheetFrames(archive, index-1, name, read_object, sheet)
             elif (item.tag == ROW and reader is not None and row_depth is None and len(tags) >= 5 and tags[:4] == SHEET_PATH
                   and all(tag in ROW_GROUPS for tag in tags[4:-1])):
                 row_depth = len(tags)
                 reader.start_row(item)
             continue
         tags.pop()
+        stack.pop()
+        if item.tag == OBJECT and frames is not None and stack and stack[-1].tag == FRAME:
+            # Read at the frame's first object: a frame outside a cell record no longer holds it once the frame ends.
+            frame = stack[-1]
+            if next(child for child in frame if child.tag == OBJECT) is item:
+                in_cell = row_depth is not None and len(tags) > row_depth and tags[row_depth] in (CELL, COVERED)
+                frames.frame(frame, (reader.row, reader.col) if in_cell else None, GROUP in tags[3:])
         if features is not None and (item.tag in SHEET_TAGS or item.tag.startswith(DRAW_PREFIX)) and len(tags) >= 3:
             features.end(tags[3:], item)
         if row_depth is not None:
@@ -218,9 +232,12 @@ def _read_sheets(archive, names, styles, base, sink, progress, conversions, surv
         elif item.tag == TABLE and tags == SHEET_PATH[:3] and reader is not None:
             reader.flush()
             features.report(sheet, name, workbook.sheet_extra(name))
+            for draft in frames.finish(sizes_declared(features)):
+                charts.add(draft, names, sheet)
             conversions.merge(sheet)
-            reader = features = None
+            reader = features = frames = None
     require(index == len(names), "INVALID_SPREADSHEET", "ODS content changed between reads")
+    sink.charts(charts.records)
 
 
 def read_workbook(path: Path | BinaryIO, request: dict, sink, checkpoint: Callable[[int, str], None]) -> ConversionReport:
@@ -247,7 +264,7 @@ def read_workbook(path: Path | BinaryIO, request: dict, sink, checkpoint: Callab
         workbook.report(conversions, layout, archive.namelist())
         report_unreadable_settings(conversions, readable)
         base = {"mode": selected_mode, "sheet_names": names, "timezone_policy": policy}
-        _read_sheets(archive, names, styles, base, sink, progress, conversions, (layout, workbook, panes))
+        _read_sheets(archive, names, styles, base, sink, progress, conversions, (layout, workbook, panes), budget)
         return conversions
 
 

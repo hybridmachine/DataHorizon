@@ -180,7 +180,7 @@ class LargeInterchangeOpenApiTests(unittest.TestCase):
                 request={**copy.deepcopy(staged),'stage_digest':summary['stage_digest'],'expected_state':book.state,'operation_id':str(uuid.uuid4())}
                 self.validate('OperationRequest',request)
                 receipt=client.request(book.base+'/operations',request,timeout=330);self.validate('Receipt',receipt)
-                self.assertEqual(receipt['imported'],{'sheets':3,'cells':49})
+                self.assertEqual(receipt['imported'],{'sheets':3,'cells':49,'charts':0})
                 for fmt,label in (('xlsx','Xlsx'),('ods','Ods')):
                     bounded=client.request(book.base+'/export/'+fmt,{'scope':'workbook'});self.validate('SpreadsheetExportResult',bounded)
                     request=copy.deepcopy(schemas[label+'ExportJobRequest']['example'])

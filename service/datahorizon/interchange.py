@@ -543,7 +543,7 @@ def read_book(archive):
     return book
 
 
-def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None):
+def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=None,charts=None):
     selected=integer(request.get("sheet_index",1),1,MAX_SHEET_INDEX,"sheet_index")
     selected_mode=mode(request)
     require(request.get("timezone_policy","reject") in ("reject","utc"),"INVALID_ARGUMENT","Choose reject or utc timestamp policy")
@@ -597,6 +597,14 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
             if edit is not None: edits.append(edit)
         scan_tree(root,sheet_features)
         sheet_features.report(conversions,sheet_label)
+        records=[]
+        if sheet_names is not None:
+            # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules.
+            from .import_charts import Collector
+            from .xlsx_charts import worksheet_drafts
+            charts=Collector() if charts is None else charts
+            drafts=worksheet_drafts(archive,part,sheet_names.index(sheet_label),sheet_label,ByteBudget(MAX_EXPANDED),conversions,sheet_features)
+            records=[record for draft in drafts if (record:=charts.add(draft,sheet_names,conversions)) is not None]
         if shared_formulas and shared_formulas.groups: report.append("Shared formulas expand to explicit per-cell sources with relative/absolute reference translation; caches are discarded.")
         report.extend(STYLE_SCOPE_LINES)
         scope=list(report)
@@ -607,7 +615,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Spreadsheet preview exceeds 4 MiB")
         if result["can_import"]:
             result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
-        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=wide
+        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=wide; result["_charts"]=records
         return result
 
 
@@ -786,16 +794,20 @@ def preparation_scope(request):
 def prepare_workbook(request,checkpoint,names,prepare,indexes=None,scope=()):
     """`indexes` are the sheet_index of each name (by default 1, 2, ...): a package's sheets that are not imported
     (XLSX chart, dialog and macro sheets) take no name but keep their place in the index. `scope` are the format's
-    fixed report lines after workbook_report(); the result's report is those scope lines, then one line per entry."""
+    fixed report lines after workbook_report(); the result's report is those scope lines, then one line per entry.
+    Each sheet's charts are converted against one workbook limit, carried as workbook_charts and listed in charts."""
+    from .import_charts import Collector, summary
     validate_sheet_names(names)
     require(request.get("row",1)==1 and request.get("col",1)==1,"INVALID_ARGUMENT","Whole-workbook import uses original coordinates")
     require(names,"INVALID_SPREADSHEET","Workbook has no sheets")
-    result={"scope":"workbook","workbook_sheets":[],"stored_cells":0,"issues":[],"can_import":True}
+    result={"scope":"workbook","workbook_sheets":[],"stored_cells":0,"issues":[],"can_import":True,"workbook_charts":[]}
     conversions=ConversionReport()
+    charts=Collector()
     size=0
     for index,name in enumerate(names,1):
         checkpoint(index-1,"Reading sheet "+name)
-        part=prepare({**request,"scope":"selection","sheet_index":indexes[index-1] if indexes else index},checkpoint,sheet_names=names)
+        part=prepare({**request,"scope":"selection","sheet_index":indexes[index-1] if indexes else index},checkpoint,sheet_names=names,charts=charts)
+        result["workbook_charts"]+=part.pop("_charts")
         # Every sheet's preparation reads the same workbook features; they are reported once, first.
         wide=part.pop("_workbook")
         if index==1: conversions.merge(wide)
@@ -810,6 +822,7 @@ def prepare_workbook(request,checkpoint,names,prepare,indexes=None,scope=()):
     result["report"]=result["scope_lines"]+conversions.lines()
     result["report_entries"]=conversions.entries()
     result["totals"]=conversions.totals()
+    result["charts"]=summary(result["workbook_charts"],names)
     require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","Workbook preview exceeds 4 MiB")
     return result
 
@@ -823,6 +836,7 @@ def xlsx_preview(request,checkpoint=lambda completed,phase:None):
         # Only chart, dialog or macro sheets: nothing to import. As for any workbook without sheets, Apply is refused.
         result={"scope":"workbook","workbook_sheets":[],"stored_cells":0,"can_import":False,
                 "issues":["The workbook has no worksheets; its other sheets are not imported"],
-                "report":workbook_report()+book.report.lines(),"scope_lines":workbook_report(),"report_entries":book.report.entries(),"totals":book.report.totals()}
+                "report":workbook_report()+book.report.lines(),"scope_lines":workbook_report(),"report_entries":book.report.entries(),"totals":book.report.totals(),
+                "charts":[],"workbook_charts":[]}
         return result
     return prepare_workbook(request,checkpoint,[name for _,name in worksheets],_xlsx_preview,[index for index,_ in worksheets])

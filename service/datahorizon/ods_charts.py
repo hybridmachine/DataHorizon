@@ -263,3 +263,84 @@ def read_frame_draft(archive, frame: ET.Element, position: int, sheet_name: str,
     except Exception:  # an untrusted chart never fails the import, whatever is wrong with it
         report.add(SKIPPED, "omitted", "unreadable", sheet=sheet_name, cell=label[:32], count=1)
         return None
+
+
+# A worksheet's frames, for the whole-workbook readers.
+
+FRAME, OBJECT, GROUP = q(DRAW, "frame"), q(DRAW, "object"), q(DRAW, "g")
+CELLS = (q(T, "table-cell"), q(T, "covered-table-cell"))
+ROW = q(T, "table-row")
+ROW_GROUPS = (q(T, "table-row-group"), q(T, "table-header-rows"), q(T, "table-rows"))
+
+
+class SheetFrames:
+    """The drafts of one ``table:table``'s chart frames, read in document order as a reader meets them.
+
+    At most ``xlsx_charts.MAX_FRAMES`` object frames are read per sheet; the rest are reported once, with their count,
+    by ``finish``.  A chart in a ``draw:g`` group is reported as ``grouped`` and left out."""
+    def __init__(self, archive, position, sheet_name, read_part, report):
+        self.archive, self.position, self.sheet_name, self.read_part, self.report = archive, position, sheet_name, read_part, report
+        self.drafts, self.order, self.unread, self.last = [], 0, 0, None
+
+    def frame(self, frame, cell, grouped):
+        """A ``draw:frame`` holding a ``draw:object``; ``cell`` as ``read_frame_draft`` takes it.  A frame is read once."""
+        from .xlsx_charts import MAX_FRAMES
+        if frame is self.last:
+            return
+        self.last = frame
+        if self.order >= MAX_FRAMES:
+            self.unread += 1
+            return
+        draft = read_frame_draft(self.archive, frame, self.position, self.sheet_name, self.order, self.read_part, self.report, cell)
+        self.order += 1
+        if draft is None:
+            return
+        if grouped:
+            self.report.add(SKIPPED, "omitted", "grouped", sheet=self.sheet_name, cell=draft["name"][:32], count=1)
+        else:
+            self.drafts.append(draft)
+
+    def finish(self, sizes_unknown=False):
+        """The drafts read; ``sizes_unknown`` marks those placed by absolute position as ``approximate_size``."""
+        if self.unread:
+            self.report.add(SKIPPED, "omitted", "unreadable", sheet=self.sheet_name, cell="drawing", count=self.unread)
+        for draft in self.drafts:
+            if sizes_unknown and draft["absolute_anchor"]:
+                draft["approximate_size"] = True
+        return self.drafts
+
+
+def table_frames(table):
+    """``(frame, cell, grouped)`` for each ``draw:frame`` holding a ``draw:object`` in a parsed ``table:table``, in
+    document order, as the streaming reader meets them: ``cell`` is the 1-based ``(row, col)`` of the cell of a sheet
+    row holding the frame, or ``None``; ``grouped`` says the frame is inside a ``draw:g``."""
+    from .ods import repeat
+    found, row = [], [1]
+
+    def visit(item, cell, grouped):
+        if item.tag == FRAME and _kid(item, DRAW, "object") is not None:
+            found.append((item, cell, grouped))
+        grouped = grouped or item.tag == GROUP
+        for child in item:
+            visit(child, cell, grouped)
+
+    def rows(element):
+        for child in element:
+            if child.tag in ROW_GROUPS:
+                rows(child)
+            elif child.tag == ROW:
+                col = 1
+                for item in child:
+                    visit(item, (row[0], col) if item.tag in CELLS else None, False)
+                    if item.tag in CELLS:
+                        col += repeat(item, "number-columns-repeated", MAX_COLS)
+                row[0] += repeat(child, "number-rows-repeated", MAX_ROWS)
+            else:
+                visit(child, None, False)
+    rows(table)
+    return found
+
+
+def sizes_declared(features) -> bool:
+    """Whether a sheet's ``OdsSheetFeatures`` met column widths or custom row heights, which the readers do not measure."""
+    return any(width is not None for width in features.widths) or "row_heights" in features.counts

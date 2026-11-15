@@ -158,20 +158,40 @@ def _rows(header, count=7, width=2):
     return "".join(rows)
 
 
+# The sample workbook's first sheet: division and sales, rows 2 to 8.
+SAMPLE_SALES = [("Sports", 400586), ("Arts", 353095), ("Electronics", 804585), ("Office", 410434),
+                ("Celebrations", 99699), ("Food", 25539), ("Garden", 25156)]
+SAMPLE_SHEETS = ("Column Chart", "Stacked Column")
+
+
+def _sales_rows():
+    rows = ['<row r="1"><c r="A1" t="inlineStr"><is><t>Division</t></is></c><c r="B1" t="inlineStr"><is><t>Sales</t></is></c></row>']
+    for row, (division, sales) in enumerate(SAMPLE_SALES, 2):
+        rows.append(f'<row r="{row}"><c r="A{row}" t="inlineStr"><is><t>{division}</t></is></c><c r="B{row}"><v>{sales}</v></c></row>')
+    return "".join(rows)
+
+
+def _sample_series():
+    first, second = SAMPLE_SHEETS
+    one = [{"name_ref": f"'{first}'!$B$1", "cat": f"'{first}'!$A$2:$A$8", "val": f"'{first}'!$B$2:$B$8"}]
+    four = [{"name_ref": f"'{second}'!${chr(66 + n)}$1", "cat": f"'{second}'!$A$2:$A$8",
+             "val": f"'{second}'!${chr(66 + n)}$2:${chr(66 + n)}$8"} for n in range(4)]
+    return one, four
+
+
 def sample_like():
-    """Two worksheets, each with a column chart anchored C1 (+632114, +154565 EMU) to J16, as in the sample workbook."""
+    """Two worksheets, each with a column chart named Chart 1 anchored C1 (+632114, +154565 EMU) to J16, as in the
+    sample workbook; the first sheet holds the sample's sales figures."""
     colours = '<c:spPr><a:solidFill><a:schemeClr val="accent1"/></a:solidFill></c:spPr>'
     labels = '<c:dLbls><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/></c:dLbls><c:gapWidth val="150"/>'
-    first, second = "Column Chart", "Stacked Column"
-    one = [{"name_ref": f"'{first}'!$B$1", "cat": f"'{first}'!$A$2:$A$8", "val": f"'{first}'!$B$2:$B$8", "sppr": colours}]
-    four = [{"name_ref": f"'{second}'!${chr(66 + n)}$1", "cat": f"'{second}'!$A$2:$A$8",
-             "val": f"'{second}'!${chr(66 + n)}$2:${chr(66 + n)}$8", "sppr": colours} for n in range(4)]
+    first, second = SAMPLE_SHEETS
+    one, four = ([{**item, "sppr": colours} for item in part] for part in _sample_series())
     anchor = two_cell((2, 632114, 0, 154565), (9, 0, 15, 0))
     return xlsx_with_charts(
-        {first: _rows(["Division", "Sales"]), second: _rows(["Division", "Q1", "Q2", "Q3", "Q4"], width=5)},
+        {first: _sales_rows(), second: _rows(["Division", "Q1", "Q2", "Q3", "Q4"], width=5)},
         [{"sheet": first, "name": "Chart 1", "anchor": anchor,
           "xml": chart_xml("bar", "col", "clustered", one, rich_title("Sales by Division"), "r", extras=labels)},
-         {"sheet": second, "name": "Chart 2", "anchor": anchor,
+         {"sheet": second, "name": "Chart 1", "anchor": anchor,
           "xml": chart_xml("bar", "col", "stacked", four, rich_title("Sales by Quarter"), "r",
                            extras=labels + '<c:overlap val="100"/>')}])
 
@@ -300,3 +320,35 @@ def ods_with_charts(sheets, charts, **builder_options):
                f'{"".join(tables)}</office:spreadsheet></office:body></office:document-content>')
     extra = {**parts, **(builder_options.pop("extra_parts", None) or {})}
     return ods_workbook_bytes(sheets, content=content, extra_parts=extra, **builder_options)
+
+
+def _ods_cell(value, frame=""):
+    if value is None:
+        return f"<table:table-cell>{frame}</table:table-cell>"
+    if isinstance(value, str):
+        return f'<table:table-cell office:value-type="string">{frame}<text:p>{escape(value)}</text:p></table:table-cell>'
+    return f'<table:table-cell office:value-type="float" office:value="{value}">{frame}<text:p>{value}</text:p></table:table-cell>'
+
+
+def _ods_rows(rows, frame):
+    """Rows of values; ``frame`` is drawn in cell C1 (an empty cell when the first row is shorter)."""
+    rows = [list(values) + [None] * (3 - len(values)) if number == 0 else values for number, values in enumerate(rows)]
+    return "".join("<table:table-row>" + "".join(_ods_cell(value, frame if (number, col) == (0, 2) else "")
+                                                for col, value in enumerate(values)) + "</table:table-row>"
+                   for number, values in enumerate(rows))
+
+
+def ods_sample_like():
+    """The ODS counterpart of ``sample_like``: the same cells, and each sheet's Chart 1 drawn in C1, 66 and 16 pixels
+    into the cell, at the size the XLSX anchor spans with default cell sizes."""
+    first, second = SAMPLE_SHEETS
+    one, four = _sample_series()
+    quarters = [["Division", "Q1", "Q2", "Q3", "Q4"]] + [[f"Division {row}"] + [row * (col + 1) for col in range(4)]
+                                                         for row in range(2, 9)]
+    sheets = {first: [["Division", "Sales"]] + [list(item) for item in SAMPLE_SALES], second: quarters}
+    charts = {first: ods_chart_xml("bar", "col", "clustered", one, "Sales by Division", "end"),
+              second: ods_chart_xml("bar", "col", "stacked", four, "Sales by Quarter", "end")}
+    rows = {name: _ods_rows(values, ods_frame(number, "Chart 1", "66px", "16px", "382px", "284px"))
+            for number, (name, values) in enumerate(sheets.items(), 1)}
+    parts = {f"Object {number}/content.xml": charts[name] for number, name in enumerate(sheets, 1)}
+    return ods_with_charts(rows, [], extra_parts=parts)

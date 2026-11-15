@@ -10,6 +10,7 @@ import copy
 import re
 
 from . import charts
+from .conversion_report import ConversionReport
 from .chart_render import LIMIT_PIE_POINTS, LIMIT_POINTS, LIMIT_SERIES
 from .engine import MAX_COLS, MAX_ROWS, EngineError
 from .formula import FormulaError, column_name, split_ref
@@ -316,6 +317,28 @@ def convert(draft, sheet_names, report):
     except _Skip as skip:
         worker.note(skip.detail, "omitted", SKIPPED)
         return None
+
+
+class Collector:
+    """The records of one whole-workbook import, in file order, up to the workbook's chart limit.
+
+    Every draft is converted; a chart ``convert`` accepts once ``charts.LIMIT_CHARTS`` records are held is reported
+    as ``chart.skipped`` / ``workbook_limit`` instead, without the conversion notes of a chart that is not imported."""
+    def __init__(self, limit=charts.LIMIT_CHARTS):
+        self.limit = limit
+        self.records = []
+
+    def add(self, draft, sheet_names, report):
+        """Convert ``draft`` into ``report``; the record, or ``None`` when the chart is skipped."""
+        notes = ConversionReport()
+        record = convert(draft, sheet_names, notes)
+        if record is not None and len(self.records) >= self.limit:
+            _Converter(draft, sheet_names, report).note("workbook_limit", "omitted", SKIPPED)
+            return None
+        report.merge(notes)
+        if record is not None:
+            self.records.append(record)
+        return record
 
 
 # Records.
