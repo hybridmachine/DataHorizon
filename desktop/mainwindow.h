@@ -373,8 +373,10 @@ private:
     // A suggest request is outstanding; a second Insert waits for it.
     bool m_chartSuggesting = false;
     // The operation id of the chart_create whose committed receipt's chart is
-    // selected after the refresh; then that chart's id and the receipt's state.
-    QString m_pendingChartSelect, m_chartToSelect, m_chartToSelectState;
+    // selected after the refresh; then that chart's id. The create's
+    // workbook, sheet and expected_state are kept while either is set.
+    QString m_pendingChartSelect, m_chartToSelect;
+    QJsonObject m_chartInsertTarget;
     QAction *m_freezeAction = nullptr, *m_freezeColumnAction = nullptr, *m_freezePanesAction = nullptr, *m_unfreezePanesAction = nullptr;
     int m_frozenRows = 0, m_frozenColumns = 0;
     bool m_frozenSizeIssue = false;

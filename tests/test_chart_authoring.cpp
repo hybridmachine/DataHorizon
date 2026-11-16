@@ -13,6 +13,13 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QPlainTextEdit>
+#include <QPointer>
+#include <QProcess>
+#include <QRegularExpression>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <functional>
+#include "restclient.h"
 #include <QScrollBar>
 #include <QSignalSpy>
 #include <QTabBar>
@@ -43,6 +50,59 @@ QJsonObject specOf(const QString &type, const QJsonValue &grouping, const QJsonV
             {"categories", categories}, {"series", seriesList}, {"legend", QJsonObject{{"position", "right"}}}};
 }
 }
+
+// Forwards every call to a real service. Suggest answers, workbook metadata
+// reads and chart catalog reads can be held until released, and the answer to the next
+// chart_create can be lost (the operation still reaches the service).
+class ChartProxy : public QTcpServer {
+public:
+    bool holdSuggest=false,holdMetadata=false,holdCharts=false,loseCreate=false;
+    int suggests=0;
+    explicit ChartProxy(const QJsonObject &service) : m_upstream(this) {
+        m_upstream.configure(service["url"].toString(),service["token"].toString());
+        connect(this,&QTcpServer::newConnection,this,[this]{
+            auto *socket=nextPendingConnection();connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
+            connect(socket,&QTcpSocket::readyRead,socket,[this,socket]{
+                const auto request=socket->property("request").toByteArray()+socket->readAll();socket->setProperty("request",request);
+                const auto end=request.indexOf("\r\n\r\n");if(end<0 || socket->property("handled").toBool())return;
+                const int length=QRegularExpression("Content-Length: (\\d+)",QRegularExpression::CaseInsensitiveOption).match(QString::fromLatin1(request.left(end))).captured(1).toInt();
+                if(request.size()<end+4+length)return;
+                socket->setProperty("handled",true);
+                const auto path=QString::fromLatin1(request.left(request.indexOf("\r\n")).split(' ').at(1));
+                const bool post=request.startsWith("POST ");
+                const auto body=QJsonDocument::fromJson(request.mid(end+4)).object();
+                const auto parts=path.split('/',Qt::SkipEmptyParts);
+                const bool suggest=path.endsWith("/charts/suggest"),metadata=!post && parts.size()==3 && parts[1]=="workbooks",catalog=path.endsWith("/charts");
+                const bool lose=loseCreate && path.endsWith("/operations") && body["action"].toString()=="chart_create";
+                if(lose)loseCreate=false;
+                if(suggest)++suggests;
+                const QPointer<QTcpSocket> guarded=socket;
+                m_upstream.request(path,body,[this,guarded,suggest,metadata,catalog,lose](QJsonObject result,QString error){
+                    if(!guarded)return;
+                    if(lose){guarded->abort();return;}
+                    std::function<void()> reply=[guarded,result,error]{send(guarded,result,error);};
+                    if(suggest && holdSuggest)m_suggest.append(reply);
+                    else if(metadata && holdMetadata)m_metadata.append(reply);
+                    else if(catalog && holdCharts)m_charts.append(reply);
+                    else reply();
+                },post);
+            });
+        });
+    }
+    int heldMetadata() const { return int(m_metadata.size()); }
+    void releaseSuggest() { holdSuggest=false;for(const auto &reply:std::exchange(m_suggest,{}))reply(); }
+    void releaseCharts() { holdCharts=false;for(const auto &reply:std::exchange(m_charts,{}))reply(); }
+    void releaseMetadata() { holdMetadata=false;for(const auto &reply:std::exchange(m_metadata,{}))reply(); }
+private:
+    static void send(const QPointer<QTcpSocket> &socket,const QJsonObject &result,const QString &error) {
+        if(!socket)return;
+        const auto bytes=QJsonDocument(error.isEmpty() || !result.isEmpty()?result:QJsonObject{{"code","UNAVAILABLE"},{"message",error}}).toJson(QJsonDocument::Compact);
+        socket->write(QByteArray("HTTP/1.1 ")+(error.isEmpty()?"200 OK":"409 Conflict")+"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(bytes.size())+"\r\n\r\n"+bytes);
+        socket->disconnectFromHost();
+    }
+    RestClient m_upstream;
+    QList<std::function<void()>> m_suggest,m_metadata,m_charts;
+};
 
 class ChartAuthoringTests : public QObject {
     Q_OBJECT
@@ -582,6 +642,7 @@ private slots:
         QTest::newRow("read-only") << "read-only";
         QTest::newRow("projected view") << "projected view";
         QTest::newRow("relational workbench") << "relational workbench";
+        QTest::newRow("busy") << "busy";
     }
     void insertIsDisabled() {
         QFETCH(QString,mode);
@@ -604,6 +665,9 @@ private slots:
         } else if(mode=="projected view") {
             const int before=opened.count();window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"header",false},{"sort",QJsonArray{QJsonObject{{"col",1}}}}});
             QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);QVERIFY(model->projected());
+        } else if(mode=="busy") {
+            // An operation in flight; the checks below run before it answers.
+            window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",6},{"col",1},{"source","9"}}}}});selectable=true;
         } else {
             window.findChild<QAction *>("relationalWorkbenchAction")->trigger();
         }
@@ -625,9 +689,85 @@ private slots:
         QVERIFY2(issuesText(window).contains("at most 64 charts"),qPrintable(issuesText(window)));
         QTest::qWait(300);QCOMPARE(layer->overlays().size(),64);QCOMPARE(layer->selectedChart(),QString());
     }
+    void insertAnchorsOnTheSelectionInTheLastColumn() {
+        CHART_WINDOW;const int last=model->columnCount();QVERIFY(last>2);
+        QJsonArray cells;for(int row=1;row<=3;++row){cells.append(QJsonObject{{"row",row},{"col",last-1},{"source","Item "+QString::number(row)}});cells.append(QJsonObject{{"row",row},{"col",last},{"source",QString::number(row*10)}});}
+        window.submit({{"action","edit"},{"cells",cells}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        selectCells(grid,model,0,last-2,2,last-1);
+        window.findChild<QAction *>("insertChartAction")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!layer->selectedChart().isEmpty(),10000);
+        const auto anchor=layer->chart(layer->selectedChart())["anchor"].toObject();
+        QCOMPARE(anchor["row"].toInt(),1);QCOMPARE(anchor["col"].toInt(),last-1);
+    }
 #undef CHART_WINDOW
 
+// A window attached to a service through ChartProxy, with a workbook open.
+#define PROXY_WINDOW \
+    QTemporaryDir temp;QJsonObject service;StartupOptions ownerOptions;ownerOptions.automaticWorkbook=false;ownerOptions.viewStatePath=temp.filePath("owner.ini"); \
+    MainWindow owner(ownerOptions);observeOwnedServiceStartup(owner,service);QSignalSpy ownerReady(&owner,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ownerReady.count(),1,10000);QVERIFY(!service["token"].toString().isEmpty()); \
+    ChartProxy proxy(service);QVERIFY(proxy.listen(QHostAddress::LocalHost,0)); \
+    StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");options.url="http://127.0.0.1:"+QString::number(proxy.serverPort()); \
+    options.token=service["token"].toString();options.recoveryDirectory=temp.filePath("recovery"); \
+    MainWindow window(options);window.resize(1200,800);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000); \
+    QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("charts.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000); \
+    auto *layer=window.findChild<ChartLayer *>("chartLayer");QVERIFY(layer);auto *grid=window.findChild<QTableView *>("grid");QVERIFY(grid);auto *model=window.model()
+    void insertWhileBusyShowsTheReason() {
+        PROXY_WINDOW;QVERIFY(fillChartData(window,opened));
+        selectCells(grid,model,0,0,3,1);
+        auto *insert=window.findChild<QAction *>("insertChartAction");QVERIFY(insert->isEnabled());
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        proxy.holdSuggest=true;insert->trigger();QTRY_COMPARE_WITH_TIMEOUT(proxy.suggests,1,10000);
+        // Disabled while the suggestion is awaited; a second Insert sends nothing.
+        QVERIFY(!insert->isEnabled());window.insertChart();QTest::qWait(100);QCOMPARE(proxy.suggests,1);
+        // The window becomes busy (a refresh, which keeps the state) before the answer.
+        proxy.holdMetadata=true;window.findChild<QAction *>("refreshStoredDataAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(proxy.heldMetadata(),1,10000);
+        proxy.releaseSuggest();
+        QTRY_VERIFY_WITH_TIMEOUT(issuesText(window).contains("The chart was not inserted • Insert again"),10000);
+        proxy.releaseMetadata();QTRY_VERIFY_WITH_TIMEOUT(insert->isEnabled(),10000);
+        QTest::qWait(200);QCOMPARE(admitted.count(),0);QCOMPARE(layer->overlays().size(),0);
+    }
+    void redoDoesNotReselectAnInsertedChart() {
+        PROXY_WINDOW;QVERIFY(fillChartData(window,opened));
+        selectCells(grid,model,0,0,3,1);
+        QSignalSpy finished(&window,&MainWindow::operationFinished);
+        auto *undo=window.findChild<QAction *>("undoAction"),*redo=window.findChild<QAction *>("redoAction");
+        // The catalog read after the create is held, so Undo comes before the layer lists the chart.
+        const int before=opened.count();proxy.holdCharts=true;window.findChild<QAction *>("insertChartAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(),1,10000);QVERIFY(finished[0][0].toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);QVERIFY(undo->isEnabled());QCOMPARE(layer->overlays().size(),0);undo->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(),2,10000);QVERIFY(finished[1][0].toBool());
+        proxy.releaseCharts();QTest::qWait(300);QCOMPARE(layer->overlays().size(),0);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+2,10000);QVERIFY(redo->isEnabled());redo->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(),3,10000);QVERIFY(finished[2][0].toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,10000);QTest::qWait(300);
+        QCOMPARE(layer->selectedChart(),QString());QVERIFY(!layer->overlays().first()->selected());
+        QVERIFY(statusText(window)!="Chart inserted • Undo removes it");
+    }
+    void aLostCreateAnswerStillSelectsTheChart() {
+        PROXY_WINDOW;QVERIFY(fillChartData(window,opened));
+        selectCells(grid,model,0,0,3,1);
+        QSignalSpy receipts(&window,&MainWindow::operationReceipt);
+        proxy.loseCreate=true;window.findChild<QAction *>("insertChartAction")->trigger();
+        // The answer is lost: an unknown receipt, then reconcile's committed one.
+        QTRY_VERIFY_WITH_TIMEOUT(receipts.count()>=2,15000);
+        QCOMPARE(receipts[0][0].toJsonObject()["outcome"].toString(),QString("unknown"));
+        QCOMPARE(receipts[1][0].toJsonObject()["outcome"].toString(),QString("committed"));
+        QTRY_VERIFY_WITH_TIMEOUT(!layer->selectedChart().isEmpty(),10000);
+        QCOMPARE(layer->selectedChart(),receipts[1][0].toJsonObject()["chart_id"].toString());
+        QCOMPARE(layer->overlays().size(),1);QCOMPARE(statusText(window),QString("Chart inserted • Undo removes it"));
+    }
+#undef PROXY_WINDOW
+
 private:
+    static void observeOwnedServiceStartup(MainWindow &owner,QJsonObject &service) {
+        auto *process=owner.findChild<QProcess *>("ownedService");
+        connect(process,&QProcess::readyReadStandardOutput,process,[process,&service,bytes=QByteArray{}]() mutable {
+            if(!service.isEmpty())return;
+            bytes+=process->peek(process->bytesAvailable());
+            const auto newline=bytes.indexOf('\n');
+            if(newline>=0)service=QJsonDocument::fromJson(bytes.left(newline)).object();
+        });
+    }
     // Labels in A2:A4, a series name in B1 and values in B2:B4, as chartSpec reads them.
     static bool fillChartData(MainWindow &window,QSignalSpy &opened) {
         const auto before=opened.count();QJsonArray cells{QJsonObject{{"row",1},{"col",2},{"source","Sales"}}};

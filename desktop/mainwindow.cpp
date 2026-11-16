@@ -878,24 +878,31 @@ void MainWindow::buildUi() {
     // A stale read refreshes, as other stale reads do; the refresh lists again.
     connect(m_charts,&ChartLayer::stale,m_model,&SheetModel::externalChange);
     connect(m_model,&QAbstractItemModel::modelReset,this,[this]{
+        // Another workbook or sheet shown ends the wait for an inserted chart.
+        if(!m_chartToSelect.isEmpty() && (m_model->workbook()!=m_chartInsertTarget["workbook"].toString() || m_model->sheet()!=m_chartInsertTarget["sheet"].toString())){m_chartToSelect.clear();m_chartInsertTarget={};}
         m_charts->bind(m_model->workbook().isEmpty()?QString():"/v1/workbooks/"+m_model->workbook(),m_model->sheet(),m_model->state(),m_model->projected());updateChartActions();});
-    // An inserted chart is selected when the layer first lists it: the
-    // committed receipt names it, and a listing at the receipt's state
-    // without it (another sheet shown, say) ends the wait.
+    // An inserted chart is selected by the first listing after its committed
+    // receipt (one of the state the create was sent at is an older read);
+    // that listing ends the wait whatever it holds, as does any other
+    // operation admitted. An unknown outcome waits for reconcile's receipt.
     connect(this,&MainWindow::operationReceipt,this,[this](const QJsonObject &receipt){
         if(m_pendingChartSelect.isEmpty() || receipt["operation_id"].toString()!=m_pendingChartSelect)return;
+        const auto outcome=receipt["outcome"].toString();
+        if(outcome=="unknown")return;
         m_pendingChartSelect.clear();
-        if(receipt["outcome"].toString()=="committed"){m_chartToSelect=receipt["chart_id"].toString();m_chartToSelectState=receipt["state"].toString();}
+        if(outcome=="committed")m_chartToSelect=receipt["chart_id"].toString();else m_chartInsertTarget={};
+    });
+    connect(this,&MainWindow::operationAdmitted,this,[this](const QString &operationId){
+        if(operationId!=m_pendingChartSelect){m_chartToSelect.clear();if(m_pendingChartSelect.isEmpty())m_chartInsertTarget={};}
     });
     connect(m_charts,&ChartLayer::listed,this,[this]{
         updateChartActions();
-        if(m_chartToSelect.isEmpty())return;
-        if(!m_charts->chart(m_chartToSelect).isEmpty()) {
-            m_charts->select(std::exchange(m_chartToSelect,{}));m_chartToSelectState.clear();
-            showChartPanel();m_status->setText(tr("Chart inserted • Undo removes it"));
-        } else if(m_model->state()==m_chartToSelectState){m_chartToSelect.clear();m_chartToSelectState.clear();}
+        if(m_chartToSelect.isEmpty() || m_model->state()==m_chartInsertTarget["expected_state"].toString())return;
+        const auto id=std::exchange(m_chartToSelect,{});m_chartInsertTarget={};
+        if(m_charts->chart(id).isEmpty())return;
+        m_charts->select(id);showChartPanel();m_status->setText(tr("Chart inserted • Undo removes it"));
     });
-    connect(m_client,&RestClient::configured,this,[this]{m_chartSuggesting=false;m_pendingChartSelect.clear();m_chartToSelect.clear();m_chartToSelectState.clear();});
+    connect(m_client,&RestClient::configured,this,[this]{m_chartSuggesting=false;m_pendingChartSelect.clear();m_chartToSelect.clear();m_chartInsertTarget={};updateChartActions();});
     m_freezeAction=add(view,tr("Freeze top row"),{},[this]{
         if(m_busy || m_unknown || m_info.isEmpty() || m_model->projected() || m_hiddenRows.contains(0)) {
             QSignalBlocker blocker(m_freezeAction); m_freezeAction->setChecked(m_frozenTop->active());
@@ -1844,13 +1851,14 @@ void MainWindow::insertChart() {
     const auto target=targetContext(range);
     QJsonObject request{{"expected_state",m_info["state"]},{"sheet",m_model->sheet()}};
     for(const char *key:{"r1","c1","r2","c2"})request[key]=range[key];
-    m_chartSuggesting=true;
+    m_chartSuggesting=true;updateChartActions();
     const auto generation=m_client->generation();
     m_client->request(base()+"/charts/suggest",request,[this,target,generation](QJsonObject result,QString error){
         if(generation!=m_client->generation())return;
-        m_chartSuggesting=false;
+        m_chartSuggesting=false;updateChartActions();
         // An answer for another workbook, sheet or state is dropped.
-        if(!matchesTarget(target) || m_busy || m_unknown || m_info["readonly"].toBool() || m_relationalActive || m_model->projected())return;
+        if(!matchesTarget(target))return;
+        if(m_busy || m_unknown || m_info["readonly"].toBool() || m_relationalActive || m_model->projected()){issue(tr("The chart was not inserted • Insert again"));return;}
         if(!error.isEmpty()){issue(error);return;}
         // One column to the right of the selection; the selection's own
         // top-left cell when that column does not exist or is hidden.
@@ -1859,6 +1867,7 @@ void MainWindow::insertChart() {
         auto operation=target;for(const char *key:{"r1","c1","r2","c2"})operation.remove(key);
         operation["action"]="chart_create";operation["spec"]=result["spec"];operation["anchor"]=QJsonObject{{"row",r1},{"col",col}};
         m_pendingChartSelect=submit(operation);
+        if(!m_pendingChartSelect.isEmpty())m_chartInsertTarget=target;
     });
 }
 
@@ -1869,7 +1878,7 @@ void MainWindow::showChartPanel() {
 void MainWindow::updateChartActions() {
     if(!m_insertChartAction)return;
     const bool sheet=!m_info.isEmpty() && !m_relationalActive && !m_model->projected();
-    setEditingEnabled(m_insertChartAction,sheet && !m_busy && !m_unknown && !m_info["readonly"].toBool());
+    setEditingEnabled(m_insertChartAction,sheet && !m_busy && !m_unknown && !m_info["readonly"].toBool() && !m_chartSuggesting);
     const bool charts=sheet && m_charts && !m_charts->overlays().isEmpty();
     setEditingEnabled(m_selectNextChartAction,charts);setEditingEnabled(m_selectPreviousChartAction,charts);
 }
