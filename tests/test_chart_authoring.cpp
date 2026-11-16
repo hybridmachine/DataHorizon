@@ -9,6 +9,7 @@
 #include <QDockWidget>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScopeGuard>
 #include <QToolButton>
 #include <QHash>
 #include <QHeaderView>
@@ -59,11 +60,12 @@ QJsonObject specOf(const QString &type, const QJsonValue &grouping, const QJsonV
 
 // Forwards every call to a real service. Suggest answers, workbook metadata
 // reads, chart catalog reads and operation answers can be held until released, chart_update
-// operations can be refused without reaching the service, and the answer to the next
+// operations can be refused without reaching the service (the refusal held like any
+// operation answer), the next chart catalog read can fail, and the answer to the next
 // chart_create can be lost (the operation still reaches the service).
 class ChartProxy : public QTcpServer {
 public:
-    bool holdSuggest=false,holdMetadata=false,holdCharts=false,holdOperations=false,loseCreate=false,refuseChartUpdates=false;
+    bool holdSuggest=false,holdMetadata=false,holdCharts=false,holdOperations=false,loseCreate=false,refuseChartUpdates=false,failCharts=false;
     int suggests=0;
     explicit ChartProxy(const QJsonObject &service) : m_upstream(this) {
         m_upstream.configure(service["url"].toString(),service["token"].toString());
@@ -86,7 +88,12 @@ public:
                 if(suggest)++suggests;
                 const QPointer<QTcpSocket> guarded=socket;
                 if(operation && refuseChartUpdates && body["action"].toString()=="chart_update") {
-                    send(guarded,{{"operation_id",body["operation_id"]},{"outcome","rejected"},{"code","INVALID_ARGUMENT"},{"message","The test proxy refused this chart change"}},"refused");
+                    std::function<void()> reply=[guarded,id=body["operation_id"]]{send(guarded,{{"operation_id",id},{"outcome","rejected"},{"code","INVALID_ARGUMENT"},{"message","The test proxy refused this chart change"}},"refused");};
+                    if(holdOperations)m_operations.append(reply);else reply();
+                    return;
+                }
+                if(catalog && failCharts) {
+                    failCharts=false;send(guarded,{{"code","UNAVAILABLE"},{"message","The test proxy failed this chart read"}},"failed");
                     return;
                 }
                 m_upstream.request(path,body,[this,guarded,suggest,metadata,catalog,operation,lose](QJsonObject result,QString error){
@@ -287,6 +294,38 @@ private slots:
         QFETCH(QPoint, delta);
         QFETCH(QRect, expected);
         QCOMPARE(ChartSpec::resized(QRect(100, 100, 200, 150), handle, delta), expected);
+    }
+    void boundsRejectGroupSeparators_data() {
+        QTest::addColumn<QString>("locale");
+        QTest::addColumn<QString>("text");
+        QTest::addColumn<bool>("sent");
+        QTest::addColumn<double>("value");
+        // Where the comma is the decimal mark, "1,500" is one and a half; where
+        // it would only group digits it is refused rather than read as 1500.
+        QTest::newRow("de 1,500") << "de_DE" << "1,500" << true << 1.5;
+        QTest::newRow("en 1,500") << "en_US" << "1,500" << false << 0.0;
+        QTest::newRow("C 1,500") << "C" << "1,500" << false << 0.0;
+        QTest::newRow("en 1e3") << "en_US" << "1e3" << true << 1000.0;
+        QTest::newRow("de 1e3") << "de_DE" << "1e3" << true << 1000.0;
+        QTest::newRow("en spaces") << "en_US" << " 5 " << true << 5.0;
+        QTest::newRow("de 2.5") << "de_DE" << "2.5" << true << 2.5;
+        QTest::newRow("en abc") << "en_US" << "abc" << false << 0.0;
+        QTest::newRow("de abc") << "de_DE" << "abc" << false << 0.0;
+    }
+    void boundsRejectGroupSeparators() {
+        QFETCH(QString,locale);QFETCH(QString,text);QFETCH(bool,sent);QFETCH(double,value);
+        const QLocale before;QLocale::setDefault(QLocale(locale));
+        auto restore=qScopeGuard([&]{QLocale::setDefault(before);});
+        ChartPanel panel;panel.setChart(chartWith(specOf("column",QJsonValue::Null,src(storedRange("s1","A2:A13")),{series("S",storedRange("s1","B2:B13"))})));
+        QSignalSpy requested(&panel,&ChartPanel::changeRequested);
+        auto *minimum=panel.findChild<QLineEdit *>("valueAxisMin");QTest::keyClicks(minimum,text);QTest::keyClick(minimum,Qt::Key_Return);
+        QCOMPARE(requested.count(),sent?1:0);
+        if(sent) {
+            const auto bound=requested[0][1].toJsonObject()["spec"].toObject()["axes"].toObject()["value"].toObject()["min"];
+            QVERIFY(bound.isDouble());QCOMPARE(bound.toDouble(),value);
+        } else {
+            QCOMPARE(panel.findChild<QLabel *>("valueAxisMinMessage")->text(),QString("Enter a number or leave empty for automatic"));QCOMPARE(minimum->text(),QString());
+        }
     }
     void clampSizeKeepsBounds() {
         QCOMPARE(ChartSpec::clampSize(QSize(1, 1)), QSize(64, 48));
@@ -1393,9 +1432,19 @@ private slots:
         selectCells(grid,model,0,0,3,1);window.findChild<QAction *>("insertChartAction")->trigger();
         QTRY_VERIFY_WITH_TIMEOUT(!layer->selectedChart().isEmpty(),10000);const auto id=layer->selectedChart();QVERIFY(idle(window));
         QVERIFY(openPanel(window,layer,id));auto *panel=panelOf(window);
-        auto *title=window.findChild<QLineEdit *>("chartTitle");title->setFocus();QCOMPARE(window.focusWidget(),static_cast<QWidget *>(title));
-        QTest::keyClicks(title,"Never sent");
+        auto *title=window.findChild<QLineEdit *>("chartTitle");
         QSignalSpy requested(panel,&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        // Directly: the chart goes from an unlocked panel while a field holds edited text; its focus-out sends nothing.
+        title->setFocus();QTest::keyClicks(title,"Gone with it");QVERIFY(title->isEnabled());
+        panel->setChart({});QVERIFY(noChartLabel(panel)->isVisible());
+        grid->setFocus();QFocusEvent away(QEvent::FocusOut,Qt::OtherFocusReason);QCoreApplication::sendEvent(title,&away);
+        QTest::keyClick(title,Qt::Key_Return);
+        QTest::qWait(100);QCOMPARE(requested.count(),0);QCOMPARE(admitted.count(),0);
+        // Shown again, the chart's field shows its stored value and nothing was held.
+        panel->setChart(layer->chart(id));QCOMPARE(title->text(),QString());QTest::qWait(100);QCOMPARE(requested.count(),0);
+        // End to end: Undo of the creation while the title has focus and unsent text.
+        title->setFocus();QCOMPARE(window.focusWidget(),static_cast<QWidget *>(title));
+        QTest::keyClicks(title,"Never sent");
         // Undo the creation from the Edit menu while the title has focus and unsent text.
         QMenu *edit=nullptr;for(auto *action:window.menuBar()->actions())if(action->text()=="&Edit")edit=action->menu();QVERIFY(edit);
         QAction *undo=nullptr;for(auto *action:edit->actions())if(action->objectName()=="undoAction")undo=action;QVERIFY(undo && undo->isEnabled());
@@ -1447,6 +1496,21 @@ private slots:
         QCOMPARE(layer->chart(id)["issue"].toString(),QString("UNSUPPORTED_SPEC_VERSION"));
         QVERIFY(idle(window));QCOMPARE(reason->text(),QString("This chart cannot be read (UNSUPPORTED_SPEC_VERSION)"));QVERIFY(!window.findChild<QWidget *>("chartTitle")->isEnabled());
         QVERIFY(!issuesText(window).contains("UNSUPPORTED"));
+    }
+    void focusReturnsAfterAChange() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Focused",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *title=window.findChild<QLineEdit *>("chartTitle");
+        // Tab from Name into Title, type, Enter.
+        for(int i=0;i<20 && window.focusWidget()!=title;++i)QTest::keyClick(window.focusWidget(),Qt::Key_Tab);
+        QCOMPARE(window.focusWidget(),static_cast<QWidget *>(title));
+        QTest::keyClicks(title,"Kept in place");QTest::keyClick(title,Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].toString(),QString("Kept in place"),10000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.focusWidget(),static_cast<QWidget *>(title),5000);QVERIFY(title->isEnabled());
+        // A list changed from the keyboard keeps the focus too.
+        QVERIFY(idle(window));auto *legend=window.findChild<QComboBox *>("legendPosition");choose(legend,"Bottom");
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["legend"].toObject()["position"].toString(),QString("bottom"),10000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.focusWidget(),static_cast<QWidget *>(legend),5000);QVERIFY(legend->isEnabled());
     }
 #undef CHART_WINDOW
 
@@ -1607,7 +1671,10 @@ private slots:
         QTest::qWait(200);QCOMPARE(admitted.count(),2);QCOMPARE(moved.count(),0);
     }
     void unchangedTextSendsNothing() {
-        PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(addChart(window,opened,"Same",2,4));activate(window);
+        PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);
+        auto stored=chartSpec("Sheet1");stored["title"]=QJsonObject{{"text","Kept"}};
+        stored["axes"]=QJsonObject{{"category",QJsonObject{{"title",QJsonValue::Null}}},{"value",QJsonObject{{"title",QJsonValue::Null},{"min",5},{"max",QJsonValue::Null}}}};
+        QVERIFY(addChart(window,opened,"Same",2,4,0,0,320,200,"Sheet1",stored));activate(window);
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
         auto *panel=panelOf(window);QSignalSpy requested(panel,&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
         auto *name=window.findChild<QLineEdit *>("chartName");
@@ -1615,7 +1682,11 @@ private slots:
         QCOMPARE(window.focusWidget(),static_cast<QWidget *>(name));QTest::keyClick(name,Qt::Key_Return);
         for(const char *field:{"chartTitle","categoryAxisTitle","valueAxisTitle","valueAxisMin","valueAxisMax","chartName"})window.findChild<QLineEdit *>(field)->setFocus();
         typeInto(name,"Same",true);window.findChild<QLineEdit *>("chartTitle")->setFocus();
+        // The same title, and "5.0" against a stored minimum of 5, retyped and left.
+        typeInto(window.findChild<QLineEdit *>("chartTitle"),"Kept",false);
+        typeInto(window.findChild<QLineEdit *>("valueAxisMin"),"5.0",false);name->setFocus();
         QTest::qWait(100);QCOMPARE(requested.count(),0);QCOMPARE(admitted.count(),0);
+        QCOMPARE(window.findChild<QLineEdit *>("valueAxisMin")->text(),QString("5.0"));
         // A second change while the first is in flight sends nothing, even with the panel unlocked.
         proxy.holdOperations=true;
         typeInto(name,"Once",true);QCOMPARE(requested.count(),1);QCOMPARE(admitted.count(),1);
@@ -1629,9 +1700,9 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["name"].toString(),QString("Once"),10000);QVERIFY(idle(window));
         QTest::qWait(200);QCOMPARE(admitted.count(),1);
         const auto spec=layer->chart(id)["spec"].toObject();
-        QVERIFY(spec["title"].toObject()["text"].isNull());QCOMPARE(spec["type"].toString(),QString("column"));QCOMPARE(spec["legend"].toObject()["position"].toString(),QString("right"));
-        // The reload put the unsent text back.
-        QTRY_COMPARE_WITH_TIMEOUT(window.findChild<QLineEdit *>("chartTitle")->text(),QString(),5000);
+        QCOMPARE(spec["title"].toObject()["text"].toString(),QString("Kept"));QCOMPARE(spec["type"].toString(),QString("column"));QCOMPARE(spec["legend"].toObject()["position"].toString(),QString("right"));
+        // The reload (the chart changed) put the unsent text back.
+        QTRY_COMPARE_WITH_TIMEOUT(window.findChild<QLineEdit *>("chartTitle")->text(),QString("Kept"),5000);
         QVERIFY(window.findChild<QToolButton *>("chartType_column")->isChecked());
         // After the answer the panel sends again.
         typeInto(name,"Again",true);QCOMPARE(requested.count(),2);
@@ -1662,6 +1733,67 @@ private slots:
         layer->select(id);window.findChild<QAction *>("editChartAction")->trigger();QVERIFY(dock->isVisible());QCOMPARE(panelOf(window)->chartId(),id);
         QCOMPARE(enabled(false),QString());QCOMPARE(window.findChild<QLineEdit *>("chartName")->text(),QString("Locked"));
         QVERIFY(window.findChild<QToolButton *>("chartType_line")->isChecked());
+    }
+    void heldTextIsAppliedOnUnlock() {
+        PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(addChart(window,opened,"Held",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);
+        auto *title=window.findChild<QLineEdit *>("chartTitle");title->setFocus();QTest::keyClicks(title,"Typed before");
+        // An unrelated operation locks the panel while the text is unsent.
+        proxy.holdOperations=true;
+        QVERIFY(!window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",20},{"col",1},{"source","9"}}}}}).isEmpty());
+        QVERIFY(!title->isEnabled());QCOMPARE(title->text(),QString("Typed before"));QCOMPARE(requested.count(),0);
+        proxy.releaseOperations();
+        // Once unlocked on the same chart, the held text is sent.
+        QTRY_COMPARE_WITH_TIMEOUT(requested.count(),1,10000);QCOMPARE(requested[0][2].toString(),QString("chartTitle"));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].toString(),QString("Typed before"),10000);
+        // When the chart itself changes meanwhile, the held text gives way to it.
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(title->isEnabled(),5000);
+        title->setFocus();title->selectAll();QTest::keyClicks(title,"Dropped");
+        proxy.holdOperations=true;
+        QVERIFY(!window.submit({{"action","chart_update"},{"chart_id",id},{"name","Renamed elsewhere"}}).isEmpty());
+        proxy.releaseOperations();
+        QTRY_COMPARE_WITH_TIMEOUT(window.findChild<QLineEdit *>("chartName")->text(),QString("Renamed elsewhere"),10000);
+        QVERIFY(idle(window));QTest::qWait(200);
+        QCOMPARE(requested.count(),1);QCOMPARE(title->text(),QString("Typed before"));
+        QCOMPARE(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].toString(),QString("Typed before"));
+    }
+    void failedCatalogReadShowsNoChartUntilTheNextListing() {
+        PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(addChart(window,opened,"Read",2,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *panel=panelOf(window);QSignalSpy requested(panel,&ChartPanel::changeRequested);
+        proxy.failCharts=true;typeInto(window.findChild<QLineEdit *>("chartName"),"Committed",true);QCOMPARE(requested.count(),1);
+        QTRY_VERIFY_WITH_TIMEOUT(issuesText(window).contains("The test proxy failed this chart read"),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(panel->chartId().isEmpty() && noChartLabel(panel)->isVisible(),5000);
+        // The next listing shows the chart as stored, and the panel asks again.
+        QVERIFY(idle(window));window.findChild<QAction *>("refreshStoredDataAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(panel->chartId(),id,10000);QCOMPARE(window.findChild<QLineEdit *>("chartName")->text(),QString("Committed"));
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QWidget *>("legendPosition")->isEnabled(),5000);
+        choose(window.findChild<QComboBox *>("legendPosition"),"Bottom");QCOMPARE(requested.count(),2);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["legend"].toObject()["position"].toString(),QString("bottom"),10000);
+        QCOMPARE(layer->chart(id)["name"].toString(),QString("Committed"));
+    }
+    void refusalForAnotherChartStaysOffThePanel() {
+        PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(addChart(window,opened,"First",2,4));QVERIFY(addChart(window,opened,"Second",14,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);
+        const auto first=overlayNamed(layer,"First")->chartId(),second=overlayNamed(layer,"Second")->chartId();QVERIFY(openPanel(window,layer,first));
+        auto *panel=panelOf(window);QSignalSpy requested(panel,&ChartPanel::changeRequested);QSignalSpy receipts(&window,&MainWindow::operationReceipt);
+        proxy.refuseChartUpdates=true;proxy.holdOperations=true;
+        typeInto(window.findChild<QLineEdit *>("chartTitle"),"Refused",true);QCOMPARE(requested.count(),1);
+        // Another chart is selected, then the first again, before the answer: nothing more is asked.
+        layer->select(second);QCOMPARE(panel->chartId(),second);layer->select(first);QCOMPARE(panel->chartId(),first);
+        panel->setLocked(false);auto *legend=window.findChild<QComboBox *>("legendPosition");legend->setFocus();QTest::keyClicks(legend,"Bottom");
+        QCOMPARE(requested.count(),1);QCOMPARE(legend->currentText(),QString("Right"));
+        layer->select(second);QCOMPARE(panel->chartId(),second);
+        proxy.releaseOperations();QTRY_COMPARE_WITH_TIMEOUT(receipts.count(),1,10000);
+        QVERIFY(issuesText(window).contains("The test proxy refused this chart change"));
+        // The message is not put beside the second chart's field.
+        QVERIFY(window.findChild<QLabel *>("chartTitleMessage")->isHidden());
+        // The wait is over: the second chart can be changed.
+        proxy.refuseChartUpdates=false;QVERIFY(idle(window));
+        typeInto(window.findChild<QLineEdit *>("chartTitle"),"Accepted",true);QCOMPARE(requested.count(),2);QCOMPARE(requested[1][0].toString(),second);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(second)["spec"].toObject()["title"].toObject()["text"].toString(),QString("Accepted"),10000);
+        QVERIFY(layer->chart(first)["spec"].toObject()["title"].toObject()["text"].isNull());
     }
 #undef PROXY_WINDOW
 

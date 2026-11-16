@@ -383,7 +383,9 @@ private:
     // change awaiting its receipt with the field that asked for it.
     ChartPanel *m_chartPanel = nullptr;
     QDockWidget *m_chartDock = nullptr;
-    QString m_chartPanelOperation, m_chartPanelField;
+    QString m_chartPanelOperation, m_chartPanelField, m_chartPanelChart;
+    // A change was committed and the charts are not listed again yet.
+    bool m_chartsAwaitList = false;
     // A suggest request is outstanding; a second Insert waits for it.
     bool m_chartSuggesting = false;
     // The operation id of the chart_create whose committed receipt's chart is

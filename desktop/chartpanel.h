@@ -3,7 +3,9 @@
 
 #include <QHash>
 #include <QJsonObject>
+#include <QPointer>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 #include <functional>
 
@@ -26,24 +28,35 @@ class QToolButton;
 // focus, and only when its text differs from the chart's stored value. Each
 // request is one chart_update: the name, the order, or the whole input-form
 // specification built from the stored chart. While a request is answered the
-// panel asks for nothing else; the next setChart or refused ends the wait.
+// panel asks for nothing else, until settle (a fresh catalog was shown) or
+// refused ends the wait.
+//
+// Text left in a field while the panel was locked or waiting is applied when
+// it can ask again, if the same chart is still shown and the text still
+// differs; otherwise the field shows the chart again. A field that had focus
+// when the panel locked gets it back on unlock, unless focus moved meanwhile.
 //
 // A chart whose specification cannot be built (unreadable, or with a broken
-// source) shows its reason at the top, and only the Chart group is enabled.
+// source) shows its reason at the top, and only the Chart group is enabled,
+// with the Data group too when the only problem is a broken source.
 class ChartPanel : public QWidget {
     Q_OBJECT
 public:
     explicit ChartPanel(QWidget *parent=nullptr);
     // The chart to show; {} shows "No chart selected". The same chart again
     // changes nothing, so a field being edited keeps its text; any other
-    // chart reloads every field and drops unsent text.
+    // chart reloads every field and drops unsent text. A request still
+    // awaited stays awaited.
     void setChart(const QJsonObject &chart);
+    // The awaited request is answered and the catalog shown is fresh: the
+    // panel may ask again, first for text held while it waited.
+    void settle();
     QString chartId() const;
     // Busy or read-only: every control disabled, values kept.
     void setLocked(bool locked);
     // Puts the named field back to the chart's value and shows the message
     // beneath it until the chart changes or the field is edited again. An
-    // empty message only puts the field back.
+    // empty message only puts the field back. Either ends the wait.
     void refused(const QString &field,const QString &message);
 signals:
     // changes holds exactly the chart_update fields: name, order or spec.
@@ -67,12 +80,22 @@ private:
     void applyText(const QString &field);
     void applyBound(const QString &field);
     void applyType(const QString &type);
+    // A text field's apply, by field name.
+    void apply(const QString &field);
+    // Holds a text field whose apply could not ask now.
+    void defer(const QString &field);
+    // Once the panel may ask: focus back, then the held fields.
+    void resume();
     QLabel *messageLabel(const QString &field);
     QJsonObject m_chart;
     // The input-form spec; empty when it cannot be built (m_reason says why).
     QJsonObject m_spec;
     QString m_reason;
     bool m_locked=false,m_pending=false;
+    QStringList m_deferred;
+    QString m_deferredChart,m_focusChart;
+    // The panel widget that had focus when the panel locked, and where focus went then.
+    QPointer<QWidget> m_focus,m_focusAfterLock;
     QStackedWidget *m_pages=nullptr;
     QLabel *m_reasonLabel=nullptr;
     QGroupBox *m_chartGroup=nullptr,*m_typeGroup=nullptr,*m_titleGroup=nullptr,*m_axesGroup=nullptr,*m_legendGroup=nullptr;

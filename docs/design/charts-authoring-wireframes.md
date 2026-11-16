@@ -603,6 +603,9 @@ Panel texts and field markers:
 | "A chart needs at least one series" | Beneath the series list: Remove on the only series (refused in the panel) |
 | "Give an X source before changing this chart to a scatter chart." | Beneath the type buttons: Scatter on a chart with no categories |
 | The service's own message | Beneath the refused field, for every refusal from the service |
+| "Enter a number or leave empty for automatic" | Beneath Minimum or Maximum: the text is not a number (refused in the panel) |
+
+Added during the build, November 2026: not part of the original sign-off.
 
 ## Decisions for the owner to confirm
 

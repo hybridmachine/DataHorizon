@@ -145,24 +145,57 @@ ChartPanel::ChartPanel(QWidget *parent) : QWidget(parent) {
 }
 
 void ChartPanel::setChart(const QJsonObject &chart) {
-    // A newer catalog answers the request that was awaited.
-    m_pending=false;
     if(chart==m_chart)return;
-    m_chart=chart;
+    // Another chart, or a changed one: held text is dropped with the reload.
+    m_chart=chart;m_deferred.clear();
     load();updateEnabled();
+}
+
+void ChartPanel::settle() {
+    m_pending=false;
+    resume();
 }
 
 QString ChartPanel::chartId() const { return m_chart.value("id").toString(); }
 
 void ChartPanel::setLocked(bool locked) {
     if(m_locked==locked)return;
-    m_locked=locked;updateEnabled();
+    m_locked=locked;
+    if(!locked){updateEnabled();resume();return;}
+    // Disabling the focused field moves focus away; remember both ends.
+    auto *focused=window()->focusWidget();
+    m_focus=focused && isAncestorOf(focused)?focused:nullptr;m_focusChart=chartId();
+    updateEnabled();
+    m_focusAfterLock=m_focus?window()->focusWidget():nullptr;
 }
 
 void ChartPanel::refused(const QString &field,const QString &message) {
     m_pending=false;
     loadField(field);
     if(message.isEmpty())clearMessage(field);else showMessage(field,message);
+    resume();
+}
+
+void ChartPanel::resume() {
+    if(m_locked || m_pending || m_chart.isEmpty())return;
+    if(m_focus && m_focusChart==chartId() && m_focus->isEnabled() && m_focus->isVisible()) {
+        auto *now=window()->focusWidget();
+        if(!now || now==m_focusAfterLock)m_focus->setFocus(Qt::OtherFocusReason);
+    }
+    m_focus=nullptr;m_focusAfterLock=nullptr;
+    if(m_deferredChart!=chartId()){for(const auto &field:std::exchange(m_deferred,{}))loadField(field);return;}
+    while(!m_deferred.isEmpty() && !m_pending && !m_locked)apply(m_deferred.takeFirst());
+}
+
+void ChartPanel::apply(const QString &field) {
+    if(field=="chartName")applyName();
+    else if(field=="valueAxisMin" || field=="valueAxisMax")applyBound(field);
+    else applyText(field);
+}
+
+void ChartPanel::defer(const QString &field) {
+    if(!m_deferred.contains(field))m_deferred.append(field);
+    m_deferredChart=chartId();
 }
 
 QLabel *ChartPanel::messageLabel(const QString &field) {
@@ -203,7 +236,9 @@ void ChartPanel::loadField(const QString &field) {
 
 void ChartPanel::updateEnabled() {
     const bool open=!m_chart.isEmpty() && !m_locked,readable=open && !m_spec.isEmpty();
-    m_chartGroup->setEnabled(open);m_dataGroup->setEnabled(open);
+    m_chartGroup->setEnabled(open);
+    // Data stays open for a broken source (its sources are edited there), not for an unreadable specification.
+    m_dataGroup->setEnabled(readable || (open && !m_chart.value("issue").isString() && ChartSpec::hasBrokenSource(m_chart)));
     for(auto *group:{m_typeGroup,m_titleGroup,m_axesGroup,m_legendGroup})group->setEnabled(readable);
     m_grouping->setEnabled(readable && ChartSpec::takesGrouping(m_spec.value("type").toString()));
 }
@@ -242,14 +277,16 @@ void ChartPanel::requestSpec(const QString &field,const std::function<void(QJson
 }
 
 void ChartPanel::applyName() {
-    if(!canRequest())return;
+    if(m_chart.isEmpty())return;
+    if(m_locked || m_pending){defer("chartName");return;}
     const auto text=m_name->text();
     if(text==m_chart.value("name").toString())return;
     request({{"name",text}},"chartName");
 }
 
 void ChartPanel::applyText(const QString &field) {
-    if(!canRequest() || m_spec.isEmpty())return;
+    if(m_chart.isEmpty() || m_spec.isEmpty())return;
+    if(m_locked || m_pending){defer(field);return;}
     const auto text=findChild<QLineEdit *>(field)->text();
     const QJsonValue value=text.isEmpty()?QJsonValue(QJsonValue::Null):QJsonValue(text);
     if(value==textValue(m_spec,field))return;
@@ -262,13 +299,18 @@ void ChartPanel::applyText(const QString &field) {
 }
 
 void ChartPanel::applyBound(const QString &field) {
-    if(!canRequest() || m_spec.isEmpty())return;
+    if(m_chart.isEmpty() || m_spec.isEmpty())return;
+    if(m_locked || m_pending){defer(field);return;}
     const auto key=field=="valueAxisMin"?"min":"max";
     const auto text=(field=="valueAxisMin"?m_min:m_max)->text().trimmed();
     QJsonValue value=QJsonValue::Null;
     if(!text.isEmpty()) {
-        bool ok=false;double parsed=QLocale::c().toDouble(text,&ok);
-        if(!ok)parsed=QLocale().toDouble(text,&ok);
+        // A group separator is never taken: "1,500" is 1.5 where the comma
+        // is the decimal mark, and refused where it would only group digits.
+        QLocale c=QLocale::c(),local;
+        c.setNumberOptions(c.numberOptions()|QLocale::RejectGroupSeparator);local.setNumberOptions(local.numberOptions()|QLocale::RejectGroupSeparator);
+        bool ok=false;double parsed=c.toDouble(text,&ok);
+        if(!ok)parsed=local.toDouble(text,&ok);
         if(!ok || !std::isfinite(parsed)){refused(field,tr("Enter a number or leave empty for automatic"));return;}
         value=parsed;
     }
