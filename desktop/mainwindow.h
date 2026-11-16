@@ -187,6 +187,8 @@ private:
     void clearCells(const QString &mode);
     void startFormatPainter();
     void cancelFormatPainter();
+    // Charts let the mouse through while a pick or the format painter is on.
+    void updateChartPassThrough();
     bool formatPainterMouseEvent(QObject *object,QEvent *event);
     void showFormatCells();
     void enterTemporal();

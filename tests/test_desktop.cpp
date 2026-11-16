@@ -4679,7 +4679,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();
         QCOMPARE(overlay->objectName(),QString("chartOverlay"));QCOMPARE(overlay->accessibleName(),QString("Chart: Placed"));
         QVERIFY(!overlay->property("chartId").toString().isEmpty());
-        QVERIFY(!overlay->testAttribute(Qt::WA_TransparentForMouseEvents));QCOMPARE(overlay->focusPolicy(),Qt::StrongFocus);
+        QVERIFY(!overlay->testAttribute(Qt::WA_TransparentForMouseEvents));QCOMPARE(overlay->focusPolicy(),Qt::ClickFocus);
         QVERIFY(!listed.isEmpty());QCOMPARE(listed.last().first().toInt(),1);
         QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
         QCOMPARE(offsetIn(overlay,grid->viewport()),QPoint(grid->columnViewportPosition(2),grid->rowViewportPosition(1))+QPoint(10,5));

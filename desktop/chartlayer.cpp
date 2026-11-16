@@ -19,7 +19,7 @@
 
 ChartOverlay::ChartOverlay(const QString &chartId,QWidget *parent):QWidget(parent),m_renderer(new QSvgRenderer(this)) {
     setObjectName("chartOverlay");setProperty("chartId",chartId);
-    setFocusPolicy(Qt::StrongFocus);
+    setFocusPolicy(Qt::ClickFocus);
 }
 
 void ChartOverlay::setChart(const QJsonObject &chart) {
@@ -129,7 +129,7 @@ void ChartLayer::bind(const QString &workbookBase,const QString &sheet,const QSt
         for(const auto &chartId:std::as_const(m_failed))
             if(auto *item=overlay(chartId)){item->setRenderKey({});retry=true;}
         m_failed.clear();
-        if(projected!=m_projected || retry){m_projected=projected;relayout();}
+        if(projected!=m_projected || retry){m_projected=projected;if(m_projected){deselect();refocusGrid();}relayout();}
         return;
     }
     const bool sameSheet=workbookBase==m_base && sheet==m_sheet;
@@ -137,6 +137,7 @@ void ChartLayer::bind(const QString &workbookBase,const QString &sheet,const QSt
     // Another sheet's charts never stay on screen while this one's are read;
     // a new state of the same sheet keeps the overlays until the list lands.
     if(!sameSheet)clear();else ++m_generation;
+    if(m_projected){deselect();refocusGrid();}
     // Renders of another sheet, workbook or state are never shown.
     abandonUnwanted();
     if(!m_base.isEmpty() && !m_sheet.isEmpty() && !m_state.isEmpty())list();
@@ -168,22 +169,22 @@ void ChartLayer::accept(const QJsonArray &charts) {
         const auto chart=value.toObject();const auto id=chart["id"].toString(chart["chart_id"].toString());
         if(id.isEmpty())continue;
         auto *overlay=existing.take(id);
-        if(!overlay){overlay=new ChartOverlay(id,m_gridArea);overlay->installEventFilter(this);}
+        if(!overlay){overlay=new ChartOverlay(id,m_gridArea);overlay->installEventFilter(this);applyPassThrough(overlay);}
         overlay->setChart(chart);
         const auto reason=ChartSpec::stateReason(chart);
         // A readable chart keeps its previous image until a new one arrives.
         if(!reason.isEmpty() || !overlay->hasImage()){overlay->setPlaceholder(reason);overlay->setRenderKey({});}
         kept.append(overlay);
     }
-    // The selected chart is gone: clear the selection, and the grid takes the
-    // focus the chart had.
+    // A chart that went takes the selection with it, and the grid takes the
+    // focus such a chart had.
     bool refocus=false;
-    if(existing.contains(m_selected)) {
-        refocus=existing[m_selected]->hasFocus();
-        m_selected.clear();emit selectionChanged({});
-    }
+    for(auto *overlay:std::as_const(existing))refocus=refocus || overlay->hasFocus();
+    const bool selectedGone=existing.contains(m_selected);
     for(auto *overlay:existing)delete overlay;
-    m_overlays=kept;abandonUnwanted();restack();relayout();
+    m_overlays=kept;
+    if(selectedGone){m_selected.clear();emit selectionChanged({});}
+    abandonUnwanted();restack();relayout();
     if(refocus && m_frozen)m_frozen->focusCurrent();
     emit listed(int(m_overlays.size()));
 }
@@ -210,8 +211,9 @@ void ChartLayer::queueRelayout() {
 bool ChartLayer::eventFilter(QObject *object,QEvent *event) {
     if(auto *item=qobject_cast<ChartOverlay *>(object))return overlayEvent(item,event);
     if(event->type()==QEvent::MouseButtonPress) {
-        // A press on a grid pane or header deselects; the pane handles the press as usual.
-        for(const auto &pane:std::as_const(m_panes))if(pane==object){select({});break;}
+        // A press on a grid pane or header deselects and takes the focus back
+        // from a chart; the pane handles the press as usual.
+        for(const auto &pane:std::as_const(m_panes))if(pane==object){select({});refocusGrid();break;}
         return QObject::eventFilter(object,event);
     }
     if(attached())switch(event->type()) {
@@ -243,7 +245,7 @@ bool ChartLayer::overlayEvent(ChartOverlay *item,QEvent *event) {
         // The chart takes Escape (and, while interactive, Enter) before the window's shortcuts.
         auto *key=static_cast<QKeyEvent *>(event);
         const bool escape=key->key()==Qt::Key_Escape && key->modifiers()==Qt::NoModifier;
-        const bool enter=m_interactive && (key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter) && (key->modifiers()&~Qt::KeypadModifier)==Qt::NoModifier;
+        const bool enter=m_interactive && item->selected() && (key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter) && (key->modifiers()&~Qt::KeypadModifier)==Qt::NoModifier;
         if(!escape && !enter)return false;
         event->accept();
         if(event->type()==QEvent::ShortcutOverride)return true;
@@ -338,6 +340,29 @@ void ChartLayer::selectNext(int direction) {
 }
 
 void ChartLayer::setInteractive(bool interactive) { m_interactive=interactive; }
+
+void ChartLayer::setPassThrough(bool passThrough) {
+    if(m_passThrough==passThrough)return;
+    m_passThrough=passThrough;
+    for(auto *item:overlays())applyPassThrough(item);
+}
+
+void ChartLayer::applyPassThrough(ChartOverlay *item) const {
+    item->setAttribute(Qt::WA_TransparentForMouseEvents,m_passThrough);
+    item->setFocusPolicy(m_passThrough?Qt::NoFocus:Qt::ClickFocus);
+}
+
+void ChartLayer::deselect() {
+    if(m_selected.isEmpty())return;
+    if(auto *previous=overlay(m_selected))previous->setSelected(false);
+    m_selected.clear();
+    emit selectionChanged({});
+}
+
+void ChartLayer::refocusGrid() {
+    if(!m_frozen)return;
+    for(auto *item:overlays())if(item->hasFocus()){m_frozen->focusCurrent();return;}
+}
 
 QList<ChartOverlay *> ChartLayer::zOrdered() const {
     auto ordered=overlays();

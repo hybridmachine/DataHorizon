@@ -1423,7 +1423,7 @@ void MainWindow::startReferencePick() {
     if(length==0){start=context.start;length=context.end-context.start;}
     line->dismissAssistance();captureGridDraft(false);syncSource();
     if(!m_source->isEnabled() || m_draftTarget["workbook"]!=m_info["id"] || m_draftTarget["state"]!=m_info["state"] || m_draftTarget["input_kind"].toString()=="text")return;
-    m_referenceTarget=targetContext();m_referenceCurrent=m_grid->currentIndex();m_referenceText=m_source->text();m_referenceStart=start;m_referenceLength=length;m_referencePreview.clear();m_referenceIssue.clear();m_referenceDragging=false;m_pickingReference=true;m_pickReferenceAction->setChecked(true);
+    m_referenceTarget=targetContext();m_referenceCurrent=m_grid->currentIndex();m_referenceText=m_source->text();m_referenceStart=start;m_referenceLength=length;m_referencePreview.clear();m_referenceIssue.clear();m_referenceDragging=false;m_pickingReference=true;m_pickReferenceAction->setChecked(true);updateChartPassThrough();
     m_source->setFocus();m_source->setSelection(start,length);m_status->setText("Pick a cell or drag a range • Release inserts into the original formula draft • Escape cancels picking");
 }
 
@@ -1445,7 +1445,7 @@ void MainWindow::pickOtherSheetReference() {
 }
 
 void MainWindow::finishReferencePick(bool insert) {
-    if(!m_pickingReference)return;m_pickingReference=false;m_referenceDragging=false;QSignalBlocker blocker(m_pickReferenceAction);m_pickReferenceAction->setChecked(false);
+    if(!m_pickingReference)return;m_pickingReference=false;m_referenceDragging=false;QSignalBlocker blocker(m_pickReferenceAction);m_pickReferenceAction->setChecked(false);updateChartPassThrough();
     const bool valid=!m_busy && !m_unknown && !m_model->projected() && matchesTarget(m_referenceTarget) && m_referenceCurrent==m_grid->currentIndex() && m_source->text()==m_referenceText && m_source->cursorPosition()==m_referenceStart+m_referenceLength && m_source->selectionStart()==(m_referenceLength?m_referenceStart:-1) && m_source->isEnabled();
     if(insert && valid && m_referenceIssue.isEmpty() && !m_referencePreview.isEmpty()){
         m_source->setFocus();m_source->setCursorPosition(0);m_source->setSelection(m_referenceStart,m_referenceLength);m_source->insert(m_referencePreview);m_source->setModified(true);if(auto *line=dynamic_cast<FormulaLineEdit *>(m_source))line->updateAssistance(false);m_status->setText("Reference inserted into formula draft • Enter to submit, Escape to discard");
@@ -1493,7 +1493,7 @@ bool MainWindow::startExternalReferencePick(ReferencePickTarget target,QString *
     else if(m_model->projected())problem=tr("Clear the list view before picking a reference; references name stored cells.");
     else if(!target.insert || !target.stillValid)problem=tr("Nothing can receive a picked reference.");
     if(!problem.isEmpty()){issue(problem);if(refusal)*refusal=problem;return false;}
-    m_externalTarget=std::move(target);m_externalPicking=true;m_externalInserted=false;
+    m_externalTarget=std::move(target);m_externalPicking=true;m_externalInserted=false;updateChartPassThrough();
     // Shortcuts reach actions without a key press in the grid: every command
     // that could change the workbook is off until picking ends.
     for(auto *action:pickBlockedActions()){if(!m_pickSuspended.contains(action))m_pickSuspended.insert(action,action->isEnabled());action->setEnabled(false);}
@@ -1544,7 +1544,7 @@ void MainWindow::setEditingEnabled(QAction *action,bool enabled) {
 
 void MainWindow::cancelExternalReferencePick() {
     if(!m_externalPicking)return;
-    m_externalPicking=false;m_referenceDragging=false;m_referencePreview.clear();m_referenceIssue.clear();m_externalPickCancel->setEnabled(false);
+    m_externalPicking=false;m_referenceDragging=false;m_referencePreview.clear();m_referenceIssue.clear();m_externalPickCancel->setEnabled(false);updateChartPassThrough();
     const auto suspended=std::exchange(m_pickSuspended,{});
     for(auto action=suspended.begin();action!=suspended.end();++action)action.key()->setEnabled(action.value());
     // Picking never moves the selection, but navigation during it may; it is
@@ -2203,6 +2203,11 @@ void MainWindow::cancelFormatPainter() {
     ++m_painterGeneration;m_painterPending=false;m_painterDragging=false;m_painterRows={};m_painterOrigin={};m_painterDestination={};
     if(m_painterAction){m_painterAction->setChecked(false);m_painterAction->setProperty("ready",false);}if(m_painterCancel)m_painterCancel->setEnabled(false);
     if(m_frozenTop){auto views=m_frozenTop->views();views.append(m_grid);for(auto *view:views)view->viewport()->unsetCursor();}
+    updateChartPassThrough();
+}
+
+void MainWindow::updateChartPassThrough() {
+    if(m_charts)m_charts->setPassThrough(m_pickingReference || m_externalPicking || m_painterPending || !m_painterRows.isEmpty());
 }
 
 void MainWindow::startFormatPainter() {
@@ -2211,7 +2216,7 @@ void MainWindow::startFormatPainter() {
     if(m_address->isModified()){issue("Finish address entry before copying formatting.");return;}
     const auto range=selectedRange();if(range.isEmpty() || m_grid->selectionModel()->selection().size()!=1)return;const auto target=targetContext(range);const auto selection=m_grid->selectionModel()->selection();const auto current=QPersistentModelIndex(m_grid->currentIndex());const auto service=m_client->url();
     captureGridDraft(false);if(!resolveDraft() || !matchesTarget(target) || current!=m_grid->currentIndex() || selection!=m_grid->selectionModel()->selection())return;
-    const auto generation=++m_painterGeneration,navigation=m_navigationGeneration,reference=m_referenceGeneration;m_painterPending=true;m_painterAction->setChecked(true);m_painterCancel->setEnabled(true);auto request=target;request.remove("workbook");m_status->setText(tr("Reading selected formatting…"));
+    const auto generation=++m_painterGeneration,navigation=m_navigationGeneration,reference=m_referenceGeneration;m_painterPending=true;updateChartPassThrough();m_painterAction->setChecked(true);m_painterCancel->setEnabled(true);auto request=target;request.remove("workbook");m_status->setText(tr("Reading selected formatting…"));
     m_client->request(base()+"/styles",request,[this,target,selection,current,service,generation,navigation,reference](QJsonObject result,QString error){
         if(generation!=m_painterGeneration)return;
         if(m_busy || m_unknown || !matchesTarget(target) || service!=m_client->url() || navigation!=m_navigationGeneration || reference!=m_referenceGeneration || current!=m_grid->currentIndex() || selection!=m_grid->selectionModel()->selection() || m_source->isModified() || m_address->isModified() || m_model->projected()){cancelFormatPainter();return;}

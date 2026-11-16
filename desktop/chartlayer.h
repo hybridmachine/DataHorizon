@@ -17,7 +17,7 @@ class QSvgRenderer;
 class QTableView;
 
 // One chart shown over the grid. It takes the mouse over its own rectangle
-// and keyboard focus; ChartLayer handles its events (selection, Escape,
+// and focus on a click; ChartLayer handles its events (selection, Escape,
 // Enter, the wheel). Its accessible name is "Chart: <name>" and its
 // description the chart's type, title and series count, or the reason it
 // cannot be read or drawn. Until an image arrives it shows a placeholder with
@@ -66,9 +66,10 @@ private:
 //
 // At most one chart is selected. A press on an overlay selects it and focuses
 // it; a press on any grid pane or header, or Escape on the overlay, clears the
-// selection (Escape also returns focus to the grid). The selection survives a
-// relist while its chart exists, and clears when the chart goes or another
-// sheet or workbook is bound. The wheel over an overlay scrolls the body.
+// selection, and the grid takes back any focus a chart had. The selection
+// survives a relist while its chart exists, and clears when the chart goes,
+// another sheet or workbook is bound, or the sheet is shown projected. The
+// wheel over an overlay scrolls the body.
 //
 // Charts in view are rendered by service render jobs, one at a time (the
 // service runs one chart job per workbook), lowest z first, after relayouts
@@ -108,6 +109,10 @@ public:
     // False while busy, read-only or projected: overlays still select on a
     // click but take no keys other than Escape.
     void setInteractive(bool interactive);
+    // True while the window picks cells (a formula reference pick, the format
+    // painter, a Python pick): overlays let the mouse through to the cells
+    // under them and take no focus, as the view-only layer did.
+    void setPassThrough(bool passThrough);
 signals:
     void listed(int count);
     // A chart's overlay now shows the service's image for the current state and size.
@@ -129,6 +134,11 @@ private:
     void restack();
     void queueRelayout();
     bool overlayEvent(ChartOverlay *overlay,QEvent *event);
+    void applyPassThrough(ChartOverlay *overlay) const;
+    // Clears the selection, emitting once when there was one.
+    void deselect();
+    // Gives the grid the focus when a chart holds it.
+    void refocusGrid();
     QList<ChartOverlay *> zOrdered() const;
     // One render job of this layer. A job still being started is marked
     // abandoned rather than dropped, so its answer can retire it.
@@ -156,7 +166,7 @@ private:
     QPointer<FrozenPanes> m_frozen;
     QPointer<QWidget> m_gridArea;
     QString m_base,m_sheet,m_state;
-    bool m_projected=false,m_queued=false,m_listed=false,m_interactive=true;
+    bool m_projected=false,m_queued=false,m_listed=false,m_interactive=true,m_passThrough=false;
     QString m_selected;
     // The viewports of every grid pane and header: a press there deselects.
     QList<QPointer<QWidget>> m_panes;

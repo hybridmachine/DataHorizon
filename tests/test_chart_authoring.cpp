@@ -3,9 +3,12 @@
 #include "chartspec.h"
 #include "mainwindow.h"
 #include <QAccessible>
+#include <QAction>
 #include <QHash>
+#include <QHeaderView>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QLineEdit>
 #include <QScrollBar>
 #include <QSignalSpy>
 #include <QTabBar>
@@ -315,9 +318,12 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
         QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(window.focusWidget(),overlay);
         QSignalSpy changed(layer,&ChartLayer::selectionChanged);
+        // The signal comes once the chart's overlay is gone.
+        int overlaysAtSignal=-1;connect(layer,&ChartLayer::selectionChanged,this,[&]{overlaysAtSignal=int(layer->overlays().size());});
         window.submit({{"action","undo"}});
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,10000);
         QCOMPARE(layer->selectedChart(),QString());QCOMPARE(changed.count(),1);QCOMPARE(changed[0][0].toString(),QString());
+        QCOMPARE(overlaysAtSignal,0);
         // Focus does not vanish with the chart: it returns to the grid.
         QCOMPARE(window.focusWidget(),grid);
     }
@@ -369,7 +375,7 @@ private slots:
         auto *plain=overlayNamed(layer,"Plain"),*titled=overlayNamed(layer,"Titled");QVERIFY(plain && titled);
         QCOMPARE(plain->accessibleName(),QString("Chart: Plain"));QCOMPARE(plain->accessibleDescription(),QString("Column chart, 1 series"));
         QCOMPARE(titled->accessibleName(),QString("Chart: Titled"));QCOMPARE(titled->accessibleDescription(),QString("Line chart, titled Units by month, 2 series"));
-        QCOMPARE(plain->focusPolicy(),Qt::StrongFocus);QVERIFY(!plain->testAttribute(Qt::WA_TransparentForMouseEvents));
+        QCOMPARE(plain->focusPolicy(),Qt::ClickFocus);QVERIFY(!plain->testAttribute(Qt::WA_TransparentForMouseEvents));
         auto *iface=QAccessible::queryAccessibleInterface(titled);QVERIFY(iface);
         QCOMPARE(iface->text(QAccessible::Name),QString("Chart: Titled"));
         QCOMPARE(iface->text(QAccessible::Description),QString("Line chart, titled Units by month, 2 series"));
@@ -391,6 +397,86 @@ private slots:
         QTest::mouseClick(broken,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));
         QCOMPARE(layer->selectedChart(),broken->chartId());QVERIFY(broken->selected());QCOMPARE(window.focusWidget(),broken);
         QVERIFY(highlighted(broken,QPoint(broken->width()/4,0)));QVERIFY(highlighted(broken,QPoint(7,7)));
+    }
+    void headerPressDeselectsAndFocusesTheGrid() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Picked",2,4,0,0,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(window.focusWidget(),overlay);
+        QSignalSpy changed(layer,&ChartLayer::selectionChanged);
+        auto *header=grid->horizontalHeader();
+        QTest::mouseClick(header->viewport(),Qt::LeftButton,Qt::NoModifier,QPoint(header->sectionViewportPosition(1)+5,header->height()/2));
+        QCOMPARE(layer->selectedChart(),QString());QVERIFY(!overlay->selected());QCOMPARE(changed.count(),1);QCOMPARE(changed[0][0].toString(),QString());
+        QCOMPARE(window.focusWidget(),grid);
+        // The layer itself returns the focus, not only Qt's click focus: a
+        // right-button press sent straight to the header (no click focus, and
+        // the header ignores it) still deselects and gives the grid the focus.
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(window.focusWidget(),overlay);
+        const QPointF at(header->sectionViewportPosition(1)+5,header->height()/2);
+        QMouseEvent press(QEvent::MouseButtonPress,at,header->viewport()->mapToGlobal(at),Qt::RightButton,Qt::RightButton,Qt::NoModifier);
+        QCoreApplication::sendEvent(header->viewport(),&press);
+        QCOMPARE(layer->selectedChart(),QString());QCOMPARE(changed.count(),3);QCOMPARE(window.focusWidget(),grid);
+    }
+    void enterOnAnUnselectedChartDoesNothing() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Picked",2,4,0,0,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        QCOMPARE(overlay->focusPolicy(),Qt::ClickFocus);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));layer->select({});
+        QCOMPARE(window.focusWidget(),overlay);QVERIFY(!overlay->selected());
+        QSignalSpy edit(layer,&ChartLayer::editRequested);
+        QKeyEvent enter(QEvent::ShortcutOverride,Qt::Key_Return,Qt::NoModifier);enter.ignore();
+        QCoreApplication::sendEvent(overlay,&enter);QVERIFY(!enter.isAccepted());
+        QTest::keyClick(overlay,Qt::Key_Return);QTest::keyClick(overlay,Qt::Key_Enter);QCOMPARE(edit.count(),0);
+        // A focused chart that goes, selected or not, gives the grid the focus.
+        window.submit({{"action","undo"}});QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,10000);
+        QCOMPARE(window.focusWidget(),grid);
+    }
+    void projectedViewDeselects() {
+        CHART_WINDOW;
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","3"}},QJsonObject{{"row",2},{"col",1},{"source","1"}},QJsonObject{{"row",3},{"col",1},{"source","2"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QVERIFY(addChart(window,opened,"Listed",2,3));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(window.focusWidget(),overlay);
+        QSignalSpy changed(layer,&ChartLayer::selectionChanged);const int before=opened.count();
+        window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"header",false},{"sort",QJsonArray{QJsonObject{{"col",1}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);QVERIFY(model->projected());
+        QCOMPARE(layer->selectedChart(),QString());QCOMPARE(changed.count(),1);QCOMPARE(changed[0][0].toString(),QString());
+        QVERIFY(window.focusWidget()!=overlay);QVERIFY(!qobject_cast<ChartOverlay *>(window.focusWidget()));
+    }
+    void formatPainterClicksThroughCharts() {
+        CHART_WINDOW;const QJsonObject bold{{"bold",true}};
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","x"},{"style",bold}}}}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QVERIFY(addChart(window,opened,"Covering",3,3,0,0,400,300));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        auto *area=overlay->parentWidget();const QPoint point(grid->columnViewportPosition(3)+5,grid->rowViewportPosition(3)+5);
+        QCOMPARE(qobject_cast<ChartOverlay *>(area->childAt(grid->viewport()->mapTo(area,point))),overlay);
+        grid->setCurrentIndex(model->index(0,0));grid->selectionModel()->select(model->index(0,0),QItemSelectionModel::ClearAndSelect);
+        auto *painter=window.findChild<QAction *>("formatPainterAction");painter->trigger();QTRY_VERIFY_WITH_TIMEOUT(painter->property("ready").toBool(),5000);
+        QVERIFY(overlay->testAttribute(Qt::WA_TransparentForMouseEvents));QCOMPARE(overlay->focusPolicy(),Qt::NoFocus);
+        QSignalSpy changed(layer,&ChartLayer::selectionChanged);const int before=opened.count();
+        windowClick(grid->viewport(),point);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(3,3)),5000);
+        QCOMPARE(model->cell(model->index(3,3))["style"].toObject(),bold);
+        QCOMPARE(changed.count(),0);QCOMPARE(layer->selectedChart(),QString());
+        // The painter is done: the chart takes clicks again.
+        QVERIFY(!painter->isChecked());
+        auto *again=layer->overlays().first();QVERIFY(!again->testAttribute(Qt::WA_TransparentForMouseEvents));QCOMPARE(again->focusPolicy(),Qt::ClickFocus);
+    }
+    void referencePickClicksThroughCharts() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Covering",3,3,0,0,400,300));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        auto *source=window.findChild<QLineEdit *>("source");auto *pick=window.findChild<QAction *>("pickReferenceAction");QVERIFY(source && pick);
+        grid->setCurrentIndex(model->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(source->isEnabled(),5000);
+        source->setFocus();QTest::keyClicks(source,"=SUM(");pick->trigger();QVERIFY(pick->isChecked());
+        QVERIFY(overlay->testAttribute(Qt::WA_TransparentForMouseEvents));
+        QSignalSpy changed(layer,&ChartLayer::selectionChanged);
+        const QPoint point(grid->columnViewportPosition(3)+5,grid->rowViewportPosition(3)+5);
+        QVERIFY(overlay->geometry().contains(grid->viewport()->mapTo(overlay->parentWidget(),point)));
+        windowClick(grid->viewport(),point);
+        QCOMPARE(source->text(),QString("=SUM(D4"));QCOMPARE(window.focusWidget(),source);
+        QCOMPARE(changed.count(),0);QCOMPARE(grid->currentIndex(),model->index(0,0));
+        QTest::keyClick(source,Qt::Key_Escape);
+        QTRY_VERIFY_WITH_TIMEOUT(!pick->isChecked(),5000);QVERIFY(!overlay->testAttribute(Qt::WA_TransparentForMouseEvents));
     }
 #undef CHART_WINDOW
 
@@ -420,6 +506,11 @@ private:
     static ChartOverlay *overlayNamed(ChartLayer *layer,const QString &name) {
         for(auto *overlay:layer->overlays())if(overlay->chart()["name"].toString()==name)return overlay;
         return nullptr;
+    }
+    // A click delivered through the window, so the widget under the point
+    // (an overlay or the cells) receives it as a real click would.
+    static void windowClick(QWidget *widget,const QPoint &point) {
+        auto *top=widget->window();QTest::mouseClick(top->windowHandle(),Qt::LeftButton,Qt::NoModifier,widget->mapTo(top,point));
     }
     // True when the overlay's own painting is the highlight colour at point.
     static bool highlighted(QWidget *widget,const QPoint &point) {
