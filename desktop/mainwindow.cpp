@@ -906,26 +906,39 @@ void MainWindow::buildUi() {
     connect(m_client,&RestClient::configured,this,[this]{m_chartSuggesting=false;m_pendingChartSelect.clear();m_chartToSelect.clear();m_chartInsertTarget={};updateChartActions();});
     // Each move, resize, reorder or delete of a chart is one operation. A
     // change not sent puts the chart back; a sent one is placed by the relist.
-    connect(m_charts,&ChartLayer::moveRequested,this,[this](const QString &id,const QJsonObject &anchor,const QJsonObject &offset){
-        if(submit({{"action","chart_update"},{"chart_id",id},{"anchor",anchor},{"offset",offset}}).isEmpty())m_charts->relayout();});
-    connect(m_charts,&ChartLayer::resizeRequested,this,[this](const QString &id,const QJsonObject &anchor,const QJsonObject &offset,const QJsonObject &size){
-        if(submit({{"action","chart_update"},{"chart_id",id},{"anchor",anchor},{"offset",offset},{"size",size}}).isEmpty())m_charts->relayout();});
+    // A refused or rolled-back one does not refresh, so its receipt puts the
+    // chart back; an unknown one waits for reconcile's receipt.
+    auto place=[this](const QJsonObject &operation){
+        m_chartPlacement=submit(operation);
+        if(m_chartPlacement.isEmpty())m_charts->relayout();
+    };
+    connect(m_charts,&ChartLayer::moveRequested,this,[place](const QString &id,const QJsonObject &anchor,const QJsonObject &offset){
+        place({{"action","chart_update"},{"chart_id",id},{"anchor",anchor},{"offset",offset}});});
+    connect(m_charts,&ChartLayer::resizeRequested,this,[place](const QString &id,const QJsonObject &anchor,const QJsonObject &offset,const QJsonObject &size){
+        place({{"action","chart_update"},{"chart_id",id},{"anchor",anchor},{"offset",offset},{"size",size}});});
+    connect(this,&MainWindow::operationReceipt,this,[this](const QJsonObject &receipt){
+        if(m_chartPlacement.isEmpty() || receipt["operation_id"].toString()!=m_chartPlacement)return;
+        const auto outcome=receipt["outcome"].toString();
+        if(outcome=="unknown")return;
+        m_chartPlacement.clear();
+        if(outcome!="committed")m_charts->relayout();
+    });
     connect(m_charts,&ChartLayer::orderRequested,this,[this](const QString &id,const QString &order){submit({{"action","chart_update"},{"chart_id",id},{"order",order}});});
     connect(m_charts,&ChartLayer::deleteRequested,this,[this](const QString &id){submit({{"action","chart_delete"},{"chart_id",id}});});
     connect(m_charts,&ChartLayer::editRequested,this,&MainWindow::showChartPanel);
     connect(m_charts,&ChartLayer::refused,this,[this](const QString &status){m_status->setText(status);});
     // The context menu on the selected chart. Its commands act on the
-    // selected chart, through the layer's requests as the chart's own keys do.
+    // selected chart through the layer, as the chart's own keys do.
     m_chartMenu=new QMenu(this);m_chartMenu->setObjectName("chartContextMenu");
     m_editChartAction=m_chartMenu->addAction(tr("Edit Chart"));m_editChartAction->setObjectName("editChartAction");
     m_chartToFrontAction=m_chartMenu->addAction(tr("Bring to Front"));m_chartToFrontAction->setObjectName("chartToFrontAction");
     m_chartToBackAction=m_chartMenu->addAction(tr("Send to Back"));m_chartToBackAction->setObjectName("chartToBackAction");
     m_chartMenu->addSeparator();
     m_deleteChartAction=m_chartMenu->addAction(tr("Delete"));m_deleteChartAction->setObjectName("deleteChartAction");
-    connect(m_editChartAction,&QAction::triggered,this,[this]{if(const auto id=m_charts->selectedChart();!id.isEmpty())emit m_charts->editRequested(id);});
-    connect(m_chartToFrontAction,&QAction::triggered,this,[this]{if(const auto id=m_charts->selectedChart();!id.isEmpty())emit m_charts->orderRequested(id,"front");});
-    connect(m_chartToBackAction,&QAction::triggered,this,[this]{if(const auto id=m_charts->selectedChart();!id.isEmpty())emit m_charts->orderRequested(id,"back");});
-    connect(m_deleteChartAction,&QAction::triggered,this,[this]{if(const auto id=m_charts->selectedChart();!id.isEmpty())emit m_charts->deleteRequested(id);});
+    connect(m_editChartAction,&QAction::triggered,m_charts,&ChartLayer::requestEdit);
+    connect(m_chartToFrontAction,&QAction::triggered,m_charts,[this]{m_charts->requestOrder("front");});
+    connect(m_chartToBackAction,&QAction::triggered,m_charts,[this]{m_charts->requestOrder("back");});
+    connect(m_deleteChartAction,&QAction::triggered,m_charts,&ChartLayer::requestDelete);
     connect(m_charts,&ChartLayer::contextMenuRequested,this,[this](const QString &,const QPoint &position){updateChartActions();m_chartMenu->popup(position);});
     updateChartActions();
     m_freezeAction=add(view,tr("Freeze top row"),{},[this]{

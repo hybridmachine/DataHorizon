@@ -52,11 +52,12 @@ QJsonObject specOf(const QString &type, const QJsonValue &grouping, const QJsonV
 }
 
 // Forwards every call to a real service. Suggest answers, workbook metadata
-// reads, chart catalog reads and operation answers can be held until released, and the answer to the next
+// reads, chart catalog reads and operation answers can be held until released, chart_update
+// operations can be refused without reaching the service, and the answer to the next
 // chart_create can be lost (the operation still reaches the service).
 class ChartProxy : public QTcpServer {
 public:
-    bool holdSuggest=false,holdMetadata=false,holdCharts=false,holdOperations=false,loseCreate=false;
+    bool holdSuggest=false,holdMetadata=false,holdCharts=false,holdOperations=false,loseCreate=false,refuseChartUpdates=false;
     int suggests=0;
     explicit ChartProxy(const QJsonObject &service) : m_upstream(this) {
         m_upstream.configure(service["url"].toString(),service["token"].toString());
@@ -78,6 +79,10 @@ public:
                 if(lose)loseCreate=false;
                 if(suggest)++suggests;
                 const QPointer<QTcpSocket> guarded=socket;
+                if(operation && refuseChartUpdates && body["action"].toString()=="chart_update") {
+                    send(guarded,{{"operation_id",body["operation_id"]},{"outcome","rejected"},{"code","INVALID_ARGUMENT"},{"message","The test proxy refused this chart change"}},"refused");
+                    return;
+                }
                 m_upstream.request(path,body,[this,guarded,suggest,metadata,catalog,operation,lose](QJsonObject result,QString error){
                     if(!guarded)return;
                     if(lose){guarded->abort();return;}
@@ -823,7 +828,10 @@ private slots:
         QCOMPARE(overlay->geometry(),expected);QCOMPARE(int(overlay->cursor().shape()),cursor);QCOMPARE(admitted.count(),0);
         QTest::mouseRelease(overlay,Qt::LeftButton,Qt::NoModifier,overlay->mapFromGlobal(end));
         QCOMPARE(resized.count(),1);QCOMPARE(moved.count(),0);QCOMPARE(admitted.count(),1);
-        QJsonObject cell,inside;QVERIFY(cellUnder(grid,area,expected.topLeft(),&cell,&inside));
+        // The right, bottom-right and bottom handles keep the stored anchor and
+        // offset; the others anchor the new corner where it lies.
+        QJsonObject cell{{"row",3},{"col",3}},inside{{"x",40},{"y",30}};
+        if(handle!=3 && handle!=4 && handle!=5)QVERIFY(cellUnder(grid,area,expected.topLeft(),&cell,&inside));
         QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["size"].toObject(),(QJsonObject{{"width",expected.width()},{"height",expected.height()}}),10000);
         QCOMPARE(layer->chart(id)["anchor"].toObject(),cell);QCOMPARE(layer->chart(id)["offset"].toObject(),inside);
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlay(id)->geometry(),expected,5000);
@@ -954,6 +962,12 @@ private slots:
         QSignalSpy edit(layer,&ChartLayer::editRequested);actions[0]->trigger();QCOMPARE(edit.count(),1);QCOMPARE(edit[0][0].toString(),id);
         // Shift+F10 and the menu key open it on the selected chart.
         overlay->setFocus();
+        // Both are taken before any window shortcut, only on a selected chart.
+        for(const auto &[key,modifiers]:{std::pair{Qt::Key_F10,Qt::ShiftModifier},std::pair{Qt::Key_Menu,Qt::NoModifier}}) {
+            QKeyEvent override(QEvent::ShortcutOverride,key,modifiers);override.ignore();
+            QCoreApplication::sendEvent(overlay,&override);QVERIFY(override.isAccepted());
+            layer->select({});override.ignore();QCoreApplication::sendEvent(overlay,&override);QVERIFY(!override.isAccepted());layer->select(id);
+        }
         QTest::keyClick(overlay,Qt::Key_F10,Qt::ShiftModifier);QCOMPARE(requested.count(),2);QCOMPARE(requested[1][0].toString(),id);
         QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(),5000);menu->hide();
         QTest::keyClick(overlay,Qt::Key_Menu);QCOMPARE(requested.count(),3);QTRY_VERIFY_WITH_TIMEOUT(menu->isVisible(),5000);menu->hide();
@@ -1005,6 +1019,102 @@ private slots:
         QVERIFY(idle(window));QCOMPARE(layer->selectedChart(),id);QTest::keyClick(layer->overlay(id),Qt::Key_Delete);
         QTRY_VERIFY_WITH_TIMEOUT(layer->overlay(id)==nullptr,10000);QCOMPARE(layer->overlays().size(),1);
         QVERIFY2(!issuesText(window).contains("chart",Qt::CaseInsensitive),qPrintable(issuesText(window)));
+    }
+    void rightPressDuringADragCancelsIt() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Pressed",2,2,0,0,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const auto id=overlay->chartId();const QRect before=overlay->geometry();auto *menu=window.findChild<QMenu *>("chartContextMenu");
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);QSignalSpy requested(layer,&ChartLayer::contextMenuRequested);QSignalSpy moved(layer,&ChartLayer::moveRequested);
+        const QPoint end=dragBy(overlay,QPoint(60,60),QPoint(100,50),false);QCOMPARE(overlay->geometry(),before.translated(100,50));
+        // The right press cancels the drag and opens no menu.
+        QTest::mousePress(overlay,Qt::RightButton,Qt::NoModifier,overlay->mapFromGlobal(end));
+        QCOMPARE(overlay->geometry(),before);QCOMPARE(requested.count(),0);QVERIFY(!menu->isVisible());QCOMPARE(layer->selectedChart(),id);
+        QTest::mouseRelease(overlay,Qt::RightButton,Qt::NoModifier,overlay->mapFromGlobal(end));
+        QTest::mouseMove(overlay,overlay->mapFromGlobal(end+QPoint(20,20)));QCOMPARE(overlay->geometry(),before);
+        QTest::mouseRelease(overlay,Qt::LeftButton,Qt::NoModifier,overlay->mapFromGlobal(end+QPoint(20,20)));
+        QTest::qWait(200);QCOMPARE(admitted.count(),0);QCOMPARE(moved.count(),0);QCOMPARE(overlay->geometry(),before);
+        // The chart is not stuck: a new drag moves it.
+        dragBy(overlay,QPoint(50,50),QPoint(60,30));QCOMPARE(moved.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlay(id)->geometry(),before.translated(60,30),10000);
+    }
+    void dragEndsWhenTheButtonOrFocusIsLost() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Lost",2,2,0,0,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const auto id=overlay->chartId();const QRect before=overlay->geometry();
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        // A move without the button (the release went elsewhere) ends the drag.
+        QPoint end=dragBy(overlay,QPoint(60,60),QPoint(100,50),false);QCOMPARE(overlay->geometry(),before.translated(100,50));
+        const QPoint at=overlay->mapFromGlobal(end+QPoint(10,10));
+        QMouseEvent move(QEvent::MouseMove,QPointF(at),QPointF(overlay->mapToGlobal(at)),Qt::NoButton,Qt::NoButton,Qt::NoModifier);
+        QCoreApplication::sendEvent(overlay,&move);
+        QCOMPARE(overlay->geometry(),before);QCOMPARE(layer->selectedChart(),id);
+        QTest::mouseRelease(overlay,Qt::LeftButton,Qt::NoModifier,at);QCOMPARE(overlay->geometry(),before);
+        // Losing the keyboard (another window activated) ends it too.
+        end=dragBy(overlay,QPoint(60,60),QPoint(100,50),false);QCOMPARE(overlay->geometry(),before.translated(100,50));
+        QFocusEvent out(QEvent::FocusOut,Qt::ActiveWindowFocusReason);QCoreApplication::sendEvent(overlay,&out);
+        QCOMPARE(overlay->geometry(),before);
+        QTest::mouseMove(overlay,overlay->mapFromGlobal(end+QPoint(20,20)));QCOMPARE(overlay->geometry(),before);
+        QTest::mouseRelease(overlay,Qt::LeftButton,Qt::NoModifier,overlay->mapFromGlobal(end+QPoint(20,20)));
+        QTest::qWait(200);QCOMPARE(admitted.count(),0);QCOMPARE(overlay->geometry(),before);
+    }
+    void bottomRightResizeKeepsAScrolledAnchor() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Scrolled",3,3,16,16,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const auto id=overlay->chartId();auto *area=overlay->parentWidget();layer->select(id);
+        auto *bar=grid->verticalScrollBar();
+        while(grid->rowViewportPosition(2)+16>=0 && bar->value()<bar->maximum())bar->setValue(bar->value()+1);
+        QVERIFY(overlay->isVisible());QVERIFY(overlay->geometry().top()<grid->viewport()->mapTo(area,QPoint()).y());
+        QSignalSpy resized(layer,&ChartLayer::resizeRequested);
+        dragBy(overlay,QPoint(overlay->width()-4,overlay->height()-4),QPoint(24,16));QCOMPARE(resized.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["size"].toObject(),(QJsonObject{{"width",344},{"height",216}}),10000);
+        QCOMPARE(layer->chart(id)["anchor"].toObject(),(QJsonObject{{"row",3},{"col",3}}));QCOMPARE(layer->chart(id)["offset"].toObject(),(QJsonObject{{"x",16},{"y",16}}));
+    }
+    void resizeStopsAtTheMaximum() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Large",3,3,0,0,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const auto id=overlay->chartId();const QRect before=overlay->geometry();
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(60,60));
+        const QPoint end=dragBy(overlay,QPoint(overlay->width()-4,overlay->height()-4),QPoint(6000,6000),false);
+        QCOMPARE(overlay->geometry(),QRect(before.topLeft(),QSize(4096,4096)));
+        QTest::mouseRelease(overlay,Qt::LeftButton,Qt::NoModifier,overlay->mapFromGlobal(end));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["size"].toObject(),(QJsonObject{{"width",4096},{"height",4096}}),10000);
+        QCOMPARE(layer->chart(id)["anchor"].toObject(),(QJsonObject{{"row",3},{"col",3}}));QCOMPARE(layer->chart(id)["offset"].toObject(),(QJsonObject{{"x",0},{"y",0}}));
+    }
+    void dragIntoAFrozenColumnAnchorsThere() {
+        CHART_WINDOW;window.findChild<QAction *>("freezeFirstColumnAction")->trigger();
+        auto *left=window.findChild<QTableView *>("frozenFirstColumn");QVERIFY(left);QTRY_VERIFY_WITH_TIMEOUT(left->isVisible(),5000);
+        QVERIFY(addChart(window,opened,"Leftward",4,4,0,0,240,160));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const auto id=overlay->chartId();auto *area=overlay->parentWidget();
+        // 7 px into column A and 3 px into row 6, in the frozen column's pane.
+        const QPoint target=left->viewport()->mapTo(area,QPoint(left->columnViewportPosition(0)+7,left->rowViewportPosition(5)+3));
+        const QPoint end=dragBy(overlay,QPoint(40,40),target-overlay->geometry().topLeft(),false);
+        QCOMPARE(overlay->geometry().topLeft(),target);
+        QTest::mouseRelease(overlay,Qt::LeftButton,Qt::NoModifier,overlay->mapFromGlobal(end));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["anchor"].toObject(),(QJsonObject{{"row",6},{"col",1}}),10000);
+        QCOMPARE(layer->chart(id)["offset"].toObject(),(QJsonObject{{"x",7},{"y",3}}));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlay(id)->geometry().topLeft(),target,5000);
+    }
+    void dragPlacesNextToAHiddenRow() {
+        CHART_WINDOW;selectCells(grid,model,4,0,4,0);window.findChild<QAction *>("hideRowsAction")->trigger();QTRY_VERIFY_WITH_TIMEOUT(grid->isRowHidden(4),5000);
+        QVERIFY(addChart(window,opened,"Hopping",10,5,0,0,240,160));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const auto id=overlay->chartId();auto *area=overlay->parentWidget();
+        // 2 px below the hidden row 5: row 6, never row 5.
+        QCOMPARE(grid->rowViewportPosition(4),grid->rowViewportPosition(5));
+        QPoint target=grid->viewport()->mapTo(area,QPoint(grid->columnViewportPosition(2)+5,grid->rowViewportPosition(5)+2));
+        QPoint end=dragBy(overlay,QPoint(40,40),target-overlay->geometry().topLeft(),false);
+        QTest::mouseRelease(overlay,Qt::LeftButton,Qt::NoModifier,overlay->mapFromGlobal(end));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["anchor"].toObject(),(QJsonObject{{"row",6},{"col",3}}),10000);
+        QCOMPARE(layer->chart(id)["offset"].toObject(),(QJsonObject{{"x",5},{"y",2}}));
+        // The last pixel row above it: row 4.
+        QVERIFY(idle(window));overlay=layer->overlay(id);QTRY_COMPARE_WITH_TIMEOUT(overlay->geometry().topLeft(),target,5000);
+        const int height=grid->rowHeight(3);
+        target=grid->viewport()->mapTo(area,QPoint(grid->columnViewportPosition(1)+3,grid->rowViewportPosition(3)+height-1));
+        end=dragBy(overlay,QPoint(40,40),target-overlay->geometry().topLeft(),false);
+        QTest::mouseRelease(overlay,Qt::LeftButton,Qt::NoModifier,overlay->mapFromGlobal(end));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["anchor"].toObject(),(QJsonObject{{"row",4},{"col",2}}),10000);
+        QCOMPARE(layer->chart(id)["offset"].toObject(),(QJsonObject{{"x",3},{"y",height-1}}));
     }
 #undef CHART_WINDOW
 
@@ -1106,6 +1216,63 @@ private slots:
         QTest::qWait(200);QCOMPARE(admitted.count(),1);
         const auto chart=layer->chart(layer->overlays().first()->chartId());
         QCOMPARE(chart["anchor"].toObject(),(QJsonObject{{"row",2},{"col",4}}));QCOMPARE(chart["size"].toObject(),(QJsonObject{{"width",320},{"height",200}}));
+    }
+    void refusedChangeGoesBack() {
+        PROXY_WINDOW;Q_UNUSED(model);QVERIFY(addChart(window,opened,"Refused",3,3,0,0,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const auto id=overlay->chartId();const QRect before=overlay->geometry();
+        QSignalSpy receipts(&window,&MainWindow::operationReceipt);proxy.refuseChartUpdates=true;
+        // A refused move: the chart returns to its stored rectangle and the service's message is reported.
+        dragBy(overlay,QPoint(60,60),QPoint(90,50));
+        QTRY_COMPARE_WITH_TIMEOUT(receipts.count(),1,10000);QCOMPARE(receipts[0][0].toJsonObject()["outcome"].toString(),QString("rejected"));
+        QTRY_COMPARE_WITH_TIMEOUT(overlay->geometry(),before,5000);QCOMPARE(overlay->mask(),QRegion(overlay->rect()));
+        QVERIFY2(issuesText(window).contains("The test proxy refused this chart change"),qPrintable(issuesText(window)));
+        QCOMPARE(layer->chart(id)["anchor"].toObject(),(QJsonObject{{"row",3},{"col",3}}));QCOMPARE(layer->selectedChart(),id);
+        // A refused mouse resize the same.
+        QVERIFY(idle(window));
+        dragBy(overlay,QPoint(overlay->width()-4,overlay->height()-4),QPoint(30,20));
+        QTRY_COMPARE_WITH_TIMEOUT(receipts.count(),2,10000);QTRY_COMPARE_WITH_TIMEOUT(overlay->geometry(),before,5000);
+        // Once accepted, a move is stored.
+        QVERIFY(idle(window));proxy.refuseChartUpdates=false;
+        dragBy(overlay,QPoint(60,60),QPoint(90,50));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlay(id)->geometry(),before.translated(90,50),10000);
+    }
+    void relistDuringADragKeepsTheDraggedChart() {
+        PROXY_WINDOW;Q_UNUSED(model);QVERIFY(addChart(window,opened,"Held",3,3,0,0,320,200));QVERIFY(addChart(window,opened,"Other",16,3,0,0,200,150));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);auto *held=overlayNamed(layer,"Held");QTRY_VERIFY_WITH_TIMEOUT(held->isVisible(),5000);
+        const auto id=held->chartId();auto *area=held->parentWidget();
+        // The catalog read after a change elsewhere is held until the drag is under way.
+        proxy.holdCharts=true;QVERIFY(!window.submit({{"action","chart_update"},{"chart_id",overlayNamed(layer,"Other")->chartId()},{"name","Renamed"}}).isEmpty());
+        QVERIFY(idle(window));
+        const QRect before=held->geometry();const QPoint delta(80,40);
+        const QPoint end=dragBy(held,QPoint(60,60),delta,false);QCOMPARE(held->geometry(),before.translated(delta));
+        proxy.releaseCharts();QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Renamed"),10000);
+        QCOMPARE(layer->overlay(id),held);QCOMPARE(held->geometry(),before.translated(delta));
+        layer->relayout();QCOMPARE(held->geometry(),before.translated(delta));QCOMPARE(held->mask(),QRegion(held->rect()));
+        // The drag still ends in one move.
+        QSignalSpy moved(layer,&ChartLayer::moveRequested);
+        QTest::mouseRelease(held,Qt::LeftButton,Qt::NoModifier,held->mapFromGlobal(end));QCOMPARE(moved.count(),1);
+        QJsonObject cell,inside;QVERIFY(cellUnder(grid,area,before.topLeft()+delta,&cell,&inside));
+        QTRY_VERIFY_WITH_TIMEOUT(layer->chart(id)["anchor"].toObject()==cell && layer->chart(id)["offset"].toObject()==inside,10000);
+    }
+    void chartDeletedDuringADragEndsItSilently() {
+        PROXY_WINDOW;Q_UNUSED(model);QVERIFY(addChart(window,opened,"First",3,3,0,0,320,200));QVERIFY(addChart(window,opened,"Second",16,3,0,0,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);
+        QPointer<ChartOverlay> first=overlayNamed(layer,"First"),second=overlayNamed(layer,"Second");QTRY_VERIFY_WITH_TIMEOUT(first->isVisible() && second->isVisible(),5000);
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);QSignalSpy moved(layer,&ChartLayer::moveRequested);
+        // Deleted through submit while the button is held: the drag ends at once.
+        QPoint end=dragBy(first,QPoint(60,60),QPoint(80,40),false);
+        QVERIFY(!window.submit({{"action","chart_delete"},{"chart_id",first->chartId()}}).isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT(!first,10000);
+        QTest::mouseRelease(grid->viewport(),Qt::LeftButton,Qt::NoModifier,grid->viewport()->mapFromGlobal(end));
+        QVERIFY(idle(window));QCOMPARE(admitted.count(),1);
+        // Deleted while the drag is under way (its catalog read held until then): the relist ends it silently.
+        proxy.holdCharts=true;QVERIFY(!window.submit({{"action","chart_delete"},{"chart_id",second->chartId()}}).isEmpty());
+        QVERIFY(idle(window));QVERIFY(second);
+        end=dragBy(second,QPoint(60,60),QPoint(80,40),false);
+        proxy.releaseCharts();QTRY_VERIFY_WITH_TIMEOUT(!second,10000);QCOMPARE(layer->overlays().size(),0);
+        QTest::mouseRelease(grid->viewport(),Qt::LeftButton,Qt::NoModifier,grid->viewport()->mapFromGlobal(end));
+        QTest::qWait(200);QCOMPARE(admitted.count(),2);QCOMPARE(moved.count(),0);
     }
 #undef PROXY_WINDOW
 

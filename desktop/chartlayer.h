@@ -134,6 +134,12 @@ public:
     // that cell. False when no cell is there: a header, outside the grid, past
     // the last row or column.
     bool placement(const QRect &rectInGridArea,QJsonObject *anchor,QJsonObject *offset) const;
+public slots:
+    // Requests for the selected chart, as its keys make them; nothing without
+    // a selection, and no order or delete while not interactive.
+    void requestEdit();
+    void requestOrder(const QString &order);
+    void requestDelete();
 signals:
     void listed(int count);
     // A chart's overlay now shows the service's image for the current state and size.

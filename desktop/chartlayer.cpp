@@ -246,6 +246,9 @@ bool ChartLayer::overlayEvent(ChartOverlay *item,QEvent *event) {
     switch(event->type()) {
     case QEvent::MouseButtonPress: {
         auto *mouse=static_cast<QMouseEvent *>(event);
+        // Another press during a drag cancels it and does nothing else.
+        if(m_drag.active){cancelDrag();return true;}
+        m_drag={};
         // Handles are drawn, and so taken, only on a chart already selected.
         const int handle=item->handleAt(mouse->position().toPoint());
         select(item->chartId());item->setFocus(Qt::MouseFocusReason);
@@ -260,12 +263,16 @@ bool ChartLayer::overlayEvent(ChartOverlay *item,QEvent *event) {
         select(item->chartId());item->setFocus(Qt::MouseFocusReason);emit editRequested(item->chartId());return true;
     case QEvent::MouseMove: {
         auto *mouse=static_cast<QMouseEvent *>(event);const QPoint global=mouse->globalPosition().toPoint();
-        if(m_drag.overlay==item && (mouse->buttons()&Qt::LeftButton)) {
-            // A plain click sends nothing: the drag starts past the drag distance.
-            if(!m_drag.active && (global-m_drag.origin).manhattanLength()<QApplication::startDragDistance())return true;
-            m_drag.active=true;dragTo(global);
+        if(m_drag.overlay==item) {
+            // A move without the button (its release went elsewhere) ends the drag.
+            if(!(mouse->buttons()&Qt::LeftButton))cancelDrag();
+            else {
+                // A plain click sends nothing: the drag starts past the drag distance.
+                if(!m_drag.active && (global-m_drag.origin).manhattanLength()<QApplication::startDragDistance())return true;
+                m_drag.active=true;dragTo(global);return true;
+            }
         }
-        else if(mouse->buttons()==Qt::NoButton)updateCursor(item,item->handleAt(mouse->position().toPoint()));
+        if(mouse->buttons()==Qt::NoButton)updateCursor(item,item->handleAt(mouse->position().toPoint()));
         return true;
     }
     case QEvent::MouseButtonRelease: {
@@ -276,6 +283,10 @@ bool ChartLayer::overlayEvent(ChartOverlay *item,QEvent *event) {
     case QEvent::ContextMenu:
         // A right-click's menu is asked for on the press, the keyboard's on its key.
         return true;
+    case QEvent::FocusOut: case QEvent::WindowDeactivate:
+        // A chart that loses the keyboard or the window ends its drag.
+        if(m_drag.overlay==item)cancelDrag();
+        return false;
     case QEvent::Wheel: {
         if(!m_body)return false;
         auto *wheel=static_cast<QWheelEvent *>(event);auto *viewport=m_body->viewport();
@@ -320,8 +331,9 @@ bool ChartLayer::keyEvent(ChartOverlay *item,QKeyEvent *key) {
     }
     if(!item->selected())return false;
     // The menu opens while the chart cannot change too; it then offers Edit Chart only.
-    if(press && ((code==Qt::Key_Menu && modifiers==Qt::NoModifier) || (code==Qt::Key_F10 && modifiers==Qt::ShiftModifier))) {
-        if(!key->isAutoRepeat())emit contextMenuRequested(item->chartId(),menuPosition(item));
+    if((code==Qt::Key_Menu && modifiers==Qt::NoModifier) || (code==Qt::Key_F10 && modifiers==Qt::ShiftModifier)) {
+        key->accept();
+        if(press && !key->isAutoRepeat() && !m_drag.active)emit contextMenuRequested(item->chartId(),menuPosition(item));
         return true;
     }
     if(!m_interactive)return false;
@@ -379,9 +391,13 @@ void ChartLayer::dragTo(const QPoint &globalPosition) {
 void ChartLayer::finishDrag(const QPoint &globalPosition) {
     const QRect rect=dragRect(globalPosition);const auto drag=std::exchange(m_drag,{});
     if(!drag.active || !drag.overlay)return;
-    QJsonObject anchor,offset;
+    // The right, bottom-right and bottom handles leave the top-left corner
+    // where it is stored; the others place the new corner (Decision 5).
+    const bool cornerKept=drag.handle==3 || drag.handle==4 || drag.handle==5;
+    const auto chart=drag.overlay->chart();
+    QJsonObject anchor=chart["anchor"].toObject(),offset=chart["offset"].toObject();
     // Nothing moved, or no cell under the top-left corner: the chart goes back.
-    if(rect==drag.start || !placement(rect,&anchor,&offset) || !offsetAllowed(offset)){relayout();return;}
+    if(rect==drag.start || (!cornerKept && (!placement(rect,&anchor,&offset) || !offsetAllowed(offset)))){relayout();return;}
     if(drag.handle<0)emit moveRequested(drag.overlay->chartId(),anchor,offset);
     else emit resizeRequested(drag.overlay->chartId(),anchor,offset,QJsonObject{{"width",rect.width()},{"height",rect.height()}});
 }
@@ -529,6 +545,18 @@ void ChartLayer::setInteractive(bool interactive) {
     if(m_interactive)return;
     cancelDrag();
     for(auto *item:overlays())item->unsetCursor();
+}
+
+void ChartLayer::requestEdit() {
+    if(!m_selected.isEmpty())emit editRequested(m_selected);
+}
+
+void ChartLayer::requestOrder(const QString &order) {
+    if(!m_selected.isEmpty() && m_interactive)emit orderRequested(m_selected,order);
+}
+
+void ChartLayer::requestDelete() {
+    if(!m_selected.isEmpty() && m_interactive)emit deleteRequested(m_selected);
 }
 
 void ChartLayer::setPassThrough(bool passThrough) {

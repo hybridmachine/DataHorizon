@@ -375,6 +375,8 @@ private:
     // The context menu on a chart (Task 5).
     QMenu *m_chartMenu = nullptr;
     QAction *m_editChartAction = nullptr, *m_chartToFrontAction = nullptr, *m_chartToBackAction = nullptr, *m_deleteChartAction = nullptr;
+    // The operation id of the chart move or resize awaiting its receipt.
+    QString m_chartPlacement;
     // A suggest request is outstanding; a second Insert waits for it.
     bool m_chartSuggesting = false;
     // The operation id of the chart_create whose committed receipt's chart is
