@@ -145,6 +145,8 @@ jobs:
           path: |
             build/Testing/Temporary/*.log
             build/desktop-tests.txt
+            build/python-workspace-tests.txt
+            build/chart-authoring-tests.txt
             build/build-toolchain.json
           if-no-files-found: ignore
 
