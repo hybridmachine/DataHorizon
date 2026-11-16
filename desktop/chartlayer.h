@@ -95,8 +95,6 @@ private:
     void clear();
     void restack();
     void queueRelayout();
-    // Why a chart cannot be drawn; empty for a readable chart.
-    static QString reasonFor(const QJsonObject &chart);
     // One render job of this layer. A job still being started is marked
     // abandoned rather than dropped, so its answer can retire it.
     struct Job { QString id,chartId,base,sheet,state,key; quint64 clientGeneration=0; bool started=false,abandoned=false; };

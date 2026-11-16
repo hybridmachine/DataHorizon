@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "chartlayer.h"
+#include "chartspec.h"
 #include "frozenpanes.h"
 #include "restclient.h"
 #include <QEvent>
@@ -124,18 +125,6 @@ void ChartLayer::list() {
     });
 }
 
-QString ChartLayer::reasonFor(const QJsonObject &chart) {
-    if(chart["issue"].isString())return tr("This chart cannot be read (%1)").arg(chart["issue"].toString());
-    if(chart["over_limit"].isString())return tr("This chart's sources are over a size limit (%1)").arg(chart["over_limit"].toString());
-    const auto spec=chart["spec"].toObject();
-    QList<QJsonObject> sources;
-    sources.append(spec["categories"].toObject()["source"].toObject());
-    for(const auto &value:spec["series"].toArray())
-        for(const auto &part:QStringList{"name","values","x"})sources.append(value.toObject()[part].toObject()["source"].toObject());
-    for(const auto &source:sources)if(source["broken"].toBool())return tr("A source of this chart no longer exists");
-    return {};
-}
-
 void ChartLayer::accept(const QJsonArray &charts) {
     if(!attached())return;
     QHash<QString,ChartOverlay *> existing;
@@ -147,7 +136,7 @@ void ChartLayer::accept(const QJsonArray &charts) {
         auto *overlay=existing.take(id);
         if(!overlay)overlay=new ChartOverlay(id,m_gridArea);
         overlay->setChart(chart);
-        const auto reason=reasonFor(chart);
+        const auto reason=ChartSpec::stateReason(chart);
         // A readable chart keeps its previous image until a new one arrives.
         if(!reason.isEmpty() || !overlay->hasImage()){overlay->setPlaceholder(reason);overlay->setRenderKey({});}
         kept.append(overlay);
@@ -227,7 +216,7 @@ void ChartLayer::relayout() {
 // A chart is rendered while it is shown, readable and not projected away.
 bool ChartLayer::wanted(ChartOverlay *overlay) const {
     return overlay && attached() && !overlay->isHidden() && !m_projected && !m_base.isEmpty() && !m_sheet.isEmpty() && !m_state.isEmpty()
-        && reasonFor(overlay->chart()).isEmpty();
+        && ChartSpec::stateReason(overlay->chart()).isEmpty();
 }
 
 QString ChartLayer::renderKey(ChartOverlay *overlay) const {
