@@ -106,7 +106,13 @@ public:
                 const bool queryRead=path.endsWith("/queries/read");
                 m_upstream.request(path,body,[this,guarded,suggest,metadata,catalog,operation,lose,queryRead](QJsonObject result,QString error){
                     if(!guarded)return;
-                    if(lose){guarded->abort();return;}
+                    // A lost acknowledgement, as the desktop tests inject it. A dropped
+                    // connection is not used: Qt's HTTP layer may send the request again.
+                    if(lose) {
+                        const auto bytes=QJsonDocument(QJsonObject{{"message","injected lost acknowledgement"},{"code","UNAVAILABLE"},{"outcome","unknown"}}).toJson(QJsonDocument::Compact);
+                        guarded->write(QByteArray("HTTP/1.1 503 Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: ")+QByteArray::number(bytes.size())+"\r\n\r\n"+bytes);
+                        guarded->disconnectFromHost();return;
+                    }
                     std::function<void()> reply=[guarded,result,error]{send(guarded,result,error);};
                     if(operation && holdOperations)m_operations.append(reply);
                     else if(suggest && holdSuggest)m_suggest.append(reply);
