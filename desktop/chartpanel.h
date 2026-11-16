@@ -8,6 +8,7 @@
 #include <QPointer>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 #include <functional>
 
@@ -35,7 +36,10 @@ class QVBoxLayout;
 // the first change after its values (and X, for a scatter chart) are given.
 // While a source of the chart is broken, edits stay in the working copy,
 // marked "Not applied yet", until none is broken; then one change carries
-// them all. Another chart, or a changed one, drops the working copy.
+// them all. A refused change undoes that change alone. The same chart
+// renamed, moved or reordered keeps the working copy; with another
+// specification it starts again from it, keeping added rows not yet
+// complete; another chart drops it.
 //
 // A choice (a type button, Grouping, Legend, Bring to Front, Send to Back)
 // asks for its change when it changes; a text field on Enter or when it loses
@@ -76,7 +80,12 @@ public:
     // What the Data group's fields offer: sheets as [{id, name}], tables
     // and queries as POST /tables lists them (a query may carry its
     // result columns as "shape": [{name}]).
+    // A saved query's columns are not listed by /tables: they are asked for
+    // with queryColumnsWanted when a query is chosen (or a stored one's
+    // column list is opened) and given here. They are kept until setCatalog
+    // describes that query differently.
     void setCatalog(const QJsonArray &sheets,const QJsonArray &tables,const QJsonArray &queries);
+    void setQueryColumns(const QString &queryId,const QStringList &columns);
 signals:
     // changes holds exactly the chart_update fields: name, order or spec.
     // field names the control (chartName, chartOrder, chartType,
@@ -88,8 +97,11 @@ signals:
     // Pick on a Range or Cell source field (categoriesSource, series<n>Name,
     // series<n>Values, series<n>X).
     void pickRequested(const QString &field);
+    // The columns of a saved query are wanted (answered with setQueryColumns).
+    void queryColumnsWanted(const QString &queryId);
 private:
-    void load();
+    // keepData: the same chart and specification; the Data group's working copy stays.
+    void load(bool keepData=false);
     void loadField(const QString &field);
     void updateEnabled();
     void showMessage(const QString &field,const QString &message);
@@ -149,9 +161,25 @@ private:
     void refuseLocally(const QString &field,const QString &message);
     QWidget *withMarkers(ChartSourceField *field);
     void connectSource(ChartSourceField *source);
+    static constexpr int MaxSeries=64;
+    // Values (and X, for a scatter chart) given.
+    bool complete(const QJsonValue &series) const;
+    // Notes the working copy before an edit that may be sent, so a refusal undoes that edit alone.
+    void remember();
+    void clearSeriesMessages();
+    QJsonArray queriesWithColumns() const;
     QJsonObject m_working;
     QList<SeriesState> m_rows;
     bool m_categoriesEdited=false,m_seriesHeld=false;
+    struct Before {
+        bool valid=false;
+        QJsonObject chart,working;
+        QList<SeriesState> rows;
+        bool categoriesEdited=false,seriesHeld=false;
+    } m_before;
+    QHash<QString,QStringList> m_queryColumns;
+    QHash<QString,QJsonObject> m_querySummaries;
+    QSet<QString> m_queriesWanted;
     QHash<QString,QString> m_sheetNames,m_sheetIds;
     QJsonArray m_tables,m_queries;
     // Names of the tables, columns and queries the chart's stored sources give.

@@ -422,7 +422,9 @@ The reason heads the panel. The Chart group stays enabled (rename, Bring to
 Front, Send to Back), as do the source fields and the Data group's buttons.
 Type, Title, Axes and Legend are disabled, because the engine cannot accept a
 specification that holds a broken source. Each broken field the user has not
-yet replaced says "This source no longer exists". A source field the user has
+yet replaced says "This source no longer exists". Its old reference or name is
+not shown, because the engine clears it when the source breaks: the field is
+blank (the sketch's `Old!A2:A13` cannot be shown). A source field the user has
 edited is held in the panel and marked "Not applied yet" instead (in the sketch,
 Series 1 Values was edited; Categories and both Series 2 fields are still
 broken). Series added, removed or moved are held the same way. When no
@@ -606,8 +608,9 @@ Panel texts and field markers:
 | "Enter a number or leave empty for automatic" | Beneath Minimum or Maximum: the text is not a number (refused in the panel) |
 | "Enter a cell range such as A2:A13" | Beneath a Range or Cell field: an unknown sheet or text that is not a reference (refused in the panel) |
 | "A series name takes one cell" | Beneath a series Name set to Cell: more than one cell typed (refused in the panel) |
+| "Not applied yet" | Beneath the Values (and, for Scatter, X) of a series added with Add Series, until its values are given and it is sent |
 
-The last three rows were added during the build, November 2026: not part of the original sign-off.
+The last four rows were added during the build, November 2026: not part of the original sign-off.
 
 ## Decisions for the owner to confirm
 

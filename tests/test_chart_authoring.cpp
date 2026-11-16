@@ -66,7 +66,7 @@ QJsonObject specOf(const QString &type, const QJsonValue &grouping, const QJsonV
 class ChartProxy : public QTcpServer {
 public:
     bool holdSuggest=false,holdMetadata=false,holdCharts=false,holdOperations=false,loseCreate=false,refuseChartUpdates=false,failCharts=false;
-    int suggests=0;
+    int suggests=0,queryReads=0;
     explicit ChartProxy(const QJsonObject &service) : m_upstream(this) {
         m_upstream.configure(service["url"].toString(),service["token"].toString());
         connect(this,&QTcpServer::newConnection,this,[this]{
@@ -86,6 +86,7 @@ public:
                 const bool lose=loseCreate && path.endsWith("/operations") && body["action"].toString()=="chart_create";
                 if(lose)loseCreate=false;
                 if(suggest)++suggests;
+                if(path.endsWith("/queries/read"))++queryReads;
                 const QPointer<QTcpSocket> guarded=socket;
                 if(operation && refuseChartUpdates && body["action"].toString()=="chart_update") {
                     std::function<void()> reply=[guarded,id=body["operation_id"]]{send(guarded,{{"operation_id",id},{"outcome","rejected"},{"code","INVALID_ARGUMENT"},{"message","The test proxy refused this chart change"}},"refused");};
@@ -1636,6 +1637,7 @@ private slots:
         auto *query=window.findChild<QComboBox *>("series1ValuesQuery"),*queryColumn=window.findChild<QComboBox *>("series1ValuesQueryColumn");QVERIFY(query && queryColumn);
         choose(kindOf(window,"series1Values"),"Query column");QCOMPARE(requested.count(),1);QVERIFY(query->isVisible());QVERIFY(!table->isVisible());
         choose(query,"Totals");QCOMPARE(requested.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(itemsOf(queryColumn),QStringList{"Total"},10000);QCOMPARE(queryColumn->currentIndex(),-1);
         choose(queryColumn,"Total");QCOMPARE(requested.count(),2);QCOMPARE(admitted.count(),2);
         QTRY_COMPARE_WITH_TIMEOUT(stored()["kind"].toString(),QString("query"),10000);
         const auto totals=catalog["queries"].toArray()[0].toObject();QCOMPARE(totals["name"].toString(),QString("Totals"));
@@ -1646,7 +1648,7 @@ private slots:
         CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Named",2,4));activate(window);
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
         auto *kind=kindOf(window,"series1Name");auto *name=rangeOf(window,"series1Name");auto *pick=window.findChild<QToolButton *>("series1NamePick");
-        QCOMPARE(itemsOf(kind),(QStringList{"Text","Cell"}));QCOMPARE(kind->currentText(),QString("Cell"));QCOMPARE(name->text(),QString("B1"));
+        QCOMPARE(itemsOf(kind),(QStringList{"Text","Cell"}));QCOMPARE(kind->currentText(),QString("Cell"));QCOMPARE(name->text(),QString("B1"));QCOMPARE(name->maxLength(),255);
         QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
         auto stored=[&]{return layer->chart(id)["spec"].toObject()["series"].toArray()[0].toObject()["name"].toObject();};
         // Text: changing the kind clears the field and sends nothing.
@@ -1706,9 +1708,12 @@ private slots:
         auto names=[&]{QStringList out;for(const auto &item:layer->chart(id)["spec"].toObject()["series"].toArray())out<<item.toObject()["name"].toObject()["text"].toString();return out;};
         auto button=[&](const QString &name){return window.findChild<QPushButton *>(name);};
         QCOMPARE(names(),(QStringList{"A","B","C"}));
+        // A message beside a series does not move to another one.
+        typeInto(rangeOf(window,"series3Values"),"Nope",true);QVERIFY(window.findChild<QLabel *>("series3ValuesMessage")->isVisible());
         QCOMPARE(button("removeSeries1")->text(),QString("Remove"));QCOMPARE(button("seriesUp1")->text(),QString("Move Up"));QCOMPARE(button("seriesDown1")->text(),QString("Move Down"));
         QVERIFY(!button("seriesUp1")->isEnabled());QVERIFY(button("seriesDown1")->isEnabled());QVERIFY(button("seriesUp3")->isEnabled());QVERIFY(!button("seriesDown3")->isEnabled());
         press(button("seriesDown1"));QCOMPARE(requested.count(),1);QCOMPARE(admitted.count(),1);
+        QVERIFY(window.findChild<QLabel *>("series3ValuesMessage")->isHidden());
         QTRY_COMPARE_WITH_TIMEOUT(names(),(QStringList{"B","A","C"}),10000);QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(button("seriesUp3")->isEnabled(),5000);
         press(button("seriesUp3"));QCOMPARE(requested.count(),2);QCOMPARE(admitted.count(),2);
         QTRY_COMPARE_WITH_TIMEOUT(names(),(QStringList{"B","C","A"}),10000);QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(button("removeSeries2")->isEnabled(),5000);
@@ -1823,6 +1828,145 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["type"].toString(),QString("line"),10000);
         QTRY_VERIFY_WITH_TIMEOUT(categories->isVisible(),5000);QVERIFY(!window.findChild<QWidget *>("series1X")->isVisible());
         QCOMPARE(rangeOf(window,"categoriesSource")->text(),QString("B2:B3"));
+    }
+    void aRefusedRepairKeepsTheOtherHeldEdits() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        const auto id=chartBrokenByDeletingData(window,opened,layer,"Mending",chartSpec("Data"));QVERIFY(!id.isEmpty());
+        QVERIFY(openPanel(window,layer,id));activate(window);
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);QSignalSpy receipts(&window,&MainWindow::operationReceipt);
+        auto marker=[&](const QString &field){return window.findChild<QLabel *>(field+"Marker");};
+        typeInto(rangeOf(window,"categoriesSource"),"A2:A4",true);typeInto(rangeOf(window,"series1Name"),"B1",true);
+        QCOMPARE(admitted.count(),0);
+        // The last replacement goes over a limit: only it is undone.
+        typeInto(rangeOf(window,"series1Values"),"B2:B20000",true);QCOMPARE(admitted.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(receipts.count(),1,10000);const auto serviceMessage=receipts[0][0].toJsonObject()["message"].toString();
+        auto *message=window.findChild<QLabel *>("series1ValuesMessage");QTRY_VERIFY_WITH_TIMEOUT(message->isVisible(),5000);QCOMPARE(message->text(),serviceMessage);
+        QCOMPARE(rangeOf(window,"series1Values")->text(),QString());QCOMPARE(marker("series1Values")->text(),QString("This source no longer exists"));
+        QCOMPARE(rangeOf(window,"categoriesSource")->text(),QString("A2:A4"));QCOMPARE(marker("categoriesSource")->text(),QString("Not applied yet"));
+        QCOMPARE(rangeOf(window,"series1Name")->text(),QString("B1"));QCOMPARE(marker("series1Name")->text(),QString("Not applied yet"));
+        QVERIFY(ChartSpec::hasBrokenSource(layer->chart(id)));
+        // Given within the limit, the held edits go with it in one change.
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(rangeOf(window,"series1Values")->isEnabled(),5000);
+        typeInto(rangeOf(window,"series1Values"),"B2:B4",true);QCOMPARE(admitted.count(),2);
+        QTRY_VERIFY_WITH_TIMEOUT(!ChartSpec::hasBrokenSource(layer->chart(id)),10000);
+        const auto spec=layer->chart(id)["spec"].toObject();
+        QCOMPARE(spec["categories"].toObject()["source"].toObject()["ref"].toString(),QString("A2:A4"));
+        QCOMPARE(spec["series"].toArray()[0].toObject()["name"].toObject()["source"].toObject()["ref"].toString(),QString("B1"));
+        QCOMPARE(spec["series"].toArray()[0].toObject()["values"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B4"));
+    }
+    void aRefusedAddedSeriesKeepsItsRow() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Growing",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy receipts(&window,&MainWindow::operationReceipt);
+        press(window.findChild<QPushButton *>("addSeries"));typeInto(rangeOf(window,"series2Name"),"Extra",true);
+        typeInto(rangeOf(window,"series2Values"),"B2:B20000",true);
+        QTRY_COMPARE_WITH_TIMEOUT(receipts.count(),1,10000);const auto serviceMessage=receipts[0][0].toJsonObject()["message"].toString();
+        // The row stays, its values as before, with the service's reason beside them.
+        auto *message=window.findChild<QLabel *>("series2ValuesMessage");QVERIFY(message);
+        QTRY_VERIFY_WITH_TIMEOUT(message->isVisible(),5000);QCOMPARE(message->text(),serviceMessage);
+        QCOMPARE(rangeOf(window,"series2Values")->text(),QString());QCOMPARE(rangeOf(window,"series2Name")->text(),QString("Extra"));
+        QCOMPARE(window.findChild<QLabel *>("series2ValuesMarker")->text(),QString("Not applied yet"));
+        QCOMPARE(layer->chart(id)["spec"].toObject()["series"].toArray().size(),1);
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(rangeOf(window,"series2Values")->isEnabled(),5000);
+        typeInto(rangeOf(window,"series2Values"),"B2:B3",true);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["series"].toArray().size(),2,10000);
+        QCOMPARE(layer->chart(id)["spec"].toObject()["series"].toArray()[1].toObject()["name"].toObject(),text("Extra"));
+    }
+    void renameKeepsAHeldRepair() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        const auto id=chartBrokenByDeletingData(window,opened,layer,"Held repair",chartSpec("Data"));QVERIFY(!id.isEmpty());
+        QVERIFY(openPanel(window,layer,id));activate(window);
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        typeInto(rangeOf(window,"categoriesSource"),"A2:A4",true);QCOMPARE(requested.count(),0);
+        // A rename is sent at once and keeps the held replacement.
+        typeInto(window.findChild<QLineEdit *>("chartName"),"Renamed",true);QCOMPARE(requested.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["name"].toString(),QString("Renamed"),10000);QVERIFY(idle(window));
+        QTRY_VERIFY_WITH_TIMEOUT(rangeOf(window,"categoriesSource")->isEnabled(),5000);
+        QCOMPARE(rangeOf(window,"categoriesSource")->text(),QString("A2:A4"));
+        QCOMPARE(window.findChild<QLabel *>("categoriesSourceMarker")->text(),QString("Not applied yet"));
+        typeInto(rangeOf(window,"series1Values"),"B2:B4",true);typeInto(rangeOf(window,"series1Name"),"B1",true);
+        QCOMPARE(requested.count(),2);QCOMPARE(requested[1][1].toJsonObject().keys(),QStringList{"spec"});
+        QTRY_VERIFY_WITH_TIMEOUT(!ChartSpec::hasBrokenSource(layer->chart(id)),10000);
+        QCOMPARE(layer->chart(id)["spec"].toObject()["categories"].toObject()["source"].toObject()["ref"].toString(),QString("A2:A4"));
+        QCOMPARE(layer->chart(id)["name"].toString(),QString("Renamed"));QVERIFY(idle(window));QCOMPARE(admitted.count(),2);
+    }
+    void titleChangeKeepsAnAddedRow() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Titled",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        press(window.findChild<QPushButton *>("addSeries"));typeInto(rangeOf(window,"series2Name"),"Kept",true);
+        typeInto(window.findChild<QLineEdit *>("chartTitle"),"New title",true);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].toString(),QString("New title"),10000);
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QWidget *>("chartTitle")->isEnabled(),5000);
+        // The added row is still there, unsent.
+        QVERIFY(window.findChild<QWidget *>("series2Values"));QCOMPARE(rangeOf(window,"series2Name")->text(),QString("Kept"));
+        QCOMPARE(window.findChild<QLabel *>("series2ValuesMarker")->text(),QString("Not applied yet"));
+        QCOMPARE(layer->chart(id)["spec"].toObject()["series"].toArray().size(),1);
+        typeInto(rangeOf(window,"series2Values"),"B2:B3",true);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["series"].toArray().size(),2,10000);
+        QCOMPARE(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].toString(),QString("New title"));
+        QCOMPARE(layer->chart(id)["spec"].toObject()["series"].toArray()[1].toObject()["name"].toObject(),text("Kept"));
+    }
+    void aKindLeftIncompleteShowsTheSourceAgain() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Undecided",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);
+        auto *kind=kindOf(window,"series1Values");
+        // The next kind, from the keyboard without opening the list.
+        kind->setFocus();QTest::keyClick(kind,Qt::Key_Down);QCOMPARE(kind->currentText(),QString("Table column"));
+        QVERIFY(window.findChild<QComboBox *>("series1ValuesTable")->isVisible());
+        // Within the field the change stands; leaving it shows the source again.
+        window.findChild<QComboBox *>("series1ValuesTable")->setFocus();QTest::qWait(50);QCOMPARE(kind->currentText(),QString("Table column"));
+        rangeOf(window,"categoriesSource")->setFocus();
+        QTRY_COMPARE_WITH_TIMEOUT(kind->currentText(),QString("Range"),5000);QCOMPARE(rangeOf(window,"series1Values")->text(),QString("B2:B4"));
+        QVERIFY(rangeOf(window,"series1Values")->isVisible());QCOMPARE(requested.count(),0);
+    }
+    void removeAndMoveAreHeldWhileASourceIsBroken() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        auto range=[](const QString &sheet,const QString &ref){return QJsonObject{{"source",QJsonObject{{"kind","range"},{"sheet",sheet},{"ref",ref}}}};};
+        const QJsonObject spec{{"spec_version",1},{"type","column"},{"categories",range("Data","A2:A4")},{"series",QJsonArray{
+            QJsonObject{{"name",range("Data","B1")},{"values",range("Data","B2:B4")}},
+            QJsonObject{{"name",text("Two")},{"values",range("Sheet1","B2:B3")}}}}};
+        const auto id=chartBrokenByDeletingData(window,opened,layer,"Reshaped",spec);QVERIFY(!id.isEmpty());
+        QVERIFY(openPanel(window,layer,id));activate(window);
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto *seriesMarker=window.findChild<QLabel *>("seriesMarker");QVERIFY(seriesMarker);QVERIFY(seriesMarker->isHidden());
+        // Moved and removed in the panel only, marked.
+        press(window.findChild<QPushButton *>("seriesUp2"));QCOMPARE(requested.count(),0);
+        QVERIFY(seriesMarker->isVisible());QCOMPARE(seriesMarker->text(),QString("Not applied yet"));
+        QCOMPARE(kindOf(window,"series1Name")->currentText(),QString("Text"));QCOMPARE(rangeOf(window,"series1Name")->text(),QString("Two"));
+        press(window.findChild<QPushButton *>("removeSeries2"));QCOMPARE(requested.count(),0);
+        QTRY_VERIFY_WITH_TIMEOUT(!window.findChild<QWidget *>("series2Values"),5000);QVERIFY(seriesMarker->isVisible());
+        // The last broken source replaced: one change carries them all.
+        typeInto(rangeOf(window,"categoriesSource"),"A2:A4",true);QCOMPARE(requested.count(),1);QCOMPARE(admitted.count(),1);
+        QTRY_VERIFY_WITH_TIMEOUT(!ChartSpec::hasBrokenSource(layer->chart(id)),10000);
+        const auto list=layer->chart(id)["spec"].toObject()["series"].toArray();QCOMPARE(list.size(),1);
+        QCOMPARE(list[0].toObject()["name"].toObject(),text("Two"));QCOMPARE(list[0].toObject()["values"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B3"));
+        QVERIFY(idle(window));QTest::qWait(200);QCOMPARE(admitted.count(),1);QTRY_VERIFY_WITH_TIMEOUT(seriesMarker->isHidden(),5000);
+    }
+    void deletedTableAndQueryAreRepaired() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addTableAndQuery(window,opened));
+        auto source=[](const QJsonObject &value){return QJsonObject{{"source",value}};};
+        const QJsonObject spec{{"spec_version",1},{"type","column"},{"categories",QJsonValue::Null},{"series",QJsonArray{
+            QJsonObject{{"name",text("T")},{"values",source({{"kind","table"},{"table","Orders"},{"column","Quantity"}})}},
+            QJsonObject{{"name",text("Q")},{"values",source({{"kind","query"},{"query","Totals"},{"column","Total"}})}}}}};
+        QVERIFY(addChart(window,opened,"Related",2,4,0,0,320,200,"Sheet1",spec));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        const auto id=layer->overlays().first()->chartId();
+        QVERIFY(applied(window,opened,{{"action","query_delete"},{"query","Totals"}}));
+        QVERIFY(applied(window,opened,{{"action","table_drop"},{"table","Orders"},{"allow_data_loss",true}}));
+        if(auto *back=window.findChild<QPushButton *>("returnToSheets");back && back->isVisible())back->click();
+        QTRY_VERIFY_WITH_TIMEOUT(layer->overlay(id) && ChartSpec::hasBrokenSource(layer->chart(id)),10000);QVERIFY(idle(window));
+        // The sheet's charts may be listed once more after the drop.
+        QTRY_VERIFY_WITH_TIMEOUT(openPanel(window,layer,id),10000);activate(window);
+        for(const char *field:{"series1Values","series2Values"})QCOMPARE(window.findChild<QLabel *>(QString(field)+"Marker")->text(),QString("This source no longer exists"));
+        QCOMPARE(kindOf(window,"series1Values")->currentText(),QString("Table column"));QCOMPARE(kindOf(window,"series2Values")->currentText(),QString("Query column"));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);
+        choose(kindOf(window,"series1Values"),"Range");typeInto(rangeOf(window,"series1Values"),"B2:B4",true);QCOMPARE(requested.count(),0);
+        QCOMPARE(window.findChild<QLabel *>("series1ValuesMarker")->text(),QString("Not applied yet"));
+        choose(kindOf(window,"series2Values"),"Range");typeInto(rangeOf(window,"series2Values"),"B2:B3",true);QCOMPARE(requested.count(),1);
+        QTRY_VERIFY_WITH_TIMEOUT(!ChartSpec::hasBrokenSource(layer->chart(id)),10000);
+        const auto list=layer->chart(id)["spec"].toObject()["series"].toArray();
+        QCOMPARE(list[0].toObject()["values"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B4"));
+        QCOMPARE(list[1].toObject()["values"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B3"));
     }
 #undef CHART_WINDOW
 
@@ -2157,6 +2301,45 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(layer->chart(second)["spec"].toObject()["title"].toObject()["text"].toString(),QString("Accepted"),10000);
         QVERIFY(layer->chart(first)["spec"].toObject()["title"].toObject()["text"].isNull());
     }
+    void queryColumnsAreReadOnlyWhenAQueryIsChosen() {
+        PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(fillChartData(window,opened));QVERIFY(addTableAndQuery(window,opened));
+        const auto review=syncRequest(window.findChild<RestClient *>(),"/v1/workbooks/"+window.model()->workbook()+"/queries/preview",
+                                      {{"name","Doubled"},{"sql","SELECT Quantity*2 AS Twice, Quantity AS Once FROM Orders"},{"expected_state",window.model()->state()}});
+        QVERIFY(!review.contains("_error"));auto save=review["source_request"].toObject();save["action"]="query_save";save["review_digest"]=review["review_digest"];
+        QVERIFY(applied(window,opened,save));
+        if(auto *back=window.findChild<QPushButton *>("returnToSheets");back && back->isVisible())back->click();
+        QVERIFY(addChart(window,opened,"Lazy",2,4));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *query=window.findChild<QComboBox *>("series1ValuesQuery"),*column=window.findChild<QComboBox *>("series1ValuesQueryColumn");
+        QTRY_COMPARE_WITH_TIMEOUT(query->count(),2,10000);
+        // Refreshes list the queries without reading any of them.
+        window.findChild<QAction *>("refreshStoredDataAction")->trigger();QVERIFY(idle(window));QTest::qWait(300);
+        QCOMPARE(proxy.queryReads,0);
+        // Choosing one reads it once; its columns fill the list.
+        choose(kindOf(window,"series1Values"),"Query column");choose(query,"Doubled");
+        QTRY_COMPARE_WITH_TIMEOUT(itemsOf(column),(QStringList{"Twice","Once"}),10000);QVERIFY(column->isEnabled());
+        QTest::qWait(200);QCOMPARE(proxy.queryReads,1);
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);
+        choose(column,"Once");QCOMPARE(requested.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["series"].toArray()[0].toObject()["values"].toObject()["source"].toObject()["column"].toString(),QString("Once"),10000);
+        // Known columns are not read again.
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(column->isEnabled(),5000);column->setFocus();QTest::qWait(200);QCOMPARE(proxy.queryReads,1);
+    }
+    void anAddedRowCanBeRemovedWhileAChangeIsAwaited() {
+        PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Waiting",2,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *panel=panelOf(window);QSignalSpy requested(panel,&ChartPanel::changeRequested);
+        press(window.findChild<QPushButton *>("addSeries"));QVERIFY(window.findChild<QWidget *>("series2Values"));
+        proxy.holdOperations=true;typeInto(window.findChild<QLineEdit *>("chartTitle"),"Awaited",true);QCOMPARE(requested.count(),1);
+        panel->setLocked(false);
+        press(window.findChild<QPushButton *>("removeSeries2"));
+        QTRY_VERIFY_WITH_TIMEOUT(!window.findChild<QWidget *>("series2Values"),5000);QCOMPARE(requested.count(),1);
+        // A stored series is not removed while the change is awaited.
+        press(window.findChild<QPushButton *>("removeSeries1"));QVERIFY(window.findChild<QWidget *>("series1Values"));QCOMPARE(requested.count(),1);
+        proxy.releaseOperations();
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].toString(),QString("Awaited"),10000);
+        QCOMPARE(layer->chart(id)["spec"].toObject()["series"].toArray().size(),1);
+    }
 #undef PROXY_WINDOW
 
 private:
@@ -2211,6 +2394,20 @@ private:
         for(auto *parent=control->parentWidget();parent;parent=parent->parentWidget())
             if(auto *scroll=qobject_cast<QScrollArea *>(parent)){scroll->ensureWidgetVisible(control);break;}
         QTest::mouseClick(control,Qt::LeftButton);
+    }
+    // Adds a sheet "Data", creates a chart on the current sheet from spec
+    // (whose ranges may name Data), then deletes Data; the chart's id, or
+    // empty when a step failed.
+    static QString chartBrokenByDeletingData(MainWindow &window,QSignalSpy &opened,ChartLayer *layer,const QString &name,const QJsonObject &spec) {
+        if(!applied(window,opened,{{"action","sheet_add"},{"name","Data"}}))return {};
+        if(!addChart(window,opened,name,2,4,0,0,320,200,"Data",spec))return {};
+        auto *tabs=window.findChild<QTabBar *>("sheets");tabs->setCurrentIndex(1);
+        if(tabs->tabText(1)!="Data" || !applied(window,opened,{{"action","sheet_delete"}}))return {};
+        for(int i=0;i<1000;++i) {
+            if(auto *overlay=overlayNamed(layer,name);overlay && ChartSpec::hasBrokenSource(layer->chart(overlay->chartId())))return idle(window)?overlay->chartId():QString();
+            QTest::qWait(10);
+        }
+        return {};
     }
     static QComboBox *kindOf(MainWindow &window,const QString &field) { return window.findChild<QComboBox *>(field+"Kind"); }
     static QLineEdit *rangeOf(MainWindow &window,const QString &field) { return window.findChild<QLineEdit *>(field+"Range"); }

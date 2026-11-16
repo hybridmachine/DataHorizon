@@ -168,7 +168,14 @@ void ChartPanel::connectSource(ChartSourceField *source) {
     connect(source,&ChartSourceField::choiceMade,this,[this,field]{clearMessage(field);applySource(field);});
     for(auto signal:{&ChartSourceField::textEdited,&ChartSourceField::kindChosen})connect(source,signal,this,[this,field]{clearMessage(field);});
     connect(source,&ChartSourceField::pickClicked,this,[this,field]{emit pickRequested(field);});
-    source->setCatalog(m_tables,m_queries);
+    // A kind changed and left incomplete shows the working source again.
+    connect(source,&ChartSourceField::abandoned,this,[this,field]{showSource(field);});
+    connect(source,&ChartSourceField::queryColumnsWanted,this,[this](const QString &id){
+        if(id.isEmpty() || m_queryColumns.contains(id) || m_queriesWanted.contains(id))return;
+        m_queriesWanted.insert(id);
+        emit queryColumnsWanted(id);
+    });
+    source->setCatalog(m_tables,queriesWithColumns());
 }
 
 QWidget *ChartPanel::withMarkers(ChartSourceField *field) {
@@ -183,9 +190,27 @@ QWidget *ChartPanel::withMarkers(ChartSourceField *field) {
 
 void ChartPanel::setChart(const QJsonObject &chart) {
     if(chart==m_chart)return;
-    // Another chart, or a changed one: held text is dropped with the reload.
+    // The same chart renamed, moved or reordered keeps the Data group's
+    // working copy (held repairs, added rows). The same chart with another
+    // specification starts again from it, keeping only added rows not yet
+    // complete; another chart drops everything. Held text is dropped.
+    const bool same=!chart.isEmpty() && chart.value("id")==m_chart.value("id");
+    const bool sameSpec=same && chart.value("spec")==m_chart.value("spec") && chart.value("issue")==m_chart.value("issue");
+    QJsonArray unsent;
+    if(same && !sameSpec) {
+        const auto list=m_working.value("series").toArray();
+        for(int row=0;row<m_rows.size() && row<list.size();++row)
+            if(m_rows[row].panelOnly && !complete(list[row]))unsent.append(list[row]);
+    }
     m_chart=chart;m_deferred.clear();
-    load();updateEnabled();
+    load(sameSpec);
+    if(!unsent.isEmpty() && !m_working.isEmpty()) {
+        auto list=m_working["series"].toArray();
+        for(const auto &item:unsent)if(list.size()<MaxSeries){list.append(item);m_rows.append(SeriesState{true,{}});}
+        m_working["series"]=list;
+        showData();
+    }
+    updateEnabled();
 }
 
 void ChartPanel::settle() {
@@ -264,7 +289,7 @@ QLabel *ChartPanel::messageLabel(const QString &field) {
     return label;
 }
 
-void ChartPanel::load() {
+void ChartPanel::load(bool keepData) {
     m_spec={};m_reason.clear();
     if(!m_chart.isEmpty()) {
         m_spec=ChartSpec::inputSpec(m_chart,&m_reason);
@@ -272,14 +297,24 @@ void ChartPanel::load() {
     }
     m_pages->setCurrentIndex(m_chart.isEmpty()?0:1);
     m_reasonLabel->setText(m_reason);m_reasonLabel->setVisible(!m_reason.isEmpty());
-    for(auto field=m_messages.keyBegin();field!=m_messages.keyEnd();++field)clearMessage(*field);
+    for(auto field=m_messages.keyBegin();field!=m_messages.keyEnd();++field)
+        if(!keepData || (*field!="series" && !dataSlot(*field,nullptr,nullptr)))clearMessage(*field);
     for(const auto &field:{"chartName","chartType","chartGrouping","chartTitle","categoryAxisTitle","valueAxisTitle","valueAxisMin","valueAxisMax","legendPosition"})loadField(field);
-    loadData();
+    if(keepData)updateMarkers();else loadData();
 }
 
 void ChartPanel::loadField(const QString &field) {
-    // A refused Data change puts the whole Data group back to the chart.
-    if(field=="series" || dataSlot(field,nullptr,nullptr)){loadData();return;}
+    // A refused Data change undoes that change alone: the working copy as it
+    // was before it, with earlier held edits and added rows, if the chart is
+    // still the one it was made on; otherwise the chart as stored.
+    if(field=="series" || dataSlot(field,nullptr,nullptr)) {
+        if(m_before.valid && m_before.chart==m_chart) {
+            m_working=m_before.working;m_rows=m_before.rows;m_categoriesEdited=m_before.categoriesEdited;m_seriesHeld=m_before.seriesHeld;
+            m_before={};
+            showData();
+        } else loadData();
+        return;
+    }
     // An unreadable specification shows nothing; a broken source shows the stored values.
     const auto spec=m_chart.value("issue").isString()?QJsonObject():m_chart.value("spec").toObject();
     if(field=="chartName")m_name->setText(m_chart.value("name").toString());
@@ -397,8 +432,6 @@ void ChartPanel::applyType(const QString &type) {
 // The Data group.
 
 namespace {
-constexpr int MaxSeries=64;
-
 QString nameIn(const QJsonArray &items,const QString &id) {
     for(const auto &value:items)if(value.toObject()["id"].toString()==id)return value.toObject()["name"].toString();
     return {};
@@ -425,17 +458,63 @@ void ChartPanel::setCatalog(const QJsonArray &sheets,const QJsonArray &tables,co
         const auto sheet=value.toObject();
         m_sheetNames.insert(sheet["id"].toString(),sheet["name"].toString());m_sheetIds.insert(sheet["name"].toString(),sheet["id"].toString());
     }
+    // A saved query's columns stay known until the catalog describes it differently.
+    QHash<QString,QJsonObject> summaries;
+    for(const auto &value:queries)summaries.insert(value.toObject()["id"].toString(),value.toObject());
+    for(auto known=m_queryColumns.begin();known!=m_queryColumns.end();)
+        if(summaries.value(known.key())!=m_querySummaries.value(known.key()))known=m_queryColumns.erase(known);else ++known;
+    m_querySummaries=summaries;
     m_tables=tables;m_queries=queries;
+    // Columns asked for under the catalog before are asked for again.
+    const auto wanted=std::exchange(m_queriesWanted,{});
+    for(const auto &id:wanted)if(summaries.contains(id) && !m_queryColumns.contains(id)){m_queriesWanted.insert(id);emit queryColumnsWanted(id);}
+    const auto withColumns=queriesWithColumns();
     QList<ChartSourceField *> fields{m_categories};
     for(const auto &box:std::as_const(m_series))fields<<box.name<<box.values<<box.x;
     for(auto *source:fields) {
-        source->setCatalog(tables,queries);
+        source->setCatalog(tables,withColumns);
         // A range shows the sheet's name as it is now, unless the person is
         // typing in it or chose another kind there.
         int row;QString part;dataSlot(source->objectName(),&row,&part);
         const auto kind=holderKind(holder(source->objectName()).toObject(),part=="name");
         if(!source->textModified() && source->kind()==kind && (kind=="range" || kind=="cell"))showSource(source->objectName());
     }
+}
+
+void ChartPanel::setQueryColumns(const QString &queryId,const QStringList &columns) {
+    m_queriesWanted.remove(queryId);
+    if(!m_querySummaries.contains(queryId))return;
+    m_queryColumns.insert(queryId,columns);
+    const auto withColumns=queriesWithColumns();
+    m_categories->setCatalog(m_tables,withColumns);
+    for(const auto &box:std::as_const(m_series))for(auto *source:{box.name,box.values,box.x})source->setCatalog(m_tables,withColumns);
+}
+
+QJsonArray ChartPanel::queriesWithColumns() const {
+    QJsonArray out;
+    for(const auto &value:m_queries) {
+        auto query=value.toObject();
+        if(const auto known=m_queryColumns.constFind(query["id"].toString());known!=m_queryColumns.constEnd()) {
+            QJsonArray shape;for(const auto &column:*known)shape.append(QJsonObject{{"name",column}});
+            query["shape"]=shape;
+        }
+        out.append(query);
+    }
+    return out;
+}
+
+bool ChartPanel::complete(const QJsonValue &series) const {
+    const auto item=series.toObject();
+    return item["values"].isObject() && (!scatter() || item["x"].isObject());
+}
+
+void ChartPanel::remember() {
+    m_before={true,m_chart,m_working,m_rows,m_categoriesEdited,m_seriesHeld};
+}
+
+void ChartPanel::clearSeriesMessages() {
+    for(auto field=m_messages.keyBegin();field!=m_messages.keyEnd();++field)
+        if(field->startsWith("series") && dataSlot(*field,nullptr,nullptr))clearMessage(*field);
 }
 
 bool ChartPanel::dataSlot(const QString &field,int *row,QString *part) {
@@ -478,6 +557,7 @@ void ChartPanel::setHolder(const QString &field,const QJsonValue &value) {
 bool ChartPanel::scatter() const { return m_working.value("type").toString()=="scatter"; }
 
 void ChartPanel::loadData() {
+    m_before={};
     m_working=m_chart.isEmpty()?QJsonObject():ChartSpec::workingSpec(m_chart);
     m_rows=QList<SeriesState>(m_working.value("series").toArray().size());
     m_categoriesEdited=m_seriesHeld=false;
@@ -643,6 +723,7 @@ void ChartPanel::applySource(const QString &field) {
         value=QJsonObject{{"source",QJsonObject{{"kind",kind},{kind,id},{"column",column}}}};
     }
     if(value==holder(field)){showSource(field);return;}
+    remember();
     setHolder(field,value);
     int row;QString part;dataSlot(field,&row,&part);
     if(row<0)m_categoriesEdited=true;else m_rows[row].edited.insert(part);
@@ -660,17 +741,18 @@ void ChartPanel::commitData(const QString &field) {
 
 void ChartPanel::removeSeries(int row) {
     clearMessage("series");
-    if(!canRequest() || row>=m_rows.size())return;
+    if(m_locked || m_chart.isEmpty() || row>=m_rows.size())return;
     auto list=m_working["series"].toArray();
-    auto complete=[this](const QJsonValue &value) {
-        const auto item=value.toObject();
-        return item["values"].isObject() && (!scatter() || item["x"].isObject());
-    };
-    const auto completeCount=std::count_if(list.begin(),list.end(),complete);
-    if(complete(list[row]) && completeCount==1){refuseLocally("series",tr("A chart needs at least one series"));return;}
+    // An added row not yet complete was never sent: it goes even while a change is awaited.
     const bool stored=complete(list[row]);
+    if(stored && !canRequest())return;
+    const auto completeCount=std::count_if(list.begin(),list.end(),[this](const QJsonValue &value){return complete(value);});
+    if(stored && completeCount==1){refuseLocally("series",tr("A chart needs at least one series"));return;}
+    if(stored)remember();
     list.removeAt(row);m_working["series"]=list;m_rows.removeAt(row);
     if(stored)m_seriesHeld=true;
+    // Messages stay with no shifted series.
+    clearSeriesMessages();
     showData();
     if(stored)commitData("series");
 }
@@ -679,10 +761,12 @@ void ChartPanel::moveSeries(int row,int by) {
     clearMessage("series");
     const int to=row+by;
     if(!canRequest() || to<0 || to>=m_rows.size())return;
+    remember();
     auto list=m_working["series"].toArray();
     const QJsonValue item=list[row];list[row]=list[to];list[to]=item;
     m_working["series"]=list;m_rows.swapItemsAt(row,to);
     m_seriesHeld=true;
+    clearSeriesMessages();
     showData();
     commitData("series");
 }

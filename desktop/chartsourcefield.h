@@ -45,8 +45,9 @@ public:
     // the catalog does not hold that table, query or column.
     void showChoice(const QString &kind,const QString &id,const QString &name,const QString &column,const QString &columnName);
     // Tables as [{id, name, columns: [{id, name}]}]; queries as
-    // [{id, name, shape: [{name}]}].
+    // [{id, name}], with "shape": [{name}] once their columns are known.
     void setCatalog(const QJsonArray &tables,const QJsonArray &queries);
+    bool queryColumnsKnown(const QString &id) const;
 signals:
     // Enter or focus-out in the text field.
     void textFinished();
@@ -56,7 +57,13 @@ signals:
     // Another kind was chosen; the field it shows is cleared.
     void kindChosen();
     void pickClicked();
+    // A query was chosen, or a shown query's column list opened, and its
+    // columns are not known yet.
+    void queryColumnsWanted(const QString &queryId);
+    // Focus left the field while a kind change was still incomplete.
+    void abandoned();
 private:
+    bool eventFilter(QObject *object,QEvent *event) override;
     void showKind(const QString &kind);
     // Fills the object list of the page (table or query), keeping the shown choice.
     void fillObjects(const QString &kind);
@@ -70,4 +77,6 @@ private:
     QJsonArray m_tables,m_queries;
     // The table or query choice last shown, with its stored names.
     QString m_shownKind,m_shownId,m_shownName,m_shownColumn,m_shownColumnName;
+    // Another kind was chosen and nothing has been shown or completed since.
+    bool m_kindChanged=false;
 };

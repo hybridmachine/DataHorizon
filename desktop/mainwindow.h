@@ -390,10 +390,12 @@ private:
     bool m_chartCatalogStale = true;
     // The catalog's chart for the panel: none while the catalog is stale.
     QJsonObject panelChart(const QString &chartId) const;
-    // Reads the tables and saved queries (with their result columns) the
-    // panel's source fields offer, while the panel is shown; an answer for
-    // another workbook or state is dropped.
+    // Reads the tables and saved queries the panel's source fields offer,
+    // while the panel is shown; an answer for another workbook or state is
+    // dropped.
     void readChartSources();
+    // Reads one saved query's result columns for the chart panel.
+    void readQueryColumns(const QString &queryId);
     int m_chartSourcesGeneration = 0;
     QJsonArray m_chartTables, m_chartQueries;
     QString m_chartSourcesWorkbook;

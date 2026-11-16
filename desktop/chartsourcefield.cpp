@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "chartsourcefield.h"
+#include <QApplication>
 #include <QComboBox>
+#include <QFocusEvent>
+#include <QTimer>
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QStackedWidget>
@@ -20,6 +23,8 @@ ChartSourceField::ChartSourceField(const QString &name,const QString &label,bool
     m_pages=new QStackedWidget;row->addWidget(m_pages,1);
     auto *text=new QWidget;auto *textRow=new QHBoxLayout(text);textRow->setContentsMargins(0,0,0,0);
     m_edit=new QLineEdit;m_edit->setObjectName(name+"Range");m_edit->setAccessibleName(label);
+    // A name's text is at most 255 characters, as every text field of the panel.
+    if(seriesName)m_edit->setMaxLength(255);
     m_pick=new QToolButton;m_pick->setObjectName(name+"Pick");m_pick->setText(tr("Pick"));m_pick->setAccessibleName(tr("Pick %1 on the grid").arg(label));
     textRow->addWidget(m_edit,1);textRow->addWidget(m_pick);
     m_pages->addWidget(text);
@@ -46,14 +51,43 @@ ChartSourceField::ChartSourceField(const QString &name,const QString &label,bool
         m_edit->clear();
         for(auto *combo:{m_table,m_query})combo->setCurrentIndex(-1);
         for(auto *combo:{m_tableColumn,m_queryColumn})combo->clear();
+        m_kindChanged=true;
         emit kindChosen();
     });
     for(const auto &kind:{QString("table"),QString("query")}) {
-        connect(objects(kind),&QComboBox::activated,this,[this,kind]{fillColumns(kind);columns(kind)->setCurrentIndex(-1);});
+        connect(objects(kind),&QComboBox::activated,this,[this,kind]{
+            fillColumns(kind);columns(kind)->setCurrentIndex(-1);
+            if(kind=="query" && !queryColumnsKnown(m_query->currentData().toString()))emit queryColumnsWanted(m_query->currentData().toString());
+        });
         connect(columns(kind),&QComboBox::activated,this,[this,kind]{
             if(objects(kind)->currentIndex()>=0 && columns(kind)->currentIndex()>=0)emit choiceMade();
         });
     }
+    // Focus leaving the field ends a kind change left incomplete; opening a
+    // stored query's column list asks for its columns.
+    for(auto *input:inputs())input->installEventFilter(this);
+}
+
+bool ChartSourceField::queryColumnsKnown(const QString &id) const {
+    for(const auto &value:m_queries)if(value.toObject()["id"].toString()==id)return value.toObject().contains("shape");
+    return false;
+}
+
+bool ChartSourceField::eventFilter(QObject *object,QEvent *event) {
+    if(object==m_queryColumn && (event->type()==QEvent::FocusIn || event->type()==QEvent::MouseButtonPress)) {
+        const auto id=m_query->currentData().toString();
+        if(m_query->currentIndex()>=0 && !id.isEmpty() && !queryColumnsKnown(id))emit queryColumnsWanted(id);
+    }
+    if(event->type()==QEvent::FocusOut && m_kindChanged && static_cast<QFocusEvent *>(event)->reason()!=Qt::PopupFocusReason)
+        // Decided once focus has landed: a move within the field keeps the change.
+        QTimer::singleShot(0,this,[this]{
+            if(!m_kindChanged || QApplication::activePopupWidget())return;
+            auto *focus=QApplication::focusWidget();
+            if(focus && isAncestorOf(focus))return;
+            m_kindChanged=false;
+            emit abandoned();
+        });
+    return QWidget::eventFilter(object,event);
 }
 
 QString ChartSourceField::kind() const { return m_kind->currentData().toString(); }
@@ -75,12 +109,14 @@ void ChartSourceField::showKind(const QString &kind) {
 
 void ChartSourceField::showText(const QString &kind,const QString &text) {
     showKind(kind);
+    m_kindChanged=false;
     m_edit->setText(text);
     m_shownKind.clear();
 }
 
 void ChartSourceField::showChoice(const QString &kind,const QString &id,const QString &name,const QString &column,const QString &columnName) {
     showKind(kind);
+    m_kindChanged=false;
     m_edit->clear();
     m_shownKind=kind;m_shownId=id;m_shownName=name;m_shownColumn=column;m_shownColumnName=columnName;
     fillObjects(kind);
@@ -137,4 +173,6 @@ void ChartSourceField::fillColumns(const QString &kind) {
         }
     }
     if(m_shownKind==kind && m_shownId==id && !shown)combo->addItem(m_shownColumnName,m_shownColumn);
+    // A query's columns are read when wanted; until then only its stored column, if any.
+    combo->setEnabled(kind=="table" || combo->count()>0);
 }

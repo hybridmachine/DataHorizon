@@ -1073,6 +1073,7 @@ void MainWindow::buildUi() {
     addDockWidget(Qt::RightDockWidgetArea,m_chartDock);m_chartDock->hide();view->addAction(m_chartDock->toggleViewAction());
     connect(m_chartDock,&QDockWidget::visibilityChanged,this,[this](bool visible){if(visible)readChartSources();});
     m_chartPanel->installEventFilter(this);
+    connect(m_chartPanel,&ChartPanel::queryColumnsWanted,this,&MainWindow::readQueryColumns);
     // A selection shows its chart at once; only a listing, the catalog read
     // after a change, lets the panel ask again (settle). After a committed
     // change the panel keeps its chart, locked; after a failed or stale chart
@@ -1989,19 +1990,21 @@ void MainWindow::readChartSources() {
     auto current=[this,generation,workbook,state]{return generation==m_chartSourcesGeneration && m_info["id"].toString()==workbook && m_info["state"]==state;};
     m_client->request(base()+"/tables",{{"expected_state",state}},[this,current,sheets,state](QJsonObject result,QString error){
         if(!current() || !error.isEmpty() || result["state"]!=state)return;
-        const auto tables=result["tables"].toArray();
-        // The catalog gives each saved query's column count; its columns come from reading it.
-        auto queries=std::make_shared<QJsonArray>(result["queries"].toArray());auto left=std::make_shared<qsizetype>(queries->size());
-        auto finish=[this,current,sheets,tables,queries]{
-            if(!current())return;
-            m_chartTables=tables;m_chartQueries=*queries;m_chartPanel->setCatalog(sheets,tables,*queries);
-        };
-        if(queries->isEmpty()){finish();return;}
-        for(qsizetype i=0;i<queries->size();++i)
-            m_client->request(base()+"/queries/read",{{"query",(*queries)[i].toObject()["id"]},{"expected_state",state}},[queries,left,i,finish](QJsonObject read,QString error){
-                if(error.isEmpty()){auto item=(*queries)[i].toObject();item["shape"]=read["query"].toObject()["shape"];(*queries)[i]=item;}
-                if(--*left==0)finish();
-            });
+        // A saved query's columns are read only when the panel asks for them.
+        m_chartTables=result["tables"].toArray();m_chartQueries=result["queries"].toArray();
+        m_chartPanel->setCatalog(sheets,m_chartTables,m_chartQueries);
+    });
+}
+
+void MainWindow::readQueryColumns(const QString &queryId) {
+    if(m_info.isEmpty())return;
+    const auto workbook=m_info["id"].toString();const auto state=m_info["state"];
+    m_client->request(base()+"/queries/read",{{"query",queryId},{"expected_state",state}},[this,workbook,state,queryId](QJsonObject result,QString error){
+        // An answer for another workbook or state is dropped; the panel asks again after its next catalog.
+        if(m_info["id"].toString()!=workbook || m_info["state"]!=state || !error.isEmpty() || result["state"]!=state)return;
+        QStringList columns;
+        for(const auto &column:result["query"].toObject()["shape"].toArray())columns<<column.toObject()["name"].toString();
+        m_chartPanel->setQueryColumns(queryId,columns);
     });
 }
 
