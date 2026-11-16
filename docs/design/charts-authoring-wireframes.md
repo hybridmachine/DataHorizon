@@ -197,8 +197,9 @@ never scrolls sideways.
   nothing is sent until its Values (and X, for Scatter) are filled in, because
   the engine has no series without values. Removing the last series is refused
   in the panel with "A chart needs at least one series".
-- **Axes.** Category title and Value title (each at most 255 characters; empty
-  means none), Minimum and Maximum. Minimum and Maximum take a number or
+- **Axes.** Category title and Value title (empty means none; limited only by
+  the service, which sets no length limit on them; the chart title alone is at
+  most 255 characters), Minimum and Maximum. Minimum and Maximum take a number or
   nothing; an empty field shows the placeholder "Automatic" and means the
   engine chooses.
 - **Legend.** One list: Right, Bottom, None.
@@ -216,7 +217,11 @@ with `QFormLayout`. Name, Title, the axis titles, Minimum and Maximum are
 `QLineEdit`s (`chartName`, `chartTitle`, `categoryAxisTitle`,
 `valueAxisTitle`, `valueAxisMin`, `valueAxisMax`); Minimum and Maximum use the
 placeholder text "Automatic". The type buttons are checkable `QToolButton`s
-(`chartType_column` … `chartType_scatter`) in an exclusive `QButtonGroup`.
+(`chartType_column` … `chartType_scatter`), exactly one pressed. As built they
+are not in a `QButtonGroup`: Qt's Tab passes over an exclusive group's
+unpressed buttons, which the focus order below does not allow, and a group's
+arrow keys would apply each type in turn; the panel keeps one pressed itself
+(changed in the final fix wave, November 16, 2026; not part of the sign-off).
 Grouping (`chartGrouping`) and Legend (`legendPosition`) are `QComboBox`es.
 Bring to Front and Send to Back are `QPushButton`s (`chartToFront`,
 `chartToBack`). Each series is a `QGroupBox` titled "Series <n>" holding its
@@ -265,7 +270,7 @@ Range, Table column, Query column.
 
 A series Name has its own kind list with two entries only, Text and Cell,
 because the engine takes a fixed text or a single cell. Text shows a text field
-(at most 255 characters); Cell shows a text field and a Pick button and accepts
+(limited only by the service, which sets no length limit on it); Cell shows a text field and a Pick button and accepts
 one cell only. Changing a kind clears the field it shows; nothing is sent until
 the new source is complete.
 
@@ -591,6 +596,10 @@ Status-bar texts (short phrases joined with " • "):
 | "Pick one cell for Series <n> Name • Enter applies • Escape cancels" | A Name pick with more than one cell selected |
 | "The chart cannot move further" | A keyboard move past the limits or onto no cell |
 | "The chart cannot resize further" | A keyboard resize past the size bounds |
+| "The chart cannot move further" | Also: a keyboard move that would leave nothing of the chart in view |
+| "The chart is not shown • Show its hidden rows or columns" | Select Next or Previous Chart when no chart can be shown (each chart's anchor is past the last shown row or column) |
+
+The last two rows were added in the final fix wave, November 16, 2026: not part of the original sign-off.
 
 Panel texts and field markers:
 

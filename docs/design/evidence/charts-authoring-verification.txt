@@ -2,7 +2,10 @@ Charts desktop authoring verification
 ====================================
 Date: November 16, 2026 (the build ran November 15-16, 2026). Branch claude/charts-authoring, cut from main at 550cbe4;
 first commit 1439cbe. Every run below was made on commit b5c80dc (the last code commit; these documents are added on
-top and change no code). Machine: the reference Mac (macOS, Darwin 25.6.0), Qt 6.8, system Python 3.14.6 (Homebrew).
+top and change no code). Machine: the reference Mac (macOS, Darwin 25.6.0), Qt 6.12.0 (the build directory's
+Qt6_DIR, /Users/btabone/Qt/6.12.0/macos, and QtTest's own "Config: ... Qt 6.12.0" line; 6.8 is only the minimum
+CMakeLists.txt asks for, wrongly given here before), system Python 3.14.6 (Homebrew).
+Item 8 records the final fix wave and its runs on commit 436d8fe, which supersede items 1 to 5 for the branch head.
 Desktop tests run on Qt's offscreen platform (QT_QPA_PLATFORM=offscreen, set by CTest).
 
 1. Build
@@ -90,3 +93,32 @@ Neither is installed: opening the exported files in Excel and in LibreOffice is 
   the fn key on a Mac keyboard.
 - Behaviour with no test of its own (from the build ledger): the external Python pick's pass-through over charts, the
   drag cancel on window deactivation, and the Shift+F10 shortcut override while the chart cannot be changed.
+
+8. Final fix wave (whole-branch review findings)
+------------------------------------------------
+The fixes and their tests are commit 436d8fe (code and tests only); every run below was made on 436d8fe, and the
+documents are committed on top of it without code changes. Eleven test functions were added to
+tests/test_chart_authoring.cpp; three existing ones were changed to the review's rulings (heldTextIsAppliedOnUnlock
+and unchangedTextSendsNothing: held text survives a rename, as its specification is unchanged;
+seriesNameTakesTextOrOneCell: a series name's text field has no 255 cap).
+Build: cmake --build build after touching the changed sources: 0 lines containing "warning".
+chart_authoring: ctest --test-dir build -R '^chart_authoring$' --output-on-failure: Passed 131.72 sec;
+  build/chart-authoring-tests.txt "Totals: 222 passed, 0 failed, 0 skipped, 0 blacklisted, 131002ms".
+desktop: ctest --test-dir build -R '^desktop$' --output-on-failure: Passed 274.04 sec;
+  build/desktop-tests.txt "Totals: 282 passed, 0 failed, 0 skipped, 0 blacklisted, 273369ms"; the known flake
+  backgroundCalculationReportsSnapshotWithoutEdits did not occur.
+python_workspace: ctest --test-dir build -R '^python_workspace$' --output-on-failure: Passed 80.52 sec;
+  "Totals: 72 passed, 0 failed, 0 skipped, 0 blacklisted, 79809ms".
+Service suite: PYTHONPATH=service python3 -m unittest discover -s tests: first run "Ran 1716 tests in 378.467s",
+  "FAILED (errors=1, skipped=28)": test_staging_shutdown.test_sigint_also_stops_in_order, "too many values to unpack
+  (expected 1, got 2)" from owned_directories(pid). It failed again alone. The system temporary directory held 8,203
+  leftover datahorizon-<pid>-* directories from earlier runs, so a new service's pid matched an old directory's
+  name; the test is environment-sensitive, not affected by this branch (git diff f55dc0c..436d8fe touches nothing
+  under service/). The leftovers were not deleted. Run again with a fresh temporary directory
+  (TMPDIR=<session scratch>/svc-tmp PYTHONPATH=service python3 -m unittest discover -s tests):
+  "Ran 1716 tests in 326.698s", "OK (skipped=28)".
+Seen failing before its fix (the test run against the code before the change): C1, I1, I2 (scroll, keyboard move,
+sheet switch), I3, M1, M6 and I4's Tab order. I5's wheel test passes on this macOS build either way (Qt compiles
+QComboBox's wheel handling out on macOS); only its focus-policy assertion depends on the fix there.
+Not verified: macOS Tab reach with the system's default keyboard setting on real hardware (offscreen reports "tab
+to all controls"); the wheel on Windows and Linux.

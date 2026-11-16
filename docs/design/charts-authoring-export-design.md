@@ -202,7 +202,23 @@ built as written, with the additions below (the panel's share is in section 5).
 - Decision 9, picking: see section 5.
 - Overlays take focus by click (`Qt::ClickFocus`), not by Tab; they are not Tab
   stops over the grid. Select Next and Previous Chart focus the chart they
-  select.
+  select, scrolling the grid first when it is out of view; a chart whose
+  anchor is past the last shown row or column cannot be shown and is passed
+  over, and when none can be shown nothing is selected and the status reads
+  "The chart is not shown • Show its hidden rows or columns" (final fix wave).
+- A chart holds the keyboard only while it is shown (final fix wave): a
+  focused chart scrolled or moved out of view is deselected and the grid takes
+  the focus, and a focused chart deleted by a relist or a sheet or workbook
+  change gives the focus to the grid, never to the address box. A keyboard
+  move that would leave nothing of the chart in view is refused with "The
+  chart cannot move further". After Delete or Backspace deletes a chart, the
+  held key's auto-repeats are swallowed until it is released, so they never
+  reach the grid's Clear Contents.
+- Existing desktop tests that asserted the view-only contract (overlays
+  transparent to the mouse, taking no focus, found by a bare accessible name)
+  were updated to the new contract (`Qt::ClickFocus`, mouse events, "Chart:
+  <name>"): the plan said only one existing test would change, which was wrong,
+  since this design reverses the view-only contract (build ruling 3).
 - During the formula reference pick, the format painter and a Python pick,
   clicks pass through charts to the cells under them, overlays take no focus
   and no keys, and the grid takes the keyboard. A chart keeps its selection on
@@ -309,17 +325,26 @@ Edit Chart also focus Name. Departures and builder decisions:
   wireframe sketch shows cannot be shown. Name, placement and order are never
   blocked.
 - Decision 6, no debounce: a choice applies on change, text on Enter or focus
-  out and only when it differs from the stored value. The panel is locked while
-  an operation is in flight, and also after any committed operation until the
-  charts are listed again, so it never builds a whole `spec` from a catalog
-  older than the change. Text typed into a field when the lock came is held
-  (one field, the one that had focus) and applied on unlock if the same chart
-  is still shown and the text still differs. Focus returns to that field after
+  out and only when the person typed it and it differs from the stored value
+  (passing focus through a field never sends what it shows). The panel is
+  locked while an operation is in flight, and also whenever the chart layer
+  has not listed the workbook, sheet and state the window is bound to,
+  whatever caused the bind (this window's commit, another client's change
+  found by the window, Refresh, an operation job, a stale read), so it never
+  builds a whole `spec` from a catalog older than the workbook (final fix wave;
+  before it, only this window's own commits locked it, and another client's
+  change could be reverted by held text). Text typed into a field when the
+  lock came is held (one field, the one that had focus) and applied only after
+  that listing, if the same chart is shown with the specification the text was
+  typed against (for Name, also the same name) and the text still differs;
+  otherwise the field shows the chart as now stored. Focus returns to that field after
   the change only if the person pressed no key and no mouse button anywhere
   else in the application meanwhile.
-- Decision 7, stale state: after a failed or stale chart read, or a client
+- Decision 7, stale state: after a failed chart read, or a client
   reconfigure, the panel shows "No chart selected" (and stays locked) until a
-  fresh listing; selecting the chart again before that does not show it.
+  fresh listing; selecting the chart again before that does not show it. After
+  a stale read or render the panel keeps its chart, locked, until the refresh
+  that follows is listed (final fix wave).
 - Decision 9, picking: a pick that ends (Enter or Escape) on another sheet
   first returns to the chart's sheet and finishes only once that sheet's charts
   are listed, so the panel's held edits are not lost to a stale read. While a
@@ -336,7 +361,23 @@ Edit Chart also focus Name. Departures and builder decisions:
   for that field.
 - Minimum and Maximum accept a number in the C locale or the system locale and
   reject group separators: "1,500" is refused under English and C (it reads as
-  1.5 under German).
+  1.5 under German). A whole number typed is sent as a JSON integer and shown
+  exactly; other bounds pass through a double, so a stored integer beyond
+  2^53 typed as a decimal, or carried as a float, loses precision (known
+  limitation).
+- Text limits: only the chart title keeps the service's 255-character limit
+  in the field (and Name its 64); axis titles and a series name's text are not
+  capped, as the service caps neither (final fix wave; the panel used to cut
+  stored longer text to 255 and send it on a focus pass).
+- Keyboard: every button and list of the panel is a Tab stop
+  (`Qt::StrongFocus`) whatever the macOS keyboard-navigation setting, in the
+  wireframes' focus order; the six type buttons are not in a `QButtonGroup`
+  (Tab would pass over an exclusive group's unpressed buttons). The lists take
+  no wheel unless their popup is open: the wheel scrolls the panel (final fix
+  wave). Not verified on Mac hardware.
+- The panel's lists are refilled after a refresh only when the sheets, tables
+  or queries offered changed (one `setCatalog` pass at most for an ordinary
+  edit's refresh, none when nothing changed).
 - Saved-query column names are read on demand: the panel asks for a query's
   columns (one `/queries/read`) when that query is chosen or its column list is
   opened, not on every refresh; a failed read is reported in Issues ("The
@@ -498,20 +539,27 @@ read as a chart. `chart_sheets` is unchanged.
   OpenAPI are updated; the stale "not merged" statements about the chart
   branches are corrected.
 
-**Authoring**
+**Authoring** (status as of November 16, 2026, in brackets)
 
-- The wireframes are signed off before desktop code.
+- The wireframes are signed off before desktop code. [Met: signed off
+  November 15, 2026.]
 - In the installed application, with the keyboard alone and with the mouse:
   insert a chart from a selection, change its type, title, a series source (a
   range, a table column and a query column), axis and legend, move it, resize
-  it, reorder it, delete it, and undo and redo each step.
+  it, reorder it, delete it, and undo and redo each step. [Not verified: the
+  run by hand in the installed application was not made; the steps are
+  covered only by the `chart_authoring` tests on the offscreen platform.]
 - Every refusal named in sections 4 and 5 shows the service's reason and
-  changes nothing.
+  changes nothing. [Met in the `chart_authoring` tests.]
 - A chart made in the application is exported and shows its data in the other
-  application (same availability rule as above).
+  application (same availability rule as above). [Not verified: the
+  operations the desktop sends were exported and read back with the import
+  previews, but neither Excel nor LibreOffice is installed on the reference
+  Mac, so the chart was not seen showing its data in the other application.]
 - Desktop tests cover selection, drag, resize, keyboard, the panel's fields
   and refusals; VoiceOver and physical-input acceptance are recorded as open if
-  not run.
+  not run. [Met: the tests exist; VoiceOver and physical input are recorded
+  as not verified.]
 
 ## 8. Left to the builder
 

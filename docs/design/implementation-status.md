@@ -58,16 +58,31 @@ Built, and covered by the `chart_authoring` tests:
   sheet; Enter applies it as one update and Escape puts the field back; the
   chart stays selected; the window returns to the chart's sheet.
 
-Measured on the reference Mac (macOS, Darwin 25.6.0; Qt 6.8; system Python
-3.14.6), on commit b5c80dc:
-- `chart_authoring`: passed, 116 s; 211 passed, 0 failed, 0 skipped.
-- `desktop`: passed, 263 s; 282 passed, 0 failed (the known unrelated flake
+- Final fix wave (the whole-branch review, November 16, 2026, commit
+  436d8fe): the panel is locked whenever the chart layer has not listed the
+  state the window is bound to, whatever caused the bind, so another client's
+  change can no longer be reverted by held text; Select Next and Previous
+  scroll a chart into view before focusing it, and a chart that cannot be
+  shown is passed over with a status; a focused chart scrolled or moved out of
+  view, or deleted, gives the keyboard to the grid; a held Delete's repeats no
+  longer clear cells once its chart is gone; stored axis titles and series
+  names longer than 255 characters are kept whole and only typed text is sent;
+  every panel button and list is a Tab stop in the wireframes' order and the
+  lists ignore the wheel; whole-number bounds are sent as JSON integers.
+
+Measured on the reference Mac (macOS, Darwin 25.6.0; Qt 6.12.0, as the build
+directory's `Qt6_DIR` and QtTest report; system Python 3.14.6), on commit
+436d8fe:
+- `chart_authoring`: passed, 132 s; 222 passed, 0 failed, 0 skipped.
+- `desktop`: passed, 274 s; 282 passed, 0 failed (the known unrelated flake
   `backgroundCalculationReportsSnapshotWithoutEdits` did not occur).
-- `python_workspace`: passed, 77 s; 72 passed, 0 failed.
-- Service suite: 1,716 tests, OK, 28 skipped, 369 s (no service code
-  changed on the branch).
-- Build of `chart_authoring_tests`, `desktop_tests` and `DataHorizon`: no
-  compiler warnings.
+- `python_workspace`: passed, 81 s; 72 passed, 0 failed.
+- Service suite: 1,716 tests, OK, 28 skipped, 327 s, with a fresh `TMPDIR`
+  (no service code changed on the branch). A first run with the system
+  temporary directory had one error, `test_sigint_also_stops_in_order`,
+  because 8,203 leftover `datahorizon-<pid>-*` directories from earlier runs
+  were there and one matched the new service's pid (see the evidence).
+- Build: no compiler warnings.
 - Export check: a throwaway SDK script (not committed) sent the operations the
   desktop sends for Insert → Chart over A1:C13 (`suggest_chart`, then
   `chart_create` anchored at D1), a whole-`spec` type change to bar, a
@@ -96,8 +111,15 @@ Known limitations:
   other than Enter and Escape do not return to the chart's sheet; starting a
   pick does not fill the field from the existing selection.
 - The panel is locked and empty until a workbook's first chart listing, and
-  stays locked after a committed operation until the charts are listed again;
-  if that refresh fails, it stays locked until a later refresh lists them.
+  stays locked whenever the chart layer has not listed the workbook, sheet and
+  state the window is bound to, whatever caused the bind (this window's
+  commit, another client's change, Refresh, an operation job, a stale read);
+  if that listing fails, it stays locked until a later refresh lists them.
+  Text held meanwhile is applied after the listing only when the chart's
+  specification is the one it was typed against.
+- Axis bounds: a whole number typed is sent as a JSON integer; other bounds,
+  and bounds carried unchanged in a whole `spec`, pass through a double, so an
+  integer bound beyond 2^53 can lose precision.
 - While a change is awaited, any key or mouse press elsewhere in the
   application cancels the return of focus to the panel field.
 
@@ -108,13 +130,15 @@ Deferred minor notes from the build (kept for later work):
   `parseRange` rejects spaces around `:` and `!` and matches sheet names
   case-sensitively; `withType` can carry a stale grouping string;
   `sourceText` shows a raw id for an unknown sheet.
-- Closing a sheet or workbook (`ChartLayer::clear()`) deletes overlays without
-  returning focus to the grid.
+- The wireframe sketches' menu layout and object names were not checked
+  against the built window (the object names are pinned by the tests).
+- `rangeTextRoundTrips` lacks cases for a quoted sheet name containing `!`, a
+  quoted unknown sheet and an unterminated quote.
+- Remove's clearing of the series message is untested.
 - A suggestion dropped because the window became busy is reported in Issues
   only, not in the status bar. Some negative assertions in the proxy tests use
   fixed waits of 100 to 300 ms.
-- `m_chartPlacement` is not cleared when a workbook closes (a stale id,
-  harmless). The application event filter and the remembered focus linger
+- The application event filter and the remembered focus linger
   when the chart is gone for good (harmless).
 - Pressing another Pick while busy ends the old pick and then shows the issue.
   `~MainWindow` disconnects `qApp` from the window broadly.
@@ -132,6 +156,15 @@ Not verified:
 - Without a test of their own: the external Python pick's pass-through, the
   drag cancel on window deactivation, and the Shift+F10 shortcut override
   while the chart cannot be changed.
+- macOS with the system's default keyboard setting ("Keyboard navigation"
+  off): every panel button and list is given `Qt::StrongFocus` so Tab reaches
+  it, and the Tab order is tested offscreen, but not checked on Mac hardware.
+  The wheel over panel lists (which changed values on Windows and Linux) is
+  tested offscreen on macOS, where Qt's combo box takes no wheel anyway.
+- `Ctrl+Alt+C` (Select Next Chart) is AltGr+C on some Windows keyboard
+  layouts (Polish "ć", for one), where typing that letter in the grid may
+  select a chart instead; the shortcut was signed off and needs the owner's
+  decision before a Windows release.
 
 ## Charts export — November 15, 2026
 
@@ -140,7 +173,9 @@ The [export design](charts-authoring-export-design.md#6-export) and
 which is not merged (it follows the import and view-only work merged to `main`
 through pull request 140). The [verification evidence](evidence/charts-export-verification.txt)
 records the commands and results. Desktop authoring (design sections 4 and 5)
-is not built.
+is not built. (Authoring was built later, November 16, 2026:
+[Charts desktop authoring](#charts-desktop-authoring--november-16-2026); its
+wireframes were signed off November 15.)
 
 Built, and covered by service tests:
 - XLSX and ODS exports write native charts: the inline whole-workbook and
@@ -237,7 +272,10 @@ Not verified:
   The two sample files are there for the owner to open.
 - openpyxl and odfpy reading the files: neither is installed, so the tests that
   use them skipped. Windows and Linux. Desktop
-authoring and workbook-Python chart operations are not built.
+authoring and workbook-Python chart operations are not built. (Desktop
+authoring was built later, November 16, 2026:
+[Charts desktop authoring](#charts-desktop-authoring--november-16-2026); its
+wireframes were signed off November 15.)
 
 ## Charts import and view-only display — November 15, 2026
 
@@ -309,7 +347,9 @@ grid, the import dialog) was not driven in this run; LibreOffice was not
 installed, so no cross-format check ran; Windows and Linux. Chart authoring
 (Insert Chart, select, move, resize, delete, edit panel, object browser),
 workbook-Python chart operations are not built. Chart export was built later
-the same day ([below](#charts-export--november-15-2026)). The stage 3 wireframe session is still owed. CLI one-sheet
+the same day ([below](#charts-export--november-15-2026)). The stage 3 wireframe session is still owed. (Authoring was built later,
+November 16, 2026: [Charts desktop authoring](#charts-desktop-authoring--november-16-2026);
+its wireframes were signed off November 15.) CLI one-sheet
 import does not exist, so only the SDK and the desktop carry charts on that
 path.
 
