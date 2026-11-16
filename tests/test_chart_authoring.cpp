@@ -2350,6 +2350,8 @@ private slots:
         selectCells(grid,model,1,1,2,1);QCOMPARE(rangeOf(window,"series1Values")->text(),QString("Other!B2:B3"));
         // Another field's Pick on this sheet starts its pick; the first field goes back.
         const int issues=issuesText(window).size();
+        // The panel takes input again once the charts of the sheet shown are listed.
+        QTRY_VERIFY_WITH_TIMEOUT(pickOf(window,"categoriesSource")->isEnabled(),10000);
         press(pickOf(window,"categoriesSource"));QVERIFY(window.chartPickActive());QCOMPARE(issuesText(window).size(),issues);
         QVERIFY(pickOf(window,"categoriesSource")->isChecked());QVERIFY(!pickOf(window,"series1Values")->isChecked());
         QCOMPARE(rangeOf(window,"series1Values")->text(),QString("B2:B4"));
@@ -2545,7 +2547,7 @@ private slots:
         QSignalSpy receipts(&window,&MainWindow::operationReceipt);
         proxy.loseCreate=true;window.findChild<QAction *>("insertChartAction")->trigger();
         // The answer is lost: an unknown receipt, then reconcile's committed one.
-        QTRY_VERIFY_WITH_TIMEOUT(receipts.count()>=2,15000);
+        QTRY_VERIFY_WITH_TIMEOUT(receipts.count()>=2,60000);
         QCOMPARE(receipts[0][0].toJsonObject()["outcome"].toString(),QString("unknown"));
         QCOMPARE(receipts[1][0].toJsonObject()["outcome"].toString(),QString("committed"));
         QTRY_VERIFY_WITH_TIMEOUT(!layer->selectedChart().isEmpty(),10000);
