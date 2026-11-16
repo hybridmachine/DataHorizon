@@ -113,9 +113,11 @@ it and opens the panel. A click on any grid pane deselects the chart and
 selects the cell as usual. The mouse wheel over a chart scrolls the grid.
 Dragging the chart moves it and dragging a handle resizes it (64 by 48 to 4096
 by 4096 pixels); the chart follows the pointer and one change is sent on
-release. A drag does not scroll the grid. On release the chart is anchored to
-the cell under its top-left corner, in whichever pane (frozen corner, frozen
-rows, frozen columns or body) is there; when no cell is there (over a header,
+release. During a resize the size stops at the bounds: it does not shrink
+below 64 by 48 or grow past 4096 by 4096. A drag does not scroll the grid. On
+release one update is sent with the anchor cell under the chart's top-left
+corner, in whichever pane (frozen corner, frozen rows, frozen columns or body)
+is there, and the offset of that corner inside that cell; when no cell is there (over a header,
 outside the grid, past the last row or column) the drag is cancelled and the
 chart goes back. A release that moved nothing sends nothing.
 
@@ -181,7 +183,10 @@ never scrolls sideways.
   one change that also carries what the engine requires and loses no source:
   grouping becomes Clustered when the new type takes one and the old did not,
   and none when it takes none; to Scatter the categories become every series'
-  X; from Scatter the first series' X becomes the categories.
+  X; from Scatter the first series' X becomes the categories. A chart with no
+  categories cannot become a Scatter until an X source is given: the change is
+  refused, the type goes back, and the message beside the type buttons says so
+  ("Give an X source before changing this chart to a scatter chart.").
 - **Title.** One field for the chart title, at most 255 characters; empty means
   no title.
 - **Data.** Categories, then the Series list. Each series has Name, Values and,
@@ -287,7 +292,7 @@ again after every workbook refresh while the panel is shown.
 |  4 Mar     |  70 |    14  #                 #  | |   [A2:A13     ] [Pick] ||
 |  5 Apr     |  50 |     6  o                 o  | | +- Series 1 ---------+ ||
 |  6 May     |  90 |    12  #                 #  | | | Values [Range  v]  | ||
-|  7 Jun     +-----+     8  o#########o#######o  | | | <<B3:B7>>  [Pick]  | ||
+|  7 Jun     +-----+     8  o#########o#######o  | | | <<B3:B6>>  [Pick]  | ||
 |  8 Jul        60       7                       | | +--------------------+ ||
 | ...                                            | ...                       |
 | [Sheet1] [Sheet2]                              |                           |
@@ -370,7 +375,9 @@ chart's stored value, and the service's own message appears directly beneath
 the field in the palette's error text colour. The message shown above is only
 an example; the text is always the service's. The message stays until the
 chart is reloaded or that field is edited again, and is also set as the field's
-accessible description. The full message is also written to Issues. A change
+accessible description. As today for every refused operation, the full
+message is also reported in the Issues dock by `MainWindow::submit`; this is
+existing behaviour, not new to charts. A change
 refused in the panel itself (an unknown sheet, a bad reference, removing the
 last series) is shown the same way. The panel never drops data to make a change
 fit: a two-series chart is not cut to one to become a pie.
@@ -395,8 +402,15 @@ fit: a two-series chart is not cut to one to become a pie.
 | | Categories [Range       v] [Old!A2:A13    ] [Pick] | |
 | |            ! This source no longer exists          | |
 | | +- Series 1 -------------------------------------+ | |
+| | | Name   [Cell        v] [B1             ] [Pick]| | |
 | | | Values [Range       v] [B2:B13         ] [Pick]| | |
 | | |        Not applied yet                         | | |
+| | +------------------------------------------------+ | |
+| | +- Series 2 -------------------------------------+ | |
+| | | Name   [Cell        v] [Old!C1         ] [Pick]| | |
+| | |        ! This source no longer exists          | | |
+| | | Values [Range       v] [Old!C2:C13     ] [Pick]| | |
+| | |        ! This source no longer exists          | | |
 | | +------------------------------------------------+ | |
 | | ...                                                | |
 | +----------------------------------------------------+ |
@@ -407,9 +421,11 @@ fit: a two-series chart is not cut to one to become a pie.
 The reason heads the panel. The Chart group stays enabled (rename, Bring to
 Front, Send to Back), as do the source fields and the Data group's buttons.
 Type, Title, Axes and Legend are disabled, because the engine cannot accept a
-specification that holds a broken source. Each broken field says "This source no
-longer exists". An edited source field is held in the panel and marked "Not
-applied yet"; series added, removed or moved are held the same way. When no
+specification that holds a broken source. Each broken field the user has not
+yet replaced says "This source no longer exists". A source field the user has
+edited is held in the panel and marked "Not applied yet" instead (in the sketch,
+Series 1 Values was edited; Categories and both Series 2 fields are still
+broken). Series added, removed or moved are held the same way. When no
 broken source remains, the held changes are sent together as one change and
 the reason goes away. On the sheet the chart shows its placeholder with the same
 reason and can still be selected, moved, resized, reordered and deleted.
@@ -436,7 +452,11 @@ reason at the top ("This chart cannot be read (UNSUPPORTED_SPEC_VERSION)" or
 "This chart cannot be read (INVALID_SPEC)"). Only the Chart group is enabled;
 every other group is disabled and empty, because the panel cannot show a
 specification it cannot read and never rewrites one. The chart can still be
-selected, moved, resized, reordered, renamed and deleted.
+selected, moved, resized, reordered, renamed and deleted, because none of those
+sends a specification: a rename sends only the name, a move or resize only the
+placement, a reorder only the order, and a delete only the chart. A
+specification is sent only when a specification field (Type, Title, Data, Axes
+or Legend) changes. The same holds for a chart with a broken source.
 
 A chart whose sources are over a size limit is readable: the panel shows the
 reason at the top ("This chart's sources are over a size limit (…)") and every
@@ -458,6 +478,14 @@ placeholder the view-only layer shows today, with the chart's name and
 "Loading". After a change the previous image stays, scaled if the size changed,
 until the new one arrives. The chart can be selected, moved, resized and edited
 while it draws; the panel works normally and shows no reason.
+
+### A stale chart
+
+A chart whose picture comes from an older workbook state, and is being drawn
+again, looks and behaves as the view-only layer shows it today: the older
+picture stays in place until the new one arrives. The chart can still be
+selected, moved, resized, deleted and opened in the panel, and the panel works
+normally.
 
 ### Busy
 
@@ -484,9 +512,9 @@ panel the same way, locked.
 
 | Where | Key | Result |
 | --- | --- | --- |
-| Anywhere a sheet is shown | Alt+F1 | Insert a chart from the selection |
-| Anywhere a sheet is shown | Ctrl+Alt+C | Select the next chart and focus it |
-| Anywhere a sheet is shown | Ctrl+Alt+Shift+C | Select the previous chart and focus it |
+| A sheet grid (not a list view or Tables and queries) | Alt+F1 | Insert a chart from the selection |
+| A sheet grid (not a list view or Tables and queries) | Ctrl+Alt+C | Select the next chart and focus it |
+| A sheet grid (not a list view or Tables and queries) | Ctrl+Alt+Shift+C | Select the previous chart and focus it |
 | Selected chart | Arrow | Move 8 pixels |
 | Selected chart | Alt+Arrow | Move 1 pixel |
 | Selected chart | Shift+Arrow | Resize by 8 pixels (right and bottom edges) |
@@ -503,7 +531,13 @@ panel the same way, locked.
 
 Each arrow-key move or resize is one change and one Undo. A keyboard move that
 would put the chart past an offset of 4096 pixels or onto no cell is refused in
-the window with the status "The chart cannot move further". A selected chart
+the window with the status "The chart cannot move further". A keyboard resize
+that would take the size below 64 by 48 or past 4096 by 4096 is refused the same
+way with the status "The chart cannot resize further"; the size stays at the
+bound. The three Insert commands follow the enablement in section 1: none works
+with no workbook, in a list view or while Tables and queries is shown, Chart is
+also disabled in a read-only workbook, and the Select commands are disabled when
+the sheet shows no charts. A selected chart
 takes Delete, Backspace, Escape, Enter, Return and the arrows before the
 window's own shortcuts, so Delete never clears the cells under the grid cursor.
 The macOS forms of these keys follow Qt's mapping (Ctrl is Command, Alt is
@@ -534,7 +568,8 @@ Each chart on the sheet is a focusable control with the accessible name
 "Chart: <name>", for example "Chart: Units by month", and the description
 "<Type> chart, titled <title>, <n> series", for example "Column chart, titled
 Units by month, 2 series". When the chart has no title the middle part is left
-out: "Column chart, 2 series". A chart that cannot be read or drawn has the
+out: "Column chart, 2 series". The count reads "1 series" for one series and
+"<n> series" otherwise. A chart that cannot be read or drawn has the
 reason as its description instead.
 
 Every panel control has an accessible name equal to its visible label; fields
@@ -545,21 +580,29 @@ fields include the series ("Series 1 Values"), and the Pick buttons are named
 
 ## Status texts and messages
 
+Status-bar texts (short phrases joined with " • "):
+
 | Text | When |
 | --- | --- |
 | "Chart inserted • Undo removes it" | After Insert → Chart succeeds |
 | "Pick a range for <field> • Enter applies • Escape cancels" | During a range pick |
 | "Pick one cell for Series <n> Name • Enter applies • Escape cancels" | A Name pick with more than one cell selected |
 | "The chart cannot move further" | A keyboard move past the limits or onto no cell |
-| "No chart selected" | The panel with nothing selected |
-| "Not applied yet" | A held source edit while a source is broken |
-| "This source no longer exists" | Beside a broken source field |
-| "A chart needs at least one series" | Remove on the only series |
-| "A source of this chart no longer exists" | Panel reason: a broken source |
-| "This chart cannot be read (<code>)" | Panel reason: unsupported or invalid specification |
-| "This chart's sources are over a size limit (<limit>)" | Panel reason: over a limit |
+| "The chart cannot resize further" | A keyboard resize past the size bounds |
 
-Every refusal from the service shows the service's own message.
+Panel texts and field markers:
+
+| Text | Where |
+| --- | --- |
+| "No chart selected" | The whole panel, with nothing selected |
+| "A source of this chart no longer exists" | Panel reason at the top: a broken source |
+| "This chart cannot be read (<code>)" | Panel reason at the top: unsupported or invalid specification |
+| "This chart's sources are over a size limit (<limit>)" | Panel reason at the top: over a limit |
+| "This source no longer exists" | Beneath a broken source field not yet edited |
+| "Not applied yet" | Beneath a source field edited while a source is broken |
+| "A chart needs at least one series" | Beneath the series list: Remove on the only series (refused in the panel) |
+| "Give an X source before changing this chart to a scatter chart." | Beneath the type buttons: Scatter on a chart with no categories |
+| The service's own message | Beneath the refused field, for every refusal from the service |
 
 ## Decisions for the owner to confirm
 
@@ -573,7 +616,8 @@ Every refusal from the service shows the service's own message.
    together when nothing is broken any more.
 3. **Shortcuts.** Insert Chart is Alt+F1, Select Next Chart Ctrl+Alt+C, Select
    Previous Chart Ctrl+Alt+Shift+C; on a selected chart the arrows move it by 8
-   pixels (Alt for 1), Shift with the arrows resizes it, Delete or Backspace
+   pixels (Alt for 1), Shift with the arrows resizes it by 8 pixels (Shift+Alt
+   for 1), Delete or Backspace
    deletes it, Enter opens the panel and Escape returns to the grid.
 4. **Handles.** Eight 8-pixel handles at the corners and edge midpoints and a
    2-pixel frame in the highlight colour, drawn inside the chart so nothing
@@ -592,3 +636,46 @@ Every refusal from the service shows the service's own message.
 9. **A range pick may visit other sheets.** During a pick the user may switch
    sheets; Enter or Escape returns to the chart's sheet and selects the chart
    again.
+
+## Owner questions
+
+These are details the design and plan leave open, filled in for these
+wireframes. Each can be accepted or corrected on its own.
+
+1. For a Scatter chart the Categories row is hidden and each series shows an X
+   row; for every other type the X row is not shown.
+2. A range field shows the bare reference (`B2:B13`) when the range is on the
+   chart's own sheet and the sheet-qualified form (`Sheet2!B2:B13`) otherwise,
+   and either form may be typed.
+3. A broken source field not yet replaced shows "This source no longer exists",
+   and adding, removing or moving series is held in the panel under decision 2,
+   just as source edits are.
+4. A chart whose sources are over a size limit shows the reason at the top of
+   the panel and keeps every group enabled, so the sources can be made smaller.
+5. Select Next Chart and Select Previous Chart stay enabled in a read-only
+   workbook, because selecting changes nothing; they are disabled with no
+   charts on the sheet, in a list view and in Tables and queries. This is the
+   item closest to the rule that authoring commands are disabled in a
+   read-only workbook.
+6. In a read-only workbook or while busy the chart's context menu enables only
+   Edit Chart, and the panel opens locked.
+7. Shift with the arrows resizes from the right and bottom edges, keeping the
+   top-left corner where it is.
+8. Enter on a chart, or Edit Chart, puts focus on the panel's Name field.
+9. A chart that cannot be read or drawn uses its reason as its accessible
+   description instead of "<Type> chart, titled <title>, <n> series".
+10. While a series name pick has more than one cell selected, the status reads
+    "Pick one cell for Series <n> Name • Enter applies • Escape cancels" and
+    Enter does nothing.
+11. The Title field and the Legend list have no visible label inside their
+    groups (their accessible names are "Title" and "Legend"), and the pick
+    button reads "Pick", with the accessible name "Pick <field> on the grid".
+12. Delete removes a chart without asking for confirmation, because Undo
+    restores it.
+13. The Menu key or Shift+F10 opens the context menu on the selected chart.
+14. A refused change is also reported in the Issues dock, as every refused
+    operation already is today.
+15. Remove on a chart's only series is refused in the panel with "A chart needs
+    at least one series", as plan Task 7 specifies.
+16. Alt+F1 may need the fn key on a Mac keyboard, where F1 is a media key by
+    default.
