@@ -4803,17 +4803,21 @@ private slots:
         StartupOptions options;options.automaticWorkbook=false;options.url="http://127.0.0.1:"+QString::number(proxy.serverPort());
         options.token=service["token"].toString();options.recoveryDirectory=temp.filePath("recovery");options.viewStatePath=temp.filePath("views.ini");
         MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
-        QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(path);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);
+        // A stale list refreshes the window, which reports ready a second time: that can land
+        // before the first report is observed, so the open waits for at least one.
+        window.openBook(path);QTRY_VERIFY_WITH_TIMEOUT(opened.count()>=1,10000);
         auto *layer=window.findChild<ChartLayer *>("chartLayer");auto *issues=window.findChild<QPlainTextEdit *>("operationIssues");
         QTRY_COMPARE_WITH_TIMEOUT(proxy.failCharts,0,5000);
         if(failure=="STALE_STATE") {
             // A stale read refreshes the window, as other stale reads do, and the refresh lists again.
             QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,10000);QCOMPARE(proxy.chartReads,2);
-            QVERIFY(!issues->toPlainText().contains("could not be read"));return;
+            // The open and that one refresh, and no other.
+            QCOMPARE(opened.count(),2);QVERIFY(!issues->toPlainText().contains("could not be read"));return;
         }
         QTRY_VERIFY_WITH_TIMEOUT(issues->toPlainText().contains("Chart catalog unavailable"),5000);
         QVERIFY(issues->toPlainText().contains("charts on this sheet could not be read"));
-        QTest::qWait(200);QCOMPARE(layer->overlays().size(),0);QCOMPARE(proxy.chartReads,1);
+        QTest::qWait(200);QCOMPARE(layer->overlays().size(),0);QCOMPARE(proxy.chartReads,1);QCOMPARE(opened.count(),1);
         const int before=opened.count();window.findChild<QAction *>("refreshStoredDataAction")->trigger();
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);QCOMPARE(proxy.chartReads,2);
