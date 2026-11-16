@@ -13,6 +13,7 @@
 
 class RestClient;
 class FrozenPanes;
+class QKeyEvent;
 class QSvgRenderer;
 class QTableView;
 
@@ -47,6 +48,10 @@ public:
     // its own rectangle, over the image or placeholder.
     void setSelected(bool selected);
     bool selected() const { return m_selected; }
+    static constexpr int HandleSize=8;
+    // The handle under a point of the widget, numbered as ChartSpec::resized
+    // numbers them (0 top-left, clockwise); -1 elsewhere or when not selected.
+    int handleAt(const QPoint &position) const;
 protected:
     void paintEvent(QPaintEvent *event) override;
 private:
@@ -70,6 +75,16 @@ private:
 // survives a relist while its chart exists, and clears when the chart goes,
 // another sheet or workbook is bound, or the sheet is shown projected. The
 // wheel over an overlay scrolls the body.
+//
+// While interactive, a selected chart is moved by dragging it and resized by
+// dragging one of its handles: the overlay follows the pointer and the
+// release asks for one change (moveRequested, resizeRequested), or none when
+// nothing moved or no cell is under the chart's top-left corner. Escape
+// cancels a drag. Its keys (Decision 3): the arrows move it, Shift with them
+// resizes it, Delete or Backspace asks for its deletion, Enter or Return for
+// its editing; the menu key or Shift+F10, and a right-click, ask for its
+// context menu. The layer sends nothing itself: the window sends each request
+// as one operation and the relist that follows places the chart.
 //
 // Charts in view are rendered by service render jobs, one at a time (the
 // service runs one chart job per workbook), lowest z first, after relayouts
@@ -113,6 +128,12 @@ public:
     // painter, a Python pick): overlays let the mouse through to the cells
     // under them and take no focus, as the view-only layer did.
     void setPassThrough(bool passThrough);
+    // The inverse of relayout() (Decision 5): the cell under the rectangle's
+    // top-left corner in the pane under it (frozen corner, frozen rows, frozen
+    // columns or body), as 1-based {row, col}, and {x, y} of the corner inside
+    // that cell. False when no cell is there: a header, outside the grid, past
+    // the last row or column.
+    bool placement(const QRect &rectInGridArea,QJsonObject *anchor,QJsonObject *offset) const;
 signals:
     void listed(int count);
     // A chart's overlay now shows the service's image for the current state and size.
@@ -125,6 +146,14 @@ signals:
     void selectionChanged(const QString &chartId);
     // A double-click or Enter on a chart.
     void editRequested(const QString &chartId);
+    void moveRequested(const QString &chartId,const QJsonObject &anchor,const QJsonObject &offset);
+    void resizeRequested(const QString &chartId,const QJsonObject &anchor,const QJsonObject &offset,const QJsonObject &size);
+    void deleteRequested(const QString &chartId);
+    // order is "front" or "back".
+    void orderRequested(const QString &chartId,const QString &order);
+    void contextMenuRequested(const QString &chartId,const QPoint &globalPosition);
+    // A keyboard move or resize refused in the window; status is the text to show.
+    void refused(const QString &status);
 protected:
     bool eventFilter(QObject *object,QEvent *event) override;
 private:
@@ -134,6 +163,30 @@ private:
     void restack();
     void queueRelayout();
     bool overlayEvent(ChartOverlay *overlay,QEvent *event);
+    bool keyEvent(ChartOverlay *overlay,QKeyEvent *key);
+    // One arrow key on a selected chart: a move, or with Shift a resize.
+    void nudge(ChartOverlay *overlay,int key,Qt::KeyboardModifiers modifiers);
+    // The pane showing a 0-based cell, and a viewport's rectangle in the grid area.
+    QTableView *paneOf(int row,int col) const;
+    QRect paneArea(QWidget *viewport) const;
+    // The cells of every pane together: no header and no scroll bar.
+    QRect cellsArea() const;
+    // The chart's whole rectangle in the grid area (its anchor cell's position
+    // plus its offset, however much of it is clipped) and the pane showing
+    // the anchor; false when the anchor is not shown.
+    bool trueRect(ChartOverlay *overlay,QRect *rect,QTableView **pane) const;
+    // placement() within one pane's cells, including those scrolled out of view.
+    bool placementIn(QTableView *view,const QPoint &point,QJsonObject *anchor,QJsonObject *offset) const;
+    // A mouse drag: pending until the pointer moves past the drag distance,
+    // then active. handle is -1 for a move.
+    struct Drag { QPointer<ChartOverlay> overlay; int handle=-1; QPoint origin; QRect start; bool active=false; };
+    bool dragging(ChartOverlay *overlay) const { return m_drag.active && m_drag.overlay && m_drag.overlay==overlay; }
+    QRect dragRect(const QPoint &globalPosition) const;
+    void dragTo(const QPoint &globalPosition);
+    void finishDrag(const QPoint &globalPosition);
+    // Ends any drag; an active one's chart goes back to its stored place.
+    void cancelDrag();
+    void updateCursor(ChartOverlay *overlay,int handle) const;
     void applyPassThrough(ChartOverlay *overlay) const;
     // Clears the selection, emitting once when there was one.
     void deselect();
@@ -168,6 +221,7 @@ private:
     QString m_base,m_sheet,m_state;
     bool m_projected=false,m_queued=false,m_listed=false,m_interactive=true,m_passThrough=false;
     QString m_selected;
+    Drag m_drag;
     // The viewports of every grid pane and header: a press there deselects.
     QList<QPointer<QWidget>> m_panes;
     quint64 m_generation=0;

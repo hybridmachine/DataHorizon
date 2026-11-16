@@ -3,10 +3,12 @@
 #include "chartspec.h"
 #include "frozenpanes.h"
 #include "restclient.h"
+#include <QApplication>
 #include <QCoreApplication>
 #include <QEvent>
 #include <QHeaderView>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QJsonArray>
 #include <QPainter>
 #include <QScrollBar>
@@ -16,10 +18,13 @@
 #include <QUuid>
 #include <QWheelEvent>
 #include <algorithm>
+#include <utility>
 
 ChartOverlay::ChartOverlay(const QString &chartId,QWidget *parent):QWidget(parent),m_renderer(new QSvgRenderer(this)) {
     setObjectName("chartOverlay");setProperty("chartId",chartId);
     setFocusPolicy(Qt::ClickFocus);
+    // Hovering a selected chart shows the move or resize cursor.
+    setMouseTracking(true);
 }
 
 void ChartOverlay::setChart(const QJsonObject &chart) {
@@ -38,6 +43,16 @@ void ChartOverlay::setPlaceholder(const QString &reason) {
 void ChartOverlay::setSelected(bool selected) {
     if(m_selected==selected)return;
     m_selected=selected;update();
+}
+
+int ChartOverlay::handleAt(const QPoint &position) const {
+    if(!m_selected)return -1;
+    const int xs[]{0,(width()-HandleSize)/2,width()-HandleSize},ys[]{0,(height()-HandleSize)/2,height()-HandleSize};
+    // Column and row of each handle, clockwise from the top-left.
+    static constexpr int places[8][2]{{0,0},{1,0},{2,0},{2,1},{2,2},{1,2},{0,2},{0,1}};
+    for(int handle=0;handle<8;++handle)
+        if(QRect(xs[places[handle][0]],ys[places[handle][1]],HandleSize,HandleSize).contains(position))return handle;
+    return -1;
 }
 
 // "<Type> chart, titled <title>, <n> series", or why the chart cannot be read
@@ -70,7 +85,7 @@ void ChartOverlay::paintEvent(QPaintEvent *) {
     }
     if(!m_selected)return;
     // Decision 4: a 2 px frame and eight 8 px handles, inside the rectangle.
-    const auto highlight=palette().highlight();const int w=width(),h=height(),frame=2,handle=8;
+    const auto highlight=palette().highlight();const int w=width(),h=height(),frame=2,handle=HandleSize;
     painter.fillRect(0,0,w,frame,highlight);painter.fillRect(0,h-frame,w,frame,highlight);
     painter.fillRect(0,0,frame,h,highlight);painter.fillRect(w-frame,0,frame,h,highlight);
     for(const int x:{0,(w-handle)/2,w-handle})for(const int y:{0,(h-handle)/2,h-handle})
@@ -181,6 +196,8 @@ void ChartLayer::accept(const QJsonArray &charts) {
     bool refocus=false;
     for(auto *overlay:std::as_const(existing))refocus=refocus || overlay->hasFocus();
     const bool selectedGone=existing.contains(m_selected);
+    // A drag whose chart went ends silently.
+    if(m_drag.overlay && existing.contains(m_drag.overlay->chartId()))m_drag={};
     for(auto *overlay:existing)delete overlay;
     m_overlays=kept;
     if(selectedGone){m_selected.clear();emit selectionChanged({});}
@@ -190,7 +207,7 @@ void ChartLayer::accept(const QJsonArray &charts) {
 }
 
 void ChartLayer::clear() {
-    ++m_generation;
+    ++m_generation;m_drag={};
     if(!m_selected.isEmpty()){m_selected.clear();emit selectionChanged({});}
     for(const auto &overlay:m_overlays)delete overlay.data();
     m_overlays.clear();m_staleRetried.clear();m_failed.clear();
@@ -227,11 +244,37 @@ bool ChartLayer::eventFilter(QObject *object,QEvent *event) {
 // grid area beneath; the wheel goes to the body's viewport.
 bool ChartLayer::overlayEvent(ChartOverlay *item,QEvent *event) {
     switch(event->type()) {
-    case QEvent::MouseButtonPress:
-        select(item->chartId());item->setFocus(Qt::MouseFocusReason);return true;
+    case QEvent::MouseButtonPress: {
+        auto *mouse=static_cast<QMouseEvent *>(event);
+        // Handles are drawn, and so taken, only on a chart already selected.
+        const int handle=item->handleAt(mouse->position().toPoint());
+        select(item->chartId());item->setFocus(Qt::MouseFocusReason);
+        if(mouse->button()==Qt::RightButton){emit contextMenuRequested(item->chartId(),mouse->globalPosition().toPoint());return true;}
+        QRect start;QTableView *pane=nullptr;
+        if(mouse->button()==Qt::LeftButton && m_interactive && !m_passThrough && trueRect(item,&start,&pane))
+            m_drag={item,handle,mouse->globalPosition().toPoint(),start,false};
+        updateCursor(item,handle);
+        return true;
+    }
     case QEvent::MouseButtonDblClick:
         select(item->chartId());item->setFocus(Qt::MouseFocusReason);emit editRequested(item->chartId());return true;
-    case QEvent::MouseButtonRelease: case QEvent::MouseMove:
+    case QEvent::MouseMove: {
+        auto *mouse=static_cast<QMouseEvent *>(event);const QPoint global=mouse->globalPosition().toPoint();
+        if(m_drag.overlay==item && (mouse->buttons()&Qt::LeftButton)) {
+            // A plain click sends nothing: the drag starts past the drag distance.
+            if(!m_drag.active && (global-m_drag.origin).manhattanLength()<QApplication::startDragDistance())return true;
+            m_drag.active=true;dragTo(global);
+        }
+        else if(mouse->buttons()==Qt::NoButton)updateCursor(item,item->handleAt(mouse->position().toPoint()));
+        return true;
+    }
+    case QEvent::MouseButtonRelease: {
+        auto *mouse=static_cast<QMouseEvent *>(event);
+        if(mouse->button()==Qt::LeftButton && m_drag.overlay==item)finishDrag(mouse->globalPosition().toPoint());
+        return true;
+    }
+    case QEvent::ContextMenu:
+        // A right-click's menu is asked for on the press, the keyboard's on its key.
         return true;
     case QEvent::Wheel: {
         if(!m_body)return false;
@@ -241,23 +284,175 @@ bool ChartLayer::overlayEvent(ChartOverlay *item,QEvent *event) {
         QCoreApplication::sendEvent(viewport,&forwarded);
         return true;
     }
-    case QEvent::ShortcutOverride: case QEvent::KeyPress: {
-        // The chart takes Escape (and, while interactive, Enter) before the
-        // window's shortcuts; while the mouse passes through it takes no keys.
-        if(m_passThrough)return false;
-        auto *key=static_cast<QKeyEvent *>(event);
-        const bool escape=key->key()==Qt::Key_Escape && key->modifiers()==Qt::NoModifier;
-        const bool enter=m_interactive && item->selected() && (key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter) && (key->modifiers()&~Qt::KeypadModifier)==Qt::NoModifier;
-        if(!escape && !enter)return false;
-        event->accept();
-        if(event->type()==QEvent::ShortcutOverride)return true;
-        if(escape){select({});if(m_frozen)m_frozen->focusCurrent();}
-        else if(!key->isAutoRepeat())emit editRequested(item->chartId());
-        return true;
-    }
+    case QEvent::ShortcutOverride: case QEvent::KeyPress:
+        return keyEvent(item,static_cast<QKeyEvent *>(event));
     default:
         return false;
     }
+}
+
+namespace {
+// Offsets are 0 to 4096 on each axis.
+constexpr int MaxOffset=4096;
+bool offsetAllowed(const QJsonObject &offset) { return offset["x"].toInt()<=MaxOffset && offset["y"].toInt()<=MaxOffset; }
+// Where a menu opened from the keyboard appears: the middle of what is shown.
+QPoint menuPosition(ChartOverlay *item) {
+    const QRect shown=item->mask().isEmpty()?item->rect():item->mask().boundingRect()&item->rect();
+    return item->mapToGlobal(shown.center());
+}
+}
+
+// Before the window's shortcuts (ShortcutOverride) and as key presses, a
+// chart takes Escape; when selected, the menu key and Shift+F10; when also
+// interactive, Delete, Backspace, Enter, Return and the arrows with Shift and
+// Alt. While the mouse passes through it takes no keys.
+bool ChartLayer::keyEvent(ChartOverlay *item,QKeyEvent *key) {
+    if(m_passThrough)return false;
+    const bool press=key->type()==QEvent::KeyPress;const int code=key->key();
+    const auto modifiers=key->modifiers()&~Qt::KeypadModifier;
+    if(code==Qt::Key_Escape && modifiers==Qt::NoModifier) {
+        key->accept();
+        if(!press)return true;
+        // During a drag Escape cancels the drag only; the chart stays selected.
+        if(m_drag.active)cancelDrag();
+        else {select({});if(m_frozen)m_frozen->focusCurrent();}
+        return true;
+    }
+    if(!item->selected())return false;
+    // The menu opens while the chart cannot change too; it then offers Edit Chart only.
+    if(press && ((code==Qt::Key_Menu && modifiers==Qt::NoModifier) || (code==Qt::Key_F10 && modifiers==Qt::ShiftModifier))) {
+        if(!key->isAutoRepeat())emit contextMenuRequested(item->chartId(),menuPosition(item));
+        return true;
+    }
+    if(!m_interactive)return false;
+    const bool enter=(code==Qt::Key_Return || code==Qt::Key_Enter) && modifiers==Qt::NoModifier;
+    const bool remove=(code==Qt::Key_Delete || code==Qt::Key_Backspace) && modifiers==Qt::NoModifier;
+    const bool arrow=(code==Qt::Key_Left || code==Qt::Key_Right || code==Qt::Key_Up || code==Qt::Key_Down) && !(modifiers&~(Qt::ShiftModifier|Qt::AltModifier));
+    if(!enter && !remove && !arrow)return false;
+    key->accept();
+    // During a drag only Escape acts.
+    if(!press || m_drag.active)return true;
+    if(arrow)nudge(item,code,modifiers);
+    else if(!key->isAutoRepeat()){if(enter)emit editRequested(item->chartId());else emit deleteRequested(item->chartId());}
+    return true;
+}
+
+// Decision 3: 8 px, or 1 px with Alt. A move places the moved rectangle as a
+// release would; a corner scrolled out of its pane's view, or moved past it,
+// is placed among that pane's cells. A resize moves the right and bottom edges.
+void ChartLayer::nudge(ChartOverlay *item,int key,Qt::KeyboardModifiers modifiers) {
+    const int step=modifiers&Qt::AltModifier?1:8;
+    const QPoint delta(key==Qt::Key_Left?-step:key==Qt::Key_Right?step:0,key==Qt::Key_Up?-step:key==Qt::Key_Down?step:0);
+    const auto chart=item->chart();
+    if(modifiers&Qt::ShiftModifier) {
+        const auto size=chart["size"].toObject();
+        const QSize next(size["width"].toInt()+delta.x(),size["height"].toInt()+delta.y());
+        if(ChartSpec::clampSize(next)!=next){emit refused(tr("The chart cannot resize further"));return;}
+        emit resizeRequested(item->chartId(),chart["anchor"].toObject(),chart["offset"].toObject(),QJsonObject{{"width",next.width()},{"height",next.height()}});
+        return;
+    }
+    QRect rect;QTableView *pane=nullptr;QJsonObject anchor,offset;bool placed=false;
+    if(trueRect(item,&rect,&pane)) {
+        const bool shown=paneArea(pane->viewport()).contains(rect.topLeft());
+        placed=(shown && placement(rect.translated(delta),&anchor,&offset)) || placementIn(pane,rect.topLeft()+delta,&anchor,&offset);
+    }
+    if(!placed || !offsetAllowed(offset)){emit refused(tr("The chart cannot move further"));return;}
+    emit moveRequested(item->chartId(),anchor,offset);
+}
+
+QRect ChartLayer::dragRect(const QPoint &globalPosition) const {
+    const QPoint delta=globalPosition-m_drag.origin;
+    return m_drag.handle<0?m_drag.start.translated(delta):ChartSpec::resized(m_drag.start,m_drag.handle,delta);
+}
+
+// The dragged chart follows the pointer, drawn whole over the cells of every
+// pane but never over a header or a scroll bar.
+void ChartLayer::dragTo(const QPoint &globalPosition) {
+    auto *item=m_drag.overlay.data();
+    if(!item || !attached())return;
+    const QRect rect=dragRect(globalPosition),shown=rect&cellsArea();
+    item->setGeometry(rect);
+    // An empty region would clear the mask; one outside the widget hides it all.
+    item->setMask(shown.isEmpty()?QRegion(-1,-1,1,1):QRegion(shown.translated(-rect.topLeft())));
+}
+
+void ChartLayer::finishDrag(const QPoint &globalPosition) {
+    const QRect rect=dragRect(globalPosition);const auto drag=std::exchange(m_drag,{});
+    if(!drag.active || !drag.overlay)return;
+    QJsonObject anchor,offset;
+    // Nothing moved, or no cell under the top-left corner: the chart goes back.
+    if(rect==drag.start || !placement(rect,&anchor,&offset) || !offsetAllowed(offset)){relayout();return;}
+    if(drag.handle<0)emit moveRequested(drag.overlay->chartId(),anchor,offset);
+    else emit resizeRequested(drag.overlay->chartId(),anchor,offset,QJsonObject{{"width",rect.width()},{"height",rect.height()}});
+}
+
+void ChartLayer::cancelDrag() {
+    const bool active=m_drag.active;m_drag={};
+    if(active)relayout();
+}
+
+void ChartLayer::updateCursor(ChartOverlay *item,int handle) const {
+    if(!item->selected() || !m_interactive || m_passThrough){item->unsetCursor();return;}
+    static constexpr Qt::CursorShape shapes[8]{Qt::SizeFDiagCursor,Qt::SizeVerCursor,Qt::SizeBDiagCursor,Qt::SizeHorCursor,
+                                               Qt::SizeFDiagCursor,Qt::SizeVerCursor,Qt::SizeBDiagCursor,Qt::SizeHorCursor};
+    item->setCursor(handle<0?Qt::SizeAllCursor:shapes[handle]);
+}
+
+QTableView *ChartLayer::paneOf(int row,int col) const {
+    const bool rowFrozen=row<m_frozen->frozenRows(),columnFrozen=col<m_frozen->frozenColumns();
+    return rowFrozen && columnFrozen?m_frozen->cornerView():rowFrozen?m_frozen->view():columnFrozen?m_frozen->leftView():m_body.data();
+}
+
+QRect ChartLayer::paneArea(QWidget *viewport) const { return QRect(viewport->mapTo(m_gridArea,QPoint()),viewport->size()); }
+
+QRect ChartLayer::cellsArea() const {
+    const QRect body=paneArea(m_body->viewport());
+    const int top=m_frozen->frozenRows()?paneArea(m_frozen->view()->viewport()).top():body.top();
+    const int left=m_frozen->frozenColumns()?paneArea(m_frozen->leftView()->viewport()).left():body.left();
+    return QRect(QPoint(left,top),body.bottomRight());
+}
+
+bool ChartLayer::trueRect(ChartOverlay *overlay,QRect *rect,QTableView **pane) const {
+    if(!attached())return false;
+    auto *model=m_body->model();const int rows=model?model->rowCount():0,columns=model?model->columnCount():0;
+    const int frozenRows=m_frozen->frozenRows(),frozenColumns=m_frozen->frozenColumns();
+    const auto chart=overlay->chart();const auto anchor=chart["anchor"].toObject(),offset=chart["offset"].toObject(),size=chart["size"].toObject();
+    int row=anchor["row"].toInt(1)-1,col=anchor["col"].toInt(1)-1;
+    if(row<0 || col<0)return false;
+    // Hidden rows and columns move the anchor to the next shown one; a frozen
+    // prefix is shown by the frozen panes, which the body hides.
+    auto rowHidden=[&](int r){return r<frozenRows?m_frozen->view()->isRowHidden(r):m_body->isRowHidden(r);};
+    auto columnHidden=[&](int c){return c<frozenColumns?m_frozen->leftView()->isColumnHidden(c):m_body->isColumnHidden(c);};
+    while(row<rows && rowHidden(row))++row;
+    while(col<columns && columnHidden(col))++col;
+    if(row>=rows || col>=columns)return false;
+    auto *view=paneOf(row,col);
+    const QPoint cell=view->viewport()->mapTo(m_gridArea,QPoint(view->columnViewportPosition(col),view->rowViewportPosition(row)));
+    *rect=QRect(cell+QPoint(offset["x"].toInt(),offset["y"].toInt()),QSize(size["width"].toInt(),size["height"].toInt()));
+    *pane=view;
+    return true;
+}
+
+bool ChartLayer::placement(const QRect &rectInGridArea,QJsonObject *anchor,QJsonObject *offset) const {
+    if(!attached())return false;
+    const QPoint corner=rectInGridArea.topLeft();
+    QList<QTableView *> panes{m_body.data()};
+    if(m_frozen->frozenRows())panes.append(m_frozen->view());
+    if(m_frozen->frozenColumns())panes.append(m_frozen->leftView());
+    if(m_frozen->frozenRows() && m_frozen->frozenColumns())panes.append(m_frozen->cornerView());
+    for(auto *view:std::as_const(panes))
+        if(paneArea(view->viewport()).contains(corner))return placementIn(view,corner,anchor,offset);
+    return false;
+}
+
+bool ChartLayer::placementIn(QTableView *view,const QPoint &point,QJsonObject *anchor,QJsonObject *offset) const {
+    const QPoint local=view->viewport()->mapFrom(m_gridArea,point);
+    const int row=view->rowAt(local.y()),col=view->columnAt(local.x());
+    // Past the last row or column, or a cell another pane shows.
+    if(row<0 || col<0 || paneOf(row,col)!=view)return false;
+    *anchor=QJsonObject{{"row",row+1},{"col",col+1}};
+    *offset=QJsonObject{{"x",local.x()-view->columnViewportPosition(col)},{"y",local.y()-view->rowViewportPosition(row)}};
+    return true;
 }
 
 // Each chart is placed from the view that shows its anchor cell and clipped
@@ -271,28 +466,14 @@ void ChartLayer::relayout() {
     // Restarted on each relayout, so scrolling renders once it settles.
     if(!items.isEmpty() || !m_jobs.isEmpty())m_renderTimer.start();
     if(items.isEmpty() || !attached())return;
-    auto *model=m_body->model();const int rows=model?model->rowCount():0,columns=model?model->columnCount():0;
-    const int frozenRows=m_frozen->frozenRows(),frozenColumns=m_frozen->frozenColumns();
-    auto area=[this](QWidget *viewport){return QRect(viewport->mapTo(m_gridArea,QPoint()),viewport->size());};
-    const QRect body=area(m_body->viewport());
-    const int top=frozenRows?area(m_frozen->view()->viewport()).top():body.top();
-    const int left=frozenColumns?area(m_frozen->leftView()->viewport()).left():body.left();
-    // Hidden rows and columns move the anchor to the next shown one; a frozen
-    // prefix is shown by the frozen panes, which the body hides.
-    auto rowHidden=[&](int row){return row<frozenRows?m_frozen->view()->isRowHidden(row):m_body->isRowHidden(row);};
-    auto columnHidden=[&](int col){return col<frozenColumns?m_frozen->leftView()->isColumnHidden(col):m_body->isColumnHidden(col);};
+    const QRect body=paneArea(m_body->viewport()),cells=cellsArea();
     for(auto *overlay:items) {
-        const auto chart=overlay->chart();const auto anchor=chart["anchor"].toObject(),offset=chart["offset"].toObject(),size=chart["size"].toObject();
-        int row=anchor["row"].toInt(1)-1,col=anchor["col"].toInt(1)-1;
-        if(m_projected || row<0 || col<0){overlay->hide();continue;}
-        while(row<rows && rowHidden(row))++row;
-        while(col<columns && columnHidden(col))++col;
-        if(row>=rows || col>=columns){overlay->hide();continue;}
-        const bool rowFrozen=row<frozenRows,columnFrozen=col<frozenColumns;
-        QTableView *view=rowFrozen && columnFrozen?m_frozen->cornerView():rowFrozen?m_frozen->view():columnFrozen?m_frozen->leftView():m_body.data();
-        const QPoint cell=view->viewport()->mapTo(m_gridArea,QPoint(view->columnViewportPosition(col),view->rowViewportPosition(row)));
-        const QRect chartRect(cell+QPoint(offset["x"].toInt(),offset["y"].toInt()),QSize(size["width"].toInt(),size["height"].toInt()));
-        const QRect clip(QPoint(columnFrozen?left:body.left(),rowFrozen?top:body.top()),body.bottomRight());
+        // A dragged chart follows the pointer, not its stored place.
+        if(dragging(overlay))continue;
+        QRect chartRect;QTableView *view=nullptr;
+        if(m_projected || !trueRect(overlay,&chartRect,&view)){overlay->hide();continue;}
+        const bool rowFrozen=view==m_frozen->view() || view==m_frozen->cornerView(),columnFrozen=view==m_frozen->leftView() || view==m_frozen->cornerView();
+        const QRect clip(QPoint(columnFrozen?cells.left():body.left(),rowFrozen?cells.top():body.top()),body.bottomRight());
         const QRect shown=chartRect&clip;
         if(shown.isEmpty()){overlay->hide();continue;}
         overlay->setGeometry(chartRect);overlay->setMask(QRegion(shown.translated(-chartRect.topLeft())));overlay->show();
@@ -324,7 +505,8 @@ QJsonObject ChartLayer::chart(const QString &chartId) const {
 void ChartLayer::select(const QString &chartId) {
     auto *next=overlay(chartId);const auto id=next?chartId:QString();
     if(id==m_selected)return;
-    if(auto *previous=overlay(m_selected))previous->setSelected(false);
+    cancelDrag();
+    if(auto *previous=overlay(m_selected)){previous->setSelected(false);previous->unsetCursor();}
     m_selected=id;
     if(next)next->setSelected(true);
     emit selectionChanged(m_selected);
@@ -341,11 +523,18 @@ void ChartLayer::selectNext(int direction) {
     ordered[next]->setFocus(Qt::OtherFocusReason);
 }
 
-void ChartLayer::setInteractive(bool interactive) { m_interactive=interactive; }
+void ChartLayer::setInteractive(bool interactive) {
+    if(m_interactive==interactive)return;
+    m_interactive=interactive;
+    if(m_interactive)return;
+    cancelDrag();
+    for(auto *item:overlays())item->unsetCursor();
+}
 
 void ChartLayer::setPassThrough(bool passThrough) {
     if(m_passThrough==passThrough)return;
     m_passThrough=passThrough;
+    if(m_passThrough)cancelDrag();
     for(auto *item:overlays())applyPassThrough(item);
     // A chart keeps its selection through a pick but not the keyboard.
     if(m_passThrough)refocusGrid();
@@ -358,7 +547,8 @@ void ChartLayer::applyPassThrough(ChartOverlay *item) const {
 
 void ChartLayer::deselect() {
     if(m_selected.isEmpty())return;
-    if(auto *previous=overlay(m_selected))previous->setSelected(false);
+    cancelDrag();
+    if(auto *previous=overlay(m_selected)){previous->setSelected(false);previous->unsetCursor();}
     m_selected.clear();
     emit selectionChanged({});
 }

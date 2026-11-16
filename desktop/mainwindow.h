@@ -116,8 +116,10 @@ protected:
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
     void showRelational(bool visible);
-    // Enables Insert → Chart and the Select Next/Previous Chart commands for
-    // the workbook, read-only state, projection, workbench and charts shown.
+    // Enables Insert → Chart, the Select Next/Previous Chart commands and the
+    // chart context menu's commands for the workbook, read-only state,
+    // projection, workbench and charts shown, and lets the charts
+    // be moved and changed only while the sheet takes edits.
     void updateChartActions();
     // Shows the chart panel for the selected chart (Task 6).
     void showChartPanel();
@@ -370,6 +372,9 @@ private:
     FrozenPanes *m_frozenTop = nullptr;
     ChartLayer *m_charts = nullptr;
     QAction *m_insertChartAction = nullptr, *m_selectNextChartAction = nullptr, *m_selectPreviousChartAction = nullptr;
+    // The context menu on a chart (Task 5).
+    QMenu *m_chartMenu = nullptr;
+    QAction *m_editChartAction = nullptr, *m_chartToFrontAction = nullptr, *m_chartToBackAction = nullptr, *m_deleteChartAction = nullptr;
     // A suggest request is outstanding; a second Insert waits for it.
     bool m_chartSuggesting = false;
     // The operation id of the chart_create whose committed receipt's chart is

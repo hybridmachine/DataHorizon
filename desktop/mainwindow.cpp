@@ -37,6 +37,7 @@
 #include <QLabel>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
@@ -903,6 +904,30 @@ void MainWindow::buildUi() {
         m_charts->select(id);showChartPanel();m_status->setText(tr("Chart inserted • Undo removes it"));
     });
     connect(m_client,&RestClient::configured,this,[this]{m_chartSuggesting=false;m_pendingChartSelect.clear();m_chartToSelect.clear();m_chartInsertTarget={};updateChartActions();});
+    // Each move, resize, reorder or delete of a chart is one operation. A
+    // change not sent puts the chart back; a sent one is placed by the relist.
+    connect(m_charts,&ChartLayer::moveRequested,this,[this](const QString &id,const QJsonObject &anchor,const QJsonObject &offset){
+        if(submit({{"action","chart_update"},{"chart_id",id},{"anchor",anchor},{"offset",offset}}).isEmpty())m_charts->relayout();});
+    connect(m_charts,&ChartLayer::resizeRequested,this,[this](const QString &id,const QJsonObject &anchor,const QJsonObject &offset,const QJsonObject &size){
+        if(submit({{"action","chart_update"},{"chart_id",id},{"anchor",anchor},{"offset",offset},{"size",size}}).isEmpty())m_charts->relayout();});
+    connect(m_charts,&ChartLayer::orderRequested,this,[this](const QString &id,const QString &order){submit({{"action","chart_update"},{"chart_id",id},{"order",order}});});
+    connect(m_charts,&ChartLayer::deleteRequested,this,[this](const QString &id){submit({{"action","chart_delete"},{"chart_id",id}});});
+    connect(m_charts,&ChartLayer::editRequested,this,&MainWindow::showChartPanel);
+    connect(m_charts,&ChartLayer::refused,this,[this](const QString &status){m_status->setText(status);});
+    // The context menu on the selected chart. Its commands act on the
+    // selected chart, through the layer's requests as the chart's own keys do.
+    m_chartMenu=new QMenu(this);m_chartMenu->setObjectName("chartContextMenu");
+    m_editChartAction=m_chartMenu->addAction(tr("Edit Chart"));m_editChartAction->setObjectName("editChartAction");
+    m_chartToFrontAction=m_chartMenu->addAction(tr("Bring to Front"));m_chartToFrontAction->setObjectName("chartToFrontAction");
+    m_chartToBackAction=m_chartMenu->addAction(tr("Send to Back"));m_chartToBackAction->setObjectName("chartToBackAction");
+    m_chartMenu->addSeparator();
+    m_deleteChartAction=m_chartMenu->addAction(tr("Delete"));m_deleteChartAction->setObjectName("deleteChartAction");
+    connect(m_editChartAction,&QAction::triggered,this,[this]{if(const auto id=m_charts->selectedChart();!id.isEmpty())emit m_charts->editRequested(id);});
+    connect(m_chartToFrontAction,&QAction::triggered,this,[this]{if(const auto id=m_charts->selectedChart();!id.isEmpty())emit m_charts->orderRequested(id,"front");});
+    connect(m_chartToBackAction,&QAction::triggered,this,[this]{if(const auto id=m_charts->selectedChart();!id.isEmpty())emit m_charts->orderRequested(id,"back");});
+    connect(m_deleteChartAction,&QAction::triggered,this,[this]{if(const auto id=m_charts->selectedChart();!id.isEmpty())emit m_charts->deleteRequested(id);});
+    connect(m_charts,&ChartLayer::contextMenuRequested,this,[this](const QString &,const QPoint &position){updateChartActions();m_chartMenu->popup(position);});
+    updateChartActions();
     m_freezeAction=add(view,tr("Freeze top row"),{},[this]{
         if(m_busy || m_unknown || m_info.isEmpty() || m_model->projected() || m_hiddenRows.contains(0)) {
             QSignalBlocker blocker(m_freezeAction); m_freezeAction->setChecked(m_frozenTop->active());
@@ -1881,6 +1906,13 @@ void MainWindow::updateChartActions() {
     setEditingEnabled(m_insertChartAction,sheet && !m_busy && !m_unknown && !m_info["readonly"].toBool() && !m_chartSuggesting);
     const bool charts=sheet && m_charts && !m_charts->overlays().isEmpty();
     setEditingEnabled(m_selectNextChartAction,charts);setEditingEnabled(m_selectPreviousChartAction,charts);
+    // Charts are moved, resized, reordered and deleted only while the sheet
+    // takes edits; they are still selected, and edited in the panel (locked).
+    const bool editable=sheet && !m_busy && !m_unknown && !m_info.value("readonly").toBool();
+    if(m_charts)m_charts->setInteractive(editable);
+    if(!m_chartMenu)return;
+    m_editChartAction->setEnabled(charts);
+    for(auto *action:{m_chartToFrontAction,m_chartToBackAction,m_deleteChartAction})action->setEnabled(charts && editable);
 }
 
 void MainWindow::cancelPendingOperation(const QString &operation) {
