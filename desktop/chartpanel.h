@@ -154,7 +154,10 @@ private:
         QPushButton *remove=nullptr,*up=nullptr,*down=nullptr;
     };
     // What the panel knows of a working series beyond its specification.
-    struct SeriesState { bool panelOnly=false;QSet<QString> edited; };
+    // id names the row for as long as the panel shows it, whatever its place.
+    struct SeriesState { bool panelOnly=false;QSet<QString> edited;int id=0; };
+    SeriesState newRow(bool panelOnly) { return SeriesState{panelOnly,{},++m_lastRow}; }
+    int m_lastRow=0;
     // A source field (categoriesSource, series<n>Name, series<n>Values,
     // series<n>X): its 0-based series (-1 for the categories) and part.
     static bool dataSlot(const QString &field,int *row,QString *part);

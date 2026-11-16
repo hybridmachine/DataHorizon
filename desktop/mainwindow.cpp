@@ -894,6 +894,8 @@ void MainWindow::buildUi() {
     connect(m_model,&QAbstractItemModel::modelReset,this,[this]{
         // Another workbook, none, or a list view ends a chart pick; another sheet keeps it.
         if(chartPickActive() && (m_model->workbook()!=m_chartPickWorkbook || m_model->projected()))cancelChartPick();
+        // Returning to the chart's sheet, another sheet shown instead ends the pick.
+        if(chartPickActive() && m_chartPickReturning && m_model->sheet()!=m_chartPickSheet)cancelChartPick();
         // Another workbook or sheet shown ends the wait for an inserted chart.
         if(!m_chartToSelect.isEmpty() && (m_model->workbook()!=m_chartInsertTarget["workbook"].toString() || m_model->sheet()!=m_chartInsertTarget["sheet"].toString())){m_chartToSelect.clear();m_chartInsertTarget={};}
         m_charts->bind(m_model->workbook().isEmpty()?QString():"/v1/workbooks/"+m_model->workbook(),m_model->sheet(),m_model->state(),m_model->projected());updateChartActions();});
@@ -1102,6 +1104,8 @@ void MainWindow::buildUi() {
         if(chartPickActive() && m_model->sheet()==m_chartPickSheet) {
             if(m_charts->chart(m_chartPickChart).isEmpty())cancelChartPick();
             else {
+                // Drawn selected again once its sheet is shown (binding another sheet cleared it).
+                m_charts->select(m_chartPickChart);
                 m_chartPanel->setChart(panelChart(m_chartPickChart));
                 // A pick ended on another sheet ends here, its chart's sheet listed again.
                 if(chartPickActive() && m_chartPickReturning)finishChartPick(m_chartPickApplyOnReturn,true);
@@ -1197,11 +1201,14 @@ void MainWindow::buildUi() {
     auto referenceViews=m_frozenTop->views();referenceViews.append(m_grid);for(auto *pane:referenceViews){pane->installEventFilter(this);pane->viewport()->installEventFilter(this);}
     connect(m_model,&QAbstractItemModel::modelAboutToBeReset,this,[this]{finishReferencePick(false);if(!m_changingSheet)cancelExternalReferencePick();});
     // A chart range pick follows the grid's selection on any sheet, and ends
-    // when a cell edit starts in the formula bar or in a cell.
+    // when a cell edit starts in the formula bar or in a cell, or focus goes
+    // to another text field outside the chart panel.
     connect(m_grid->selectionModel(),&QItemSelectionModel::selectionChanged,this,[this]{if(chartPickActive() && !m_chartPickReturning)updateChartPick(true);});
     connect(qApp,&QApplication::focusChanged,this,[this](QWidget *,QWidget *now){
         if(!chartPickActive() || !now)return;
-        bool editor=now==m_source;
+        // Any text field outside the chart panel (the formula bar, the
+        // address box) takes Enter itself; so does a cell editor.
+        bool editor=qobject_cast<QLineEdit *>(now) && !m_chartPanel->isAncestorOf(now);
         auto views=m_frozenTop->views();views.append(m_grid);
         for(auto *view:views)editor=editor || (now!=view->viewport() && view->viewport()->isAncestorOf(now));
         if(editor)cancelChartPick();
@@ -2469,13 +2476,21 @@ void MainWindow::cancelFormatPainter() {
 
 void MainWindow::updateChartPassThrough() {
     if(m_charts)m_charts->setPassThrough(m_pickingReference || m_externalPicking || m_painterPending || !m_painterRows.isEmpty() || chartPickActive());
+    // Only a chart range pick keeps the chart selected through a click on the grid.
+    if(m_charts)m_charts->setKeepSelection(chartPickActive());
 }
 
 bool MainWindow::chartPickActive() const { return !m_chartPickField.isEmpty(); }
 
 void MainWindow::beginChartPick(const QString &field) {
-    // Pick on the field being picked ends its pick; on another field starts that one.
-    if(chartPickActive()){if(field==m_chartPickField){endChartPick(false);return;}cancelChartPick();}
+    // Pick on the field being picked ends its pick; on another field starts
+    // that one for the same chart, on whatever sheet is shown.
+    QString carriedChart,carriedSheet;
+    if(chartPickActive()) {
+        if(field==m_chartPickField){endChartPick(false);return;}
+        if(!m_chartPickReturning){carriedChart=m_chartPickChart;carriedSheet=m_chartPickSheet;}
+        cancelChartPick();
+    }
     finishReferencePick(false);cancelFormatPainter();cancelExternalReferencePick();
     bool editing=false;auto views=m_frozenTop->views();views.append(m_grid);
     for(auto *view:views)if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))if(delegate->activeEditor())editing=true;
@@ -2485,12 +2500,12 @@ void MainWindow::beginChartPick(const QString &field) {
     else if(m_unknown)problem=tr("Reconcile the unknown operation before picking a range.");
     else if(m_info.isEmpty() || m_relationalActive || m_model->projected())problem=tr("Show the sheet's cells before picking a range.");
     else if(editing || m_source->isModified())problem=tr("Enter or discard the cell draft before picking a range.");
-    else if(chartId.isEmpty() || chart.isEmpty())problem=tr("Select the chart before picking a range.");
+    else if(chartId.isEmpty() || (carriedChart.isEmpty()?chart.isEmpty():chartId!=carriedChart))problem=tr("Select the chart before picking a range.");
     if(!problem.isEmpty()){issue(problem);return;}
     m_chartPanel->beginPick(field);
     if(m_chartPanel->pickField()!=field)return;
     m_chartPickField=field;m_chartPickChart=chartId;m_chartPickWorkbook=m_info["id"].toString();
-    m_chartPickSheet=chart.value("sheet_id").toString(m_model->sheet());
+    m_chartPickSheet=carriedSheet.isEmpty()?chart.value("sheet_id").toString(m_model->sheet()):carriedSheet;
     m_chartPickStatus=m_status->text();
     updateChartPassThrough();
     // As for a Python pick, every command that could change the workbook is

@@ -70,9 +70,9 @@ private:
 // view, and never cover the headers or scroll bars.
 //
 // At most one chart is selected. A press on an overlay selects it and focuses
-// it; a press on any grid pane or header (except while passing through), or
-// Escape on the overlay, clears the selection, and the grid takes back any
-// focus a chart had. The selection
+// it; a press on any grid pane or header (except while the selection is
+// kept), or Escape on the overlay, clears the selection, and the grid takes
+// back any focus a chart had. The selection
 // survives a relist while its chart exists, and clears when the chart goes,
 // another sheet or workbook is bound, or the sheet is shown projected. The
 // wheel over an overlay scrolls the body.
@@ -128,8 +128,10 @@ public:
     // True while the window picks cells (a formula reference pick, the format
     // painter, a Python pick, a chart range pick): overlays let the mouse
     // through to the cells under them and take no focus, as the view-only
-    // layer did, and a press on the grid keeps the selection.
+    // layer did.
     void setPassThrough(bool passThrough);
+    // True during a chart range pick only: a press on the grid keeps the selection.
+    void setKeepSelection(bool keep) { m_keepSelection=keep; }
     // The inverse of relayout() (Decision 5): the cell under the rectangle's
     // top-left corner in the pane under it (frozen corner, frozen rows, frozen
     // columns or body), as 1-based {row, col}, and {x, y} of the corner inside
@@ -227,7 +229,7 @@ private:
     QPointer<FrozenPanes> m_frozen;
     QPointer<QWidget> m_gridArea;
     QString m_base,m_sheet,m_state;
-    bool m_projected=false,m_queued=false,m_listed=false,m_interactive=true,m_passThrough=false;
+    bool m_projected=false,m_queued=false,m_listed=false,m_interactive=true,m_passThrough=false,m_keepSelection=false;
     QString m_selected;
     Drag m_drag;
     // The viewports of every grid pane and header: a press there deselects.

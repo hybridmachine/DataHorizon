@@ -206,7 +206,7 @@ void ChartPanel::setChart(const QJsonObject &chart) {
     load(sameSpec);
     if(!unsent.isEmpty() && !m_working.isEmpty()) {
         auto list=m_working["series"].toArray();
-        for(const auto &item:unsent)if(list.size()<MaxSeries){list.append(item);m_rows.append(SeriesState{true,{}});}
+        for(const auto &item:unsent)if(list.size()<MaxSeries){list.append(item);m_rows.append(newRow(true));}
         m_working["series"]=list;
         showData();
     }
@@ -563,7 +563,8 @@ bool ChartPanel::scatter() const { return m_working.value("type").toString()=="s
 void ChartPanel::loadData() {
     m_before={};m_picked={};
     m_working=m_chart.isEmpty()?QJsonObject():ChartSpec::workingSpec(m_chart);
-    m_rows=QList<SeriesState>(m_working.value("series").toArray().size());
+    m_rows.clear();
+    for(qsizetype row=0;row<m_working.value("series").toArray().size();++row)m_rows.append(newRow(false));
     m_categoriesEdited=m_seriesHeld=false;
     // The names the stored sources give, for a table, column or query the catalog lacks.
     m_storedNames.clear();
@@ -764,9 +765,14 @@ void ChartPanel::removeSeries(int row) {
     if(stored && completeCount==1){refuseLocally("series",tr("A chart needs at least one series"));return;}
     if(stored)remember();
     // An added row removed while a change is awaited (or edits are held) is
-    // gone from what a refusal goes back to as well.
-    else if(m_before.valid && row<m_before.rows.size() && m_before.rows[row].panelOnly) {
-        auto before=m_before.working["series"].toArray();before.removeAt(row);m_before.working["series"]=before;m_before.rows.removeAt(row);
+    // gone from what a refusal goes back to as well, found there by its id.
+    else if(m_before.valid) {
+        const int id=m_rows[row].id;
+        for(qsizetype at=0;at<m_before.rows.size();++at) {
+            if(m_before.rows[at].id!=id)continue;
+            auto before=m_before.working["series"].toArray();before.removeAt(at);m_before.working["series"]=before;m_before.rows.removeAt(at);
+            break;
+        }
     }
     list.removeAt(row);m_working["series"]=list;m_rows.removeAt(row);
     if(stored)m_seriesHeld=true;
@@ -795,7 +801,7 @@ void ChartPanel::addSeries() {
     if(!canRequest() || m_working.isEmpty() || m_rows.size()>=MaxSeries)return;
     auto list=m_working["series"].toArray();
     list.append(QJsonObject{{"name",QJsonObject{{"text",""}}},{"values",QJsonValue::Null},{"x",QJsonValue::Null}});
-    m_working["series"]=list;m_rows.append(SeriesState{true,{}});
+    m_working["series"]=list;m_rows.append(newRow(true));
     showData();
     m_series.last().values->setFocus(Qt::OtherFocusReason);
 }
