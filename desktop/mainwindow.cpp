@@ -590,6 +590,7 @@ void MainWindow::createTableFromSelection() {
 void MainWindow::buildUi() {
     auto *file = menuBar()->addMenu(tr("&File"));
     auto *edit = menuBar()->addMenu(tr("&Edit"));
+    auto *insertMenu = menuBar()->addMenu(tr("&Insert"));insertMenu->setObjectName("insertMenu");
     auto *formatMenu = menuBar()->addMenu(tr("F&ormat"));
     auto *sheetMenu = menuBar()->addMenu(tr("&Sheet"));
     auto *dataMenu = menuBar()->addMenu(tr("&Data"));
@@ -606,7 +607,7 @@ void MainWindow::buildUi() {
     auto *savePortable=view->addAction(tr("Save view in workbook"));savePortable->setObjectName("savePortableViewAction");connect(savePortable,&QAction::triggered,this,[this]{portableView(true);});
     auto *loadPortable=view->addAction(tr("Load view from workbook"));loadPortable->setObjectName("loadPortableViewAction");connect(loadPortable,&QAction::triggered,this,[this]{portableView(false);});
     auto *help = menuBar()->addMenu(tr("&Help"));
-    m_sheetMenus={edit,formatMenu,sheetMenu,dataMenu,view};m_editingMenus={edit,formatMenu,sheetMenu,dataMenu};
+    m_sheetMenus={edit,insertMenu,formatMenu,sheetMenu,dataMenu,view};m_editingMenus={edit,insertMenu,formatMenu,sheetMenu,dataMenu};
     auto *tables=dataMenu->addAction(tr("Tables and queries…"));tables->setObjectName("relationalWorkbenchAction");
     connect(tables,&QAction::triggered,this,[this]{showRelational(true);});
     auto *promote=dataMenu->addAction(tr("Create table from selection…"));promote->setObjectName("tableFromSelectionAction");
@@ -696,6 +697,10 @@ void MainWindow::buildUi() {
     connect(m_client,&RestClient::configured,this,&MainWindow::clearFindResults);
     add(edit, tr("Replace all in selection…"), QKeySequence::Replace, [this] { findDialog(true); });
     add(edit, tr("Reconcile unknown operation"), {}, [this] { reconcile(); })->setObjectName("reconcileAction");
+    m_insertChartAction=add(insertMenu,tr("Chart"),QKeySequence(tr("Alt+F1")),[this]{insertChart();});m_insertChartAction->setObjectName("insertChartAction");
+    insertMenu->addSeparator();
+    m_selectNextChartAction=add(insertMenu,tr("Select Next Chart"),QKeySequence(tr("Ctrl+Alt+C")),[this]{m_charts->selectNext(1);});m_selectNextChartAction->setObjectName("selectNextChartAction");
+    m_selectPreviousChartAction=add(insertMenu,tr("Select Previous Chart"),QKeySequence(tr("Ctrl+Alt+Shift+C")),[this]{m_charts->selectNext(-1);});m_selectPreviousChartAction->setObjectName("selectPreviousChartAction");
     m_painterAction=add(formatMenu,tr("Format painter"),{},[this]{startFormatPainter();},true);m_painterAction->setObjectName("formatPainterAction");m_painterAction->setCheckable(true);m_painterAction->setToolTip(tr("Copy the selected style pattern, then click a destination or drag an exact multiple. Escape cancels."));
     m_painterCancel=new QAction(this);m_painterCancel->setShortcut(QKeySequence(Qt::Key_Escape));m_painterCancel->setShortcutContext(Qt::WidgetWithChildrenShortcut);m_painterCancel->setEnabled(false);addAction(m_painterCancel);connect(m_painterCancel,&QAction::triggered,this,[this]{cancelFormatPainter();m_status->setText(tr("Format painter cancelled"));});
     m_externalPickCancel=new QAction(this);m_externalPickCancel->setObjectName("cancelExternalPickAction");m_externalPickCancel->setShortcut(QKeySequence(Qt::Key_Escape));m_externalPickCancel->setShortcutContext(Qt::WidgetWithChildrenShortcut);m_externalPickCancel->setEnabled(false);addAction(m_externalPickCancel);connect(m_externalPickCancel,&QAction::triggered,this,&MainWindow::cancelExternalReferencePick);
@@ -873,7 +878,24 @@ void MainWindow::buildUi() {
     // A stale read refreshes, as other stale reads do; the refresh lists again.
     connect(m_charts,&ChartLayer::stale,m_model,&SheetModel::externalChange);
     connect(m_model,&QAbstractItemModel::modelReset,this,[this]{
-        m_charts->bind(m_model->workbook().isEmpty()?QString():"/v1/workbooks/"+m_model->workbook(),m_model->sheet(),m_model->state(),m_model->projected());});
+        m_charts->bind(m_model->workbook().isEmpty()?QString():"/v1/workbooks/"+m_model->workbook(),m_model->sheet(),m_model->state(),m_model->projected());updateChartActions();});
+    // An inserted chart is selected when the layer first lists it: the
+    // committed receipt names it, and a listing at the receipt's state
+    // without it (another sheet shown, say) ends the wait.
+    connect(this,&MainWindow::operationReceipt,this,[this](const QJsonObject &receipt){
+        if(m_pendingChartSelect.isEmpty() || receipt["operation_id"].toString()!=m_pendingChartSelect)return;
+        m_pendingChartSelect.clear();
+        if(receipt["outcome"].toString()=="committed"){m_chartToSelect=receipt["chart_id"].toString();m_chartToSelectState=receipt["state"].toString();}
+    });
+    connect(m_charts,&ChartLayer::listed,this,[this]{
+        updateChartActions();
+        if(m_chartToSelect.isEmpty())return;
+        if(!m_charts->chart(m_chartToSelect).isEmpty()) {
+            m_charts->select(std::exchange(m_chartToSelect,{}));m_chartToSelectState.clear();
+            showChartPanel();m_status->setText(tr("Chart inserted • Undo removes it"));
+        } else if(m_model->state()==m_chartToSelectState){m_chartToSelect.clear();m_chartToSelectState.clear();}
+    });
+    connect(m_client,&RestClient::configured,this,[this]{m_chartSuggesting=false;m_pendingChartSelect.clear();m_chartToSelect.clear();m_chartToSelectState.clear();});
     m_freezeAction=add(view,tr("Freeze top row"),{},[this]{
         if(m_busy || m_unknown || m_info.isEmpty() || m_model->projected() || m_hiddenRows.contains(0)) {
             QSignalBlocker blocker(m_freezeAction); m_freezeAction->setChecked(m_frozenTop->active());
@@ -1749,19 +1771,19 @@ void MainWindow::refresh(const QString &selectSheet) {
     }, false);
 }
 
-void MainWindow::submit(QJsonObject operation) {
-    if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
+QString MainWindow::submit(QJsonObject operation) {
+    if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return {};
     const auto action=operation["action"].toString();
     if(m_relationalActive && !action.startsWith("module_") && action!="binding_save" && action!="binding_delete" && !action.startsWith("name_") && action!="macro_run" && !(action.startsWith("table_") || action.startsWith("index_") || action.startsWith("relationship_") || action.startsWith("query_") || action=="undo" || action=="redo")) {
-        issue(tr("Return to sheets before applying a sheet operation."));return;
+        issue(tr("Return to sheets before applying a sheet operation."));return {};
     }
     const auto defaults=targetContext();
     for (auto field=defaults.begin(); field!=defaults.end(); ++field)
         if (!operation.contains(field.key())) operation[field.key()]=field.value();
     captureGridDraft(false);
-    if (!resolveDraft()) return;
+    if (!resolveDraft()) return {};
     if (!matchesTarget(operation)) {
-        issue("Reviewed inputs changed. Review the target and state again before submitting."); return;
+        issue("Reviewed inputs changed. Review the target and state again before submitting."); return {};
     }
     operation.remove("workbook");
     m_pendingId = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -1813,6 +1835,43 @@ void MainWindow::submit(QJsonObject operation) {
         reportReferenceWarnings(result);
         refresh(); emit operationReceipt(result);emit operationFinished(true);
     },true,timeout);
+    return operationId;
+}
+
+void MainWindow::insertChart() {
+    if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_relationalActive || m_model->projected() || m_chartSuggesting)return;
+    const auto range=selectedRange();if(range.isEmpty())return;
+    const auto target=targetContext(range);
+    QJsonObject request{{"expected_state",m_info["state"]},{"sheet",m_model->sheet()}};
+    for(const char *key:{"r1","c1","r2","c2"})request[key]=range[key];
+    m_chartSuggesting=true;
+    const auto generation=m_client->generation();
+    m_client->request(base()+"/charts/suggest",request,[this,target,generation](QJsonObject result,QString error){
+        if(generation!=m_client->generation())return;
+        m_chartSuggesting=false;
+        // An answer for another workbook, sheet or state is dropped.
+        if(!matchesTarget(target) || m_busy || m_unknown || m_info["readonly"].toBool() || m_relationalActive || m_model->projected())return;
+        if(!error.isEmpty()){issue(error);return;}
+        // One column to the right of the selection; the selection's own
+        // top-left cell when that column does not exist or is hidden.
+        const int r1=target["r1"].toInt(),c1=target["c1"].toInt(),c2=target["c2"].toInt();
+        const int col=c2<m_model->columnCount() && !m_hiddenColumns.contains(c2)?c2+1:c1;
+        auto operation=target;for(const char *key:{"r1","c1","r2","c2"})operation.remove(key);
+        operation["action"]="chart_create";operation["spec"]=result["spec"];operation["anchor"]=QJsonObject{{"row",r1},{"col",col}};
+        m_pendingChartSelect=submit(operation);
+    });
+}
+
+void MainWindow::showChartPanel() {
+    // Task 6 shows the chart panel's dock here.
+}
+
+void MainWindow::updateChartActions() {
+    if(!m_insertChartAction)return;
+    const bool sheet=!m_info.isEmpty() && !m_relationalActive && !m_model->projected();
+    setEditingEnabled(m_insertChartAction,sheet && !m_busy && !m_unknown && !m_info["readonly"].toBool());
+    const bool charts=sheet && m_charts && !m_charts->overlays().isEmpty();
+    setEditingEnabled(m_selectNextChartAction,charts);setEditingEnabled(m_selectPreviousChartAction,charts);
 }
 
 void MainWindow::cancelPendingOperation(const QString &operation) {
@@ -1914,7 +1973,7 @@ void MainWindow::setBusy(bool busy, const QString &message) {
     if(m_freezeAction) m_freezeAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenRows.contains(0));
     syncSource();
     if (!message.isEmpty()) m_status->setText(m_releasing ? "Closing workbook…" : message);
-    queueSummary();updateListSummary();
+    queueSummary();updateListSummary();updateChartActions();
 }
 
 void MainWindow::issue(const QString &message) {

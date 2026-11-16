@@ -45,7 +45,13 @@ public:
     explicit MainWindow(const StartupOptions &options = {}, QWidget *parent = nullptr);
     ~MainWindow() override;
     void openBook(const QString &path, bool create = false, bool readonly = false,bool repair=false);
-    void submit(QJsonObject operation);
+    // Sends one managed operation; returns its operation_id, or an empty
+    // string when nothing was sent.
+    QString submit(QJsonObject operation);
+    // Insert → Chart: asks the service to suggest a chart for the grid's
+    // selection, creates it with one chart_create, and selects it once the
+    // chart layer lists it.
+    void insertChart();
     void importCsvText(const QString &text, QJsonObject target = {});
     void importCsvBytes(const QByteArray &bytes, const QString &encoding = "utf-8-sig", const QString &delimiter = ",", QJsonObject target = {}, QJsonObject temporalSchema = {});
     void importSpreadsheetBytes(const QByteArray &bytes, const QString &format = "xlsx", const QString &mode = "formulas", int sheetIndex = 1, QJsonObject target = {});
@@ -110,6 +116,11 @@ protected:
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
     void showRelational(bool visible);
+    // Enables Insert → Chart and the Select Next/Previous Chart commands for
+    // the workbook, read-only state, projection, workbench and charts shown.
+    void updateChartActions();
+    // Shows the chart panel for the selected chart (Task 6).
+    void showChartPanel();
     void showPythonWorkspace();
     void showNameManager();
     void readNames(const QJsonObject &info);
@@ -358,6 +369,12 @@ private:
     QPushButton *m_hiddenButton = nullptr;
     FrozenPanes *m_frozenTop = nullptr;
     ChartLayer *m_charts = nullptr;
+    QAction *m_insertChartAction = nullptr, *m_selectNextChartAction = nullptr, *m_selectPreviousChartAction = nullptr;
+    // A suggest request is outstanding; a second Insert waits for it.
+    bool m_chartSuggesting = false;
+    // The operation id of the chart_create whose committed receipt's chart is
+    // selected after the refresh; then that chart's id and the receipt's state.
+    QString m_pendingChartSelect, m_chartToSelect, m_chartToSelectState;
     QAction *m_freezeAction = nullptr, *m_freezeColumnAction = nullptr, *m_freezePanesAction = nullptr, *m_unfreezePanesAction = nullptr;
     int m_frozenRows = 0, m_frozenColumns = 0;
     bool m_frozenSizeIssue = false;

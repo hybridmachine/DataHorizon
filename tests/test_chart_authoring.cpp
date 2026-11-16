@@ -8,7 +8,11 @@
 #include <QHeaderView>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
+#include <QMenuBar>
+#include <QPlainTextEdit>
 #include <QScrollBar>
 #include <QSignalSpy>
 #include <QTabBar>
@@ -496,6 +500,131 @@ private slots:
         QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));
         QCOMPARE(layer->selectedChart(),id);QCOMPARE(changed.count(),2);QCOMPARE(window.focusWidget(),overlay);
     }
+    void insertMenuSitsBetweenEditAndFormat() {
+        CHART_WINDOW;
+        auto *menu=window.findChild<QMenu *>("insertMenu");QVERIFY(menu);QCOMPARE(menu->title(),QString("&Insert"));
+        QStringList titles;for(auto *action:window.menuBar()->actions())titles.append(action->text());
+        QCOMPARE(titles,(QStringList{"&File","&Edit","&Insert","F&ormat","&Sheet","&Data","&Tools","&View","&Help"}));
+        const auto actions=menu->actions();QCOMPARE(actions.size(),4);
+        QCOMPARE(actions[0]->objectName(),QString("insertChartAction"));QCOMPARE(actions[0]->text(),QString("Chart"));QCOMPARE(actions[0]->shortcut(),QKeySequence("Alt+F1"));
+        QVERIFY(actions[1]->isSeparator());
+        QCOMPARE(actions[2]->objectName(),QString("selectNextChartAction"));QCOMPARE(actions[2]->text(),QString("Select Next Chart"));QCOMPARE(actions[2]->shortcut(),QKeySequence("Ctrl+Alt+C"));
+        QCOMPARE(actions[3]->objectName(),QString("selectPreviousChartAction"));QCOMPARE(actions[3]->text(),QString("Select Previous Chart"));QCOMPARE(actions[3]->shortcut(),QKeySequence("Ctrl+Alt+Shift+C"));
+        // A workbook with no charts: Chart works, the Select commands do not.
+        QVERIFY(actions[0]->isEnabled());QVERIFY(!actions[2]->isEnabled());QVERIFY(!actions[3]->isEnabled());
+        QVERIFY(addChart(window,opened,"One",2,4));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        QTRY_VERIFY_WITH_TIMEOUT(actions[2]->isEnabled() && actions[3]->isEnabled(),5000);
+        actions[2]->trigger();QCOMPARE(layer->selectedChart(),layer->overlays().first()->chartId());QCOMPARE(window.focusWidget(),layer->overlays().first());
+        layer->select({});actions[3]->trigger();QCOMPARE(layer->selectedChart(),layer->overlays().first()->chartId());
+    }
+    void insertChartCreatesASelectedChart() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        selectCells(grid,model,0,0,3,1);
+        auto *insert=window.findChild<QAction *>("insertChartAction");QVERIFY(insert && insert->isEnabled());
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);QSignalSpy changed(layer,&ChartLayer::selectionChanged);
+        insert->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(!layer->selectedChart().isEmpty(),10000);
+        const auto id=layer->selectedChart();QCOMPARE(id,layer->overlays().first()->chartId());QVERIFY(layer->overlay(id)->selected());
+        QCOMPARE(changed.count(),1);QCOMPARE(admitted.count(),1);
+        const auto chart=layer->chart(id);
+        QCOMPARE(chart["anchor"].toObject()["row"].toInt(),1);QCOMPARE(chart["anchor"].toObject()["col"].toInt(),3);
+        QCOMPARE(chart["name"].toString(),QString("Chart 1"));
+        QCOMPARE(chart["size"].toObject()["width"].toInt(),480);QCOMPARE(chart["size"].toObject()["height"].toInt(),300);
+        QCOMPARE(chart["spec"].toObject()["series"].toArray().size(),1);
+        QCOMPARE(statusText(window),QString("Chart inserted • Undo removes it"));
+        QVERIFY(issuesText(window).isEmpty());
+    }
+    void oneUndoRemovesTheInsertedChart() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        selectCells(grid,model,0,0,3,1);
+        window.findChild<QAction *>("insertChartAction")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!layer->selectedChart().isEmpty(),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(1,1)),5000);QCOMPARE(model->cell(model->index(1,1))["source"].toString(),QString("200"));
+        auto *undo=window.findChild<QAction *>("undoAction");QTRY_VERIFY_WITH_TIMEOUT(undo->isEnabled(),5000);
+        const int before=opened.count();undo->trigger();QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,10000);QCOMPARE(layer->selectedChart(),QString());
+        // Only the chart went: the cells are as they were.
+        QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(1,1)),5000);QCOMPARE(model->cell(model->index(1,1))["source"].toString(),QString("200"));
+    }
+    void insertWithoutNumericDataShowsTheReason() {
+        CHART_WINDOW;
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","a"}},QJsonObject{{"row",2},{"col",1},{"source","b"}},QJsonObject{{"row",1},{"col",2},{"source","c"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        selectCells(grid,model,0,0,1,1);
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        window.findChild<QAction *>("insertChartAction")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(issuesText(window).contains("no numeric data"),10000);
+        QTest::qWait(200);QCOMPARE(admitted.count(),0);QCOMPARE(layer->overlays().size(),0);QCOMPARE(layer->selectedChart(),QString());
+    }
+    void insertAnchorsOnTheSelectionWhenNoColumnIsToTheRight() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        // Hide column C, the one to the right of A1:B4.
+        selectCells(grid,model,0,2,0,2);window.findChild<QAction *>("hideColumnsAction")->trigger();QVERIFY(grid->isColumnHidden(2));
+        selectCells(grid,model,0,0,3,1);
+        window.findChild<QAction *>("insertChartAction")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!layer->selectedChart().isEmpty(),10000);
+        const auto anchor=layer->chart(layer->selectedChart())["anchor"].toObject();
+        QCOMPARE(anchor["row"].toInt(),1);QCOMPARE(anchor["col"].toInt(),1);
+    }
+    void insertIsRefusedOverHiddenRows() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        selectCells(grid,model,2,0,2,0);window.findChild<QAction *>("hideRowsAction")->trigger();QVERIFY(grid->isRowHidden(2));
+        selectCells(grid,model,0,0,3,1);
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        window.findChild<QAction *>("insertChartAction")->trigger();
+        QVERIFY(issuesText(window).contains("Show hidden rows"));
+        QTest::qWait(300);QCOMPARE(admitted.count(),0);QCOMPARE(layer->overlays().size(),0);
+    }
+    void insertIsDisabled_data() {
+        QTest::addColumn<QString>("mode");
+        QTest::newRow("no workbook") << "no workbook";
+        QTest::newRow("read-only") << "read-only";
+        QTest::newRow("projected view") << "projected view";
+        QTest::newRow("relational workbench") << "relational workbench";
+    }
+    void insertIsDisabled() {
+        QFETCH(QString,mode);
+        if(mode=="no workbook") {
+            QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini");
+            MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+            for(const char *name:{"insertChartAction","selectNextChartAction","selectPreviousChartAction"})QVERIFY2(!window.findChild<QAction *>(name)->isEnabled(),name);
+            return;
+        }
+        CHART_WINDOW;
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","3"}},QJsonObject{{"row",2},{"col",1},{"source","1"}},QJsonObject{{"row",3},{"col",1},{"source","2"}}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QVERIFY(addChart(window,opened,"Existing",2,4));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        auto *insert=window.findChild<QAction *>("insertChartAction"),*next=window.findChild<QAction *>("selectNextChartAction"),*previous=window.findChild<QAction *>("selectPreviousChartAction");
+        QTRY_VERIFY_WITH_TIMEOUT(insert->isEnabled() && next->isEnabled() && previous->isEnabled(),5000);
+        bool selectable=false;
+        if(mode=="read-only") {
+            const int before=opened.count();window.openBook(temp.filePath("charts.dhwb"),false,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);
+            QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);selectable=true;
+        } else if(mode=="projected view") {
+            const int before=opened.count();window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"header",false},{"sort",QJsonArray{QJsonObject{{"col",1}}}}});
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);QVERIFY(model->projected());
+        } else {
+            window.findChild<QAction *>("relationalWorkbenchAction")->trigger();
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(!insert->isEnabled(),5000);
+        QCOMPARE(next->isEnabled(),selectable);QCOMPARE(previous->isEnabled(),selectable);
+        // Asked directly, Insert does nothing either.
+        selectCells(grid,model,0,0,2,0);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        window.insertChart();QTest::qWait(300);QCOMPARE(admitted.count(),0);
+        if(selectable){next->trigger();QCOMPARE(layer->selectedChart(),layer->overlays().first()->chartId());}
+    }
+    void insertAtTheChartLimitShowsTheReason() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        for(int i=0;i<64;++i)QVERIFY2(addChart(window,opened,QString("C%1").arg(i),10+i,8,0,0,64,48),qPrintable(QString::number(i)));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),64,10000);
+        selectCells(grid,model,0,0,3,1);
+        QSignalSpy finished(&window,&MainWindow::operationFinished);
+        window.findChild<QAction *>("insertChartAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(),1,10000);QCOMPARE(finished[0][0].toBool(),false);
+        QVERIFY2(issuesText(window).contains("at most 64 charts"),qPrintable(issuesText(window)));
+        QTest::qWait(300);QCOMPARE(layer->overlays().size(),64);QCOMPARE(layer->selectedChart(),QString());
+    }
 #undef CHART_WINDOW
 
 private:
@@ -520,6 +649,16 @@ private:
                        {"size",QJsonObject{{"width",width},{"height",height}}},{"spec",spec.isEmpty()?chartSpec(source):spec}});
         for(int i=0;i<1000 && opened.count()==before;++i)QTest::qWait(10);
         return opened.count()>before;
+    }
+    // Makes the 0-based rectangle the grid's one selection, current cell at its top-left.
+    static void selectCells(QTableView *grid,SheetModel *model,int top,int left,int bottom,int right) {
+        grid->setCurrentIndex(model->index(top,left));
+        grid->selectionModel()->select(QItemSelection(model->index(top,left),model->index(bottom,right)),QItemSelectionModel::ClearAndSelect);
+    }
+    static QString issuesText(MainWindow &window) { return window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText(); }
+    static QString statusText(MainWindow &window) {
+        for(auto *label:window.findChildren<QLabel *>())if(label->accessibleName()=="Storage and calculation status")return label->text();
+        return {};
     }
     static ChartOverlay *overlayNamed(ChartLayer *layer,const QString &name) {
         for(auto *overlay:layer->overlays())if(overlay->chart()["name"].toString()==name)return overlay;
