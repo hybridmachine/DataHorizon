@@ -84,7 +84,7 @@ void ChartOverlay::paintEvent(QPaintEvent *) {
         painter.drawText(rect().adjusted(8,8,-8,-8),Qt::AlignCenter|Qt::TextWordWrap,placeholder());
     }
     if(!m_selected)return;
-    // Decision 4: a 2 px frame and eight 8 px handles, inside the rectangle.
+    // A 2 px frame and eight 8 px handles, inside the rectangle, so a selected chart covers no more cells.
     const auto highlight=palette().highlight();const int w=width(),h=height(),frame=2,handle=HandleSize;
     painter.fillRect(0,0,w,frame,highlight);painter.fillRect(0,h-frame,w,frame,highlight);
     painter.fillRect(0,0,frame,h,highlight);painter.fillRect(w-frame,0,frame,h,highlight);
@@ -144,15 +144,15 @@ void ChartLayer::bind(const QString &workbookBase,const QString &sheet,const QSt
         for(const auto &chartId:std::as_const(m_failed))
             if(auto *item=overlay(chartId)){item->setRenderKey({});retry=true;}
         m_failed.clear();
-        if(projected!=m_projected || retry){m_projected=projected;if(m_projected){deselect();refocusGrid();}relayout();}
+        if(projected!=m_projected || retry){m_projected=projected;if(m_projected){select({});refocusGrid();}relayout();}
         return;
     }
     const bool sameSheet=workbookBase==m_base && sheet==m_sheet;
-    m_base=workbookBase;m_sheet=sheet;m_state=state;m_projected=projected;m_listed=true;
+    m_base=workbookBase;m_sheet=sheet;m_state=state;m_projected=projected;m_listed=true;m_current=false;
     // Another sheet's charts never stay on screen while this one's are read;
     // a new state of the same sheet keeps the overlays until the list lands.
     if(!sameSheet)clear();else ++m_generation;
-    if(m_projected){deselect();refocusGrid();}
+    if(m_projected){select({});refocusGrid();}
     // Renders of another sheet, workbook or state are never shown.
     abandonUnwanted();
     if(!m_base.isEmpty() && !m_sheet.isEmpty() && !m_state.isEmpty())list();
@@ -168,7 +168,7 @@ void ChartLayer::list() {
         // After a failed or stale read the next bind of this key reads again;
         // a stale state refreshes the window, which binds again.
         const bool stale=error.isEmpty()?result["state"].toString()!=state:result["code"]=="STALE_STATE";
-        if(stale || !error.isEmpty()){self->m_listed=false;}
+        if(stale || !error.isEmpty()){self->m_listed=false;self->m_current=false;}
         if(stale){emit self->stale();return;}
         if(!error.isEmpty()){emit self->failed(tr("The charts on this sheet could not be read: %1. They are read again when the workbook refreshes.").arg(error));return;}
         self->accept(result["charts"].toArray());
@@ -199,7 +199,7 @@ void ChartLayer::accept(const QJsonArray &charts) {
     // A drag whose chart went ends silently.
     if(m_drag.overlay && existing.contains(m_drag.overlay->chartId()))m_drag={};
     for(auto *overlay:existing)delete overlay;
-    m_overlays=kept;
+    m_overlays=kept;m_current=true;
     if(selectedGone){m_selected.clear();emit selectionChanged({});}
     abandonUnwanted();restack();relayout();
     if(refocus && m_frozen)m_frozen->focusCurrent();
@@ -209,8 +209,12 @@ void ChartLayer::accept(const QJsonArray &charts) {
 void ChartLayer::clear() {
     ++m_generation;m_drag={};
     if(!m_selected.isEmpty()){m_selected.clear();emit selectionChanged({});}
+    // A deleted chart's focus goes to the grid, not the next control.
+    bool refocus=false;
+    for(const auto &overlay:m_overlays)refocus=refocus || (overlay && overlay->hasFocus());
     for(const auto &overlay:m_overlays)delete overlay.data();
     m_overlays.clear();m_staleRetried.clear();m_failed.clear();
+    if(refocus && m_frozen)m_frozen->focusCurrent();
     abandonUnwanted();
 }
 
@@ -226,6 +230,15 @@ void ChartLayer::queueRelayout() {
 }
 
 bool ChartLayer::eventFilter(QObject *object,QEvent *event) {
+    const auto type=event->type();
+    if(m_swallowRepeat && (type==QEvent::ShortcutOverride || type==QEvent::KeyPress || type==QEvent::KeyRelease)) {
+        // The key that deleted a chart, still held: its repeats reach the
+        // grid once the chart is gone and are swallowed there, before the
+        // window's Clear Contents shortcut, until the key is released.
+        auto *key=static_cast<QKeyEvent *>(event);const bool same=key->key()==m_swallowRepeat;
+        if(same && key->isAutoRepeat() && type!=QEvent::KeyRelease && !qobject_cast<ChartOverlay *>(object)){key->accept();return true;}
+        if(!key->isAutoRepeat() && (type==QEvent::KeyPress || (same && type==QEvent::KeyRelease)))m_swallowRepeat=0;
+    }
     if(auto *item=qobject_cast<ChartOverlay *>(object))return overlayEvent(item,event);
     if(event->type()==QEvent::MouseButtonPress) {
         // A press on a grid pane or header deselects and takes the focus back
@@ -346,11 +359,14 @@ bool ChartLayer::keyEvent(ChartOverlay *item,QKeyEvent *key) {
     // During a drag only Escape acts.
     if(!press || m_drag.active)return true;
     if(arrow)nudge(item,code,modifiers);
-    else if(!key->isAutoRepeat()){if(enter)emit editRequested(item->chartId());else emit deleteRequested(item->chartId());}
+    else if(!key->isAutoRepeat()) {
+        if(enter)emit editRequested(item->chartId());
+        else{m_swallowRepeat=code;emit deleteRequested(item->chartId());}
+    }
     return true;
 }
 
-// Decision 3: 8 px, or 1 px with Alt. A move places the moved rectangle as a
+// 8 px a press, or 1 px with Alt. A move places the moved rectangle as a
 // release would; a corner scrolled out of its pane's view, or moved past it,
 // is placed among that pane's cells. A resize moves the right and bottom edges.
 void ChartLayer::nudge(ChartOverlay *item,int key,Qt::KeyboardModifiers modifiers) {
@@ -369,7 +385,9 @@ void ChartLayer::nudge(ChartOverlay *item,int key,Qt::KeyboardModifiers modifier
         const bool shown=paneArea(pane->viewport()).contains(rect.topLeft());
         placed=(shown && placement(rect.translated(delta),&anchor,&offset)) || placementIn(pane,rect.topLeft()+delta,&anchor,&offset);
     }
-    if(!placed || !offsetAllowed(offset)){emit refused(tr("The chart cannot move further"));return;}
+    // A move that would leave nothing of the chart in view is refused, so the
+    // keys never stay with a chart out of sight.
+    if(!placed || !offsetAllowed(offset) || (rect.translated(delta)&cellsArea()).isEmpty()){emit refused(tr("The chart cannot move further"));return;}
     emit moveRequested(item->chartId(),anchor,offset);
 }
 
@@ -393,7 +411,7 @@ void ChartLayer::finishDrag(const QPoint &globalPosition) {
     const QRect rect=dragRect(globalPosition);const auto drag=std::exchange(m_drag,{});
     if(!drag.active || !drag.overlay)return;
     // The right, bottom-right and bottom handles leave the top-left corner
-    // where it is stored; the others place the new corner (Decision 5).
+    // where it is stored; the others place the new corner, as relayout() would draw it.
     const bool cornerKept=drag.handle==3 || drag.handle==4 || drag.handle==5;
     const auto chart=drag.overlay->chart();
     QJsonObject anchor=chart["anchor"].toObject(),offset=chart["offset"].toObject();
@@ -429,20 +447,28 @@ QRect ChartLayer::cellsArea() const {
     return QRect(QPoint(left,top),body.bottomRight());
 }
 
-bool ChartLayer::trueRect(ChartOverlay *overlay,QRect *rect,QTableView **pane) const {
+bool ChartLayer::anchorCell(ChartOverlay *overlay,int *row,int *col) const {
     if(!attached())return false;
     auto *model=m_body->model();const int rows=model?model->rowCount():0,columns=model?model->columnCount():0;
     const int frozenRows=m_frozen->frozenRows(),frozenColumns=m_frozen->frozenColumns();
-    const auto chart=overlay->chart();const auto anchor=chart["anchor"].toObject(),offset=chart["offset"].toObject(),size=chart["size"].toObject();
-    int row=anchor["row"].toInt(1)-1,col=anchor["col"].toInt(1)-1;
-    if(row<0 || col<0)return false;
+    const auto anchor=overlay->chart()["anchor"].toObject();
+    int r=anchor["row"].toInt(1)-1,c=anchor["col"].toInt(1)-1;
+    if(r<0 || c<0)return false;
     // Hidden rows and columns move the anchor to the next shown one; a frozen
     // prefix is shown by the frozen panes, which the body hides.
-    auto rowHidden=[&](int r){return r<frozenRows?m_frozen->view()->isRowHidden(r):m_body->isRowHidden(r);};
-    auto columnHidden=[&](int c){return c<frozenColumns?m_frozen->leftView()->isColumnHidden(c):m_body->isColumnHidden(c);};
-    while(row<rows && rowHidden(row))++row;
-    while(col<columns && columnHidden(col))++col;
-    if(row>=rows || col>=columns)return false;
+    auto rowHidden=[&](int i){return i<frozenRows?m_frozen->view()->isRowHidden(i):m_body->isRowHidden(i);};
+    auto columnHidden=[&](int i){return i<frozenColumns?m_frozen->leftView()->isColumnHidden(i):m_body->isColumnHidden(i);};
+    while(r<rows && rowHidden(r))++r;
+    while(c<columns && columnHidden(c))++c;
+    if(r>=rows || c>=columns)return false;
+    *row=r;*col=c;
+    return true;
+}
+
+bool ChartLayer::trueRect(ChartOverlay *overlay,QRect *rect,QTableView **pane) const {
+    int row=0,col=0;
+    if(!anchorCell(overlay,&row,&col))return false;
+    const auto chart=overlay->chart();const auto offset=chart["offset"].toObject(),size=chart["size"].toObject();
     auto *view=paneOf(row,col);
     const QPoint cell=view->viewport()->mapTo(m_gridArea,QPoint(view->columnViewportPosition(col),view->rowViewportPosition(row)));
     *rect=QRect(cell+QPoint(offset["x"].toInt(),offset["y"].toInt()),QSize(size["width"].toInt(),size["height"].toInt()));
@@ -484,16 +510,29 @@ void ChartLayer::relayout() {
     if(!items.isEmpty() || !m_jobs.isEmpty())m_renderTimer.start();
     if(items.isEmpty() || !attached())return;
     const QRect body=paneArea(m_body->viewport()),cells=cellsArea();
+    // A focused chart hidden here (scrolled or moved out of view) gives up
+    // its selection, and the grid takes the focus Qt would hand to the next control.
+    bool lost=false;
+    auto hide=[&](ChartOverlay *overlay) {
+        if(overlay->isHidden())return;
+        if(overlay->hasFocus()){lost=true;if(overlay->chartId()==m_selected)select({});}
+        overlay->hide();
+    };
     for(auto *overlay:items) {
         // A dragged chart follows the pointer, not its stored place.
         if(dragging(overlay))continue;
         QRect chartRect;QTableView *view=nullptr;
-        if(m_projected || !trueRect(overlay,&chartRect,&view)){overlay->hide();continue;}
+        if(m_projected || !trueRect(overlay,&chartRect,&view)){hide(overlay);continue;}
         const bool rowFrozen=view==m_frozen->view() || view==m_frozen->cornerView(),columnFrozen=view==m_frozen->leftView() || view==m_frozen->cornerView();
         const QRect clip(QPoint(columnFrozen?cells.left():body.left(),rowFrozen?cells.top():body.top()),body.bottomRight());
         const QRect shown=chartRect&clip;
-        if(shown.isEmpty()){overlay->hide();continue;}
+        if(shown.isEmpty()){hide(overlay);continue;}
         overlay->setGeometry(chartRect);overlay->setMask(QRegion(shown.translated(-chartRect.topLeft())));overlay->show();
+    }
+    // The pane holding the grid cursor takes it, without scrolling back to the cursor.
+    if(lost) {
+        const auto current=m_body->currentIndex();
+        (current.isValid()?paneOf(current.row(),current.column()):m_body.data())->setFocus(Qt::OtherFocusReason);
     }
 }
 
@@ -535,9 +574,32 @@ void ChartLayer::selectNext(int direction) {
     const int n=int(ordered.size());int index=-1;
     for(int i=0;i<n;++i)if(ordered[i]->chartId()==m_selected)index=i;
     const int step=direction<0?-1:1;
-    const int next=index<0?(step>0?0:n-1):(index+step+n)%n;
-    select(ordered[next]->chartId());
-    ordered[next]->setFocus(Qt::OtherFocusReason);
+    int next=index<0?(step>0?0:n-1):(index+step+n)%n;
+    // A chart that cannot be shown is passed over.
+    for(int tried=0;tried<n;++tried,next=(next+step+n)%n)
+        if(focusChart(ordered[next]->chartId()))return;
+    emit refused(tr("The chart is not shown • Show its hidden rows or columns"));
+}
+
+bool ChartLayer::focusChart(const QString &chartId) {
+    auto *item=overlay(chartId);
+    if(!item || m_projected || !reveal(item))return false;
+    select(chartId);
+    item->setFocus(Qt::OtherFocusReason);
+    return true;
+}
+
+bool ChartLayer::reveal(ChartOverlay *item) {
+    int row=0,col=0;
+    if(!anchorCell(item,&row,&col))return false;
+    relayout();
+    if(!item->isHidden())return true;
+    // The body scrolls to the anchor; a frozen row or column keeps its axis.
+    const bool rowFrozen=row<m_frozen->frozenRows(),columnFrozen=col<m_frozen->frozenColumns();
+    const int r=rowFrozen?m_body->rowAt(0):row,c=columnFrozen?m_body->columnAt(0):col;
+    if(r>=0 && c>=0)m_body->scrollTo(m_body->model()->index(r,c),rowFrozen?QAbstractItemView::EnsureVisible:QAbstractItemView::PositionAtTop);
+    relayout();
+    return !item->isHidden();
 }
 
 void ChartLayer::setInteractive(bool interactive) {
@@ -572,14 +634,6 @@ void ChartLayer::setPassThrough(bool passThrough) {
 void ChartLayer::applyPassThrough(ChartOverlay *item) const {
     item->setAttribute(Qt::WA_TransparentForMouseEvents,m_passThrough);
     item->setFocusPolicy(m_passThrough?Qt::NoFocus:Qt::ClickFocus);
-}
-
-void ChartLayer::deselect() {
-    if(m_selected.isEmpty())return;
-    cancelDrag();
-    if(auto *previous=overlay(m_selected)){previous->setSelected(false);previous->unsetCursor();}
-    m_selected.clear();
-    emit selectionChanged({});
 }
 
 void ChartLayer::refocusGrid() {

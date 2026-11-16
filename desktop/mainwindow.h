@@ -104,8 +104,8 @@ public:
     // it is accepted, the operation finishes, or the handle changes. The final
     // outcome still arrives as that operation's receipt.
     void cancelPendingOperation(const QString &operation);
-    // A range pick for a Range or Cell source field of the chart panel
-    // (Decision 9). While it is active the grid's selection on any sheet fills
+    // A range pick for a Range or Cell source field of the chart panel, so a
+    // source is chosen by selecting cells as for a formula. While it is active the grid's selection on any sheet fills
     // the field, the chart stays selected and editing commands are disabled.
     // endChartPick(true) applies the picked range as a typed one would (Enter;
     // nothing when the selection cannot be applied), endChartPick(false) puts
@@ -385,7 +385,7 @@ private:
     FrozenPanes *m_frozenTop = nullptr;
     ChartLayer *m_charts = nullptr;
     QAction *m_insertChartAction = nullptr, *m_selectNextChartAction = nullptr, *m_selectPreviousChartAction = nullptr;
-    // The context menu on a chart (Task 5).
+    // The context menu on a chart: Edit Chart, Bring to Front, Send to Back, Delete.
     QMenu *m_chartMenu = nullptr;
     QAction *m_editChartAction = nullptr, *m_chartToFrontAction = nullptr, *m_chartToBackAction = nullptr, *m_deleteChartAction = nullptr;
     // The operation id of the chart move or resize awaiting its receipt.
@@ -395,11 +395,17 @@ private:
     ChartPanel *m_chartPanel = nullptr;
     QDockWidget *m_chartDock = nullptr;
     QString m_chartPanelOperation, m_chartPanelField, m_chartPanelChart;
-    // The chart layer's catalog may be older than the workbook: a change was
-    // committed, or a chart read failed or was stale, and no listing has
-    // arrived since. The panel then takes no chart from the layer and stays locked.
+    // The model was bound to a key the chart layer had not listed, a chart
+    // read failed or was stale, or the service session changed, and the
+    // panel has not taken a listing since.
     bool m_chartCatalogStale = true;
-    // The catalog's chart for the panel: none while the catalog is stale.
+    // The chart layer shows the catalog listed for the workbook, sheet and
+    // state the window is bound to now, whatever caused the bind (this
+    // window's commit, another client's change, Refresh, an operation job).
+    // Otherwise the panel takes no chart from the layer and stays locked, so
+    // it never builds a specification from a catalog older than the workbook.
+    bool chartCatalogCurrent() const;
+    // The catalog's chart for the panel: none while the catalog is not current.
     QJsonObject panelChart(const QString &chartId) const;
     // Reads the tables and saved queries the panel's source fields offer,
     // while the panel is shown; an answer for another workbook or state is
@@ -409,10 +415,12 @@ private:
     void readQueryColumns(const QString &queryId);
     int m_chartSourcesGeneration = 0;
     QJsonArray m_chartTables, m_chartQueries;
+    // What the panel's lists were last given.
+    QJsonArray m_chartGivenSheets, m_chartGivenTables, m_chartGivenQueries;
     QString m_chartSourcesWorkbook;
     // A suggest request is outstanding; a second Insert waits for it.
     bool m_chartSuggesting = false;
-    // The chart range pick (Task 8): the panel's field, its chart, the
+    // The chart range pick for a Range or Cell field of the panel: the panel's field, its chart, the
     // chart's sheet and workbook; the field is empty when no pick is on.
     // The status shown before it, and whether the selection can be applied.
     QString m_chartPickField, m_chartPickChart, m_chartPickSheet, m_chartPickWorkbook, m_chartPickStatus;

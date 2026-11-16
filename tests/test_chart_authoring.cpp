@@ -32,6 +32,7 @@
 #include <QTabBar>
 #include <QTableView>
 #include <QTemporaryDir>
+#include <QUuid>
 #include <QtTest>
 
 namespace {
@@ -1010,6 +1011,105 @@ private slots:
         QCOMPARE(model->cell(model->index(1,1))["source"].toString(),QString("200"));QCOMPARE(grid->currentIndex(),model->index(1,1));
         QCOMPARE(admitted.count(),1);QCOMPARE(cleared.count(),0);
     }
+    // Delete held on a chart: once the chart is gone and the grid has the
+    // focus, the key's auto-repeated presses clear nothing until it is released.
+    void heldDeleteDoesNotClearTheCellsOnceTheChartIsGone() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Held down",6,4,0,0,320,200));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        grid->setCurrentIndex(model->index(1,1));QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(1,1)),5000);
+        auto *clear=window.findChild<QAction *>("clearContentsAction");QSignalSpy cleared(clear,&QAction::triggered);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(40,40));QCOMPARE(window.focusWidget(),overlay);
+        QTest::keyPress(overlay,Qt::Key_Delete);QCOMPARE(admitted.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,10000);QCOMPARE(window.focusWidget(),grid);QVERIFY(idle(window));
+        // The key's repeats now reach the grid, as the shortcut map delivers
+        // them (qt_sendShortcutOverrideEvent, as QTest uses it: true when a shortcut took the key).
+        for(int repeat=0;repeat<3;++repeat) {
+            if(!qt_sendShortcutOverrideEvent(grid,0,Qt::Key_Delete,Qt::NoModifier,QString(),true)) {
+                QKeyEvent press(QEvent::KeyPress,Qt::Key_Delete,Qt::NoModifier,QString(),true);QCoreApplication::sendEvent(grid,&press);
+            }
+        }
+        QTest::qWait(200);QCOMPARE(cleared.count(),0);QCOMPARE(admitted.count(),1);
+        QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(1,1)),5000);QCOMPARE(model->cell(model->index(1,1))["source"].toString(),QString("200"));
+        // Released, Delete on the grid clears the cells again.
+        QTest::keyRelease(grid,Qt::Key_Delete);QTest::keyClick(grid,Qt::Key_Delete);QCOMPARE(cleared.count(),1);
+    }
+    // Select Next on a chart out of view scrolls it into view and gives it the keyboard.
+    void selectNextBringsAChartOutOfViewIntoView() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Far",2,2));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        QVERIFY(applied(window,opened,{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",400},{"col",1},{"source","keep"}}}}}));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);overlay=layer->overlays().first();const auto id=overlay->chartId();
+        auto away=[&]{grid->setCurrentIndex(model->index(399,0));grid->scrollTo(model->index(399,0));grid->setFocus();};
+        away();QTRY_VERIFY_WITH_TIMEOUT(!overlay->isVisible(),5000);
+        auto *next=window.findChild<QAction *>("selectNextChartAction");QVERIFY(next->isEnabled());
+        next->trigger();
+        QCOMPARE(layer->selectedChart(),id);QVERIFY(overlay->isVisible());QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(overlay));
+        // Delete then deletes the chart, never the cell under the grid cursor.
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        QTest::keyClick(QApplication::focusWidget(),Qt::Key_Delete);QCOMPARE(admitted.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,10000);QVERIFY(idle(window));
+        QTRY_VERIFY_WITH_TIMEOUT(model->loaded(model->index(399,0)),5000);QCOMPARE(model->cell(model->index(399,0))["source"].toString(),QString("keep"));
+        // With its anchor row hidden the chart is shown at the next row, and found the same way.
+        window.findChild<QAction *>("undoAction")->trigger();QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,10000);QVERIFY(idle(window));
+        overlay=layer->overlays().first();
+        selectCells(grid,model,1,0,1,0);window.findChild<QAction *>("hideRowsAction")->trigger();QTRY_VERIFY_WITH_TIMEOUT(grid->isRowHidden(1),5000);
+        away();QTRY_VERIFY_WITH_TIMEOUT(!overlay->isVisible(),5000);layer->select({});
+        window.findChild<QAction *>("selectPreviousChartAction")->trigger();
+        QCOMPARE(layer->selectedChart(),overlay->chartId());QVERIFY(overlay->isVisible());QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(overlay));
+    }
+    // A chart whose anchor has no shown row or column after it cannot be shown: it is not selected and the status says so.
+    void aChartThatCannotBeShownIsNotSelected() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Last column",2,16384,0,0,120,80));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        selectCells(grid,model,0,16383,0,16383);window.findChild<QAction *>("hideColumnsAction")->trigger();QTRY_VERIFY_WITH_TIMEOUT(grid->isColumnHidden(16383),5000);
+        QVERIFY(idle(window));grid->setCurrentIndex(model->index(0,0));grid->setFocus();
+        QTRY_VERIFY_WITH_TIMEOUT(!layer->overlays().first()->isVisible(),5000);
+        window.findChild<QAction *>("selectNextChartAction")->trigger();
+        QCOMPARE(layer->selectedChart(),QString());QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(grid));
+        QCOMPARE(statusText(window),QString("The chart is not shown • Show its hidden rows or columns"));
+    }
+    // A chart holds the keyboard only while it is shown: scrolled away, its
+    // focus goes to the grid (not the address box) and it is no longer
+    // selected, so Delete with the grid focused never deletes it, and a
+    // selection the keys cannot reach is never left showing.
+    void aFocusedChartScrolledAwayGivesTheGridTheFocus() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Near",2,2));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        window.findChild<QAction *>("selectNextChartAction")->trigger();QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(overlay));
+        QSignalSpy changed(layer,&ChartLayer::selectionChanged);
+        grid->verticalScrollBar()->setValue(300);
+        QTRY_VERIFY_WITH_TIMEOUT(!overlay->isVisible(),5000);
+        QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(grid));QCOMPARE(layer->selectedChart(),QString());
+        QCOMPARE(changed.count(),1);QVERIFY(!overlay->selected());
+        // Delete with the grid focused never deletes a chart, selected or not.
+        QSignalSpy deleted(layer,&ChartLayer::deleteRequested);
+        QTest::keyClick(grid,Qt::Key_Delete);
+        layer->select(overlay->chartId());QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(grid));QTest::keyClick(grid,Qt::Key_Delete);
+        QVERIFY(idle(window));QTest::qWait(200);QCOMPARE(deleted.count(),0);QCOMPARE(layer->overlays().size(),1);
+    }
+    // A keyboard move that would leave nothing of the chart in view is refused; the chart keeps the keyboard.
+    void aKeyboardMoveNeverTakesTheChartOutOfSight() {
+        CHART_WINDOW;activate(window);
+        const int right=grid->viewport()->width();
+        QVERIFY(addChart(window,opened,"Edge",1,1,right-4,40,200,150));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(2,20));QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(overlay));
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        QTest::keyClick(overlay,Qt::Key_Right);
+        QCOMPARE(statusText(window),QString("The chart cannot move further"));QCOMPARE(admitted.count(),0);
+        QVERIFY(overlay->isVisible());QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(overlay));QCOMPARE(layer->selectedChart(),overlay->chartId());
+        // A move that keeps some of it in view is sent.
+        QTest::keyClick(overlay,Qt::Key_Left);QCOMPARE(admitted.count(),1);
+    }
+    // A sheet switch while a chart has the keyboard gives it to the grid.
+    void sheetSwitchGivesAFocusedChartsFocusToTheGrid() {
+        CHART_WINDOW;window.submit({{"action","sheet_add"},{"name","Other"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QVERIFY(addChart(window,opened,"First",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(overlay));
+        window.findChild<QTabBar *>("sheets")->setCurrentIndex(1);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,5000);QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(grid));
+    }
     void backspaceDeletes() {
         CHART_WINDOW;QVERIFY(addChart(window,opened,"Gone",2,4,0,0,320,200));
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
@@ -1536,6 +1636,96 @@ private slots:
         QVERIFY(idle(window));QCOMPARE(reason->text(),QString("This chart cannot be read (UNSUPPORTED_SPEC_VERSION)"));QVERIFY(!window.findChild<QWidget *>("chartTitle")->isEnabled());
         QVERIFY(!issuesText(window).contains("UNSUPPORTED"));
     }
+    // Texts the service does not limit are shown and kept whole: focus
+    // passing through a field, and a change elsewhere, never cut them.
+    void longStoredTextsAreKeptWhole() {
+        CHART_WINDOW;auto spec=chartSpec("Sheet1");const QString longTitle(300,'x'),longName(300,'n');
+        spec["axes"]=QJsonObject{{"category",QJsonObject{{"title",longTitle}}},{"value",QJsonObject{{"title",QJsonValue::Null},{"min",QJsonValue::Null},{"max",QJsonValue::Null}}}};
+        auto list=spec["series"].toArray();auto first=list[0].toObject();first["name"]=text(longName);list[0]=first;spec["series"]=list;
+        QVERIFY(addChart(window,opened,"Long",2,4,0,0,320,200,"Sheet1",spec));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();
+        auto storedTitle=[&]{return layer->chart(id)["spec"].toObject()["axes"].toObject()["category"].toObject()["title"].toString();};
+        QCOMPARE(storedTitle().size(),300);
+        QVERIFY(openPanel(window,layer,id));QVERIFY(idle(window));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);
+        auto *field=window.findChild<QLineEdit *>("categoryAxisTitle");QTRY_VERIFY_WITH_TIMEOUT(field->isEnabled(),5000);
+        QCOMPARE(field->text(),longTitle);QCOMPARE(rangeOf(window,"series1Name")->text(),longName);
+        field->setFocus();window.findChild<QLineEdit *>("valueAxisTitle")->setFocus();
+        rangeOf(window,"series1Name")->setFocus();field->setFocus();
+        QTest::qWait(200);QCOMPARE(requested.count(),0);
+        // An unrelated change carries them whole.
+        choose(window.findChild<QComboBox *>("legendPosition"),"Bottom");QCOMPARE(requested.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["legend"].toObject()["position"].toString(),QString("bottom"),10000);
+        QCOMPARE(storedTitle(),longTitle);
+        QCOMPARE(layer->chart(id)["spec"].toObject()["series"].toArray()[0].toObject()["name"].toObject()["text"].toString(),longName);
+        // A typed title longer than 255 is sent whole; the chart title keeps the service's 255 limit.
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(field->isEnabled(),5000);
+        typeInto(field,QString(260,'y'),true);QCOMPARE(requested.count(),2);
+        QTRY_COMPARE_WITH_TIMEOUT(storedTitle(),QString(260,'y'),10000);
+        QCOMPARE(window.findChild<QLineEdit *>("chartTitle")->maxLength(),255);
+    }
+    // Tab reaches every control of the panel in the wireframes' focus order,
+    // and buttons and lists are Tab stops whatever the platform's keyboard
+    // setting (Qt::StrongFocus: macOS's default setting skips Tab-only controls).
+    void tabReachesEveryPanelControlInOrder() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Tabbed",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();
+        QVERIFY(openPanel(window,layer,id));QVERIFY(idle(window));
+        auto *name=window.findChild<QLineEdit *>("chartName");QTRY_VERIFY_WITH_TIMEOUT(name->isEnabled(),5000);
+        const QStringList order{"chartName","chartToFront","chartToBack","chartType_column","chartType_bar","chartType_line","chartType_area","chartType_pie","chartType_scatter",
+                                "chartGrouping","chartTitle","categoriesSourceKind","categoriesSourceRange","categoriesSourcePick",
+                                "series1NameKind","series1NameRange","series1NamePick","series1ValuesKind","series1ValuesRange","series1ValuesPick",
+                                "removeSeries1","addSeries","categoryAxisTitle","valueAxisTitle","valueAxisMin","valueAxisMax","legendPosition"};
+        for(const auto &control:order) {
+            auto *widget=window.findChild<QWidget *>(control);QVERIFY2(widget,qPrintable(control));
+            if(!qobject_cast<QLineEdit *>(widget))QVERIFY2(widget->focusPolicy()==Qt::StrongFocus,qPrintable(control));
+        }
+        for(const char *control:{"seriesUp1","seriesDown1","series1XKind","series1ValuesTable","series1ValuesQueryColumn"})
+            QCOMPARE(window.findChild<QWidget *>(control)->focusPolicy(),Qt::StrongFocus);
+        name->setFocus(Qt::TabFocusReason);
+        QStringList visited{QApplication::focusWidget()->objectName()};
+        for(int i=1;i<order.size();++i){QTest::keyClick(QApplication::focusWidget(),Qt::Key_Tab);visited<<QApplication::focusWidget()->objectName();}
+        QCOMPARE(visited,order);
+        QTest::keyClick(QApplication::focusWidget(),Qt::Key_Backtab,Qt::ShiftModifier);QCOMPARE(QApplication::focusWidget()->objectName(),QString("valueAxisMax"));
+    }
+    // The wheel over a list of the panel never changes it: it scrolls the panel.
+    void wheelOverAPanelListChangesNothing() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Wheeled",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();
+        QVERIFY(openPanel(window,layer,id));QVERIFY(idle(window));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);
+        for(const char *name:{"legendPosition","chartGrouping","series1ValuesKind"}) {
+            auto *combo=window.findChild<QComboBox *>(name);QTRY_VERIFY_WITH_TIMEOUT(combo->isEnabled(),5000);
+            const auto before=combo->currentIndex();
+            for(bool focused:{false,true}) {
+                if(focused)combo->setFocus();else window.findChild<QLineEdit *>("chartName")->setFocus();
+                for(const int delta:{-120,120,-120}) {
+                    const QPointF at(combo->width()/2,combo->height()/2);
+                    QWheelEvent wheel(at,combo->mapToGlobal(at),QPoint(),QPoint(0,delta),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);
+                    QCoreApplication::sendEvent(combo,&wheel);
+                    QVERIFY2(!wheel.isAccepted(),name);
+                }
+                QVERIFY2(combo->currentIndex()==before,name);
+            }
+            QCOMPARE(combo->focusPolicy(),Qt::StrongFocus);
+        }
+        QTest::qWait(200);QCOMPARE(requested.count(),0);
+    }
+    // A whole-number bound is sent as a JSON integer, exactly, and shown exactly.
+    void wholeNumberBoundsAreSentAsIntegers() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Bounds",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();
+        QVERIFY(openPanel(window,layer,id));QVERIFY(idle(window));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);
+        auto *max=window.findChild<QLineEdit *>("valueAxisMax");QTRY_VERIFY_WITH_TIMEOUT(max->isEnabled(),5000);
+        const qint64 big=9007199254740993LL;  // 2^53 + 1: not a double
+        typeInto(max,QString::number(big),true);QCOMPARE(requested.count(),1);
+        const auto sent=requested[0][1].toJsonObject()["spec"].toObject()["axes"].toObject()["value"].toObject()["max"];
+        QCOMPARE(sent.toInteger(),big);
+        QCOMPARE(QJsonDocument(QJsonObject{{"max",sent}}).toJson(QJsonDocument::Compact),QByteArray("{\"max\":9007199254740993}"));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["axes"].toObject()["value"].toObject()["max"].toInteger(),big,10000);
+        QVERIFY(idle(window));QTRY_COMPARE_WITH_TIMEOUT(max->text(),QString::number(big),5000);
+    }
     void focusReturnsAfterAChange() {
         CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Focused",2,4));activate(window);
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
@@ -1656,7 +1846,9 @@ private slots:
         CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Named",2,4));activate(window);
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
         auto *kind=kindOf(window,"series1Name");auto *name=rangeOf(window,"series1Name");auto *pick=window.findChild<QToolButton *>("series1NamePick");
-        QCOMPARE(itemsOf(kind),(QStringList{"Text","Cell"}));QCOMPARE(kind->currentText(),QString("Cell"));QCOMPARE(name->text(),QString("B1"));QCOMPARE(name->maxLength(),255);
+        QCOMPARE(itemsOf(kind),(QStringList{"Text","Cell"}));QCOMPARE(kind->currentText(),QString("Cell"));QCOMPARE(name->text(),QString("B1"));
+        // No length cap: the service does not limit a series name's text.
+        QCOMPARE(name->maxLength(),32767);
         QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
         auto stored=[&]{return layer->chart(id)["spec"].toObject()["series"].toArray()[0].toObject()["name"].toObject();};
         // Text: changing the kind clears the field and sends nothing.
@@ -2456,15 +2648,17 @@ private slots:
         QTest::mouseClick(window.findChild<QPushButton *>("chartToBack"),Qt::LeftButton);
         QCOMPARE(requested.count(),1);
         proxy.releaseOperations();
-        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["name"].toString(),QString("Once"),10000);QVERIFY(idle(window));
-        QTest::qWait(200);QCOMPARE(admitted.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["name"].toString(),QString("Once"),10000);
+        // The rename left the specification as it was, so the held title is
+        // applied once the chart is listed again, as one more change; the
+        // choices made while waiting are not.
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].toString(),QString("Twice"),10000);QVERIFY(idle(window));
+        QTest::qWait(200);QCOMPARE(admitted.count(),2);QCOMPARE(requested.count(),2);
         const auto spec=layer->chart(id)["spec"].toObject();
-        QCOMPARE(spec["title"].toObject()["text"].toString(),QString("Kept"));QCOMPARE(spec["type"].toString(),QString("column"));QCOMPARE(spec["legend"].toObject()["position"].toString(),QString("right"));
-        // The reload (the chart changed) put the unsent text back.
-        QTRY_COMPARE_WITH_TIMEOUT(window.findChild<QLineEdit *>("chartTitle")->text(),QString("Kept"),5000);
+        QCOMPARE(spec["type"].toString(),QString("column"));QCOMPARE(spec["legend"].toObject()["position"].toString(),QString("right"));
         QVERIFY(window.findChild<QToolButton *>("chartType_column")->isChecked());
         // After the answer the panel sends again.
-        typeInto(name,"Again",true);QCOMPARE(requested.count(),2);
+        QTRY_VERIFY_WITH_TIMEOUT(name->isEnabled(),5000);typeInto(name,"Again",true);QCOMPARE(requested.count(),3);
         QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["name"].toString(),QString("Again"),10000);
     }
     void panelIsLockedWhileBusyAndWhenReadOnly() {
@@ -2506,16 +2700,70 @@ private slots:
         // Once unlocked on the same chart, the held text is sent.
         QTRY_COMPARE_WITH_TIMEOUT(requested.count(),1,10000);QCOMPARE(requested[0][2].toString(),QString("chartTitle"));
         QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].toString(),QString("Typed before"),10000);
-        // When the chart itself changes meanwhile, the held text gives way to it.
+        // When the chart's specification changes meanwhile, the held text gives way to it.
         QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(title->isEnabled(),5000);
         title->setFocus();title->selectAll();QTest::keyClicks(title,"Dropped");
         proxy.holdOperations=true;
-        QVERIFY(!window.submit({{"action","chart_update"},{"chart_id",id},{"name","Renamed elsewhere"}}).isEmpty());
+        QVERIFY(!window.submit({{"action","chart_update"},{"chart_id",id},{"spec_patch",QJsonObject{{"legend",QJsonObject{{"position","bottom"}}}}}}).isEmpty());
         proxy.releaseOperations();
-        QTRY_COMPARE_WITH_TIMEOUT(window.findChild<QLineEdit *>("chartName")->text(),QString("Renamed elsewhere"),10000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.findChild<QComboBox *>("legendPosition")->currentText(),QString("Bottom"),10000);
         QVERIFY(idle(window));QTest::qWait(200);
         QCOMPARE(requested.count(),1);QCOMPARE(title->text(),QString("Typed before"));
         QCOMPARE(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].toString(),QString("Typed before"));
+        // A rename alone leaves the specification as typed against: the held text is sent.
+        QTRY_VERIFY_WITH_TIMEOUT(title->isEnabled(),5000);title->setFocus();title->selectAll();QTest::keyClicks(title,"Kept through a rename");
+        proxy.holdOperations=true;
+        QVERIFY(!window.submit({{"action","chart_update"},{"chart_id",id},{"name","Renamed elsewhere"}}).isEmpty());
+        proxy.releaseOperations();
+        QTRY_COMPARE_WITH_TIMEOUT(requested.count(),2,10000);QCOMPARE(requested[1][2].toString(),QString("chartTitle"));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].toString(),QString("Kept through a rename"),10000);
+        QCOMPARE(layer->chart(id)["name"].toString(),QString("Renamed elsewhere"));
+    }
+    // Another client's change refreshes the window by itself. Until the chart
+    // layer has listed that state the panel is locked and sends nothing, held
+    // text included; text typed against a specification that changed gives
+    // way to it, and text whose specification is unchanged is sent once.
+    void anotherClientsChangeIsNotRevertedByHeldText() {
+        PROXY_WINDOW;Q_UNUSED(grid);QVERIFY(addChart(window,opened,"Shared",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QVERIFY(idle(window));
+        auto *panel=panelOf(window);QSignalSpy requested(panel,&ChartPanel::changeRequested);
+        auto *title=window.findChild<QLineEdit *>("chartTitle");auto *legend=window.findChild<QComboBox *>("legendPosition");
+        RestClient other;other.configure(service["url"].toString(),service["token"].toString());
+        auto otherUpdate=[&](const QJsonObject &changes) {
+            QJsonObject operation{{"action","chart_update"},{"chart_id",id},{"operation_id",QUuid::createUuid().toString(QUuid::WithoutBraces)},
+                                  {"expected_state",model->state()},{"sheet",model->sheet()}};
+            for(auto change=changes.begin();change!=changes.end();++change)operation[change.key()]=change.value();
+            return syncRequest(&other,"/v1/workbooks/"+model->workbook()+"/operations",operation);
+        };
+        // The other client changes the legend while Title holds unsent text.
+        QTRY_VERIFY_WITH_TIMEOUT(title->isEnabled(),5000);title->setFocus();QTest::keyClicks(title,"Mine");
+        proxy.holdCharts=true;
+        auto before=model->state();
+        QCOMPARE(otherUpdate({{"spec_patch",QJsonObject{{"legend",QJsonObject{{"position","bottom"}}}}}})["outcome"].toString(),QString("committed"));
+        QTRY_VERIFY_WITH_TIMEOUT(model->state()!=before,15000);QVERIFY(idle(window));QTest::qWait(200);
+        // Not yet listed: locked, nothing sent.
+        QVERIFY(!title->isEnabled());QVERIFY(!legend->isEnabled());QCOMPARE(requested.count(),0);
+        proxy.releaseCharts();
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["legend"].toObject()["position"].toString(),QString("bottom"),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(title->isEnabled(),5000);QTest::qWait(300);
+        QCOMPARE(requested.count(),0);QCOMPARE(title->text(),QString());QCOMPARE(legend->currentText(),QString("Bottom"));
+        QVERIFY(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].isNull());
+        // The other client renames the chart only: the held title is sent once, after the listing.
+        title->setFocus();QTest::keyClicks(title,"Mine");
+        proxy.holdCharts=true;before=model->state();
+        QCOMPARE(otherUpdate({{"name","Elsewhere"}})["outcome"].toString(),QString("committed"));
+        // Found by the window, or by Refresh: either binds the new state.
+        for(int i=0;i<300 && model->state()==before;++i)QTest::qWait(10);
+        if(model->state()==before)window.findChild<QAction *>("refreshStoredDataAction")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(model->state()!=before,15000);QVERIFY(idle(window));QTest::qWait(200);
+        QVERIFY(!title->isEnabled());QCOMPARE(requested.count(),0);
+        proxy.releaseCharts();
+        QTRY_COMPARE_WITH_TIMEOUT(requested.count(),1,10000);QCOMPARE(requested[0][2].toString(),QString("chartTitle"));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].toString(),QString("Mine"),10000);
+        QCOMPARE(layer->chart(id)["name"].toString(),QString("Elsewhere"));
+        QCOMPARE(layer->chart(id)["spec"].toObject()["legend"].toObject()["position"].toString(),QString("bottom"));
+        QVERIFY(idle(window));QTest::qWait(200);QCOMPARE(requested.count(),1);
     }
     void failedCatalogReadShowsNoChartUntilTheNextListing() {
         PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(addChart(window,opened,"Read",2,4));

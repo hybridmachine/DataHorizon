@@ -13,7 +13,6 @@
 #include <functional>
 
 class ChartSourceField;
-class QButtonGroup;
 class QComboBox;
 class QFormLayout;
 class QGroupBox;
@@ -50,8 +49,9 @@ class QVBoxLayout;
 // refused ends the wait.
 //
 // Text left in a field while the panel was locked or waiting is applied when
-// it can ask again, if the same chart is still shown and the text still
-// differs; otherwise the field shows the chart again. A field that had focus
+// it can ask again, if the same chart is still shown with the specification
+// it was typed against (and, for Name, the same name) and the text still
+// differs; otherwise the field shows the chart as now stored. A field that had focus
 // when the panel locked gets it back on unlock, unless the person pressed a
 // key or a mouse button outside the panel meanwhile, or focus moved.
 //
@@ -64,7 +64,8 @@ public:
     explicit ChartPanel(QWidget *parent=nullptr);
     // The chart to show; {} shows "No chart selected". The same chart again
     // changes nothing, so a field being edited keeps its text; any other
-    // chart reloads every field and drops unsent text. A request still
+    // chart reloads every field and drops unsent text, except held text whose
+    // specification is unchanged. A request still
     // awaited stays awaited.
     void setChart(const QJsonObject &chart);
     // The awaited request is answered and the catalog shown is fresh: the
@@ -89,7 +90,8 @@ public:
     // The read of a saved query's columns failed: they are asked for again
     // the next time they are wanted.
     void queryColumnsFailed(const QString &queryId);
-    // A range pick on the grid for a Range or Cell source field (Decision 9).
+    // A range pick on the grid for a Range or Cell source field, so a source
+    // is chosen by selecting cells as for a formula.
     // beginPick marks the field (highlighted, read-only, Pick pressed); it
     // does nothing unless the field shows a Range or Cell. setPicked shows a
     // picked range in the field as if typed, bare on the chart's sheet and
@@ -146,6 +148,8 @@ private:
     // While a focus is to be restored: notes a key or mouse press outside the panel.
     bool eventFilter(QObject *object,QEvent *event) override;
     void forgetFocus();
+    // A button or list of the panel: a Tab stop on every platform, and a list ignores the wheel.
+    void takeKeyboard(QWidget *control);
 
     // The Data group.
     struct SeriesBox {
@@ -233,7 +237,6 @@ private:
     QWidget *m_dataGroup=nullptr;
     QLineEdit *m_name=nullptr,*m_title=nullptr,*m_categoryTitle=nullptr,*m_valueTitle=nullptr,*m_min=nullptr,*m_max=nullptr;
     QPushButton *m_front=nullptr,*m_back=nullptr;
-    QButtonGroup *m_types=nullptr;
     QHash<QString,QToolButton *> m_typeButtons;
     QComboBox *m_grouping=nullptr,*m_legend=nullptr;
     QHash<QString,QLabel *> m_messages;

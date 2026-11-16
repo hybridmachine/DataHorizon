@@ -23,8 +23,7 @@ ChartSourceField::ChartSourceField(const QString &name,const QString &label,bool
     m_pages=new QStackedWidget;row->addWidget(m_pages,1);
     auto *text=new QWidget;auto *textRow=new QHBoxLayout(text);textRow->setContentsMargins(0,0,0,0);
     m_edit=new QLineEdit;m_edit->setObjectName(name+"Range");m_edit->setAccessibleName(label);
-    // A name's text is at most 255 characters, as every text field of the panel.
-    if(seriesName)m_edit->setMaxLength(255);
+    // No length cap: the service does not limit a series name's text.
     m_pick=new QToolButton;m_pick->setObjectName(name+"Pick");m_pick->setText(tr("Pick"));m_pick->setAccessibleName(tr("Pick %1 on the grid").arg(label));
     textRow->addWidget(m_edit,1);textRow->addWidget(m_pick);
     m_pages->addWidget(text);

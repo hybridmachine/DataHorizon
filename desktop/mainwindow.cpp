@@ -898,7 +898,10 @@ void MainWindow::buildUi() {
         if(chartPickActive() && m_chartPickReturning && m_model->sheet()!=m_chartPickSheet)cancelChartPick();
         // Another workbook or sheet shown ends the wait for an inserted chart.
         if(!m_chartToSelect.isEmpty() && (m_model->workbook()!=m_chartInsertTarget["workbook"].toString() || m_model->sheet()!=m_chartInsertTarget["sheet"].toString())){m_chartToSelect.clear();m_chartInsertTarget={};}
-        m_charts->bind(m_model->workbook().isEmpty()?QString():"/v1/workbooks/"+m_model->workbook(),m_model->sheet(),m_model->state(),m_model->projected());updateChartActions();});
+        const auto chartBase=m_model->workbook().isEmpty()?QString():"/v1/workbooks/"+m_model->workbook();
+        // A key not yet listed holds the panel until the panel has taken its listing.
+        if(!m_charts->listedFor(chartBase,m_model->sheet(),m_model->state()))m_chartCatalogStale=true;
+        m_charts->bind(chartBase,m_model->sheet(),m_model->state(),m_model->projected());updateChartActions();});
     // An inserted chart is selected by the first listing after its committed
     // receipt (one of the state the create was sent at is an older read);
     // that listing ends the wait whatever it holds, as does any other
@@ -919,10 +922,15 @@ void MainWindow::buildUi() {
         const auto id=std::exchange(m_chartToSelect,{});m_chartInsertTarget={};
         if(m_charts->chart(id).isEmpty())return;
         m_charts->select(id);showChartPanel();m_status->setText(tr("Chart inserted • Undo removes it"));
-        // Focus stays on the chart, not on the grid that inserted it.
-        if(auto *overlay=m_charts->overlay(id))overlay->setFocus(Qt::OtherFocusReason);
+        // Focus goes to the chart, scrolled into view when it is not, not to the grid that inserted it.
+        m_charts->focusChart(id);
     });
-    connect(m_client,&RestClient::configured,this,[this]{m_chartSuggesting=false;m_pendingChartSelect.clear();m_chartToSelect.clear();m_chartInsertTarget={};updateChartActions();});
+    // A new service session answers nothing asked of the last one.
+    connect(m_client,&RestClient::configured,this,[this]{
+        m_chartSuggesting=false;m_pendingChartSelect.clear();m_chartToSelect.clear();m_chartInsertTarget={};
+        m_chartPlacement.clear();m_queryReads.clear();
+        updateChartActions();
+    });
     // Each move, resize, reorder or delete of a chart is one operation. A
     // change not sent puts the chart back; a sent one is placed by the relist.
     // A refused or rolled-back one does not refresh, so its receipt puts the
@@ -1090,11 +1098,13 @@ void MainWindow::buildUi() {
     connect(m_chartPanel,&ChartPanel::pickRequested,this,&MainWindow::beginChartPick);
     connect(m_chartPanel,&ChartPanel::pickEnded,this,[this]{cancelChartPick();});
     // A selection shows its chart at once; only a listing, the catalog read
-    // after a change, lets the panel ask again (settle). After a committed
-    // change the panel keeps its chart, locked; after a failed or stale chart
-    // read it shows no chart. Either way it takes no chart from the layer and
-    // stays locked until that listing, so it never builds a specification
-    // from a catalog older than the workbook.
+    // after a change, lets the panel ask again (settle). Whenever the layer
+    // has not listed the state the window is bound to (a commit of this
+    // window or another client, a refresh, a stale read) the panel keeps its
+    // chart, locked; after a failed chart read it shows no chart. Either
+    // way it takes no chart from the layer and stays locked until that
+    // listing, so it never builds a specification from a catalog older than
+    // the workbook; text held meanwhile is applied against the listed chart.
     // During a chart pick the panel keeps its chart by id, also while
     // another sheet is shown: the selection the layer drops then is not the
     // panel's. A listing of the chart's sheet without it ends the pick.
@@ -1107,18 +1117,24 @@ void MainWindow::buildUi() {
                 // Drawn selected again once its sheet is shown (binding another sheet cleared it).
                 m_charts->select(m_chartPickChart);
                 m_chartPanel->setChart(panelChart(m_chartPickChart));
-                // A pick ended on another sheet ends here, its chart's sheet listed again.
-                if(chartPickActive() && m_chartPickReturning)finishChartPick(m_chartPickApplyOnReturn,true);
             }
         }
         if(!chartPickActive())m_chartPanel->setChart(panelChart(m_charts->selectedChart()));
+        // Unlocked only once the panel shows the listed chart.
         updateChartActions();
+        // A pick ended on another sheet ends here, its chart's sheet listed again.
+        if(chartPickActive() && m_model->sheet()==m_chartPickSheet && m_chartPickReturning)finishChartPick(m_chartPickApplyOnReturn,true);
         if(m_chartPanelOperation.isEmpty())m_chartPanel->settle();
     });
     connect(m_charts,&ChartLayer::failed,m_chartPanel,[this]{cancelChartPick();m_chartCatalogStale=true;m_chartPanel->setChart({});updateChartActions();});
-    connect(m_charts,&ChartLayer::stale,m_chartPanel,[this]{cancelChartPick();m_chartCatalogStale=true;m_chartPanel->setChart({});updateChartActions();});
+    // A stale read or render means the workbook moved on: the refresh that
+    // follows binds the new state, and the panel keeps its chart, locked,
+    // until that state is listed (text held meanwhile is kept for it).
+    connect(m_charts,&ChartLayer::stale,m_chartPanel,[this]{cancelChartPick();m_chartCatalogStale=true;updateChartActions();});
+    // A committed operation sets the window's state before the refresh binds
+    // it, so the catalog stops being current at once (chartCatalogCurrent).
     connect(this,&MainWindow::operationReceipt,m_chartPanel,[this](const QJsonObject &receipt){
-        if(receipt["outcome"]=="committed" && !m_relationalActive && !m_model->projected()){m_chartCatalogStale=true;updateChartActions();}
+        if(receipt["outcome"]=="committed")updateChartActions();
     });
     // Each panel change is one chart_update. One not sent puts its field
     // back at once; a refused or rolled-back one when its receipt comes,
@@ -2016,8 +2032,13 @@ void MainWindow::insertChart() {
     });
 }
 
+bool MainWindow::chartCatalogCurrent() const {
+    return !m_chartCatalogStale && m_charts && !m_info.isEmpty()
+        && m_charts->listedFor("/v1/workbooks/"+m_info["id"].toString(),m_model->sheet(),m_info["state"].toString());
+}
+
 QJsonObject MainWindow::panelChart(const QString &chartId) const {
-    return m_chartCatalogStale?QJsonObject():m_charts->chart(chartId);
+    return chartCatalogCurrent()?m_charts->chart(chartId):QJsonObject();
 }
 
 void MainWindow::readChartSources() {
@@ -2026,15 +2047,23 @@ void MainWindow::readChartSources() {
     for(const auto &value:m_info["sheets"].toArray())sheets.append(QJsonObject{{"id",value.toObject()["id"]},{"name",value.toObject()["name"]}});
     const auto workbook=m_info["id"].toString();const auto state=m_info["state"];
     if(m_chartSourcesWorkbook!=workbook){m_chartSourcesWorkbook=workbook;m_chartTables={};m_chartQueries={};}
-    // The sheets are known now; the tables and queries last read stand until the new ones arrive.
-    m_chartPanel->setCatalog(sheets,m_chartTables,m_chartQueries);
+    // The panel's lists are refilled only when what they offer changed: the
+    // sheets at once when they changed, the tables and queries when read.
+    // An ordinary edit's refresh refills nothing.
+    auto give=[this](const QJsonArray &sheets) {
+        if(sheets==m_chartGivenSheets && m_chartTables==m_chartGivenTables && m_chartQueries==m_chartGivenQueries)return;
+        m_chartGivenSheets=sheets;m_chartGivenTables=m_chartTables;m_chartGivenQueries=m_chartQueries;
+        m_chartPanel->setCatalog(sheets,m_chartTables,m_chartQueries);
+    };
+    // The tables and queries last read stand until the new ones arrive.
+    if(sheets!=m_chartGivenSheets)give(sheets);
     const int generation=++m_chartSourcesGeneration;
     auto current=[this,generation,workbook,state]{return generation==m_chartSourcesGeneration && m_info["id"].toString()==workbook && m_info["state"]==state;};
-    m_client->request(base()+"/tables",{{"expected_state",state}},[this,current,sheets,state](QJsonObject result,QString error){
+    m_client->request(base()+"/tables",{{"expected_state",state}},[this,current,sheets,state,give](QJsonObject result,QString error){
         if(!current() || !error.isEmpty() || result["state"]!=state)return;
         // A saved query's columns are read only when the panel asks for them.
         m_chartTables=result["tables"].toArray();m_chartQueries=result["queries"].toArray();
-        m_chartPanel->setCatalog(sheets,m_chartTables,m_chartQueries);
+        give(sheets);
     });
 }
 
@@ -2072,7 +2101,7 @@ void MainWindow::updateChartActions() {
     // takes edits; they are still selected, and edited in the panel (locked).
     const bool editable=sheet && !m_busy && !m_unknown && !m_info.value("readonly").toBool();
     if(m_charts)m_charts->setInteractive(editable);
-    if(m_chartPanel)m_chartPanel->setLocked(!editable || m_chartCatalogStale);
+    if(m_chartPanel)m_chartPanel->setLocked(!editable || !chartCatalogCurrent());
     if(!m_chartMenu)return;
     m_editChartAction->setEnabled(charts);
     for(auto *action:{m_chartToFrontAction,m_chartToBackAction,m_deleteChartAction})action->setEnabled(charts && editable);

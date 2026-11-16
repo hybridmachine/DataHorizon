@@ -75,17 +75,25 @@ private:
 // back any focus a chart had. The selection
 // survives a relist while its chart exists, and clears when the chart goes,
 // another sheet or workbook is bound, or the sheet is shown projected. The
-// wheel over an overlay scrolls the body.
+// wheel over an overlay scrolls the body. A chart holds the keyboard only
+// while its overlay is shown: when a focused overlay is hidden (scrolled or
+// moved out of view) the chart is deselected, and when one is hidden or
+// deleted the grid takes the focus, never another control.
 //
 // While interactive, a selected chart is moved by dragging it and resized by
 // dragging one of its handles: the overlay follows the pointer and the
 // release asks for one change (moveRequested, resizeRequested), or none when
 // nothing moved or no cell is under the chart's top-left corner. Escape
-// cancels a drag. Its keys (Decision 3): the arrows move it, Shift with them
+// cancels a drag. Its keys, taken before the window's shortcuts so they never
+// act on the cells beneath: the arrows move it, Shift with them
 // resizes it, Delete or Backspace asks for its deletion, Enter or Return for
 // its editing; the menu key or Shift+F10, and a right-click, ask for its
 // context menu. The layer sends nothing itself: the window sends each request
-// as one operation and the relist that follows places the chart.
+// as one operation and the relist that follows places the chart. A keyboard
+// move that would leave nothing of the chart in view is refused. After a
+// chart is deleted with Delete or Backspace, auto-repeated presses of that
+// key are swallowed until it is released, so a held key never clears the
+// cells the grid shows once the chart is gone.
 //
 // Charts in view are rendered by service render jobs, one at a time (the
 // service runs one chart job per workbook), lowest z first, after relayouts
@@ -109,6 +117,12 @@ public:
     // Binding the state already bound keeps the overlays and renders again
     // the charts whose render failed.
     void bind(const QString &workbookBase,const QString &sheet,const QString &state,bool projected);
+    // True when the charts shown are the catalog listed for this workbook,
+    // sheet and state: false from a bind of another key, or a failed or
+    // stale read, until that key's listing arrives.
+    bool listedFor(const QString &workbookBase,const QString &sheet,const QString &state) const {
+        return m_current && workbookBase==m_base && sheet==m_sheet && state==m_state;
+    }
     void relayout();
     ~ChartLayer() override;
     QList<ChartOverlay *> overlays() const;
@@ -117,8 +131,15 @@ public:
     // Selects the chart; an empty id, or one not on the sheet, clears.
     void select(const QString &chartId);
     // Selects and focuses the next (+1) or previous (-1) chart in z order,
-    // wrapping; with none selected, the lowest (+1) or highest (-1).
+    // wrapping; with none selected, the lowest (+1) or highest (-1). A chart
+    // scrolled out of view is scrolled into view first; one that cannot be
+    // shown at all (its anchor past the last shown row or column) is
+    // skipped, and when no chart can be shown nothing is selected and
+    // refused() gives the status.
     void selectNext(int direction);
+    // Scrolls the chart into view when it is out of view, then selects and
+    // focuses it; false, selecting nothing, when it cannot be shown.
+    bool focusChart(const QString &chartId);
     // The catalog's chart and its overlay; empty and null when not on the sheet.
     QJsonObject chart(const QString &chartId) const;
     ChartOverlay *overlay(const QString &chartId) const;
@@ -132,7 +153,7 @@ public:
     void setPassThrough(bool passThrough);
     // True during a chart range pick only: a press on the grid keeps the selection.
     void setKeepSelection(bool keep) { m_keepSelection=keep; }
-    // The inverse of relayout() (Decision 5): the cell under the rectangle's
+    // The inverse of relayout(), so a chart stays where it was dropped: the cell under the rectangle's
     // top-left corner in the pane under it (frozen corner, frozen rows, frozen
     // columns or body), as 1-based {row, col}, and {x, y} of the corner inside
     // that cell. False when no cell is there: a header, outside the grid, past
@@ -185,6 +206,12 @@ private:
     // plus its offset, however much of it is clipped) and the pane showing
     // the anchor; false when the anchor is not shown.
     bool trueRect(ChartOverlay *overlay,QRect *rect,QTableView **pane) const;
+    // The 0-based cell showing the chart's anchor: its own, or the next shown
+    // row and column after hidden ones; false when there is none.
+    bool anchorCell(ChartOverlay *overlay,int *row,int *col) const;
+    // Scrolls the body so a chart out of view shows its anchor; false when it
+    // still shows nothing.
+    bool reveal(ChartOverlay *overlay);
     // placement() within one pane's cells, including those scrolled out of view.
     bool placementIn(QTableView *view,const QPoint &point,QJsonObject *anchor,QJsonObject *offset) const;
     // A mouse drag: pending until the pointer moves past the drag distance,
@@ -198,8 +225,6 @@ private:
     void cancelDrag();
     void updateCursor(ChartOverlay *overlay,int handle) const;
     void applyPassThrough(ChartOverlay *overlay) const;
-    // Clears the selection, emitting once when there was one.
-    void deselect();
     // Gives the grid the focus when a chart holds it.
     void refocusGrid();
     QList<ChartOverlay *> zOrdered() const;
@@ -229,7 +254,7 @@ private:
     QPointer<FrozenPanes> m_frozen;
     QPointer<QWidget> m_gridArea;
     QString m_base,m_sheet,m_state;
-    bool m_projected=false,m_queued=false,m_listed=false,m_interactive=true,m_passThrough=false,m_keepSelection=false;
+    bool m_projected=false,m_queued=false,m_listed=false,m_current=false,m_interactive=true,m_passThrough=false,m_keepSelection=false;
     QString m_selected;
     Drag m_drag;
     // The viewports of every grid pane and header: a press there deselects.
@@ -241,6 +266,8 @@ private:
     // service refused a start because its chart job slots were taken.
     QTimer m_renderTimer,m_busyTimer;
     bool m_busy=false;int m_busyDelay=PollIntervalMs;
+    // A chart was deleted with this key (Delete or Backspace) and it is still held.
+    int m_swallowRepeat=0;
     // The key a chart was already retried for after a stale answer.
     QHash<QString,QString> m_staleRetried;
     // Charts whose render settled as a failure; a bind of the same state

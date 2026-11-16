@@ -2,7 +2,7 @@
 #include "chartpanel.h"
 #include "chartspec.h"
 #include "chartsourcefield.h"
-#include <QButtonGroup>
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QComboBox>
 #include <QFormLayout>
@@ -39,7 +39,10 @@ QJsonValue textValue(const QJsonObject &spec,const QString &field) {
     return axes["value"].toObject()["title"];
 }
 QString number(const QJsonValue &value) {
-    return value.isDouble()?QString::number(value.toDouble(),'g',QLocale::FloatingPointShortest):QString();
+    if(!value.isDouble())return {};
+    // A whole number is shown exactly; toInteger gives its default for any other.
+    if(value.toInteger(1)==value.toInteger(0))return QString::number(value.toInteger());
+    return QString::number(value.toDouble(),'g',QLocale::FloatingPointShortest);
 }
 QWidget *withMessage(QWidget *field,QLabel *message) {
     auto *box=new QWidget;auto *layout=new QVBoxLayout(box);layout->setContentsMargins(0,0,0,0);layout->setSpacing(2);
@@ -70,13 +73,15 @@ ChartPanel::ChartPanel(QWidget *parent) : QWidget(parent) {
 
     // Type: six buttons, exactly one pressed, and Grouping.
     m_typeGroup=new QGroupBox(tr("Type"));auto *typeForm=new QFormLayout(m_typeGroup);
-    m_types=new QButtonGroup(this);m_types->setExclusive(true);
+    // Exactly one pressed, kept by the panel rather than by a QButtonGroup:
+    // Qt's Tab passes over a group's unpressed buttons, and a group's arrow
+    // keys would press (and so apply) each type in turn.
     auto *buttons=new QGridLayout;
     const QStringList labels{tr("Column"),tr("Bar"),tr("Line"),tr("Area"),tr("Pie"),tr("Scatter")};
     for(int i=0;i<Types.size();++i) {
         auto *button=new QToolButton;button->setObjectName("chartType_"+Types[i]);button->setText(labels[i]);button->setCheckable(true);
         button->setToolButtonStyle(Qt::ToolButtonTextOnly);button->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);
-        m_types->addButton(button,i);m_typeButtons.insert(Types[i],button);buttons->addWidget(button,i/3,i%3);
+        m_typeButtons.insert(Types[i],button);buttons->addWidget(button,i/3,i%3);
     }
     typeForm->addRow(buttons);typeForm->addRow(messageLabel("chartType"));
     m_grouping=new QComboBox;m_grouping->setObjectName("chartGrouping");m_grouping->setAccessibleName(tr("Grouping"));
@@ -110,7 +115,8 @@ ChartPanel::ChartPanel(QWidget *parent) : QWidget(parent) {
     // Axes: titles, Minimum and Maximum.
     m_axesGroup=new QGroupBox(tr("Axes"));auto *axesForm=new QFormLayout(m_axesGroup);
     auto line=[&](QLineEdit *&edit,const QString &name,const QString &label) {
-        edit=new QLineEdit;edit->setObjectName(name);edit->setAccessibleName(label);edit->setMaxLength(255);
+        // No length cap: the service limits only the chart title (255) and the name.
+        edit=new QLineEdit;edit->setObjectName(name);edit->setAccessibleName(label);
         axesForm->addRow(label,withMessage(edit,messageLabel(name)));
     };
     line(m_categoryTitle,"categoryAxisTitle",tr("Category title"));
@@ -140,7 +146,11 @@ ChartPanel::ChartPanel(QWidget *parent) : QWidget(parent) {
         connect(edit,&QLineEdit::editingFinished,this,[this,field]{applyBound(field);});
         connect(edit,&QLineEdit::textEdited,this,[this,field]{clearMessage(field);});
     }
-    connect(m_types,&QButtonGroup::idClicked,this,[this](int id){applyType(Types.value(id));});
+    for(const auto &type:Types)
+        connect(m_typeButtons.value(type),&QToolButton::clicked,this,[this,type]{
+            for(auto button=m_typeButtons.cbegin();button!=m_typeButtons.cend();++button)button.value()->setChecked(button.key()==type);
+            applyType(type);
+        });
     for(const auto &[button,direction]:{std::pair{m_front,"front"},std::pair{m_back,"back"}})
         connect(button,&QPushButton::clicked,this,[this,direction=QString(direction)]{
             clearMessage("chartOrder");
@@ -159,7 +169,19 @@ ChartPanel::ChartPanel(QWidget *parent) : QWidget(parent) {
         });
     }
     connect(m_addSeries,&QPushButton::clicked,this,&ChartPanel::addSeries);
+    for(auto *button:{static_cast<QWidget *>(m_front),static_cast<QWidget *>(m_back),static_cast<QWidget *>(m_addSeries)})takeKeyboard(button);
+    for(auto *button:m_typeButtons)takeKeyboard(button);
+    for(auto *combo:{m_grouping,m_legend})takeKeyboard(combo);
     load();updateEnabled();
+    orderFocus();
+}
+
+void ChartPanel::takeKeyboard(QWidget *control) {
+    // A Tab stop whatever the platform's keyboard setting: macOS gives
+    // buttons and lists Tab focus only, which its default setting skips.
+    control->setFocusPolicy(Qt::StrongFocus);
+    // A list takes no wheel: the wheel scrolls the panel (see eventFilter).
+    if(qobject_cast<QComboBox *>(control))control->installEventFilter(this);
 }
 
 void ChartPanel::connectSource(ChartSourceField *source) {
@@ -176,6 +198,7 @@ void ChartPanel::connectSource(ChartSourceField *source) {
         emit queryColumnsWanted(id);
     });
     source->setCatalog(m_tables,queriesWithColumns());
+    for(auto *input:source->inputs())if(qobject_cast<QComboBox *>(input) || qobject_cast<QToolButton *>(input))takeKeyboard(input);
 }
 
 QWidget *ChartPanel::withMarkers(ChartSourceField *field) {
@@ -193,16 +216,21 @@ void ChartPanel::setChart(const QJsonObject &chart) {
     // The same chart renamed, moved or reordered keeps the Data group's
     // working copy (held repairs, added rows). The same chart with another
     // specification starts again from it, keeping only added rows not yet
-    // complete; another chart drops everything. Held text is dropped.
+    // complete; another chart drops everything. Held text stays, unshown
+    // values kept in its field, only while the specification it was typed
+    // against is unchanged (and, for Name, the name); otherwise its field
+    // shows the chart as now stored.
     const bool same=!chart.isEmpty() && chart.value("id")==m_chart.value("id");
     const bool sameSpec=same && chart.value("spec")==m_chart.value("spec") && chart.value("issue")==m_chart.value("issue");
+    const bool keepHeld=sameSpec && !m_deferred.isEmpty() && m_deferredChart==chartId()
+        && (m_deferred!="chartName" || chart.value("name")==m_chart.value("name"));
     QJsonArray unsent;
     if(same && !sameSpec) {
         const auto list=m_working.value("series").toArray();
         for(int row=0;row<m_rows.size() && row<list.size();++row)
             if(m_rows[row].panelOnly && !complete(list[row]))unsent.append(list[row]);
     }
-    m_chart=chart;m_deferred.clear();
+    m_chart=chart;if(!keepHeld)m_deferred.clear();
     load(sameSpec);
     if(!unsent.isEmpty() && !m_working.isEmpty()) {
         auto list=m_working["series"].toArray();
@@ -239,6 +267,12 @@ void ChartPanel::setLocked(bool locked) {
 }
 
 bool ChartPanel::eventFilter(QObject *object,QEvent *event) {
+    // The wheel over a closed list goes on to the scroll area holding the
+    // panel: it never changes a value, which would apply at once.
+    if(event->type()==QEvent::Wheel) {
+        if(auto *combo=qobject_cast<QComboBox *>(object);combo && isAncestorOf(combo) && !combo->view()->isVisible()){event->ignore();return true;}
+        return false;
+    }
     if(event->type()==QEvent::KeyPress || event->type()==QEvent::MouseButtonPress) {
         // Counted where a widget receives it; a window passes it on to one.
         auto *widget=qobject_cast<QWidget *>(object);
@@ -299,7 +333,9 @@ void ChartPanel::load(bool keepData) {
     m_reasonLabel->setText(m_reason);m_reasonLabel->setVisible(!m_reason.isEmpty());
     for(auto field=m_messages.keyBegin();field!=m_messages.keyEnd();++field)
         if(!keepData || (*field!="series" && !dataSlot(*field,nullptr,nullptr)))clearMessage(*field);
-    for(const auto &field:{"chartName","chartType","chartGrouping","chartTitle","categoryAxisTitle","valueAxisTitle","valueAxisMin","valueAxisMax","legendPosition"})loadField(field);
+    // A held field keeps its text until it is applied.
+    for(const auto &field:{"chartName","chartType","chartGrouping","chartTitle","categoryAxisTitle","valueAxisTitle","valueAxisMin","valueAxisMax","legendPosition"})
+        if(field!=m_deferred)loadField(field);
     if(keepData)updateMarkers();else loadData();
 }
 
@@ -319,10 +355,8 @@ void ChartPanel::loadField(const QString &field) {
     const auto spec=m_chart.value("issue").isString()?QJsonObject():m_chart.value("spec").toObject();
     if(field=="chartName")m_name->setText(m_chart.value("name").toString());
     else if(field=="chartType") {
-        m_types->setExclusive(false);
         for(auto *button:m_typeButtons)button->setChecked(false);
         if(auto *button=m_typeButtons.value(spec["type"].toString()))button->setChecked(true);
-        m_types->setExclusive(true);
     } else if(field=="chartGrouping")m_grouping->setCurrentIndex(m_grouping->findData(spec["grouping"].toString()));
     else if(TextFields.contains(field))findChild<QLineEdit *>(field)->setText(textValue(spec,field).toString());
     else if(field=="valueAxisMin" || field=="valueAxisMax") {
@@ -378,6 +412,8 @@ void ChartPanel::requestSpec(const QString &field,const std::function<void(QJson
 void ChartPanel::applyName() {
     if(m_chart.isEmpty())return;
     if(m_locked || m_pending){defer("chartName");return;}
+    // Only text the person typed applies, so passing through never changes a value.
+    if(!m_name->isModified())return;
     const auto text=m_name->text();
     if(text==m_chart.value("name").toString())return;
     request({{"name",text}},"chartName");
@@ -386,7 +422,11 @@ void ChartPanel::applyName() {
 void ChartPanel::applyText(const QString &field) {
     if(m_chart.isEmpty() || m_spec.isEmpty())return;
     if(m_locked || m_pending){defer(field);return;}
-    const auto text=findChild<QLineEdit *>(field)->text();
+    // Only text the person typed applies, so focus passing through a field
+    // never sends what it shows.
+    auto *edit=findChild<QLineEdit *>(field);
+    if(!edit->isModified())return;
+    const auto text=edit->text();
     const QJsonValue value=text.isEmpty()?QJsonValue(QJsonValue::Null):QJsonValue(text);
     if(value==textValue(m_spec,field))return;
     requestSpec(field,[field,value](QJsonObject &spec){
@@ -401,6 +441,7 @@ void ChartPanel::applyBound(const QString &field) {
     if(m_chart.isEmpty() || m_spec.isEmpty())return;
     if(m_locked || m_pending){defer(field);return;}
     const auto key=field=="valueAxisMin"?"min":"max";
+    if(!(field=="valueAxisMin"?m_min:m_max)->isModified())return;
     const auto text=(field=="valueAxisMin"?m_min:m_max)->text().trimmed();
     QJsonValue value=QJsonValue::Null;
     if(!text.isEmpty()) {
@@ -408,13 +449,19 @@ void ChartPanel::applyBound(const QString &field) {
         // is the decimal mark, and refused where it would only group digits.
         QLocale c=QLocale::c(),local;
         c.setNumberOptions(c.numberOptions()|QLocale::RejectGroupSeparator);local.setNumberOptions(local.numberOptions()|QLocale::RejectGroupSeparator);
-        bool ok=false;double parsed=c.toDouble(text,&ok);
-        if(!ok)parsed=local.toDouble(text,&ok);
-        if(!ok || !std::isfinite(parsed)){refused(field,tr("Enter a number or leave empty for automatic"));return;}
-        value=parsed;
+        // A whole number is sent as a JSON integer, never through a double.
+        bool ok=false;const qint64 whole=c.toLongLong(text,&ok);
+        if(ok)value=whole;
+        else {
+            double parsed=c.toDouble(text,&ok);
+            if(!ok)parsed=local.toDouble(text,&ok);
+            if(!ok || !std::isfinite(parsed)){refused(field,tr("Enter a number or leave empty for automatic"));return;}
+            value=parsed;
+        }
     }
     const QJsonValue stored=axesOf(m_spec).value("value").toObject().value(key);
-    if(value.isNull()?stored.isNull():stored.isDouble() && stored.toDouble()==value.toDouble())return;
+    if(value.isNull()?stored.isNull():stored.isDouble() && (value.isDouble() && value.toInteger(1)==value.toInteger(0)
+        ?stored.toInteger(~value.toInteger())==value.toInteger():stored.toDouble()==value.toDouble()))return;
     requestSpec(field,[key,value](QJsonObject &spec){
         auto axes=axesOf(spec);auto item=axes["value"].toObject();item[key]=value;axes["value"]=item;spec["axes"]=axes;
     });
@@ -657,6 +704,7 @@ void ChartPanel::ensureSeries(int count) {
         connect(box.remove,&QPushButton::clicked,this,[this,row]{removeSeries(row);});
         connect(box.up,&QPushButton::clicked,this,[this,row]{moveSeries(row,-1);});
         connect(box.down,&QPushButton::clicked,this,[this,row]{moveSeries(row,1);});
+        for(auto *button:{box.remove,box.up,box.down})takeKeyboard(button);
         // Shown now, not when the layout gets round to it.
         m_seriesLayout->addWidget(box.box);box.box->show();
         m_series.append(box);
@@ -665,8 +713,11 @@ void ChartPanel::ensureSeries(int count) {
 }
 
 void ChartPanel::orderFocus() {
-    // The panel's focus order: series rows are made after Axes and Legend.
-    QList<QWidget *> chain{m_title};
+    // The panel's focus order, as the wireframes give it: series rows are
+    // made after Axes and Legend, so the order is set rather than left to creation.
+    QList<QWidget *> chain{m_name,m_front,m_back};
+    for(const auto &type:Types)chain<<m_typeButtons.value(type);
+    chain<<m_grouping<<m_title;
     chain+=m_categories->inputs();
     for(const auto &box:std::as_const(m_series)) {
         chain+=box.name->inputs();chain+=box.values->inputs();chain+=box.x->inputs();
