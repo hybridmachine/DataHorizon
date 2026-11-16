@@ -4,6 +4,7 @@
 #include "servicepaths.h"
 #include "frozenpanes.h"
 #include "chartlayer.h"
+#include "chartpanel.h"
 #include "listcriteriadialog.h"
 #include "namedlistviews.h"
 #include "functionhelp.h"
@@ -49,6 +50,7 @@
 #include <QProcessEnvironment>
 #include <QProgressDialog>
 #include <QRegularExpression>
+#include <QScrollArea>
 #include <QScrollBar>
 #include <QScopedValueRollback>
 #include <QScopeGuard>
@@ -276,6 +278,8 @@ MainWindow::MainWindow(const StartupOptions &options, QWidget *parent)
 MainWindow::~MainWindow() {
     saveViewState();
     m_shuttingDown = true;
+    // A panel field losing focus as the widgets go must not reach the window.
+    if (m_chartPanel) m_chartPanel->disconnect(this);
     if (m_service.state() != QProcess::NotRunning) {
         m_service.terminate();
         if (!m_service.waitForFinished(1500)) { m_service.kill(); m_service.waitForFinished(1000); }
@@ -902,6 +906,8 @@ void MainWindow::buildUi() {
         const auto id=std::exchange(m_chartToSelect,{});m_chartInsertTarget={};
         if(m_charts->chart(id).isEmpty())return;
         m_charts->select(id);showChartPanel();m_status->setText(tr("Chart inserted • Undo removes it"));
+        // Focus stays on the chart, not on the grid that inserted it.
+        if(auto *overlay=m_charts->overlay(id))overlay->setFocus(Qt::OtherFocusReason);
     });
     connect(m_client,&RestClient::configured,this,[this]{m_chartSuggesting=false;m_pendingChartSelect.clear();m_chartToSelect.clear();m_chartInsertTarget={};updateChartActions();});
     // Each move, resize, reorder or delete of a chart is one operation. A
@@ -925,7 +931,11 @@ void MainWindow::buildUi() {
     });
     connect(m_charts,&ChartLayer::orderRequested,this,[this](const QString &id,const QString &order){submit({{"action","chart_update"},{"chart_id",id},{"order",order}});});
     connect(m_charts,&ChartLayer::deleteRequested,this,[this](const QString &id){submit({{"action","chart_delete"},{"chart_id",id}});});
-    connect(m_charts,&ChartLayer::editRequested,this,&MainWindow::showChartPanel);
+    // Enter, a double-click and Edit Chart open the panel and put focus on Name.
+    connect(m_charts,&ChartLayer::editRequested,this,[this](const QString &id){
+        m_chartPanel->setChart(m_charts->chart(id));showChartPanel();
+        if(auto *name=m_chartPanel->findChild<QLineEdit *>("chartName"))name->setFocus(Qt::OtherFocusReason);
+    });
     connect(m_charts,&ChartLayer::refused,this,[this](const QString &status){m_status->setText(status);});
     // The context menu on the selected chart. Its commands act on the
     // selected chart through the layer, as the chart's own keys do.
@@ -1054,6 +1064,37 @@ void MainWindow::buildUi() {
     auto *issuesDock = new QDockWidget(tr("Issues"), this); issuesDock->setObjectName("issuesDock");
     m_issues = new QPlainTextEdit; m_issues->setObjectName("operationIssues");m_issues->setReadOnly(true); m_issues->setAccessibleName(tr("Operation and calculation issues")); issuesDock->setWidget(m_issues);
     addDockWidget(Qt::BottomDockWidgetArea, issuesDock); issuesDock->hide(); view->addAction(issuesDock->toggleViewAction());
+    // The chart panel: a right-hand dock showing the selected chart. It
+    // scrolls vertically when the window is short and never sideways.
+    m_chartPanel=new ChartPanel;
+    auto *chartScroll=new QScrollArea;chartScroll->setWidget(m_chartPanel);chartScroll->setWidgetResizable(true);
+    chartScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);chartScroll->setFrameShape(QFrame::NoFrame);
+    m_chartDock=new QDockWidget(tr("Chart"),this);m_chartDock->setObjectName("chartDock");m_chartDock->setWidget(chartScroll);
+    addDockWidget(Qt::RightDockWidgetArea,m_chartDock);m_chartDock->hide();view->addAction(m_chartDock->toggleViewAction());
+    connect(m_charts,&ChartLayer::selectionChanged,m_chartPanel,[this](const QString &id){m_chartPanel->setChart(m_charts->chart(id));});
+    connect(m_charts,&ChartLayer::listed,m_chartPanel,[this]{m_chartPanel->setChart(m_charts->chart(m_charts->selectedChart()));});
+    // Each panel change is one chart_update. One not sent puts its field
+    // back at once; a refused or rolled-back one when its receipt comes,
+    // with the service's message beside the field (submit also reports it
+    // in Issues). An unknown outcome waits for reconcile's receipt.
+    connect(m_chartPanel,&ChartPanel::changeRequested,this,[this](const QString &id,const QJsonObject &changes,const QString &field){
+        QJsonObject operation{{"action","chart_update"},{"chart_id",id}};
+        for(auto change=changes.begin();change!=changes.end();++change)operation[change.key()]=change.value();
+        m_chartPanelOperation=submit(operation);m_chartPanelField=field;
+        if(m_chartPanelOperation.isEmpty())m_chartPanel->refused(field,{});
+    });
+    connect(this,&MainWindow::operationReceipt,m_chartPanel,[this](const QJsonObject &receipt){
+        if(m_chartPanelOperation.isEmpty() || receipt["operation_id"].toString()!=m_chartPanelOperation)return;
+        const auto outcome=receipt["outcome"].toString();
+        if(outcome=="unknown")return;
+        m_chartPanelOperation.clear();
+        if(outcome!="committed")m_chartPanel->refused(std::exchange(m_chartPanelField,{}),receipt["message"].toString());
+        else m_chartPanelField.clear();
+    });
+    connect(m_client,&RestClient::configured,m_chartPanel,[this]{
+        if(!m_chartPanelOperation.isEmpty()){m_chartPanelOperation.clear();m_chartPanel->refused(std::exchange(m_chartPanelField,{}),{});}
+    });
+    updateChartActions();
     view->addAction(m_toolbar->toggleViewAction());
     add(help, tr("Preview capabilities"), {}, [this] {
         m_client->request("/v1/capabilities", {}, [this](QJsonObject, QString error) {
@@ -1910,7 +1951,7 @@ void MainWindow::insertChart() {
 }
 
 void MainWindow::showChartPanel() {
-    // Task 6 shows the chart panel's dock here.
+    m_chartDock->show();m_chartDock->raise();
 }
 
 void MainWindow::updateChartActions() {
@@ -1923,6 +1964,7 @@ void MainWindow::updateChartActions() {
     // takes edits; they are still selected, and edited in the panel (locked).
     const bool editable=sheet && !m_busy && !m_unknown && !m_info.value("readonly").toBool();
     if(m_charts)m_charts->setInteractive(editable);
+    if(m_chartPanel)m_chartPanel->setLocked(!editable);
     if(!m_chartMenu)return;
     m_editChartAction->setEnabled(charts);
     for(auto *action:{m_chartToFrontAction,m_chartToBackAction,m_deleteChartAction})action->setEnabled(charts && editable);

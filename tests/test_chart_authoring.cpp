@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "chartlayer.h"
+#include "chartpanel.h"
 #include "chartspec.h"
 #include "mainwindow.h"
 #include <QAccessible>
 #include <QAction>
+#include <QComboBox>
+#include <QDockWidget>
+#include <QPushButton>
+#include <QScrollArea>
+#include <QToolButton>
 #include <QHash>
 #include <QHeaderView>
 #include <QJsonArray>
@@ -1116,6 +1122,332 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["anchor"].toObject(),(QJsonObject{{"row",4},{"col",2}}),10000);
         QCOMPARE(layer->chart(id)["offset"].toObject(),(QJsonObject{{"x",3},{"y",height-1}}));
     }
+    void dockOpensOnInsertEditAndDoubleClickNotOnAClick() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));activate(window);
+        auto *dock=window.findChild<QDockWidget *>("chartDock");QVERIFY(dock);auto *panel=panelOf(window);QVERIFY(panel);
+        QCOMPARE(dock->windowTitle(),QString("Chart"));QCOMPARE(window.dockWidgetArea(dock),Qt::RightDockWidgetArea);QVERIFY(!dock->isVisible());
+        auto *scroll=qobject_cast<QScrollArea *>(dock->widget());QVERIFY(scroll);QCOMPARE(scroll->widget(),panel);
+        QCOMPARE(scroll->horizontalScrollBarPolicy(),Qt::ScrollBarAlwaysOff);
+        // View → Chart sits next to View → Issues.
+        QMenu *view=nullptr;for(auto *action:window.menuBar()->actions())if(action->text()=="&View")view=action->menu();QVERIFY(view);
+        const auto actions=view->actions();auto *issues=window.findChild<QDockWidget *>("issuesDock")->toggleViewAction();
+        const int at=int(actions.indexOf(issues));QVERIFY(at>=0);QCOMPARE(actions.value(at+1),dock->toggleViewAction());QCOMPARE(dock->toggleViewAction()->text(),QString("Chart"));
+        // Insert opens the panel on the new chart; focus stays on the chart.
+        selectCells(grid,model,0,0,3,1);window.findChild<QAction *>("insertChartAction")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!layer->selectedChart().isEmpty(),10000);const auto id=layer->selectedChart();
+        QTRY_VERIFY_WITH_TIMEOUT(dock->isVisible(),5000);QCOMPARE(panel->chartId(),id);
+        QCOMPARE(window.findChild<QLineEdit *>("chartName")->text(),QString("Chart 1"));
+        QTRY_COMPARE_WITH_TIMEOUT(window.focusWidget(),static_cast<QWidget *>(layer->overlay(id)),5000);
+        // A click only selects.
+        dock->hide();QVERIFY(idle(window));layer->select({});auto *overlay=layer->overlay(id);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(40,40));QCOMPARE(layer->selectedChart(),id);
+        QTest::qWait(100);QVERIFY(!dock->isVisible());
+        // A double-click opens it.
+        QTest::mouseDClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(40,40));QVERIFY(dock->isVisible());QCOMPARE(panel->chartId(),id);
+        // Enter on the chart opens it and puts focus on Name.
+        dock->hide();overlay->setFocus();QCOMPARE(window.focusWidget(),overlay);
+        QTest::keyClick(overlay,Qt::Key_Return);QVERIFY(dock->isVisible());
+        QCOMPARE(window.focusWidget(),static_cast<QWidget *>(window.findChild<QLineEdit *>("chartName")));
+        // Edit Chart the same.
+        dock->hide();overlay->setFocus();window.findChild<QAction *>("editChartAction")->trigger();QVERIFY(dock->isVisible());
+        QCOMPARE(window.focusWidget(),static_cast<QWidget *>(window.findChild<QLineEdit *>("chartName")));
+        // View → Chart hides and shows it.
+        dock->toggleViewAction()->trigger();QVERIFY(!dock->isVisible());dock->toggleViewAction()->trigger();QVERIFY(dock->isVisible());
+    }
+    void panelSaysNoChartSelected() {
+        CHART_WINDOW;window.submit({{"action","sheet_add"},{"name","Other"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QVERIFY(addChart(window,opened,"Shown",2,4));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);const auto id=overlay->chartId();
+        auto *dock=window.findChild<QDockWidget *>("chartDock");dock->toggleViewAction()->trigger();QVERIFY(dock->isVisible());
+        auto *panel=panelOf(window);auto *name=window.findChild<QLineEdit *>("chartName");
+        auto empty=[&]{const auto *label=noChartLabel(panel);return label && label->isVisible() && !name->isVisible() && panel->chartId().isEmpty();};
+        QVERIFY(empty());
+        layer->select(id);QCOMPARE(panel->chartId(),id);QVERIFY(name->isVisible());QCOMPARE(name->text(),QString("Shown"));QVERIFY(!noChartLabel(panel)->isVisible());
+        // A click on the grid clears it.
+        QTest::mouseClick(grid->viewport(),Qt::LeftButton,Qt::NoModifier,QPoint(grid->columnViewportPosition(1)+5,grid->rowViewportPosition(1)+5));QVERIFY(empty());
+        // Escape on the chart clears it.
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(panel->chartId(),id);
+        QTest::keyClick(overlay,Qt::Key_Escape);QVERIFY(empty());
+        // A sheet switch clears it.
+        layer->select(id);QCOMPARE(panel->chartId(),id);
+        window.findChild<QTabBar *>("sheets")->setCurrentIndex(1);QVERIFY(empty());QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,5000);QVERIFY(empty());
+        QVERIFY(dock->isVisible());
+    }
+    void renameAppliesOnEnterAndOnFocusOut() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Before",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();
+        auto *panel=panelOf(window);QVERIFY(openPanel(window,layer,id));auto *name=window.findChild<QLineEdit *>("chartName");
+        QCOMPARE(name->text(),QString("Before"));QCOMPARE(name->maxLength(),64);
+        QSignalSpy requested(panel,&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        typeInto(name,"Entered",true);
+        QCOMPARE(requested.count(),1);QCOMPARE(requested[0][0].toString(),id);
+        QCOMPARE(requested[0][1].toJsonObject(),(QJsonObject{{"name","Entered"}}));QCOMPARE(requested[0][2].toString(),QString("chartName"));
+        QCOMPARE(admitted.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["name"].toString(),QString("Entered"),10000);QTRY_COMPARE_WITH_TIMEOUT(name->text(),QString("Entered"),5000);
+        // Leaving the field applies it too.
+        QVERIFY(idle(window));typeInto(name,"Left behind",false);QCOMPARE(requested.count(),1);
+        window.findChild<QLineEdit *>("chartTitle")->setFocus();
+        QCOMPARE(requested.count(),2);QCOMPARE(requested[1][1].toJsonObject(),(QJsonObject{{"name","Left behind"}}));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["name"].toString(),QString("Left behind"),10000);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlay(id)->accessibleName(),QString("Chart: Left behind"),5000);
+        QCOMPARE(admitted.count(),2);
+    }
+    void eachTypeButtonChangesTheType_data() {
+        QTest::addColumn<QString>("type");
+        for(const char *type:{"column","bar","line","area","pie","scatter"})QTest::newRow(type) << QString(type);
+    }
+    void eachTypeButtonChangesTheType() {
+        QFETCH(QString,type);
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        auto spec=chartSpec("Sheet1");spec["type"]=type=="column"?"line":"column";
+        QVERIFY(addChart(window,opened,"Typed",2,4,0,0,320,200,"Sheet1",spec));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *button=window.findChild<QToolButton *>("chartType_"+type);QVERIFY(button);QVERIFY(button->isCheckable());QVERIFY(!button->isChecked());
+        auto *from=window.findChild<QToolButton *>("chartType_"+spec["type"].toString());QVERIFY(from->isChecked());
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        QTest::mouseClick(button,Qt::LeftButton);QCOMPARE(admitted.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["type"].toString(),type,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(button->isChecked() && !from->isChecked(),5000);
+        const auto stored=layer->chart(id)["spec"].toObject();
+        QCOMPARE(stored["series"].toArray().size(),1);
+        auto *grouping=window.findChild<QComboBox *>("chartGrouping");
+        QVERIFY(idle(window));QCOMPARE(grouping->isEnabled(),ChartSpec::takesGrouping(type));
+        if(ChartSpec::takesGrouping(type)){QCOMPARE(stored["grouping"].toString(),QString("clustered"));QCOMPARE(grouping->currentText(),QString("Clustered"));}
+        else {QVERIFY(stored["grouping"].isNull());QCOMPARE(grouping->currentIndex(),-1);}
+        // A click on the pressed button sends nothing.
+        QTest::mouseClick(button,Qt::LeftButton);QTest::qWait(100);QCOMPARE(admitted.count(),1);
+        QCOMPARE(window.findChild<QAction *>("undoAction")->text(),QString("Undo Edit chart"));
+    }
+    void typeChangeCarriesItsCompanions() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        auto spec=chartSpec("Sheet1");spec["grouping"]="stacked";spec["title"]=QJsonObject{{"text","Kept"}};spec["legend"]=QJsonObject{{"position","bottom"}};
+        QVERIFY(addChart(window,opened,"Companions",2,4,0,0,320,200,"Sheet1",spec));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QCOMPARE(window.findChild<QComboBox *>("chartGrouping")->currentText(),QString("Stacked"));
+        // To scatter: the categories become every series' X; no grouping.
+        QTest::mouseClick(window.findChild<QToolButton *>("chartType_scatter"),Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["type"].toString(),QString("scatter"),10000);
+        auto stored=layer->chart(id)["spec"].toObject();
+        QVERIFY(stored["categories"].isNull());QVERIFY(stored["grouping"].isNull());
+        QCOMPARE(stored["series"].toArray()[0].toObject()["x"].toObject()["source"].toObject()["ref"].toString(),QString("A2:A4"));
+        QCOMPARE(stored["title"].toObject()["text"].toString(),QString("Kept"));QCOMPARE(stored["legend"].toObject()["position"].toString(),QString("bottom"));
+        // And back: the first series' X becomes the categories; grouping Clustered.
+        QVERIFY(idle(window));QTest::mouseClick(window.findChild<QToolButton *>("chartType_column"),Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["type"].toString(),QString("column"),10000);
+        stored=layer->chart(id)["spec"].toObject();
+        QCOMPARE(stored["categories"].toObject()["source"].toObject()["ref"].toString(),QString("A2:A4"));
+        QVERIFY(stored["series"].toArray()[0].toObject()["x"].isNull());QCOMPARE(stored["grouping"].toString(),QString("clustered"));
+        QCOMPARE(stored["series"].toArray()[0].toObject()["values"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B4"));
+        QCOMPARE(stored["title"].toObject()["text"].toString(),QString("Kept"));QCOMPARE(stored["legend"].toObject()["position"].toString(),QString("bottom"));
+        // A chart without categories cannot become a scatter: refused in the panel, nothing sent.
+        auto bare=chartSpec("Sheet1");bare.remove("categories");bare["type"]="line";
+        QVERIFY(idle(window));QVERIFY(addChart(window,opened,"Bare",12,4,0,0,320,200,"Sheet1",bare));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);
+        const auto bareId=overlayNamed(layer,"Bare")->chartId();QVERIFY(openPanel(window,layer,bareId));
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        QTest::mouseClick(window.findChild<QToolButton *>("chartType_scatter"),Qt::LeftButton);
+        auto *message=window.findChild<QLabel *>("chartTypeMessage");QVERIFY(message);QVERIFY(message->isVisible());
+        QCOMPARE(message->text(),QString("Give an X source before changing this chart to a scatter chart."));
+        QVERIFY(window.findChild<QToolButton *>("chartType_line")->isChecked());QVERIFY(!window.findChild<QToolButton *>("chartType_scatter")->isChecked());
+        QTest::qWait(100);QCOMPARE(admitted.count(),0);QCOMPARE(layer->chart(bareId)["spec"].toObject()["type"].toString(),QString("line"));
+    }
+    void twoSeriesToPieIsRefusedAndTheTypeGoesBack() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        auto spec=chartSpec("Sheet1");auto list=spec["series"].toArray();list.append(list.first());spec["series"]=list;
+        QVERIFY(addChart(window,opened,"Pair",2,4,0,0,320,200,"Sheet1",spec));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        const auto before=layer->chart(id);
+        QSignalSpy receipts(&window,&MainWindow::operationReceipt);
+        auto *pie=window.findChild<QToolButton *>("chartType_pie"),*column=window.findChild<QToolButton *>("chartType_column");
+        QTest::mouseClick(pie,Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(receipts.count(),1,10000);const auto receipt=receipts[0][0].toJsonObject();
+        QVERIFY(receipt["outcome"]=="rejected" || receipt["outcome"]=="rolled_back");const auto serviceMessage=receipt["message"].toString();
+        QVERIFY2(serviceMessage.contains("a pie chart has exactly one series"),qPrintable(serviceMessage));
+        auto *message=window.findChild<QLabel *>("chartTypeMessage");QVERIFY(message);
+        QTRY_VERIFY_WITH_TIMEOUT(message->isVisible(),5000);QCOMPARE(message->text(),serviceMessage);QVERIFY(message->wordWrap());
+        QCOMPARE(column->accessibleDescription(),serviceMessage);
+        QVERIFY(column->isChecked());QVERIFY(!pie->isChecked());
+        QVERIFY(issuesText(window).contains(serviceMessage));
+        // The chart is unchanged: two series, still a column chart.
+        QTest::qWait(200);QCOMPARE(layer->chart(id),before);QCOMPARE(layer->chart(id)["spec"].toObject()["series"].toArray().size(),2);
+        // The next edit of the type clears the message.
+        QVERIFY(idle(window));QTest::mouseClick(window.findChild<QToolButton *>("chartType_line"),Qt::LeftButton);QVERIFY(!message->isVisible());
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["type"].toString(),QString("line"),10000);
+        QCOMPARE(layer->chart(id)["spec"].toObject()["series"].toArray().size(),2);
+    }
+    void titleAxisTitlesMinMaxAndLegendApply() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Dressed",2,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto specOfChart=[&]{return layer->chart(id)["spec"].toObject();};
+        auto valueAxis=[&]{return specOfChart()["axes"].toObject()["value"].toObject();};
+        auto *title=window.findChild<QLineEdit *>("chartTitle");QCOMPARE(title->maxLength(),255);QCOMPARE(title->accessibleName(),QString("Title"));
+        typeInto(title,"Units by month",true);
+        QTRY_COMPARE_WITH_TIMEOUT(specOfChart()["title"].toObject()["text"].toString(),QString("Units by month"),10000);
+        QVERIFY(idle(window));typeInto(window.findChild<QLineEdit *>("categoryAxisTitle"),"Month",true);
+        QTRY_COMPARE_WITH_TIMEOUT(specOfChart()["axes"].toObject()["category"].toObject()["title"].toString(),QString("Month"),10000);
+        QVERIFY(idle(window));typeInto(window.findChild<QLineEdit *>("valueAxisTitle"),"Units",true);
+        QTRY_COMPARE_WITH_TIMEOUT(valueAxis()["title"].toString(),QString("Units"),10000);
+        auto *minimum=window.findChild<QLineEdit *>("valueAxisMin"),*maximum=window.findChild<QLineEdit *>("valueAxisMax");
+        QCOMPARE(minimum->placeholderText(),QString("Automatic"));QCOMPARE(maximum->placeholderText(),QString("Automatic"));
+        QVERIFY(idle(window));typeInto(minimum,"10",true);
+        QTRY_VERIFY_WITH_TIMEOUT(valueAxis()["min"].isDouble(),10000);QCOMPARE(valueAxis()["min"].toDouble(),10.0);
+        QVERIFY(idle(window));typeInto(maximum,"2.5e3",true);
+        QTRY_VERIFY_WITH_TIMEOUT(valueAxis()["max"].isDouble(),10000);QCOMPARE(valueAxis()["max"].toDouble(),2500.0);
+        QTRY_COMPARE_WITH_TIMEOUT(maximum->text(),QString("2500"),5000);
+        auto *legend=window.findChild<QComboBox *>("legendPosition");QCOMPARE(legend->currentText(),QString("Right"));QCOMPARE(legend->accessibleName(),QString("Legend"));
+        QVERIFY(idle(window));choose(legend,"Bottom");
+        QTRY_COMPARE_WITH_TIMEOUT(specOfChart()["legend"].toObject()["position"].toString(),QString("bottom"),10000);
+        QVERIFY(idle(window));choose(legend,"None");
+        QTRY_COMPARE_WITH_TIMEOUT(specOfChart()["legend"].toObject()["position"].toString(),QString("none"),10000);
+        QVERIFY(idle(window));choose(window.findChild<QComboBox *>("chartGrouping"),"Stacked");
+        QTRY_COMPARE_WITH_TIMEOUT(specOfChart()["grouping"].toString(),QString("stacked"),10000);
+        // An emptied title means no title.
+        QVERIFY(idle(window));typeInto(title,"",true);
+        QTRY_VERIFY_WITH_TIMEOUT(specOfChart()["title"].toObject()["text"].isNull(),10000);
+        // Text that is not a number is refused beside the field, without a request.
+        QVERIFY(idle(window));QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        typeInto(minimum,"ten",true);
+        auto *message=window.findChild<QLabel *>("valueAxisMinMessage");QVERIFY(message && message->isVisible());
+        QCOMPARE(message->text(),QString("Enter a number or leave empty for automatic"));QCOMPARE(minimum->text(),QString("10"));
+        QTest::qWait(100);QCOMPARE(admitted.count(),0);QCOMPARE(valueAxis()["min"].toDouble(),10.0);
+        // Everything else held.
+        const auto stored=specOfChart();
+        QCOMPARE(stored["axes"].toObject()["category"].toObject()["title"].toString(),QString("Month"));
+        QCOMPARE(valueAxis()["title"].toString(),QString("Units"));QCOMPARE(valueAxis()["max"].toDouble(),2500.0);
+        QCOMPARE(stored["series"].toArray().size(),1);QCOMPARE(stored["type"].toString(),QString("column"));
+    }
+    void emptyMinimumMeansAutomatic() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        auto spec=chartSpec("Sheet1");spec["axes"]=QJsonObject{{"category",QJsonObject{{"title",QJsonValue::Null}}},{"value",QJsonObject{{"title",QJsonValue::Null},{"min",5},{"max",50}}}};
+        QVERIFY(addChart(window,opened,"Bounded",2,4,0,0,320,200,"Sheet1",spec));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));activate(window);
+        auto *minimum=window.findChild<QLineEdit *>("valueAxisMin"),*maximum=window.findChild<QLineEdit *>("valueAxisMax");
+        QCOMPARE(minimum->text(),QString("5"));QCOMPARE(maximum->text(),QString("50"));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);
+        typeInto(minimum,"",false);maximum->setFocus();
+        QCOMPARE(requested.count(),1);
+        const auto sent=requested[0][1].toJsonObject()["spec"].toObject()["axes"].toObject()["value"].toObject();
+        QVERIFY(sent["min"].isNull());QCOMPARE(sent["max"].toDouble(),50.0);
+        auto valueAxis=[&]{return layer->chart(id)["spec"].toObject()["axes"].toObject()["value"].toObject();};
+        QTRY_VERIFY_WITH_TIMEOUT(valueAxis()["min"].isNull(),10000);QCOMPARE(valueAxis()["max"].toDouble(),50.0);
+        QTRY_COMPARE_WITH_TIMEOUT(minimum->text(),QString(),5000);QCOMPARE(minimum->placeholderText(),QString("Automatic"));
+    }
+    void minimumAboveMaximumIsRefused() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        auto spec=chartSpec("Sheet1");spec["axes"]=QJsonObject{{"category",QJsonObject{{"title",QJsonValue::Null}}},{"value",QJsonObject{{"title",QJsonValue::Null},{"min",QJsonValue::Null},{"max",10}}}};
+        QVERIFY(addChart(window,opened,"Inverted",2,4,0,0,320,200,"Sheet1",spec));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        const auto before=layer->chart(id);
+        QSignalSpy receipts(&window,&MainWindow::operationReceipt);
+        auto *minimum=window.findChild<QLineEdit *>("valueAxisMin");typeInto(minimum,"20",true);
+        QTRY_COMPARE_WITH_TIMEOUT(receipts.count(),1,10000);const auto outcome=receipts[0][0].toJsonObject()["outcome"].toString();QVERIFY(outcome=="rejected" || outcome=="rolled_back");
+        const auto serviceMessage=receipts[0][0].toJsonObject()["message"].toString();QVERIFY2(serviceMessage.contains("min must not exceed max"),qPrintable(serviceMessage));
+        auto *message=window.findChild<QLabel *>("valueAxisMinMessage");QVERIFY(message);
+        QTRY_VERIFY_WITH_TIMEOUT(message->isVisible(),5000);QCOMPARE(message->text(),serviceMessage);QCOMPARE(minimum->accessibleDescription(),serviceMessage);
+        QCOMPARE(minimum->text(),QString());
+        QTest::qWait(200);QCOMPARE(layer->chart(id),before);
+        // Editing the field again clears the message.
+        QVERIFY(idle(window));minimum->setFocus();QTest::keyClicks(minimum,"1");QVERIFY(!message->isVisible());QVERIFY(minimum->accessibleDescription().isEmpty());
+    }
+    void frontAndBackButtonsReorder() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Lower",2,2,0,0,320,200));QVERIFY(addChart(window,opened,"Upper",4,4,0,0,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);
+        const auto lower=overlayNamed(layer,"Lower")->chartId(),upper=overlayNamed(layer,"Upper")->chartId();
+        QVERIFY(z(layer,lower)<z(layer,upper));QVERIFY(openPanel(window,layer,lower));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);
+        auto *front=window.findChild<QPushButton *>("chartToFront"),*back=window.findChild<QPushButton *>("chartToBack");QVERIFY(front && back);
+        QCOMPARE(front->text(),QString("Bring to Front"));QCOMPARE(back->text(),QString("Send to Back"));
+        QTest::mouseClick(front,Qt::LeftButton);QCOMPARE(requested.count(),1);QCOMPARE(requested[0][1].toJsonObject(),(QJsonObject{{"order","front"}}));
+        QTRY_VERIFY_WITH_TIMEOUT(z(layer,lower)>z(layer,upper),10000);QCOMPARE(layer->selectedChart(),lower);
+        QVERIFY(idle(window));QTest::mouseClick(back,Qt::LeftButton);QCOMPARE(requested.count(),2);QCOMPARE(requested[1][1].toJsonObject(),(QJsonObject{{"order","back"}}));
+        QTRY_VERIFY_WITH_TIMEOUT(z(layer,lower)<z(layer,upper),10000);QCOMPARE(panelOf(window)->chartId(),lower);
+    }
+    void everyPanelChangeIsOneUndo() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Original",2,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *undo=window.findChild<QAction *>("undoAction");
+        auto *name=window.findChild<QLineEdit *>("chartName"),*title=window.findChild<QLineEdit *>("chartTitle");auto *legend=window.findChild<QComboBox *>("legendPosition");
+        auto *column=window.findChild<QToolButton *>("chartType_column"),*line=window.findChild<QToolButton *>("chartType_line");
+        auto spec=[&]{return layer->chart(id)["spec"].toObject();};
+        const int before=opened.count();
+        typeInto(name,"Renamed",true);QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["name"].toString(),QString("Renamed"),10000);
+        QVERIFY(idle(window));QCOMPARE(undo->text(),QString("Undo Edit chart"));
+        QTest::mouseClick(line,Qt::LeftButton);QTRY_COMPARE_WITH_TIMEOUT(spec()["type"].toString(),QString("line"),10000);
+        QVERIFY(idle(window));QCOMPARE(undo->text(),QString("Undo Edit chart"));
+        typeInto(title,"Titled",true);QTRY_COMPARE_WITH_TIMEOUT(spec()["title"].toObject()["text"].toString(),QString("Titled"),10000);
+        QVERIFY(idle(window));QCOMPARE(undo->text(),QString("Undo Edit chart"));
+        choose(legend,"None");QTRY_COMPARE_WITH_TIMEOUT(spec()["legend"].toObject()["position"].toString(),QString("none"),10000);
+        QVERIFY(idle(window));QCOMPARE(undo->text(),QString("Undo Edit chart"));
+        QCOMPARE(opened.count(),before+4);
+        // Each Undo reverses exactly one change, newest first, and the panel follows.
+        undo->trigger();QTRY_COMPARE_WITH_TIMEOUT(spec()["legend"].toObject()["position"].toString(),QString("right"),10000);
+        QCOMPARE(spec()["title"].toObject()["text"].toString(),QString("Titled"));QTRY_COMPARE_WITH_TIMEOUT(legend->currentText(),QString("Right"),5000);
+        QVERIFY(idle(window));undo->trigger();QTRY_VERIFY_WITH_TIMEOUT(spec()["title"].toObject()["text"].isNull(),10000);
+        QCOMPARE(spec()["type"].toString(),QString("line"));QTRY_COMPARE_WITH_TIMEOUT(title->text(),QString(),5000);
+        QVERIFY(idle(window));undo->trigger();QTRY_COMPARE_WITH_TIMEOUT(spec()["type"].toString(),QString("column"),10000);
+        QCOMPARE(layer->chart(id)["name"].toString(),QString("Renamed"));QTRY_VERIFY_WITH_TIMEOUT(column->isChecked() && !line->isChecked(),5000);
+        QVERIFY(idle(window));undo->trigger();QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["name"].toString(),QString("Original"),10000);
+        QTRY_COMPARE_WITH_TIMEOUT(name->text(),QString("Original"),5000);QCOMPARE(panelOf(window)->chartId(),id);
+    }
+    void panelClearsWhenItsChartIsUndoneAway() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));activate(window);
+        selectCells(grid,model,0,0,3,1);window.findChild<QAction *>("insertChartAction")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!layer->selectedChart().isEmpty(),10000);const auto id=layer->selectedChart();QVERIFY(idle(window));
+        QVERIFY(openPanel(window,layer,id));auto *panel=panelOf(window);
+        auto *title=window.findChild<QLineEdit *>("chartTitle");title->setFocus();QCOMPARE(window.focusWidget(),static_cast<QWidget *>(title));
+        QTest::keyClicks(title,"Never sent");
+        QSignalSpy requested(panel,&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        // Undo the creation from the Edit menu while the title has focus and unsent text.
+        QMenu *edit=nullptr;for(auto *action:window.menuBar()->actions())if(action->text()=="&Edit")edit=action->menu();QVERIFY(edit);
+        QAction *undo=nullptr;for(auto *action:edit->actions())if(action->objectName()=="undoAction")undo=action;QVERIFY(undo && undo->isEnabled());
+        undo->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,10000);QCOMPARE(layer->selectedChart(),QString());
+        QTRY_VERIFY_WITH_TIMEOUT(panel->chartId().isEmpty() && noChartLabel(panel)->isVisible(),5000);
+        // Nothing is left to edit, locked or not.
+        QVERIFY(idle(window));panel->setLocked(true);panel->setLocked(false);
+        for(const char *field:{"chartName","chartTitle","chartToFront"})QVERIFY2(!window.findChild<QWidget *>(field)->isEnabled(),field);
+        // The stale field's focus-out, and Enter on it, send nothing.
+        QTest::keyClick(title,Qt::Key_Return);
+        QFocusEvent out(QEvent::FocusOut,Qt::OtherFocusReason);QCoreApplication::sendEvent(title,&out);title->clearFocus();
+        QVERIFY(idle(window));QTest::qWait(200);
+        QCOMPARE(requested.count(),0);QCOMPARE(admitted.count(),1);QCOMPARE(layer->overlays().size(),0);
+        QVERIFY(!issuesText(window).contains("chart",Qt::CaseInsensitive));
+    }
+    void unsupportedVersionShowsTheReasonAndOnlyTheChartGroup() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Future",2,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();
+        // Another program stores a newer specification version (direct SQLite access).
+        QProcess direct;direct.start(qEnvironmentVariable("DATAHORIZON_PYTHON","python3"),{"-c",
+            "import json,sqlite3,sys\n"
+            "db=sqlite3.connect(sys.argv[1])\n"
+            "for i,p in db.execute(\"SELECT id,payload FROM dh_objects WHERE namespace='chart'\").fetchall():\n"
+            "    d=json.loads(p);d['spec_version']=2;d['spec']['spec_version']=2\n"
+            "    db.execute(\"UPDATE dh_objects SET payload=? WHERE namespace='chart' AND id=?\",(json.dumps(d),i))\n"
+            "db.commit();db.close()\n",temp.filePath("charts.dhwb")});
+        QVERIFY(direct.waitForFinished(10000));QCOMPARE(direct.exitCode(),0);
+        window.findChild<QAction *>("refreshStoredDataAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["issue"].toString(),QString("UNSUPPORTED_SPEC_VERSION"),10000);
+        QVERIFY(idle(window));QVERIFY(openPanel(window,layer,id));
+        auto *reason=window.findChild<QLabel *>("chartPanelReason");QVERIFY(reason);QVERIFY(reason->isVisible());
+        QCOMPARE(reason->text(),QString("This chart cannot be read (UNSUPPORTED_SPEC_VERSION)"));
+        auto *name=window.findChild<QLineEdit *>("chartName");
+        for(const char *enabled:{"chartName","chartToFront","chartToBack"})QVERIFY2(window.findChild<QWidget *>(enabled)->isEnabled(),enabled);
+        for(const char *type:{"column","bar","line","area","pie","scatter"}) {
+            auto *button=window.findChild<QToolButton *>(QString("chartType_")+type);QVERIFY2(!button->isEnabled() && !button->isChecked(),type);
+        }
+        for(const char *disabled:{"chartGrouping","chartTitle","categoryAxisTitle","valueAxisTitle","valueAxisMin","valueAxisMax","legendPosition"})QVERIFY2(!window.findChild<QWidget *>(disabled)->isEnabled(),disabled);
+        for(const char *empty:{"chartTitle","categoryAxisTitle","valueAxisTitle","valueAxisMin","valueAxisMax"})QVERIFY2(window.findChild<QLineEdit *>(empty)->text().isEmpty(),empty);
+        QCOMPARE(window.findChild<QComboBox *>("chartGrouping")->currentIndex(),-1);QCOMPARE(window.findChild<QComboBox *>("legendPosition")->currentIndex(),-1);
+        // Locking and unlocking (a busy spell) keeps the specification groups disabled.
+        panelOf(window)->setLocked(true);panelOf(window)->setLocked(false);
+        QVERIFY(name->isEnabled());QVERIFY(!window.findChild<QWidget *>("chartTitle")->isEnabled());QVERIFY(!window.findChild<QWidget *>("chartType_line")->isEnabled());
+        // A rename sends only the name and leaves the specification alone.
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);
+        typeInto(name,"Renamed",true);QCOMPARE(requested.count(),1);QCOMPARE(requested[0][1].toJsonObject(),(QJsonObject{{"name","Renamed"}}));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["name"].toString(),QString("Renamed"),10000);
+        QCOMPARE(layer->chart(id)["issue"].toString(),QString("UNSUPPORTED_SPEC_VERSION"));
+        QVERIFY(idle(window));QCOMPARE(reason->text(),QString("This chart cannot be read (UNSUPPORTED_SPEC_VERSION)"));QVERIFY(!window.findChild<QWidget *>("chartTitle")->isEnabled());
+        QVERIFY(!issuesText(window).contains("UNSUPPORTED"));
+    }
 #undef CHART_WINDOW
 
 // A window attached to a service through ChartProxy, with a workbook open.
@@ -1274,6 +1606,63 @@ private slots:
         QTest::mouseRelease(grid->viewport(),Qt::LeftButton,Qt::NoModifier,grid->viewport()->mapFromGlobal(end));
         QTest::qWait(200);QCOMPARE(admitted.count(),2);QCOMPARE(moved.count(),0);
     }
+    void unchangedTextSendsNothing() {
+        PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(addChart(window,opened,"Same",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *panel=panelOf(window);QSignalSpy requested(panel,&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto *name=window.findChild<QLineEdit *>("chartName");
+        // Enter and focus-out on unchanged fields, and the same text typed again.
+        QCOMPARE(window.focusWidget(),static_cast<QWidget *>(name));QTest::keyClick(name,Qt::Key_Return);
+        for(const char *field:{"chartTitle","categoryAxisTitle","valueAxisTitle","valueAxisMin","valueAxisMax","chartName"})window.findChild<QLineEdit *>(field)->setFocus();
+        typeInto(name,"Same",true);window.findChild<QLineEdit *>("chartTitle")->setFocus();
+        QTest::qWait(100);QCOMPARE(requested.count(),0);QCOMPARE(admitted.count(),0);
+        // A second change while the first is in flight sends nothing, even with the panel unlocked.
+        proxy.holdOperations=true;
+        typeInto(name,"Once",true);QCOMPARE(requested.count(),1);QCOMPARE(admitted.count(),1);
+        panel->setLocked(false);
+        typeInto(window.findChild<QLineEdit *>("chartTitle"),"Twice",true);
+        QTest::mouseClick(window.findChild<QToolButton *>("chartType_line"),Qt::LeftButton);
+        auto *legend=window.findChild<QComboBox *>("legendPosition");legend->setFocus();QTest::keyClicks(legend,"Bottom");
+        QTest::mouseClick(window.findChild<QPushButton *>("chartToBack"),Qt::LeftButton);
+        QCOMPARE(requested.count(),1);
+        proxy.releaseOperations();
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["name"].toString(),QString("Once"),10000);QVERIFY(idle(window));
+        QTest::qWait(200);QCOMPARE(admitted.count(),1);
+        const auto spec=layer->chart(id)["spec"].toObject();
+        QVERIFY(spec["title"].toObject()["text"].isNull());QCOMPARE(spec["type"].toString(),QString("column"));QCOMPARE(spec["legend"].toObject()["position"].toString(),QString("right"));
+        // The reload put the unsent text back.
+        QTRY_COMPARE_WITH_TIMEOUT(window.findChild<QLineEdit *>("chartTitle")->text(),QString(),5000);
+        QVERIFY(window.findChild<QToolButton *>("chartType_column")->isChecked());
+        // After the answer the panel sends again.
+        typeInto(name,"Again",true);QCOMPARE(requested.count(),2);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["name"].toString(),QString("Again"),10000);
+    }
+    void panelIsLockedWhileBusyAndWhenReadOnly() {
+        PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(addChart(window,opened,"Locked",2,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        const QStringList fields{"chartName","chartToFront","chartToBack","chartType_column","chartType_bar","chartType_line","chartType_area","chartType_pie","chartType_scatter",
+                                 "chartGrouping","chartTitle","categoryAxisTitle","valueAxisTitle","valueAxisMin","valueAxisMax","legendPosition"};
+        auto enabled=[&](bool expected){for(const auto &field:fields)if(window.findChild<QWidget *>(field)->isEnabled()!=expected)return field;return QString();};
+        QCOMPARE(enabled(true),QString());
+        // Busy: every control disabled, values kept.
+        proxy.holdOperations=true;
+        QVERIFY(!window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",20},{"col",1},{"source","9"}}}}}).isEmpty());
+        QCOMPARE(enabled(false),QString());QCOMPARE(window.findChild<QLineEdit *>("chartName")->text(),QString("Locked"));
+        QVERIFY(window.findChild<QToolButton *>("chartType_column")->isChecked());QCOMPARE(window.findChild<QComboBox *>("legendPosition")->currentText(),QString("Right"));
+        proxy.releaseOperations();QVERIFY(idle(window));QTRY_COMPARE_WITH_TIMEOUT(enabled(true),QString(),5000);
+        // Grouping stays disabled for a type that takes none.
+        auto *grouping=window.findChild<QComboBox *>("chartGrouping");QVERIFY(grouping->isEnabled());
+        QTest::mouseClick(window.findChild<QToolButton *>("chartType_line"),Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["type"].toString(),QString("line"),10000);QVERIFY(idle(window));
+        QTRY_VERIFY_WITH_TIMEOUT(!grouping->isEnabled(),5000);QVERIFY(window.findChild<QWidget *>("chartTitle")->isEnabled());
+        // Read-only: Edit Chart opens the panel locked.
+        auto *dock=window.findChild<QDockWidget *>("chartDock");dock->hide();
+        const int before=opened.count();window.openBook(temp.filePath("charts.dhwb"),false,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);id=layer->overlays().first()->chartId();
+        layer->select(id);window.findChild<QAction *>("editChartAction")->trigger();QVERIFY(dock->isVisible());QCOMPARE(panelOf(window)->chartId(),id);
+        QCOMPARE(enabled(false),QString());QCOMPARE(window.findChild<QLineEdit *>("chartName")->text(),QString("Locked"));
+        QVERIFY(window.findChild<QToolButton *>("chartType_line")->isChecked());
+    }
 #undef PROXY_WINDOW
 
 private:
@@ -1355,6 +1744,32 @@ private:
         return insert->isEnabled();
     }
     static int z(ChartLayer *layer,const QString &chartId) { return layer->chart(chartId)["z"].toInt(); }
+    static ChartPanel *panelOf(MainWindow &window) { return window.findChild<ChartPanel *>("chartPanel"); }
+    // The panel's "No chart selected" text.
+    static QLabel *noChartLabel(ChartPanel *panel) {
+        for(auto *label:panel->findChildren<QLabel *>())if(label->text()=="No chart selected")return label;
+        return nullptr;
+    }
+    // Makes the window active, so focus changes send focus events.
+    static void activate(MainWindow &window) { window.activateWindow();QVERIFY(QTest::qWaitForWindowActive(&window)); }
+    // Selects the chart and opens the panel on it with Edit Chart.
+    static bool openPanel(MainWindow &window,ChartLayer *layer,const QString &chartId) {
+        layer->select(chartId);if(layer->selectedChart()!=chartId)return false;
+        window.findChild<QAction *>("editChartAction")->trigger();
+        return window.findChild<QDockWidget *>("chartDock")->isVisible() && panelOf(window)->chartId()==chartId;
+    }
+    // Replaces a field's text by typing, then presses Enter when asked.
+    static void typeInto(QLineEdit *edit,const QString &text,bool enter) {
+        edit->setFocus();edit->selectAll();
+        if(text.isEmpty())QTest::keyClick(edit,Qt::Key_Backspace);else QTest::keyClicks(edit,text);
+        if(enter)QTest::keyClick(edit,Qt::Key_Return);
+    }
+    // Chooses a list entry from the keyboard, as a person would.
+    static void choose(QComboBox *combo,const QString &text) {
+        // Typed letters search the list; a pause first starts a new search.
+        QTest::qWait(QApplication::keyboardInputInterval()+50);combo->setFocus();QTest::keyClicks(combo,text);
+        QCOMPARE(combo->currentText(),text);
+    }
     // True when the overlay's own painting is the highlight colour at point.
     static bool highlighted(QWidget *widget,const QPoint &point) {
         return widget->grab().toImage().pixelColor(point*widget->devicePixelRatioF()).rgb()==widget->palette().color(QPalette::Highlight).rgb();

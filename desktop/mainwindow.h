@@ -23,6 +23,8 @@ class QToolBar;
 class QPushButton;
 class FrozenPanes;
 class ChartLayer;
+class ChartPanel;
+class QDockWidget;
 class QTimer;
 class QMenu;
 class QStackedWidget;
@@ -121,7 +123,7 @@ private:
     // projection, workbench and charts shown, and lets the charts
     // be moved and changed only while the sheet takes edits.
     void updateChartActions();
-    // Shows the chart panel for the selected chart (Task 6).
+    // Shows the chart panel's dock; it shows the selected chart.
     void showChartPanel();
     void showPythonWorkspace();
     void showNameManager();
@@ -377,6 +379,11 @@ private:
     QAction *m_editChartAction = nullptr, *m_chartToFrontAction = nullptr, *m_chartToBackAction = nullptr, *m_deleteChartAction = nullptr;
     // The operation id of the chart move or resize awaiting its receipt.
     QString m_chartPlacement;
+    // The chart panel in its dock, and the operation id of the panel's
+    // change awaiting its receipt with the field that asked for it.
+    ChartPanel *m_chartPanel = nullptr;
+    QDockWidget *m_chartDock = nullptr;
+    QString m_chartPanelOperation, m_chartPanelField;
     // A suggest request is outstanding; a second Insert waits for it.
     bool m_chartSuggesting = false;
     // The operation id of the chart_create whose committed receipt's chart is
