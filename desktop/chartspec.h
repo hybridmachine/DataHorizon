@@ -17,6 +17,12 @@ namespace ChartSpec {
 // Empty, with reason set, when the chart has an issue or a broken source.
 QJsonObject inputSpec(const QJsonObject &chart,QString *reason=nullptr);
 bool hasBrokenSource(const QJsonObject &chart);
+// As inputSpec, but a broken source stays in its stored form (with
+// "broken": true) instead of emptying the result, so the panel can show it
+// and replace it. Empty only for a chart with an issue.
+QJsonObject workingSpec(const QJsonObject &chart);
+// True when a working spec still holds a stored broken source.
+bool holdsBrokenSource(const QJsonObject &spec);
 // Why a chart cannot be drawn; empty for a readable chart.
 QString stateReason(const QJsonObject &chart);
 
@@ -28,6 +34,10 @@ bool takesGrouping(const QString &type);
 QJsonObject sourceToInput(const QJsonObject &storedSource);
 // "Sheet1!A2:A13", "Table.Column" or "Query.Column".
 QString sourceText(const QJsonObject &storedSource,const QHash<QString,QString> &sheetNames);
+// A range source, stored or input form, as a range field shows it: the bare
+// reference ("B2:B13") on ownSheetId, sheet-qualified as sourceText otherwise;
+// empty for a broken range that keeps no rectangle.
+QString rangeText(const QJsonObject &source,const QHash<QString,QString> &sheetNames,const QString &ownSheetId);
 QJsonObject rangeSource(const QString &sheetId,int r1,int c1,int r2,int c2);
 // Accepts "A2:A13", "Sheet1!A2:A13" and "'Q1 Sales'!$A$2:$A$13".
 bool parseRange(const QString &text,const QHash<QString,QString> &sheetIdsByName,const QString &currentSheetId,QJsonObject *source);

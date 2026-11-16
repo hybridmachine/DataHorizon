@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "chartpanel.h"
 #include "chartspec.h"
+#include "chartsourcefield.h"
 #include <QButtonGroup>
 #include <QApplication>
 #include <QComboBox>
@@ -11,11 +12,13 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QLocale>
+#include <QRegularExpression>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -87,9 +90,21 @@ ChartPanel::ChartPanel(QWidget *parent) : QWidget(parent) {
     titleForm->addRow(withMessage(m_title,messageLabel("chartTitle")));
     column->addWidget(m_titleGroup);
 
-    // Data: sources and series (filled by a later task).
+    // Data: Categories, then the series list and Add Series.
     m_dataGroup=new QWidget;m_dataGroup->setObjectName("chartDataGroup");
     auto *data=new QVBoxLayout(m_dataGroup);data->setContentsMargins(0,0,0,0);
+    auto *dataBox=new QGroupBox(tr("Data"));auto *dataColumn=new QVBoxLayout(dataBox);
+    m_categoriesForm=new QFormLayout;
+    m_categories=new ChartSourceField("categoriesSource",tr("Categories"),false);
+    m_categoriesForm->addRow(tr("Categories"),withMarkers(m_categories));
+    dataColumn->addLayout(m_categoriesForm);
+    dataColumn->addWidget(new QLabel(tr("Series")));
+    m_seriesLayout=new QVBoxLayout;m_seriesLayout->setContentsMargins(0,0,0,0);dataColumn->addLayout(m_seriesLayout);
+    dataColumn->addWidget(messageLabel("series"));
+    m_seriesMarker=new QLabel(tr("Not applied yet"));m_seriesMarker->setObjectName("seriesMarker");m_seriesMarker->hide();dataColumn->addWidget(m_seriesMarker);
+    m_addSeries=new QPushButton(tr("Add Series"));m_addSeries->setObjectName("addSeries");
+    auto *addRow=new QHBoxLayout;addRow->addWidget(m_addSeries);addRow->addStretch();dataColumn->addLayout(addRow);
+    data->addWidget(dataBox);
     column->addWidget(m_dataGroup);
 
     // Axes: titles, Minimum and Maximum.
@@ -143,7 +158,27 @@ ChartPanel::ChartPanel(QWidget *parent) : QWidget(parent) {
             });
         });
     }
+    connect(m_addSeries,&QPushButton::clicked,this,&ChartPanel::addSeries);
     load();updateEnabled();
+}
+
+void ChartPanel::connectSource(ChartSourceField *source) {
+    const auto field=source->objectName();
+    connect(source,&ChartSourceField::textFinished,this,[this,field]{applySource(field);});
+    connect(source,&ChartSourceField::choiceMade,this,[this,field]{clearMessage(field);applySource(field);});
+    for(auto signal:{&ChartSourceField::textEdited,&ChartSourceField::kindChosen})connect(source,signal,this,[this,field]{clearMessage(field);});
+    connect(source,&ChartSourceField::pickClicked,this,[this,field]{emit pickRequested(field);});
+    source->setCatalog(m_tables,m_queries);
+}
+
+QWidget *ChartPanel::withMarkers(ChartSourceField *field) {
+    const auto name=field->objectName();
+    auto *marker=new QLabel;marker->setObjectName(name+"Marker");marker->setWordWrap(true);marker->hide();
+    m_markers.insert(name,marker);
+    auto *box=withMessage(field,messageLabel(name));
+    box->layout()->addWidget(marker);
+    connectSource(field);
+    return box;
 }
 
 void ChartPanel::setChart(const QJsonObject &chart) {
@@ -214,6 +249,7 @@ void ChartPanel::resume() {
 void ChartPanel::apply(const QString &field) {
     if(field=="chartName")applyName();
     else if(field=="valueAxisMin" || field=="valueAxisMax")applyBound(field);
+    else if(dataSlot(field,nullptr,nullptr))applySource(field);
     else applyText(field);
 }
 
@@ -238,9 +274,12 @@ void ChartPanel::load() {
     m_reasonLabel->setText(m_reason);m_reasonLabel->setVisible(!m_reason.isEmpty());
     for(auto field=m_messages.keyBegin();field!=m_messages.keyEnd();++field)clearMessage(*field);
     for(const auto &field:{"chartName","chartType","chartGrouping","chartTitle","categoryAxisTitle","valueAxisTitle","valueAxisMin","valueAxisMax","legendPosition"})loadField(field);
+    loadData();
 }
 
 void ChartPanel::loadField(const QString &field) {
+    // A refused Data change puts the whole Data group back to the chart.
+    if(field=="series" || dataSlot(field,nullptr,nullptr)){loadData();return;}
     // An unreadable specification shows nothing; a broken source shows the stored values.
     const auto spec=m_chart.value("issue").isString()?QJsonObject():m_chart.value("spec").toObject();
     if(field=="chartName")m_name->setText(m_chart.value("name").toString());
@@ -272,6 +311,7 @@ void ChartPanel::showMessage(const QString &field,const QString &message) {
     QList<QWidget *> widgets;
     if(field=="chartType")for(auto *button:m_typeButtons)widgets.append(button);
     else if(field=="chartOrder")widgets={m_front,m_back};
+    else if(auto *source=sourceField(field))widgets=source->inputs();
     else if(auto *widget=findChild<QWidget *>(field))widgets={widget};
     for(auto *widget:widgets)widget->setAccessibleDescription(message);
 }
@@ -282,6 +322,7 @@ void ChartPanel::clearMessage(const QString &field) {
     QList<QWidget *> widgets;
     if(field=="chartType")for(auto *button:m_typeButtons)widgets.append(button);
     else if(field=="chartOrder")widgets={m_front,m_back};
+    else if(auto *source=sourceField(field))widgets=source->inputs();
     else if(auto *widget=findChild<QWidget *>(field))widgets={widget};
     for(auto *widget:widgets)widget->setAccessibleDescription({});
 }
@@ -351,4 +392,312 @@ void ChartPanel::applyType(const QString &type) {
     const auto spec=ChartSpec::withType(m_spec,type,&refusal);
     if(spec.isEmpty()){refused("chartType",refusal);return;}
     request({{"spec",spec}},"chartType");
+}
+
+// The Data group.
+
+namespace {
+constexpr int MaxSeries=64;
+
+QString nameIn(const QJsonArray &items,const QString &id) {
+    for(const auto &value:items)if(value.toObject()["id"].toString()==id)return value.toObject()["name"].toString();
+    return {};
+}
+QString columnIn(const QJsonArray &tables,const QString &table,const QString &column) {
+    for(const auto &value:tables) {
+        if(value.toObject()["id"].toString()!=table)continue;
+        return nameIn(value.toObject()["columns"].toArray(),column);
+    }
+    return {};
+}
+// The kind a field shows for a working holder: text or cell for a name,
+// otherwise the source's kind (range when there is none yet).
+QString holderKind(const QJsonObject &holder,bool name) {
+    if(name)return holder.contains("source")?"cell":"text";
+    const auto kind=holder["source"].toObject()["kind"].toString();
+    return kind.isEmpty()?"range":kind;
+}
+}
+
+void ChartPanel::setCatalog(const QJsonArray &sheets,const QJsonArray &tables,const QJsonArray &queries) {
+    m_sheetNames.clear();m_sheetIds.clear();
+    for(const auto &value:sheets) {
+        const auto sheet=value.toObject();
+        m_sheetNames.insert(sheet["id"].toString(),sheet["name"].toString());m_sheetIds.insert(sheet["name"].toString(),sheet["id"].toString());
+    }
+    m_tables=tables;m_queries=queries;
+    QList<ChartSourceField *> fields{m_categories};
+    for(const auto &box:std::as_const(m_series))fields<<box.name<<box.values<<box.x;
+    for(auto *source:fields) {
+        source->setCatalog(tables,queries);
+        // A range shows the sheet's name as it is now, unless the person is
+        // typing in it or chose another kind there.
+        int row;QString part;dataSlot(source->objectName(),&row,&part);
+        const auto kind=holderKind(holder(source->objectName()).toObject(),part=="name");
+        if(!source->textModified() && source->kind()==kind && (kind=="range" || kind=="cell"))showSource(source->objectName());
+    }
+}
+
+bool ChartPanel::dataSlot(const QString &field,int *row,QString *part) {
+    if(field=="categoriesSource") {
+        if(row)*row=-1;
+        if(part)*part="categories";
+        return true;
+    }
+    static const QRegularExpression pattern("^series([1-9][0-9]*)(Name|Values|X)$");
+    const auto match=pattern.match(field);
+    if(!match.hasMatch())return false;
+    if(row)*row=match.captured(1).toInt()-1;
+    if(part)*part=match.captured(2).toLower();
+    return true;
+}
+
+ChartSourceField *ChartPanel::sourceField(const QString &field) const {
+    int row;QString part;
+    if(!dataSlot(field,&row,&part))return nullptr;
+    if(row<0)return m_categories;
+    if(row>=m_series.size())return nullptr;
+    const auto &box=m_series[row];
+    return part=="name"?box.name:part=="values"?box.values:box.x;
+}
+
+QJsonValue ChartPanel::holder(const QString &field) const {
+    int row;QString part;
+    if(!dataSlot(field,&row,&part))return {};
+    if(row<0)return m_working.value("categories");
+    return m_working.value("series").toArray().at(row).toObject().value(part);
+}
+
+void ChartPanel::setHolder(const QString &field,const QJsonValue &value) {
+    int row;QString part;
+    if(!dataSlot(field,&row,&part))return;
+    if(row<0){m_working["categories"]=value;return;}
+    auto list=m_working["series"].toArray();auto item=list[row].toObject();item[part]=value;list[row]=item;m_working["series"]=list;
+}
+
+bool ChartPanel::scatter() const { return m_working.value("type").toString()=="scatter"; }
+
+void ChartPanel::loadData() {
+    m_working=m_chart.isEmpty()?QJsonObject():ChartSpec::workingSpec(m_chart);
+    m_rows=QList<SeriesState>(m_working.value("series").toArray().size());
+    m_categoriesEdited=m_seriesHeld=false;
+    // The names the stored sources give, for a table, column or query the catalog lacks.
+    m_storedNames.clear();
+    const auto spec=m_chart.value("spec").toObject();
+    QList<QJsonObject> sources{spec["categories"].toObject()["source"].toObject()};
+    for(const auto &value:spec["series"].toArray())
+        for(const auto &part:{"name","values","x"})sources.append(value.toObject()[part].toObject()["source"].toObject());
+    for(const auto &source:sources) {
+        const auto kind=source["kind"].toString();
+        if(kind=="table") {
+            if(source["table"].isString())m_storedNames.insert("table:"+source["table_id"].toString(),source["table"].toString());
+            if(source["column"].isString())m_storedNames.insert("column:"+source["table_id"].toString()+"/"+source["column_id"].toString(),source["column"].toString());
+        } else if(kind=="query" && source["query"].isString())m_storedNames.insert("query:"+source["query_id"].toString(),source["query"].toString());
+    }
+    showData();
+}
+
+void ChartPanel::showData() {
+    ensureSeries(int(m_working.value("series").toArray().size()));
+    const bool xs=scatter();
+    // A scatter chart has no categories; each series has its X instead.
+    m_categoriesForm->setRowVisible(0,!xs);
+    showSource("categoriesSource");
+    for(int row=0;row<m_series.size();++row) {
+        const auto n=QString::number(row+1);
+        for(const auto &part:{"Name","Values","X"})showSource("series"+n+part);
+        m_series[row].form->setRowVisible(2,xs);
+        m_series[row].up->setEnabled(row>0);m_series[row].down->setEnabled(row+1<m_series.size());
+    }
+    m_addSeries->setEnabled(m_series.size()<MaxSeries);
+    updateMarkers();
+}
+
+void ChartPanel::showSource(const QString &field) {
+    auto *source=sourceField(field);if(!source)return;
+    int row;QString part;dataSlot(field,&row,&part);
+    const auto value=holder(field).toObject();
+    const auto own=m_chart.value("sheet_id").toString();
+    const auto stored=value["source"].toObject();
+    const auto kind=holderKind(value,part=="name");
+    if(kind=="text")source->showText(kind,value["text"].toString());
+    else if(kind=="table") {
+        // Input form names the table and column by id; a stored (broken) source in its own fields.
+        const bool input=!stored.contains("table_id");
+        const auto table=stored[input?"table":"table_id"].toString(),column=stored[input?"column":"column_id"].toString();
+        auto name=nameIn(m_tables,table);if(name.isEmpty())name=m_storedNames.value("table:"+table);
+        auto columnName=columnIn(m_tables,table,column);if(columnName.isEmpty())columnName=m_storedNames.value("column:"+table+"/"+column);
+        source->showChoice(kind,table,name,column,columnName);
+    } else if(kind=="query") {
+        const auto query=stored[stored.contains("query_id")?"query_id":"query"].toString();
+        auto name=nameIn(m_queries,query);if(name.isEmpty())name=m_storedNames.value("query:"+query);
+        source->showChoice(kind,query,name,stored["column"].toString(),stored["column"].toString());
+    } else source->showText(kind,stored.isEmpty()?QString():ChartSpec::rangeText(stored,m_sheetNames,own));
+}
+
+void ChartPanel::ensureSeries(int count) {
+    while(m_series.size()>count) {
+        const auto box=m_series.takeLast();
+        const auto n=QString::number(m_series.size()+1);
+        for(const auto &part:{"Name","Values","X"}){m_messages.remove("series"+n+part);m_markers.remove("series"+n+part);}
+        // Gone at once for lookups by name; deleted once a signal of its own has returned.
+        box.box->hide();m_seriesLayout->removeWidget(box.box);
+        for(auto *child:box.box->findChildren<QObject *>())child->setObjectName({});
+        box.box->deleteLater();
+    }
+    while(m_series.size()<count) {
+        const int row=int(m_series.size());
+        const auto n=QString::number(row+1);
+        SeriesBox box;
+        box.box=new QGroupBox(tr("Series %1").arg(n));box.form=new QFormLayout(box.box);
+        auto field=[&](ChartSourceField *&source,const QString &part,const QString &label,bool name) {
+            source=new ChartSourceField("series"+n+part,tr("Series %1 %2").arg(n,label),name);
+            box.form->addRow(label,withMarkers(source));
+        };
+        field(box.name,"Name",tr("Name"),true);
+        field(box.values,"Values",tr("Values"),false);
+        field(box.x,"X",tr("X"),false);
+        box.remove=new QPushButton(tr("Remove"));box.remove->setObjectName("removeSeries"+n);
+        box.up=new QPushButton(tr("Move Up"));box.up->setObjectName("seriesUp"+n);
+        box.down=new QPushButton(tr("Move Down"));box.down->setObjectName("seriesDown"+n);
+        auto *buttons=new QHBoxLayout;
+        for(auto *button:{box.remove,box.up,box.down})buttons->addWidget(button);
+        buttons->addStretch();box.form->addRow(buttons);
+        connect(box.remove,&QPushButton::clicked,this,[this,row]{removeSeries(row);});
+        connect(box.up,&QPushButton::clicked,this,[this,row]{moveSeries(row,-1);});
+        connect(box.down,&QPushButton::clicked,this,[this,row]{moveSeries(row,1);});
+        // Shown now, not when the layout gets round to it.
+        m_seriesLayout->addWidget(box.box);box.box->show();
+        m_series.append(box);
+    }
+    orderFocus();
+}
+
+void ChartPanel::orderFocus() {
+    // The panel's focus order: series rows are made after Axes and Legend.
+    QList<QWidget *> chain{m_title};
+    chain+=m_categories->inputs();
+    for(const auto &box:std::as_const(m_series)) {
+        chain+=box.name->inputs();chain+=box.values->inputs();chain+=box.x->inputs();
+        chain<<box.remove<<box.up<<box.down;
+    }
+    chain<<m_addSeries<<m_categoryTitle<<m_valueTitle<<m_min<<m_max<<m_legend;
+    for(int i=1;i<chain.size();++i)setTabOrder(chain[i-1],chain[i]);
+}
+
+void ChartPanel::updateMarkers() {
+    const bool held=ChartSpec::holdsBrokenSource(m_working);
+    auto mark=[&](const QString &field,bool edited,bool unsent) {
+        auto *label=m_markers.value(field);if(!label)return;
+        const bool broken=holder(field).toObject()["source"].toObject()["broken"].toBool();
+        const auto text=broken?tr("This source no longer exists"):(edited && held) || unsent?tr("Not applied yet"):QString();
+        auto palette=label->palette();
+        palette.setColor(QPalette::WindowText,broken?QColor("#b3261e"):this->palette().color(QPalette::WindowText));
+        label->setPalette(palette);label->setText(text);label->setVisible(!text.isEmpty());
+    };
+    mark("categoriesSource",m_categoriesEdited,false);
+    for(int row=0;row<m_rows.size();++row) {
+        const auto n=QString::number(row+1);const auto &state=m_rows[row];
+        mark("series"+n+"Name",state.edited.contains("name"),false);
+        // A series added in the panel is not applied until its values (and X) are given.
+        mark("series"+n+"Values",state.edited.contains("values"),state.panelOnly);
+        mark("series"+n+"X",state.edited.contains("x"),state.panelOnly && scatter());
+    }
+    m_seriesMarker->setVisible(held && m_seriesHeld);
+}
+
+QJsonObject ChartPanel::sendable() const {
+    auto spec=m_working;
+    QJsonArray list;
+    for(const auto &value:m_working.value("series").toArray()) {
+        const auto item=value.toObject();
+        if(!item["values"].isObject() || (scatter() && !item["x"].isObject()))continue;
+        list.append(item);
+    }
+    spec["series"]=list;
+    return spec;
+}
+
+void ChartPanel::applySource(const QString &field) {
+    auto *source=sourceField(field);
+    if(!source || m_chart.isEmpty() || m_working.isEmpty())return;
+    const auto kind=source->kind();
+    const bool typed=kind=="text" || kind=="cell" || kind=="range";
+    if(m_locked || m_pending){if(typed)defer(field);else showSource(field);return;}
+    QJsonValue value;
+    if(typed) {
+        // Only typed text applies; a field left as it was shown sends nothing.
+        if(!source->textModified())return;
+        if(kind=="text")value=QJsonObject{{"text",source->text()}};
+        else {
+            const auto text=source->text().trimmed();
+            if(text.isEmpty())return;
+            QJsonObject range;
+            if(!ChartSpec::parseRange(text,m_sheetIds,m_chart.value("sheet_id").toString(),&range)){refuseLocally(field,tr("Enter a cell range such as A2:A13"));return;}
+            if(kind=="cell" && range["ref"].toString().contains(':')){refuseLocally(field,tr("A series name takes one cell"));return;}
+            value=QJsonObject{{"source",range}};
+        }
+    } else {
+        const auto id=source->chosenId(),column=source->chosenColumn();
+        if(id.isEmpty() || column.isEmpty())return;
+        value=QJsonObject{{"source",QJsonObject{{"kind",kind},{kind,id},{"column",column}}}};
+    }
+    if(value==holder(field)){showSource(field);return;}
+    setHolder(field,value);
+    int row;QString part;dataSlot(field,&row,&part);
+    if(row<0)m_categoriesEdited=true;else m_rows[row].edited.insert(part);
+    showSource(field);
+    commitData(field);
+}
+
+void ChartPanel::commitData(const QString &field) {
+    updateMarkers();
+    // Held while a source is broken; nothing to send when it is what is stored.
+    const auto spec=sendable();
+    if(ChartSpec::holdsBrokenSource(spec) || spec==m_spec || spec.value("series").toArray().isEmpty())return;
+    request({{"spec",spec}},field);
+}
+
+void ChartPanel::removeSeries(int row) {
+    clearMessage("series");
+    if(!canRequest() || row>=m_rows.size())return;
+    auto list=m_working["series"].toArray();
+    auto complete=[this](const QJsonValue &value) {
+        const auto item=value.toObject();
+        return item["values"].isObject() && (!scatter() || item["x"].isObject());
+    };
+    const auto completeCount=std::count_if(list.begin(),list.end(),complete);
+    if(complete(list[row]) && completeCount==1){refuseLocally("series",tr("A chart needs at least one series"));return;}
+    const bool stored=complete(list[row]);
+    list.removeAt(row);m_working["series"]=list;m_rows.removeAt(row);
+    if(stored)m_seriesHeld=true;
+    showData();
+    if(stored)commitData("series");
+}
+
+void ChartPanel::moveSeries(int row,int by) {
+    clearMessage("series");
+    const int to=row+by;
+    if(!canRequest() || to<0 || to>=m_rows.size())return;
+    auto list=m_working["series"].toArray();
+    const QJsonValue item=list[row];list[row]=list[to];list[to]=item;
+    m_working["series"]=list;m_rows.swapItemsAt(row,to);
+    m_seriesHeld=true;
+    showData();
+    commitData("series");
+}
+
+void ChartPanel::addSeries() {
+    clearMessage("series");
+    if(!canRequest() || m_working.isEmpty() || m_rows.size()>=MaxSeries)return;
+    auto list=m_working["series"].toArray();
+    list.append(QJsonObject{{"name",QJsonObject{{"text",""}}},{"values",QJsonValue::Null},{"x",QJsonValue::Null}});
+    m_working["series"]=list;m_rows.append(SeriesState{true,{}});
+    showData();
+    m_series.last().values->setFocus(Qt::OtherFocusReason);
+}
+
+void ChartPanel::refuseLocally(const QString &field,const QString &message) {
+    showSource(field);
+    showMessage(field,message);
 }

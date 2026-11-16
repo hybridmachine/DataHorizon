@@ -327,6 +327,36 @@ private slots:
             QCOMPARE(panel.findChild<QLabel *>("valueAxisMinMessage")->text(),QString("Enter a number or leave empty for automatic"));QCOMPARE(minimum->text(),QString());
         }
     }
+    void rangeTextIsBareOnTheChartSheet() {
+        const QHash<QString, QString> names{{"s1", "Sheet1"}, {"s2", "Q1 Sales"}};
+        QCOMPARE(ChartSpec::rangeText(storedRange("s1", "A2:A13"), names, "s1"), QString("A2:A13"));
+        QCOMPARE(ChartSpec::rangeText(storedRange("s2", "A2:A13"), names, "s1"), QString("'Q1 Sales'!A2:A13"));
+        QCOMPARE(ChartSpec::rangeText(QJsonObject{{"kind", "range"}, {"sheet", "s1"}, {"ref", "B1"}}, names, "s1"), QString("B1"));
+        QCOMPARE(ChartSpec::rangeText(QJsonObject{{"kind", "range"}, {"sheet", "s2"}, {"ref", "B1"}}, names, "s1"), QString("'Q1 Sales'!B1"));
+        // A broken range (no ref) is drawn from its rectangle.
+        auto broken = storedRange("gone", "", true);broken["ref"] = QJsonValue::Null;
+        QCOMPARE(ChartSpec::rangeText(broken, names, "s1"), QString("gone!A2:A13"));
+        // One whose sheet was deleted keeps no rectangle and shows nothing.
+        for (const char *key : {"row1", "col1", "row2", "col2"}) broken[key] = QJsonValue::Null;
+        QCOMPARE(ChartSpec::rangeText(broken, names, "s1"), QString());
+    }
+    void workingSpecKeepsBrokenSourcesStored() {
+        const auto broken = storedRange("gone", "A2:A13", true);
+        const auto spec = specOf("column", "clustered", src(broken), {series("S", storedRange("s1", "B2:B13")), series("T", storedTable())});
+        const auto working = ChartSpec::workingSpec(chartWith(spec));
+        QCOMPARE(working["categories"].toObject()["source"].toObject(), broken);
+        QCOMPARE(working["series"].toArray()[0].toObject()["values"].toObject()["source"].toObject(), (QJsonObject{{"kind", "range"}, {"sheet", "s1"}, {"ref", "B2:B13"}}));
+        QCOMPARE(working["series"].toArray()[1].toObject()["values"].toObject()["source"].toObject(), (QJsonObject{{"kind", "table"}, {"table", "t1"}, {"column", "c1"}}));
+        QVERIFY(ChartSpec::holdsBrokenSource(working));
+        // Replaced, nothing is broken and it is the input spec.
+        auto repaired = working;repaired["categories"] = src(QJsonObject{{"kind", "range"}, {"sheet", "s1"}, {"ref", "A2:A13"}});
+        QVERIFY(!ChartSpec::holdsBrokenSource(repaired));
+        auto fixed = spec;fixed["categories"] = src(storedRange("s1", "A2:A13"));
+        QCOMPARE(repaired, ChartSpec::inputSpec(chartWith(fixed)));
+        QCOMPARE(ChartSpec::workingSpec(chartWith(fixed)), ChartSpec::inputSpec(chartWith(fixed)));
+        auto unreadable = chartWith(spec);unreadable["issue"] = "INVALID_SPEC";
+        QVERIFY(ChartSpec::workingSpec(unreadable).isEmpty());
+    }
     void clampSizeKeepsBounds() {
         QCOMPARE(ChartSpec::clampSize(QSize(1, 1)), QSize(64, 48));
         QCOMPARE(ChartSpec::clampSize(QSize(9000, 9000)), QSize(4096, 4096));
@@ -1512,6 +1542,288 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["legend"].toObject()["position"].toString(),QString("bottom"),10000);
         QTRY_COMPARE_WITH_TIMEOUT(window.focusWidget(),static_cast<QWidget *>(legend),5000);QVERIFY(legend->isEnabled());
     }
+    void sourceFieldsShowTheStoredSources() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addTableAndQuery(window,opened));
+        QVERIFY(applied(window,opened,{{"action","sheet_add"},{"name","Other Data"}}));
+        auto range=[](const QString &sheet,const QString &ref){return QJsonObject{{"source",QJsonObject{{"kind","range"},{"sheet",sheet},{"ref",ref}}}};};
+        const QJsonObject spec{{"spec_version",1},{"type","column"},{"categories",range("Sheet1","A2:A4")},{"series",QJsonArray{
+            QJsonObject{{"name",range("Sheet1","B1")},{"values",range("Sheet1","B2:B4")}},
+            QJsonObject{{"name",QJsonObject{{"text","Tab"}}},{"values",QJsonObject{{"source",QJsonObject{{"kind","table"},{"table","Orders"},{"column","Quantity"}}}}}},
+            QJsonObject{{"name",range("Other Data","A1")},{"values",QJsonObject{{"source",QJsonObject{{"kind","query"},{"query","Totals"},{"column","Total"}}}}}}}}};
+        QVERIFY(addChart(window,opened,"Sources",2,6,0,0,320,200,"Sheet1",spec));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        // Every source field starts with its kind list.
+        auto *categories=kindOf(window,"categoriesSource");QVERIFY(categories);
+        QCOMPARE(itemsOf(categories),(QStringList{"Range","Table column","Query column"}));
+        QCOMPARE(categories->currentText(),QString("Range"));QCOMPARE(rangeOf(window,"categoriesSource")->text(),QString("A2:A4"));
+        QCOMPARE(itemsOf(kindOf(window,"series1Name")),(QStringList{"Text","Cell"}));
+        // Ranges on the chart's own sheet are bare; on another sheet, qualified.
+        QCOMPARE(kindOf(window,"series1Name")->currentText(),QString("Cell"));QCOMPARE(rangeOf(window,"series1Name")->text(),QString("B1"));
+        QCOMPARE(kindOf(window,"series1Values")->currentText(),QString("Range"));QCOMPARE(rangeOf(window,"series1Values")->text(),QString("B2:B4"));
+        QCOMPARE(kindOf(window,"series3Name")->currentText(),QString("Cell"));QCOMPARE(rangeOf(window,"series3Name")->text(),QString("'Other Data'!A1"));
+        // A text name shows the text without a Pick button.
+        QCOMPARE(kindOf(window,"series2Name")->currentText(),QString("Text"));QCOMPARE(rangeOf(window,"series2Name")->text(),QString("Tab"));
+        QVERIFY(!window.findChild<QToolButton *>("series2NamePick")->isVisible());QVERIFY(window.findChild<QToolButton *>("series1NamePick")->isVisible());
+        // A table column and a query column show their two lists.
+        QCOMPARE(kindOf(window,"series2Values")->currentText(),QString("Table column"));
+        auto *table=window.findChild<QComboBox *>("series2ValuesTable"),*tableColumn=window.findChild<QComboBox *>("series2ValuesTableColumn");
+        QVERIFY(table && tableColumn && table->isVisible());QVERIFY(!rangeOf(window,"series2Values")->isVisible());
+        QCOMPARE(table->currentText(),QString("Orders"));QCOMPARE(tableColumn->currentText(),QString("Quantity"));
+        QCOMPARE(kindOf(window,"series3Values")->currentText(),QString("Query column"));
+        auto *query=window.findChild<QComboBox *>("series3ValuesQuery"),*queryColumn=window.findChild<QComboBox *>("series3ValuesQueryColumn");
+        QVERIFY(query && queryColumn && query->isVisible());QCOMPARE(query->currentText(),QString("Totals"));QCOMPARE(queryColumn->currentText(),QString("Total"));
+        // The workbook's lists arrive from the catalog.
+        QTRY_VERIFY_WITH_TIMEOUT(itemsOf(table).contains("Orders") && itemsOf(query).contains("Totals"),10000);
+        QCOMPARE(table->currentText(),QString("Orders"));QCOMPARE(query->currentText(),QString("Totals"));
+        // The panel widens its dock rather than scroll sideways.
+        auto *scroll=qobject_cast<QScrollArea *>(window.findChild<QDockWidget *>("chartDock")->widget());
+        QTRY_VERIFY_WITH_TIMEOUT(scroll->widget()->width()<=scroll->viewport()->width(),5000);
+        // Pick asks for a pick of its field and nothing else.
+        auto *pick=window.findChild<QToolButton *>("series1ValuesPick");QVERIFY(pick);QCOMPARE(pick->text(),QString("Pick"));
+        QCOMPARE(pick->accessibleName(),QString("Pick Series 1 Values on the grid"));
+        QCOMPARE(window.findChild<QToolButton *>("categoriesSourcePick")->accessibleName(),QString("Pick Categories on the grid"));
+        QSignalSpy picks(panelOf(window),&ChartPanel::pickRequested);press(pick);
+        QCOMPARE(picks.count(),1);QCOMPARE(picks[0][0].toString(),QString("series1Values"));
+        QTest::qWait(100);QCOMPARE(admitted.count(),0);
+    }
+    void typedRangeChangesTheValues() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Typed",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *values=rangeOf(window,"series1Values");QCOMPARE(values->text(),QString("B2:B4"));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto spec=[&]{return layer->chart(id)["spec"].toObject();};
+        auto stored=[&]{return spec()["series"].toArray()[0].toObject()["values"].toObject()["source"].toObject();};
+        typeInto(values,"B2:B3",true);
+        QCOMPARE(requested.count(),1);QCOMPARE(requested[0][2].toString(),QString("series1Values"));QCOMPARE(admitted.count(),1);
+        QCOMPARE(requested[0][1].toJsonObject().keys(),QStringList{"spec"});
+        QTRY_COMPARE_WITH_TIMEOUT(stored()["ref"].toString(),QString("B2:B3"),10000);QCOMPARE(stored()["sheet_id"].toString(),model->sheet());
+        QTRY_COMPARE_WITH_TIMEOUT(values->text(),QString("B2:B3"),5000);
+        // Everything else is kept.
+        QCOMPARE(spec()["categories"].toObject()["source"].toObject()["ref"].toString(),QString("A2:A4"));
+        QCOMPARE(spec()["series"].toArray()[0].toObject()["name"].toObject()["source"].toObject()["ref"].toString(),QString("B1"));
+        // The qualified form, applied on leaving the field.
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(values->isEnabled(),5000);
+        typeInto(values,"Sheet1!$B$2:$B$4",false);QCOMPARE(requested.count(),1);rangeOf(window,"categoriesSource")->setFocus();
+        QCOMPARE(requested.count(),2);
+        QTRY_COMPARE_WITH_TIMEOUT(stored()["ref"].toString(),QString("B2:B4"),10000);QTRY_COMPARE_WITH_TIMEOUT(values->text(),QString("B2:B4"),5000);
+        // The same range again sends nothing.
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(values->isEnabled(),5000);
+        typeInto(values,"B2:B4",true);QTest::qWait(100);QCOMPARE(requested.count(),2);QCOMPARE(admitted.count(),2);
+    }
+    void tableColumnAndQueryColumnCanBeChosen() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addTableAndQuery(window,opened));QVERIFY(addChart(window,opened,"Chosen",2,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto stored=[&]{return layer->chart(id)["spec"].toObject()["series"].toArray()[0].toObject()["values"].toObject()["source"].toObject();};
+        auto *table=window.findChild<QComboBox *>("series1ValuesTable"),*tableColumn=window.findChild<QComboBox *>("series1ValuesTableColumn");QVERIFY(table && tableColumn);
+        QTRY_VERIFY_WITH_TIMEOUT(itemsOf(table).contains("Orders"),10000);
+        // A kind, then a table, send nothing; the column completes the source.
+        choose(kindOf(window,"series1Values"),"Table column");QCOMPARE(requested.count(),0);
+        QVERIFY(table->isVisible());QVERIFY(!rangeOf(window,"series1Values")->isVisible());QCOMPARE(table->currentIndex(),-1);
+        choose(table,"Orders");QCOMPARE(requested.count(),0);QCOMPARE(tableColumn->currentIndex(),-1);QCOMPARE(itemsOf(tableColumn),QStringList{"Quantity"});
+        choose(tableColumn,"Quantity");QCOMPARE(requested.count(),1);QCOMPARE(admitted.count(),1);QCOMPARE(requested[0][2].toString(),QString("series1Values"));
+        QTRY_COMPARE_WITH_TIMEOUT(stored()["kind"].toString(),QString("table"),10000);QVERIFY(idle(window));
+        // Held by identity.
+        auto *client=window.findChild<RestClient *>();const auto base="/v1/workbooks/"+model->workbook();
+        const auto catalog=syncRequest(client,base+"/tables",{{"expected_state",model->state()}});QVERIFY2(!catalog.contains("_error"),qPrintable(catalog["_error"].toString()));
+        const auto orders=catalog["tables"].toArray()[0].toObject();QCOMPARE(orders["name"].toString(),QString("Orders"));
+        QCOMPARE(stored()["table_id"].toString(),orders["id"].toString());QCOMPARE(stored()["column_id"].toString(),orders["columns"].toArray()[0].toObject()["id"].toString());
+        QCOMPARE(stored()["table"].toString(),QString("Orders"));QCOMPARE(stored()["column"].toString(),QString("Quantity"));QVERIFY(!stored()["broken"].toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(table->currentText(),QString("Orders"),5000);QCOMPARE(tableColumn->currentText(),QString("Quantity"));
+        // A query column the same way.
+        QTRY_VERIFY_WITH_TIMEOUT(kindOf(window,"series1Values")->isEnabled(),5000);
+        auto *query=window.findChild<QComboBox *>("series1ValuesQuery"),*queryColumn=window.findChild<QComboBox *>("series1ValuesQueryColumn");QVERIFY(query && queryColumn);
+        choose(kindOf(window,"series1Values"),"Query column");QCOMPARE(requested.count(),1);QVERIFY(query->isVisible());QVERIFY(!table->isVisible());
+        choose(query,"Totals");QCOMPARE(requested.count(),1);
+        choose(queryColumn,"Total");QCOMPARE(requested.count(),2);QCOMPARE(admitted.count(),2);
+        QTRY_COMPARE_WITH_TIMEOUT(stored()["kind"].toString(),QString("query"),10000);
+        const auto totals=catalog["queries"].toArray()[0].toObject();QCOMPARE(totals["name"].toString(),QString("Totals"));
+        QCOMPARE(stored()["query_id"].toString(),totals["id"].toString());QCOMPARE(stored()["column"].toString(),QString("Total"));QCOMPARE(stored()["query"].toString(),QString("Totals"));
+        QTRY_COMPARE_WITH_TIMEOUT(query->currentText(),QString("Totals"),5000);QCOMPARE(queryColumn->currentText(),QString("Total"));
+    }
+    void seriesNameTakesTextOrOneCell() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Named",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *kind=kindOf(window,"series1Name");auto *name=rangeOf(window,"series1Name");auto *pick=window.findChild<QToolButton *>("series1NamePick");
+        QCOMPARE(itemsOf(kind),(QStringList{"Text","Cell"}));QCOMPARE(kind->currentText(),QString("Cell"));QCOMPARE(name->text(),QString("B1"));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto stored=[&]{return layer->chart(id)["spec"].toObject()["series"].toArray()[0].toObject()["name"].toObject();};
+        // Text: changing the kind clears the field and sends nothing.
+        choose(kind,"Text");QCOMPARE(name->text(),QString());QVERIFY(!pick->isVisible());QCOMPARE(requested.count(),0);
+        typeInto(name,"Units",true);QCOMPARE(requested.count(),1);QCOMPARE(requested[0][2].toString(),QString("series1Name"));
+        QTRY_COMPARE_WITH_TIMEOUT(stored(),text("Units"),10000);QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(kind->isEnabled(),5000);
+        QCOMPARE(kind->currentText(),QString("Text"));QCOMPARE(name->text(),QString("Units"));
+        // Cell: one cell only; more is refused beside the field and the field goes back.
+        choose(kind,"Cell");QVERIFY(pick->isVisible());QCOMPARE(name->text(),QString());
+        typeInto(name,"B1:B2",true);
+        auto *message=window.findChild<QLabel *>("series1NameMessage");QVERIFY(message);QVERIFY(message->isVisible());
+        QCOMPARE(message->text(),QString("A series name takes one cell"));
+        QCOMPARE(kind->currentText(),QString("Text"));QCOMPARE(name->text(),QString("Units"));
+        QTest::qWait(100);QCOMPARE(requested.count(),1);QCOMPARE(admitted.count(),1);
+        choose(kind,"Cell");typeInto(name,"B1",true);QCOMPARE(requested.count(),2);QVERIFY(!message->isVisible());
+        QTRY_COMPARE_WITH_TIMEOUT(stored()["source"].toObject()["ref"].toString(),QString("B1"),10000);
+        QCOMPARE(stored()["source"].toObject()["sheet_id"].toString(),model->sheet());
+        QTRY_COMPARE_WITH_TIMEOUT(kind->currentText(),QString("Cell"),5000);QCOMPARE(name->text(),QString("B1"));
+    }
+    void addSeriesIsPanelOnlyUntilItsValuesAreGiven() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Grown",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *panel=panelOf(window);QSignalSpy requested(panel,&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto *add=window.findChild<QPushButton *>("addSeries");QVERIFY(add);QCOMPARE(add->text(),QString("Add Series"));
+        QVERIFY(!window.findChild<QWidget *>("series2Values"));
+        press(add);
+        QVERIFY(window.findChild<QWidget *>("series2Values"));QVERIFY(rangeOf(window,"series2Values")->isVisible());
+        QCOMPARE(rangeOf(window,"series2Values")->text(),QString());QCOMPARE(kindOf(window,"series2Name")->currentText(),QString("Text"));
+        QCOMPARE(window.findChild<QLabel *>("series2ValuesMarker")->text(),QString("Not applied yet"));
+        QTest::qWait(100);QCOMPARE(requested.count(),0);QCOMPARE(admitted.count(),0);
+        // It survives a relist of the same, unchanged chart.
+        window.findChild<QAction *>("refreshStoredDataAction")->trigger();QVERIFY(idle(window));QTest::qWait(200);
+        QCOMPARE(panel->chartId(),id);QVERIFY(window.findChild<QWidget *>("series2Values"));QTRY_VERIFY_WITH_TIMEOUT(rangeOf(window,"series2Values")->isEnabled(),5000);
+        // A name alone sends nothing; values complete it in one request.
+        typeInto(rangeOf(window,"series2Name"),"Added",true);QTest::qWait(100);QCOMPARE(requested.count(),0);
+        typeInto(rangeOf(window,"series2Values"),"B2:B3",true);
+        QCOMPARE(requested.count(),1);QCOMPARE(admitted.count(),1);QCOMPARE(requested[0][2].toString(),QString("series2Values"));
+        auto list=[&]{return layer->chart(id)["spec"].toObject()["series"].toArray();};
+        QTRY_COMPARE_WITH_TIMEOUT(list().size(),2,10000);
+        QCOMPARE(list()[1].toObject()["name"].toObject(),text("Added"));QCOMPARE(list()[1].toObject()["values"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B3"));
+        QCOMPARE(list()[0].toObject()["values"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B4"));
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QLabel *>("series2ValuesMarker")->isHidden(),5000);
+        // Another chart shown drops an unfilled row.
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(add->isEnabled(),5000);press(add);QVERIFY(window.findChild<QWidget *>("series3Values"));
+        panel->setChart({});panel->setChart(layer->chart(id));
+        QTRY_VERIFY_WITH_TIMEOUT(!window.findChild<QWidget *>("series3Values"),5000);QTest::qWait(100);QCOMPARE(requested.count(),1);
+    }
+    void removeAndReorderSeries() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        auto spec=chartSpec("Sheet1");QJsonArray three;
+        for(const auto &[name,ref]:{std::pair{"A","B2:B4"},std::pair{"B","B2:B3"},std::pair{"C","B3:B4"}})
+            three.append(QJsonObject{{"name",text(name)},{"values",QJsonObject{{"source",QJsonObject{{"kind","range"},{"sheet","Sheet1"},{"ref",ref}}}}}});
+        spec["series"]=three;
+        QVERIFY(addChart(window,opened,"Ordered",2,4,0,0,320,200,"Sheet1",spec));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto names=[&]{QStringList out;for(const auto &item:layer->chart(id)["spec"].toObject()["series"].toArray())out<<item.toObject()["name"].toObject()["text"].toString();return out;};
+        auto button=[&](const QString &name){return window.findChild<QPushButton *>(name);};
+        QCOMPARE(names(),(QStringList{"A","B","C"}));
+        QCOMPARE(button("removeSeries1")->text(),QString("Remove"));QCOMPARE(button("seriesUp1")->text(),QString("Move Up"));QCOMPARE(button("seriesDown1")->text(),QString("Move Down"));
+        QVERIFY(!button("seriesUp1")->isEnabled());QVERIFY(button("seriesDown1")->isEnabled());QVERIFY(button("seriesUp3")->isEnabled());QVERIFY(!button("seriesDown3")->isEnabled());
+        press(button("seriesDown1"));QCOMPARE(requested.count(),1);QCOMPARE(admitted.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(names(),(QStringList{"B","A","C"}),10000);QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(button("seriesUp3")->isEnabled(),5000);
+        press(button("seriesUp3"));QCOMPARE(requested.count(),2);QCOMPARE(admitted.count(),2);
+        QTRY_COMPARE_WITH_TIMEOUT(names(),(QStringList{"B","C","A"}),10000);QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(button("removeSeries2")->isEnabled(),5000);
+        QCOMPARE(rangeOf(window,"series3Values")->text(),QString("B2:B4"));
+        press(button("removeSeries2"));QCOMPARE(requested.count(),3);QCOMPARE(admitted.count(),3);
+        QTRY_COMPARE_WITH_TIMEOUT(names(),(QStringList{"B","A"}),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(!window.findChild<QWidget *>("series3Values"),5000);
+        const auto list=layer->chart(id)["spec"].toObject()["series"].toArray();
+        QCOMPARE(list[1].toObject()["values"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B4"));
+        QCOMPARE(list[0].toObject()["values"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B3"));
+        QCOMPARE(window.findChild<QAction *>("undoAction")->text(),QString("Undo Edit chart"));
+    }
+    void lastSeriesCannotBeRemoved() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Single",2,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto *remove=window.findChild<QPushButton *>("removeSeries1");QVERIFY(remove);press(remove);
+        auto *message=window.findChild<QLabel *>("seriesMessage");QVERIFY(message);QVERIFY(message->isVisible());
+        QCOMPARE(message->text(),QString("A chart needs at least one series"));QVERIFY(window.findChild<QWidget *>("series1Values"));
+        QTest::qWait(100);QCOMPARE(requested.count(),0);QCOMPARE(admitted.count(),0);
+        QCOMPARE(layer->chart(id)["spec"].toObject()["series"].toArray().size(),1);
+    }
+    void badReferenceIsRefusedBesideTheField() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Strict",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        const auto before=layer->chart(id);
+        auto *values=rangeOf(window,"series1Values");auto *message=window.findChild<QLabel *>("series1ValuesMessage");QVERIFY(message);
+        for(const char *bad:{"Nope!B2:B4","Units","B2:"}) {
+            typeInto(values,bad,true);
+            QVERIFY2(message->isVisible(),bad);QCOMPARE(message->text(),QString("Enter a cell range such as A2:A13"));
+            QCOMPARE(values->text(),QString("B2:B4"));QCOMPARE(values->accessibleDescription(),message->text());
+        }
+        typeInto(rangeOf(window,"categoriesSource"),"A2:A4,B2",true);
+        QVERIFY(window.findChild<QLabel *>("categoriesSourceMessage")->isVisible());QCOMPARE(rangeOf(window,"categoriesSource")->text(),QString("A2:A4"));
+        // Editing the field again clears its message.
+        values->setFocus();QTest::keyClicks(values,"B");QVERIFY(!message->isVisible());QVERIFY(values->accessibleDescription().isEmpty());
+        QTest::qWait(100);QCOMPARE(requested.count(),0);QCOMPARE(admitted.count(),0);QCOMPARE(layer->chart(id),before);
+    }
+    void sourceOverTheCellLimitShowsTheServiceReason() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Limited",2,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        const auto before=layer->chart(id);QSignalSpy receipts(&window,&MainWindow::operationReceipt);
+        auto *values=rangeOf(window,"series1Values");typeInto(values,"B2:B20000",true);
+        QTRY_COMPARE_WITH_TIMEOUT(receipts.count(),1,10000);const auto receipt=receipts[0][0].toJsonObject();
+        QVERIFY(receipt["outcome"]=="rejected" || receipt["outcome"]=="rolled_back");
+        const auto serviceMessage=receipt["message"].toString();QVERIFY2(serviceMessage.contains("10000"),qPrintable(serviceMessage));
+        auto *message=window.findChild<QLabel *>("series1ValuesMessage");QVERIFY(message);
+        QTRY_VERIFY_WITH_TIMEOUT(message->isVisible(),5000);QCOMPARE(message->text(),serviceMessage);
+        QCOMPARE(values->text(),QString("B2:B4"));QCOMPARE(values->accessibleDescription(),serviceMessage);
+        QTest::qWait(200);QCOMPARE(layer->chart(id),before);
+    }
+    void brokenSourceIsRepairedWithOneUpdate() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(applied(window,opened,{{"action","sheet_add"},{"name","Data"}}));
+        QVERIFY(addChart(window,opened,"Mended",2,4,0,0,320,200,"Data"));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        auto *tabs=window.findChild<QTabBar *>("sheets");tabs->setCurrentIndex(1);QCOMPARE(tabs->tabText(1),QString("Data"));
+        QVERIFY(applied(window,opened,{{"action","sheet_delete"}}));
+        QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Mended") && ChartSpec::hasBrokenSource(layer->chart(overlayNamed(layer,"Mended")->chartId())),10000);
+        const auto id=overlayNamed(layer,"Mended")->chartId();QVERIFY(idle(window));QVERIFY(openPanel(window,layer,id));activate(window);
+        auto *reason=window.findChild<QLabel *>("chartPanelReason");QVERIFY(reason->isVisible());QCOMPARE(reason->text(),QString("A source of this chart no longer exists"));
+        auto marker=[&](const QString &field){return window.findChild<QLabel *>(field+"Marker");};
+        for(const char *field:{"categoriesSource","series1Name","series1Values"}) {
+            QVERIFY2(marker(field) && marker(field)->isVisible(),field);QCOMPARE(marker(field)->text(),QString("This source no longer exists"));
+            // A deleted sheet leaves no range to show.
+            QVERIFY2(rangeOf(window,field)->isEnabled(),field);QVERIFY2(rangeOf(window,field)->text().isEmpty(),qPrintable(rangeOf(window,field)->text()));
+        }
+        QVERIFY(!window.findChild<QWidget *>("chartTitle")->isEnabled());QVERIFY(!window.findChild<QWidget *>("chartType_line")->isEnabled());
+        QVERIFY(window.findChild<QWidget *>("addSeries")->isEnabled());QVERIFY(window.findChild<QWidget *>("chartName")->isEnabled());
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        // Each replacement is held, and marked, while a source is still broken.
+        typeInto(rangeOf(window,"categoriesSource"),"A2:A4",true);
+        QTest::qWait(100);QCOMPARE(requested.count(),0);QCOMPARE(marker("categoriesSource")->text(),QString("Not applied yet"));
+        QCOMPARE(rangeOf(window,"categoriesSource")->text(),QString("A2:A4"));QCOMPARE(marker("series1Values")->text(),QString("This source no longer exists"));
+        typeInto(rangeOf(window,"series1Values"),"B2:B4",true);
+        QTest::qWait(100);QCOMPARE(requested.count(),0);QCOMPARE(marker("series1Values")->text(),QString("Not applied yet"));
+        QCOMPARE(marker("series1Name")->text(),QString("This source no longer exists"));
+        // The last one sends them all together.
+        typeInto(rangeOf(window,"series1Name"),"B1",true);
+        QCOMPARE(requested.count(),1);QCOMPARE(admitted.count(),1);
+        QTRY_VERIFY_WITH_TIMEOUT(!ChartSpec::hasBrokenSource(layer->chart(id)),10000);
+        const auto spec=layer->chart(id)["spec"].toObject();const auto first=spec["series"].toArray()[0].toObject();
+        for(const auto &holder:{spec["categories"],first["name"],first["values"]})QCOMPARE(holder.toObject()["source"].toObject()["sheet_id"].toString(),model->sheet());
+        QCOMPARE(spec["categories"].toObject()["source"].toObject()["ref"].toString(),QString("A2:A4"));
+        QCOMPARE(first["name"].toObject()["source"].toObject()["ref"].toString(),QString("B1"));QCOMPARE(first["values"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B4"));
+        QVERIFY(idle(window));QTest::qWait(200);QCOMPARE(admitted.count(),1);
+        QTRY_VERIFY_WITH_TIMEOUT(!reason->isVisible(),5000);QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QWidget *>("chartTitle")->isEnabled(),5000);
+        for(const char *field:{"categoriesSource","series1Name","series1Values"})QVERIFY2(marker(field)->isHidden(),field);
+    }
+    void scatterSeriesShowAnXField() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        auto range=[](const QString &ref){return QJsonObject{{"source",QJsonObject{{"kind","range"},{"sheet","Sheet1"},{"ref",ref}}}};};
+        const QJsonObject spec{{"spec_version",1},{"type","scatter"},{"series",QJsonArray{QJsonObject{{"name",range("B1")},{"values",range("B2:B4")},{"x",range("B2:B4")}}}}};
+        QVERIFY(addChart(window,opened,"Scattered",2,4,0,0,320,200,"Sheet1",spec));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);
+        auto *categories=window.findChild<QWidget *>("categoriesSource");QVERIFY(categories);QVERIFY(!categories->isVisible());
+        auto *x=window.findChild<QWidget *>("series1X");QVERIFY(x);QVERIFY(x->isVisible());
+        QCOMPARE(kindOf(window,"series1X")->currentText(),QString("Range"));QCOMPARE(rangeOf(window,"series1X")->text(),QString("B2:B4"));
+        QCOMPARE(window.findChild<QToolButton *>("series1XPick")->accessibleName(),QString("Pick Series 1 X on the grid"));
+        typeInto(rangeOf(window,"series1X"),"B2:B3",true);QCOMPARE(requested.count(),1);QCOMPARE(requested[0][2].toString(),QString("series1X"));
+        auto list=[&]{return layer->chart(id)["spec"].toObject()["series"].toArray();};
+        QTRY_COMPARE_WITH_TIMEOUT(list()[0].toObject()["x"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B3"),10000);
+        // A new scatter series needs its X as well as its values.
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QWidget *>("addSeries")->isEnabled(),5000);
+        press(window.findChild<QPushButton *>("addSeries"));QVERIFY(window.findChild<QWidget *>("series2X")->isVisible());
+        typeInto(rangeOf(window,"series2Values"),"B2:B4",true);QTest::qWait(100);QCOMPARE(requested.count(),1);
+        typeInto(rangeOf(window,"series2X"),"B2:B4",true);QCOMPARE(requested.count(),2);
+        QTRY_COMPARE_WITH_TIMEOUT(list().size(),2,10000);QCOMPARE(list()[1].toObject()["x"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B4"));
+        // Another type shows Categories and no X.
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QWidget *>("chartType_line")->isEnabled(),5000);
+        press(window.findChild<QToolButton *>("chartType_line"));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["type"].toString(),QString("line"),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(categories->isVisible(),5000);QVERIFY(!window.findChild<QWidget *>("series1X")->isVisible());
+        QCOMPARE(rangeOf(window,"categoriesSource")->text(),QString("B2:B3"));
+    }
 #undef CHART_WINDOW
 
 // A window attached to a service through ChartProxy, with a workbook open.
@@ -1865,6 +2177,44 @@ private:
         for(int i=0;i<1000 && opened.count()==before;++i)QTest::qWait(10);
         return opened.count()>before;
     }
+    // Submits an operation and waits for the window to accept the new state.
+    static bool applied(MainWindow &window,QSignalSpy &opened,const QJsonObject &operation) {
+        const auto before=opened.count();
+        if(window.submit(operation).isEmpty())return false;
+        for(int i=0;i<1000 && opened.count()==before;++i)QTest::qWait(10);
+        return opened.count()>before;
+    }
+    static QJsonObject syncRequest(RestClient *client,const QString &path,const QJsonObject &body) {
+        auto response=std::make_shared<QJsonObject>();auto done=std::make_shared<bool>(false);
+        client->request(path,body,[response,done](QJsonObject result,QString error){*response=result;if(!error.isEmpty())(*response)["_error"]=error;*done=true;});
+        for(int i=0;i<500 && !*done;++i)QTest::qWait(10);
+        if(!*done)(*response)["_error"]="timed out";
+        return *response;
+    }
+    // A table Orders (Quantity 1, 2, 3) and a saved query Totals (Total) over it.
+    static bool addTableAndQuery(MainWindow &window,QSignalSpy &opened) {
+        if(!applied(window,opened,{{"action","table_create"},{"name","Orders"},{"columns",QJsonArray{QJsonObject{{"name","Quantity"},{"type","integer"}}}}}))return false;
+        if(!applied(window,opened,{{"action","table_insert"},{"table","Orders"},{"rows",QJsonArray{QJsonObject{{"Quantity",1}},QJsonObject{{"Quantity",2}},QJsonObject{{"Quantity",3}}}}}))return false;
+        const auto review=syncRequest(window.findChild<RestClient *>(),"/v1/workbooks/"+window.model()->workbook()+"/queries/preview",
+                                      {{"name","Totals"},{"sql","SELECT Quantity AS Total FROM Orders"},{"expected_state",window.model()->state()}});
+        if(review.contains("_error"))return false;
+        auto save=review["source_request"].toObject();save["action"]="query_save";save["review_digest"]=review["review_digest"];
+        if(!applied(window,opened,save))return false;
+        // Creating a table showed Tables and queries; back to the sheets.
+        if(auto *back=window.findChild<QPushButton *>("returnToSheets");back && back->isVisible())back->click();
+        return true;
+    }
+    // Scrolls the panel to a control and clicks it, as a person would.
+    static void press(QWidget *control) {
+        // Laid out first, as a person would see it before clicking.
+        QTest::qWait(50);
+        for(auto *parent=control->parentWidget();parent;parent=parent->parentWidget())
+            if(auto *scroll=qobject_cast<QScrollArea *>(parent)){scroll->ensureWidgetVisible(control);break;}
+        QTest::mouseClick(control,Qt::LeftButton);
+    }
+    static QComboBox *kindOf(MainWindow &window,const QString &field) { return window.findChild<QComboBox *>(field+"Kind"); }
+    static QLineEdit *rangeOf(MainWindow &window,const QString &field) { return window.findChild<QLineEdit *>(field+"Range"); }
+    static QStringList itemsOf(QComboBox *combo) { QStringList out;for(int i=0;i<combo->count();++i)out<<combo->itemText(i);return out; }
     static QJsonObject chartSpec(const QString &sheet) {
         auto range=[sheet](const QString &ref){return QJsonObject{{"source",QJsonObject{{"kind","range"},{"sheet",sheet},{"ref",ref}}}};};
         return {{"spec_version",1},{"type","column"},{"categories",range("A2:A4")},{"series",QJsonArray{QJsonObject{{"name",range("B1")},{"values",range("B2:B4")}}}}};

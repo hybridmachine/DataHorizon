@@ -50,6 +50,7 @@ target_sources(datahorizon_desktop PRIVATE desktop/tablerelationships.cpp)
 target_sources(datahorizon_desktop PRIVATE desktop/chartlayer.cpp desktop/chartlayer.h)
 target_sources(datahorizon_desktop PRIVATE desktop/chartspec.cpp desktop/chartspec.h)
 target_sources(datahorizon_desktop PRIVATE desktop/chartpanel.cpp desktop/chartpanel.h)
+target_sources(datahorizon_desktop PRIVATE desktop/chartsourcefield.cpp desktop/chartsourcefield.h)
 target_sources(datahorizon_desktop PRIVATE desktop/queryworkbench.cpp desktop/queryworkbench.h)
 target_sources(datahorizon_desktop PRIVATE desktop/querydefinitions.cpp desktop/relationalexport.h)
 target_sources(datahorizon_desktop PRIVATE desktop/pythonworkspace.cpp desktop/pythonworkspace.h

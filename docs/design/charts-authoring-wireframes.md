@@ -604,8 +604,10 @@ Panel texts and field markers:
 | "Give an X source before changing this chart to a scatter chart." | Beneath the type buttons: Scatter on a chart with no categories |
 | The service's own message | Beneath the refused field, for every refusal from the service |
 | "Enter a number or leave empty for automatic" | Beneath Minimum or Maximum: the text is not a number (refused in the panel) |
+| "Enter a cell range such as A2:A13" | Beneath a Range or Cell field: an unknown sheet or text that is not a reference (refused in the panel) |
+| "A series name takes one cell" | Beneath a series Name set to Cell: more than one cell typed (refused in the panel) |
 
-Added during the build, November 2026: not part of the original sign-off.
+The last three rows were added during the build, November 2026: not part of the original sign-off.
 
 ## Decisions for the owner to confirm
 

@@ -2,25 +2,40 @@
 #pragma once
 
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
+#include <QList>
 #include <QPointer>
+#include <QSet>
 #include <QString>
 #include <QWidget>
 #include <functional>
 
+class ChartSourceField;
 class QButtonGroup;
 class QComboBox;
+class QFormLayout;
 class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
 class QStackedWidget;
 class QToolButton;
+class QVBoxLayout;
 
 // The side panel that edits one chart: its name and stacking order, type and
-// grouping, title, axes and legend (the Data group is filled by a later task,
-// in chartDataGroup between Title and Axes). It takes the catalog's chart in
-// and asks for changes out; it sends nothing itself and knows no window.
+// grouping, title, data (categories and series, in chartDataGroup), axes and
+// legend. It takes the catalog's chart in and asks for changes out; it sends
+// nothing itself and knows no window.
+//
+// The Data group edits a working copy of the specification. A completed
+// source edit (a range applied with Enter or focus-out, both lists chosen, a
+// name's text), a Remove or a Move asks for one change carrying the whole
+// specification. Add Series adds a row to the panel only; it is sent with
+// the first change after its values (and X, for a scatter chart) are given.
+// While a source of the chart is broken, edits stay in the working copy,
+// marked "Not applied yet", until none is broken; then one change carries
+// them all. Another chart, or a changed one, drops the working copy.
 //
 // A choice (a type button, Grouping, Legend, Bring to Front, Send to Back)
 // asks for its change when it changes; a text field on Enter or when it loses
@@ -58,13 +73,20 @@ public:
     // beneath it until the chart changes or the field is edited again. An
     // empty message only puts the field back. Either ends the wait.
     void refused(const QString &field,const QString &message);
+    // What the Data group's fields offer: sheets as [{id, name}], tables
+    // and queries as POST /tables lists them (a query may carry its
+    // result columns as "shape": [{name}]).
+    void setCatalog(const QJsonArray &sheets,const QJsonArray &tables,const QJsonArray &queries);
 signals:
     // changes holds exactly the chart_update fields: name, order or spec.
     // field names the control (chartName, chartOrder, chartType,
     // chartGrouping, chartTitle, categoryAxisTitle, valueAxisTitle,
-    // valueAxisMin, valueAxisMax, legendPosition).
+    // valueAxisMin, valueAxisMax, legendPosition; for the Data group
+    // categoriesSource, series<n>Name, series<n>Values, series<n>X, or
+    // "series" for a Remove or a Move).
     void changeRequested(const QString &chartId,const QJsonObject &changes,const QString &field);
-    // A range pick for a source field (the Data group, later).
+    // Pick on a Range or Cell source field (categoriesSource, series<n>Name,
+    // series<n>Values, series<n>X).
     void pickRequested(const QString &field);
 private:
     void load();
@@ -90,6 +112,57 @@ private:
     // While a focus is to be restored: notes a key or mouse press outside the panel.
     bool eventFilter(QObject *object,QEvent *event) override;
     void forgetFocus();
+
+    // The Data group.
+    struct SeriesBox {
+        QGroupBox *box=nullptr;QFormLayout *form=nullptr;
+        ChartSourceField *name=nullptr,*values=nullptr,*x=nullptr;
+        QPushButton *remove=nullptr,*up=nullptr,*down=nullptr;
+    };
+    // What the panel knows of a working series beyond its specification.
+    struct SeriesState { bool panelOnly=false;QSet<QString> edited; };
+    // A source field (categoriesSource, series<n>Name, series<n>Values,
+    // series<n>X): its 0-based series (-1 for the categories) and part.
+    static bool dataSlot(const QString &field,int *row,QString *part);
+    ChartSourceField *sourceField(const QString &field) const;
+    QJsonValue holder(const QString &field) const;
+    void setHolder(const QString &field,const QJsonValue &value);
+    // The working copy afresh from the chart.
+    void loadData();
+    // Every Data field from the working copy.
+    void showData();
+    void showSource(const QString &field);
+    void ensureSeries(int count);
+    void updateMarkers();
+    void orderFocus();
+    bool scatter() const;
+    // The working copy as it would be sent: series not yet complete left out.
+    QJsonObject sendable() const;
+    void applySource(const QString &field);
+    // Sends the working copy when nothing is broken and it changed.
+    void commitData(const QString &field);
+    void removeSeries(int row);
+    void moveSeries(int row,int by);
+    void addSeries();
+    // A change refused in the panel: the field shows the working copy again,
+    // with the message beneath it.
+    void refuseLocally(const QString &field,const QString &message);
+    QWidget *withMarkers(ChartSourceField *field);
+    void connectSource(ChartSourceField *source);
+    QJsonObject m_working;
+    QList<SeriesState> m_rows;
+    bool m_categoriesEdited=false,m_seriesHeld=false;
+    QHash<QString,QString> m_sheetNames,m_sheetIds;
+    QJsonArray m_tables,m_queries;
+    // Names of the tables, columns and queries the chart's stored sources give.
+    QHash<QString,QString> m_storedNames;
+    ChartSourceField *m_categories=nullptr;
+    QFormLayout *m_categoriesForm=nullptr;
+    QVBoxLayout *m_seriesLayout=nullptr;
+    QList<SeriesBox> m_series;
+    QPushButton *m_addSeries=nullptr;
+    QLabel *m_seriesMarker=nullptr;
+    QHash<QString,QLabel *> m_markers;
     QJsonObject m_chart;
     // The input-form spec; empty when it cannot be built (m_reason says why).
     QJsonObject m_spec;

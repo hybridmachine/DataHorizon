@@ -61,6 +61,32 @@ QJsonObject inputSpec(const QJsonObject &chart,QString *reason) {
     return spec;
 }
 
+QJsonObject workingSpec(const QJsonObject &chart) {
+    if(chart["issue"].isString())return {};
+    auto keep=[](const QJsonValue &value) {
+        if(value.isObject() && value.toObject()["source"].toObject()["broken"].toBool())return value;
+        return convertHolder(value);
+    };
+    auto spec=chart["spec"].toObject();
+    spec["categories"]=keep(spec["categories"]);
+    QJsonArray list;
+    for(const auto &value:spec["series"].toArray()) {
+        auto item=value.toObject();
+        for(const auto &part:QStringList{"name","values","x"})if(item.contains(part))item[part]=keep(item[part]);
+        list.append(item);
+    }
+    spec["series"]=list;
+    return spec;
+}
+
+bool holdsBrokenSource(const QJsonObject &spec) {
+    auto broken=[](const QJsonValue &holder){return holder.toObject()["source"].toObject()["broken"].toBool();};
+    if(broken(spec["categories"]))return true;
+    for(const auto &value:spec["series"].toArray())
+        for(const auto &part:QStringList{"name","values","x"})if(broken(value.toObject()[part]))return true;
+    return false;
+}
+
 bool takesGrouping(const QString &type) { return type=="column" || type=="bar" || type=="area"; }
 
 QJsonObject withType(const QJsonObject &spec,const QString &type,QString *refusal) {
@@ -120,6 +146,17 @@ QString sourceText(const QJsonObject &s,const QHash<QString,QString> &sheetNames
     static const QRegularExpression plain("^[A-Za-z_][A-Za-z0-9_]*$");
     if(!plain.match(name).hasMatch())name="'"+name.replace("'","''")+"'";
     return name+"!"+ref;
+}
+
+QString rangeText(const QJsonObject &source,const QHash<QString,QString> &sheetNames,const QString &ownSheetId) {
+    auto stored=source;
+    if(!stored.contains("sheet_id"))stored["sheet_id"]=stored["sheet"];
+    // A range broken by deleting its cells or sheet keeps no rectangle to show.
+    if(stored["ref"].toString().isEmpty() && !stored["row1"].isDouble())return {};
+    const auto text=sourceText(stored,sheetNames);
+    if(stored["sheet_id"].toString()!=ownSheetId)return text;
+    // A reference holds no "!", so the last one ends the sheet name.
+    return text.mid(text.lastIndexOf('!')+1);
 }
 
 QJsonObject rangeSource(const QString &sheetId,int r1,int c1,int r2,int c2) {

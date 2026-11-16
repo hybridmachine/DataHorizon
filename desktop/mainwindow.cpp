@@ -1071,6 +1071,8 @@ void MainWindow::buildUi() {
     chartScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);chartScroll->setFrameShape(QFrame::NoFrame);
     m_chartDock=new QDockWidget(tr("Chart"),this);m_chartDock->setObjectName("chartDock");m_chartDock->setWidget(chartScroll);
     addDockWidget(Qt::RightDockWidgetArea,m_chartDock);m_chartDock->hide();view->addAction(m_chartDock->toggleViewAction());
+    connect(m_chartDock,&QDockWidget::visibilityChanged,this,[this](bool visible){if(visible)readChartSources();});
+    m_chartPanel->installEventFilter(this);
     // A selection shows its chart at once; only a listing, the catalog read
     // after a change, lets the panel ask again (settle). After a committed
     // change the panel keeps its chart, locked; after a failed or stale chart
@@ -1853,6 +1855,7 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     setEditingEnabled(m_redo,info["redo"].isString() && !info["readonly"].toBool());
     setWindowTitle(QFileInfo(info["path"].toString()).fileName() + " — DataHorizon development preview");
     syncSource();
+    readChartSources();
     if(info["repair"].toBool() && !m_relationalActive)showRelational(true);
     if (m_restoreDraft) restoreRecoveredDraft();
     if(!m_relationalAfterWrite.isEmpty()) {
@@ -1972,6 +1975,34 @@ void MainWindow::insertChart() {
 
 QJsonObject MainWindow::panelChart(const QString &chartId) const {
     return m_chartCatalogStale?QJsonObject():m_charts->chart(chartId);
+}
+
+void MainWindow::readChartSources() {
+    if(!m_chartPanel || !m_chartDock->isVisible() || m_info.isEmpty())return;
+    QJsonArray sheets;
+    for(const auto &value:m_info["sheets"].toArray())sheets.append(QJsonObject{{"id",value.toObject()["id"]},{"name",value.toObject()["name"]}});
+    const auto workbook=m_info["id"].toString();const auto state=m_info["state"];
+    if(m_chartSourcesWorkbook!=workbook){m_chartSourcesWorkbook=workbook;m_chartTables={};m_chartQueries={};}
+    // The sheets are known now; the tables and queries last read stand until the new ones arrive.
+    m_chartPanel->setCatalog(sheets,m_chartTables,m_chartQueries);
+    const int generation=++m_chartSourcesGeneration;
+    auto current=[this,generation,workbook,state]{return generation==m_chartSourcesGeneration && m_info["id"].toString()==workbook && m_info["state"]==state;};
+    m_client->request(base()+"/tables",{{"expected_state",state}},[this,current,sheets,state](QJsonObject result,QString error){
+        if(!current() || !error.isEmpty() || result["state"]!=state)return;
+        const auto tables=result["tables"].toArray();
+        // The catalog gives each saved query's column count; its columns come from reading it.
+        auto queries=std::make_shared<QJsonArray>(result["queries"].toArray());auto left=std::make_shared<qsizetype>(queries->size());
+        auto finish=[this,current,sheets,tables,queries]{
+            if(!current())return;
+            m_chartTables=tables;m_chartQueries=*queries;m_chartPanel->setCatalog(sheets,tables,*queries);
+        };
+        if(queries->isEmpty()){finish();return;}
+        for(qsizetype i=0;i<queries->size();++i)
+            m_client->request(base()+"/queries/read",{{"query",(*queries)[i].toObject()["id"]},{"expected_state",state}},[queries,left,i,finish](QJsonObject read,QString error){
+                if(error.isEmpty()){auto item=(*queries)[i].toObject();item["shape"]=read["query"].toObject()["shape"];(*queries)[i]=item;}
+                if(--*left==0)finish();
+            });
+    });
 }
 
 void MainWindow::showChartPanel() {
@@ -3417,6 +3448,14 @@ bool MainWindow::discardQueryDraft(){
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
+    // The chart panel never scrolls sideways: its dock stays as wide as the
+    // panel needs, as its Data group grows and shrinks (laid out once the
+    // request is handled).
+    if(object==m_chartPanel && event->type()==QEvent::LayoutRequest)
+        QTimer::singleShot(0,this,[this]{
+            auto *scroll=qobject_cast<QScrollArea *>(m_chartDock->widget());
+            scroll->setMinimumWidth(m_chartPanel->minimumSizeHint().width()+scroll->verticalScrollBar()->sizeHint().width()+2*scroll->frameWidth());
+        });
     if(event->type()==QEvent::Resize || event->type()==QEvent::Show || event->type()==QEvent::Hide) {
         if(object==m_grid || (m_frozenTop && m_frozenTop->views().contains(qobject_cast<QTableView *>(object))))
             QTimer::singleShot(0,this,[this]{updateVisibleCalculations();});
