@@ -119,8 +119,13 @@ def report_text(review):
     lines += ["  " + line for line in report_scope_lines(review)]
     rank = {severity: index for index, severity in enumerate(SEVERITY_ORDER)}
     for entry in sorted(entries, key=lambda item: rank.get(item["severity"], len(rank))):
-        first = (entry.get("samples") or [None])[0]
-        where = "" if first is None else "; first at " + place(first)
+        samples = entry.get("samples") or []
+        if entry["category"] == "chart.skipped" and samples:
+            # Each sample is one chart left out (its name, on its sheet): every one is named, not only the first.
+            where = "; " + ", ".join(place(sample) for sample in samples)
+            if entry["count"] > len(samples): where += f" and {entry['count'] - len(samples)} more"
+        else:
+            where = "" if not samples else "; first at " + place(samples[0])
         count = f"{'>=' if entry.get('at_least') else ''}{entry['count']}"
         lines.append(f"  {entry['severity']:<12} {count:>7}  {entry['category']}: {entry['detail']}{where}")
     charts = review.get("charts") or []

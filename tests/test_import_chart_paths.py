@@ -16,7 +16,7 @@ import zipfile
 import zlib
 from unittest.mock import patch
 
-from chart_fixtures import (chart_xml, two_cell, ods_chart_xml, ods_sample_like, ods_title, ods_with_charts, one_cell, plot_xml,
+from chart_fixtures import (A, XDR, chart_xml, two_cell, ods_chart_xml, ods_sample_like, ods_title, ods_with_charts, one_cell, plot_xml,
                             rich_title, sample_like, xlsx_with_charts)
 from ods_builder import styles_document
 from datahorizon import import_charts, import_stage, ods_stream, xlsx_stream
@@ -356,7 +356,8 @@ class ImportChartPathTests(unittest.TestCase):
         self.assertEqual(summary["charts"], [])
         self.assertEqual([(entry["detail"], entry["samples"]) for entry in entries(summary, "chart.skipped")],
                          [("type", [{"sheet": "Data", "cell": "Radar"}])])
-        self.assertEqual({entry["detail"] for entry in entries(summary, "workbook.feature")} >= {"charts", "chart_sheets"}, True)
+        # The chart sheet is not imported and is reported; the worksheet's skipped chart has its own entry, not a "charts" one.
+        self.assertEqual({entry["detail"] for entry in entries(summary, "workbook.feature")} & {"charts", "chart_sheets"}, {"chart_sheets"})
         receipt = self.apply(summary)
         self.assertEqual(receipt["imported"], {"sheets": 1, "cells": 16, "charts": 0})
         self.assertEqual(self.charts(), [])
@@ -1090,6 +1091,194 @@ class ChartFixtureTests(unittest.TestCase):
         import generate_chart_workbook
         self.assertEqual((FIXTURES / "charts-two-sheets.xlsx").read_bytes(), generate_chart_workbook.build())
         self.assertEqual((FIXTURES / "charts-one-sheet.xlsx").read_bytes(), generate_chart_workbook.build(1))
+
+
+MAX_CHARTS_HELD = 64
+PICTURE_ANCHOR = (f'<xdr:twoCellAnchor xmlns:xdr="{XDR}" xmlns:a="{A}" xmlns:r="{REL}"><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff>'
+                  '<xdr:row>20</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>2</xdr:col><xdr:colOff>0</xdr:colOff>'
+                  '<xdr:row>22</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="9" name="Picture 1"/>'
+                  '<xdr:cNvPicPr/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId9"/></xdr:blipFill><xdr:spPr/></xdr:pic><xdr:clientData/></xdr:twoCellAnchor>')
+ODS_PICTURE = ('<draw:frame draw:name="Picture 1" svg:x="0cm" svg:y="20cm" svg:width="2cm" svg:height="2cm">'
+               '<draw:image xlink:href="Pictures/one.png" xlink:type="simple"/></draw:frame>')
+
+
+def with_picture(data, fmt):
+    """``data`` whose only drawing also holds a picture (a ``draw:frame`` image in ODS), beside its charts."""
+    if fmt == "ods":
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            content = archive.read("content.xml").decode()
+        return replace_part(data, "content.xml", content.replace("<table:shapes>", "<table:shapes>" + ODS_PICTURE, 1).encode())
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        drawing = archive.read("xl/drawings/drawing1.xml").decode()
+    return replace_part(data, "xl/drawings/drawing1.xml", drawing.replace("</xdr:wsDr>", PICTURE_ANCHOR + "</xdr:wsDr>").encode())
+
+
+class ImportReportCleanUpTests(unittest.TestCase):
+    """Charts that were read are not also listed as omitted: no ``charts`` feature, and a sheet's ``drawings`` only when
+    its drawing held something besides charts or was not read. Every path (staged, inline workbook, one sheet), both formats."""
+
+    def setUp(self):
+        self.temp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.server = self.enterContext(Service(staging_root=self.temp / "staging"))
+
+    def staged(self, data, fmt):
+        path = self.temp / f"source-{uuid.uuid4().hex}.{fmt}"
+        path.write_bytes(data)
+        job = uuid.uuid4().hex
+        self.server.dispatch("POST", f"/v1/import/{fmt}/jobs", {"job_id": job, "scope": "workbook", "source_path": str(path)})
+        deadline = time.monotonic() + 120
+        view = self.server.dispatch("GET", "/v1/jobs/" + job, {})
+        while view["status"] == "running":
+            self.assertLess(time.monotonic(), deadline, "job did not finish")
+            time.sleep(0.01)
+            view = self.server.dispatch("GET", "/v1/jobs/" + job, {})
+        self.assertEqual(view["status"], "completed", view)
+        return view["result"]
+
+    def reports(self, data, fmt, sheet_index=1):
+        """The report entries of one source by import path."""
+        preview = xlsx_preview if fmt == "xlsx" else ods_preview
+        return {"staged": self.staged(data, fmt)["report_entries"],
+                "inline": preview({"file_base64": b64(data), "scope": "workbook"})["report_entries"],
+                "one sheet": preview({"file_base64": b64(data), "scope": "selection", "sheet_index": sheet_index})["report_entries"]}
+
+    @staticmethod
+    def found(report, category, detail):
+        return [entry for entry in report if (entry["category"], entry["detail"]) == (category, detail)]
+
+    def sources(self):
+        xlsx = xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "name": "A", "xml": column_chart()},
+                                                        {"sheet": "Data", "name": "B", "xml": column_chart(), "anchor": one_cell()}])
+        ods = ods_with_charts({"Data": ods_data_rows()}, [{"sheet": "Data", "name": "A", "xml": ods_column_chart()},
+                                                          {"sheet": "Data", "name": "B", "xml": ods_column_chart(), "cell": (3, 3)}])
+        return {"xlsx": xlsx, "ods": ods}
+
+    def test_imported_charts_are_not_listed_as_omitted(self):
+        for fmt, data in self.sources().items():
+            for path, report in self.reports(data, fmt).items():
+                with self.subTest(fmt=fmt, path=path):
+                    self.assertEqual(self.found(report, "workbook.feature", "charts"), [])
+                    self.assertEqual(self.found(report, "sheet.feature", "drawings"), [])
+                    self.assertEqual(self.found(report, "chart.skipped", "unreadable"), [])
+
+    def test_skipped_charts_are_still_reported_but_their_drawing_is_not_omitted(self):
+        radar = chart_xml(plot_area=plot_xml("radar", series=[{"cat": "Data!$A$2:$A$8", "val": "Data!$B$2:$B$8"}]))
+        xlsx = xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "name": "Radar", "xml": radar}])
+        for path, report in self.reports(xlsx, "xlsx").items():
+            with self.subTest(path=path):
+                self.assertEqual([entry["samples"] for entry in self.found(report, "chart.skipped", "type")], [[{"sheet": "Data", "cell": "Radar"}]])
+                self.assertEqual(self.found(report, "workbook.feature", "charts"), [])
+                self.assertEqual(self.found(report, "sheet.feature", "drawings"), [])
+
+    def test_a_drawing_with_a_picture_is_still_reported(self):
+        for fmt, data in self.sources().items():
+            for path, report in self.reports(with_picture(data, fmt), fmt).items():
+                with self.subTest(fmt=fmt, path=path):
+                    (entry,) = self.found(report, "sheet.feature", "drawings")
+                    self.assertEqual((entry["severity"], entry["count"], entry["samples"]), ("omitted", 1, [{"sheet": "Data", "cell": None}]))
+                    self.assertEqual(self.found(report, "workbook.feature", "charts"), [])
+                    self.assertEqual(self.found(report, "chart.skipped", "unreadable"), [])
+
+    def test_a_grouped_chart_keeps_its_drawing_entry(self):
+        ods = ods_with_charts({"Data": ods_data_rows()}, [{"sheet": "Data", "name": "A", "xml": ods_column_chart()}])
+        with zipfile.ZipFile(io.BytesIO(ods)) as archive:
+            content = archive.read("content.xml").decode()
+        frame = content[content.index("<draw:frame"):content.index("</draw:frame>") + len("</draw:frame>")]
+        grouped = replace_part(ods, "content.xml", content.replace(frame, f"<draw:g>{frame}</draw:g>").encode())
+        for path, report in self.reports(grouped, "ods").items():
+            with self.subTest(path=path):
+                self.assertEqual([entry["samples"] for entry in self.found(report, "chart.skipped", "grouped")], [[{"sheet": "Data", "cell": "A"}]])
+                self.assertEqual([entry["count"] for entry in self.found(report, "sheet.feature", "drawings")], [1])
+
+    def test_an_unreadable_drawing_is_still_reported(self):
+        xlsx = xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "name": "A", "xml": column_chart()}])
+        broken = replace_part(xlsx, "xl/drawings/drawing1.xml", b"<xdr:wsDr")
+        ods = ods_with_charts({"Data": ods_data_rows()}, [{"sheet": "Data", "name": "A", "xml": ods_column_chart(), "missing": True}])
+        for fmt, data in (("xlsx", broken), ("ods", ods)):
+            for path, report in self.reports(data, fmt).items():
+                with self.subTest(fmt=fmt, path=path):
+                    self.assertEqual([entry["samples"] for entry in self.found(report, "chart.skipped", "unreadable")],
+                                     [[{"sheet": "Data", "cell": "drawing" if fmt == "xlsx" else "A"}]])
+                    self.assertEqual([entry["count"] for entry in self.found(report, "sheet.feature", "drawings")], [1])
+
+    def test_an_empty_drawing_is_still_reported(self):
+        xlsx = xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "name": "A", "xml": column_chart()}])
+        empty = replace_part(xlsx, "xl/drawings/drawing1.xml", f'<xdr:wsDr xmlns:xdr="{XDR}" xmlns:a="{A}"/>'.encode())
+        for path, report in self.reports(empty, "xlsx").items():
+            with self.subTest(path=path):
+                self.assertEqual([entry["count"] for entry in self.found(report, "sheet.feature", "drawings")], [1])
+                self.assertEqual(self.found(report, "workbook.feature", "charts"), [])
+
+    def test_a_drawing_with_an_alternate_content_shape_is_still_reported(self):
+        # A root mc:AlternateContent whose branches hold no anchor (here only a shape) is not consumed as an anchor.
+        mc = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+        shape = (f'<mc:AlternateContent xmlns:mc="{mc}"><mc:Choice Requires="a"><xdr:sp xmlns:xdr="{XDR}"><xdr:nvSpPr>'
+                 '<xdr:cNvPr id="9" name="Shape 1"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr/></xdr:sp></mc:Choice></mc:AlternateContent>')
+        xlsx = xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "name": "A", "xml": column_chart()}])
+        with zipfile.ZipFile(io.BytesIO(xlsx)) as archive:
+            drawing = archive.read("xl/drawings/drawing1.xml").decode()
+        data = replace_part(xlsx, "xl/drawings/drawing1.xml", drawing.replace("</xdr:wsDr>", shape + "</xdr:wsDr>").encode())
+        for path, report in self.reports(data, "xlsx").items():
+            with self.subTest(path=path):
+                self.assertEqual([entry["count"] for entry in self.found(report, "sheet.feature", "drawings")], [1])
+                self.assertEqual(self.found(report, "chart.skipped", "unreadable"), [])
+        preview = xlsx_preview({"file_base64": b64(data), "scope": "workbook"})
+        self.assertEqual([chart["name"] for chart in preview["workbook_charts"]], ["A"])
+
+    def test_an_ods_z_index_too_long_to_read_is_ignored(self):
+        # 5,000 digits: past Python's 4,300-digit int conversion limit. The chart imports, in document order.
+        ods = ods_with_charts({"Data": ods_data_rows()}, [{"sheet": "Data", "name": "A", "xml": ods_column_chart()}])
+        with zipfile.ZipFile(io.BytesIO(ods)) as archive:
+            content = archive.read("content.xml").decode()
+        data = replace_part(ods, "content.xml", content.replace("<draw:frame", '<draw:frame draw:z-index="' + "9" * 5000 + '"', 1).encode())
+        preview = ods_preview({"file_base64": b64(data), "scope": "workbook"})
+        self.assertEqual([chart["name"] for chart in preview["workbook_charts"]], ["A"])
+        self.assertEqual([chart["name"] for chart in self.staged(data, "ods")["charts"]], ["A"])
+
+    def test_a_drawing_past_the_chart_allowance_is_still_reported(self):
+        xlsx = xlsx_with_charts({"Data": data_rows()}, [{"sheet": "Data", "name": "A", "xml": column_chart()}])
+        with patch.object(import_charts, "CHART_EXPANDED", 200):  # less than the sheet's relationships and its drawing
+            reports = self.reports(xlsx, "xlsx")
+        for path, report in reports.items():
+            with self.subTest(path=path):
+                self.assertEqual([entry["samples"] for entry in self.found(report, "chart.skipped", "unreadable")], [[{"sheet": "Data", "cell": "drawing"}]])
+                self.assertEqual([entry["count"] for entry in self.found(report, "sheet.feature", "drawings")], [1])
+
+    def embedded(self, charts):
+        """The ``embedded_objects`` counts, by path, of an ODS file with ``charts`` on one sheet."""
+        data = ods_with_charts({"Data": ods_data_rows()}, charts)
+        return {path: [entry["count"] for entry in self.found(report, "workbook.feature", "embedded_objects")]
+                for path, report in self.reports(data, "ods").items()}
+
+    def test_ods_chart_objects_are_not_listed_as_embedded_objects(self):
+        found = self.embedded([{"sheet": "Data", "name": "A", "xml": ods_column_chart()},
+                               {"sheet": "Data", "name": "B", "xml": ods_column_chart(), "cell": (3, 3)}])
+        self.assertEqual(found, {"staged": [], "inline": [], "one sheet": []})
+
+    def test_a_non_chart_object_is_still_an_embedded_object(self):
+        formula = '<math:math xmlns:math="http://www.w3.org/1998/Math/MathML"/>'
+        found = self.embedded([{"sheet": "Data", "name": "A", "xml": ods_column_chart()},
+                               {"sheet": "Data", "name": "Formula", "xml": formula, "cell": (3, 3)}])
+        self.assertEqual(found, {"staged": [1], "inline": [1], "one sheet": [1]})
+
+    def test_an_unreadable_chart_object_is_still_an_embedded_object(self):
+        found = self.embedded([{"sheet": "Data", "name": "A", "xml": ods_column_chart().replace("chart:plot-area", "chart:plot-ared")}])
+        self.assertEqual(found, {"staged": [1], "inline": [1], "one sheet": [1]})
+
+    def test_a_chart_object_never_reached_is_still_an_embedded_object(self):
+        # Once 64 charts are held no further object is read, so the 65th is not known to be a chart.
+        charts = [{"sheet": "Data", "name": f"C{n}", "xml": ods_column_chart()} for n in range(MAX_CHARTS_HELD + 1)]
+        found = self.embedded(charts)
+        self.assertEqual(found, {"staged": [1], "inline": [1], "one sheet": [1]})
+
+    def test_chart_sheets_are_still_reported(self):
+        data = (FIXTURES / "corpus" / "chart-sheet.xlsx").read_bytes()
+        for path, report in self.reports(data, "xlsx").items():
+            with self.subTest(path=path):
+                self.assertEqual(self.found(report, "workbook.feature", "charts"), [])
+                if path != "one sheet":
+                    (entry,) = self.found(report, "workbook.feature", "chart_sheets")
+                    self.assertEqual(entry["count"], 1)
 
 
 class SelectionRollbackTests(unittest.TestCase):

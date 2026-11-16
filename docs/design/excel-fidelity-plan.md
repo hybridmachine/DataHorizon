@@ -851,8 +851,9 @@ it turns out wrong. Task numbers refer to the
   entity in a sheet relationship part still rejects (an attack shape, not an
   unusual file). Cost if wrong: comments of a sheet with damaged relationships
   are reported only as unreadable relationships.
-- An XLSX drawing is reported on the sheet that holds it (`drawings`); charts,
-  pivot tables, VBA, custom XML and the other advanced parts are reported once
+- An XLSX drawing is reported on the sheet that holds it (`drawings`; not when
+  it held only charts, which import or have their own `chart.skipped` entry;
+  this was changed on November 15, 2026); pivot tables, VBA, custom XML and the other advanced parts are reported once
   for the workbook from the package part names. Cost if wrong: none for loss;
   the counts are of parts, not of objects.
 - ODS column widths are reported only for columns whose width differs from the

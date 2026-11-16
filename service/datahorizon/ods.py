@@ -428,8 +428,6 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
             with archive.open(name) as stream: _check_declaration(stream.read(65536))
             return read_xml(archive,name)
         panes,readable=read_panes(archive,read_settings)
-        wide=ConversionReport(); workbook_features.report(wide,layout,archive.namelist()); report_unreadable_settings(wide,readable)
-        if sheet_names is None: conversions.merge(wide)
         report.append("ISO shorthand normalizes to native seconds; explicit timezone_policy=utc normalizes offset timestamps to UTC civil values and omits the original offset.")
         scope=list(report)
         edits=[]; row=1; processed=0; staged_bytes=0
@@ -463,11 +461,9 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
                 col+=count
             for offset in range(row_count if template else 0): edits.extend({**item,"row":row+offset} for item in template)
             row+=row_count
-        sheet_features=OdsSheetFeatures(layout,mapped_styles(styles.styles),panes.get(sheet_label))
-        scan_table(sheets[selected-1],sheet_features)
-        sheet_features.report(conversions,sheet_label,workbook_features.sheet_extra(sheet_label))
         # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules, against the
         # shared allowance and workbook limit. A selection reads this sheet's charts alone, then rebases and shifts them.
+        # The frames are read before the sheet's features are scanned: a frame that is a chart is not a drawing left out.
         from .interchange import _apply_cells, fit_charts, selection_charts
         from .ods_charts import SheetFrames, sizes_declared, table_frames
         names=sheet_names if sheet_names is not None else [s.get(q(T,"name"),"") for s in sheets]
@@ -475,6 +471,14 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         if chart_parts is None: chart_parts=selection_charts(names,position,shift,sheet_label,checkpoint)
         frames=SheetFrames(archive,position,sheet_label,chart_parts,conversions)
         for frame,cell,grouped in table_frames(sheets[selected-1]): frames.frame(frame,cell,grouped)
+        def workbook_wide():
+            # Read once the charts are: an object read as a chart is not an embedded object left out.
+            wide=ConversionReport(); workbook_features.report(wide,layout,archive.namelist(),chart_parts.objects); report_unreadable_settings(wide,readable)
+            return wide
+        if sheet_names is None: conversions.merge(workbook_wide())
+        sheet_features=OdsSheetFeatures(layout,mapped_styles(styles.styles),panes.get(sheet_label),frames.charts)
+        scan_table(sheets[selected-1],sheet_features)
+        sheet_features.report(conversions,sheet_label,workbook_features.sheet_extra(sheet_label))
         records=[record for draft in frames.finish(sizes_declared(sheet_features)) if (record:=chart_parts.collector.add(draft,names,conversions)) is not None]
         lines=list(report)
         def build(charts):
@@ -488,7 +492,7 @@ def _ods_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=No
         result=fit_charts(build,records,[sheet_label],conversions,_apply_cells(edits,request)) if sheet_names is None else build(records)
         if result["can_import"]: result["cells"]=import_edits(result,integer(request.get("row",1),1,1048576,"row"),integer(request.get("col",1),1,16384,"col"))
         require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","ODS preview exceeds 4 MiB")
-        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=wide; result["_charts"]=records
+        if sheet_names is not None: result["_conversions"]=conversions; result["_workbook"]=workbook_wide; result["_charts"]=records
         return result
 
 
@@ -504,11 +508,12 @@ def uses_modern_function(source):
     return map_formula_functions(source,MODERN_FUNCTIONS)!=source
 
 
-def export_lines(head,catalog,modern_functions):
-    """The fixed report lines of an ODS export after its scope lines `head`; the conversion report's lines follow them."""
+def export_lines(head,catalog,modern_functions,charts=()):
+    """The fixed report lines of an ODS export after its scope lines `head`, with its chart lines `charts`; the
+    conversion report's lines follow them."""
     report=list(head)
     if catalog.get('native_omissions'):report.append('Native relational objects omitted from this sheet export: '+', '.join(catalog['native_omissions']))
-    report.extend(native_only_report(catalog))
+    report.extend(native_only_report(catalog,charts))
     report.append(TEMPORAL_EXPORT_LINE)
     if modern_functions:report.append(MODERN_FUNCTIONS_LINE)
     return report
@@ -642,13 +647,14 @@ def export_ods_cell(cell,style_name,*,sheet,mode,report,whole,bounds=None,names=
     return out,text_nodes
 
 
-def package_parts():
-    """The styles and manifest parts of an ODS export, after its mimetype and content.xml."""
+def package_parts(extra=(),manifest=()):
+    """The styles and manifest parts of an ODS export, after its mimetype and content.xml, then the `extra` (path,
+    element) parts, whose manifest entries `manifest` lists as (full path, media type)."""
     styles=ET.Element(q(O,"document-styles"),{q(O,"version"):"1.3"}); node(styles,q(O,"styles"))
-    manifest=ET.Element(q(M,"manifest"),{q(M,"version"):"1.3"})
-    for name,mime in (("/",MIME),("content.xml","text/xml"),("styles.xml","text/xml")):
-        node(manifest,q(M,"file-entry"),**{q(M,"full-path"):name,q(M,"media-type"):mime})
-    return [("styles.xml",styles),("META-INF/manifest.xml",manifest)]
+    listing=ET.Element(q(M,"manifest"),{q(M,"version"):"1.3"})
+    for name,mime in (("/",MIME),("content.xml","text/xml"),("styles.xml","text/xml"),*manifest):
+        node(listing,q(M,"file-entry"),**{q(M,"full-path"):name,q(M,"media-type"):mime})
+    return [("styles.xml",styles),("META-INF/manifest.xml",listing),*extra]
 
 
 def ods_export(snapshot,request):
@@ -662,31 +668,58 @@ def ods_export(snapshot,request):
     names=validate_sheet_names([s["name"] for s in snapshots])
     if selected_mode=="values": blocked_values(snapshots,whole)
     if whole: head=workbook_report()+[WHOLE_FORMULA_LINE]
-    report=export_lines(head,snapshot,selected_mode=="formulas" and any(uses_modern_function(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"))
-    root=ET.Element(q(O,"document-content"),{q(O,"version"):"1.3","xmlns:of":OF})
+    from .export_charts import fit, snapshot_charts
+    from .ods_charts import chart_document
+    found=ConversionReport()
+    built,left_out=snapshot_charts(snapshot,chart_document,found)
+    # Charts are written only as far as the file and its response stay within the size limits the cells are held to.
+    return fit(built,lambda kept:_ods_file(snapshot,snapshots,names,selected_mode,whole,head,found,left_out,built,kept))
+
+
+def _ods_file(snapshot,snapshots,names,selected_mode,whole,head,found,left_out,built,kept):
+    """The export result holding the built charts `kept`; the other charts of `built` are reported as left out for size."""
+    from .export_charts import lines as chart_lines, oversize, package as package_charts
+    from .ods_charts import package as chart_package
+    from .ods_features import DRAW, SVG, XLINK
+    conversions=ConversionReport(); conversions.merge(found)
+    left_out+=oversize(built[len(kept):],conversions)
+    (objects,entries,frames),written=package_charts(kept,chart_package,([],[],{}),conversions)
+    left_out+=len(kept)-len(written)
+    report=export_lines(head,snapshot,selected_mode=="formulas" and any(uses_modern_function(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"),
+                        chart_lines(len(written),left_out))
+    # The chart frames carry prefixed names without declarations; the document declares their namespaces.
+    root=ET.Element(q(O,"document-content"),{q(O,"version"):"1.3","xmlns:of":OF,**({"xmlns:draw":DRAW,"xmlns:svg":SVG,"xmlns:xlink":XLINK} if frames else {})})
     automatic=node(root,q(O,"automatic-styles"))
     style_table=OdsStyleTable(automatic)
     for cell in [c for s in snapshots for c in s["cells"]]: style_table.name(cell.get("style",{}))
-    body=node(root,q(O,"body")); spreadsheet=node(body,q(O,"spreadsheet")); text_nodes=0; conversions=ConversionReport()
+    body=node(root,q(O,"body")); spreadsheet=node(body,q(O,"spreadsheet")); text_nodes=0
     for sheet in snapshots:
         table=node(spreadsheet,q(T,"table"),**{q(T,"name"):sheet["name"]})
         previous_row=0; previous_col=0; row_node=None
-        for cell in sheet["cells"]:
-            row,col=cell["row"],cell["col"]
+        # A chart frame sits in its anchor cell, which may hold no stored cell (or be on a sheet without cells).
+        placed={}
+        for row,col,frame in frames.get(sheet["name"],()): placed.setdefault((row,col),[]).append(frame)
+        stored={(cell["row"],cell["col"]):cell for cell in sheet["cells"]}
+        for row,col in sorted(stored.keys()|placed.keys()):
+            cell=stored.get((row,col))
             if row!=previous_row:
                 if row-previous_row>1: node(table,q(T,"table-row"),**{q(T,"number-rows-repeated"):str(row-previous_row-1)})
                 row_node=node(table,q(T,"table-row")); previous_row=row; previous_col=0
             if col-previous_col>1: node(row_node,q(T,"table-cell"),**{q(T,"number-columns-repeated"):str(col-previous_col-1)})
             previous_col=col
-            out,whitespace=export_ods_cell(cell,style_table.name(cell.get("style",{})),sheet=sheet["name"],mode=selected_mode,report=conversions,
-                                           whole=whole,bounds=sheet.get("range"),names=names)
-            text_nodes+=whitespace
-            require(text_nodes<=50000,"LIMIT","ODS text structure exceeds 50,000 whitespace nodes")
+            if cell is None: out=ET.Element(q(T,"table-cell"))
+            else:
+                out,whitespace=export_ods_cell(cell,style_table.name(cell.get("style",{})),sheet=sheet["name"],mode=selected_mode,report=conversions,
+                                               whole=whole,bounds=sheet.get("range"),names=names)
+                text_nodes+=whitespace
+                require(text_nodes<=50000,"LIMIT","ODS text structure exceeds 50,000 whitespace nodes")
+            out.extend(placed.get((row,col),()))
             row_node.append(out)
     output=io.BytesIO()
     with zipfile.ZipFile(output,"w",compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("mimetype",MIME,compress_type=zipfile.ZIP_STORED)
-        parts=[(name,xml(part)) for name,part in [("content.xml",root),*package_parts()]]
+        # The chart objects count against the expanded size with every other part.
+        parts=[(name,xml(part)) for name,part in [("content.xml",root),*package_parts(objects,entries)]]
         require(sum(len(data) for _,data in parts)<=16*1024*1024,"LIMIT","Expanded ODS export exceeds 16 MiB")
         for name,data in parts: archive.writestr(name,data)
     result={"file_base64":base64.b64encode(output.getvalue()).decode(),"state":snapshot["state"],"report":report+conversions.lines(),

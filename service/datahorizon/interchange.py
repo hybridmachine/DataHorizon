@@ -46,8 +46,12 @@ def namespaces(workbook_root):
 MAX_PACKAGE = 3*1024*1024
 MAX_EXPANDED = 16*1024*1024
 MAX_SOURCE_BYTES = 65_536  # typed() limit on a managed cell source
-# A selection's sheet_index names any sheet of the package's workbook list (a bounded package holds at most 128
-# parts); only worksheets count toward whole-workbook scope's 64-sheet limit.
+# What a bounded package may hold.  This service's own bounded XLSX export of 64 sheets with 64 charts spread over
+# them writes 325 entries (per sheet with a chart: the sheet, its relationships, a drawing and its relationships; one
+# part per chart; five package parts), so a bounded export always reads back through the bounded import.
+MAX_PARTS = 384
+# A selection's sheet_index names any sheet of the package's workbook list (a bounded package holds at most
+# MAX_PARTS parts); only worksheets count toward whole-workbook scope's 64-sheet limit.
 MAX_SHEET_INDEX = 4096
 
 
@@ -85,7 +89,7 @@ def package(request):
         archive=zipfile.ZipFile(io.BytesIO(data))
         normalise_part_names(archive)
         items=archive.infolist()
-        require(len(items)<=128 and len({i.filename for i in items})==len(items),"INVALID_SPREADSHEET","Package has too many or duplicate entries")
+        require(len(items)<=MAX_PARTS and len({i.filename for i in items})==len(items),"INVALID_SPREADSHEET","Package has too many or duplicate entries")
         require(sum(i.file_size for i in items)<=MAX_EXPANDED,"LIMIT","Expanded spreadsheet exceeds 16 MiB")
         require(all(not i.flag_bits & 1 and i.compress_type in (zipfile.ZIP_STORED,zipfile.ZIP_DEFLATED) for i in items),
                 "INVALID_SPREADSHEET","Encrypted or unsupported package compression")
@@ -597,7 +601,6 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
             edit=convert_xlsx_cell(cell,context=context)
             if edit is not None: edits.append(edit)
         scan_tree(root,sheet_features)
-        sheet_features.report(conversions,sheet_label)
         # A whole-workbook preparation carries the sheet's charts, read by the streaming reader's rules, against the
         # shared allowance and workbook limit. A selection reads this sheet's charts alone, then rebases and shifts them.
         from .xlsx_charts import worksheet_drafts
@@ -606,6 +609,7 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         if chart_parts is None: chart_parts=selection_charts(names,position,shift,sheet_label,checkpoint)
         drafts=worksheet_drafts(archive,part,position,sheet_label,chart_parts,conversions,sheet_features)
         records=[record for draft in drafts if (record:=chart_parts.collector.add(draft,names,conversions)) is not None]
+        sheet_features.report(conversions,sheet_label)  # after the charts: a drawing that held only charts is not reported
         if shared_formulas and shared_formulas.groups: report.append("Shared formulas expand to explicit per-cell sources with relative/absolute reference translation; caches are discarded.")
         report.extend(STYLE_SCOPE_LINES)
         scope=list(report)
@@ -625,12 +629,13 @@ def _xlsx_preview(request,checkpoint=lambda completed,phase:None,*,sheet_names=N
         return result
 
 
-def native_only_report(snapshot):
-    """Report lines for workbook names, event bindings and charts, which no interchange format carries."""
+def native_only_report(snapshot,charts=()):
+    """Report lines for workbook names and event bindings, which no interchange format carries, then the export's own
+    chart lines `charts` (export_charts.lines)."""
     report=[]
     if snapshot.get('native_names'):report.append('Workbook names are native-only and omitted from this export: '+', '.join(snapshot['native_names']))
     if snapshot.get('native_bindings'):report.append('Event bindings are native-only and omitted from this export: '+', '.join(snapshot['native_bindings']))
-    if snapshot.get('native_charts'):report.append('Charts are native-only and omitted from this export: '+', '.join(snapshot['native_charts']))
+    report.extend(charts)
     return report
 
 
@@ -646,11 +651,12 @@ def uses_future_prefix(source):
     return map_formula_functions(source,FUTURE_PREFIX)!=source
 
 
-def export_report(head,catalog,future_functions):
-    """The fixed report lines of an XLSX export after its scope lines `head`; the conversion report's lines follow them."""
+def export_report(head,catalog,future_functions,charts=()):
+    """The fixed report lines of an XLSX export after its scope lines `head`, with its chart lines `charts`; the
+    conversion report's lines follow them."""
     report=list(head)
     if catalog.get('native_omissions'):report.append('Native relational objects omitted from this sheet export: '+', '.join(catalog['native_omissions']))
-    report.extend(native_only_report(catalog))
+    report.extend(native_only_report(catalog,charts))
     report.append(TEMPORAL_EXPORT_LINE)
     if future_functions:report.append(FUTURE_FUNCTIONS_LINE)
     return report
@@ -693,8 +699,9 @@ def export_cell(cell,style,*,sheet,mode,report,whole,bounds=None,names=None):
     return out
 
 
-def package_parts(names):
-    """The content types, package relationships, workbook and workbook relationships of an export of sheets `names`.
+def package_parts(names,extra=(),overrides=()):
+    """The content types, package relationships, workbook and workbook relationships of an export of sheets `names`,
+    then the `extra` (name, element) parts, whose content types `overrides` lists as (part name, content type).
 
     Worksheets are xl/worksheets/sheet<N>.xml and the stylesheet xl/styles.xml; the workbook requests full recalculation on load."""
     workbook=ET.Element("workbook",xmlns=S,**{"xmlns:r":R})
@@ -712,7 +719,8 @@ def package_parts(names):
     node(types,"Override",PartName="/xl/workbook.xml",ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml")
     for index in range(1,len(names)+1): node(types,"Override",PartName=f"/xl/worksheets/sheet{index}.xml",ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml")
     node(types,"Override",PartName="/xl/styles.xml",ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml")
-    return [("[Content_Types].xml",types),("_rels/.rels",mainrels),("xl/workbook.xml",workbook),("xl/_rels/workbook.xml.rels",relationships)]
+    for name,kind in overrides: node(types,"Override",PartName="/"+name,ContentType=kind)
+    return [("[Content_Types].xml",types),("_rels/.rels",mainrels),("xl/workbook.xml",workbook),("xl/_rels/workbook.xml.rels",relationships),*extra]
 
 
 def xlsx_export(snapshot,request):
@@ -726,12 +734,29 @@ def xlsx_export(snapshot,request):
     names=validate_sheet_names([s["name"] for s in snapshots])
     if selected_mode=="values": blocked_values(snapshots,whole)
     if whole: head=workbook_report()+[WHOLE_EXPORT_CACHES]
-    report=export_report(head,snapshot,selected_mode=="formulas" and any(uses_future_prefix(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"))
+    from .export_charts import fit, snapshot_charts
+    from .xlsx_charts import chart_part
+    found=ConversionReport()
+    built,left_out=snapshot_charts(snapshot,chart_part,found)
+    # Charts are written only as far as the file and its response stay within the size limits the cells are held to.
+    return fit(built,lambda kept:_xlsx_file(snapshot,snapshots,names,selected_mode,whole,head,found,left_out,built,kept))
+
+
+def _xlsx_file(snapshot,snapshots,names,selected_mode,whole,head,found,left_out,built,kept):
+    """The export result holding the built charts `kept`; the other charts of `built` are reported as left out for size."""
+    from .export_charts import lines as chart_lines, oversize, package as package_charts
+    from .xlsx_charts import package as chart_package
+    conversions=ConversionReport(); conversions.merge(found)
+    left_out+=oversize(built[len(kept):],conversions)
+    (chart_parts,drawings,overrides),written=package_charts(kept,lambda pairs,notes:chart_package(pairs,names),([],{},[]),conversions)
+    left_out+=len(kept)-len(written)
+    report=export_report(head,snapshot,selected_mode=="formulas" and any(uses_future_prefix(c["source"]) for sheet in snapshots for c in sheet["cells"] if c["kind"]=="formula"),
+                         chart_lines(len(written),left_out))
     from .xlsx_styles import export_styles
     styles,style_ids=export_styles([c for s in snapshots for c in s["cells"]])
-    worksheets=[];conversions=ConversionReport()
-    for sheet in snapshots:
-        root=ET.Element("worksheet",xmlns=S)
+    worksheets=[]
+    for index,sheet in enumerate(snapshots,1):
+        root=ET.Element("worksheet",xmlns=S,**({"xmlns:r":R} if index in drawings else {}))
         data=node(root,"sheetData")
         current=None
         for cell in sheet["cells"]:
@@ -739,10 +764,12 @@ def xlsx_export(snapshot,request):
                 current=cell["row"]; row=node(data,"row",r=str(current))
             row.append(export_cell(cell,style_ids[encoded(cell.get("style",{}))],sheet=sheet["name"],mode=selected_mode,report=conversions,
                                    whole=whole,bounds=sheet.get("range"),names=names))
+        if index in drawings: node(root,"drawing",**{"r:id":drawings[index]})
         worksheets.append(root)
     output=io.BytesIO()
     with zipfile.ZipFile(output,"w",compression=zipfile.ZIP_DEFLATED) as archive:
-        parts=package_parts(names)+[("xl/styles.xml",styles)]
+        # The chart parts count against the expanded size with every other part.
+        parts=package_parts(names,chart_parts,overrides)+[("xl/styles.xml",styles)]
         parts.extend((f"xl/worksheets/sheet{index}.xml",part) for index,part in enumerate(worksheets,1))
         payload=[(name,xml(part)) for name,part in parts]
         require(sum(len(data) for _,data in payload)<=MAX_EXPANDED,"LIMIT","Expanded XLSX export exceeds 16 MiB")
@@ -862,13 +889,15 @@ def prepare_workbook(request,checkpoint,names,prepare,indexes=None,scope=()):
         result["workbook_charts"]+=part.pop("_charts")
         # Every sheet's preparation reads the same workbook features; they are reported once, first.
         wide=part.pop("_workbook")
-        if index==1: conversions.merge(wide)
+        if index==1: first=wide
         conversions.merge(part.pop("_conversions"))
         result["stored_cells"]+=part["stored_cells"]
         require(result["stored_cells"]<=MAX_CELLS,"LIMIT","Whole-workbook import exceeds 10,000 stored cells")
         size+=len(encoded(part["cells"]).encode())
         require(size<=3*1024*1024,"READ_LIMIT","Workbook input payload exceeds 3 MiB")
         result["workbook_sheets"].append({"name":name,"cells":part["cells"]})
+    # An ODS preparation gives its workbook features as a function, read once every sheet's charts have been.
+    conversions.merge(first() if callable(first) else first)
     # Sheets whose cells all degraded or were skipped are still created; their details are itemized here.
     result["scope_lines"]=workbook_report()+list(scope)
     def build(charts):

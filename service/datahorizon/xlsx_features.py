@@ -34,7 +34,7 @@ SHEET_FEATURES = (
 WORKBOOK_FEATURES = (
     "chart_sheets", "dialog_sheets", "macro_sheets", "sheets_without_part", "defined_names", "external_references", "hidden_sheets", "workbook_protection", "file_sharing",
     "calculation_settings", "custom_views", "rich_text", "phonetic", "function_groups", "smart_tags", "web_publish",
-    "slicers", "data_model", "extensions", "charts", "pivot_tables", "vba", "custom_xml", "connections",
+    "slicers", "data_model", "extensions", "pivot_tables", "vba", "custom_xml", "connections",
     "query_tables", "embedded_objects", "document_properties")
 # Sheets of a workbook that are not worksheets, by the last segment of their relationship type. They are not
 # imported: each is reported (workbook.feature, with the sheet as sample) and no native sheet is created for it.
@@ -46,9 +46,10 @@ KIND_NAMES = {"chart_sheets": "a chart sheet", "dialog_sheets": "a dialog sheet"
 STOCK_HEADER_FOOTER = {"&C&A", "&CPage &P", "&C&P", "&CPage &P of &N"}
 
 # Advanced package parts, one workbook entry per id counting the matching parts. Drawings, tables, comments and
-# external links are reported where a sheet or the workbook refers to them, not here.
+# external links are reported where a sheet or the workbook refers to them, not here. Chart parts are not: the
+# charts are imported, and each one that is not has its own chart.skipped entry (a chart sheet is chart_sheets).
 PACKAGE_PARTS = tuple((feature, re.compile(pattern, re.IGNORECASE)) for feature, pattern in (
-    ("charts", r"xl/charts/chart[^/]*\.xml"), ("pivot_tables", r"xl/pivotTables/[^/]+\.xml"),
+    ("pivot_tables", r"xl/pivotTables/[^/]+\.xml"),
     ("vba", r"xl/vbaProject\.bin"), ("custom_xml", r"customXml/item[0-9]*\.xml"),
     ("connections", r"xl/connections\.xml"), ("query_tables", r"xl/queryTables/[^/]+\.xml"),
     ("embedded_objects", r"xl/embeddings/[^/]+"), ("slicers", r"xl/(?:slicers|timelines)/[^/]+\.xml"),
@@ -154,6 +155,8 @@ class SheetFeatures:
         self.relationships = relationships or Relationships()
         self.legacy_drawing = False
         self.drawing_id, self.drawings = None, 0  # the r:id of the first <drawing>, and how many the sheet holds
+        self.charts_only = False  # set by the chart reading: the sheet's drawing was read and held only chart frames
+        self._settled = False
         self._found_in_extension = False
         self.default_width = None
         self.rows = self.columns = 0  # <row> and <col> elements seen
@@ -303,13 +306,21 @@ class SheetFeatures:
         return self.custom_width_columns+sum(columns for width, columns in self.plain_widths.items()
                                              if width is None or default is None or abs(width - default) > WIDTH_TOLERANCE)
 
-    def report(self, report, sheet):
-        """Add one omitted entry per feature found, in SHEET_FEATURES order."""
+    def settle(self):
+        """Add the features known only once the sheet has been read (once, however often it is called)."""
+        if self._settled: return
+        self._settled = True
         self.add("column_widths", self._column_widths())
         if self.relationships.comments: self.add("comments", self.relationships.comments)
         elif self.legacy_drawing: self.add("legacy_drawings")
         if self.relationships.unreadable: self.add("relationships_unreadable")
+
+    def report(self, report, sheet):
+        """Add one omitted entry per feature found, in SHEET_FEATURES order. The sheet's drawing is not one when the
+        chart reading found it held only chart frames (``charts_only``), which it does before this is called."""
+        self.settle()
         for feature in SHEET_FEATURES:
+            if feature == "drawings" and self.charts_only: continue
             if feature in self.counts:
                 report.add(SHEET_FEATURE, "omitted", feature, sheet=sheet, count=self.counts[feature], at_least=feature in self.saturated)
 

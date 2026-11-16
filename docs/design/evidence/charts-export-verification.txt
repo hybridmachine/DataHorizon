@@ -1,0 +1,113 @@
+Charts export verification
+==========================
+Date: November 15, 2026. Branch claude/charts-export, based on commit f6c8a6b (the round-trip tests and these
+documents are added on top). Machine: the reference Mac (macOS, Darwin 25.6.0), system Python 3.14.6
+(Homebrew). Neither openpyxl nor odfpy is installed.
+
+1. Round-trip module
+--------------------
+Command (repository root):
+  PYTHONPATH=service python3 -m unittest discover -s tests -p 'test_chart_round_trip.py' -v
+Result: Ran 7 tests in about 3 s, OK, 0 skipped.
+  ChartRoundTripTests.test_every_supported_chart_round_trips
+    ten charts on two sheets (column, bar, area clustered and stacked; line; pie; scatter; a chart whose sources are on
+    another sheet), with titles, axis titles, value axis min and max, all three legend positions, anchors, offsets, sizes
+    and drawing order; every series named by a cell reference. XLSX and ODS, inline export with inline import preview,
+    and streamed export job with staged import. Charts, cells and import report all equal; the import report holds no
+    chart or drawing entry.
+  ChartRoundTripTests.test_a_stacked_chart_survives_every_route
+    stacked column and bar charts, both formats and routes; no `gap width` entry on import.
+  ChartRoundTripTests.test_ods_names_a_text_series_series_n
+    the ODS export reports chart.converted / series_name and the series comes back "Series 1"; XLSX keeps the text.
+  FixtureRoundTripTests.test_fixture_file_round_trips
+    tests/fixtures/charts-two-sheets.xlsx and charts-one-sheet.xlsx: import, export, import (and a third generation),
+    both formats, both routes. ODS compares everything but series named by text.
+  DocumentedDifferenceTests (three tests): text over 255 characters (axis titles and an XLSX series name) comes back
+    at 255; two charts named "Sales" on one sheet come back "Sales" and a unique name; an empty series name comes back
+    "Series 1".
+No round-trip failure occurred; no product code was changed in this task.
+
+2. Whole service suite
+----------------------
+Command: PYTHONPATH=service python3 -m unittest discover -s tests
+Result: Ran 1681 tests in 373.757s, OK (skipped=28). The skipped tests are not itemized here; tests that need
+openpyxl or odfpy skip because neither is installed (two such skips are in the chart modules:
+PYTHONPATH=service python3 -m unittest discover -s tests -p 'test_*chart*.py' ran 461 tests, OK, skipped=2).
+The run printed ResourceWarning lines about unclosed SQLite connections; they were not investigated in this task.
+
+3. Desktop suite
+----------------
+Commands: cmake --build build --target desktop_tests && ctest --test-dir build -R '^desktop$' --output-on-failure
+Result: build exit 0 (everything already built; this branch changes no desktop code); ctest: 1/1 test passed,
+255.42 s ("100% tests passed out of 1").
+
+4. Sample files and package check
+---------------------------------
+A script run once, and not committed, built a native workbook (two sheets, the ten charts of item 1) and exported it
+through the service's streamed export job:
+  /Users/btabone/source/DataHorizon/output/charts-export-samples/charts.xlsx  (12,075 bytes, "Charts: 10 written.")
+  /Users/btabone/source/DataHorizon/output/charts-export-samples/charts.ods   (8,178 bytes, "Charts: 10 written.")
+The directory is not tracked by git. Both files hold the ten charts of item 1 (all six types, with stacked column, stacked bar and stacked area among them).
+Check with zipfile: testzip() found no bad member in either file. Every XML part parsed with xml.dom.minidom: XLSX 23
+of 23 parts; ODS 13 of 14 parts (the other is `mimetype`, which is plain text). 10 chart parts matched by name in
+each file. This shows the packages are well formed; it does not show that Excel or LibreOffice accept them.
+
+5. Not verified
+---------------
+- Opening the files in Excel: not installed on this machine.
+- Opening the files in LibreOffice: not installed on this machine.
+- The owner's `Column Chart_Complete.xlsx`: not on the machine, not exported. To check by hand, open the two sample
+  files above in each application and confirm every chart shows its data after the application recalculates (no
+  cached values are written).
+- openpyxl and odfpy reading the files: neither is installed, so the tests that use them skipped.
+- Windows and Linux; a qualified cross-platform release.
+
+6. Fixes after the whole-branch review (November 15, 2026)
+-----------------------------------------------------------
+The findings of the whole-branch review (reviewed at 262e122) were fixed test-first in commits 549c207, 9268762,
+3d0a59b, e1b4c63 and 6c05e56; the documents follow in the next commit. The final runs were made on 6c05e56 (the
+document changes, uncommitted at the time, touch no code).
+Round-trip module: PYTHONPATH=service python3 -m unittest discover -s tests -p 'test_chart_round_trip.py'
+  Ran 8 tests in 3.2 s, OK (the new test: two charts whose anchor order is the reverse of their z order keep z
+  order through XLSX and ODS, both routes).
+Chart modules: PYTHONPATH=service python3 -m unittest discover -s tests -p 'test_*chart*.py'
+  Ran 482 tests in 54.4 s, OK (skipped=2; openpyxl and odfpy are not installed).
+Whole service suite: PYTHONPATH=service python3 -m unittest discover -s tests
+  Ran 1702 tests in 363.355s, OK (skipped=28).
+ResourceWarnings: the full-suite output again holds ResourceWarning lines about unclosed SQLite connections. They do
+not come from the test modules this branch adds or changes: each of them (test_chart_clients, test_chart_export_paths,
+test_chart_round_trip, test_export_charts, test_import_chart_paths, test_large_export, test_ods_chart_export,
+test_stage_import, test_xlsx_chart_export, test_xlsx_charts, test_xlsx_degrade, test_xlsx_stream) was run alone with
+`python3 -W error::ResourceWarning` and emitted none; the same holds for test_workbook_interchange.py, on this branch
+and on main (f2e3e96). The modules that emit them were not identified.
+Collection timing: the reviewer's probe (60 tables of 20 columns, 64 charts of 64 table-sourced series) took 0.05 to
+0.06 s per export (20-cell selection and whole workbook, both formats); before the fix the selection export failed
+after 2 s with "Operation exceeded its time budget" and the whole-workbook export took 4.0 to 4.3 s.
+Sample files, regenerated by a new throwaway script (not committed): a native workbook with one chart of each of the
+six types plus one stacked column chart, exported through the streamed export job:
+  /Users/btabone/source/DataHorizon/output/charts-export-samples/charts.xlsx  (8,134 bytes, "Charts: 7 written.")
+  /Users/btabone/source/DataHorizon/output/charts-export-samples/charts.ods   (6,248 bytes, "Charts: 7 written.")
+  testzip() found no bad member in either; every XML part parsed (XLSX 16 of 16; ODS 10 of 11, the other is
+  `mimetype`); 7 chart parts in each; both read back through the project's import previews with the seven charts and
+  no chart or drawing report entry. These replace the ten-chart files of item 4.
+Not verified (unchanged, with one addition):
+- Opening the files in Excel: not installed.
+- Opening the files in LibreOffice: not installed. The ODS chart data binding (xlink:href=".." on chart:chart, the
+  plot area's table:cell-range-address) and draw:z-index were written from the format's documentation and
+  LibreOffice's known output; they are unverified until a file is opened there.
+- The owner's Column Chart_Complete.xlsx: not on the machine.
+- openpyxl and odfpy reading the files: neither is installed.
+
+Pull request review fixes (November 15, 2026; run on the working tree committed after 87b1595)
+Fixes: a bounded package may hold 384 parts (was 128); an inline export whose cells fit keeps the leading charts that
+fit and reports the rest `size_limit` instead of failing; an ODS title of several lines is one text:p with
+text:line-break, read back by the importer; the CLI report names every chart of a chart.skipped entry.
+New tests: 25 sheets with one chart each read back through the bounded import (XLSX 130 parts, ODS); the reviewer's
+size case (25 cells of 64 KiB of ampersands, 64 charts of 64 series) exports to ODS against the real 16 MiB limit with
+the charts that fit; the XLSX route with the limit lowered in an in-process service (a read snapshot cannot hold cells
+that fill 16 MiB of XLSX), whole workbook and selection; `fit` for every prefix length and both size codes; the title
+shape and round trip; the CLI line.
+Whole service suite: PYTHONPATH=service python3 -m unittest discover -s tests
+  Ran 1716 tests in 355.425s, OK (skipped=28).
+Not verified here: the title fix in LibreOffice and against the ODF 1.3 schema (LibreOffice is not installed on this
+machine and the schema was not fetched); the reviewer reported both checks failing before the fix.

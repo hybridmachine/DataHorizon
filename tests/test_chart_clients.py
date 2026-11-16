@@ -224,24 +224,25 @@ class ChartClientTests(unittest.TestCase):
         self.assertEqual(deleted.returncode, 0, deleted.stderr)
         self.assertEqual(json.loads(cli(path, "charts", "list").stdout)["charts"], [])
 
-    def test_export_reports_charts_as_native_only(self):
+    def test_export_reports_charts(self):
         book = self.open_book("export.dhwb")
         spec = book.suggest_chart("Sheet1", r1=1, c1=1, r2=7, c2=2)["spec"]
         book.create_chart(spec, name="Sales")
         book.apply("sheet_add", name="Summary")
         book.create_chart(spec, sheet="Summary")
-        charts_line = "Charts are native-only and omitted from this export: Sales on Sheet1, Chart 1 on Summary"
         for form in ("xlsx", "ods"):
             with self.subTest(form=form):
                 whole = book.export_spreadsheet(form, scope="workbook")["report"]
-                self.assertEqual([line for line in whole if line.startswith("Charts ")], [charts_line])
+                self.assertEqual([line for line in whole if line.startswith("Charts")], ["Charts: 2 written."])
+                # The selection holds Sales's anchor but not its sources (A2:B7); Summary's chart is not on its sheet.
                 selection = book.export_spreadsheet(form, sheet="Sheet1", r1=1, c1=1, r2=3, c2=3)["report"]
-                self.assertIn(charts_line, selection)
+                self.assertEqual([line for line in selection if line.startswith("Charts")],
+                                 ["Charts: 0 written, 1 left out; each is listed below with its reason."])
         csv = self.client.request(book.base + "/export/csv", dict(sheet="Sheet1", r1=1, c1=1, r2=3, c2=3))["report"]
         self.assertFalse([line for line in csv if "Chart" in line])
         empty = self.open_book("no-charts.dhwb")
         for form in ("xlsx", "ods"):
-            self.assertFalse([line for line in empty.export_spreadsheet(form, scope="workbook")["report"] if line.startswith("Charts ")])
+            self.assertFalse([line for line in empty.export_spreadsheet(form, scope="workbook")["report"] if line.startswith("Charts")])
 
     def fill_table(self, book):
         book.create_table("Sales", [dict(name="Month", type="text"), dict(name="Units", type="integer"), dict(name="Cost", type="number")])

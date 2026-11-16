@@ -354,8 +354,9 @@ class StreamingReaderTests(unittest.TestCase):
                     self.assertEqual(found[("sheet.feature", "legacy_drawings")]["samples"], [{"sheet": "Other", "cell": None}])
                     for key in (("sheet.feature", "frozen_panes"), ("sheet.feature", "sparklines"), ("sheet.feature", "rich_values"),
                                 ("sheet.feature", "rich_text"), ("sheet.feature", "row_heights"), ("sheet.feature", "hidden_rows_columns"),
-                                ("workbook.feature", "defined_names"), ("workbook.feature", "charts")):
+                                ("workbook.feature", "defined_names")):
                         self.assertIn(key, found)
+                    self.assertNotIn(("workbook.feature", "charts"), found)  # a chart part is never itemized as omitted
 
     def test_feature_relationships_are_read_as_a_stream(self):
         # One relationship per hyperlink: more than the tree reader's whole-part node bound must not reject.

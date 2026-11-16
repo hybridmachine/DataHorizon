@@ -82,6 +82,7 @@ def snapshot(engine):
     and the existing exporter writes it as Python float text (42 becomes 42.0), as the bounded export does."""
     result = engine.read_workbook()
     result.pop('state')
+    result.pop('chart_sheets')  # keyed by sheet id, which differs between workbooks
     for sheet in result['sheets']:
         for cell in sheet['cells']:
             if cell['kind'] == 'number': cell['source'] = float(cell['source'])
@@ -209,13 +210,13 @@ class LargeExportTests(unittest.TestCase):
         """Hold the export's writer at its first checkpoint, after the snapshot and with the file open."""
         reached, proceed = threading.Event(), threading.Event()
         real = service_module.write_workbook
-        def wrapper(path, sheets, report, checkpoint):
+        def wrapper(path, sheets, report, checkpoint, **options):
             def gate(completed, phase):
                 if not reached.is_set():
                     reached.set()
                     proceed.wait(30)
                 checkpoint(completed, phase)
-            return real(path, sheets, report, gate)
+            return real(path, sheets, report, gate, **options)
         with patch.object(service_module, 'write_workbook', wrapper):
             try:
                 yield reached, proceed

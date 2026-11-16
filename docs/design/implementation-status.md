@@ -4,10 +4,117 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## Charts export — November 15, 2026
+
+The [export design](charts-authoring-export-design.md#6-export) and
+[plan](charts-export-plan.md) are executed on branch `claude/charts-export`,
+which is not merged (it follows the import and view-only work merged to `main`
+through pull request 140). The [verification evidence](evidence/charts-export-verification.txt)
+records the commands and results. Desktop authoring (design sections 4 and 5)
+is not built.
+
+Built, and covered by service tests:
+- XLSX and ODS exports write native charts: the inline whole-workbook and
+  selection routes and the streamed whole-workbook export job. A shared step
+  (`export_charts.py`) decides which charts can be written and builds one draft
+  per chart; `xlsx_charts.py` and `ods_charts.py` write the DrawingML chart and
+  the ODS chart object and package them. The six chart types and both groupings
+  are written with titles, axis titles, value axis minimum and maximum, legend
+  position, series names by cell reference, sources by sheet name, anchor,
+  offset, size and drawing order. XLSX also writes literal series names.
+- A chart is left out whole, with `chart.skipped` and one of seven reasons:
+  `table_source`, `query_source`, `broken_source`, `source`, `unsupported` (a
+  stored specification this service cannot read: an unsupported version or an
+  invalid specification; a stored chart record that is itself malformed is
+  refused when the workbook is opened or refreshed, before any export, as
+  before) and `unwritable` (including every chart, when packaging the built
+  charts fails; the export continues without them), and `size_limit` (inline
+  exports: no room within the size limits). The report says
+  `Charts: N written.` or `Charts: N written, M left out; each is listed below
+  with its reason.`, and nothing when there are no charts. A selection export
+  writes a chart only when its anchor and every source lie inside the
+  selection.
+- No cached values and no ODS local data table are written. In XLSX a chart
+  shows its data once Excel fills the caches on load; in ODS the chart reads the
+  sheet's cells directly. No markers or gridlines are written. ODS
+  cannot carry a series name given as text: the chart is written, the export
+  reports `chart.converted` / `series_name`, and the series comes back "Series
+  N". XLSX stacked column and bar charts carry full overlap, and the importer no
+  longer reports that case as a dropped `gap width` style.
+- Changes after the whole-branch review: collecting charts reads each catalog
+  (tables, saved queries, sheets) at most once per export, and a selection
+  export collects only its sheet's charts, so table-sourced charts no longer
+  time out an export (60 tables and 64 charts of 64 table-sourced series: a
+  20-cell selection export went from failing after 2 s to about 0.05 s); a
+  stored payload that is JSON but not an object is reported `unsupported`
+  (reached only when charts are collected from a database the engine has not
+  validated; through the service such a record is refused when the workbook is
+  opened or refreshed); ODS
+  chart objects say their data comes from the sheet (`xlink:href=".."`, the
+  plot area's `table:cell-range-address`); each ODS frame carries
+  `draw:z-index` and the importer orders a sheet's charts by it, so stacking
+  order survives when anchors disagree with it; XLSX references always quote
+  the sheet name; XLSX charts have square corners (`c:roundedCorners` 0); a
+  packaging failure leaves every chart out instead of failing the export. An
+  ODS scatter chart is not given LibreOffice's points-only marker settings,
+  because the importer would report them as a dropped `markers` style.
+- Changes in pull request review: chart parts still count against the inline
+  exports' 16 MiB expanded and 4 MiB response limits, but an export whose cells
+  fit no longer fails because of its charts: the leading charts that fit are
+  written and each other one is reported `size_limit` (owner decision; 25 cells
+  of 64 KiB of ampersands and 64 charts of 64 series now export to ODS with
+  the charts that fit). A bounded package may hold 384 parts (was 128), so
+  an XLSX export with one chart on each of 25 sheets (130 parts) reads back
+  through the bounded import. An ODS title of several lines is written as one
+  paragraph with `text:line-break` and read back. The CLI report names every
+  chart left out.
+- Import report clean-up: no `workbook.feature` `charts`; `sheet.feature`
+  `drawings` only for a sheet whose drawing was not read, holds no chart frame,
+  or holds something besides chart frames (an XLSX drawing root element that is
+  not an anchor included); ODS `embedded_objects` does not count an object read as
+  a chart; `chart_sheets` is unchanged.
+- The rules are in the [compatibility contract](compatibility-v0.md#chart-export).
+  The OpenAPI document (`openapi` in `service.py`) did not describe charts as
+  omitted from export, so it is unchanged.
+
+Measured on the reference Mac (system Python 3.14.6, no openpyxl or odfpy):
+- `tests/test_chart_round_trip.py`: 8 tests, OK. Ten charts of every type and
+  grouping on two sheets, exported and imported again through XLSX and ODS, the
+  inline and the streamed routes, come back equal in type, grouping, title,
+  axes, legend, sources, series names, name, anchor, offset, size and order,
+  with no chart or drawing entry in the import report. The committed fixtures
+  `charts-two-sheets.xlsx` and `charts-one-sheet.xlsx` import, export and import
+  again with the same charts and cells. Three differences from the importer's
+  own rules are pinned, one test each: text over 255 characters is cut, duplicate
+  chart names on a sheet are made unique, and an empty series name comes back
+  "Series N". The eighth: two charts whose anchor order is the reverse of their
+  z order come back in z order in both formats and routes.
+- The whole service suite, after the review fixes (run on commit 6c05e56):
+  1,702 tests, OK, 28 skipped, 363 s. The chart modules: 482 tests, OK, 2
+  skipped.
+- The desktop suite (this branch changes no desktop code): passed, 255 s.
+- Two sample files, `output/charts-export-samples/charts.xlsx` and `charts.ods`
+  (not tracked by git), regenerated after the review fixes, hold seven charts
+  each (the six types and a stacked column chart); every XML part of each
+  parses and both import again with the seven charts.
+
+Not verified:
+- Opening the exports in Excel (not installed).
+- Opening them in LibreOffice (not installed). The ODS chart data binding
+  (`xlink:href=".."`, the plot area's `table:cell-range-address`) and
+  `draw:z-index` were written from the format's documentation and LibreOffice's
+  known output, and are unverified until a file is opened there.
+- The owner's sample file `Column Chart_Complete.xlsx` (not on the machine).
+  The two sample files are there for the owner to open.
+- openpyxl and odfpy reading the files: neither is installed, so the tests that
+  use them skipped. Windows and Linux. Desktop
+authoring and workbook-Python chart operations are not built.
+
 ## Charts import and view-only display — November 15, 2026
 
 The [design](charts-import-view-design.md) and [plan](charts-import-view-plan.md)
-are executed on branch `claude/charts-import-view`, which is not merged. They
+are executed on branch `claude/charts-import-view`, merged to `main` through
+pull request 140. They
 pull chart import and a view-only desktop display ahead of charts stage 3
 authoring and stage 4 export. The [verification evidence](evidence/charts-import-view-verification.txt)
 records the commands and results.
@@ -63,24 +170,25 @@ SVGs are 2,509 and 3,376 bytes. The whole-file conversion report holds seven
 `sheet.feature` `drawings` as omitted. The full suite result is in the evidence
 file.
 
-Known inconsistency, awaiting an owner decision: the `workbook.feature`
-`charts` and `sheet.feature` `drawings` omitted entries are still reported when
-the charts import, so a file whose charts all imported still lists charts as
-omitted.
+The run above predates the owner's decision on the `workbook.feature` `charts`
+and `sheet.feature` `drawings` entries, now built: an import no longer reports
+`charts`, and reports a sheet's `drawings` only when its drawing held something
+besides charts or was not read.
 
 Not verified: the application window on the sample file (overlays over the
 grid, the import dialog) was not driven in this run; LibreOffice was not
 installed, so no cross-format check ran; Windows and Linux. Chart authoring
 (Insert Chart, select, move, resize, delete, edit panel, object browser),
-workbook-Python chart operations and chart export are not built; export still
-omits charts. The stage 3 wireframe session is still owed. CLI one-sheet
+workbook-Python chart operations are not built. Chart export was built later
+the same day ([below](#charts-export--november-15-2026)). The stage 3 wireframe session is still owed. CLI one-sheet
 import does not exist, so only the SDK and the desktop carry charts on that
 path.
 
 ## Charts table and saved-query sources — November 13, 2026
 
 The [table and saved-query sources plan](charts-table-query-sources-plan.md) is
-executed on branch `claude/charts-table-query-sources`, which is not merged.
+executed on branch `claude/charts-table-query-sources`, merged to `main`
+through pull request 140.
 With it, charts stage 2 is complete. A chart's values, categories or x values
 can now come from a column of a structured table (`{"kind": "table", "table",
 "column"}`) or a column of a saved query's result (`{"kind": "query", "query",
@@ -116,8 +224,8 @@ as-built [design](charts-design.md) (Draft 0.5).
 ## Charts stage 2 engine and interfaces (range sources) — November 12, 2026
 
 The [stage 2 plan](charts-stage-2-plan.md) is executed for range sources on
-branch `claude/charts-stage-2`. That branch is stacked on the unmerged
-`claude/charts-stage-1`, and neither is merged. Charts are a `chart` kind in
+branch `claude/charts-stage-2`. That branch was stacked on
+`claude/charts-stage-1`; both were merged to `main` through pull request 140. Charts are a `chart` kind in
 `dh_objects` at [native format v8](native-format-v1.md#charts-format-v8). They
 are created, changed and deleted by undoable operation actions, follow row and
 column edits, and are resolved and rendered to SVG by cancellable 30-second

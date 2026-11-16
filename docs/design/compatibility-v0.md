@@ -357,8 +357,8 @@ end of their sheet.
 | `cell.*` | A cell value converted or skipped: `error_value`, `invalid_value`, `missing_cache`, `number_out_of_range`, `text_too_long`, `unsupported_type`, `date_conversion` |
 | `formula.*` | A formula kept unevaluable, replaced by its cache or skipped: `unsupported_function`, `name`, `missing_sheet`, `external_reference`, `unsupported_reference`, `syntax`, `unsupported_syntax`, `array`, `data_table`, `untranslatable`, `unmaintained` (export), `cache_omitted` and `display_not_evaluated` (large export) |
 | `style.*` | Formatting outside the native style tier: `number_format`, `font`, `fill`, `border`, `alignment`, `named_style` |
-| `sheet.feature` | A worksheet feature not imported; the detail is its feature id (`merged_cells`, `column_widths`, `row_heights`, `hidden_rows_columns`, `frozen_panes`, `conditional_formatting`, `data_validation`, `hyperlinks`, `comments`, `excel_tables`, `auto_filter`, `sheet_protection`, `page_setup`, `drawings` (still reported when the charts import; see [Charts](#charts)) and others); the count is items (ranges, rules, links, rows or columns) |
-| `workbook.feature` | A workbook feature or package part not imported: `defined_names`, `external_references`, `hidden_sheets`, `workbook_protection`, `calculation_settings`, `charts` (still reported when the charts import; see [Charts](#charts)), `pivot_tables`, `vba`, `custom_xml`, `rich_text` and others |
+| `sheet.feature` | A worksheet feature not imported; the detail is its feature id (`merged_cells`, `column_widths`, `row_heights`, `hidden_rows_columns`, `frozen_panes`, `conditional_formatting`, `data_validation`, `hyperlinks`, `comments`, `excel_tables`, `auto_filter`, `sheet_protection`, `page_setup`, `drawings` (not reported for a drawing that held only charts; see [Charts](#charts)) and others); the count is items (ranges, rules, links, rows or columns) |
+| `workbook.feature` | A workbook feature or package part not imported: `defined_names`, `external_references`, `hidden_sheets`, `workbook_protection`, `calculation_settings`, `pivot_tables`, `vba`, `custom_xml`, `rich_text` and others |
 | `chart.*` | A chart converted or skipped on import: `chart.converted` and `chart.skipped`, see [Charts](#charts) |
 | `report.truncated` | Further distinct entries beyond 200, counted but not itemized |
 
@@ -388,7 +388,7 @@ ODS validation names in a sheet). Section 5.2 of the
 | --- | --- | --- |
 | Scope | Selection (one sheet at an offset, or one rectangle) and whole workbook | Whole workbook only |
 | Transport | base64 in a JSON body of at most 4 MiB | `PUT /v1/uploads/{upload}` raw body (or `source_path` on the same machine), staged preparation job, `GET /v1/exports/{export}` download |
-| Limits | 10,000 stored cells, 64 worksheets for a whole workbook (chart, dialog and macro sheets do not count; a selection can name any worksheet), 3 MiB package, 16 MiB expanded, 128 parts, 100,000 XML nodes per part | 1,000,000 stored cells, 255 worksheets, 48 MiB package, 256 MiB expanded, 4,096 parts, 1 MiB of XML per cell or record, 65,536 shared-formula groups open at once per sheet, 300 s per phase, 2 concurrent uploads and downloads, 1,024 distinct styles per export |
+| Limits | 10,000 stored cells, 64 worksheets for a whole workbook (chart, dialog and macro sheets do not count; a selection can name any worksheet), 3 MiB package, 16 MiB expanded, 384 parts (enough for this service's own bounded export of 64 sheets and 64 charts, 325 parts), 100,000 XML nodes per part | 1,000,000 stored cells, 255 worksheets, 48 MiB package, 256 MiB expanded, 4,096 parts, 1 MiB of XML per cell or record, 65,536 shared-formula groups open at once per sheet, 300 s per phase, 2 concurrent uploads and downloads, 1,024 distinct styles per export |
 | Review | Every prepared cell | The report and a bounded sample; cells are staged on disk |
 | Apply | One managed edit (selection) or one atomic `workbook_import` | One atomic `workbook_import` from the stage |
 
@@ -427,14 +427,17 @@ compatibility claim.
 ### Charts
 
 Chart import was built on November 14-15, 2026 on branch `claude/charts-import-view`
-(not merged; the design is [charts-import-view-design.md](charts-import-view-design.md)).
+(merged to `main` through pull request 140; the design is [charts-import-view-design.md](charts-import-view-design.md)).
 The development preview imports charts from XLSX (DrawingML `c:chartSpace`
 reached from a worksheet's drawing) and ODS (a `draw:frame` holding a
 `draw:object` with a `chart:chart` sub-document) as native charts, and the
 desktop draws them view-only ([status](implementation-status.md#charts-import-and-view-only-display--november-15-2026)).
-It is not a qualified cross-platform release. **Export still omits charts**: an
-XLSX or ODS export reports each native chart as omitted, and no chart is
-written. CSV carries no charts.
+Chart export was built on November 15, 2026 on branch `claude/charts-export`
+(not merged; the design is [charts-authoring-export-design.md](charts-authoring-export-design.md#6-export),
+the record is the [status](implementation-status.md#charts-export--november-15-2026)
+and the [evidence](evidence/charts-export-verification.txt)); see
+[Chart export](#chart-export) below. Neither is a qualified cross-platform
+release. CSV carries no charts.
 
 Cached values in the file (`c:numCache`, `c:strCache`) are never used as data;
 the chart reads the imported cells, so in `values` mode it reads the cached
@@ -529,10 +532,16 @@ one-sheet import, so only the SDK and the desktop carry charts on that path.
 
 **Known limits and inconsistencies.**
 
-- The existing `workbook.feature` `charts` and `sheet.feature` `drawings`
-  omitted entries are still reported even when the charts import, so a file
-  whose charts all imported still lists them as omitted. This is a known
-  inconsistency awaiting an owner decision, not intended behavior.
+- An import reports no `workbook.feature` `charts` entry, so chart parts
+  that no drawing reaches (orphans) are not itemized. It reports a sheet's
+  `drawings` unless that sheet's one drawing was read and held only chart
+  frames (imported, or skipped with their own `chart.skipped` entry); a
+  picture, shape, connector, group or other object keeps it, as does a drawing
+  that was not read. On ODS the count is of the sheet's drawing items that are
+  not charts read as such, and `embedded_objects` does not count an object
+  directory read as a chart (imported, or skipped with a `chart.skipped` entry);
+  a formula or OLE object, an object that could not be read and an object never
+  reached because of a reading bound are still counted.
 - Pixel sizes use default cell sizes (64x20 px); where the sheet declares
   custom sizes the chart is imported with `size_approximate` and its extent can
   differ from the file's.
@@ -549,6 +558,125 @@ one-sheet import, so only the SDK and the desktop carry charts on that path.
   through the service; the evidence file lists what was not verified (the
   desktop window on that file, Windows, Linux, LibreOffice).
   See the [evidence](evidence/charts-import-view-verification.txt).
+
+### Chart export
+
+The whole-workbook XLSX and ODS exports (inline and the streamed export job) and
+the selection export write each native chart whose data comes from cell ranges
+as a live chart: a DrawingML chart in XLSX, a chart object in ODS, anchored at
+its cell with its offset and size, in drawing order. List, relational and CSV
+exports never carry charts.
+
+**What is written**
+
+| Native | In the file |
+| --- | --- |
+| `column`, `bar`, `line`, `area`, `pie`, `scatter` | The matching chart type |
+| `clustered`, `stacked` | The matching grouping; XLSX stacked column and bar charts also carry full overlap (`c:overlap` 100) |
+| Title, axis titles | Literal text; an empty title is written as no title |
+| Value axis `min`, `max` | Fixed minimum and maximum |
+| Legend `right`, `bottom`, `none` | Legend position, or no legend |
+| Series name by cell reference | A cell reference, in XLSX and ODS |
+| Series name by text | XLSX: literal text. ODS: not carried (see below) |
+| Values, categories, scatter x | Cell references by sheet name |
+| Name, anchor, offset, size, drawing order | Frame name, anchor, extent and drawing order |
+
+No markers or gridlines are written (specification version 1 holds neither).
+Characters XML 1.0 cannot hold are dropped from written text; a literal tab in a
+title is written as is. A line break in an ODS chart or axis title is written as
+`text:line-break` inside the title's one paragraph (ODF allows a title one
+`text:p`, and LibreOffice joins the lines of a title written as several), and
+the ODS importer reads `text:line-break` in a title as a line break.
+
+**Format details.** XLSX references always quote the sheet name
+(`'Sales'!$A$2:$A$13`, a `'` in the name doubled), so a sheet named `R`, `C`,
+`TRUE` or `FALSE` cannot be read as something else, and the chart is written
+with square corners (`c:roundedCorners` 0; Excel draws rounded corners when it
+is absent). An ODS chart object says its data comes from the spreadsheet
+(`xlink:href=".."` on `chart:chart`) and lists its source ranges, space-separated
+and in the same order, in the plot area's `table:cell-range-address` (with
+`chart:data-source-has-labels="none"`) and the frame's
+`draw:notify-on-update-of-ranges`, as LibreOffice Calc writes them. The frame
+sits in its anchor cell, so document order is anchor order; each frame carries
+`draw:z-index`, its place in drawing order on its sheet. The importer orders a
+sheet's ODS charts by `draw:z-index` when every chart frame on the sheet carries
+one (document order breaks ties) and keeps document order otherwise, so files
+from applications that write no `draw:z-index` read as before. An ODS scatter
+chart carries no marker or line settings: LibreOffice's points-only form
+(`chart:symbol-type` and `chart:lines`) would make the importer report a dropped
+`markers` style, so how an application draws it by default is not controlled
+(the XLSX scatter chart is markers only).
+
+**ODS series named by text.** ODS cannot carry a series name given as text
+without an embedded copy of the data. The chart is still written, the export
+reports `chart.converted` with detail `series_name` for it, and on import the
+series is named "Series N". A series named by a cell reference round-trips.
+
+**No cached values.** The export writes no cached values for charts in either
+format, as for formulas ("Formula caches are omitted; target recalculation is
+requested"), and no ODS local data table. In XLSX a chart shows its data once
+Excel fills the caches on load, when it recalculates on open. In ODS the chart
+reads the sheet's cells directly.
+
+**Left out.** A chart is left out whole, never in part, and reported
+`chart.skipped` with one of seven reasons; a chart with several reasons is
+reported under the first that applies, checked in the order `unsupported`,
+`broken_source`, `table_source`, `query_source`, `source`.
+
+| Reason | Meaning |
+| --- | --- |
+| `table_source` | A source is a table column |
+| `query_source` | A source is a saved-query column |
+| `broken_source` | A source is broken |
+| `source` | A range source the format cannot express as one reference, a source on a sheet that is not in the export, or (selection export) a chart whose anchor or a source lies outside the selection |
+| `unsupported` | A stored specification this service cannot read: an unsupported specification version or an invalid specification inside a valid stored record; the export does not fail. A stored chart record that is itself malformed (not JSON, not an object, or a bad envelope) is refused when the workbook is opened or refreshed, before any export runs, as it was before chart export |
+| `unwritable` | Writing the chart failed for an unexpected reason; the export continues. If packaging the built charts fails, every chart is left out with this reason and the export continues without charts |
+| `size_limit` | (Inline exports) The chart was built, but the file or its response had no room for it within the size limits; the cells and the charts before it are exported |
+
+**Report.** `Charts: N written.` or `Charts: N written, M left out; each is
+listed below with its reason.`; no line when the workbook has no charts.
+`ConversionReport` merges entries with the same reason: the chart names are in
+an entry's `samples` and `count` counts charts. The CLI's report names every
+chart of a `chart.skipped` entry, not only the first.
+
+**Size limits.** Chart parts count against the inline exports' 16 MiB expanded
+limit and 4 MiB response limit (64 charts of 64 series add about 1.8 MB expanded
+and 100 KB compressed). Charts never fail an inline export that its cells alone
+would pass: when the export with every chart is over a limit, the charts are
+kept in order as far as they fit and each later one is left out and reported
+`size_limit`. Cells that are over a limit on their own fail with `LIMIT` or
+`READ_LIMIT`, as before charts were written. The limits themselves are
+unchanged. Finding what fits assembles the export again (at most eight more
+times for 64 charts), only in this case. The streamed export job counts chart
+parts against its own, larger expanded budget and has no such fallback.
+
+**Bounded import of a bounded export.** A bounded package may hold 384 parts
+(it was 128): an XLSX export writes a drawing, two relationship parts and a
+chart part per sheet with one chart, so charts spread over 25 sheets already
+made 130 parts, which the bounded import refused.
+
+**Selection export.** A chart is written only when its anchor and every source
+lie inside the selection. The selection is written at its original coordinates
+on a sheet named `Sheet1`, so the chart keeps its anchor and its references name
+`Sheet1`. Charts on other sheets are not reported.
+
+**Round trip.** Exported and imported again, a chart keeps its type, grouping,
+title, axes, legend, sources, series names, name, anchor, offset, size and
+order, in both formats and through both export routes
+(`tests/test_chart_round_trip.py`). Three differences come from the importer's
+own rules and are documented, not fixed: text over 255 characters (an axis
+title or a series name given as text) is cut on import; duplicate chart names on
+a sheet are made unique; an empty series name comes back as "Series N". The
+fourth, an ODS series named by text, is above. An import reads XLSX stacked
+column and bar charts written with full overlap without reporting a dropped
+`gap width` style (only that exact case, stacked grouping with overlap 100).
+
+**Not verified.** The files were not opened in Excel or LibreOffice (neither is
+installed on the machine that ran the checks), and the owner's sample
+`Column Chart_Complete.xlsx` was not exported. The ODS chart data binding and
+`draw:z-index` were written from the format's documentation and LibreOffice's
+known output and are unverified until a file is opened there. Two sample files are written for
+the owner to open; see the [evidence](evidence/charts-export-verification.txt).
 
 ## Whole-workbook interchange
 

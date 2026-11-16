@@ -68,7 +68,7 @@ by this check (listed at the end of plan section 14).
 | `cellWatches` | §18.3.1.9 | Watch window entries | reported | `cell_watches` | **Call** NG (view state) |
 | `ignoredErrors` | §18.3.1.51 | Suppressed error indicators | reported per rule | `ignored_errors` | **Call** NG (no error indicators natively) |
 | `smartTags` | §18.3.1.90 | Smart tags on cells | reported | `smart_tags` | **Call** NG (deprecated feature) |
-| `drawing` | §18.3.1.36 | The sheet's DrawingML layer: shapes, pictures, charts | reported | `drawings` | NG charts, drawings, images |
+| `drawing` | §18.3.1.36 | The sheet's DrawingML layer: shapes, pictures, charts | reported, except a drawing that held only imported or skipped charts | `drawings` | NG drawings, images (charts import) |
 | `legacyDrawing` | *unverified* (§18.3.1) | VML layer: comment boxes, form controls | reported as comments when the sheet has a comments part, otherwise as legacy drawings | `comments` or `legacy_drawings` | 5 (comments); NG (shapes, controls) |
 | `legacyDrawingHF` | *unverified* (§18.3.1) | VML pictures in headers and footers | reported | `page_setup` | NG print setup |
 | `drawingHF` | §18.3.1.37 | DrawingML pictures in headers and footers | reported | `page_setup` | NG print setup |
@@ -171,7 +171,7 @@ by this check (listed at the end of plan section 14).
 | Tables (`xl/tables/*`) | Excel table definitions | reported through `tableParts`; structured references kept as unevaluable formulas | `excel_tables`; `formula.syntax` | 8a |
 | Comments (`xl/comments*`) and threaded comments | Notes and threads | reported per sheet through the sheet's relationships, counting the comments in the part (1 when it is missing or unreadable) | `comments` | 5 |
 | Sheet relationship parts (`xl/worksheets/_rels/*.rels`) | Links from a sheet to its comments, drawings, tables, hyperlink targets | read as a stream for the report; absent or empty declares nothing; unreadable is reported; a DTD or entity rejects | `relationships_unreadable` | — |
-| Drawings and charts (`xl/drawings/*`, `xl/charts/*`, `xl/media/*`) | Shapes, pictures, charts | drawings reported per sheet; charts reported per part | `drawings`, `workbook.feature` `charts` | NG charts, drawings, images |
+| Drawings and charts (`xl/drawings/*`, `xl/charts/*`, `xl/media/*`) | Shapes, pictures, charts | drawings reported per sheet unless they held only charts; chart parts are not itemized (each chart has a `chart.*` entry) | `drawings` | NG charts, drawings, images |
 | Chart sheets, dialog sheets, macro sheets | Sheets that are not worksheets | reported, one entry per kind with the sheets as samples; no native sheet is created; choosing one at selection scope is `INVALID_ARGUMENT` | `workbook.feature` `chart_sheets`, `dialog_sheets`, `macro_sheets` | **Call** NG (charts, macro sheets) |
 | Pivot tables and caches (`xl/pivotTables/*`, `xl/pivotCache/*`) | Pivot tables | reported per pivot table part | `pivot_tables` | NG pivot tables |
 | External links (`xl/externalLinks/*`) | Linked workbooks and their cached values | reported per `externalReference` | `external_references` | NG external links |

@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 
 from .conversion_report import ConversionReport
 from .engine import MAX_COLS, MAX_ROWS
+from .export_charts import format_reference
 from .import_charts import (DEFAULT_COLUMN_PX, DEFAULT_GROUPING, DEFAULT_ROW_PX, EMPTY_TITLE, LEFT_OUT, MAX_DRAFT_SERIES,
                             MAX_FRAMES, SKIPPED, STYLED, ChartParts, locate, parse_reference)
 from .ods import F as FO, O, T, X, Y, q
@@ -111,11 +112,20 @@ def _styles(root):
     return found
 
 
+def _paragraph_text(element):
+    """The text of a paragraph or of a span inside it; each ``text:line-break`` reads as a newline."""
+    parts = [element.text or ""]
+    for child in element:
+        parts.append("\n" if child.tag == q(X, "line-break") else _paragraph_text(child))
+        parts.append(child.tail or "")
+    return "".join(parts)
+
+
 def _text(element):
-    """The paragraphs of a ``chart:title`` joined by newlines, or ``None``."""
+    """The text of a ``chart:title`` (line breaks and further paragraphs as newlines), or ``None``."""
     if element is None:
         return dict(EMPTY_TITLE)
-    paragraphs = ["".join(paragraph.itertext()) for paragraph in element.iter(q(X, "p"))]
+    paragraphs = [_paragraph_text(paragraph) for paragraph in element.iter(q(X, "p"))]
     return {"text": "\n".join(paragraphs) or None, "from_cell": element.get(q(T, "cell-range")) is not None}
 
 
@@ -243,7 +253,7 @@ def _chart_body(root):
 
 
 def read_frame_draft(archive, frame: ET.Element, position: int, sheet_name: str, order: int, parts,
-                     report: ConversionReport, cell, *, claim=True):
+                     report: ConversionReport, cell, *, claim=True, on_chart=None):
     """The draft of the chart a ``draw:frame`` holds, or ``None``.
 
     ``None`` without a report: the frame is not a chart object.  ``None`` with a ``chart.skipped`` entry: the object
@@ -253,7 +263,8 @@ def read_frame_draft(archive, frame: ET.Element, position: int, sheet_name: str,
     root of a part gets a reader of its own).  ``cell`` is the 1-based ``(row, col)`` of the cell holding the frame,
     or ``None`` for a frame in ``table:shapes``, which is placed by its absolute position on the default cell sizes,
     64 and 20 pixels.  ``claim=False`` keeps the draft from counting toward the import's chart limit (a grouped chart,
-    which is reported and left out)."""
+    which is reported and left out).  ``on_chart()`` is called once the frame's object is known to be a chart,
+    whatever becomes of the chart after (a placement that cannot be read, or an import that is full, skips it)."""
     if not isinstance(parts, ChartParts):
         parts = ChartParts(reader=parts)
     label = frame.get(NAME) or f"Chart {order + 1}"
@@ -270,6 +281,9 @@ def read_frame_draft(archive, frame: ET.Element, position: int, sheet_name: str,
             return None
         if body is None:
             raise _Unreadable
+        parts.objects.add(part)
+        if on_chart is not None:
+            on_chart()
         (row, col), (x, y), (width, height), absolute = _placement(frame, cell)
         return parts.draft(body, {"sheet": position, "name": label, "order": order,
                                   "anchor": {"row": row, "col": col}, "offset": {"x": x, "y": y},
@@ -288,15 +302,34 @@ ROW = q(T, "table-row")
 ROW_GROUPS = (q(T, "table-row-group"), q(T, "table-header-rows"), q(T, "table-rows"))
 
 
+Z_INDEX = q(DRAW, "z-index")
+
+
+Z_INDEX_DIGITS = 9  # longer text is not converted: an untrusted attribute never fails the import
+
+
+def _z_index(frame):
+    """A frame's ``draw:z-index`` when it is a plain non-negative decimal of at most ``Z_INDEX_DIGITS`` ASCII digits,
+    else ``None`` (the sheet's charts then keep document order)."""
+    text = frame.get(Z_INDEX)
+    if text is None or not 0 < len(text) <= Z_INDEX_DIGITS or not text.isascii() or not text.isdigit():
+        return None
+    return int(text)
+
+
 class SheetFrames:
     """The drafts of one ``table:table``'s chart frames, read in document order as a reader meets them.
 
     ``parts`` is the import's ``ChartParts``: at most ``MAX_FRAMES`` object frames are read in the whole import; this
     sheet's frames past that are reported once, with their count, by ``finish``.  A chart in a ``draw:g`` group is
-    reported as ``grouped`` and left out."""
+    reported as ``grouped`` and left out.  ``charts`` holds the frames known to be charts that are not grouped: a
+    frame is added when its object has been read and is removed by ``OdsSheetFeatures`` when the frame ends, so that
+    the sheet's ``drawings`` count leaves it out (a frame that was not read, or whose object is not a chart, stays in)."""
     def __init__(self, archive, position, sheet_name, parts, report):
         self.archive, self.position, self.sheet_name, self.parts, self.report = archive, position, sheet_name, parts, report
         self.drafts, self.order, self.unread, self.last = [], 0, 0, None
+        self.charts = set()
+        self.stacking = []  # each draft's ``draw:z-index``, or ``None`` where its frame has none that can be read
 
     def frame(self, frame, cell, grouped):
         """A ``draw:frame`` holding a ``draw:object``; ``cell`` as ``read_frame_draft`` takes it.  A frame is read once."""
@@ -309,7 +342,7 @@ class SheetFrames:
             return
         self.parts.frames += 1
         draft = read_frame_draft(self.archive, frame, self.position, self.sheet_name, self.order, self.parts, self.report, cell,
-                                 claim=not grouped)
+                                 claim=not grouped, on_chart=None if grouped else lambda: self.charts.add(frame))
         self.order += 1
         if draft is None:
             return
@@ -317,9 +350,17 @@ class SheetFrames:
             self.report.add(SKIPPED, "omitted", "grouped", sheet=self.sheet_name, cell=draft["name"][:32], count=1)
         else:
             self.drafts.append(draft)
+            self.stacking.append(_z_index(frame))
 
     def finish(self, sizes_unknown=False):
-        """The drafts read; ``sizes_unknown`` marks those placed by absolute position as ``approximate_size``."""
+        """The drafts read; ``sizes_unknown`` marks those placed by absolute position as ``approximate_size``.
+
+        When every chart frame read carries a ``draw:z-index``, the drafts are in that order (document order breaks
+        ties); otherwise, as for files from applications that do not write one, they stay in document order."""
+        if self.drafts and None not in self.stacking:
+            ranked = sorted(range(len(self.drafts)), key=lambda number: (self.stacking[number], number))
+            self.drafts = [self.drafts[number] for number in ranked]
+            self.stacking = [self.stacking[number] for number in ranked]
         if self.unread:
             self.report.add(SKIPPED, "omitted", "unreadable", sheet=self.sheet_name, cell="drawing", count=self.unread)
         for draft in self.drafts:
@@ -362,3 +403,159 @@ def table_frames(table):
 def sizes_declared(features) -> bool:
     """Whether a sheet's ``OdsSheetFeatures`` met column widths or custom row heights, which the readers do not measure."""
     return any(width is not None for width in features.widths) or "row_heights" in features.counts
+
+
+# Writing.
+#
+# ``chart_document`` and ``package`` write the parts of an export draft with literal prefixed names
+# (``chart:chart``) and ``xmlns:`` attributes, like the XLSX writer: the elements serialize as they are.  Nothing is
+# styled (the native chart has none) and no part carries a local data table or cached values: the chart names the
+# cells of the sheets it draws.  ODF has no literal series name outside such a table, so a series named by text is
+# written without a label and reads back as ``Series N``; a series named by a cell keeps its name.
+
+PIXELS_PER_INCH = 96
+CHART_MEDIA = "application/vnd.oasis.opendocument.chart"
+NAMESPACES = {"xmlns:office": O, "xmlns:style": Y, "xmlns:text": X, "xmlns:table": T, "xmlns:fo": FO,
+              "xmlns:draw": DRAW, "xmlns:chart": CHART, "xmlns:svg": SVG, "xmlns:xlink": XLINK}
+CLASSES = {"column": "chart:bar", "bar": "chart:bar", "line": "chart:line", "area": "chart:area", "pie": "chart:circle",
+           "scatter": "chart:scatter"}
+LEGEND_WORDS = {"right": "end", "bottom": "bottom"}
+UNWRITABLE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")  # what XML 1.0 cannot hold
+LINE_BREAK = re.compile("\r\n|\r|\n")
+
+
+def _clean(text):
+    """``text`` without the characters XML 1.0 cannot hold; carriage returns become line feeds, as a parser reads them."""
+    return LINE_BREAK.sub("\n", UNWRITABLE.sub("", text))
+
+
+def _add(parent, tag, text=None, **attributes):
+    element = ET.SubElement(parent, tag, attributes)
+    if text is not None:
+        element.text = text
+    return element
+
+
+def _title(parent, text):
+    # ODF allows a title one paragraph: the lines of a title are separated by line breaks inside it.
+    first, *rest = text.split("\n")
+    paragraph = _add(_add(parent, "chart:title"), "text:p", first)
+    for line in rest:
+        _add(paragraph, "text:line-break").tail = line
+
+
+def _usable(text):
+    return text if text and _clean(text) else None
+
+
+def _length(pixels):
+    return f"{pixels / PIXELS_PER_INCH:.8f}in"
+
+
+def _style(styles, name, **properties):
+    style = _add(styles, "style:style", **{"style:name": name, "style:family": "chart"})
+    _add(style, "style:chart-properties", **properties)
+
+
+def chart_document(draft):
+    """The ``office:document-content`` of the chart object of an export draft."""
+    kind, grouping = draft["type"], draft["grouping"]
+    if not draft["series"]:
+        raise ValueError("a chart needs a series")
+    root = ET.Element("office:document-content", {**NAMESPACES, "office:version": "1.3"})
+    styles = _add(root, "office:automatic-styles")
+    # As LibreOffice Calc writes it: ``xlink:href=".."`` says the data comes from the spreadsheet holding the object, not
+    # from a table of the chart's own (which an exported chart does not carry).
+    chart = _add(_add(_add(root, "office:body"), "office:chart"), "chart:chart",
+                 **{"chart:class": CLASSES[kind], "xlink:href": "..", "xlink:type": "simple"})
+    title = _usable(draft["title"])
+    if title is not None:
+        _title(chart, _clean(title))
+    if draft["legend"] in LEGEND_WORDS:
+        _add(chart, "chart:legend", **{"chart:legend-position": LEGEND_WORDS[draft["legend"]]})
+    flags = {}
+    if kind == "bar":
+        flags["chart:vertical"] = "true"
+    if grouping == "stacked" and kind in ("column", "bar", "area"):
+        flags["chart:stacked"] = "true"
+    area = _add(chart, "chart:plot-area", **{"table:cell-range-address": " ".join(_sources(draft)),
+                                             "chart:data-source-has-labels": "none"})
+    if flags:
+        _style(styles, "plot", **flags)
+        area.set("chart:style-name", "plot")
+    scatter = kind == "scatter"
+    horizontal = _add(area, "chart:axis", **{"chart:dimension": "x", "chart:name": "primary-x"})
+    titles = [_usable(draft[key]) for key in ("category_title", "value_title")]
+    if kind != "pie" and titles[0] is not None:
+        _title(horizontal, _clean(titles[0]))
+    if draft["categories"] is not None and not scatter:
+        _add(horizontal, "chart:categories", **{"table:cell-range-address": format_reference(draft["categories"], "ods")})
+    if kind != "pie":
+        vertical = _add(area, "chart:axis", **{"chart:dimension": "y", "chart:name": "primary-y"})
+        limits = {f"chart:{word}": repr(float(draft[key])) for key, word in (("min", "minimum"), ("max", "maximum"))
+                  if draft[key] is not None}
+        if limits:
+            _style(styles, "axis-y", **limits)
+            vertical.set("chart:style-name", "axis-y")
+        if titles[1] is not None:
+            _title(vertical, _clean(titles[1]))
+    for item in draft["series"]:
+        attributes = {"chart:values-cell-range-address": format_reference(item["values"], "ods")}
+        if item["name"] is not None and item["name"][0] == "ref":
+            attributes["chart:label-cell-address"] = format_reference(item["name"][1], "ods")
+        series = _add(area, "chart:series", **attributes)
+        if scatter and item["x"] is not None:
+            _add(series, "chart:domain", **{"table:cell-range-address": format_reference(item["x"], "ods")})
+    return root
+
+
+def _sources(draft):
+    """The source ranges of a draft in the ODS dialect: categories, then each series' name cell, values and x; once each."""
+    refs = [draft["categories"]]
+    for item in draft["series"]:
+        refs += [item["name"][1] if item["name"] is not None and item["name"][0] == "ref" else None, item["values"], item["x"]]
+    found = []
+    for ref in refs:
+        text = None if ref is None else format_reference(ref, "ods")
+        if text is not None and text not in found:
+            found.append(text)
+    return found
+
+
+def _frame(number, z, draft):
+    place, offset, size = draft["anchor"], draft["offset"], draft["size"]
+    # A frame sits in its anchor cell, so document order is anchor order; ``draw:z-index`` keeps the stacking order.
+    frame = ET.Element("draw:frame", {"draw:name": _clean(draft["name"]), "draw:z-index": str(z),
+                                      "svg:x": _length(offset["x"]), "svg:y": _length(offset["y"]),
+                                      "svg:width": _length(size["width"]), "svg:height": _length(size["height"])})
+    # As LibreOffice writes it: the chart listens to its source ranges, so it redraws when those cells change.
+    _add(frame, "draw:object", **{"draw:notify-on-update-of-ranges": " ".join(_sources(draft)),
+                                  "xlink:href": f"./Object {number}", "xlink:type": "simple", "xlink:show": "embed",
+                                  "xlink:actuate": "onLoad"})
+    return place["row"], place["col"], frame
+
+
+def package(built, report):
+    """The parts that carry the built charts of an export.
+
+    ``built`` is ``export_charts.build``'s ``(draft, chart document)`` pairs.  Returns ``(parts, manifest, frames)``:
+    the ``(path, element)`` of each chart object's ``Object N/content.xml`` (N counting the charts in draft order from
+    1); the manifest entries, ``(full path, media type)``, of each object directory and its content part; and, for each
+    exported sheet name, the ``(anchor row, anchor col, draw:frame)`` of its charts in draft order.  A frame is a
+    cell-anchored frame: the caller places it in the cell at its anchor, so that the sheet reads back the anchor and
+    the offset the draft has; its ``draw:z-index`` is its place in draft order on its sheet, from 0, which the reader
+    orders the sheet's charts by.  Lengths are inches at 96 pixels to the inch.
+
+    ODF holds no literal series name outside a local data table, which an exported chart does not carry, so a chart
+    with a series named by text is still written, that name left out, and the import would number it ``Series N``.
+    ``report`` (a ``ConversionReport``) gets one ``chart.converted`` / ``series_name`` entry for each such chart, on its
+    sheet, named by the chart (the importer's own entry for a series name it replaced)."""
+    parts, manifest, frames = [], [], {}
+    for number, (draft, document) in enumerate(built, 1):
+        if any(item["name"] is not None and item["name"][0] == "text" for item in draft["series"]):
+            report.add("chart.converted", "converted", "series_name", sheet=draft["sheet"], cell=draft["name"][:32])
+        parts.append((f"Object {number}/content.xml", document))
+        manifest += [(f"Object {number}/", CHART_MEDIA), (f"Object {number}/content.xml", "text/xml")]
+        placed = frames.setdefault(draft["sheet"], [])
+        placed.append(_frame(number, len(placed), draft))
+    return parts, manifest, frames

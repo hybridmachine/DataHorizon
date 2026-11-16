@@ -1,6 +1,6 @@
 # Charts on open: import and view-only display
 
-Status: **As built** (November 15, 2026), on branch `claude/charts-import-view`, not merged. Drafted November 14, 2026 (Draft 0.1). Where the build differs from the text below, [compatibility-v0.md](compatibility-v0.md#charts), [implementation-status.md](implementation-status.md#charts-import-and-view-only-display--november-15-2026) and the [evidence](evidence/charts-import-view-verification.txt) are the record; the sections below are the design as agreed.
+Status: **As built** (November 15, 2026), on branch `claude/charts-import-view`, merged to `main` through pull request 140. Drafted November 14, 2026 (Draft 0.1). Where the build differs from the text below, [compatibility-v0.md](compatibility-v0.md#charts), [implementation-status.md](implementation-status.md#charts-import-and-view-only-display--november-15-2026) and the [evidence](evidence/charts-import-view-verification.txt) are the record; the sections below are the design as agreed.
 Marks: **Owner** is a decision the owner made; **Call** is the author's
 proposal, open to correction; **Builder** is left to the implementation plan.
 
@@ -39,7 +39,7 @@ neither chart is visible.
 
 - Authoring in the desktop: Insert Chart, the edit panel, select, move, resize,
   delete, the object browser entry. They stay in charts stage 3.
-- Chart export to XLSX or ODS. Export keeps reporting each chart as omitted.
+- Chart export to XLSX or ODS. At the time, export kept reporting each chart as omitted. Export was built later, on November 15, 2026; see [charts-authoring-export-design.md](charts-authoring-export-design.md#6-export) and the [compatibility contract](compatibility-v0.md#chart-export).
 - New chart types or options. Specification version 1 is unchanged; nothing is
   added to carry Excel colours, data labels or gap width.
 - Chart sheets, pivot charts, combination charts, secondary axes.
@@ -135,8 +135,11 @@ neither chart is visible.
 Report lines use a new `chart.*` category family (**Builder**: exact category
 names and wording, following the existing conversion report conventions). The
 existing `workbook.feature` `charts` count stays, so nothing that reads it
-breaks, and is joined by the per-chart lines. Each line names the chart and its
-sheet.
+breaks, and is joined by the per-chart lines. (As built the count stayed; the
+owner dropped it on November 15, 2026, a later change recorded in
+[charts-authoring-export-design.md](charts-authoring-export-design.md#6-export)
+section 6 and in the bullet "Omitted entries" under the as-built notes.) Each
+line names the chart and its sheet.
 
 Cached values in the file (`c:numCache`, `c:strCache`) are never used as data;
 the chart reads the imported cells. In values mode the cells hold values and
@@ -346,11 +349,18 @@ Recorded November 15, 2026. Each is also in the
   declared column-width style). A chart keeps roughly its source pixel size, so
   on the desktop grid, whose default cells are larger, it covers fewer cells
   than in the source.
-- **Omitted entries still reported.** Section 4 said the `workbook.feature`
-  `charts` count stays. The build also still reports `sheet.feature`
-  `drawings`, so a file whose charts all imported still lists both as omitted.
-  This is a known inconsistency awaiting an owner decision, not a desired
-  behavior.
+- **Omitted entries (a later change).** As first built, the `workbook.feature`
+  `charts` count stayed and `sheet.feature` `drawings` was reported too, so a
+  file whose charts all imported still listed both as omitted. The owner
+  settled this on November 15, 2026 (see
+  [charts-authoring-export-design.md](charts-authoring-export-design.md#6-export)
+  section 6), after this record was written. The rule as now built: there is no
+  `workbook.feature` `charts` entry; `sheet.feature` `drawings` is reported for
+  a sheet only when its drawing was not read or held something other than chart
+  frames (a picture, shape, connector, group or other object); on ODS,
+  `embedded_objects` does not count an object read as a chart; `chart_sheets`
+  is unchanged. Every chart still has its `chart.converted` or `chart.skipped`
+  entry.
 - **Frozen panes.** A chart anchored in a frozen row or column is pinned in the
   frozen direction and may extend over the scrolling cells.
 - **Chart list and render failures.** A failed chart list read is shown in the

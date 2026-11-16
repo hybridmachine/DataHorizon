@@ -394,10 +394,21 @@ def over_limit(payload):
     return None if error is None else error.body["code"]
 
 
-def _describe_table_source(db, source):
+def _lookup(db, lookups, key):
+    """One catalog of ``lookups`` (``"tables"``, ``"queries"`` or ``"sheets"``), read from ``db`` at most once."""
+    if key not in lookups:
+        if key == "tables":
+            lookups[key] = {item["id"]: item for item in relational.tables(db)}
+        elif key == "queries":
+            lookups[key] = {item["id"]: item for item in query_views.queries(db)}
+        else:
+            lookups[key] = {row[0] for row in db.execute("SELECT id FROM sheets")}
+    return lookups[key]
+
+
+def _describe_table_source(db, source, lookups):
     source["table"] = source["column"] = None
-    found = None if source["table_id"] is None else next(
-        (item for item in relational.tables(db) if item["id"] == source["table_id"]), None)
+    found = None if source["table_id"] is None else _lookup(db, lookups, "tables").get(source["table_id"])
     column = None if found is None or source["column_id"] is None else next(
         (item for item in found["columns"] if item["id"] == source["column_id"]), None)
     source["broken"] = column is None
@@ -405,20 +416,19 @@ def _describe_table_source(db, source):
         source["table"], source["column"] = found["name"], column["name"]
 
 
-def _describe_query_source(db, source):
-    found = None if source["query_id"] is None else next(
-        (item for item in query_views.queries(db) if item["id"] == source["query_id"]), None)
+def _describe_query_source(db, source, lookups):
+    found = None if source["query_id"] is None else _lookup(db, lookups, "queries").get(source["query_id"])
     source["query"] = None if found is None else found["name"]
     source["broken"] = found is None or [item["name"] for item in found["shape"]].count(source["column"]) != 1
 
 
-def _describe_source(db, source):
+def _describe_source(db, source, lookups):
     if source_kind(source) == "table":
-        return _describe_table_source(db, source)
+        return _describe_table_source(db, source, lookups)
     if source_kind(source) == "query":
-        return _describe_query_source(db, source)
-    source["broken"] = source["sheet_id"] is None or source["row1"] is None or db.execute(
-        "SELECT 1 FROM sheets WHERE id=?", (source["sheet_id"],)).fetchone() is None
+        return _describe_query_source(db, source, lookups)
+    source["broken"] = source["sheet_id"] is None or source["row1"] is None \
+        or source["sheet_id"] not in _lookup(db, lookups, "sheets")
     source["ref"] = None
     if not source["broken"]:
         first = column_name(source["col1"]) + str(source["row1"])
@@ -436,16 +446,20 @@ def _sources(spec):
     return sources
 
 
-def describe(db, sheet_id, chart_id, payload):
-    """Return a deep copy of ``payload`` with its id, sheet, issue and source refs."""
+def describe(db, sheet_id, chart_id, payload, lookups=None):
+    """Return a deep copy of ``payload`` with its id, sheet, issue and source refs.
+
+    ``lookups``, when given, is a dict shared by the calls describing one set of charts: the table, query and sheet
+    catalogs are then each read at most once for the set, instead of once per source."""
     out = copy.deepcopy(payload)
     out["id"] = chart_id
     out["sheet_id"] = sheet_id
     out["issue"] = validate_stored(payload)
     out["over_limit"] = over_limit(payload)
     if out["issue"] is None:
+        lookups = {} if lookups is None else lookups
         for source in _sources(out["spec"]):
-            _describe_source(db, source)
+            _describe_source(db, source, lookups)
     return out
 
 
