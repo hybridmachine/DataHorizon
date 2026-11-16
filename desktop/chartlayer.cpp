@@ -242,7 +242,9 @@ bool ChartLayer::overlayEvent(ChartOverlay *item,QEvent *event) {
         return true;
     }
     case QEvent::ShortcutOverride: case QEvent::KeyPress: {
-        // The chart takes Escape (and, while interactive, Enter) before the window's shortcuts.
+        // The chart takes Escape (and, while interactive, Enter) before the
+        // window's shortcuts; while the mouse passes through it takes no keys.
+        if(m_passThrough)return false;
         auto *key=static_cast<QKeyEvent *>(event);
         const bool escape=key->key()==Qt::Key_Escape && key->modifiers()==Qt::NoModifier;
         const bool enter=m_interactive && item->selected() && (key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter) && (key->modifiers()&~Qt::KeypadModifier)==Qt::NoModifier;
@@ -345,6 +347,8 @@ void ChartLayer::setPassThrough(bool passThrough) {
     if(m_passThrough==passThrough)return;
     m_passThrough=passThrough;
     for(auto *item:overlays())applyPassThrough(item);
+    // A chart keeps its selection through a pick but not the keyboard.
+    if(m_passThrough)refocusGrid();
 }
 
 void ChartLayer::applyPassThrough(ChartOverlay *item) const {

@@ -478,6 +478,24 @@ private slots:
         QTest::keyClick(source,Qt::Key_Escape);
         QTRY_VERIFY_WITH_TIMEOUT(!pick->isChecked(),5000);QVERIFY(!overlay->testAttribute(Qt::WA_TransparentForMouseEvents));
     }
+    void passThroughTakesTheKeyboardButKeepsTheSelection() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Picked",2,4,0,0,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const auto id=overlay->chartId();
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(window.focusWidget(),overlay);QCOMPARE(layer->selectedChart(),id);
+        QSignalSpy changed(layer,&ChartLayer::selectionChanged);QSignalSpy edit(layer,&ChartLayer::editRequested);
+        layer->setPassThrough(true);
+        QCOMPARE(window.focusWidget(),grid);QCOMPARE(layer->selectedChart(),id);QVERIFY(overlay->selected());
+        for(const auto key:{Qt::Key_Return,Qt::Key_Enter,Qt::Key_Escape}) {
+            QKeyEvent override(QEvent::ShortcutOverride,key,Qt::NoModifier);override.ignore();
+            QCoreApplication::sendEvent(overlay,&override);QVERIFY(!override.isAccepted());
+            QTest::keyClick(overlay,key);
+        }
+        QCOMPARE(edit.count(),0);QCOMPARE(changed.count(),0);QCOMPARE(layer->selectedChart(),id);QVERIFY(overlay->selected());
+        layer->setPassThrough(false);layer->select({});QCOMPARE(changed.count(),1);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));
+        QCOMPARE(layer->selectedChart(),id);QCOMPARE(changed.count(),2);QCOMPARE(window.focusWidget(),overlay);
+    }
 #undef CHART_WINDOW
 
 private:
