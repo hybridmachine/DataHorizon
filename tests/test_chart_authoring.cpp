@@ -429,15 +429,16 @@ private slots:
         QTest::keyClick(overlay,Qt::Key_Escape);
         QCOMPARE(layer->selectedChart(),QString());QVERIFY(!overlay->selected());QCOMPARE(changed.count(),1);QCOMPARE(changed[0][0].toString(),QString());
         QCOMPARE(window.focusWidget(),grid);QCOMPARE(grid->currentIndex(),model->index(5,1));
-        // Not interactive: a click still selects, Escape still deselects, Enter is not taken.
+        // Not interactive: a click still selects, Escape still deselects, Enter still opens the panel (locked).
         layer->setInteractive(false);QSignalSpy edit(layer,&ChartLayer::editRequested);
         QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(layer->selectedChart(),overlay->chartId());QCOMPARE(window.focusWidget(),overlay);
         QKeyEvent enter(QEvent::ShortcutOverride,Qt::Key_Return,Qt::NoModifier);enter.ignore();
-        QCoreApplication::sendEvent(overlay,&enter);QVERIFY(!enter.isAccepted());
-        QTest::keyClick(overlay,Qt::Key_Return);QCOMPARE(edit.count(),0);
+        QCoreApplication::sendEvent(overlay,&enter);QVERIFY(enter.isAccepted());
+        QTest::keyClick(overlay,Qt::Key_Return);QCOMPARE(edit.count(),1);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(window.focusWidget(),overlay);
         QTest::keyClick(overlay,Qt::Key_Escape);QCOMPARE(layer->selectedChart(),QString());QCOMPARE(window.focusWidget(),grid);
         layer->setInteractive(true);
-        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QTest::keyClick(overlay,Qt::Key_Return);QCOMPARE(edit.count(),1);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QTest::keyClick(overlay,Qt::Key_Return);QCOMPARE(edit.count(),2);
     }
     void onlyOneChartIsSelected() {
         CHART_WINDOW;QVERIFY(addChart(window,opened,"Left",2,2,0,0,200,150));QVERIFY(addChart(window,opened,"Right",2,8,0,0,200,150));
@@ -1040,6 +1041,8 @@ private slots:
         QVERIFY(applied(window,opened,{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",400},{"col",1},{"source","keep"}}}}}));
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);overlay=layer->overlays().first();const auto id=overlay->chartId();
         auto away=[&]{grid->setCurrentIndex(model->index(399,0));grid->scrollTo(model->index(399,0));grid->setFocus();};
+        // The charts are listed for the edited workbook before a chart's keys act.
+        QTRY_VERIFY_WITH_TIMEOUT(layer->listedFor("/v1/workbooks/"+model->workbook(),model->sheet(),model->state()),5000);
         away();QTRY_VERIFY_WITH_TIMEOUT(!overlay->isVisible(),5000);
         auto *next=window.findChild<QAction *>("selectNextChartAction");QVERIFY(next->isEnabled());
         next->trigger();
@@ -1084,6 +1087,18 @@ private slots:
         overlay=layer->overlay(id);QVERIFY(overlay);QVERIFY(overlay->isVisible());QVERIFY(grid->isRowHidden(30));
         QCOMPARE(layer->selectedChart(),id);QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(overlay));
         QCOMPARE(cleared.count(),0);
+    }
+    // Pull request review: Enter on a chart in a read-only workbook opens its panel, locked.
+    void enterOpensTheLockedPanelOfAReadOnlyChart() {
+        CHART_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(addChart(window,opened,"Fixed",2,4));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        const int before=opened.count();window.openBook(temp.filePath("charts.dhwb"),false,true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);activate(window);
+        auto *dock=window.findChild<QDockWidget *>("chartDock");QVERIFY(dock);QVERIFY(!dock->isVisible());
+        window.findChild<QAction *>("selectNextChartAction")->trigger();
+        auto *overlay=layer->overlays().first();QTRY_COMPARE_WITH_TIMEOUT(QApplication::focusWidget(),static_cast<QWidget *>(overlay),5000);
+        QTest::keyClick(overlay,Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(dock->isVisible(),5000);
+        auto *name=window.findChild<QLineEdit *>("chartName");QVERIFY(name);QCOMPARE(name->text(),QString("Fixed"));QVERIFY(!name->isEnabled());
     }
     // A chart holds the keyboard only while it is shown: scrolled away, its
     // focus goes to the grid (not the address box) and it is no longer
@@ -2601,20 +2616,21 @@ private slots:
         dragBy(overlay,QPoint(60,60),QPoint(90,50));
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlay(id)->geometry(),before.translated(90,50),10000);
     }
-    void relistDuringADragKeepsTheDraggedChart() {
+    // While the charts listed are older than the workbook no drag starts;
+    // listed again, the chart is dragged from its listed place in one move.
+    void aDragWaitsForTheChartsToBeListed() {
         PROXY_WINDOW;Q_UNUSED(model);QVERIFY(addChart(window,opened,"Held",3,3,0,0,320,200));QVERIFY(addChart(window,opened,"Other",16,3,0,0,200,150));
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);auto *held=overlayNamed(layer,"Held");QTRY_VERIFY_WITH_TIMEOUT(held->isVisible(),5000);
         const auto id=held->chartId();auto *area=held->parentWidget();
-        // The catalog read after a change elsewhere is held until the drag is under way.
         proxy.holdCharts=true;QVERIFY(!window.submit({{"action","chart_update"},{"chart_id",overlayNamed(layer,"Other")->chartId()},{"name","Renamed"}}).isEmpty());
         QVERIFY(idle(window));
         const QRect before=held->geometry();const QPoint delta(80,40);
-        const QPoint end=dragBy(held,QPoint(60,60),delta,false);QCOMPARE(held->geometry(),before.translated(delta));
-        proxy.releaseCharts();QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Renamed"),10000);
-        QCOMPARE(layer->overlay(id),held);QCOMPARE(held->geometry(),before.translated(delta));
-        layer->relayout();QCOMPARE(held->geometry(),before.translated(delta));QCOMPARE(held->mask(),QRegion(held->rect()));
-        // The drag still ends in one move.
         QSignalSpy moved(layer,&ChartLayer::moveRequested);
+        QPoint end=dragBy(held,QPoint(60,60),delta,false);QCOMPARE(held->geometry(),before);
+        QTest::mouseRelease(held,Qt::LeftButton,Qt::NoModifier,held->mapFromGlobal(end));QCOMPARE(moved.count(),0);
+        proxy.releaseCharts();QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Renamed"),10000);QVERIFY(idle(window));
+        QCOMPARE(layer->overlay(id),held);QCOMPARE(held->geometry(),before);
+        end=dragBy(held,QPoint(60,60),delta,false);QCOMPARE(held->geometry(),before.translated(delta));
         QTest::mouseRelease(held,Qt::LeftButton,Qt::NoModifier,held->mapFromGlobal(end));QCOMPARE(moved.count(),1);
         QJsonObject cell,inside;QVERIFY(cellUnder(grid,area,before.topLeft()+delta,&cell,&inside));
         QTRY_VERIFY_WITH_TIMEOUT(layer->chart(id)["anchor"].toObject()==cell && layer->chart(id)["offset"].toObject()==inside,10000);
@@ -2987,6 +3003,71 @@ private slots:
         // Chosen again, its columns are asked for again, once.
         proxy.failQueryReads=false;choose(kindOf(window,"series1Values"),"Range");choose(kindOf(window,"series1Values"),"Query column");choose(query,"Totals");
         QTRY_COMPARE_WITH_TIMEOUT(itemsOf(column),QStringList{"Total"},10000);QTest::qWait(200);QCOMPARE(proxy.queryReads,2);
+    }
+    // Pull request review: while the charts listed are older than the workbook, a
+    // chart's keys change nothing (a resize would overwrite another client's
+    // size from the old one) and Delete does not reach the grid's cells.
+    void aChartIsNotChangedFromAnOlderListing() {
+        PROXY_WINDOW;Q_UNUSED(grid);QVERIFY(addChart(window,opened,"Shared",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(idle(window));
+        auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(overlay));
+        RestClient other;other.configure(service["url"].toString(),service["token"].toString());
+        proxy.holdCharts=true;const auto before=model->state();
+        const auto answer=syncRequest(&other,"/v1/workbooks/"+model->workbook()+"/operations",{{"action","chart_update"},{"chart_id",id},
+            {"operation_id",QUuid::createUuid().toString(QUuid::WithoutBraces)},{"expected_state",before},{"sheet",model->sheet()},{"size",QJsonObject{{"width",600},{"height",200}}}});
+        QCOMPARE(answer["outcome"].toString(),QString("committed"));
+        QTRY_VERIFY_WITH_TIMEOUT(model->state()!=before,15000);QVERIFY(idle(window));QTest::qWait(200);
+        overlay=layer->overlay(id);QVERIFY(overlay);QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(overlay));
+        QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto *clear=window.findChild<QAction *>("clearContentsAction");QVERIFY(clear);QSignalSpy cleared(clear,&QAction::triggered);
+        QTest::keyClick(overlay,Qt::Key_Right,Qt::ShiftModifier);QTest::keyClick(overlay,Qt::Key_Right);QTest::keyClick(overlay,Qt::Key_Delete);
+        QTest::qWait(300);QCOMPARE(admitted.count(),0);QCOMPARE(cleared.count(),0);
+        proxy.releaseCharts();
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["size"].toObject()["width"].toInt(),600,10000);QVERIFY(idle(window));
+        // Listed again, the keys act on the listed size.
+        overlay=layer->overlay(id);QVERIFY(overlay);overlay->setFocus();
+        QTest::keyClick(overlay,Qt::Key_Right,Qt::ShiftModifier);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["size"].toObject()["width"].toInt(),608,10000);
+    }
+    // Pull request review: a query read dropped because the workbook changed is asked for again.
+    void aDroppedQueryReadIsAskedAgain() {
+        PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(fillChartData(window,opened));QVERIFY(addTableAndQuery(window,opened));
+        QVERIFY(addChart(window,opened,"Dropped",2,4));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *query=window.findChild<QComboBox *>("series1ValuesQuery"),*column=window.findChild<QComboBox *>("series1ValuesQueryColumn");
+        QTRY_COMPARE_WITH_TIMEOUT(query->count(),1,10000);
+        proxy.holdQueryReads=true;
+        choose(kindOf(window,"series1Values"),"Query column");choose(query,"Totals");QTRY_COMPARE_WITH_TIMEOUT(proxy.queryReads,1,10000);
+        // A cell edit changes the workbook state while the read is awaited.
+        QVERIFY(applied(window,opened,{{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",9},{"col",9},{"source","x"}}}}}));QVERIFY(idle(window));
+        proxy.releaseQueryReads();QTest::qWait(300);QCOMPARE(column->count(),0);
+        QTRY_VERIFY_WITH_TIMEOUT(kindOf(window,"series1Values")->isEnabled(),5000);
+        choose(kindOf(window,"series1Values"),"Range");choose(kindOf(window,"series1Values"),"Query column");choose(query,"Totals");
+        QTRY_COMPARE_WITH_TIMEOUT(itemsOf(column),QStringList{"Total"},10000);QCOMPARE(proxy.queryReads,2);
+    }
+    // Pull request review: a saved query edited to give another column under
+    // the same name and counts offers the new column.
+    void anEditedQuerysColumnsAreReadAgain() {
+        PROXY_WINDOW;Q_UNUSED(grid);QVERIFY(fillChartData(window,opened));QVERIFY(addTableAndQuery(window,opened));
+        QVERIFY(addChart(window,opened,"Edited",2,4));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *query=window.findChild<QComboBox *>("series1ValuesQuery"),*column=window.findChild<QComboBox *>("series1ValuesQueryColumn");
+        QTRY_COMPARE_WITH_TIMEOUT(query->count(),1,10000);
+        choose(kindOf(window,"series1Values"),"Query column");choose(query,"Totals");
+        QTRY_COMPARE_WITH_TIMEOUT(itemsOf(column),QStringList{"Total"},10000);
+        const auto queryId=query->currentData().toString();QVERIFY(!queryId.isEmpty());
+        const auto review=syncRequest(window.findChild<RestClient *>(),"/v1/workbooks/"+model->workbook()+"/queries/preview",
+                                      {{"name","Totals"},{"sql","SELECT Quantity AS Units FROM Orders"},{"query",queryId},{"expected_state",model->state()}});
+        QVERIFY2(!review.contains("_error"),qPrintable(review["_error"].toString()));
+        auto save=review["source_request"].toObject();save["action"]="query_save";save["review_digest"]=review["review_digest"];
+        QVERIFY(applied(window,opened,save));
+        if(auto *back=window.findChild<QPushButton *>("returnToSheets");back && back->isVisible())back->click();
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(openPanel(window,layer,id),10000);
+        query=window.findChild<QComboBox *>("series1ValuesQuery");column=window.findChild<QComboBox *>("series1ValuesQueryColumn");
+        QTRY_VERIFY_WITH_TIMEOUT(kindOf(window,"series1Values")->isEnabled(),5000);
+        choose(kindOf(window,"series1Values"),"Range");choose(kindOf(window,"series1Values"),"Query column");choose(query,"Totals");
+        QTRY_COMPARE_WITH_TIMEOUT(itemsOf(column),QStringList{"Units"},10000);
     }
 #undef PROXY_WINDOW
 

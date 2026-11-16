@@ -2048,6 +2048,8 @@ void MainWindow::readChartSources() {
     for(const auto &value:m_info["sheets"].toArray())sheets.append(QJsonObject{{"id",value.toObject()["id"]},{"name",value.toObject()["name"]}});
     const auto workbook=m_info["id"].toString();const auto state=m_info["state"];
     if(m_chartSourcesWorkbook!=workbook){m_chartSourcesWorkbook=workbook;m_chartTables={};m_chartQueries={};}
+    // A saved query's columns are read for one workbook state; another state forgets them.
+    if(const auto key=workbook+'\n'+state.toString();m_chartColumnsState!=key){m_chartColumnsState=key;m_chartPanel->queryColumnsObsolete();}
     // The panel's lists are refilled only when what they offer changed: the
     // sheets at once when they changed, the tables and queries when read.
     // An ordinary edit's refresh refills nothing.
@@ -2077,11 +2079,11 @@ void MainWindow::readQueryColumns(const QString &queryId) {
     m_queryReads.insert(key);
     m_client->request(base()+"/queries/read",{{"query",queryId},{"expected_state",state}},[this,workbook,state,queryId,key](QJsonObject result,QString error){
         m_queryReads.remove(key);
-        // An answer for another workbook or state is dropped; the panel asks again after its next catalog.
-        if(m_info["id"].toString()!=workbook || m_info["state"]!=state)return;
+        // An answer for another workbook or state is dropped and the panel may ask again.
+        if(m_info["id"].toString()!=workbook || m_info["state"]!=state){m_chartPanel->queryColumnsFailed(queryId);return;}
         // A failed read is reported; the columns are asked for again when next wanted.
         if(!error.isEmpty()){issue(tr("The columns of a saved query could not be read: %1").arg(error));m_chartPanel->queryColumnsFailed(queryId);return;}
-        if(result["state"]!=state)return;
+        if(result["state"]!=state){m_chartPanel->queryColumnsFailed(queryId);return;}
         QStringList columns;
         for(const auto &column:result["query"].toObject()["shape"].toArray())columns<<column.toObject()["name"].toString();
         m_chartPanel->setQueryColumns(queryId,columns);
@@ -2101,7 +2103,7 @@ void MainWindow::updateChartActions() {
     // Charts are moved, resized, reordered and deleted only while the sheet
     // takes edits; they are still selected, and edited in the panel (locked).
     const bool editable=sheet && !m_busy && !m_unknown && !m_info.value("readonly").toBool();
-    if(m_charts)m_charts->setInteractive(editable);
+    if(m_charts){m_charts->setInteractive(editable);m_charts->setHeld(editable && !chartCatalogCurrent());}
     if(m_chartPanel)m_chartPanel->setLocked(!editable || !chartCatalogCurrent());
     if(!m_chartMenu)return;
     m_editChartAction->setEnabled(charts);

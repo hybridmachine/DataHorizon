@@ -438,6 +438,7 @@ private:
     QString selectionProblem(QJsonObject *range) const;
     // Reads of saved query columns in flight, by workbook, state and query.
     QSet<QString> m_queryReads;
+    QString m_chartColumnsState;
     // The operation id of the chart_create whose committed receipt's chart is
     // selected after the refresh; then that chart's id. The create's
     // workbook, sheet and expected_state are kept while either is set.

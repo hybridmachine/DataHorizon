@@ -90,6 +90,8 @@ public:
     // The read of a saved query's columns failed: they are asked for again
     // the next time they are wanted.
     void queryColumnsFailed(const QString &queryId);
+    // Called when the workbook state changes: forgets every column list known or awaited.
+    void queryColumnsObsolete();
     // A range pick on the grid for a Range or Cell source field, so a source
     // is chosen by selecting cells as for a formula.
     // beginPick marks the field (highlighted, read-only, Pick pressed); it

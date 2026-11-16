@@ -537,6 +537,19 @@ void ChartPanel::setQueryColumns(const QString &queryId,const QStringList &colum
     for(const auto &box:std::as_const(m_series))for(auto *source:{box.name,box.values,box.x})source->setCatalog(m_tables,withColumns);
 }
 
+// The workbook changed: a saved query may now give other columns under the
+// same summary, and an answer still awaited will be dropped. Nothing is
+// known or awaited any more; a field asks again when its query is chosen or
+// its column list is opened. A stored choice stays shown by name.
+void ChartPanel::queryColumnsObsolete() {
+    m_queriesWanted.clear();
+    if(m_queryColumns.isEmpty())return;
+    m_queryColumns.clear();
+    const auto withColumns=queriesWithColumns();
+    m_categories->setCatalog(m_tables,withColumns);
+    for(const auto &box:std::as_const(m_series))for(auto *source:{box.name,box.values,box.x})source->setCatalog(m_tables,withColumns);
+}
+
 void ChartPanel::queryColumnsFailed(const QString &queryId) {
     m_queriesWanted.remove(queryId);
 }

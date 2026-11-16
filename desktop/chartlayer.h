@@ -126,7 +126,7 @@ public:
     void relayout();
     // Called as a model reset begins: the view shows hidden rows and default
     // sizes until it is restored, so nothing is placed or hidden until then.
-    void holdLayout(){m_held=true;}
+    void holdLayout(){m_layoutHeld=true;}
     ~ChartLayer() override;
     QList<ChartOverlay *> overlays() const;
     // The selected chart's id; empty when none is.
@@ -149,6 +149,8 @@ public:
     // False while busy, read-only or projected: overlays still select on a
     // click but take no keys other than Escape.
     void setInteractive(bool interactive);
+    // Set while the window holds a newer workbook state than the charts listed.
+    void setHeld(bool held);
     // True while the window picks cells (a formula reference pick, the format
     // painter, a Python pick, a chart range pick): overlays let the mouse
     // through to the cells under them and take no focus, as the view-only
@@ -196,7 +198,8 @@ private:
     void clear();
     void restack();
     void queueRelayout();
-    bool m_held=false;
+    bool m_layoutHeld=false,m_held=false;
+    bool editable() const {return m_interactive && !m_held;}
     bool overlayEvent(ChartOverlay *overlay,QEvent *event);
     bool keyEvent(ChartOverlay *overlay,QKeyEvent *key);
     // One arrow key on a selected chart: a move, or with Shift a resize.

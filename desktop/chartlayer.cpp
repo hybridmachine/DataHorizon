@@ -226,7 +226,7 @@ void ChartLayer::restack() {
 
 void ChartLayer::queueRelayout() {
     if(m_queued)return;m_queued=true;
-    QTimer::singleShot(0,this,[this]{m_held=false;if(m_queued)relayout();});
+    QTimer::singleShot(0,this,[this]{m_layoutHeld=false;if(m_queued)relayout();});
 }
 
 bool ChartLayer::eventFilter(QObject *object,QEvent *event) {
@@ -268,7 +268,7 @@ bool ChartLayer::overlayEvent(ChartOverlay *item,QEvent *event) {
         select(item->chartId());item->setFocus(Qt::MouseFocusReason);
         if(mouse->button()==Qt::RightButton){emit contextMenuRequested(item->chartId(),mouse->globalPosition().toPoint());return true;}
         QRect start;QTableView *pane=nullptr;
-        if(mouse->button()==Qt::LeftButton && m_interactive && !m_passThrough && trueRect(item,&start,&pane))
+        if(mouse->button()==Qt::LeftButton && editable() && !m_passThrough && trueRect(item,&start,&pane))
             m_drag={item,handle,mouse->globalPosition().toPoint(),start,false};
         updateCursor(item,handle);
         return true;
@@ -350,19 +350,24 @@ bool ChartLayer::keyEvent(ChartOverlay *item,QKeyEvent *key) {
         if(press && !key->isAutoRepeat() && !m_drag.active)emit contextMenuRequested(item->chartId(),menuPosition(item));
         return true;
     }
-    if(!m_interactive)return false;
+    // Enter opens the panel while the chart cannot change too; the panel is then locked.
     const bool enter=(code==Qt::Key_Return || code==Qt::Key_Enter) && modifiers==Qt::NoModifier;
+    if(enter) {
+        key->accept();
+        if(press && !key->isAutoRepeat() && !m_drag.active)emit editRequested(item->chartId());
+        return true;
+    }
+    if(!m_interactive)return false;
     const bool remove=(code==Qt::Key_Delete || code==Qt::Key_Backspace) && modifiers==Qt::NoModifier;
     const bool arrow=(code==Qt::Key_Left || code==Qt::Key_Right || code==Qt::Key_Up || code==Qt::Key_Down) && !(modifiers&~(Qt::ShiftModifier|Qt::AltModifier));
-    if(!enter && !remove && !arrow)return false;
+    if(!remove && !arrow)return false;
     key->accept();
-    // During a drag only Escape acts.
-    if(!press || m_drag.active)return true;
+    // During a drag only Escape acts. While held the keys stay with the
+    // chart and change nothing: its listed place may be older than the
+    // workbook's, and Delete must not reach the grid's cells.
+    if(!press || m_drag.active || m_held)return true;
     if(arrow)nudge(item,code,modifiers);
-    else if(!key->isAutoRepeat()) {
-        if(enter)emit editRequested(item->chartId());
-        else{m_swallowRepeat=code;emit deleteRequested(item->chartId());}
-    }
+    else if(!key->isAutoRepeat()){m_swallowRepeat=code;emit deleteRequested(item->chartId());}
     return true;
 }
 
@@ -427,7 +432,7 @@ void ChartLayer::cancelDrag() {
 }
 
 void ChartLayer::updateCursor(ChartOverlay *item,int handle) const {
-    if(!item->selected() || !m_interactive || m_passThrough){item->unsetCursor();return;}
+    if(!item->selected() || !editable() || m_passThrough){item->unsetCursor();return;}
     static constexpr Qt::CursorShape shapes[8]{Qt::SizeFDiagCursor,Qt::SizeVerCursor,Qt::SizeBDiagCursor,Qt::SizeHorCursor,
                                                Qt::SizeFDiagCursor,Qt::SizeVerCursor,Qt::SizeBDiagCursor,Qt::SizeHorCursor};
     item->setCursor(handle<0?Qt::SizeAllCursor:shapes[handle]);
@@ -505,7 +510,7 @@ bool ChartLayer::placementIn(QTableView *view,const QPoint &point,QJsonObject *a
 // includes a header or a scroll bar.
 void ChartLayer::relayout() {
     // Held through a model reset; the reset queues the relayout that follows it.
-    if(m_held)return;
+    if(m_layoutHeld)return;
     m_queued=false;
     const auto items=overlays();
     // Restarted on each relayout, so scrolling renders once it settles.
@@ -612,16 +617,24 @@ void ChartLayer::setInteractive(bool interactive) {
     for(auto *item:overlays())item->unsetCursor();
 }
 
+// The charts listed may be older than the workbook: nothing is moved,
+// resized, reordered or deleted from them until they are listed again.
+void ChartLayer::setHeld(bool held) {
+    if(m_held==held)return;
+    m_held=held;
+    if(m_held)cancelDrag();
+}
+
 void ChartLayer::requestEdit() {
     if(!m_selected.isEmpty())emit editRequested(m_selected);
 }
 
 void ChartLayer::requestOrder(const QString &order) {
-    if(!m_selected.isEmpty() && m_interactive)emit orderRequested(m_selected,order);
+    if(!m_selected.isEmpty() && editable())emit orderRequested(m_selected,order);
 }
 
 void ChartLayer::requestDelete() {
-    if(!m_selected.isEmpty() && m_interactive)emit deleteRequested(m_selected);
+    if(!m_selected.isEmpty() && editable())emit deleteRequested(m_selected);
 }
 
 void ChartLayer::setPassThrough(bool passThrough) {

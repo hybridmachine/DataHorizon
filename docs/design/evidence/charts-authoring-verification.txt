@@ -138,3 +138,24 @@ Known and not changed: a chart that is selected while the grid holds the keyboar
 the format painter starts) stays selected, and Delete then acts on the grid's cells as an ordinary grid Delete; axis
 title and series name fields keep Qt's default 32,767-character field limit; after a reconnect to the same workbook,
 sheet and state the chart list may not be read again until the next change (read, not run).
+
+Pull request review fixes (November 16, 2026; run on the working tree committed after 95995fe)
+Four findings of the review of pull request 143, each reproduced by a new test seen failing before its fix:
+- A chart's keys and drags acted on charts listed for an older workbook state (a Shift+arrow resize overwrote another
+  client's size). The window now holds the chart layer while its listing is older than the workbook: no drag starts,
+  a drag under way is cancelled, and Delete, Backspace and the arrows stay with the chart and change nothing, so
+  Delete does not reach the grid. Test aChartIsNotChangedFromAnOlderListing. This replaces the earlier behaviour in
+  which a drag could begin before the relist (relistDuringADragKeepsTheDraggedChart is now
+  aDragWaitsForTheChartsToBeListed).
+- A saved-query column read dropped because the workbook changed left the panel waiting for it forever.
+  Test aDroppedQueryReadIsAskedAgain.
+- A saved query edited to give another column under the same name and counts kept its old column list. The panel
+  now forgets every column list when the workbook state changes and reads again when a query is chosen or its column
+  list is opened. Test anEditedQuerysColumnsAreReadAgain.
+- Enter on a focused chart did nothing in a read-only workbook; it now opens the panel, locked, as Edit Chart does.
+  Test enterOpensTheLockedPanelOfAReadOnlyChart; escapeDeselectsAndFocusesTheGrid changed to match.
+ctest --test-dir build -R '^(chart_authoring|desktop|python_workspace)$': chart_authoring "Totals: 227 passed, 0
+failed"; desktop "Totals: 282 passed, 0 failed"; python_workspace "Totals: 72 passed, 0 failed" (desktop and
+python_workspace were run before three chart authoring tests were updated; no product code changed after).
+The first CI run of the pull request failed python_workspace and chart_authoring without keeping their output; the
+workflow now uploads both logs on failure.
