@@ -229,8 +229,9 @@ bool ChartLayer::eventFilter(QObject *object,QEvent *event) {
     if(auto *item=qobject_cast<ChartOverlay *>(object))return overlayEvent(item,event);
     if(event->type()==QEvent::MouseButtonPress) {
         // A press on a grid pane or header deselects and takes the focus back
-        // from a chart; the pane handles the press as usual.
-        for(const auto &pane:std::as_const(m_panes))if(pane==object){select({});refocusGrid();break;}
+        // from a chart; the pane handles the press as usual. During a pick
+        // the chart keeps its selection.
+        for(const auto &pane:std::as_const(m_panes))if(pane==object){if(!m_passThrough)select({});refocusGrid();break;}
         return QObject::eventFilter(object,event);
     }
     if(attached())switch(event->type()) {

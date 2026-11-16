@@ -70,8 +70,9 @@ private:
 // view, and never cover the headers or scroll bars.
 //
 // At most one chart is selected. A press on an overlay selects it and focuses
-// it; a press on any grid pane or header, or Escape on the overlay, clears the
-// selection, and the grid takes back any focus a chart had. The selection
+// it; a press on any grid pane or header (except while passing through), or
+// Escape on the overlay, clears the selection, and the grid takes back any
+// focus a chart had. The selection
 // survives a relist while its chart exists, and clears when the chart goes,
 // another sheet or workbook is bound, or the sheet is shown projected. The
 // wheel over an overlay scrolls the body.
@@ -125,8 +126,9 @@ public:
     // click but take no keys other than Escape.
     void setInteractive(bool interactive);
     // True while the window picks cells (a formula reference pick, the format
-    // painter, a Python pick): overlays let the mouse through to the cells
-    // under them and take no focus, as the view-only layer did.
+    // painter, a Python pick, a chart range pick): overlays let the mouse
+    // through to the cells under them and take no focus, as the view-only
+    // layer did, and a press on the grid keeps the selection.
     void setPassThrough(bool passThrough);
     // The inverse of relayout() (Decision 5): the cell under the rectangle's
     // top-left corner in the pane under it (frozen corner, frozen rows, frozen

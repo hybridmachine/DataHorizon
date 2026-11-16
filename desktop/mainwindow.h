@@ -7,6 +7,7 @@
 #include "formulasyntax.h"
 #include <QProcess>
 #include <QHash>
+#include <QSet>
 #include <QMap>
 #include <QJsonArray>
 #include <QPersistentModelIndex>
@@ -103,6 +104,16 @@ public:
     // it is accepted, the operation finishes, or the handle changes. The final
     // outcome still arrives as that operation's receipt.
     void cancelPendingOperation(const QString &operation);
+    // A range pick for a Range or Cell source field of the chart panel
+    // (Decision 9). While it is active the grid's selection on any sheet fills
+    // the field, the chart stays selected and editing commands are disabled.
+    // endChartPick(true) applies the picked range as a typed one would (Enter;
+    // nothing when the selection cannot be applied), endChartPick(false) puts
+    // the field back (Escape); both return to the chart's sheet, select the
+    // chart and focus the field.
+    void beginChartPick(const QString &field);
+    void endChartPick(bool apply);
+    bool chartPickActive() const;
 signals:
     // Emitted once when external picking ends; inserted is true when at least
     // one reference was inserted while it was armed.
@@ -401,6 +412,24 @@ private:
     QString m_chartSourcesWorkbook;
     // A suggest request is outstanding; a second Insert waits for it.
     bool m_chartSuggesting = false;
+    // The chart range pick (Task 8): the panel's field, its chart, the
+    // chart's sheet and workbook; the field is empty when no pick is on.
+    // The status shown before it, and whether the selection can be applied.
+    QString m_chartPickField, m_chartPickChart, m_chartPickSheet, m_chartPickWorkbook, m_chartPickStatus;
+    // Ended on another sheet: returning to the chart's sheet, to apply or not once it is listed.
+    bool m_chartPickReady = false, m_chartPickReturning = false, m_chartPickApplyOnReturn = false;
+    QAction *m_chartPickApply = nullptr, *m_chartPickCancel = nullptr;
+    // Ends the pick and puts the field back, staying where the person is.
+    void cancelChartPick();
+    // settle: on the chart's sheet, listed: select the chart, focus the field and apply when asked.
+    void finishChartPick(bool apply,bool settle);
+    // The status, and the field when fill is set, from the grid's selection.
+    void updateChartPick(bool fill);
+    // The grid's selection as 1-based {r1, c1, r2, c2}, or why it cannot be
+    // used for a range operation; both empty when nothing is selected.
+    QString selectionProblem(QJsonObject *range) const;
+    // Reads of saved query columns in flight, by workbook, state and query.
+    QSet<QString> m_queryReads;
     // The operation id of the chart_create whose committed receipt's chart is
     // selected after the refresh; then that chart's id. The create's
     // workbook, sheet and expected_state are kept while either is set.

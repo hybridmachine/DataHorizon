@@ -48,6 +48,14 @@ public:
     // [{id, name}], with "shape": [{name}] once their columns are known.
     void setCatalog(const QJsonArray &tables,const QJsonArray &queries);
     bool queryColumnsKnown(const QString &id) const;
+    // A range pick on the grid for this field: the text field is highlighted
+    // and read-only, the kind list disabled and Pick stays pressed. Its text
+    // and kind are kept when focus leaves the field for the grid. Starting
+    // remembers the text; stopping with restore puts it back.
+    void setPicking(bool picking,bool restore=false);
+    // Shows a picked range as if it had been typed.
+    void showPicked(const QString &text);
+    void focusText();
 signals:
     // Enter or focus-out in the text field.
     void textFinished();
@@ -64,6 +72,8 @@ signals:
     void abandoned();
 private:
     bool eventFilter(QObject *object,QEvent *event) override;
+    // Once focus has landed: a kind change left incomplete ends when focus is outside the field.
+    void checkAbandoned();
     void showKind(const QString &kind);
     // Fills the object list of the page (table or query), keeping the shown choice.
     void fillObjects(const QString &kind);
@@ -79,4 +89,7 @@ private:
     QString m_shownKind,m_shownId,m_shownName,m_shownColumn,m_shownColumnName;
     // Another kind was chosen and nothing has been shown or completed since.
     bool m_kindChanged=false;
+    // A pick is on; the text and its typed state when it started.
+    bool m_picking=false,m_pickedModified=false;
+    QString m_pickedText;
 };

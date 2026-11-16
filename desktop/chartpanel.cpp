@@ -490,6 +490,10 @@ void ChartPanel::setQueryColumns(const QString &queryId,const QStringList &colum
     for(const auto &box:std::as_const(m_series))for(auto *source:{box.name,box.values,box.x})source->setCatalog(m_tables,withColumns);
 }
 
+void ChartPanel::queryColumnsFailed(const QString &queryId) {
+    m_queriesWanted.remove(queryId);
+}
+
 QJsonArray ChartPanel::queriesWithColumns() const {
     QJsonArray out;
     for(const auto &value:m_queries) {
@@ -557,7 +561,7 @@ void ChartPanel::setHolder(const QString &field,const QJsonValue &value) {
 bool ChartPanel::scatter() const { return m_working.value("type").toString()=="scatter"; }
 
 void ChartPanel::loadData() {
-    m_before={};
+    m_before={};m_picked={};
     m_working=m_chart.isEmpty()?QJsonObject():ChartSpec::workingSpec(m_chart);
     m_rows=QList<SeriesState>(m_working.value("series").toArray().size());
     m_categoriesEdited=m_seriesHeld=false;
@@ -578,6 +582,12 @@ void ChartPanel::loadData() {
 }
 
 void ChartPanel::showData() {
+    // Fields shown afresh end a pick: the field picked may be another one now.
+    if(!m_picking.isEmpty()) {
+        if(auto *source=sourceField(std::exchange(m_picking,{})))source->setPicking(false);
+        m_picked={};
+        emit pickEnded();
+    }
     ensureSeries(int(m_working.value("series").toArray().size()));
     const bool xs=scatter();
     // A scatter chart has no categories; each series has its X instead.
@@ -701,6 +711,8 @@ QJsonObject ChartPanel::sendable() const {
 void ChartPanel::applySource(const QString &field) {
     auto *source=sourceField(field);
     if(!source || m_chart.isEmpty() || m_working.isEmpty())return;
+    // While picked the field shows the grid's selection; endPick applies it.
+    if(field==m_picking)return;
     const auto kind=source->kind();
     const bool typed=kind=="text" || kind=="cell" || kind=="range";
     if(m_locked || m_pending){if(typed)defer(field);else showSource(field);return;}
@@ -713,7 +725,9 @@ void ChartPanel::applySource(const QString &field) {
             const auto text=source->text().trimmed();
             if(text.isEmpty())return;
             QJsonObject range;
-            if(!ChartSpec::parseRange(text,m_sheetIds,m_chart.value("sheet_id").toString(),&range)){refuseLocally(field,tr("Enter a cell range such as A2:A13"));return;}
+            // A picked range is taken as picked; typed text is read.
+            if(m_picked.field==field && m_picked.text==text)range=m_picked.source;
+            else if(!ChartSpec::parseRange(text,m_sheetIds,m_chart.value("sheet_id").toString(),&range)){refuseLocally(field,tr("Enter a cell range such as A2:A13"));return;}
             if(kind=="cell" && range["ref"].toString().contains(':')){refuseLocally(field,tr("A series name takes one cell"));return;}
             value=QJsonObject{{"source",range}};
         }
@@ -749,6 +763,11 @@ void ChartPanel::removeSeries(int row) {
     const auto completeCount=std::count_if(list.begin(),list.end(),[this](const QJsonValue &value){return complete(value);});
     if(stored && completeCount==1){refuseLocally("series",tr("A chart needs at least one series"));return;}
     if(stored)remember();
+    // An added row removed while a change is awaited (or edits are held) is
+    // gone from what a refusal goes back to as well.
+    else if(m_before.valid && row<m_before.rows.size() && m_before.rows[row].panelOnly) {
+        auto before=m_before.working["series"].toArray();before.removeAt(row);m_before.working["series"]=before;m_before.rows.removeAt(row);
+    }
     list.removeAt(row);m_working["series"]=list;m_rows.removeAt(row);
     if(stored)m_seriesHeld=true;
     // Messages stay with no shifted series.
@@ -784,4 +803,41 @@ void ChartPanel::addSeries() {
 void ChartPanel::refuseLocally(const QString &field,const QString &message) {
     showSource(field);
     showMessage(field,message);
+}
+
+// Picking a range on the grid.
+
+QString ChartPanel::fieldLabel(const QString &field) {
+    int row;QString part;
+    if(!dataSlot(field,&row,&part))return {};
+    if(row<0)return tr("Categories");
+    const auto label=part=="name"?tr("Name"):part=="values"?tr("Values"):tr("X");
+    return tr("Series %1 %2").arg(row+1).arg(label);
+}
+
+void ChartPanel::beginPick(const QString &field) {
+    if(!m_picking.isEmpty())endPick(false,false);
+    auto *source=sourceField(field);
+    if(!source || m_chart.isEmpty() || m_working.isEmpty() || !(source->kind()=="range" || source->kind()=="cell"))return;
+    m_picking=field;m_picked={};
+    source->setPicking(true);
+}
+
+void ChartPanel::setPicked(const QString &field,const QJsonObject &rangeSource) {
+    auto *source=sourceField(field);
+    if(field.isEmpty() || field!=m_picking || !source)return;
+    const auto text=ChartSpec::rangeText(rangeSource,m_sheetNames,m_chart.value("sheet_id").toString());
+    m_picked={field,text,rangeSource};
+    clearMessage(field);
+    source->showPicked(text);
+}
+
+void ChartPanel::endPick(bool apply,bool focus) {
+    const auto field=std::exchange(m_picking,{});
+    auto *source=sourceField(field);if(!source)return;
+    source->setPicking(false,!apply);
+    if(!apply)m_picked={};
+    // Focus first: a change sent now locks the panel, which gives it back on unlock.
+    if(focus)source->focusText();
+    if(apply)applySource(field);
 }

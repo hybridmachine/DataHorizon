@@ -86,6 +86,24 @@ public:
     // describes that query differently.
     void setCatalog(const QJsonArray &sheets,const QJsonArray &tables,const QJsonArray &queries);
     void setQueryColumns(const QString &queryId,const QStringList &columns);
+    // The read of a saved query's columns failed: they are asked for again
+    // the next time they are wanted.
+    void queryColumnsFailed(const QString &queryId);
+    // A range pick on the grid for a Range or Cell source field (Decision 9).
+    // beginPick marks the field (highlighted, read-only, Pick pressed); it
+    // does nothing unless the field shows a Range or Cell. setPicked shows a
+    // picked range in the field as if typed, bare on the chart's sheet and
+    // sheet-qualified otherwise; nothing is sent. endPick(true) applies the
+    // field as a typed range is applied on Enter (one change, a held edit
+    // while a source is broken, or completing an added row); endPick(false)
+    // puts the field back. Either focuses the field when asked.
+    void beginPick(const QString &field);
+    void setPicked(const QString &field,const QJsonObject &rangeSource);
+    void endPick(bool apply,bool focus);
+    // The field being picked; empty when none.
+    QString pickField() const { return m_picking; }
+    // A source field's label: "Categories", "Series 1 Name", "Series 1 Values", "Series 1 X".
+    static QString fieldLabel(const QString &field);
 signals:
     // changes holds exactly the chart_update fields: name, order or spec.
     // field names the control (chartName, chartOrder, chartType,
@@ -99,6 +117,10 @@ signals:
     void pickRequested(const QString &field);
     // The columns of a saved query are wanted (answered with setQueryColumns).
     void queryColumnsWanted(const QString &queryId);
+    // The panel ended a pick itself: the Data group was shown afresh (a
+    // series added, removed or moved, or another specification), so the
+    // field may be another one now. Its content is the working copy's.
+    void pickEnded();
 private:
     // keepData: the same chart and specification; the Data group's working copy stays.
     void load(bool keepData=false);
@@ -212,4 +234,8 @@ private:
     QHash<QString,QToolButton *> m_typeButtons;
     QComboBox *m_grouping=nullptr,*m_legend=nullptr;
     QHash<QString,QLabel *> m_messages;
+    // The field being picked, and the range last picked into a field with
+    // the text it shows: that text applies as that range.
+    QString m_picking;
+    struct Picked { QString field,text;QJsonObject source; } m_picked;
 };

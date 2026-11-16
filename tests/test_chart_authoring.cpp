@@ -61,11 +61,12 @@ QJsonObject specOf(const QString &type, const QJsonValue &grouping, const QJsonV
 // Forwards every call to a real service. Suggest answers, workbook metadata
 // reads, chart catalog reads and operation answers can be held until released, chart_update
 // operations can be refused without reaching the service (the refusal held like any
-// operation answer), the next chart catalog read can fail, and the answer to the next
-// chart_create can be lost (the operation still reaches the service).
+// operation answer), the next chart catalog read can fail, reads of saved queries can
+// fail while asked, and the answer to the next chart_create can be lost (the operation
+// still reaches the service).
 class ChartProxy : public QTcpServer {
 public:
-    bool holdSuggest=false,holdMetadata=false,holdCharts=false,holdOperations=false,loseCreate=false,refuseChartUpdates=false,failCharts=false;
+    bool holdSuggest=false,holdMetadata=false,holdCharts=false,holdOperations=false,loseCreate=false,refuseChartUpdates=false,failCharts=false,failQueryReads=false;
     int suggests=0,queryReads=0;
     explicit ChartProxy(const QJsonObject &service) : m_upstream(this) {
         m_upstream.configure(service["url"].toString(),service["token"].toString());
@@ -91,6 +92,10 @@ public:
                 if(operation && refuseChartUpdates && body["action"].toString()=="chart_update") {
                     std::function<void()> reply=[guarded,id=body["operation_id"]]{send(guarded,{{"operation_id",id},{"outcome","rejected"},{"code","INVALID_ARGUMENT"},{"message","The test proxy refused this chart change"}},"refused");};
                     if(holdOperations)m_operations.append(reply);else reply();
+                    return;
+                }
+                if(path.endsWith("/queries/read") && failQueryReads) {
+                    send(guarded,{{"code","UNAVAILABLE"},{"message","The test proxy failed this query read"}},"failed");
                     return;
                 }
                 if(catalog && failCharts) {
@@ -1968,6 +1973,221 @@ private slots:
         QCOMPARE(list[0].toObject()["values"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B4"));
         QCOMPARE(list[1].toObject()["values"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B3"));
     }
+    // Task 8: picking a range on the grid.
+    void pickFillsTheFieldFromTheGridSelection() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Picked range",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto *values=rangeOf(window,"series1Values");auto *pick=pickOf(window,"series1Values");QCOMPARE(values->text(),QString("B2:B4"));
+        QVERIFY(!window.chartPickActive());press(pick);
+        QVERIFY(window.chartPickActive());QVERIFY(pick->isChecked());
+        QCOMPARE(statusText(window),QString("Pick a range for Series 1 Values • Enter applies • Escape cancels"));
+        // The grid keeps the keyboard; the field is not filled until the selection changes.
+        QVERIFY(window.focusWidget());QVERIFY(!panelOf(window)->isAncestorOf(window.focusWidget()));QCOMPARE(values->text(),QString("B2:B4"));
+        // A selection made in code, by the mouse and by the keyboard fills the field.
+        selectCells(grid,model,1,1,2,1);QCOMPARE(values->text(),QString("B2:B3"));
+        windowClick(grid->viewport(),grid->visualRect(model->index(1,2)).center());QCOMPARE(values->text(),QString("C2"));
+        QTest::keyClick(window.focusWidget(),Qt::Key_Down,Qt::ShiftModifier);QCOMPARE(values->text(),QString("C2:C3"));
+        QTest::keyClick(window.focusWidget(),Qt::Key_Left);QCOMPARE(values->text(),QString("B3"));
+        QVERIFY(window.chartPickActive());
+        QCOMPARE(statusText(window),QString("Pick a range for Series 1 Values • Enter applies • Escape cancels"));
+        // Nothing is sent until Enter.
+        QTest::qWait(100);QCOMPARE(requested.count(),0);QCOMPARE(admitted.count(),0);
+        QCOMPARE(layer->chart(id)["spec"].toObject()["series"].toArray()[0].toObject()["values"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B4"));
+        // Categories are picked the same way, with their own label.
+        QTest::keyClick(window.focusWidget(),Qt::Key_Escape);QVERIFY(!window.chartPickActive());
+        press(pickOf(window,"categoriesSource"));QVERIFY(window.chartPickActive());
+        QCOMPARE(statusText(window),QString("Pick a range for Categories • Enter applies • Escape cancels"));
+        selectCells(grid,model,1,0,3,0);QCOMPARE(rangeOf(window,"categoriesSource")->text(),QString("A2:A4"));QCOMPARE(values->text(),QString("B2:B4"));
+    }
+    void pickKeepsTheChartSelected() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Kept",2,4,0,0,320,200));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const auto id=overlay->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy changed(layer,&ChartLayer::selectionChanged);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        press(pickOf(window,"series1Values"));QVERIFY(window.chartPickActive());
+        // The chart lets the mouse through to the cells beneath it and cannot be dragged.
+        QVERIFY(overlay->testAttribute(Qt::WA_TransparentForMouseEvents));QCOMPARE(overlay->focusPolicy(),Qt::NoFocus);
+        const QPoint under=grid->visualRect(model->index(2,4)).center();
+        QVERIFY(overlay->geometry().contains(grid->viewport()->mapTo(overlay->parentWidget(),under)));
+        windowClick(grid->viewport(),under);
+        QCOMPARE(grid->currentIndex(),model->index(2,4));QCOMPARE(rangeOf(window,"series1Values")->text(),QString("E3"));
+        // A click on the grid does not deselect the chart during a pick.
+        windowClick(grid->viewport(),grid->visualRect(model->index(1,1)).center());QCOMPARE(rangeOf(window,"series1Values")->text(),QString("B2"));
+        QCOMPARE(layer->selectedChart(),id);QVERIFY(overlay->selected());QCOMPARE(changed.count(),0);QCOMPARE(panelOf(window)->chartId(),id);
+        // Delete reaches neither the chart nor the cells.
+        QTest::keyClick(window.focusWidget(),Qt::Key_Delete);QTest::qWait(100);QCOMPARE(admitted.count(),0);QCOMPARE(layer->overlays().size(),1);
+        QTest::keyClick(window.focusWidget(),Qt::Key_Escape);QVERIFY(!window.chartPickActive());
+        QCOMPARE(layer->selectedChart(),id);QVERIFY(!overlay->testAttribute(Qt::WA_TransparentForMouseEvents));
+    }
+    void enterAppliesThePickAsOneUpdate() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Applied",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto *values=rangeOf(window,"series1Values");
+        auto stored=[&]{return layer->chart(id)["spec"].toObject()["series"].toArray()[0].toObject()["values"].toObject()["source"].toObject();};
+        press(pickOf(window,"series1Values"));selectCells(grid,model,1,1,2,1);QCOMPARE(values->text(),QString("B2:B3"));
+        QTest::keyClick(window.focusWidget(),Qt::Key_Return);
+        QVERIFY(!window.chartPickActive());QVERIFY(!pickOf(window,"series1Values")->isChecked());
+        QCOMPARE(requested.count(),1);QCOMPARE(requested[0][2].toString(),QString("series1Values"));QCOMPARE(requested[0][1].toJsonObject().keys(),QStringList{"spec"});
+        QCOMPARE(admitted.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(stored()["ref"].toString(),QString("B2:B3"),10000);QCOMPARE(stored()["sheet_id"].toString(),model->sheet());
+        QVERIFY(idle(window));QTRY_COMPARE_WITH_TIMEOUT(values->text(),QString("B2:B3"),5000);
+        // The chart is selected and the picked field has focus again.
+        QCOMPARE(layer->selectedChart(),id);QTRY_COMPARE_WITH_TIMEOUT(window.focusWidget(),static_cast<QWidget *>(values),5000);
+        QTest::qWait(200);QCOMPARE(admitted.count(),1);
+        // Enter with focus in the panel applies the pick too, and only it.
+        QTRY_VERIFY_WITH_TIMEOUT(pickOf(window,"series1Values")->isEnabled(),5000);
+        press(pickOf(window,"series1Values"));selectCells(grid,model,1,1,3,1);QCOMPARE(values->text(),QString("B2:B4"));
+        auto *title=window.findChild<QLineEdit *>("chartTitle");title->setFocus();QVERIFY(window.chartPickActive());
+        QTest::keyClick(title,Qt::Key_Return);QVERIFY(!window.chartPickActive());
+        QCOMPARE(requested.count(),2);QCOMPARE(requested[1][2].toString(),QString("series1Values"));
+        QTRY_COMPARE_WITH_TIMEOUT(stored()["ref"].toString(),QString("B2:B4"),10000);QVERIFY(idle(window));QTest::qWait(200);QCOMPARE(admitted.count(),2);
+    }
+    void escapeCancelsThePickAndRestoresTheField() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Cancelled",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto *values=rangeOf(window,"series1Values");auto *undo=window.findChild<QAction *>("undoAction");const bool undoEnabled=undo->isEnabled();
+        press(pickOf(window,"series1Values"));selectCells(grid,model,1,1,2,1);QCOMPARE(values->text(),QString("B2:B3"));
+        QTest::keyClick(window.focusWidget(),Qt::Key_Escape);
+        QVERIFY(!window.chartPickActive());QCOMPARE(values->text(),QString("B2:B4"));QVERIFY(!values->isModified());
+        QVERIFY(!pickOf(window,"series1Values")->isChecked());QCOMPARE(layer->selectedChart(),id);
+        QCOMPARE(window.focusWidget(),static_cast<QWidget *>(values));
+        QVERIFY(statusText(window)!=QString("Pick a range for Series 1 Values • Enter applies • Escape cancels"));
+        QCOMPARE(undo->isEnabled(),undoEnabled);
+        // Leaving the restored field sends nothing.
+        rangeOf(window,"categoriesSource")->setFocus();QTest::qWait(100);QCOMPARE(requested.count(),0);
+        // Escape with focus in the panel cancels too.
+        press(pickOf(window,"series1Values"));selectCells(grid,model,2,1,3,1);QCOMPARE(values->text(),QString("B3:B4"));
+        auto *title=window.findChild<QLineEdit *>("chartTitle");title->setFocus();QTest::keyClick(title,Qt::Key_Escape);
+        QVERIFY(!window.chartPickActive());QCOMPARE(values->text(),QString("B2:B4"));QCOMPARE(window.focusWidget(),static_cast<QWidget *>(values));
+        // The same Pick button pressed again cancels as well.
+        press(pickOf(window,"series1Values"));selectCells(grid,model,2,1,3,1);press(pickOf(window,"series1Values"));
+        QVERIFY(!window.chartPickActive());QCOMPARE(values->text(),QString("B2:B4"));
+        QTest::qWait(100);QCOMPARE(requested.count(),0);QCOMPARE(admitted.count(),0);
+        QCOMPARE(layer->chart(id)["spec"].toObject()["series"].toArray()[0].toObject()["values"].toObject()["source"].toObject()["ref"].toString(),QString("B2:B4"));
+    }
+    void pickOnAnotherSheetNamesThatSheetAndReturns() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(applied(window,opened,{{"action","sheet_add"},{"name","Other"}}));
+        auto *tabs=window.findChild<QTabBar *>("sheets");const auto own=model->sheet();
+        tabs->setCurrentIndex(1);QCOMPARE(tabs->tabText(1),QString("Other"));const auto other=model->sheet();QVERIFY(other!=own);
+        QVERIFY(fillChartData(window,opened));tabs->setCurrentIndex(0);QCOMPARE(model->sheet(),own);
+        QVERIFY(addChart(window,opened,"Travelled",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *panel=panelOf(window);QSignalSpy requested(panel,&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto *values=rangeOf(window,"series1Values");
+        // Read while the chart's sheet is listed again: empty until then.
+        auto stored=[&]{const auto list=layer->chart(id)["spec"].toObject()["series"].toArray();return list.isEmpty()?QJsonObject():list[0].toObject()["values"].toObject()["source"].toObject();};
+        // An added row not yet sent is kept through the visit.
+        press(window.findChild<QPushButton *>("addSeries"));typeInto(rangeOf(window,"series2Name"),"Waiting",true);
+        press(pickOf(window,"series1Values"));QVERIFY(window.chartPickActive());
+        tabs->setCurrentIndex(1);QCOMPARE(model->sheet(),other);QVERIFY(window.chartPickActive());
+        // The panel keeps its chart while its sheet is not shown.
+        QCOMPARE(panel->chartId(),id);QCOMPARE(rangeOf(window,"series2Name")->text(),QString("Waiting"));
+        selectCells(grid,model,1,1,2,1);QCOMPARE(values->text(),QString("Other!B2:B3"));
+        QCOMPARE(statusText(window),QString("Pick a range for Series 1 Values • Enter applies • Escape cancels"));
+        QTest::keyClick(window.focusWidget(),Qt::Key_Return);
+        // Back on the chart's sheet, one change once it is listed.
+        QCOMPARE(model->sheet(),own);QCOMPARE(tabs->currentIndex(),0);QTRY_VERIFY_WITH_TIMEOUT(!window.chartPickActive(),5000);
+        QCOMPARE(requested.count(),1);QCOMPARE(admitted.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(stored()["ref"].toString(),QString("B2:B3"),10000);QCOMPARE(stored()["sheet_id"].toString(),other);
+        QVERIFY(idle(window));QTRY_COMPARE_WITH_TIMEOUT(layer->selectedChart(),id,5000);
+        QTRY_COMPARE_WITH_TIMEOUT(values->text(),QString("Other!B2:B3"),5000);QTRY_COMPARE_WITH_TIMEOUT(window.focusWidget(),static_cast<QWidget *>(values),5000);
+        QCOMPARE(rangeOf(window,"series2Name")->text(),QString("Waiting"));
+        QTest::qWait(200);QCOMPARE(admitted.count(),1);
+        // Escape on another sheet returns too, and changes nothing.
+        QTRY_VERIFY_WITH_TIMEOUT(pickOf(window,"series1Values")->isEnabled(),5000);
+        press(pickOf(window,"series1Values"));tabs->setCurrentIndex(1);selectCells(grid,model,2,1,3,1);QCOMPARE(values->text(),QString("Other!B3:B4"));
+        QTest::keyClick(window.focusWidget(),Qt::Key_Escape);
+        QCOMPARE(model->sheet(),own);QTRY_VERIFY_WITH_TIMEOUT(!window.chartPickActive(),5000);QCOMPARE(values->text(),QString("Other!B2:B3"));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->selectedChart(),id,5000);QCOMPARE(window.focusWidget(),static_cast<QWidget *>(values));
+        QTest::qWait(200);QCOMPARE(requested.count(),1);QCOMPARE(admitted.count(),1);
+    }
+    void namePickNeedsOneCell() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Named pick",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto *name=rangeOf(window,"series1Name");QCOMPARE(name->text(),QString("B1"));
+        press(pickOf(window,"series1Name"));
+        QCOMPARE(statusText(window),QString("Pick a range for Series 1 Name • Enter applies • Escape cancels"));
+        selectCells(grid,model,0,1,1,1);
+        QCOMPARE(statusText(window),QString("Pick one cell for Series 1 Name • Enter applies • Escape cancels"));
+        QTest::keyClick(window.focusWidget(),Qt::Key_Return);QVERIFY(window.chartPickActive());QTest::qWait(100);QCOMPARE(requested.count(),0);
+        selectCells(grid,model,1,0,1,0);QCOMPARE(name->text(),QString("A2"));
+        QCOMPARE(statusText(window),QString("Pick a range for Series 1 Name • Enter applies • Escape cancels"));
+        QTest::keyClick(window.focusWidget(),Qt::Key_Return);QVERIFY(!window.chartPickActive());
+        QCOMPARE(requested.count(),1);QCOMPARE(requested[0][2].toString(),QString("series1Name"));QCOMPARE(admitted.count(),1);
+        auto stored=[&]{return layer->chart(id)["spec"].toObject()["series"].toArray()[0].toObject()["name"].toObject()["source"].toObject();};
+        QTRY_COMPARE_WITH_TIMEOUT(stored()["ref"].toString(),QString("A2"),10000);QCOMPARE(stored()["sheet_id"].toString(),model->sheet());
+        // A selection over the cell limit or hidden cells shows why, and Enter does nothing.
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(pickOf(window,"series1Values")->isEnabled(),5000);
+        press(pickOf(window,"series1Values"));const int issues=issuesText(window).size();
+        grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(200,99)),QItemSelectionModel::ClearAndSelect);
+        QCOMPARE(statusText(window),QString("Selection exceeds the 10,000-cell ordinary operation limit."));QCOMPARE(rangeOf(window,"series1Values")->text(),QString("B2:B4"));
+        QTest::keyClick(window.focusWidget(),Qt::Key_Return);QVERIFY(window.chartPickActive());
+        QCOMPARE(issuesText(window).size(),issues);
+        QTest::keyClick(window.focusWidget(),Qt::Key_Escape);QTest::qWait(100);QCOMPARE(requested.count(),1);QCOMPARE(admitted.count(),1);
+    }
+    void pickIsCancelledByClosingTheWorkbook() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Closed",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto *values=rangeOf(window,"series1Values");
+        press(pickOf(window,"series1Values"));selectCells(grid,model,1,1,2,1);QCOMPARE(values->text(),QString("B2:B3"));
+        const int before=opened.count();window.openBook(temp.filePath("other.dhwb"),true);
+        QVERIFY(!window.chartPickActive());QCOMPARE(values->text(),QString("B2:B4"));QVERIFY(!pickOf(window,"series1Values")->isChecked());
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);QVERIFY(idle(window));
+        QVERIFY(window.findChild<QAction *>("insertChartAction")->isEnabled());QVERIFY(window.findChild<QAction *>("clearContentsAction")->isEnabled());
+        QTRY_COMPARE_WITH_TIMEOUT(panelOf(window)->chartId(),QString(),5000);
+        QTest::qWait(100);QCOMPARE(requested.count(),0);QCOMPARE(admitted.count(),0);QVERIFY(layer->chart(id).isEmpty());
+    }
+    void editingCommandsAreDisabledDuringAPick() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Guarded",2,4));QVERIFY(addChart(window,opened,"Second",14,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);const auto id=overlayNamed(layer,"Guarded")->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        auto action=[&](const char *name){auto *found=window.findChild<QAction *>(name);if(!found)qWarning("no action %s",name);return found;};
+        const QStringList blocked{"undoAction","cutAction","pasteAction","clearContentsAction","clearAllAction","insertChartAction","selectNextChartAction","selectPreviousChartAction",
+                                  "addSheetAction","deleteRowsAction","formatCellsAction","importAction"};
+        for(const auto &name:blocked)QVERIFY2(action(qPrintable(name)) && action(qPrintable(name))->isEnabled(),qPrintable(name));
+        press(pickOf(window,"series1Values"));QVERIFY(window.chartPickActive());
+        for(const auto &name:blocked)QVERIFY2(!action(qPrintable(name))->isEnabled(),qPrintable(name));
+        // View-only commands stay.
+        for(const char *name:{"copyAction","findAction","refreshStoredDataAction"})QVERIFY2(action(name)->isEnabled(),name);
+        // Shortcuts of disabled commands do nothing.
+        QTest::keyClick(window.focusWidget(),Qt::Key_C,Qt::ControlModifier|Qt::AltModifier);QCOMPARE(layer->selectedChart(),id);QVERIFY(window.chartPickActive());
+        QTest::keyClick(window.focusWidget(),Qt::Key_Escape);QVERIFY(!window.chartPickActive());
+        for(const auto &name:blocked)QVERIFY2(action(qPrintable(name))->isEnabled(),qPrintable(name));
+        // Starting a cell edit cancels the pick and puts the field back.
+        press(pickOf(window,"series1Values"));selectCells(grid,model,5,1,6,1);QCOMPARE(rangeOf(window,"series1Values")->text(),QString("B6:B7"));
+        grid->setFocus();QTest::keyClicks(grid,"7");
+        QVERIFY(!window.chartPickActive());QCOMPARE(rangeOf(window,"series1Values")->text(),QString("B2:B4"));QVERIFY(!pickOf(window,"series1Values")->isChecked());
+        QVERIFY(QApplication::focusWidget()!=static_cast<QWidget *>(rangeOf(window,"series1Values")));
+        QTest::keyClick(QApplication::focusWidget(),Qt::Key_Escape);
+        QTest::qWait(100);QCOMPARE(requested.count(),0);QCOMPARE(admitted.count(),0);
+    }
+    // Carry-in from Task 7: focus leaving a field for a pick keeps a kind just chosen.
+    void pickKeepsANewlyChosenKind() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));
+        auto spec=chartSpec("Sheet1");auto list=spec["series"].toArray();auto first=list[0].toObject();first["name"]=text("Typed");list[0]=first;spec["series"]=list;
+        QVERIFY(addChart(window,opened,"Rekinded",2,4,0,0,320,200,"Sheet1",spec));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        QSignalSpy requested(panelOf(window),&ChartPanel::changeRequested);
+        auto *kind=kindOf(window,"series1Name");auto *name=rangeOf(window,"series1Name");QCOMPARE(kind->currentText(),QString("Text"));
+        choose(kind,"Cell");QCOMPARE(name->text(),QString());QVERIFY(pickOf(window,"series1Name")->isVisible());
+        press(pickOf(window,"series1Name"));QVERIFY(window.chartPickActive());QTest::qWait(100);
+        QCOMPARE(kind->currentText(),QString("Cell"));QCOMPARE(name->text(),QString());
+        selectCells(grid,model,1,0,1,0);QTest::qWait(50);QCOMPARE(kind->currentText(),QString("Cell"));QCOMPARE(name->text(),QString("A2"));
+        // Cancelled, the kind just chosen and its empty field stand, with focus back in it.
+        QTest::keyClick(window.focusWidget(),Qt::Key_Escape);QTest::qWait(50);
+        QCOMPARE(kind->currentText(),QString("Cell"));QCOMPARE(name->text(),QString());QCOMPARE(window.focusWidget(),static_cast<QWidget *>(name));
+        // Picked again and applied, the cell is stored.
+        press(pickOf(window,"series1Name"));QTest::qWait(100);QCOMPARE(kind->currentText(),QString("Cell"));
+        selectCells(grid,model,2,0,2,0);QCOMPARE(name->text(),QString("A3"));QTest::keyClick(window.focusWidget(),Qt::Key_Return);
+        QCOMPARE(requested.count(),1);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["series"].toArray()[0].toObject()["name"].toObject()["source"].toObject()["ref"].toString(),QString("A3"),10000);
+        QVERIFY(idle(window));QTRY_COMPARE_WITH_TIMEOUT(kind->currentText(),QString("Cell"),5000);QCOMPARE(name->text(),QString("A3"));
+    }
 #undef CHART_WINDOW
 
 // A window attached to a service through ChartProxy, with a workbook open.
@@ -2340,6 +2560,40 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].toString(),QString("Awaited"),10000);
         QCOMPARE(layer->chart(id)["spec"].toObject()["series"].toArray().size(),1);
     }
+    // Carry-in from Task 7: a refused Data change does not bring back an added row removed while it was awaited.
+    void aRemovedAddedRowStaysRemovedAfterARefusal() {
+        PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Pruned",2,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *panel=panelOf(window);QSignalSpy requested(panel,&ChartPanel::changeRequested);QSignalSpy receipts(&window,&MainWindow::operationReceipt);
+        press(window.findChild<QPushButton *>("addSeries"));typeInto(rangeOf(window,"series2Name"),"Dropped",true);QCOMPARE(requested.count(),0);
+        proxy.refuseChartUpdates=true;proxy.holdOperations=true;
+        typeInto(rangeOf(window,"series1Values"),"B2:B3",true);QCOMPARE(requested.count(),1);
+        panel->setLocked(false);
+        press(window.findChild<QPushButton *>("removeSeries2"));QTRY_VERIFY_WITH_TIMEOUT(!window.findChild<QWidget *>("series2Values"),5000);
+        proxy.releaseOperations();QTRY_COMPARE_WITH_TIMEOUT(receipts.count(),1,10000);
+        // Only the refused change is undone: its field goes back, the removed row stays removed.
+        auto *message=window.findChild<QLabel *>("series1ValuesMessage");QTRY_VERIFY_WITH_TIMEOUT(message->isVisible(),5000);
+        QCOMPARE(message->text(),QString("The test proxy refused this chart change"));QCOMPARE(rangeOf(window,"series1Values")->text(),QString("B2:B4"));
+        QVERIFY(!window.findChild<QWidget *>("series2Values"));QTest::qWait(200);QVERIFY(!window.findChild<QWidget *>("series2Values"));
+        QCOMPARE(layer->chart(id)["spec"].toObject()["series"].toArray().size(),1);QCOMPARE(requested.count(),1);
+    }
+    // Carry-in from Task 7: a failed read of a query's columns is reported and asked for again.
+    void aFailedQueryReadIsReportedAndAskedAgain() {
+        PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(fillChartData(window,opened));QVERIFY(addTableAndQuery(window,opened));
+        QVERIFY(addChart(window,opened,"Retried",2,4));QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *query=window.findChild<QComboBox *>("series1ValuesQuery"),*column=window.findChild<QComboBox *>("series1ValuesQueryColumn");
+        QTRY_COMPARE_WITH_TIMEOUT(query->count(),1,10000);
+        // One refresh reads the catalog without reading any query.
+        window.findChild<QAction *>("refreshStoredDataAction")->trigger();QVERIFY(idle(window));QTest::qWait(300);QCOMPARE(proxy.queryReads,0);
+        proxy.failQueryReads=true;
+        choose(kindOf(window,"series1Values"),"Query column");choose(query,"Totals");
+        QTRY_VERIFY_WITH_TIMEOUT(issuesText(window).contains("The test proxy failed this query read"),10000);
+        QCOMPARE(proxy.queryReads,1);QCOMPARE(column->count(),0);
+        // Chosen again, its columns are asked for again, once.
+        proxy.failQueryReads=false;choose(kindOf(window,"series1Values"),"Range");choose(kindOf(window,"series1Values"),"Query column");choose(query,"Totals");
+        QTRY_COMPARE_WITH_TIMEOUT(itemsOf(column),QStringList{"Total"},10000);QTest::qWait(200);QCOMPARE(proxy.queryReads,2);
+    }
 #undef PROXY_WINDOW
 
 private:
@@ -2411,6 +2665,7 @@ private:
     }
     static QComboBox *kindOf(MainWindow &window,const QString &field) { return window.findChild<QComboBox *>(field+"Kind"); }
     static QLineEdit *rangeOf(MainWindow &window,const QString &field) { return window.findChild<QLineEdit *>(field+"Range"); }
+    static QToolButton *pickOf(MainWindow &window,const QString &field) { return window.findChild<QToolButton *>(field+"Pick"); }
     static QStringList itemsOf(QComboBox *combo) { QStringList out;for(int i=0;i<combo->count();++i)out<<combo->itemText(i);return out; }
     static QJsonObject chartSpec(const QString &sheet) {
         auto range=[sheet](const QString &ref){return QJsonObject{{"source",QJsonObject{{"kind","range"},{"sheet",sheet},{"ref",ref}}}};};

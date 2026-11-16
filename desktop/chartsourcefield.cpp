@@ -78,17 +78,43 @@ bool ChartSourceField::eventFilter(QObject *object,QEvent *event) {
         const auto id=m_query->currentData().toString();
         if(m_query->currentIndex()>=0 && !id.isEmpty() && !queryColumnsKnown(id))emit queryColumnsWanted(id);
     }
-    if(event->type()==QEvent::FocusOut && m_kindChanged && static_cast<QFocusEvent *>(event)->reason()!=Qt::PopupFocusReason)
-        // Decided once focus has landed: a move within the field keeps the change.
-        QTimer::singleShot(0,this,[this]{
-            if(!m_kindChanged || QApplication::activePopupWidget())return;
-            auto *focus=QApplication::focusWidget();
-            if(focus && isAncestorOf(focus))return;
-            m_kindChanged=false;
-            emit abandoned();
-        });
+    if(event->type()==QEvent::FocusOut && m_kindChanged && static_cast<QFocusEvent *>(event)->reason()!=Qt::PopupFocusReason)checkAbandoned();
     return QWidget::eventFilter(object,event);
 }
+
+void ChartSourceField::checkAbandoned() {
+    // Decided once focus has landed: a move within the field keeps the
+    // change, and so does a pick, which takes focus to the grid.
+    QTimer::singleShot(0,this,[this]{
+        if(!m_kindChanged || m_picking || QApplication::activePopupWidget())return;
+        auto *focus=QApplication::focusWidget();
+        if(focus && isAncestorOf(focus))return;
+        m_kindChanged=false;
+        emit abandoned();
+    });
+}
+
+void ChartSourceField::setPicking(bool picking,bool restore) {
+    if(m_picking==picking)return;
+    m_picking=picking;
+    if(picking){m_pickedText=m_edit->text();m_pickedModified=m_edit->isModified();}
+    else if(restore){m_edit->setText(m_pickedText);m_edit->setModified(m_pickedModified);}
+    // The field being picked is highlighted with the palette's highlight colour.
+    QPalette palette;
+    if(picking){palette=m_edit->palette();palette.setColor(QPalette::Base,palette.color(QPalette::Highlight));palette.setColor(QPalette::Text,palette.color(QPalette::HighlightedText));}
+    m_edit->setPalette(palette);
+    m_edit->setReadOnly(picking);
+    m_kind->setEnabled(!picking);
+    m_pick->setCheckable(picking);m_pick->setChecked(picking);
+    // A kind change still incomplete ends as usual once the pick has ended elsewhere.
+    if(!picking && m_kindChanged)checkAbandoned();
+}
+
+void ChartSourceField::showPicked(const QString &text) {
+    m_edit->setText(text);m_edit->setModified(true);
+}
+
+void ChartSourceField::focusText() { m_edit->setFocus(Qt::OtherFocusReason); }
 
 QString ChartSourceField::kind() const { return m_kind->currentData().toString(); }
 QString ChartSourceField::text() const { return m_edit->text(); }
