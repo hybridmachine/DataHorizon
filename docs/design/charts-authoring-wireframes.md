@@ -199,7 +199,8 @@ never scrolls sideways.
   in the panel with "A chart needs at least one series".
 - **Axes.** Category title and Value title (empty means none; limited only by
   the service, which sets no length limit on them; the chart title alone is at
-  most 255 characters), Minimum and Maximum. Minimum and Maximum take a number or
+  most 255 characters; this limit statement changed in the final fix wave,
+  November 16, 2026, and is not part of the sign-off), Minimum and Maximum. Minimum and Maximum take a number or
   nothing; an empty field shows the placeholder "Automatic" and means the
   engine chooses.
 - **Legend.** One list: Right, Bottom, None.
@@ -270,7 +271,7 @@ Range, Table column, Query column.
 
 A series Name has its own kind list with two entries only, Text and Cell,
 because the engine takes a fixed text or a single cell. Text shows a text field
-(limited only by the service, which sets no length limit on it); Cell shows a text field and a Pick button and accepts
+(limited only by the service, which sets no length limit on it; changed in the final fix wave, November 16, 2026, not part of the sign-off); Cell shows a text field and a Pick button and accepts
 one cell only. Changing a kind clears the field it shows; nothing is sent until
 the new source is complete.
 

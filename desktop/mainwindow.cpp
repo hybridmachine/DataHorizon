@@ -828,6 +828,7 @@ void MainWindow::buildUi() {
     m_grid->setAlternatingRowColors(false);
     connect(m_model,&QAbstractItemModel::modelAboutToBeReset,this,[this]{
         QScopedValueRollback<bool> applying(m_applyingView,true);
+        if(m_charts)m_charts->holdLayout();
         m_frozenTop->setFrozen(false);m_frozenTop->setFirstColumnFrozen(false);
         for(int row:m_hiddenViewRows) m_grid->setRowHidden(row,false);
         for(int col:m_hiddenViewColumns) m_grid->setColumnHidden(col,false);

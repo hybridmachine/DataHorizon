@@ -122,3 +122,19 @@ sheet switch), I3, M1, M6 and I4's Tab order. I5's wheel test passes on this mac
 QComboBox's wheel handling out on macOS); only its focus-policy assertion depends on the fix there.
 Not verified: macOS Tab reach with the system's default keyboard setting on real hardware (offscreen reports "tab
 to all controls"); the wheel on Windows and Linux.
+
+Fix after the re-review of the final fix wave (November 16, 2026; run on the working tree committed after a59c89c)
+The re-review found, by running, that the fix for a hidden focused chart misfired during a refresh: the window shows
+hidden rows and default sizes as a model reset begins and puts them back afterwards, and the chart layer laid out in
+between, so a focused chart below hidden rows was taken for hidden, lost its selection and gave the grid the
+keyboard; Delete then cleared cells. The layer now holds its layout from the start of a model reset until the
+relayout the reset queues (ChartLayer::holdLayout, called from the window's reset handler).
+New test aFocusedChartBelowHiddenRowsKeepsTheKeyboardThroughARefresh (rows 2-35 hidden, chart at row 40, one arrow
+press): seen failing before the fix (selection empty), passing after.
+ctest --test-dir build -R '^(chart_authoring|desktop|python_workspace)$' --output-on-failure: 3 of 3 passed, 481.52 s;
+  chart_authoring "Totals: 223 passed, 0 failed"; desktop "Totals: 282 passed, 0 failed". The service suite was not
+  run again; nothing under service/ changed.
+Known and not changed: a chart that is selected while the grid holds the keyboard (after a formula reference pick or
+the format painter starts) stays selected, and Delete then acts on the grid's cells as an ordinary grid Delete; axis
+title and series name fields keep Qt's default 32,767-character field limit; after a reconnect to the same workbook,
+sheet and state the chart list may not be read again until the next change (read, not run).

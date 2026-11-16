@@ -124,6 +124,9 @@ public:
         return m_current && workbookBase==m_base && sheet==m_sheet && state==m_state;
     }
     void relayout();
+    // Called as a model reset begins: the view shows hidden rows and default
+    // sizes until it is restored, so nothing is placed or hidden until then.
+    void holdLayout(){m_held=true;}
     ~ChartLayer() override;
     QList<ChartOverlay *> overlays() const;
     // The selected chart's id; empty when none is.
@@ -193,6 +196,7 @@ private:
     void clear();
     void restack();
     void queueRelayout();
+    bool m_held=false;
     bool overlayEvent(ChartOverlay *overlay,QEvent *event);
     bool keyEvent(ChartOverlay *overlay,QKeyEvent *key);
     // One arrow key on a selected chart: a move, or with Shift a resize.

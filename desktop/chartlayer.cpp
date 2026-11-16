@@ -226,7 +226,7 @@ void ChartLayer::restack() {
 
 void ChartLayer::queueRelayout() {
     if(m_queued)return;m_queued=true;
-    QTimer::singleShot(0,this,[this]{if(m_queued)relayout();});
+    QTimer::singleShot(0,this,[this]{m_held=false;if(m_queued)relayout();});
 }
 
 bool ChartLayer::eventFilter(QObject *object,QEvent *event) {
@@ -504,6 +504,8 @@ bool ChartLayer::placementIn(QTableView *view,const QPoint &point,QJsonObject *a
 // while a body chart passes under the frozen rows and columns. The clip never
 // includes a header or a scroll bar.
 void ChartLayer::relayout() {
+    // Held through a model reset; the reset queues the relayout that follows it.
+    if(m_held)return;
     m_queued=false;
     const auto items=overlays();
     // Restarted on each relayout, so scrolling renders once it settles.

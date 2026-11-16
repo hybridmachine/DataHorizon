@@ -1068,6 +1068,23 @@ private slots:
         QCOMPARE(layer->selectedChart(),QString());QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(grid));
         QCOMPARE(statusText(window),QString("The chart is not shown • Show its hidden rows or columns"));
     }
+    // A refresh shows hidden rows for a moment before the view puts them back;
+    // a focused chart below them keeps its selection and the keyboard through it.
+    void aFocusedChartBelowHiddenRowsKeepsTheKeyboardThroughARefresh() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Low",40,2,0,0,200,120));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        selectCells(grid,model,1,0,34,0);window.findChild<QAction *>("hideRowsAction")->trigger();QTRY_VERIFY_WITH_TIMEOUT(grid->isRowHidden(30),5000);
+        QVERIFY(idle(window));grid->setCurrentIndex(model->index(0,0));
+        auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);const auto id=overlay->chartId();
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(overlay));
+        auto *clear=window.findChild<QAction *>("clearContentsAction");QVERIFY(clear);QSignalSpy cleared(clear,&QAction::triggered);
+        const auto before=model->state();
+        QTest::keyClick(overlay,Qt::Key_Right);
+        QTRY_VERIFY_WITH_TIMEOUT(model->state()!=before,10000);QVERIFY(idle(window));QTest::qWait(300);
+        overlay=layer->overlay(id);QVERIFY(overlay);QVERIFY(overlay->isVisible());QVERIFY(grid->isRowHidden(30));
+        QCOMPARE(layer->selectedChart(),id);QCOMPARE(QApplication::focusWidget(),static_cast<QWidget *>(overlay));
+        QCOMPARE(cleared.count(),0);
+    }
     // A chart holds the keyboard only while it is shown: scrolled away, its
     // focus goes to the grid (not the address box) and it is no longer
     // selected, so Delete with the grid focused never deletes it, and a
