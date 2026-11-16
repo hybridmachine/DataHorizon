@@ -3,8 +3,10 @@
 #include "chartspec.h"
 #include "frozenpanes.h"
 #include "restclient.h"
+#include <QCoreApplication>
 #include <QEvent>
 #include <QHeaderView>
+#include <QKeyEvent>
 #include <QJsonArray>
 #include <QPainter>
 #include <QScrollBar>
@@ -12,24 +14,45 @@
 #include <QTableView>
 #include <QTimer>
 #include <QUuid>
+#include <QWheelEvent>
 #include <algorithm>
 
 ChartOverlay::ChartOverlay(const QString &chartId,QWidget *parent):QWidget(parent),m_renderer(new QSvgRenderer(this)) {
     setObjectName("chartOverlay");setProperty("chartId",chartId);
-    setAttribute(Qt::WA_TransparentForMouseEvents);setFocusPolicy(Qt::NoFocus);
+    setFocusPolicy(Qt::StrongFocus);
 }
 
 void ChartOverlay::setChart(const QJsonObject &chart) {
-    m_chart=chart;setAccessibleName(chart["name"].toString());update();
+    m_chart=chart;setAccessibleName(tr("Chart: %1").arg(chart["name"].toString()));describe();update();
 }
 
 bool ChartOverlay::setSvg(const QByteArray &svg) {
     if(svg.isEmpty() || !QSvgRenderer(svg).isValid())return false;
-    m_svg=svg;m_renderer->load(svg);update();return true;
+    m_svg=svg;m_renderer->load(svg);describe();update();return true;
 }
 
 void ChartOverlay::setPlaceholder(const QString &reason) {
-    m_svg.clear();m_reason=reason;update();
+    m_svg.clear();m_reason=reason;describe();update();
+}
+
+void ChartOverlay::setSelected(bool selected) {
+    if(m_selected==selected)return;
+    m_selected=selected;update();
+}
+
+// "<Type> chart, titled <title>, <n> series", or why the chart cannot be read
+// or drawn: the catalog's reason, else the reason its placeholder shows.
+void ChartOverlay::describe() {
+    auto reason=ChartSpec::stateReason(m_chart);
+    if(reason.isEmpty() && !hasImage())reason=m_reason;
+    if(!reason.isEmpty()){setAccessibleDescription(reason);return;}
+    const auto spec=m_chart["spec"].toObject();
+    auto type=spec["type"].toString();
+    if(!type.isEmpty())type[0]=type[0].toUpper();
+    const auto title=spec["title"].toObject()["text"].toString();
+    const auto count=spec["series"].toArray().size();
+    const auto series=tr("%1 series").arg(count);  // "1 series", "2 series"
+    setAccessibleDescription(title.isEmpty()?tr("%1 chart, %2").arg(type,series):tr("%1 chart, titled %2, %3").arg(type,title,series));
 }
 
 QString ChartOverlay::placeholder() const {
@@ -39,10 +62,19 @@ QString ChartOverlay::placeholder() const {
 void ChartOverlay::paintEvent(QPaintEvent *) {
     QPainter painter(this);
     painter.fillRect(rect(),palette().base());
-    if(hasImage()){m_renderer->render(&painter,QRectF(rect()));return;}
-    painter.setPen(palette().color(QPalette::Mid));painter.drawRect(rect().adjusted(0,0,-1,-1));
-    painter.setPen(palette().color(QPalette::Text));
-    painter.drawText(rect().adjusted(8,8,-8,-8),Qt::AlignCenter|Qt::TextWordWrap,placeholder());
+    if(hasImage())m_renderer->render(&painter,QRectF(rect()));
+    else {
+        painter.setPen(palette().color(QPalette::Mid));painter.drawRect(rect().adjusted(0,0,-1,-1));
+        painter.setPen(palette().color(QPalette::Text));
+        painter.drawText(rect().adjusted(8,8,-8,-8),Qt::AlignCenter|Qt::TextWordWrap,placeholder());
+    }
+    if(!m_selected)return;
+    // Decision 4: a 2 px frame and eight 8 px handles, inside the rectangle.
+    const auto highlight=palette().highlight();const int w=width(),h=height(),frame=2,handle=8;
+    painter.fillRect(0,0,w,frame,highlight);painter.fillRect(0,h-frame,w,frame,highlight);
+    painter.fillRect(0,0,frame,h,highlight);painter.fillRect(w-frame,0,frame,h,highlight);
+    for(const int x:{0,(w-handle)/2,w-handle})for(const int y:{0,(h-handle)/2,h-handle})
+        if(x!=(w-handle)/2 || y!=(h-handle)/2)painter.fillRect(x,y,handle,handle,highlight);
 }
 
 ChartLayer::ChartLayer(RestClient *client,QTableView *body,FrozenPanes *frozen,QWidget *gridArea,QObject *parent)
@@ -57,6 +89,8 @@ ChartLayer::ChartLayer(RestClient *client,QTableView *body,FrozenPanes *frozen,Q
             connect(header,&QHeaderView::geometriesChanged,this,&ChartLayer::relayout);
         }
         view->installEventFilter(this);view->viewport()->installEventFilter(this);
+        m_panes.append(view->viewport());
+        for(auto *header:{view->horizontalHeader(),view->verticalHeader()}){header->viewport()->installEventFilter(this);m_panes.append(header->viewport());}
     }
     auto *model=body->model();
     connect(model,&QAbstractItemModel::modelReset,this,&ChartLayer::queueRelayout);
@@ -93,7 +127,7 @@ void ChartLayer::bind(const QString &workbookBase,const QString &sheet,const QSt
         // its own data simply fails again.
         bool retry=false;
         for(const auto &chartId:std::as_const(m_failed))
-            if(auto *overlay=overlayFor(chartId)){overlay->setRenderKey({});retry=true;}
+            if(auto *item=overlay(chartId)){item->setRenderKey({});retry=true;}
         m_failed.clear();
         if(projected!=m_projected || retry){m_projected=projected;relayout();}
         return;
@@ -134,20 +168,29 @@ void ChartLayer::accept(const QJsonArray &charts) {
         const auto chart=value.toObject();const auto id=chart["id"].toString(chart["chart_id"].toString());
         if(id.isEmpty())continue;
         auto *overlay=existing.take(id);
-        if(!overlay)overlay=new ChartOverlay(id,m_gridArea);
+        if(!overlay){overlay=new ChartOverlay(id,m_gridArea);overlay->installEventFilter(this);}
         overlay->setChart(chart);
         const auto reason=ChartSpec::stateReason(chart);
         // A readable chart keeps its previous image until a new one arrives.
         if(!reason.isEmpty() || !overlay->hasImage()){overlay->setPlaceholder(reason);overlay->setRenderKey({});}
         kept.append(overlay);
     }
+    // The selected chart is gone: clear the selection, and the grid takes the
+    // focus the chart had.
+    bool refocus=false;
+    if(existing.contains(m_selected)) {
+        refocus=existing[m_selected]->hasFocus();
+        m_selected.clear();emit selectionChanged({});
+    }
     for(auto *overlay:existing)delete overlay;
     m_overlays=kept;abandonUnwanted();restack();relayout();
+    if(refocus && m_frozen)m_frozen->focusCurrent();
     emit listed(int(m_overlays.size()));
 }
 
 void ChartLayer::clear() {
     ++m_generation;
+    if(!m_selected.isEmpty()){m_selected.clear();emit selectionChanged({});}
     for(const auto &overlay:m_overlays)delete overlay.data();
     m_overlays.clear();m_staleRetried.clear();m_failed.clear();
     abandonUnwanted();
@@ -156,9 +199,7 @@ void ChartLayer::clear() {
 // Overlays sit above every pane of the grid area, lowest z first; raise()
 // moves each to the top of its siblings, so the highest z ends uppermost.
 void ChartLayer::restack() {
-    auto ordered=overlays();
-    std::stable_sort(ordered.begin(),ordered.end(),[](ChartOverlay *a,ChartOverlay *b){return a->chart()["z"].toInt()<b->chart()["z"].toInt();});
-    for(auto *overlay:ordered)overlay->raise();
+    for(auto *overlay:zOrdered())overlay->raise();
 }
 
 void ChartLayer::queueRelayout() {
@@ -167,11 +208,52 @@ void ChartLayer::queueRelayout() {
 }
 
 bool ChartLayer::eventFilter(QObject *object,QEvent *event) {
+    if(auto *item=qobject_cast<ChartOverlay *>(object))return overlayEvent(item,event);
+    if(event->type()==QEvent::MouseButtonPress) {
+        // A press on a grid pane or header deselects; the pane handles the press as usual.
+        for(const auto &pane:std::as_const(m_panes))if(pane==object){select({});break;}
+        return QObject::eventFilter(object,event);
+    }
     if(attached())switch(event->type()) {
     case QEvent::Resize: case QEvent::Move: case QEvent::Show: case QEvent::Hide: case QEvent::LayoutRequest: queueRelayout();break;
     default: break;
     }
     return QObject::eventFilter(object,event);
+}
+
+// The overlay's mouse, wheel and key events. Presses and drags never reach the
+// grid area beneath; the wheel goes to the body's viewport.
+bool ChartLayer::overlayEvent(ChartOverlay *item,QEvent *event) {
+    switch(event->type()) {
+    case QEvent::MouseButtonPress:
+        select(item->chartId());item->setFocus(Qt::MouseFocusReason);return true;
+    case QEvent::MouseButtonDblClick:
+        select(item->chartId());item->setFocus(Qt::MouseFocusReason);emit editRequested(item->chartId());return true;
+    case QEvent::MouseButtonRelease: case QEvent::MouseMove:
+        return true;
+    case QEvent::Wheel: {
+        if(!m_body)return false;
+        auto *wheel=static_cast<QWheelEvent *>(event);auto *viewport=m_body->viewport();
+        QWheelEvent forwarded(viewport->mapFromGlobal(wheel->globalPosition()),wheel->globalPosition(),wheel->pixelDelta(),wheel->angleDelta(),
+                              wheel->buttons(),wheel->modifiers(),wheel->phase(),wheel->inverted(),wheel->source(),wheel->pointingDevice());
+        QCoreApplication::sendEvent(viewport,&forwarded);
+        return true;
+    }
+    case QEvent::ShortcutOverride: case QEvent::KeyPress: {
+        // The chart takes Escape (and, while interactive, Enter) before the window's shortcuts.
+        auto *key=static_cast<QKeyEvent *>(event);
+        const bool escape=key->key()==Qt::Key_Escape && key->modifiers()==Qt::NoModifier;
+        const bool enter=m_interactive && (key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter) && (key->modifiers()&~Qt::KeypadModifier)==Qt::NoModifier;
+        if(!escape && !enter)return false;
+        event->accept();
+        if(event->type()==QEvent::ShortcutOverride)return true;
+        if(escape){select({});if(m_frozen)m_frozen->focusCurrent();}
+        else if(!key->isAutoRepeat())emit editRequested(item->chartId());
+        return true;
+    }
+    default:
+        return false;
+    }
 }
 
 // Each chart is placed from the view that shows its anchor cell and clipped
@@ -224,9 +306,43 @@ QString ChartLayer::renderKey(ChartOverlay *overlay) const {
     return m_state+"|"+QString::number(size["width"].toInt())+"x"+QString::number(size["height"].toInt());
 }
 
-ChartOverlay *ChartLayer::overlayFor(const QString &chartId) const {
-    for(const auto &overlay:m_overlays)if(overlay && overlay->chartId()==chartId)return overlay;
+ChartOverlay *ChartLayer::overlay(const QString &chartId) const {
+    if(chartId.isEmpty())return nullptr;
+    for(const auto &item:m_overlays)if(item && item->chartId()==chartId)return item;
     return nullptr;
+}
+
+QJsonObject ChartLayer::chart(const QString &chartId) const {
+    auto *item=overlay(chartId);
+    return item?item->chart():QJsonObject();
+}
+
+void ChartLayer::select(const QString &chartId) {
+    auto *next=overlay(chartId);const auto id=next?chartId:QString();
+    if(id==m_selected)return;
+    if(auto *previous=overlay(m_selected))previous->setSelected(false);
+    m_selected=id;
+    if(next)next->setSelected(true);
+    emit selectionChanged(m_selected);
+}
+
+void ChartLayer::selectNext(int direction) {
+    const auto ordered=zOrdered();
+    if(ordered.isEmpty())return;
+    const int n=int(ordered.size());int index=-1;
+    for(int i=0;i<n;++i)if(ordered[i]->chartId()==m_selected)index=i;
+    const int step=direction<0?-1:1;
+    const int next=index<0?(step>0?0:n-1):(index+step+n)%n;
+    select(ordered[next]->chartId());
+    ordered[next]->setFocus(Qt::OtherFocusReason);
+}
+
+void ChartLayer::setInteractive(bool interactive) { m_interactive=interactive; }
+
+QList<ChartOverlay *> ChartLayer::zOrdered() const {
+    auto ordered=overlays();
+    std::stable_sort(ordered.begin(),ordered.end(),[](ChartOverlay *a,ChartOverlay *b){return a->chart()["z"].toInt()<b->chart()["z"].toInt();});
+    return ordered;
 }
 
 int ChartLayer::jobIndex(const QString &jobId) const {
@@ -248,7 +364,7 @@ void ChartLayer::abandonUnwanted() {
         const auto &job=m_jobs[i];
         if(!m_client || job.clientGeneration!=generation){m_jobs.removeAt(i);continue;}
         if(job.abandoned)continue;
-        auto *overlay=overlayFor(job.chartId);
+        auto *overlay=this->overlay(job.chartId);
         if(job.base!=m_base || job.sheet!=m_sheet || job.state!=m_state || !wanted(overlay) || renderKey(overlay)!=job.key)abandon(i);
     }
 }
@@ -264,9 +380,7 @@ void ChartLayer::renderQueued() {
     if(!attached() || !m_client)return;
     abandonUnwanted();
     if(m_busy)return;
-    auto ordered=overlays();
-    std::stable_sort(ordered.begin(),ordered.end(),[](ChartOverlay *a,ChartOverlay *b){return a->chart()["z"].toInt()<b->chart()["z"].toInt();});
-    for(auto *overlay:ordered) {
+    for(auto *overlay:zOrdered()) {
         if(m_jobs.size()>=MaxConcurrentRenders)break;
         if(wanted(overlay) && overlay->renderKey()!=renderKey(overlay) && jobForChart(overlay->chartId())<0)start(overlay);
     }
@@ -289,7 +403,7 @@ void ChartLayer::start(ChartOverlay *overlay) {
             return;
         }
         if(error.isEmpty()){self->m_jobs[index].started=true;self->m_busyDelay=PollIntervalMs;self->answer(id,result,error);return;}
-        const auto job=self->m_jobs.takeAt(index);auto *overlay=self->overlayFor(job.chartId);
+        const auto job=self->m_jobs.takeAt(index);auto *overlay=self->overlay(job.chartId);
         if(code=="JOB_BUSY" || code=="JOB_LIMIT") {
             // The service's chart job slots are taken: try again shortly, backing
             // off, or as soon as one of this layer's jobs ends.
@@ -323,7 +437,7 @@ void ChartLayer::answer(const QString &jobId,const QJsonObject &response,const Q
     const auto job=m_jobs.takeAt(index);m_busy=false;m_busyTimer.stop();
     // An unreadable answer leaves the job's fate unknown, so it is cancelled first.
     retire(m_client,job.base+"/charts/jobs/"+job.id,!error.isEmpty());
-    auto *overlay=overlayFor(job.chartId);
+    auto *overlay=this->overlay(job.chartId);
     if(overlay && job.base==m_base && job.sheet==m_sheet && job.state==m_state && renderKey(overlay)==job.key) {
         const auto result=response["result"].toObject();
         if(status=="completed" && result["state"].toString()==job.state) {

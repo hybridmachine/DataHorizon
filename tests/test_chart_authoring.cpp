@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#include "chartlayer.h"
 #include "chartspec.h"
+#include "mainwindow.h"
+#include <QAccessible>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QScrollBar>
+#include <QSignalSpy>
+#include <QTabBar>
+#include <QTableView>
+#include <QTemporaryDir>
 #include <QtTest>
 
 namespace {
@@ -203,6 +211,219 @@ private slots:
         QCOMPARE(ChartSpec::clampSize(QSize(1, 1)), QSize(64, 48));
         QCOMPARE(ChartSpec::clampSize(QSize(9000, 9000)), QSize(4096, 4096));
         QCOMPARE(ChartSpec::clampSize(QSize(300, 200)), QSize(300, 200));
+    }
+
+// A new workbook in a shown window with the chart layer, grid and model at
+// hand (as CHART_WINDOW in test_desktop.cpp).
+#define CHART_WINDOW \
+    QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;options.viewStatePath=temp.filePath("views.ini"); \
+    MainWindow window(options);window.resize(1200,800);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000); \
+    QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("charts.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000); \
+    auto *layer=window.findChild<ChartLayer *>("chartLayer");QVERIFY(layer);auto *grid=window.findChild<QTableView *>("grid");QVERIFY(grid);auto *model=window.model();Q_UNUSED(model)
+    void clickSelectsAChart() {
+        CHART_WINDOW;QVERIFY(fillChartData(window,opened));QVERIFY(addChart(window,opened,"Picked",2,4,0,0,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=overlayNamed(layer,"Picked");QVERIFY(overlay);
+        QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const auto id=overlay->chartId();QSignalSpy changed(layer,&ChartLayer::selectionChanged);QSignalSpy edit(layer,&ChartLayer::editRequested);
+        QVERIFY(!overlay->selected());QVERIFY(!highlighted(overlay,QPoint(overlay->width()/4,0)));
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(40,40));
+        QCOMPARE(layer->selectedChart(),id);QVERIFY(overlay->selected());QCOMPARE(window.focusWidget(),overlay);
+        QCOMPARE(changed.count(),1);QCOMPARE(changed[0][0].toString(),id);
+        QCOMPARE(layer->overlay(id),overlay);QCOMPARE(layer->chart(id)["name"].toString(),QString("Picked"));
+        // The cell under the chart is not selected by the click.
+        QVERIFY(grid->currentIndex()!=model->index(3,4));
+        // Decision 4: a 2 px frame and eight 8 px handles inside the rectangle.
+        const int w=overlay->width(),h=overlay->height();
+        for(const QPoint &p:{QPoint(w/4,0),QPoint(w/4,1),QPoint(0,h/4),QPoint(w-1,h/4),QPoint(w/4,h-1),QPoint(w/4,h-2)})QVERIFY2(highlighted(overlay,p),qPrintable(QString("%1,%2").arg(p.x()).arg(p.y())));
+        QVERIFY(!highlighted(overlay,QPoint(w/4,2)));
+        for(const QPoint &p:{QPoint(7,7),QPoint(w/2,7),QPoint(w-8,7),QPoint(w-8,h/2),QPoint(w-8,h-8),QPoint(w/2,h-8),QPoint(7,h-8),QPoint(7,h/2)})QVERIFY2(highlighted(overlay,p),qPrintable(QString("handle %1,%2").arg(p.x()).arg(p.y())));
+        QVERIFY(!highlighted(overlay,QPoint(9,9)));
+        // Enter and a double-click ask for the chart to be edited.
+        QTest::keyClick(overlay,Qt::Key_Return);QCOMPARE(edit.count(),1);QCOMPARE(edit[0][0].toString(),id);
+        QTest::keyClick(overlay,Qt::Key_Enter);QCOMPARE(edit.count(),2);
+        QTest::mouseDClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(40,40));QCOMPARE(edit.count(),3);QCOMPARE(layer->selectedChart(),id);
+        QCOMPARE(changed.count(),1);
+    }
+    void clickOnTheGridDeselects() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Picked",2,4,0,0,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        QSignalSpy changed(layer,&ChartLayer::selectionChanged);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(layer->selectedChart(),overlay->chartId());
+        const QPoint cell(grid->columnViewportPosition(1)+5,grid->rowViewportPosition(1)+5);
+        QVERIFY(!overlay->geometry().contains(grid->viewport()->mapTo(overlay->parentWidget(),cell)));
+        QTest::mouseClick(grid->viewport(),Qt::LeftButton,Qt::NoModifier,cell);
+        QCOMPARE(layer->selectedChart(),QString());QVERIFY(!overlay->selected());
+        QCOMPARE(changed.count(),2);QCOMPARE(changed[1][0].toString(),QString());
+        QCOMPARE(grid->currentIndex(),model->index(1,1));QCOMPARE(window.focusWidget(),grid);
+        QVERIFY(!highlighted(overlay,QPoint(overlay->width()/4,0)));
+    }
+    void escapeDeselectsAndFocusesTheGrid() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Picked",2,4,0,0,320,200));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        grid->setCurrentIndex(model->index(5,1));
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(window.focusWidget(),overlay);
+        // The overlay claims Escape before any window shortcut.
+        QKeyEvent override(QEvent::ShortcutOverride,Qt::Key_Escape,Qt::NoModifier);override.ignore();
+        QCoreApplication::sendEvent(overlay,&override);QVERIFY(override.isAccepted());
+        QSignalSpy changed(layer,&ChartLayer::selectionChanged);
+        QTest::keyClick(overlay,Qt::Key_Escape);
+        QCOMPARE(layer->selectedChart(),QString());QVERIFY(!overlay->selected());QCOMPARE(changed.count(),1);QCOMPARE(changed[0][0].toString(),QString());
+        QCOMPARE(window.focusWidget(),grid);QCOMPARE(grid->currentIndex(),model->index(5,1));
+        // Not interactive: a click still selects, Escape still deselects, Enter is not taken.
+        layer->setInteractive(false);QSignalSpy edit(layer,&ChartLayer::editRequested);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(layer->selectedChart(),overlay->chartId());QCOMPARE(window.focusWidget(),overlay);
+        QKeyEvent enter(QEvent::ShortcutOverride,Qt::Key_Return,Qt::NoModifier);enter.ignore();
+        QCoreApplication::sendEvent(overlay,&enter);QVERIFY(!enter.isAccepted());
+        QTest::keyClick(overlay,Qt::Key_Return);QCOMPARE(edit.count(),0);
+        QTest::keyClick(overlay,Qt::Key_Escape);QCOMPARE(layer->selectedChart(),QString());QCOMPARE(window.focusWidget(),grid);
+        layer->setInteractive(true);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QTest::keyClick(overlay,Qt::Key_Return);QCOMPARE(edit.count(),1);
+    }
+    void onlyOneChartIsSelected() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Left",2,2,0,0,200,150));QVERIFY(addChart(window,opened,"Right",2,8,0,0,200,150));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);
+        auto *left=overlayNamed(layer,"Left"),*right=overlayNamed(layer,"Right");QVERIFY(left && right);
+        QTRY_VERIFY_WITH_TIMEOUT(left->isVisible() && right->isVisible(),5000);QVERIFY(!left->geometry().intersects(right->geometry()));
+        QSignalSpy changed(layer,&ChartLayer::selectionChanged);
+        QTest::mouseClick(left,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QVERIFY(left->selected());QVERIFY(!right->selected());
+        QTest::mouseClick(right,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QVERIFY(!left->selected());QVERIFY(right->selected());
+        QCOMPARE(layer->selectedChart(),right->chartId());QCOMPARE(window.focusWidget(),right);
+        layer->select(left->chartId());QVERIFY(left->selected());QVERIFY(!right->selected());
+        // Selecting what is selected changes nothing; an unknown id clears.
+        layer->select(left->chartId());QCOMPARE(changed.count(),3);
+        layer->select("no-such-chart");QCOMPARE(layer->selectedChart(),QString());QVERIFY(!left->selected() && !right->selected());
+        QCOMPARE(changed.count(),4);QCOMPARE(changed[3][0].toString(),QString());
+        layer->select({});QCOMPARE(changed.count(),4);
+        QVERIFY(layer->overlay("no-such-chart")==nullptr);QVERIFY(layer->chart("no-such-chart").isEmpty());
+    }
+    void selectionSurvivesARelist() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Kept",2,4));QVERIFY(addChart(window,opened,"Other",12,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);auto *kept=overlayNamed(layer,"Kept");QTRY_VERIFY_WITH_TIMEOUT(kept->isVisible(),5000);
+        const auto id=kept->chartId();layer->select(id);
+        QSignalSpy changed(layer,&ChartLayer::selectionChanged);QSignalSpy listed(layer,&ChartLayer::listed);
+        // A change of the chart itself and a change elsewhere both list again.
+        window.submit({{"action","chart_update"},{"chart_id",overlayNamed(layer,"Other")->chartId()},{"name","Renamed"}});
+        QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Renamed"),10000);
+        window.submit({{"action","chart_update"},{"chart_id",id},{"offset",QJsonObject{{"x",12},{"y",6}}}});
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["offset"].toObject()["x"].toInt(),12,10000);
+        QVERIFY(listed.count()>=2);
+        QCOMPARE(layer->selectedChart(),id);QVERIFY(layer->overlay(id)->selected());QVERIFY(!overlayNamed(layer,"Renamed")->selected());
+        QCOMPARE(changed.count(),0);
+    }
+    void selectionClearsWhenTheChartIsGone() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Undone",2,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        QTest::mouseClick(overlay,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));QCOMPARE(window.focusWidget(),overlay);
+        QSignalSpy changed(layer,&ChartLayer::selectionChanged);
+        window.submit({{"action","undo"}});
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,10000);
+        QCOMPARE(layer->selectedChart(),QString());QCOMPARE(changed.count(),1);QCOMPARE(changed[0][0].toString(),QString());
+        // Focus does not vanish with the chart: it returns to the grid.
+        QCOMPARE(window.focusWidget(),grid);
+    }
+    void selectionClearsOnSheetSwitch() {
+        CHART_WINDOW;window.submit({{"action","sheet_add"},{"name","Other"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QVERIFY(addChart(window,opened,"First",2,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        const auto id=overlay->chartId();layer->select(id);QCOMPARE(layer->selectedChart(),id);
+        QSignalSpy changed(layer,&ChartLayer::selectionChanged);
+        auto *tabs=window.findChild<QTabBar *>("sheets");tabs->setCurrentIndex(1);
+        QCOMPARE(layer->selectedChart(),QString());QCOMPARE(changed.count(),1);QCOMPARE(changed[0][0].toString(),QString());
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,5000);
+        // Coming back does not select it again.
+        tabs->setCurrentIndex(0);QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        QCOMPARE(layer->selectedChart(),QString());QVERIFY(!layer->overlays().first()->selected());QCOMPARE(changed.count(),1);
+    }
+    void wheelOverAChartScrollsTheGrid() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Wheel",2,2,0,0,400,300));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
+        auto *bar=grid->verticalScrollBar();QVERIFY(bar->maximum()>0);const int before=bar->value();
+        const QPoint at(30,30);
+        QWheelEvent wheel(QPointF(at),QPointF(overlay->mapToGlobal(at)),QPoint(),QPoint(0,-120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);
+        QCoreApplication::sendEvent(overlay,&wheel);
+        QVERIFY(bar->value()>before);
+    }
+    void selectNextWrapsInZOrder() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"A",2,2));QVERIFY(addChart(window,opened,"B",4,4));QVERIFY(addChart(window,opened,"C",6,6));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),3,5000);
+        const auto a=overlayNamed(layer,"A")->chartId(),b=overlayNamed(layer,"B")->chartId(),c=overlayNamed(layer,"C")->chartId();
+        // Put A on top: the z order is then B, C, A.
+        window.submit({{"action","chart_update"},{"chart_id",a},{"z",50}});
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(a)["z"].toInt(),50,10000);
+        QCOMPARE(layer->selectedChart(),QString());
+        layer->selectNext(1);QCOMPARE(layer->selectedChart(),b);QCOMPARE(window.focusWidget(),layer->overlay(b));
+        layer->selectNext(1);QCOMPARE(layer->selectedChart(),c);
+        layer->selectNext(1);QCOMPARE(layer->selectedChart(),a);
+        layer->selectNext(1);QCOMPARE(layer->selectedChart(),b);
+        layer->selectNext(-1);QCOMPARE(layer->selectedChart(),a);
+        layer->selectNext(-1);QCOMPARE(layer->selectedChart(),c);
+        layer->select({});layer->selectNext(-1);QCOMPARE(layer->selectedChart(),a);
+        QVERIFY(layer->overlay(a)->selected());QVERIFY(!layer->overlay(b)->selected() && !layer->overlay(c)->selected());
+    }
+    void overlayIsAccessible() {
+        CHART_WINDOW;QVERIFY(addChart(window,opened,"Plain",2,2));
+        auto spec=chartSpec("Sheet1");spec["type"]="line";spec["title"]=QJsonObject{{"text","Units by month"}};
+        auto list=spec["series"].toArray();list.append(list.first());spec["series"]=list;
+        QVERIFY(addChart(window,opened,"Titled",12,2,0,0,320,200,"Sheet1",spec));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);
+        auto *plain=overlayNamed(layer,"Plain"),*titled=overlayNamed(layer,"Titled");QVERIFY(plain && titled);
+        QCOMPARE(plain->accessibleName(),QString("Chart: Plain"));QCOMPARE(plain->accessibleDescription(),QString("Column chart, 1 series"));
+        QCOMPARE(titled->accessibleName(),QString("Chart: Titled"));QCOMPARE(titled->accessibleDescription(),QString("Line chart, titled Units by month, 2 series"));
+        QCOMPARE(plain->focusPolicy(),Qt::StrongFocus);QVERIFY(!plain->testAttribute(Qt::WA_TransparentForMouseEvents));
+        auto *iface=QAccessible::queryAccessibleInterface(titled);QVERIFY(iface);
+        QCOMPARE(iface->text(QAccessible::Name),QString("Chart: Titled"));
+        QCOMPARE(iface->text(QAccessible::Description),QString("Line chart, titled Units by month, 2 series"));
+        QVERIFY(iface->state().focusable);
+        // A rename is read again with the catalog.
+        window.submit({{"action","chart_update"},{"chart_id",plain->chartId()},{"name","Renamed"}});
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlay(plain->chartId())->accessibleName(),QString("Chart: Renamed"),10000);
+    }
+    void brokenChartCanBeSelected() {
+        CHART_WINDOW;window.submit({{"action","sheet_add"},{"name","Data"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        QVERIFY(addChart(window,opened,"Broken chart",2,3,0,0,320,200,"Data"));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
+        auto *tabs=window.findChild<QTabBar *>("sheets");tabs->setCurrentIndex(1);QCOMPARE(tabs->tabText(1),QString("Data"));
+        const int before=opened.count();window.submit({{"action","sheet_delete"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);
+        QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Broken chart") && overlayNamed(layer,"Broken chart")->placeholder().contains("source"),5000);
+        auto *broken=overlayNamed(layer,"Broken chart");QTRY_VERIFY_WITH_TIMEOUT(broken->isVisible(),5000);
+        const auto reason=ChartSpec::stateReason(layer->chart(broken->chartId()));QVERIFY(!reason.isEmpty());
+        QCOMPARE(broken->accessibleDescription(),reason);QCOMPARE(broken->accessibleName(),QString("Chart: Broken chart"));
+        QTest::mouseClick(broken,Qt::LeftButton,Qt::NoModifier,QPoint(20,20));
+        QCOMPARE(layer->selectedChart(),broken->chartId());QVERIFY(broken->selected());QCOMPARE(window.focusWidget(),broken);
+        QVERIFY(highlighted(broken,QPoint(broken->width()/4,0)));QVERIFY(highlighted(broken,QPoint(7,7)));
+    }
+#undef CHART_WINDOW
+
+private:
+    // Labels in A2:A4, a series name in B1 and values in B2:B4, as chartSpec reads them.
+    static bool fillChartData(MainWindow &window,QSignalSpy &opened) {
+        const auto before=opened.count();QJsonArray cells{QJsonObject{{"row",1},{"col",2},{"source","Sales"}}};
+        for(int row=2;row<=4;++row){cells.append(QJsonObject{{"row",row},{"col",1},{"source","Item "+QString::number(row)}});cells.append(QJsonObject{{"row",row},{"col",2},{"source",QString::number(row*100)}});}
+        window.submit({{"action","edit"},{"cells",cells}});
+        for(int i=0;i<1000 && opened.count()==before;++i)QTest::qWait(10);
+        return opened.count()>before;
+    }
+    static QJsonObject chartSpec(const QString &sheet) {
+        auto range=[sheet](const QString &ref){return QJsonObject{{"source",QJsonObject{{"kind","range"},{"sheet",sheet},{"ref",ref}}}};};
+        return {{"spec_version",1},{"type","column"},{"categories",range("A2:A4")},{"series",QJsonArray{QJsonObject{{"name",range("B1")},{"values",range("B2:B4")}}}}};
+    }
+    // Creates a chart on the current sheet through the service and waits for
+    // the window to accept the new state.
+    static bool addChart(MainWindow &window,QSignalSpy &opened,const QString &name,int row,int col,int x=0,int y=0,int width=320,int height=200,
+                         const QString &source="Sheet1",const QJsonObject &spec={}) {
+        const auto before=opened.count();
+        window.submit({{"action","chart_create"},{"name",name},{"anchor",QJsonObject{{"row",row},{"col",col}}},{"offset",QJsonObject{{"x",x},{"y",y}}},
+                       {"size",QJsonObject{{"width",width},{"height",height}}},{"spec",spec.isEmpty()?chartSpec(source):spec}});
+        for(int i=0;i<1000 && opened.count()==before;++i)QTest::qWait(10);
+        return opened.count()>before;
+    }
+    static ChartOverlay *overlayNamed(ChartLayer *layer,const QString &name) {
+        for(auto *overlay:layer->overlays())if(overlay->chart()["name"].toString()==name)return overlay;
+        return nullptr;
+    }
+    // True when the overlay's own painting is the highlight colour at point.
+    static bool highlighted(QWidget *widget,const QPoint &point) {
+        return widget->grab().toImage().pixelColor(point*widget->devicePixelRatioF()).rgb()==widget->palette().color(QPalette::Highlight).rgb();
     }
 };
 

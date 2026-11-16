@@ -16,8 +16,11 @@ class FrozenPanes;
 class QSvgRenderer;
 class QTableView;
 
-// One chart shown over the grid. View-only: mouse and keyboard pass through
-// to the cells under it. Until an image arrives it shows a placeholder with
+// One chart shown over the grid. It takes the mouse over its own rectangle
+// and keyboard focus; ChartLayer handles its events (selection, Escape,
+// Enter, the wheel). Its accessible name is "Chart: <name>" and its
+// description the chart's type, title and series count, or the reason it
+// cannot be read or drawn. Until an image arrives it shows a placeholder with
 // the chart's name and why it is not drawn ("Loading" while one is awaited).
 // The image is the service's SVG scaled to the widget, so a previous image
 // stays, stretched, while one of a new size is rendered.
@@ -39,13 +42,20 @@ public:
     // failure, or a stale answer that was already retried. Empty when none.
     QString renderKey() const { return m_renderKey; }
     void setRenderKey(const QString &key) { m_renderKey=key; }
+    // A selected chart paints a 2 px frame in the palette's highlight colour
+    // and eight 8 px handles at its corners and edge midpoints, all inside
+    // its own rectangle, over the image or placeholder.
+    void setSelected(bool selected);
+    bool selected() const { return m_selected; }
 protected:
     void paintEvent(QPaintEvent *event) override;
 private:
+    void describe();
     QJsonObject m_chart;
     QByteArray m_svg;
     QSvgRenderer *m_renderer;
     QString m_reason,m_renderKey;
+    bool m_selected=false;
 };
 
 // Lists the charts of the bound sheet and keeps one overlay per chart placed
@@ -53,6 +63,12 @@ private:
 // column pane when the anchor row or column is frozen, otherwise the scrolling
 // body. Overlays are hidden while the sheet is shown through a projected list
 // view, and never cover the headers or scroll bars.
+//
+// At most one chart is selected. A press on an overlay selects it and focuses
+// it; a press on any grid pane or header, or Escape on the overlay, clears the
+// selection (Escape also returns focus to the grid). The selection survives a
+// relist while its chart exists, and clears when the chart goes or another
+// sheet or workbook is bound. The wheel over an overlay scrolls the body.
 //
 // Charts in view are rendered by service render jobs, one at a time (the
 // service runs one chart job per workbook), lowest z first, after relayouts
@@ -79,6 +95,19 @@ public:
     void relayout();
     ~ChartLayer() override;
     QList<ChartOverlay *> overlays() const;
+    // The selected chart's id; empty when none is.
+    QString selectedChart() const { return m_selected; }
+    // Selects the chart; an empty id, or one not on the sheet, clears.
+    void select(const QString &chartId);
+    // Selects and focuses the next (+1) or previous (-1) chart in z order,
+    // wrapping; with none selected, the lowest (+1) or highest (-1).
+    void selectNext(int direction);
+    // The catalog's chart and its overlay; empty and null when not on the sheet.
+    QJsonObject chart(const QString &chartId) const;
+    ChartOverlay *overlay(const QString &chartId) const;
+    // False while busy, read-only or projected: overlays still select on a
+    // click but take no keys other than Escape.
+    void setInteractive(bool interactive);
 signals:
     void listed(int count);
     // A chart's overlay now shows the service's image for the current state and size.
@@ -87,6 +116,10 @@ signals:
     void failed(const QString &message);
     // The workbook changed while the catalog was read.
     void stale();
+    // The selection changed; empty when it was cleared.
+    void selectionChanged(const QString &chartId);
+    // A double-click or Enter on a chart.
+    void editRequested(const QString &chartId);
 protected:
     bool eventFilter(QObject *object,QEvent *event) override;
 private:
@@ -95,6 +128,8 @@ private:
     void clear();
     void restack();
     void queueRelayout();
+    bool overlayEvent(ChartOverlay *overlay,QEvent *event);
+    QList<ChartOverlay *> zOrdered() const;
     // One render job of this layer. A job still being started is marked
     // abandoned rather than dropped, so its answer can retire it.
     struct Job { QString id,chartId,base,sheet,state,key; quint64 clientGeneration=0; bool started=false,abandoned=false; };
@@ -107,7 +142,6 @@ private:
     void fail(ChartOverlay *overlay,const QString &key,const QJsonObject &error,const QString &message);
     bool wanted(ChartOverlay *overlay) const;
     QString renderKey(ChartOverlay *overlay) const;
-    ChartOverlay *overlayFor(const QString &chartId) const;
     int jobIndex(const QString &jobId) const;
     int jobForChart(const QString &chartId) const;
     // Cancels (when asked) and releases a job that is no longer the layer's;
@@ -122,7 +156,10 @@ private:
     QPointer<FrozenPanes> m_frozen;
     QPointer<QWidget> m_gridArea;
     QString m_base,m_sheet,m_state;
-    bool m_projected=false,m_queued=false,m_listed=false;
+    bool m_projected=false,m_queued=false,m_listed=false,m_interactive=true;
+    QString m_selected;
+    // The viewports of every grid pane and header: a press there deselects.
+    QList<QPointer<QWidget>> m_panes;
     quint64 m_generation=0;
     QList<QPointer<ChartOverlay>> m_overlays;
     QList<Job> m_jobs;
