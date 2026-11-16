@@ -1773,6 +1773,56 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["legend"].toObject()["position"].toString(),QString("bottom"),10000);
         QCOMPARE(layer->chart(id)["name"].toString(),QString("Committed"));
     }
+    void reselectAfterAFailedReadShowsNoChart() {
+        PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(addChart(window,opened,"First",2,4));QVERIFY(addChart(window,opened,"Second",14,4));
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);
+        const auto first=overlayNamed(layer,"First")->chartId(),second=overlayNamed(layer,"Second")->chartId();QVERIFY(openPanel(window,layer,first));
+        auto *panel=panelOf(window);QSignalSpy requested(panel,&ChartPanel::changeRequested);QSignalSpy admitted(&window,&MainWindow::operationAdmitted);
+        proxy.failCharts=true;typeInto(window.findChild<QLineEdit *>("chartName"),"Committed",true);QCOMPARE(requested.count(),1);
+        QTRY_VERIFY_WITH_TIMEOUT(issuesText(window).contains("The test proxy failed this chart read"),10000);QVERIFY(idle(window));
+        QTRY_VERIFY_WITH_TIMEOUT(panel->chartId().isEmpty(),5000);
+        // The layer still holds the catalog from before the change; selecting again shows no chart from it.
+        layer->select(second);QCOMPARE(layer->selectedChart(),second);QVERIFY(panel->chartId().isEmpty());QVERIFY(noChartLabel(panel)->isVisible());
+        layer->select(first);QVERIFY(panel->chartId().isEmpty());QVERIFY(noChartLabel(panel)->isVisible());
+        window.findChild<QAction *>("selectNextChartAction")->trigger();QVERIFY(panel->chartId().isEmpty());
+        window.findChild<QAction *>("editChartAction")->trigger();QVERIFY(panel->chartId().isEmpty());
+        // An attempted edit sends nothing.
+        auto *name=window.findChild<QLineEdit *>("chartName");QVERIFY(!name->isEnabled());
+        panel->setLocked(false);name->setFocus();QTest::keyClicks(name," again");QTest::keyClick(name,Qt::Key_Return);
+        auto *legend=window.findChild<QComboBox *>("legendPosition");QTest::keyClicks(legend,"Bottom");
+        QTest::qWait(200);QCOMPARE(requested.count(),1);QCOMPARE(admitted.count(),1);
+        // A successful read restores the panel on the stored chart.
+        layer->select(first);window.findChild<QAction *>("refreshStoredDataAction")->trigger();
+        QTRY_COMPARE_WITH_TIMEOUT(panel->chartId(),first,10000);QCOMPARE(name->text(),QString("Committed"));
+        QVERIFY(idle(window));QTRY_VERIFY_WITH_TIMEOUT(legend->isEnabled(),5000);
+        choose(legend,"Bottom");QCOMPARE(requested.count(),2);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(first)["spec"].toObject()["legend"].toObject()["position"].toString(),QString("bottom"),10000);
+        QCOMPARE(layer->chart(first)["name"].toString(),QString("Committed"));
+    }
+    void focusStaysWhereThePersonWentDuringTheWait() {
+        PROXY_WINDOW;Q_UNUSED(model);QVERIFY(addChart(window,opened,"Waiting",2,4));activate(window);
+        QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);const auto id=layer->overlays().first()->chartId();QVERIFY(openPanel(window,layer,id));
+        auto *title=window.findChild<QLineEdit *>("chartTitle");title->setFocus();QTest::keyClicks(title,"Moved on");
+        // The catalog read after the change is held. Disabling the field left
+        // no focus widget; meanwhile the person presses an arrow, which the
+        // window takes as no widget has focus.
+        proxy.holdCharts=true;QTest::keyClick(title,Qt::Key_Return);
+        QTRY_VERIFY_WITH_TIMEOUT(idle(window),10000);QVERIFY(!title->isEnabled());
+        auto *after=window.focusWidget();QVERIFY(after!=title);
+        QTest::keyClick(after?after:static_cast<QWidget *>(&window),Qt::Key_Down);
+        proxy.releaseCharts();
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].toString(),QString("Moved on"),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(title->isEnabled(),5000);QTest::qWait(200);
+        QCOMPARE(window.focusWidget(),after);
+        // A person who went to the grid and used the arrows there keeps the grid.
+        QVERIFY(idle(window));title->setFocus();QTest::keyClicks(title," again");
+        proxy.holdCharts=true;QTest::keyClick(title,Qt::Key_Return);QTRY_VERIFY_WITH_TIMEOUT(idle(window),10000);
+        grid->setFocus();QTest::keyClick(grid,Qt::Key_Down);
+        proxy.releaseCharts();
+        QTRY_COMPARE_WITH_TIMEOUT(layer->chart(id)["spec"].toObject()["title"].toObject()["text"].toString(),QString("Moved on again"),10000);
+        QTRY_VERIFY_WITH_TIMEOUT(title->isEnabled(),5000);QTest::qWait(200);
+        QCOMPARE(window.focusWidget(),static_cast<QWidget *>(grid));
+    }
     void refusalForAnotherChartStaysOffThePanel() {
         PROXY_WINDOW;Q_UNUSED(grid);Q_UNUSED(model);QVERIFY(addChart(window,opened,"First",2,4));QVERIFY(addChart(window,opened,"Second",14,4));
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),2,5000);

@@ -2,6 +2,7 @@
 #include "chartpanel.h"
 #include "chartspec.h"
 #include <QButtonGroup>
+#include <QApplication>
 #include <QComboBox>
 #include <QFormLayout>
 #include <QGridLayout>
@@ -12,6 +13,7 @@
 #include <QLocale>
 #include <QPushButton>
 #include <QStackedWidget>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <cmath>
@@ -163,10 +165,31 @@ void ChartPanel::setLocked(bool locked) {
     m_locked=locked;
     if(!locked){updateEnabled();resume();return;}
     // Disabling the focused field moves focus away; remember both ends.
+    // A focus remembered by an earlier lock of the same wait is kept.
     auto *focused=window()->focusWidget();
-    m_focus=focused && isAncestorOf(focused)?focused:nullptr;m_focusChart=chartId();
+    const bool inside=focused && isAncestorOf(focused);
     updateEnabled();
-    m_focusAfterLock=m_focus?window()->focusWidget():nullptr;
+    if(!inside)return;
+    m_focus=focused;m_focusChart=chartId();m_focusAfterLock=window()->focusWidget();
+    // Any key or mouse press elsewhere during the wait means the person moved on.
+    // Watched from the next turn of the event loop: the key that asked for the
+    // change is still being delivered to the panel's parents now.
+    m_userActed=false;
+    QTimer::singleShot(0,this,[this]{if(m_focus)qApp->installEventFilter(this);});
+}
+
+bool ChartPanel::eventFilter(QObject *object,QEvent *event) {
+    if(event->type()==QEvent::KeyPress || event->type()==QEvent::MouseButtonPress) {
+        // Counted where a widget receives it; a window passes it on to one.
+        auto *widget=qobject_cast<QWidget *>(object);
+        if(widget && widget!=this && !isAncestorOf(widget))m_userActed=true;
+    }
+    return false;
+}
+
+void ChartPanel::forgetFocus() {
+    qApp->removeEventFilter(this);
+    m_focus=nullptr;m_focusAfterLock=nullptr;m_userActed=false;
 }
 
 void ChartPanel::refused(const QString &field,const QString &message) {
@@ -178,13 +201,14 @@ void ChartPanel::refused(const QString &field,const QString &message) {
 
 void ChartPanel::resume() {
     if(m_locked || m_pending || m_chart.isEmpty())return;
-    if(m_focus && m_focusChart==chartId() && m_focus->isEnabled() && m_focus->isVisible()) {
+    if(m_focus && !m_userActed && m_focusChart==chartId() && m_focus->isEnabled() && m_focus->isVisible()) {
         auto *now=window()->focusWidget();
         if(!now || now==m_focusAfterLock)m_focus->setFocus(Qt::OtherFocusReason);
     }
-    m_focus=nullptr;m_focusAfterLock=nullptr;
-    if(m_deferredChart!=chartId()){for(const auto &field:std::exchange(m_deferred,{}))loadField(field);return;}
-    while(!m_deferred.isEmpty() && !m_pending && !m_locked)apply(m_deferred.takeFirst());
+    forgetFocus();
+    if(m_deferred.isEmpty())return;
+    const auto field=std::exchange(m_deferred,{});
+    if(m_deferredChart==chartId())apply(field);else loadField(field);
 }
 
 void ChartPanel::apply(const QString &field) {
@@ -194,8 +218,7 @@ void ChartPanel::apply(const QString &field) {
 }
 
 void ChartPanel::defer(const QString &field) {
-    if(!m_deferred.contains(field))m_deferred.append(field);
-    m_deferredChart=chartId();
+    m_deferred=field;m_deferredChart=chartId();
 }
 
 QLabel *ChartPanel::messageLabel(const QString &field) {

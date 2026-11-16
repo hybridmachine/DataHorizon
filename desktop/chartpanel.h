@@ -5,7 +5,6 @@
 #include <QJsonObject>
 #include <QPointer>
 #include <QString>
-#include <QStringList>
 #include <QWidget>
 #include <functional>
 
@@ -34,7 +33,8 @@ class QToolButton;
 // Text left in a field while the panel was locked or waiting is applied when
 // it can ask again, if the same chart is still shown and the text still
 // differs; otherwise the field shows the chart again. A field that had focus
-// when the panel locked gets it back on unlock, unless focus moved meanwhile.
+// when the panel locked gets it back on unlock, unless the person pressed a
+// key or a mouse button outside the panel meanwhile, or focus moved.
 //
 // A chart whose specification cannot be built (unreadable, or with a broken
 // source) shows its reason at the top, and only the Chart group is enabled,
@@ -87,13 +87,18 @@ private:
     // Once the panel may ask: focus back, then the held fields.
     void resume();
     QLabel *messageLabel(const QString &field);
+    // While a focus is to be restored: notes a key or mouse press outside the panel.
+    bool eventFilter(QObject *object,QEvent *event) override;
+    void forgetFocus();
     QJsonObject m_chart;
     // The input-form spec; empty when it cannot be built (m_reason says why).
     QJsonObject m_spec;
     QString m_reason;
     bool m_locked=false,m_pending=false;
-    QStringList m_deferred;
-    QString m_deferredChart,m_focusChart;
+    // At most one held field: it is the one that had focus, and only the
+    // focused field finishes editing, so a second one cannot arise.
+    QString m_deferred,m_deferredChart,m_focusChart;
+    bool m_userActed=false;
     // The panel widget that had focus when the panel locked, and where focus went then.
     QPointer<QWidget> m_focus,m_focusAfterLock;
     QStackedWidget *m_pages=nullptr;

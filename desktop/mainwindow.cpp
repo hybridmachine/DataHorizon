@@ -933,7 +933,7 @@ void MainWindow::buildUi() {
     connect(m_charts,&ChartLayer::deleteRequested,this,[this](const QString &id){submit({{"action","chart_delete"},{"chart_id",id}});});
     // Enter, a double-click and Edit Chart open the panel and put focus on Name.
     connect(m_charts,&ChartLayer::editRequested,this,[this](const QString &id){
-        m_chartPanel->setChart(m_charts->chart(id));showChartPanel();
+        m_chartPanel->setChart(panelChart(id));showChartPanel();
         if(auto *name=m_chartPanel->findChild<QLineEdit *>("chartName"))name->setFocus(Qt::OtherFocusReason);
     });
     connect(m_charts,&ChartLayer::refused,this,[this](const QString &status){m_status->setText(status);});
@@ -1072,20 +1072,21 @@ void MainWindow::buildUi() {
     m_chartDock=new QDockWidget(tr("Chart"),this);m_chartDock->setObjectName("chartDock");m_chartDock->setWidget(chartScroll);
     addDockWidget(Qt::RightDockWidgetArea,m_chartDock);m_chartDock->hide();view->addAction(m_chartDock->toggleViewAction());
     // A selection shows its chart at once; only a listing, the catalog read
-    // after a change, lets the panel ask again (settle). A committed change
-    // keeps the panel locked until that listing, so it never builds a
-    // specification from the catalog before the change. A failed read shows
-    // no chart until the next listing.
-    connect(m_charts,&ChartLayer::selectionChanged,m_chartPanel,[this](const QString &id){m_chartPanel->setChart(m_charts->chart(id));});
+    // after a change, lets the panel ask again (settle). After a committed
+    // change the panel keeps its chart, locked; after a failed or stale chart
+    // read it shows no chart. Either way it takes no chart from the layer and
+    // stays locked until that listing, so it never builds a specification
+    // from a catalog older than the workbook.
+    connect(m_charts,&ChartLayer::selectionChanged,m_chartPanel,[this](const QString &id){m_chartPanel->setChart(panelChart(id));});
     connect(m_charts,&ChartLayer::listed,m_chartPanel,[this]{
-        m_chartsAwaitList=false;
-        m_chartPanel->setChart(m_charts->chart(m_charts->selectedChart()));updateChartActions();
+        m_chartCatalogStale=false;
+        m_chartPanel->setChart(panelChart(m_charts->selectedChart()));updateChartActions();
         if(m_chartPanelOperation.isEmpty())m_chartPanel->settle();
     });
-    connect(m_charts,&ChartLayer::failed,m_chartPanel,[this]{m_chartsAwaitList=false;m_chartPanel->setChart({});updateChartActions();});
-    connect(m_charts,&ChartLayer::stale,m_chartPanel,[this]{m_chartsAwaitList=false;updateChartActions();});
+    connect(m_charts,&ChartLayer::failed,m_chartPanel,[this]{m_chartCatalogStale=true;m_chartPanel->setChart({});updateChartActions();});
+    connect(m_charts,&ChartLayer::stale,m_chartPanel,[this]{m_chartCatalogStale=true;m_chartPanel->setChart({});updateChartActions();});
     connect(this,&MainWindow::operationReceipt,m_chartPanel,[this](const QJsonObject &receipt){
-        if(receipt["outcome"]=="committed" && !m_relationalActive && !m_model->projected()){m_chartsAwaitList=true;updateChartActions();}
+        if(receipt["outcome"]=="committed" && !m_relationalActive && !m_model->projected()){m_chartCatalogStale=true;updateChartActions();}
     });
     // Each panel change is one chart_update. One not sent puts its field
     // back at once; a refused or rolled-back one when its receipt comes,
@@ -1109,7 +1110,7 @@ void MainWindow::buildUi() {
         else m_chartPanel->settle();
     });
     connect(m_client,&RestClient::configured,m_chartPanel,[this]{
-        m_chartsAwaitList=false;
+        m_chartCatalogStale=true;m_chartPanel->setChart({});
         if(!m_chartPanelOperation.isEmpty()){m_chartPanelOperation.clear();m_chartPanelChart.clear();m_chartPanel->refused(std::exchange(m_chartPanelField,{}),{});}
         updateChartActions();
     });
@@ -1969,6 +1970,10 @@ void MainWindow::insertChart() {
     });
 }
 
+QJsonObject MainWindow::panelChart(const QString &chartId) const {
+    return m_chartCatalogStale?QJsonObject():m_charts->chart(chartId);
+}
+
 void MainWindow::showChartPanel() {
     m_chartDock->show();m_chartDock->raise();
 }
@@ -1983,7 +1988,7 @@ void MainWindow::updateChartActions() {
     // takes edits; they are still selected, and edited in the panel (locked).
     const bool editable=sheet && !m_busy && !m_unknown && !m_info.value("readonly").toBool();
     if(m_charts)m_charts->setInteractive(editable);
-    if(m_chartPanel)m_chartPanel->setLocked(!editable || m_chartsAwaitList);
+    if(m_chartPanel)m_chartPanel->setLocked(!editable || m_chartCatalogStale);
     if(!m_chartMenu)return;
     m_editChartAction->setEnabled(charts);
     for(auto *action:{m_chartToFrontAction,m_chartToBackAction,m_deleteChartAction})action->setEnabled(charts && editable);

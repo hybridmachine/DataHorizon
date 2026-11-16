@@ -384,8 +384,12 @@ private:
     ChartPanel *m_chartPanel = nullptr;
     QDockWidget *m_chartDock = nullptr;
     QString m_chartPanelOperation, m_chartPanelField, m_chartPanelChart;
-    // A change was committed and the charts are not listed again yet.
-    bool m_chartsAwaitList = false;
+    // The chart layer's catalog may be older than the workbook: a change was
+    // committed, or a chart read failed or was stale, and no listing has
+    // arrived since. The panel then takes no chart from the layer and stays locked.
+    bool m_chartCatalogStale = true;
+    // The catalog's chart for the panel: none while the catalog is stale.
+    QJsonObject panelChart(const QString &chartId) const;
     // A suggest request is outstanding; a second Insert waits for it.
     bool m_chartSuggesting = false;
     // The operation id of the chart_create whose committed receipt's chart is
