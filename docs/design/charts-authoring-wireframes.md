@@ -1,6 +1,6 @@
 # Chart authoring wireframes
 
-Status: awaiting the owner's sign-off
+Status: Signed off by the owner on November 15, 2026, with the nine decisions and the sixteen owner questions accepted as written.
 
 Wireframes, November 15, 2026. These Qt Widgets sketches define how a person
 inserts, selects, moves, resizes, reorders, deletes and edits a chart on the
