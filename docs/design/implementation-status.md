@@ -4,6 +4,135 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## Charts desktop authoring — November 16, 2026
+
+The [authoring design](charts-authoring-export-design.md#4-authoring-on-the-sheet)
+(sections 4 and 5), [plan](charts-authoring-plan.md) and signed-off
+[wireframes](charts-authoring-wireframes.md) are executed on branch
+`claude/charts-authoring`, built November 15-16, 2026 from `main` at 550cbe4
+and not merged. The [verification evidence](evidence/charts-authoring-verification.txt)
+records the commands and results. No service, REST, CLI or SDK code changed.
+The rulings made during the build and every departure from the design are in
+the "As built" paragraphs of design sections 4 and 5.
+
+Built, and covered by the `chart_authoring` tests:
+- Wireframes: recorded and signed off by the owner on November 15, 2026, with
+  the nine plan decisions and the sixteen owner questions accepted as written,
+  before any desktop code. Three panel texts and one field marker added during
+  the build are listed in the wireframes' text table as not part of the
+  sign-off.
+- Chart specification helpers (`desktop/chartspec.*`): the stored form to the
+  input form with sources by id, the type change with its companions (grouping;
+  categories to and from scatter X sources), placement and resize arithmetic
+  within 64x48 to 4096x4096, and the text of a range source.
+- On the sheet (`desktop/chartlayer.*`): a chart takes clicks over its area and
+  focus by click; one chart is selected at a time, with a 2 px frame and eight
+  handles; a press on the grid or a header, or Escape, deselects. Drag to move
+  and handle drag to resize, one `chart_update` on release; arrow keys move
+  (8 px, 1 px with Alt) and Shift+arrows resize; Delete or Backspace deletes;
+  Enter opens the panel; a context menu (Edit Chart, Bring to Front, Send to
+  Back, Delete) from the right button, the Menu key or Shift+F10. A refused or
+  unsent move or resize puts the chart back. Clicks pass through charts during
+  the formula reference pick, the format painter and a Python pick. Accessible
+  name "Chart: <name>" and a description from the type, title and series
+  count, or the chart's state.
+- Insert menu between Edit and Format: Chart (`Alt+F1`), Select Next Chart
+  (`Ctrl+Alt+C`), Select Previous Chart (`Ctrl+Alt+Shift+C`). Insert asks the
+  suggest route for the selection and sends one `chart_create` anchored one
+  column right of the selection (its top-left cell when that column does not
+  exist or is hidden); the chart is selected and focused and the panel opens.
+  One Undo removes it. Disabled with no workbook, in a read-only workbook, a
+  projected list view, the relational workbench, while busy and while a
+  suggestion is awaited.
+- The side panel (`desktop/chartpanel.*`, `desktop/chartsourcefield.*`), a
+  dock titled "Chart" with a View menu toggle: Chart (Name, Bring to Front,
+  Send to Back), Type (six types, Grouping), Title, Data (Categories; series
+  with Name, Values and X for scatter; Add Series, Remove, Move Up, Move Down),
+  Axes (titles, Minimum, Maximum) and Legend. Each source is a range (typed or
+  picked on the grid), a table column or a query column. Every change is one
+  `chart_update` with a whole `spec`, shown as "Edit chart" in Undo. Refusals
+  show the service's message beside the field and put back only that change.
+  A broken source holds source edits ("Not applied yet") until one update
+  repairs it; an unreadable specification leaves only the Chart group enabled.
+- Range picking on the grid: the field fills as the selection changes, on any
+  sheet; Enter applies it as one update and Escape puts the field back; the
+  chart stays selected; the window returns to the chart's sheet.
+
+Measured on the reference Mac (macOS, Darwin 25.6.0; Qt 6.8; system Python
+3.14.6), on commit b5c80dc:
+- `chart_authoring`: passed, 116 s; 211 passed, 0 failed, 0 skipped.
+- `desktop`: passed, 263 s; 282 passed, 0 failed (the known unrelated flake
+  `backgroundCalculationReportsSnapshotWithoutEdits` did not occur).
+- `python_workspace`: passed, 77 s; 72 passed, 0 failed.
+- Service suite: 1,716 tests, OK, 28 skipped, 369 s (no service code
+  changed on the branch).
+- Build of `chart_authoring_tests`, `desktop_tests` and `DataHorizon`: no
+  compiler warnings.
+- Export check: a throwaway SDK script (not committed) sent the operations the
+  desktop sends for Insert → Chart over A1:C13 (`suggest_chart`, then
+  `chart_create` anchored at D1), a whole-`spec` type change to bar, a
+  whole-`spec` title change, a move (anchor F3, offset 12,7) and a resize
+  (520x340); all five committed. The workbook was exported to XLSX and ODS
+  (inline whole-workbook route, "Charts: 1 written." each) and read back with
+  the import previews: in both formats the chart came back equal in name,
+  type, grouping, title, legend, categories, series names and values sources,
+  anchor, offset and size, with no chart or drawing entry in the import
+  report. The two files are in `output/charts-authoring-samples/` (not
+  tracked). This exercised the operations the desktop sends, not the desktop
+  UI; the UI path is covered by the `chart_authoring` tests, which drive mouse
+  and key events through Qt on the offscreen platform.
+
+Known limitations:
+- No object browser entry for charts, no type picker with a preview, no copy
+  as image, cut, copy, paste or multi-selection, and no workbook Python chart
+  operations.
+- A broken source's old reference cannot be shown (the engine clears it); the
+  field is blank with "This source no longer exists". A dropped table or query
+  appears as a blank entry in its list.
+- Saved-query column names are read on demand, one `/queries/read` per query
+  chosen; the `/tables` catalog carries only a column count.
+- Any text field outside the panel taking focus cancels a range pick,
+  including the Find dialog's and the Python editor's fields; cancellations
+  other than Enter and Escape do not return to the chart's sheet; starting a
+  pick does not fill the field from the existing selection.
+- The panel is locked and empty until a workbook's first chart listing, and
+  stays locked after a committed operation until the charts are listed again;
+  if that refresh fails, it stays locked until a later refresh lists them.
+- While a change is awaited, any key or mouse press elsewhere in the
+  application cancels the return of focus to the panel field.
+
+Deferred minor notes from the build (kept for later work):
+- `chartspec.cpp` wraps `tr()` in a helper that hides its strings from
+  `lupdate` (there are no `.ts` files today).
+- `ChartSpec::resized` does not clamp the axis not being dragged;
+  `parseRange` rejects spaces around `:` and `!` and matches sheet names
+  case-sensitively; `withType` can carry a stale grouping string;
+  `sourceText` shows a raw id for an unknown sheet.
+- Closing a sheet or workbook (`ChartLayer::clear()`) deletes overlays without
+  returning focus to the grid.
+- A suggestion dropped because the window became busy is reported in Issues
+  only, not in the status bar. Some negative assertions in the proxy tests use
+  fixed waits of 100 to 300 ms.
+- `m_chartPlacement` is not cleared when a workbook closes (a stale id,
+  harmless). The application event filter and the remembered focus linger
+  when the chart is gone for good (harmless).
+- Pressing another Pick while busy ends the old pick and then shows the issue.
+  `~MainWindow` disconnects `qApp` from the window broadly.
+- The test helper `choose()` can leave a combo popup open offscreen.
+
+Not verified:
+- The acceptance run by hand in the built application with a physical mouse
+  and keyboard (design section 7, plan Task 9 Step 2): not run. The automated
+  tests drive Qt mouse and key events on the offscreen platform only.
+- Opening the exported files in Excel and in LibreOffice: neither is
+  installed on the reference Mac.
+- VoiceOver; physical-input acceptance; Windows and Linux.
+- macOS Option as Alt for the 1-pixel arrow steps on real hardware; `Alt+F1`
+  may need the fn key on a Mac keyboard.
+- Without a test of their own: the external Python pick's pass-through, the
+  drag cancel on window deactivation, and the Shift+F10 shortcut override
+  while the chart cannot be changed.
+
 ## Charts export — November 15, 2026
 
 The [export design](charts-authoring-export-design.md#6-export) and

@@ -1,5 +1,7 @@
 # Charts Desktop Authoring Implementation Plan
 
+Executed November 15-16, 2026; see implementation-status.md for what was built and the rulings made during the build.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A person can insert a chart from a selection, select, move, resize, reorder and delete it on the sheet, and change everything specification version 1 holds in a docked side panel, with the mouse and with the keyboard.

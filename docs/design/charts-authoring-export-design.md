@@ -5,7 +5,12 @@ Status: **Draft 0.2** (November 15, 2026), approved by the owner on November
 [the status document](implementation-status.md#charts-export--november-15-2026)
 and the [export plan](charts-export-plan.md)); the as-built rules are in
 sections 6 and 7 and the [compatibility contract](compatibility-v0.md#charts).
-**Authoring (sections 4 and 5) is not built.**
+**Authoring (sections 4 and 5) is built** on branch `claude/charts-authoring`
+(November 15-16, 2026; not merged), from the [authoring plan](charts-authoring-plan.md)
+and the signed-off [wireframes](charts-authoring-wireframes.md); see
+[the status document](implementation-status.md#charts-desktop-authoring--november-16-2026).
+The "As built" paragraphs at the end of sections 4 and 5 list where the build
+departs from or adds to the text.
 Marks: **Owner** is a decision the owner made; **Call** is the author's
 proposal, open to correction; **Builder** is left to the implementation plans.
 
@@ -159,6 +164,69 @@ it, as the view-only layer does after any workbook change. Undo and Redo use
 the existing Edit commands and the operations' own labels; when the selected
 chart no longer exists, the selection clears.
 
+**As built (November 16, 2026).** The plan's nine decisions for section 8 are
+built as written, with the additions below (the panel's share is in section 5).
+
+- Decision 1, whole `spec`: every panel change sends a whole `spec` in input
+  form built from the catalog's chart, with sources by id; `spec_patch` is
+  never sent.
+- Decision 2, broken sources: see section 5.
+- Decision 3, shortcuts: Insert → Chart `Alt+F1`, Select Next Chart
+  `Ctrl+Alt+C`, Select Previous Chart `Ctrl+Alt+Shift+C`; on a selected chart
+  the arrows move by 8 px, `Alt`+arrows by 1 px, `Shift`+arrows resize the
+  right and bottom edges by 8 px, `Shift+Alt`+arrows by 1 px; `Delete` or
+  `Backspace` deletes; `Enter` or `Return` opens the panel and focuses Name;
+  `Escape` deselects and returns focus to the grid. The Menu key and
+  `Shift+F10` open the context menu on a selected chart, also while the chart
+  cannot be changed (busy or read-only), so Edit Chart stays reachable. The
+  Insert menu sits between Edit and Format and holds Chart, a separator, Select
+  Next Chart and Select Previous Chart. Select Next and Previous are suspended
+  during the picks, with the other editing commands.
+- Decision 4, handles: eight 8 px handles and a 2 px frame in the palette's
+  highlight colour, inside the overlay's rectangle.
+- Decision 5, drags across panes: a drag does not scroll the grid; on release
+  the anchor is the cell under the top-left corner in whichever pane shows it,
+  and a release over no cell sends nothing and puts the chart back. Two
+  exceptions: the right, bottom and bottom-right resize handles keep the
+  chart's stored anchor and offset and send only the new size (so resizing a
+  chart whose corner is scrolled out of view does not re-anchor it), and a
+  keyboard move of a chart whose top-left corner is scrolled out of its pane
+  is worked out from that pane's cells, so the chart moves from its true
+  position instead of being refused.
+- Decision 6, no debounce: see section 5. While an operation is in flight the
+  overlays take no drag and no editing key.
+- Decision 7, stale state: nothing new in `submit`; see section 5 for the
+  panel.
+- Decision 8: the tests are in `tests/test_chart_authoring.cpp`, CTest name
+  `chart_authoring`.
+- Decision 9, picking: see section 5.
+- Overlays take focus by click (`Qt::ClickFocus`), not by Tab; they are not Tab
+  stops over the grid. Select Next and Previous Chart focus the chart they
+  select.
+- During the formula reference pick, the format painter and a Python pick,
+  clicks pass through charts to the cells under them, overlays take no focus
+  and no keys, and the grid takes the keyboard. A chart keeps its selection on
+  a grid or header press only during a chart range pick (section 5); in every
+  other mode a press on a grid pane or a header deselects and returns focus to
+  the grid.
+- A right-click, a press of any button, a lost focus, the window being
+  deactivated or a pointer move without the left button during a drag cancels
+  the drag and puts the chart back; so do Escape, the window becoming busy and
+  a change of selection.
+- A move or resize the service refuses (or that is not sent) puts the chart
+  back where it is stored, and the service's message is shown in Issues.
+  Keyboard steps past the limits show "The chart cannot move further" or "The
+  chart cannot resize further" in the status bar.
+- Insert: when the column right of the selection does not exist or is hidden,
+  the anchor is the selection's top-left cell. After the insert the status
+  reads "Chart inserted • Undo removes it", the panel opens and the new chart
+  takes focus. A suggestion that arrives when the create can no longer be sent
+  (the window became busy, read-only, projected or switched to the workbench)
+  shows "The chart was not inserted • Insert again" in Issues; an answer for
+  another workbook, sheet or state is dropped silently. Insert → Chart is also
+  disabled while a suggestion is awaited.
+- Binding a projected list view clears the selection.
+
 ## 5. Authoring: the side panel
 
 A dock on the right of the main window, in the manner of the Issues dock at the
@@ -223,6 +291,68 @@ mockup the owner chose from (option A, kept outside version control under
 `.superpowers/brainstorm/`) is the starting point; the authoring plan's first
 task records the wireframes for sections 4 and 5 (every state included) in
 `docs/design/` for the owner's sign-off before any desktop code.
+
+**As built (November 16, 2026).** The [wireframes](charts-authoring-wireframes.md)
+were signed off by the owner on November 15, 2026, before any desktop code. The
+panel is a dock titled "Chart" on the right, hidden at start, with its toggle in
+the View menu after the Issues toggle; it sits in a scroll area that is kept at
+least as wide as the panel, so it never scrolls sideways. A double-click and
+Edit Chart also focus Name. Departures and builder decisions:
+
+- Decision 1, whole `spec`, always: built (section 4).
+- Decision 2, broken sources: while a source is broken, the reason is at the
+  top and only the Chart group and the Data group are enabled; source edits,
+  Remove and Move are held in the panel, marked "Not applied yet", and one
+  `chart_update` carries them once nothing is broken. A broken source shows a
+  blank field with "This source no longer exists": the engine clears the old
+  reference (and the name of a dropped table or query), so the old text the
+  wireframe sketch shows cannot be shown. Name, placement and order are never
+  blocked.
+- Decision 6, no debounce: a choice applies on change, text on Enter or focus
+  out and only when it differs from the stored value. The panel is locked while
+  an operation is in flight, and also after any committed operation until the
+  charts are listed again, so it never builds a whole `spec` from a catalog
+  older than the change. Text typed into a field when the lock came is held
+  (one field, the one that had focus) and applied on unlock if the same chart
+  is still shown and the text still differs. Focus returns to that field after
+  the change only if the person pressed no key and no mouse button anywhere
+  else in the application meanwhile.
+- Decision 7, stale state: after a failed or stale chart read, or a client
+  reconfigure, the panel shows "No chart selected" (and stays locked) until a
+  fresh listing; selecting the chart again before that does not show it.
+- Decision 9, picking: a pick that ends (Enter or Escape) on another sheet
+  first returns to the chart's sheet and finishes only once that sheet's charts
+  are listed, so the panel's held edits are not lost to a stale read. While a
+  pick is on, the panel keeps its chart by id across sheet changes and the
+  chart is selected again when its sheet is shown. Any text field outside the
+  panel taking focus (the formula bar, the address box, a cell editor, and
+  also the Find dialog's and the Python editor's fields) cancels the pick and
+  puts the field back; so do the window becoming busy, another workbook, a
+  list view, the workbench, hiding the dock and a failed or stale read. Those
+  cancellations do not return to the chart's sheet. Starting a pick does not
+  fill the field from the existing selection; the first selection change
+  does. A selection that cannot be applied shows its reason in the status bar
+  and is not filled. Another field's Pick ends the current pick and starts one
+  for that field.
+- Minimum and Maximum accept a number in the C locale or the system locale and
+  reject group separators: "1,500" is refused under English and C (it reads as
+  1.5 under German).
+- Saved-query column names are read on demand: the panel asks for a query's
+  columns (one `/queries/read`) when that query is chosen or its column list is
+  opened, not on every refresh; a failed read is reported in Issues ("The
+  columns of a saved query could not be read: <error>") and asked again on the
+  next choice. Only `/tables` is read per refresh. No service change was made.
+- A refusal from the service puts back only the refused Data change: earlier
+  held repairs and added series rows stay, and the message appears beside the
+  refused field. A rename, move or order change of the chart keeps the held
+  edits and added rows.
+- Three panel texts were added during the build, listed in the wireframes'
+  text table and not part of the original sign-off: "Enter a number or leave
+  empty for automatic" (Minimum or Maximum), "Enter a cell range such as
+  A2:A13" (a Range or Cell field) and "A series name takes one cell" (a series
+  Name set to Cell). The table also records "Not applied yet" beneath the
+  Values and X of a series added with Add Series.
+- Service changes: none.
 
 ## 6. Export
 
