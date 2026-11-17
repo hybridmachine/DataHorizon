@@ -4,13 +4,20 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## November 17 review and proposed work block
+
+Chart export and desktop authoring reached `main` in PRs #141 and #143.
+The [project review and proposed large structural edit plan](excel-fidelity-increment-9-plan.md)
+records the merged baseline, current verification and the recommended sequence for
+Excel fidelity increment 9, beginning with row insertion on a large sheet.
+
 ## Charts desktop authoring — November 16, 2026
 
 The [authoring design](charts-authoring-export-design.md#4-authoring-on-the-sheet)
 (sections 4 and 5), [plan](charts-authoring-plan.md) and signed-off
 [wireframes](charts-authoring-wireframes.md) are executed on branch
 `claude/charts-authoring`, built November 15-16, 2026 from `main` at 550cbe4
-and not merged. The [verification evidence](evidence/charts-authoring-verification.txt)
+and merged through PR #143. The [verification evidence](evidence/charts-authoring-verification.txt)
 records the commands and results. No service, REST, CLI or SDK code changed.
 The rulings made during the build and every departure from the design are in
 the "As built" paragraphs of design sections 4 and 5.
@@ -170,12 +177,10 @@ Not verified:
 
 The [export design](charts-authoring-export-design.md#6-export) and
 [plan](charts-export-plan.md) are executed on branch `claude/charts-export`,
-which is not merged (it follows the import and view-only work merged to `main`
-through pull request 140). The [verification evidence](evidence/charts-export-verification.txt)
-records the commands and results. Desktop authoring (design sections 4 and 5)
-is not built. (Authoring was built later, November 16, 2026:
-[Charts desktop authoring](#charts-desktop-authoring--november-16-2026); its
-wireframes were signed off November 15.)
+merged through PR #141 after the import and view-only work in PR #140.
+The [verification evidence](evidence/charts-export-verification.txt) records
+the commands and results. [Desktop authoring](#charts-desktop-authoring--november-16-2026)
+followed in PR #143.
 
 Built, and covered by service tests:
 - XLSX and ODS exports write native charts: the inline whole-workbook and
