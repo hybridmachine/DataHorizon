@@ -1069,6 +1069,16 @@ void MainWindow::buildUi() {
     m_status->setTextFormat(Qt::PlainText);
     m_status->setObjectName("storageStatus");
     statusBar()->addWidget(m_status, 1);
+    m_cancelStructure=new QPushButton(tr("Cancel edit"),this);
+    m_cancelStructure->setObjectName("cancelLargeStructure");
+    m_cancelStructure->setAccessibleName(tr("Cancel large structural edit"));
+    statusBar()->addPermanentWidget(m_cancelStructure);
+    m_cancelStructure->hide();
+    connect(m_cancelStructure,&QPushButton::clicked,this,[this]{
+        m_cancelStructure->setEnabled(false);
+        m_status->setText(tr("Requesting cancellation of the large structural edit…"));
+        cancelPendingOperation(m_pendingId);
+    });
     m_summary=new QLabel(this);m_summary->setObjectName("selectionSummary");m_summary->setAccessibleName(tr("Selection summary"));m_summary->setTextFormat(Qt::PlainText);
     m_summary->setMinimumWidth(0);m_summary->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
     statusBar()->addPermanentWidget(m_summary,1);
@@ -1807,6 +1817,9 @@ void MainWindow::startService() {
     connect(&m_service, &QProcess::errorOccurred, this, [this] { issue("Service startup failed: " + m_service.errorString()); });
     connect(&m_service, &QProcess::finished, this, [this](int, QProcess::ExitStatus) {
         if (m_shuttingDown) return;
+        if(m_largeStructureReview)m_largeStructureReview->reject();
+        m_cancelStructure->hide();
+        m_largeStructurePending=false;
         m_workspace->serviceStopped();
         m_enterRequest={}; m_enterNavigation={};
         captureGridDraft();
@@ -1927,7 +1940,7 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
 }
 
 void MainWindow::refresh(const QString &selectSheet) {
-    if (m_info.isEmpty() || m_unknown || m_refreshing) return;
+    if (m_info.isEmpty() || m_unknown || m_refreshing || m_largeStructureReview || m_largeStructurePending) return;
     captureGridDraft(false);
     if (!resolveDraft()) return;
     m_refreshing = true; setBusy(true, "Refreshing stored inputs…");
@@ -1961,50 +1974,168 @@ QString MainWindow::submit(QJsonObject operation) {
     operation["sheet"] = m_model->sheet();
     setBusy(true, "Submitting • " + m_pendingId);
     const auto operationId=m_pendingId;
+    sendOperation(operation);
+    return operationId;
+}
+
+void MainWindow::sendOperation(const QJsonObject &operation) {
+    const auto operationId=operation["operation_id"].toString();
+    const auto action=operation["action"].toString();
     // A whole-workbook import can take minutes; its answer is awaited longer.
     // A lost answer is still reconciled through the operation ID below.
     const int timeout=action=="workbook_import"?330000:15000;
-    m_client->request(base()+"/operations", operation, [this,operationId,action](QJsonObject result, QString error) {
+    m_client->request(base()+"/operations", operation, [this,operation,operationId,action](QJsonObject result, QString error) {
         if (m_pendingId!=operationId) return;
-        const bool invalidAcknowledgement = error.isEmpty() && !RestClient::validReceipt(result, m_pendingId, true);
-        if (invalidAcknowledgement) error = "Invalid mutation acknowledgement; reconcile its operation ID";
-        if (!error.isEmpty()) {
-            m_enterNavigation={};
-            const auto outcome = result["outcome"].toString();
-            if (!invalidAcknowledgement && (outcome == "rolled_back" || outcome == "rejected")
-                && result["code"].isString() && !result["code"].toString().isEmpty() && result["message"].isString()
-                && result["operation_id"].toString() == m_pendingId) {
-                m_saveMode = 0;
-                clearRecoveryRecord(); m_pendingId.clear(); m_unknown=false;
-                const bool restoreDraft=m_draftSubmissionId==operationId && !m_recoveredDraft.isEmpty();
-                if (restoreDraft) {
-                    m_draftSubmissionId.clear(); m_restoreDraft=true;
-                    if (result["code"]=="STALE_STATE") m_recoveredDraft["needs_review"]=true;
-                }
-                const bool stopped=m_options.url.isEmpty() && m_service.state()==QProcess::NotRunning;
-                const auto rule=bindingRejection(result);
-                m_bindingRejection=restoreDraft?rule:QString();
-                setBusy(stopped, stopped ? "Service stopped • Edit rejected • Restart local service" : !rule.isEmpty() ? rule : outcome == "rolled_back" ? "Rolled back • No cells changed" : "Rejected • No cells changed"); issue(rule.isEmpty()?error:rule);
-                if (result["code"] == "STALE_STATE" || restoreDraft) refresh();
-            } else {
-                m_unknown = true; setBusy(true, "Outcome unknown • Reconcile before editing");
-                preserveUnknownOperation();
-                issue("Operation " + m_pendingId + ": " + error); reconcile();
-            }
-            emit operationReceipt(m_unknown?QJsonObject{{"operation_id",operationId},{"outcome","unknown"},{"message",error}}:result);
-            emit operationFinished(false); return;
+        static const QSet<QString> structuralActions{
+            "rows_insert","rows_delete","columns_insert","columns_delete","sheet_duplicate","sheet_delete"};
+        const auto committed=RestClient::validReceipt(result,operationId,true);
+        const auto refused=!error.isEmpty() && !committed && RestClient::validReceipt(result,operationId);
+        if (refused && !m_unknown && structuralActions.contains(action) && !operation["confirm_large_structure"].toBool()
+            && result["outcome"]=="rejected" && result["code"]=="LARGE_STRUCTURE_CONFIRMATION_REQUIRED"
+            && result["expected_state"]==operation["expected_state"] && result["clears_history"].toBool()) {
+            reviewLargeStructure(operation);
+            return;
         }
-        if (m_enterNavigation["operation_id"].toString()==operationId) m_enterNavigation["ready"]=true;
-        if (m_draftSubmissionId==operationId) clearRecoveredDraft();
-        clearRecoveryRecord(); m_pendingId.clear(); m_unknown = false; m_info["state"] = result["state"];
-        if(action=="table_promote" || action=="table_create") {
-            m_relational->selectTable(result["table"].toObject()["id"].toString());m_relationalAfterWrite=m_info["id"].toString();
-            if(action=="table_promote")m_tablePromotionDraft={};
+        if (m_largeStructurePending && !m_unknown && !refused && !(error.isEmpty() && committed)) {
+            if(error.isEmpty() && result["operation_id"].toString()==operationId && result["status"]=="running")
+                showLargeStructureProgress(result["phase"].toString());
+            // A missing submission acknowledgement can still leave a running job.
+            pollLargeStructure(operationId);
+            return;
         }
-        reportReferenceWarnings(result);
-        refresh(); emit operationReceipt(result);emit operationFinished(true);
+        finishOperation(action,result,error);
     },true,timeout);
-    return operationId;
+}
+
+void MainWindow::reviewLargeStructure(QJsonObject operation) {
+    const auto action=operation["action"].toString();
+    const auto sheet=m_tabs->tabText(m_tabs->currentIndex());
+    QString edit;
+    if(action=="sheet_duplicate")edit=tr("Duplicate “%1” as “%2”.").arg(sheet,operation["name"].toString());
+    else if(action=="sheet_delete")edit=tr("Delete the sheet “%1”.").arg(sheet);
+    else {
+        const bool columns=action.startsWith("columns_");
+        const auto verb=action.endsWith("_insert")?tr("Insert"):tr("Delete");
+        const int count=operation["count"].toInt(1);
+        const auto dimension=columns?(count==1?tr("column"):tr("columns")):(count==1?tr("row"):tr("rows"));
+        edit=tr("%1 %2 %3 starting at %4 on “%5”.").arg(verb).arg(count).arg(dimension).arg(operation["start"].toInt()).arg(sheet);
+    }
+    auto *review=new QMessageBox(QMessageBox::Warning,tr("Run large structural edit?"),
+        tr("%1\n\nThis edit exceeds the size limit for immediate editing. If it succeeds, the workbook’s Undo and Redo history will be cleared and the edit cannot be undone. You can request cancellation while it runs.").arg(edit),
+        QMessageBox::Cancel,this);
+    m_largeStructureReview=review;
+    review->setObjectName("largeStructureReview");
+    review->setOption(QMessageBox::Option::DontUseNativeDialog);
+    review->setAttribute(Qt::WA_DeleteOnClose);
+    review->setTextFormat(Qt::PlainText);
+    auto *run=review->addButton(tr("Run in Background"),QMessageBox::AcceptRole);
+    run->setObjectName("confirmLargeStructure");
+    review->setDefaultButton(QMessageBox::Cancel);
+    connect(review,&QMessageBox::finished,this,[this,review,run,operation]() mutable {
+        m_largeStructureReview=nullptr;
+        if (operation["operation_id"].toString()!=m_pendingId) return;
+        if (review->clickedButton()!=run) {
+            const auto message=tr("Large structural edit declined.");
+            finishOperation(operation["action"].toString(),{{"operation_id",m_pendingId},
+                {"outcome","rejected"},{"code","CANCELLED"},{"message",message}},message);
+            return;
+        }
+        m_largeStructurePending=true;
+        m_status->setText(tr("Starting large structural edit…"));
+        operation["confirm_large_structure"]=true;
+        sendOperation(operation);
+    });
+    review->open();
+}
+
+void MainWindow::showLargeStructureProgress(const QString &phase) {
+    if (m_cancelStructure->isHidden()) {
+        m_cancelStructure->setEnabled(true);
+        m_cancelStructure->show();
+    }
+    if (!m_cancelStructure->isEnabled()) return;
+    const QHash<QString,QString> phases{
+        {"queued",tr("Queued")},{"planning",tr("Planning")},{"staging_cells",tr("Preparing cells")},
+        {"rewriting_references",tr("Updating formula references")},{"validating_cells",tr("Validating cells")},
+        {"applying_cells",tr("Moving cells")},{"updating_metadata",tr("Updating workbook objects")},
+        {"running_hooks",tr("Running handlers")},{"committing",tr("Saving changes")}};
+    m_status->setText(tr("Large structural edit · %1").arg(phases.value(phase,tr("Working…"))));
+}
+
+void MainWindow::pollLargeStructure(const QString &operationId, int attempts) {
+    if (m_pendingId!=operationId || m_unknown) return;
+    const auto path=base()+"/operations/"+QString::fromLatin1(QUrl::toPercentEncoding(operationId))+"/status";
+    m_client->request(path,{},[this,operationId,attempts](QJsonObject result,QString error) {
+        if (m_pendingId!=operationId || m_unknown) return;
+        if (error.isEmpty() && result["operation_id"].toString()==operationId) {
+            if (result["status"]=="running") {
+                showLargeStructureProgress(result["phase"].toString());
+                QTimer::singleShot(250,this,[this,operationId]{pollLargeStructure(operationId);});
+                return;
+            }
+            if (result["status"]=="completed") {
+                finishOperation({},result["receipt"].toObject(),{});
+                return;
+            }
+            const auto failure=result["error"].toObject();
+            if (result["status"]=="failed" && RestClient::validReceipt(failure,operationId)
+                && failure["outcome"]!="committed") {
+                finishOperation({},failure,failure["message"].toString());
+                return;
+            }
+        }
+        if (attempts>1) {
+            QTimer::singleShot(250,this,[this,operationId,attempts]{pollLargeStructure(operationId,attempts-1);});
+            return;
+        }
+        finishOperation({}, {},error.isEmpty()?tr("The structural edit status has no valid receipt."):error);
+    },false,5000);
+}
+
+void MainWindow::finishOperation(const QString &action, const QJsonObject &result, QString error) {
+    const auto operationId=m_pendingId;
+    const bool largeStructure=std::exchange(m_largeStructurePending,false);
+    m_cancelStructure->hide();
+    const bool invalidAcknowledgement = error.isEmpty() && !RestClient::validReceipt(result, operationId, true);
+    if (invalidAcknowledgement) error = "Invalid mutation acknowledgement; reconcile its operation ID";
+    if (!error.isEmpty()) {
+        m_enterNavigation={};
+        const auto outcome = result["outcome"].toString();
+        if (!invalidAcknowledgement && (outcome == "rolled_back" || outcome == "rejected")
+            && RestClient::validReceipt(result,operationId)) {
+            m_saveMode = 0;
+            clearRecoveryRecord(); m_pendingId.clear(); m_unknown=false;
+            const bool restoreDraft=m_draftSubmissionId==operationId && !m_recoveredDraft.isEmpty();
+            if (restoreDraft) {
+                m_draftSubmissionId.clear(); m_restoreDraft=true;
+                if (result["code"]=="STALE_STATE") m_recoveredDraft["needs_review"]=true;
+            }
+            const bool stopped=m_options.url.isEmpty() && m_service.state()==QProcess::NotRunning;
+            const auto rule=bindingRejection(result);
+            m_bindingRejection=restoreDraft?rule:QString();
+            setBusy(stopped, stopped ? "Service stopped • Edit rejected • Restart local service" : !rule.isEmpty() ? rule : outcome == "rolled_back" ? "Rolled back • No cells changed" : "Rejected • No cells changed");
+            issue(rule.isEmpty()?error:rule);
+            if (largeStructure && result["code"]=="STALE_STATE")
+                issue(tr("The workbook changed after review. Run the structural command again to review the current workbook."));
+            if (result["code"] == "STALE_STATE" || restoreDraft) refresh();
+        } else {
+            m_unknown = true; setBusy(true, "Outcome unknown • Reconcile before editing");
+            preserveUnknownOperation();
+            issue("Operation " + m_pendingId + ": " + error); reconcile();
+        }
+        emit operationReceipt(m_unknown?QJsonObject{{"operation_id",operationId},{"outcome","unknown"},{"message",error}}:result);
+        emit operationFinished(false);
+        return;
+    }
+    if (m_enterNavigation["operation_id"].toString()==operationId) m_enterNavigation["ready"]=true;
+    if (m_draftSubmissionId==operationId) clearRecoveredDraft();
+    clearRecoveryRecord(); m_pendingId.clear(); m_unknown = false; m_info["state"] = result["state"];
+    if(action=="table_promote" || action=="table_create") {
+        m_relational->selectTable(result["table"].toObject()["id"].toString());m_relationalAfterWrite=m_info["id"].toString();
+        if(action=="table_promote")m_tablePromotionDraft={};
+    }
+    reportReferenceWarnings(result);
+    refresh(); emit operationReceipt(result);emit operationFinished(true);
 }
 
 void MainWindow::insertChart() {
@@ -2114,13 +2245,18 @@ void MainWindow::cancelPendingOperation(const QString &operation) {
     if(operation.isEmpty() || operation!=m_pendingId)return;
     const auto handle=m_info["id"].toString();
     m_client->request(base()+"/operations/"+QString::fromLatin1(QUrl::toPercentEncoding(operation))+"/cancel",{},[this,operation,handle](QJsonObject result,QString error){
-        if(!error.isEmpty()){issue(error);return;}
+        if(m_pendingId!=operation || m_info["id"].toString()!=handle)return;
+        if(!error.isEmpty()){
+            if(m_largeStructurePending && !m_unknown)m_cancelStructure->setEnabled(true);
+            issue(error);return;
+        }
         if(!result["cancel_requested"].toBool()) {
             // The request may have arrived before the service registered the
             // operation: ask again while that same operation is in flight.
             QTimer::singleShot(100,this,[this,operation,handle]{if(m_pendingId==operation && !m_unknown && m_info["id"].toString()==handle)cancelPendingOperation(operation);});
             return;
         }
+        if(m_largeStructurePending && !m_unknown)m_status->setText(tr("Cancellation requested · Waiting for the edit receipt…"));
         issue(tr("Cancellation requested for %1. Wait for its final receipt.").arg(operation));
     });
 }
@@ -2194,7 +2330,7 @@ void MainWindow::restartService() {
 }
 
 void MainWindow::setBusy(bool busy, const QString &message) {
-    busy=busy || !m_activeOperationJob.isEmpty();
+    busy=busy || !m_activeOperationJob.isEmpty() || m_largeStructureReview || m_largeStructurePending;
     if(busy){finishReferencePick(false);cancelExternalReferencePick();cancelFormatPainter();cancelChartPick();}
     m_busy = busy || m_releasing;
     if(m_busy){clearFindResults();++m_navigationGeneration;m_navigationExtending=false;}
@@ -2245,7 +2381,7 @@ void MainWindow::syncSource() {
         return;
     }
     auto cell = m_model->cell(index);
-    if (cell.contains("error")) m_status->setText(cell["display"].toString() + " • " + cell["error"].toString() + " • Input retained");
+    if (!m_largeStructurePending && cell.contains("error")) m_status->setText(cell["display"].toString() + " • " + cell["error"].toString() + " • Input retained");
 }
 
 QJsonObject MainWindow::enterDestination(const QModelIndex &index, int direction, bool horizontal) const {

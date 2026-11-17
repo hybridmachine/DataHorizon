@@ -474,6 +474,97 @@ private:
     RestClient m_upstream;
 };
 
+class LargeStructureServer : public QTcpServer {
+public:
+    explicit LargeStructureServer(const QString &path) {
+        m_info={{"id","handle"},{"workbook_id","workbook"},{"path",path},{"state","epoch:0"},
+            {"undo","Edit cell"},{"redo","Edit cell"},
+            {"sheets",QJsonArray{QJsonObject{{"id","sheet"},{"name","Sheet1"}}}}};
+        connect(this,&QTcpServer::newConnection,this,[this]{
+            auto *socket=nextPendingConnection();
+            connect(socket,&QTcpSocket::disconnected,socket,&QObject::deleteLater);
+            connect(socket,&QTcpSocket::readyRead,socket,[this,socket]{
+                const auto request=socket->property("request").toByteArray()+socket->readAll();
+                socket->setProperty("request",request);
+                const auto end=request.indexOf("\r\n\r\n");
+                if(end<0 || socket->property("handled").toBool())return;
+                const auto length=QRegularExpression("Content-Length: (\\d+)",QRegularExpression::CaseInsensitiveOption)
+                    .match(QString::fromLatin1(request.left(end))).captured(1).toInt();
+                if(request.size()<end+4+length)return;
+                socket->setProperty("handled",true);
+                const auto path=QString::fromLatin1(request.left(request.indexOf("\r\n")).split(' ').at(1));
+                const auto input=QJsonDocument::fromJson(request.mid(end+4)).object();
+                respond(socket,path,input);
+            });
+        });
+    }
+    QList<QJsonObject> submissions;
+    QStringList statusReads, receiptReads, cancellations;
+    bool stale=false, loseSubmission=false, statusUnavailable=false, complete=false;
+private:
+    static void send(QTcpSocket *socket,const QJsonObject &result,const QByteArray &status="200 OK") {
+        const auto body=QJsonDocument(result).toJson(QJsonDocument::Compact);
+        socket->write("HTTP/1.1 "+status+"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "
+            +QByteArray::number(body.size())+"\r\n\r\n"+body);
+        socket->disconnectFromHost();
+    }
+    void respond(QTcpSocket *socket,const QString &path,const QJsonObject &input) {
+        const auto resource=QStringLiteral("/v1/workbooks/handle/operations");
+        if(path==resource) {
+            submissions.append(input);
+            const auto id=input["operation_id"];
+            if(!input["confirm_large_structure"].toBool()) {
+                send(socket,{{"operation_id",id},{"outcome","rejected"},{"code","LARGE_STRUCTURE_CONFIRMATION_REQUIRED"},
+                    {"message","Confirmation required"},{"expected_state",input["expected_state"]},{"clears_history",true}},"409 Conflict");
+            } else if(stale) {
+                m_info["state"]="epoch:1";
+                send(socket,{{"operation_id",id},{"outcome","rejected"},{"code","STALE_STATE"},{"message","Workbook state changed"}},"409 Conflict");
+            } else if(loseSubmission) {
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 100\r\n\r\n{");
+                socket->disconnectFromHost();
+            } else {
+                send(socket,{{"operation_id",id},{"status","running"},{"phase","queued"}});
+            }
+            return;
+        }
+        if(path.startsWith(resource+"/")) {
+            const auto tail=path.mid(resource.size()+1).split('/');
+            const auto id=tail.first();
+            if(tail.last()=="cancel") {
+                cancellations.append(id);
+                send(socket,{{"operation_id",id},{"cancel_requested",true}});
+                return;
+            }
+            QJsonObject receipt{{"operation_id",id},{"outcome","committed"},{"state","epoch:1"},{"changed_cells",10002}};
+            if(!cancellations.isEmpty())
+                receipt={{"operation_id",id},{"outcome","rolled_back"},{"code","CANCELLED"},{"message","Operation cancelled"}};
+            if(tail.last()=="status") {
+                statusReads.append(id);
+                if(statusUnavailable)send(socket,{{"message","Status reply unavailable"}},"503 Service Unavailable");
+                else if(!cancellations.isEmpty())send(socket,{{"operation_id",id},{"status","failed"},{"phase","staging_cells"},{"error",receipt}});
+                else if(complete) {
+                    commit();
+                    send(socket,{{"operation_id",id},{"status","completed"},{"phase","committed"},{"receipt",receipt}});
+                } else send(socket,{{"operation_id",id},{"status","running"},{"phase","staging_cells"}});
+            } else {
+                receiptReads.append(id);
+                commit();
+                send(socket,receipt);
+            }
+            return;
+        }
+        if(path=="/v1/capabilities")send(socket,{{"api_version",1}});
+        else if(path=="/v1/open" || path=="/v1/workbooks/handle")send(socket,m_info);
+        else send(socket,{{"state",m_info["state"]},{"sheet","sheet"},{"cells",QJsonArray{}},{"names",QJsonArray{}}});
+    }
+    void commit() {
+        m_info["state"]="epoch:1";
+        m_info.remove("undo");
+        m_info.remove("redo");
+    }
+    QJsonObject m_info;
+};
+
 class DesktopTests : public QObject {
     Q_OBJECT
 private slots:
@@ -1122,6 +1213,143 @@ private slots:
         window.findChild<QAction *>("insertRowsAction")->trigger();
         QVERIFY(window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("Clear the list view before changing rows or columns"));
         QCOMPARE(opened.count(),6);
+    }
+    void largeStructureConfirmationAndReceipt_data() {
+        QTest::addColumn<QString>("scenario");
+        for(const auto *scenario:{"decline","commit","cancel","stale","lost_ack","durable_receipt"})
+            QTest::newRow(scenario)<<QString(scenario);
+    }
+    void largeStructureConfirmationAndReceipt() {
+        QFETCH(QString,scenario);
+        QTemporaryDir temp;
+        LargeStructureServer server(temp.filePath("structure.dhwb"));
+        QVERIFY(server.listen(QHostAddress::LocalHost,0));
+        server.stale=scenario=="stale";
+        server.loseSubmission=scenario=="lost_ack";
+        server.statusUnavailable=scenario=="durable_receipt";
+        StartupOptions options;
+        options.automaticWorkbook=false;
+        options.url=QString("http://127.0.0.1:%1").arg(server.serverPort());
+        options.token="test";
+        options.recoveryDirectory=temp.filePath("recovery");
+        MainWindow window(options);
+        window.show();
+        QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,5000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);
+        window.openBook(temp.filePath("structure.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,5000);
+        QSignalSpy receipts(&window,&MainWindow::operationReceipt);
+        QSignalSpy finished(&window,&MainWindow::operationFinished);
+        auto *grid=window.findChild<QTableView *>("grid");
+        grid->selectRow(1);
+        answerNextDialog(QMessageBox::Yes);
+        window.findChild<QAction *>("insertRowsAction")->trigger();
+
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QMessageBox *>("largeStructureReview"),3000);
+        auto *review=window.findChild<QMessageBox *>("largeStructureReview");
+        QVERIFY(review->text().contains("Undo and Redo"));
+        QVERIFY(review->text().contains("cannot be undone"));
+        QCOMPARE(review->defaultButton(),review->button(QMessageBox::Cancel));
+        QCOMPARE(server.submissions.size(),1);
+        QVERIFY(receipts.isEmpty());
+        if(scenario=="decline") {
+            review->button(QMessageBox::Cancel)->click();
+            QTRY_COMPARE(finished.count(),1);
+            QCOMPARE(server.submissions.size(),1);
+            QVERIFY(server.statusReads.isEmpty());
+            QVERIFY(window.findChild<QAction *>("undoAction")->isEnabled());
+            QVERIFY(window.findChild<QAction *>("redoAction")->isEnabled());
+            QCOMPARE(window.model()->state(),QString("epoch:0"));
+            return;
+        }
+
+        review->findChild<QPushButton *>("confirmLargeStructure")->click();
+        QTRY_COMPARE_WITH_TIMEOUT(server.submissions.size(),2,3000);
+        auto confirmed=server.submissions.last();
+        QVERIFY(confirmed.take("confirm_large_structure").toBool());
+        QCOMPARE(confirmed,server.submissions.first());
+        const auto id=confirmed["operation_id"].toString();
+        QVERIFY(!id.isEmpty());
+        if(server.stale) {
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,5000);
+            QCOMPARE(window.model()->state(),QString("epoch:1"));
+            QVERIFY(server.statusReads.isEmpty());
+            const auto refusal=receipts.last().first().toJsonObject();
+            QCOMPARE(refusal["code"].toString(),QString("STALE_STATE"));
+            auto *issues=window.findChild<QPlainTextEdit *>("operationIssues");
+            QVERIFY(issues->toPlainText().contains("Run the structural command again"));
+            QCOMPARE(server.submissions.size(),2);
+            return;
+        }
+
+        auto *cancel=window.findChild<QPushButton *>("cancelLargeStructure");
+        if(!server.statusUnavailable) {
+            QTRY_VERIFY_WITH_TIMEOUT(cancel->isVisible(),3000);
+            QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QLabel *>("storageStatus")->text().contains("Preparing cells"),3000);
+            QVERIFY(receipts.isEmpty());
+            QCOMPARE(window.model()->state(),QString("epoch:0"));
+            QVERIFY(window.submit({{"action","undo"}}).isEmpty());
+        }
+        if(scenario=="cancel") {
+            cancel->click();
+            QTRY_COMPARE_WITH_TIMEOUT(finished.count(),1,3000);
+            QVERIFY(!finished.first().first().toBool());
+            QCOMPARE(server.cancellations,QStringList{id});
+            QCOMPARE(window.model()->state(),QString("epoch:0"));
+            QCOMPARE(receipts.last().first().toJsonObject()["outcome"].toString(),QString("rolled_back"));
+            QVERIFY(window.findChild<QAction *>("undoAction")->isEnabled());
+            QVERIFY(window.findChild<QAction *>("redoAction")->isEnabled());
+        } else {
+            server.complete=true;
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,5000);
+            QCOMPARE(window.model()->state(),QString("epoch:1"));
+            QCOMPARE(receipts.last().first().toJsonObject()["outcome"].toString(),QString("committed"));
+            QCOMPARE(server.receiptReads,server.statusUnavailable?QStringList{id}:QStringList{});
+            if(server.statusUnavailable) {
+                QCOMPARE(receipts.size(),2);
+                QCOMPARE(receipts.first().first().toJsonObject()["outcome"].toString(),QString("unknown"));
+            }
+            QVERIFY(!window.findChild<QAction *>("undoAction")->isEnabled());
+            QVERIFY(!window.findChild<QAction *>("redoAction")->isEnabled());
+        }
+        QVERIFY(!cancel->isVisible());
+        QVERIFY(!server.statusReads.isEmpty());
+        for(const auto &queried:server.statusReads)QCOMPARE(queried,id);
+        QCOMPARE(server.submissions.size(),2);
+        QCOMPARE(QDir(options.recoveryDirectory).entryList({"operation-*.json"},QDir::Files).size(),0);
+    }
+    void largeInsertRowsThroughOwnedService() {
+        QTemporaryDir temp;
+        StartupOptions options;
+        options.automaticWorkbook=false;
+        options.recoveryDirectory=temp.filePath("recovery");
+        MainWindow window(options);
+        window.show();
+        QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady);
+        window.openBook(temp.filePath("large-insert.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        QJsonArray cells;
+        for(int row=1;row<=5001;++row)
+            cells.append(QJsonObject{{"row",row},{"col",1},{"source",QString::number(row)}});
+        window.submit({{"action","edit"},{"cells",cells}});
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *grid=window.findChild<QTableView *>("grid");
+        auto *model=window.model();
+        grid->selectionModel()->select(QItemSelection(model->index(0,0),model->index(5999,0)),QItemSelectionModel::ClearAndSelect);
+        QSignalSpy receipts(&window,&MainWindow::operationReceipt);
+        answerNextDialog(QMessageBox::Yes);
+        window.findChild<QAction *>("insertRowsAction")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QMessageBox *>("largeStructureReview"),10000);
+        window.findChild<QPushButton *>("confirmLargeStructure")->click();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),3,15000);
+        QCOMPARE(receipts.last().first().toJsonObject()["changed_cells"].toInt(),10002);
+        QCOMPARE(model->data(model->index(0,0),Qt::EditRole).toString(),QString());
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(6000,0),Qt::EditRole).toString(),QString("1"),5000);
+        QTRY_COMPARE_WITH_TIMEOUT(model->data(model->index(11000,0),Qt::EditRole).toString(),QString("5001"),5000);
+        QVERIFY(!window.findChild<QAction *>("undoAction")->isEnabled());
     }
     void rowDeletionConfirmationRetainsReviewedStateAfterExternalRefresh() {
         QTemporaryDir temp; StartupOptions options; options.automaticWorkbook=false;
