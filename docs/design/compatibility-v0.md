@@ -199,18 +199,22 @@ references. The bounded parser, source/scan limits and required-hook exclusions
 are recorded in [the editing contract](editing-csv-next-five.md#sheet-rename).
 Sheet duplication retargets copied explicit self-references (names and UUIDs),
 leaves unqualified references local to the copy, and preserves other-sheet
-targets. Only the copied cells are scanned; unsupported copied formulas reject.
+targets. Only the copied cells are scanned. The reference scanner maintains
+supported references inside unevaluable formulas and reports unmaintained ones.
 Sheet deletion replaces surviving references to the deleted sheet (including
 UUIDs and inherited ranges) with permanent #REF! errors and reports locations.
-Unsupported surviving syntax rejects the operation. Deleted inputs and rewritten
-formulas share the 10,000-cell limit. See [the deletion contract](editing-csv-next-five.md#sheet-deletion).
+Deleted inputs and rewritten formulas share the 10,000-cell ordinary edit limit.
+See [the deletion contract](editing-csv-next-five.md#sheet-deletion).
 Literal exclamation marks in strings
 and formula error tokens such as #REF! are not sheet separators; copied broken
 references retain their error without blocking these operations.
-Bounded row/column insertion/deletion is available from the Sheet menu and the
-shared operation API, with confirmation and broken-reference locations. It
-clears history and rejects activated required handlers, unsupported formula
-syntax, oversized operations and insertion that would discard stored cells.
+Row and column insertion and deletion are available from the Sheet menu and the
+shared operation API. Inserting beyond the grid edge rejects any shift that
+would discard a stored cell. A successful structural edit clears history.
+Oversized row/column edits and sheet duplication/deletion require explicit
+confirmation and run as atomic background jobs. Their receipts report affected
+references. The same workbook state, structural hooks and native metadata rules
+apply throughout the transaction. [Large structural edits](excel-fidelity-increment-9-plan.md)
 Wrap/borders are native styles; sizing, hiding and freezing use local view state
 as described below.
 

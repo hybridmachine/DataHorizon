@@ -4,12 +4,15 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
-## November 17 review and proposed work block
+## Large structural edits — November 17, 2026
 
 Chart export and desktop authoring reached `main` in PRs #141 and #143.
-The [project review and proposed large structural edit plan](excel-fidelity-increment-9-plan.md)
-records the merged baseline, current verification and the recommended sequence for
-Excel fidelity increment 9, beginning with row insertion on a large sheet.
+Excel fidelity increment 9 adds confirmed background execution for inserting and
+deleting whole rows and columns and duplicating and deleting sheets. Qt, REST,
+the managed CLI and the SDK use the same operation ID and transaction. The
+ordinary path keeps its existing limits. The large path stages coordinates on
+disk, streams formula rewrites, maintains native objects and checks cancellation
+before committing. [Plan and verification](excel-fidelity-increment-9-plan.md)
 
 ## Charts desktop authoring — November 16, 2026
 
@@ -777,7 +780,7 @@ confirmation. Physical input, VoiceOver, Windows/Linux and release gates remain 
 | M3 | Typed entry/date functions and scalar contracts; bounded transitive dependency reuse/invalidation; state/generation/UTC-clock background calculations with pending/error/stale/cancelled results; transactional hook reads; bounded automatic visible/frozen viewport scheduling | Broader Excel functions/coercion/reference compatibility, native usability/accessibility and platform acceptance |
 | M4 | Typed/formula-aware copy, Cut/fill/history, supported sheet/row/column transforms; opt-in transactional before/after structural hooks; native v3 portable view settings; local hiding/freezing and cross-pane selection | Full Excel reference compatibility, broader presentation/view models, native platform conventions and screen-reader acceptance |
 | M5 | Portable named bounded list definitions and persistent declared-record UUIDs; explicit external-edit reconciliation; reviewed record bulk edits and formula-preserving filtered copy/XLSX/ODS export; explicit locale/temporal conversion; durable staged atomic/batched jobs, frozen global sort/find paging and cooperative cancellation | Wider locale/timezone/duration policies, larger scopes and performance qualification (including large-file opening budget), full SQL/query/relational models at M8, production job scheduling and platform/manual acceptance |
-| M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures; Excel fidelity increment 1: degrade-and-report XLSX/ODS import (strict namespaces, `mixed` mode, every unimported feature reported), large staged import/export at measured limits (1,000,000 cells on the reference Mac), corpus and scorecard ([verification](evidence/excel-fidelity-1-verification.txt)) | Excel-saved and LibreOffice-saved corpus; native features of fidelity increments 2–10; broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
+| M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures; Excel fidelity increment 1: degrade-and-report XLSX/ODS import (strict namespaces, `mixed` mode, every unimported feature reported), large staged import/export at measured limits (1,000,000 cells on the reference Mac), corpus and scorecard ([verification](evidence/excel-fidelity-1-verification.txt)) | Excel-saved and LibreOffice-saved corpus; native features of fidelity increments 2–8 and 10; broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
 | M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
 | M8 | Bounded native tables/relationships/indexes, read-only SQL and saved views; native v5 modules, exact service-local activation, atomic macros, required hooks/history and managed clients; native v6 names and cell/table event bindings, owner-channel approval and the Qt Python workspace (local branch, no PR) | Proven managed SQL writes, names in formulas/interchange, structure/open/code binding events, custom functions/packages, durable external effects, remote TLS/mTLS/password access, physical-input/VoiceOver acceptance of the workspace and remaining foundation/platform qualification |
 
