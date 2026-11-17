@@ -25,7 +25,8 @@ import traceback
 from urllib.parse import unquote, urlsplit
 import uuid
 
-from .engine import EngineError, MAX_CELLS, STAGE_PATH, Workbook, boolean, encoded, require
+from .engine import EngineError, MAX_CELLS, STAGE_PATH, Workbook, boolean, encoded, operation_fingerprint, require, sql_deadline
+from .large_structure import ACTIONS as LARGE_STRUCTURE_ACTIONS, needs_large
 from .formula import MAX_COLS, MAX_ROWS, SUPPORTED_FUNCTIONS
 from .csv_import import COLUMN_TYPES, ENCODINGS, preview_csv
 from .jobs import PreparationJobs
@@ -53,6 +54,7 @@ CAPABILITIES = {
     "operations": ["list_edit","list_declare","list_reconcile","list_forget","metadata_set","metadata_delete","workbook_import", "edit", "paste", "move", "fill", "replace_all", "undo", "redo", "sheet_add", "sheet_rename", "sheet_duplicate", "sheet_reorder", "sheet_delete", "rows_insert", "rows_delete", "columns_insert", "columns_delete"],
     "interchange": ["csv", "xlsx", "ods"], "managed_sql": False, "remote_binding": False,
     "follow_up_work": False, "chunked_jobs": True, "preparation_jobs": True, "background_calculation":True, "structural_events":True,
+    "large_structure_jobs": True,
     "max_preparation_jobs":4, "preparation_job_seconds":10, "preparation_retention_seconds":300,
     "max_open_workbooks":8, "max_open_handles":128,
     "max_concurrent_requests":16, "max_header_bytes":65536, "request_read_timeout_seconds":10,
@@ -158,6 +160,7 @@ ROUTES = {
     "/v1/workbooks/{workbook}/find": ("post", "Find in a declared source or display scope"),
     "/v1/workbooks/{workbook}/operations": ("post", "Atomic managed operation"),
     "/v1/workbooks/{workbook}/operations/{operation}": ("get", "Durable outcome lookup"),
+    "/v1/workbooks/{workbook}/operations/{operation}/status": ("get", "Poll a large structural operation"),
     "/v1/workbooks/{workbook}/operations/{operation}/cancel": ("post", "Request cooperative cancellation; inspect the final receipt"),
     "/v1/workbooks/{workbook}/snapshot": ("post", "Exclusive consistent native copy"),
     "/v1/workbooks/{workbook}/close": ("post", "Release this client handle; other client handles remain valid"),
@@ -316,6 +319,10 @@ def openapi():
     for action, (required, properties, example) in actions.items():
         schema_name = "".join(word.title() for word in action.split("_"))+"Operation"
         mapping[action] = "#/components/schemas/"+schema_name
+        if action in LARGE_STRUCTURE_ACTIONS:
+            properties = {**properties, "confirm_large_structure":{
+                "type":"boolean","default":False,
+                "description":"Explicitly approve background execution and clearing Undo and Redo for this command and expected_state. Omit it to receive an offer first."}}
         schemas[schema_name] = {"type":"object","required":["operation_id","expected_state","action",*required],
             "properties":{**common,"action":{"type":"string","enum":[action]},**properties},
             "example":{"operation_id":"generate-a-uuid","expected_state":"copy-from-workbook-info","action":action,**example}}
@@ -339,8 +346,38 @@ def openapi():
             "named in charts_left_out. The receipt adds imported: {sheets, cells, charts}.")
     schemas["OperationRequest"] = {"oneOf":[{"$ref":ref} for ref in mapping.values()],
         "discriminator":{"propertyName":"action","mapping":mapping},
-        "description":"Atomic operations: at most 10,000 affected cells and a 4 MiB request. Range endpoints are inclusive and must be ordered. Copy fill uses the top-left input; series requires a numeric seed. Same-sheet Move retargets supported scalar/fully-contained range references into the cut rectangle; partially intersecting referenced ranges and unsupported syntax reject atomically. Sheet rename updates qualified name references while preserving stable UUID references, scanning at most 10,000 formulas/8 MiB. Sheet duplication preserves other-sheet references and retargets copied self-references, including UUIDs; it copies at most 10,000 stored cells/8 MiB. Sheet deletion replaces surviving name/UUID references and inherited ranges with permanent #REF! errors and reports affected locations; deleted and rewritten cells share the 10,000-cell limit. Unsupported syntax and required hooks reject reference-changing structure operations. Row/column changes retarget absolute and relative A1 references across sheets, expand/contract ranges and report newly broken references; required handlers, unsupported formula syntax and grid overflow reject atomically. Structure changes clear history. No managed SQL or chunked commits.",
+        "description":"Atomic operations with a 4 MiB request limit and an ordinary edit limit of 10,000 affected cells. Range endpoints are inclusive and must be ordered. Copy fill uses the top-left input; series requires a numeric seed. Same-sheet Move retargets supported scalar/fully-contained range references into the cut rectangle; partially intersecting referenced ranges and unsupported syntax reject atomically. Sheet rename updates qualified name references while preserving stable UUID references, scanning at most 10,000 formulas/8 MiB. Sheet duplication preserves other-sheet references and retargets copied self-references, including UUIDs. Sheet deletion replaces surviving name/UUID references and inherited ranges with permanent #REF! errors and reports affected locations. Row/column changes retarget absolute and relative A1 references across sheets, expand/contract ranges and report newly broken references. Structural changes clear history. Row and column insertion and deletion, sheet duplication and sheet deletion can use confirmed background execution when the ordinary cell, formula scan or byte budget would be exceeded. Each executes in one transaction with applicable hooks. Managed SQL is unavailable.",
         "example":schemas["EditOperation"]["example"]}
+    confirmation_code = "LARGE_STRUCTURE_CONFIRMATION_REQUIRED"
+    schemas["LargeStructureConfirmation"] = {
+        "type":"object","required":["operation_id","code","message","outcome","expected_state","clears_history"],
+        "properties":{"operation_id":common["operation_id"],"code":{"type":"string","enum":[confirmation_code]},
+                      "message":{"type":"string"},"outcome":{"type":"string","enum":["rejected"]},
+                      "expected_state":common["expected_state"],"clears_history":{"type":"boolean","enum":[True]}},
+        "example":{"operation_id":"reviewed-edit-id","code":confirmation_code,
+                   "message":"This structural edit runs in the background and clears Undo and Redo.",
+                   "outcome":"rejected","expected_state":"copy-from-workbook-info","clears_history":True}}
+    schemas["OperationConflict"] = {"oneOf":[{"$ref":"#/components/schemas/LargeStructureConfirmation"},
+        {"allOf":[{"$ref":"#/components/schemas/Error"},
+                  {"not":{"properties":{"code":{"type":"string","enum":[confirmation_code]}}}}]}]}
+    phases = ("queued", "planning", "staging_cells", "rewriting_references", "validating_cells", "applying_cells",
+              "updating_metadata", "running_hooks", "committing", "completed", "failed")
+    for schema_name, status in (("LargeStructureRunning","running"),("LargeStructureCompleted","completed"),("LargeStructureFailed","failed")):
+        properties = {"operation_id":common["operation_id"],"status":{"type":"string","enum":[status]},
+                      "phase":{"type":"string","enum":list(phases)}}
+        if status == "completed":
+            properties["receipt"] = {"$ref":"#/components/schemas/Receipt"}
+        elif status == "failed":
+            properties["error"] = {"allOf":[{"$ref":"#/components/schemas/Error"},
+                                            {"type":"object","required":["operation_id"],"properties":{
+                                                "http_status":{"type":"integer","minimum":400,"maximum":599}}}]}
+        schemas[schema_name] = {"type":"object","properties":properties,"required":list(properties)}
+    schemas["LargeStructureStatus"] = {"oneOf":[{"$ref":"#/components/schemas/LargeStructure"+name}
+                                                  for name in ("Running","Completed","Failed")]}
+    schemas["OperationSubmission"] = {"oneOf":[{"$ref":"#/components/schemas/"+name}
+                                                 for name in ("Receipt","LargeStructureRunning")]}
+    schemas["OperationCancellation"] = {"type":"object","required":["operation_id","cancel_requested","instructions"],
+        "properties":{"operation_id":common["operation_id"],"cancel_requested":{"type":"boolean"},"instructions":{"type":"string"}}}
     schemas.update({
         "CsvPreviewRequest":{"type":"object","oneOf":[{"required":["csv"],"not":{"anyOf":[{"required":["csv_base64"]},{"required":["encoding"]}]}},{"required":["csv_base64"],"not":{"required":["csv"]}}],
             "properties":{"csv":{"type":"string","description":"Already decoded Unicode text; at most 3 MiB of UTF-8"},
@@ -607,7 +644,24 @@ def openapi():
         elif path.endswith("/summary"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Summary"}}}
         elif path.endswith("/operations"):
-            operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/Receipt"}}}
+            operation["description"] = (
+                "An oversized unconfirmed structural edit returns LARGE_STRUCTURE_CONFIRMATION_REQUIRED before hooks or a durable receipt. "
+                "Confirm the same command, operation_id and expected_state by adding confirm_large_structure: true. "
+                "Callers may also supply explicit confirmation on their first submission with a reviewed expected_state. "
+                "A stale state requires a fresh review and operation ID. Poll status for the accepted job, use the cancellation route to request "
+                "cancellation, and reconcile any lost acknowledgement with the original operation ID. Identical retries return an active status "
+                "or the original durable result. Changing the command or expected state under an admitted ID is rejected.")
+            operation["responses"]["200"].update(description="Committed receipt or running large structural edit",
+                content={"application/json":{"schema":{"$ref":"#/components/schemas/OperationSubmission"}}})
+            operation["responses"]["409"].update(description="Confirmation required, stale state, operation ID conflict or another request error",
+                content={"application/json":{"schema":{"$ref":"#/components/schemas/OperationConflict"}}})
+        elif path.endswith("/operations/{operation}/status"):
+            operation["description"] = ("Returns live progress or a terminal receipt or error. Running and cancellation requests do not confirm a commit. "
+                                        "After service restart or progress eviction, a durable receipt can provide terminal status. "
+                                        "OUTCOME_UNKNOWN means a receipt could not be confirmed.")
+            operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/LargeStructureStatus"}}}
+        elif path.endswith("/operations/{operation}/cancel"):
+            operation["responses"]["200"]["content"]={"application/json":{"schema":{"$ref":"#/components/schemas/OperationCancellation"}}}
         elif path.endswith("/{operation}"):
             operation["responses"]["200"]["content"]={"application/json":{"schema":{"oneOf":[{"$ref":"#/components/schemas/Receipt"},{"$ref":"#/components/schemas/Error"}]}}}
         if '/operation-jobs' in path:
@@ -693,6 +747,8 @@ class Service(ThreadingHTTPServer):
         self.token, self.handler = token or secrets.token_urlsafe(32), handler
         self.workbooks, self.registry_lock = {}, threading.RLock()
         self.active_operations={}
+        self._structure_workers = {}
+        self._structure_results = {}
         self._path_locks, self._opening = {}, set()
         self._reserved_handles = 0
         self._stopping = False
@@ -761,17 +817,24 @@ class Service(ThreadingHTTPServer):
 
     def server_close(self):
         super().server_close()
-        self.jobs.close()
-        self.staging.close()
         with self.registry_lock:
             self._stopping = True
+            operations = list(self.active_operations.values())
+            workers = [entry["thread"] for entry in self._structure_workers.values()]
             books = set(self.workbooks.values())
+        for event in operations:
+            event.set()
+        for worker in workers:
+            worker.join()
+        self.jobs.close()
+        self.staging.close()
         for book in books:
             with self._path_access(book.path):
                 with book.lock:
                     book.close()
                 with self.registry_lock:
                     self.workbooks = {handle:engine for handle,engine in self.workbooks.items() if engine is not book}
+                    self._forget_structure_results(book)
 
     @contextmanager
     def _path_access(self, path):
@@ -1136,6 +1199,26 @@ class Service(ThreadingHTTPServer):
             with self.registry_lock:
                 require(self.workbooks.get(parts[2]) is book,'NOT_FOUND','Workbook handle was released',404)
                 return self._cancel_operation(book,unquote(suffix[1]))
+        with self.registry_lock:
+            require(self.workbooks.get(parts[2]) is book, "NOT_FOUND", "Workbook handle was released", 404)
+            if method == "GET" and len(suffix) in (2, 3) and suffix[0] == "operations":
+                operation = unquote(suffix[1])
+                key = book, operation
+                if suffix[2:] == ["status"]:
+                    view = self._known_structure_status(book, operation)
+                    if view is not None:
+                        return view
+                if suffix[2:] in ([], ["status"]) and key in self.active_operations:
+                    raise EngineError("OUTCOME_UNKNOWN", "Operation is still running; inspect its final receipt",
+                                      409, "unknown", operation_id=operation)
+            if method == "POST" and suffix == ["operations"] and isinstance(body.get("operation_id"), str):
+                replay = self._running_structure_replay(book, body)
+                if replay is not None:
+                    return replay
+            if method == "POST" and suffix == ["close"]:
+                closed = self._close_during_structure(book, parts[2])
+                if closed is not None:
+                    return closed
         with self._path_access(book.path):
             with self.registry_lock:
                 require(self.workbooks.get(parts[2]) is book,"NOT_FOUND","Workbook handle was released",404)
@@ -1178,6 +1261,148 @@ class Service(ThreadingHTTPServer):
         with self.registry_lock:event=self.active_operations.get((book,operation))
         if event is not None:event.set()
         return dict(operation_id=operation,cancel_requested=event is not None,instructions='Inspect the durable receipt; a committed operation cannot be undone by cancellation.')
+
+    def _close_during_structure(self, book, handle):
+        for (owner, _), entry in self._structure_workers.items():
+            if owner is book:
+                require(entry["handle"] != handle, "OPERATION_RUNNING",
+                        "Wait for this handle's large structural edit to finish before releasing it", 409)
+                # The submitting handle remains open, so an unrelated lease can be released without the writer lock.
+                self.workbooks.pop(handle)
+                return {"closed":True}
+        return None
+
+    def _forget_structure_results(self, book):
+        for key in list(self._structure_results):
+            if key[0] is book:
+                del self._structure_results[key]
+
+    def _running_structure_replay(self, book, body):
+        operation = body["operation_id"]
+        entry = self._structure_workers.get((book, operation))
+        if entry is None:
+            return None
+        if (entry["fingerprint"] != operation_fingerprint(body) or STAGE_PATH in body
+                or type(body.get("confirm_large_structure", False)) is not bool):
+            raise EngineError("OPERATION_ID_REUSED", "Operation ID is active with different arguments",
+                              409, "unknown", operation_id=operation)
+        return entry["view"].copy()
+
+    def _structure_status(self, book, operation):
+        with self.registry_lock:
+            view = self._known_structure_status(book, operation)
+            if view is not None:
+                return view
+        receipt = book.operation(operation)
+        if receipt["outcome"] == "committed":
+            return dict(operation_id=operation, status="completed", phase="completed", receipt=receipt)
+        return dict(operation_id=operation, status="failed", phase="failed", error=receipt)
+
+    def _known_structure_status(self, book, operation):
+        key = book, operation
+        entry = self._structure_workers.get(key) or self._structure_results.get(key)
+        return entry["view"].copy() if entry is not None else None
+
+    def _structure_admission(self, book, handle, body):
+        operation = body["operation_id"]
+        fingerprint = operation_fingerprint(body)
+        with self.registry_lock:
+            previous = self._structure_results.get((book, operation))
+        with book.lock:
+            try:
+                book.verify_file()
+                book.db.execute("BEGIN")
+                try:
+                    receipt = book.recorded_operation(operation, fingerprint)
+                    if receipt is not None:
+                        return receipt
+                    if previous is not None:
+                        if previous["fingerprint"] != fingerprint:
+                            raise EngineError("OPERATION_ID_REUSED", "Operation ID was used with different arguments",
+                                              409, "unknown", operation_id=operation)
+                        error = previous["view"].get("error")
+                        if error is None:
+                            raise EngineError("OUTCOME_UNKNOWN", "Durable receipt is unavailable",
+                                              409, "unknown", operation_id=operation)
+                        failure = EngineError(error["code"], error["message"], error["http_status"])
+                        failure.body = error.copy()
+                        raise failure
+                    deadline = time.monotonic() + 5
+                    book.refresh(deadline=deadline)
+                    if book.readonly or book.repair or book.relational_issues or body.get("expected_state") != book.state():
+                        return None  # Ordinary engine admission reports these cases with its usual receipt semantics.
+                    try:
+                        with sql_deadline(book.db, deadline):
+                            large = needs_large(book, body)
+                    except EngineError as error:
+                        if error.body["code"] == "TIMEOUT":
+                            # A bounded review could not prove the edit fits the ordinary budget.
+                            large = True
+                        else:
+                            # Invalid commands use the existing engine validation and receipts.
+                            return None
+                finally:
+                    book.db.execute("ROLLBACK")
+            except EngineError as error:
+                if error.body.get("operation_id") != operation:
+                    error.body.update(outcome="unknown", operation_id=operation)
+                raise
+            except (sqlite3.Error, OSError) as error:
+                raise EngineError("OUTCOME_UNKNOWN", "Could not review the workbook. Reconcile the operation ID",
+                                  409, "unknown", operation_id=operation) from error
+        if not large:
+            return None
+        with self.registry_lock:
+            if not body.get("confirm_large_structure", False):
+                raise EngineError("LARGE_STRUCTURE_CONFIRMATION_REQUIRED",
+                                  "This structural edit runs in the background and clears Undo and Redo. Confirm the reviewed edit to continue.",
+                                  409, operation_id=operation, expected_state=body["expected_state"], clears_history=True)
+            return self._start_structure(book, handle, body, fingerprint)
+
+    def _start_structure(self, book, handle, body, fingerprint):
+        operation = body["operation_id"]
+        key = book, operation
+        if self._stopping or any(owner is book for owner, _ in self._structure_workers):
+            raise EngineError("SERVICE_BUSY", "Cannot start the edit now. Reconcile the operation ID",
+                              503, "unknown", operation_id=operation)
+        event = threading.Event()
+        view = dict(operation_id=operation, status="running", phase="queued")
+
+        def progress(phase):
+            with self.registry_lock:
+                view["phase"] = phase
+
+        def run():
+            try:
+                with self._path_access(book.path):
+                    receipt = book.mutate(body, cancel_event=event, large_structure_progress=progress)
+                result = dict(status="completed", phase="completed", receipt=receipt)
+            except EngineError as failure:
+                error = dict(failure.body, operation_id=operation, http_status=failure.status)
+                result = dict(status="failed", error=error)
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+                result = dict(status="failed", error={"code":"OUTCOME_UNKNOWN", "message":"Reconcile the durable operation receipt",
+                                                       "outcome":"unknown", "operation_id":operation, "http_status":500})
+            with self.registry_lock:
+                view.update(result)
+                del self.active_operations[key]
+                del self._structure_workers[key]
+                self._structure_results[key] = dict(fingerprint=fingerprint, view=view)
+                # Durable receipts remain available after a terminal view is evicted.
+                if len(self._structure_results) > 128:
+                    del self._structure_results[next(iter(self._structure_results))]
+
+        worker = threading.Thread(target=run, name="large-structural-edit", daemon=True)
+        self._structure_workers[key] = dict(thread=worker, handle=handle, fingerprint=fingerprint, view=view)
+        self.active_operations[key] = event
+        try:
+            worker.start()
+        except BaseException:
+            self._structure_workers.pop(key)
+            self.active_operations.pop(key)
+            raise
+        return view.copy()
 
     def _dispatch_book(self, method, handle, book, suffix, body):
         if suffix and suffix[0]=='operation-jobs':
@@ -1253,6 +1478,9 @@ class Service(ThreadingHTTPServer):
             return book.calculation_jobs().access(suffix[2],action)
         if method == "POST" and suffix == ["close"]:
             with self.registry_lock:
+                closed = self._close_during_structure(book, handle)
+                if closed is not None:
+                    return closed
                 last = sum(engine is book for engine in self.workbooks.values())==1
                 if not last:
                     self.workbooks.pop(handle)
@@ -1261,6 +1489,7 @@ class Service(ThreadingHTTPServer):
                     book.close()
                 with self.registry_lock:
                     self.workbooks.pop(handle)
+                    self._forget_structure_results(book)
             return {"closed":True}
         if method == "GET" and not suffix:
             return {**book.info(), "id": handle, "workbook_id": book.id}
@@ -1309,12 +1538,29 @@ class Service(ThreadingHTTPServer):
             try:
                 # Refusals before the engine is entered name the operation and are rejected: nothing was admitted.
                 require(STAGE_PATH not in body,"INVALID_ARGUMENT",f"{STAGE_PATH} is set by the service; name a stage with stage_id")
+                action = body.get("action")
+                structural = isinstance(action, str) and action in LARGE_STRUCTURE_ACTIONS
+                if "confirm_large_structure" in body:
+                    require(structural, "INVALID_ARGUMENT", "Only row, column, sheet duplication and sheet deletion operations accept large edit confirmation")
+                    boolean(body["confirm_large_structure"], "confirm_large_structure")
+                operation.encode("utf-8")
                 if staged:
                     path,identity=self._stage_file(body["stage_id"])
                     body={**body,STAGE_PATH:path}
+            except UnicodeEncodeError as error:
+                raise EngineError("OPERATION_ID", "Operation ID must be valid Unicode text") from error
             except EngineError as error:
                 error.body.update(outcome="rejected",operation_id=operation)
                 raise
+            with self.registry_lock:
+                replay = self._running_structure_replay(book, body)
+                known_structure = (book, operation) in self._structure_results
+            if replay is not None:
+                return replay
+            if structural or known_structure:
+                admission = self._structure_admission(book, handle, body)
+                if admission is not None:
+                    return admission
             key=(book,operation)
             with self.registry_lock:
                 require(key not in self.active_operations,'OPERATION_RUNNING','Operation is active; inspect its receipt before retrying',409)
@@ -1330,6 +1576,8 @@ class Service(ThreadingHTTPServer):
             return self._cancel_operation(book,unquote(suffix[1]))
         if method == "GET" and len(suffix) == 2 and suffix[0] == "operations":
             return book.operation(unquote(suffix[1]))
+        if method == "GET" and len(suffix) == 3 and suffix[0] == "operations" and suffix[2] == "status":
+            return self._structure_status(book, unquote(suffix[1]))
         if method == "POST" and suffix == ["snapshot"]:
             require(isinstance(body.get("path"), str), "INVALID_PATH", "Snapshot path is required")
             try: return book.snapshot(body["path"])

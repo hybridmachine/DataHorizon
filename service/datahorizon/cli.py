@@ -72,8 +72,10 @@ def emit_result(output, result, command, cleanup=None):
         except (OSError,ValueError,AttributeError):
             pass
         diagnostic={"code":"OUTPUT_FAILED","phase":"output","message":str(error)}
-        if isinstance(result,dict) and "operation_id" in result:
+        if isinstance(result,dict) and "operation_id" in result and "outcome" in result:
             diagnostic.update(operation_id=result["operation_id"],outcome=result["outcome"],receipt=result)
+        elif isinstance(result,dict) and "operation_id" in result:
+            diagnostic.update(operation_id=result["operation_id"])
         elif command=="direct-sql":
             diagnostic.update(outcome="committed",mode="direct",handlers=False)
         elif command=="create":
@@ -184,6 +186,17 @@ def show_progress(label):
     return report
 
 
+def structure_progress(book):
+    """Print progress on an interactive stderr; stdout still carries the final receipt."""
+    if not sys.stderr.isatty():
+        return None
+    def report(view):
+        operation = view["operation_id"]
+        phase = view["phase"].replace("_", " ")
+        print(terminal_text(f"Operation {operation} (handle {book.info['id']}) {phase}"), file=sys.stderr, flush=True)
+    return report
+
+
 def confirm(question):
     """True on y/yes, False on anything else; None when stdin has nothing to answer with (non-interactive).
     The question goes to stderr, so it is seen when stdout is redirected."""
@@ -285,8 +298,13 @@ def main():
     write.add_argument("--timezone-policy",choices=["reject","utc"],default="reject")
     apply = commands.add_parser("apply", help="Read a complete managed operation JSON object from stdin")
     apply.add_argument("--sheet", default="Sheet1")
+    apply.add_argument("--confirm-large-structure", action="store_true",
+                       help="Approve background execution of this structural edit and clearing Undo and Redo")
     outcome = commands.add_parser("outcome")
     outcome.add_argument("operation_id")
+    status = commands.add_parser("operation-status", help="Check large structural edit progress or its final outcome")
+    status.add_argument("operation_id")
+    status.add_argument("--handle", help="Check a running job using an existing handle on the --url service")
     cancel=commands.add_parser('cancel-operation',help='Request cancellation; inspect outcome before deciding whether data committed')
     cancel.add_argument('operation_id')
     cancel.add_argument('--handle',help='An existing handle in --url service; cancellation must not wait for a new open')
@@ -314,6 +332,8 @@ def main():
     try:
         if args.approve_code and (args.url or args.command=="direct-sql"):raise ValueError("--approve-code configures an owned managed service; configure remote service approval at its operator startup")
         if args.command=='cancel-operation' and (not args.url or not args.handle):raise ValueError('cancel-operation requires --url and --handle for the existing service execution')
+        if args.command == "operation-status" and args.handle and not args.url:
+            raise ValueError("operation-status with --handle requires --url for the existing service execution")
         if args.command=='query' and ((args.output and not args.export) or (args.export and args.query_action!='run')):raise ValueError('Query file output requires query run --export FORMAT')
         if args.command in ("read", "set"):
             row, col = coordinates(args.address)
@@ -327,11 +347,17 @@ def main():
             releasing=False
             emit_result(output,result,args.command)
             return
-        context = nullcontext(Client(args.url, os.environ["DATAHORIZON_TOKEN"])) if args.url else LocalService(args.handler,approved_code=args.approve_code)
+        context = (nullcontext(Client(args.url, os.environ["DATAHORIZON_TOKEN"])) if args.url else
+                   LocalService(args.handler, approved_code=args.approve_code, isolate_interrupts=args.command=="apply"))
         with context as client:
             if args.command=='cancel-operation':
                 result=client.request('/v1/workbooks/'+quote(args.handle,safe='')+'/operations/'+quote(args.operation_id,safe='')+'/cancel',{})
                 output=json.dumps(result,allow_nan=False);releasing=True
+            elif args.command == "operation-status" and args.handle:
+                result = client.request("/v1/workbooks/" + quote(args.handle, safe="") +
+                                        "/operations/" + quote(args.operation_id, safe="") + "/status")
+                output = json.dumps(result, allow_nan=False)
+                releasing = True
             elif args.command == "inspect":
                 result=client.inspect_native(args.file)
                 output=json.dumps(result,allow_nan=False)
@@ -449,7 +475,10 @@ def main():
                         request = json.load(sys.stdin)
                         if not isinstance(request, dict):
                             raise ValueError("Operation JSON must be an object")
-                        result = book.apply(request.pop("action"), request.pop("sheet", args.sheet), **request)
+                        if args.confirm_large_structure:
+                            request["confirm_large_structure"] = True
+                        result = book.apply(request.pop("action"), request.pop("sheet", args.sheet),
+                                            progress=structure_progress(book), cancel_on_interrupt=True, **request)
                     elif args.command=='job':
                         import time
                         arguments=json.load(sys.stdin) if args.job_action in ('create','append','start','resume') else {}
@@ -473,6 +502,8 @@ def main():
                         result=book.calculate(args.sheet,r1=args.r1,c1=args.c1,r2=args.r2,c2=args.c2)
                         while result['status']=='running':time.sleep(.05);result=book.calculation(result['job_id'])
                         book.calculation(result['job_id'],'release')
+                    elif args.command == "operation-status":
+                        result = book.operation_status(args.operation_id)
                     else:
                         result = book.outcome(args.operation_id)
                     if args.command not in ('import-spreadsheet','export-spreadsheet'):output=json.dumps(result, allow_nan=False)
