@@ -4611,7 +4611,7 @@ private slots:
         QVERIFY(importChartFixture(window,path,false));
         QTRY_COMPARE_WITH_TIMEOUT(changed.count(),1,20000);QVERIFY(changed[0][0].toBool());
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);
-        QCOMPARE(layer->overlays().first()->objectName(),QString("chartOverlay"));QCOMPARE(layer->overlays().first()->accessibleName(),QString("Chart 1"));
+        QCOMPARE(layer->overlays().first()->objectName(),QString("chartOverlay"));QCOMPARE(layer->overlays().first()->accessibleName(),QString("Chart: Chart 1"));
     }
     void oneSheetImportCountsItsCharts() {
         CHART_WINDOW;QSignalSpy changed(&window,&MainWindow::operationFinished);auto *status=window.findChild<QLabel *>("storageStatus");QVERIFY(status);
@@ -4677,9 +4677,9 @@ private slots:
         CHART_WINDOW;QSignalSpy listed(layer,&ChartLayer::listed);
         QVERIFY(addChart(window,opened,"Placed",2,3,10,5,320,200));
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();
-        QCOMPARE(overlay->objectName(),QString("chartOverlay"));QCOMPARE(overlay->accessibleName(),QString("Placed"));
+        QCOMPARE(overlay->objectName(),QString("chartOverlay"));QCOMPARE(overlay->accessibleName(),QString("Chart: Placed"));
         QVERIFY(!overlay->property("chartId").toString().isEmpty());
-        QVERIFY(overlay->testAttribute(Qt::WA_TransparentForMouseEvents));QCOMPARE(overlay->focusPolicy(),Qt::NoFocus);
+        QVERIFY(!overlay->testAttribute(Qt::WA_TransparentForMouseEvents));QCOMPARE(overlay->focusPolicy(),Qt::ClickFocus);
         QVERIFY(!listed.isEmpty());QCOMPARE(listed.last().first().toInt(),1);
         QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
         QCOMPARE(offsetIn(overlay,grid->viewport()),QPoint(grid->columnViewportPosition(2),grid->rowViewportPosition(1))+QPoint(10,5));
@@ -4706,26 +4706,30 @@ private slots:
         window.submit({{"action","chart_update"},{"chart_id",lower->property("chartId").toString()},{"z",5}});
         QTRY_VERIFY_WITH_TIMEOUT(overlayNamed(layer,"Lower") && order(overlayNamed(layer,"Lower"))>order(overlayNamed(layer,"Upper")),10000);
     }
-    void chartOverlayDoesNotInterceptClicks() {
+    void chartOverlayTakesClicksOverItsArea() {
         CHART_WINDOW;QVERIFY(addChart(window,opened,"Covering",2,2,0,0,400,300));
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),1,5000);auto *overlay=layer->overlays().first();QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(),5000);
         auto *area=overlay->parentWidget();const QPoint point(grid->columnViewportPosition(3)+5,grid->rowViewportPosition(3)+5);
         const QPoint inArea=grid->viewport()->mapTo(area,point);
-        QVERIFY(overlay->geometry().contains(inArea));QVERIFY(!qobject_cast<ChartOverlay *>(area->childAt(inArea)));
-        QTest::mouseClick(grid->viewport(),Qt::LeftButton,Qt::NoModifier,point);
-        QCOMPARE(grid->currentIndex(),model->index(3,3));
+        QVERIFY(overlay->geometry().contains(inArea));QCOMPARE(qobject_cast<ChartOverlay *>(area->childAt(inArea)),overlay);
+        // A click beside the chart still selects the cell under it.
+        const QPoint beside(grid->columnViewportPosition(0)+5,grid->rowViewportPosition(3)+5);
+        const QPoint besideInArea=grid->viewport()->mapTo(area,beside);
+        QVERIFY(!overlay->geometry().contains(besideInArea));QVERIFY(!qobject_cast<ChartOverlay *>(area->childAt(besideInArea)));
+        QTest::mouseClick(grid->viewport(),Qt::LeftButton,Qt::NoModifier,beside);
+        QCOMPARE(grid->currentIndex(),model->index(3,0));
     }
     void chartsOnOtherSheetsAreNotShown() {
         CHART_WINDOW;window.submit({{"action","sheet_add"},{"name","Other"}});QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
         QVERIFY(addChart(window,opened,"First",2,2));
-        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->accessibleName()=="First",5000);
+        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->accessibleName()=="Chart: First",5000);
         auto *tabs=window.findChild<QTabBar *>("sheets");const auto first=model->sheet();tabs->setCurrentIndex(1);QVERIFY(model->sheet()!=first);
         QTRY_COMPARE_WITH_TIMEOUT(layer->overlays().size(),0,5000);
         QVERIFY(addChart(window,opened,"Second",2,2));
-        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->accessibleName()=="Second",5000);
+        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->accessibleName()=="Chart: Second",5000);
         QCOMPARE(window.findChildren<ChartOverlay *>().size(),1);
         tabs->setCurrentIndex(0);QCOMPARE(model->sheet(),first);
-        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->accessibleName()=="First",5000);
+        QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->accessibleName()=="Chart: First",5000);
         QCOMPARE(window.findChildren<ChartOverlay *>().size(),1);
     }
     void chartAnchoredInFrozenRowStaysVisible() {
@@ -4977,7 +4981,7 @@ private:
         return opened.count()>before;
     }
     static ChartOverlay *overlayNamed(ChartLayer *layer,const QString &name) {
-        for(auto *overlay:layer->overlays())if(overlay->accessibleName()==name)return overlay;
+        for(auto *overlay:layer->overlays())if(overlay->chart()["name"].toString()==name)return overlay;
         return nullptr;
     }
     static QPoint offsetIn(QWidget *widget,QWidget *reference){return widget->mapToGlobal(QPoint())-reference->mapToGlobal(QPoint());}

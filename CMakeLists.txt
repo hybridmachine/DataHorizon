@@ -48,6 +48,9 @@ target_sources(datahorizon_desktop PRIVATE desktop/relationalworkbench.cpp deskt
 target_sources(datahorizon_desktop PRIVATE desktop/tablerecordeditor.cpp desktop/recordinputdialog.h)
 target_sources(datahorizon_desktop PRIVATE desktop/tablerelationships.cpp)
 target_sources(datahorizon_desktop PRIVATE desktop/chartlayer.cpp desktop/chartlayer.h)
+target_sources(datahorizon_desktop PRIVATE desktop/chartspec.cpp desktop/chartspec.h)
+target_sources(datahorizon_desktop PRIVATE desktop/chartpanel.cpp desktop/chartpanel.h)
+target_sources(datahorizon_desktop PRIVATE desktop/chartsourcefield.cpp desktop/chartsourcefield.h)
 target_sources(datahorizon_desktop PRIVATE desktop/queryworkbench.cpp desktop/queryworkbench.h)
 target_sources(datahorizon_desktop PRIVATE desktop/querydefinitions.cpp desktop/relationalexport.h)
 target_sources(datahorizon_desktop PRIVATE desktop/pythonworkspace.cpp desktop/pythonworkspace.h
@@ -139,6 +142,10 @@ if(BUILD_TESTING)
     target_compile_definitions(python_workspace_tests PRIVATE DATAHORIZON_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     add_test(NAME python_workspace COMMAND python_workspace_tests -o python-workspace-tests.txt,txt)
     set_tests_properties(python_workspace PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;DATAHORIZON_VIEW_STATE=${CMAKE_CURRENT_BINARY_DIR}/test-views.ini" TIMEOUT 600)
+    add_executable(chart_authoring_tests tests/test_chart_authoring.cpp)
+    target_link_libraries(chart_authoring_tests PRIVATE datahorizon_desktop Qt6::Test)
+    add_test(NAME chart_authoring COMMAND chart_authoring_tests -o chart-authoring-tests.txt,txt)
+    set_tests_properties(chart_authoring PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;DATAHORIZON_VIEW_STATE=${CMAKE_CURRENT_BINARY_DIR}/test-views.ini" TIMEOUT 600)
     add_test(NAME service COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s tests -v)
     # The suite runs about 290 s on the reference Mac (the bounded-memory and export round-trip checks of the
     # increment 1 final review included), so every platform gets the limit Windows already had.

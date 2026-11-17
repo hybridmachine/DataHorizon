@@ -432,6 +432,8 @@ The development preview imports charts from XLSX (DrawingML `c:chartSpace`
 reached from a worksheet's drawing) and ODS (a `draw:frame` holding a
 `draw:object` with a `chart:chart` sub-document) as native charts, and the
 desktop draws them view-only ([status](implementation-status.md#charts-import-and-view-only-display--november-15-2026)).
+Desktop chart authoring was built later, on November 15-16, 2026, on branch
+`claude/charts-authoring` (not merged; [status](implementation-status.md#charts-desktop-authoring--november-16-2026)).
 Chart export was built on November 15, 2026 on branch `claude/charts-export`
 (not merged; the design is [charts-authoring-export-design.md](charts-authoring-export-design.md#6-export),
 the record is the [status](implementation-status.md#charts-export--november-15-2026)

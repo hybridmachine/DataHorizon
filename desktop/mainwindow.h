@@ -7,6 +7,7 @@
 #include "formulasyntax.h"
 #include <QProcess>
 #include <QHash>
+#include <QSet>
 #include <QMap>
 #include <QJsonArray>
 #include <QPersistentModelIndex>
@@ -23,6 +24,8 @@ class QToolBar;
 class QPushButton;
 class FrozenPanes;
 class ChartLayer;
+class ChartPanel;
+class QDockWidget;
 class QTimer;
 class QMenu;
 class QStackedWidget;
@@ -45,7 +48,13 @@ public:
     explicit MainWindow(const StartupOptions &options = {}, QWidget *parent = nullptr);
     ~MainWindow() override;
     void openBook(const QString &path, bool create = false, bool readonly = false,bool repair=false);
-    void submit(QJsonObject operation);
+    // Sends one managed operation; returns its operation_id, or an empty
+    // string when nothing was sent.
+    QString submit(QJsonObject operation);
+    // Insert → Chart: asks the service to suggest a chart for the grid's
+    // selection, creates it with one chart_create, and selects it once the
+    // chart layer lists it.
+    void insertChart();
     void importCsvText(const QString &text, QJsonObject target = {});
     void importCsvBytes(const QByteArray &bytes, const QString &encoding = "utf-8-sig", const QString &delimiter = ",", QJsonObject target = {}, QJsonObject temporalSchema = {});
     void importSpreadsheetBytes(const QByteArray &bytes, const QString &format = "xlsx", const QString &mode = "formulas", int sheetIndex = 1, QJsonObject target = {});
@@ -95,6 +104,16 @@ public:
     // it is accepted, the operation finishes, or the handle changes. The final
     // outcome still arrives as that operation's receipt.
     void cancelPendingOperation(const QString &operation);
+    // A range pick for a Range or Cell source field of the chart panel, so a
+    // source is chosen by selecting cells as for a formula. While it is active the grid's selection on any sheet fills
+    // the field, the chart stays selected and editing commands are disabled.
+    // endChartPick(true) applies the picked range as a typed one would (Enter;
+    // nothing when the selection cannot be applied), endChartPick(false) puts
+    // the field back (Escape); both return to the chart's sheet, select the
+    // chart and focus the field.
+    void beginChartPick(const QString &field);
+    void endChartPick(bool apply);
+    bool chartPickActive() const;
 signals:
     // Emitted once when external picking ends; inserted is true when at least
     // one reference was inserted while it was armed.
@@ -110,6 +129,13 @@ protected:
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
     void showRelational(bool visible);
+    // Enables Insert → Chart, the Select Next/Previous Chart commands and the
+    // chart context menu's commands for the workbook, read-only state,
+    // projection, workbench and charts shown, and lets the charts
+    // be moved and changed only while the sheet takes edits.
+    void updateChartActions();
+    // Shows the chart panel's dock; it shows the selected chart.
+    void showChartPanel();
     void showPythonWorkspace();
     void showNameManager();
     void readNames(const QJsonObject &info);
@@ -187,6 +213,8 @@ private:
     void clearCells(const QString &mode);
     void startFormatPainter();
     void cancelFormatPainter();
+    // Charts let the mouse through while a pick or the format painter is on.
+    void updateChartPassThrough();
     bool formatPainterMouseEvent(QObject *object,QEvent *event);
     void showFormatCells();
     void enterTemporal();
@@ -356,6 +384,66 @@ private:
     QPushButton *m_hiddenButton = nullptr;
     FrozenPanes *m_frozenTop = nullptr;
     ChartLayer *m_charts = nullptr;
+    QAction *m_insertChartAction = nullptr, *m_selectNextChartAction = nullptr, *m_selectPreviousChartAction = nullptr;
+    // The context menu on a chart: Edit Chart, Bring to Front, Send to Back, Delete.
+    QMenu *m_chartMenu = nullptr;
+    QAction *m_editChartAction = nullptr, *m_chartToFrontAction = nullptr, *m_chartToBackAction = nullptr, *m_deleteChartAction = nullptr;
+    // The operation id of the chart move or resize awaiting its receipt.
+    QString m_chartPlacement;
+    // The chart panel in its dock, and the operation id of the panel's
+    // change awaiting its receipt with the field that asked for it.
+    ChartPanel *m_chartPanel = nullptr;
+    QDockWidget *m_chartDock = nullptr;
+    QString m_chartPanelOperation, m_chartPanelField, m_chartPanelChart;
+    // The model was bound to a key the chart layer had not listed, a chart
+    // read failed or was stale, or the service session changed, and the
+    // panel has not taken a listing since.
+    bool m_chartCatalogStale = true;
+    // The chart layer shows the catalog listed for the workbook, sheet and
+    // state the window is bound to now, whatever caused the bind (this
+    // window's commit, another client's change, Refresh, an operation job).
+    // Otherwise the panel takes no chart from the layer and stays locked, so
+    // it never builds a specification from a catalog older than the workbook.
+    bool chartCatalogCurrent() const;
+    // The catalog's chart for the panel: none while the catalog is not current.
+    QJsonObject panelChart(const QString &chartId) const;
+    // Reads the tables and saved queries the panel's source fields offer,
+    // while the panel is shown; an answer for another workbook or state is
+    // dropped.
+    void readChartSources();
+    // Reads one saved query's result columns for the chart panel.
+    void readQueryColumns(const QString &queryId);
+    int m_chartSourcesGeneration = 0;
+    QJsonArray m_chartTables, m_chartQueries;
+    // What the panel's lists were last given.
+    QJsonArray m_chartGivenSheets, m_chartGivenTables, m_chartGivenQueries;
+    QString m_chartSourcesWorkbook;
+    // A suggest request is outstanding; a second Insert waits for it.
+    bool m_chartSuggesting = false;
+    // The chart range pick for a Range or Cell field of the panel: the panel's field, its chart, the
+    // chart's sheet and workbook; the field is empty when no pick is on.
+    // The status shown before it, and whether the selection can be applied.
+    QString m_chartPickField, m_chartPickChart, m_chartPickSheet, m_chartPickWorkbook, m_chartPickStatus;
+    // Ended on another sheet: returning to the chart's sheet, to apply or not once it is listed.
+    bool m_chartPickReady = false, m_chartPickReturning = false, m_chartPickApplyOnReturn = false;
+    QAction *m_chartPickApply = nullptr, *m_chartPickCancel = nullptr;
+    // Ends the pick and puts the field back, staying where the person is.
+    void cancelChartPick();
+    // settle: on the chart's sheet, listed: select the chart, focus the field and apply when asked.
+    void finishChartPick(bool apply,bool settle);
+    // The status, and the field when fill is set, from the grid's selection.
+    void updateChartPick(bool fill);
+    // The grid's selection as 1-based {r1, c1, r2, c2}, or why it cannot be
+    // used for a range operation; both empty when nothing is selected.
+    QString selectionProblem(QJsonObject *range) const;
+    // Reads of saved query columns in flight, by workbook, state and query.
+    QSet<QString> m_queryReads;
+    QString m_chartColumnsState;
+    // The operation id of the chart_create whose committed receipt's chart is
+    // selected after the refresh; then that chart's id. The create's
+    // workbook, sheet and expected_state are kept while either is set.
+    QString m_pendingChartSelect, m_chartToSelect;
+    QJsonObject m_chartInsertTarget;
     QAction *m_freezeAction = nullptr, *m_freezeColumnAction = nullptr, *m_freezePanesAction = nullptr, *m_unfreezePanesAction = nullptr;
     int m_frozenRows = 0, m_frozenColumns = 0;
     bool m_frozenSizeIssue = false;

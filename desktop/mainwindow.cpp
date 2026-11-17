@@ -4,6 +4,8 @@
 #include "servicepaths.h"
 #include "frozenpanes.h"
 #include "chartlayer.h"
+#include "chartpanel.h"
+#include "chartspec.h"
 #include "listcriteriadialog.h"
 #include "namedlistviews.h"
 #include "functionhelp.h"
@@ -37,6 +39,7 @@
 #include <QLabel>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
@@ -48,6 +51,7 @@
 #include <QProcessEnvironment>
 #include <QProgressDialog>
 #include <QRegularExpression>
+#include <QScrollArea>
 #include <QScrollBar>
 #include <QScopedValueRollback>
 #include <QScopeGuard>
@@ -275,6 +279,13 @@ MainWindow::MainWindow(const StartupOptions &options, QWidget *parent)
 MainWindow::~MainWindow() {
     saveViewState();
     m_shuttingDown = true;
+    // A panel field losing focus as the widgets go must not reach the window,
+    // nor the chart dock hiding, focus moving or the grid's selection
+    // changing as they go.
+    if (m_chartPanel) m_chartPanel->disconnect(this);
+    if (m_chartDock) m_chartDock->disconnect(this);
+    if (m_grid) m_grid->selectionModel()->disconnect(this);
+    qApp->disconnect(this);
     if (m_service.state() != QProcess::NotRunning) {
         m_service.terminate();
         if (!m_service.waitForFinished(1500)) { m_service.kill(); m_service.waitForFinished(1000); }
@@ -285,7 +296,7 @@ QString MainWindow::base() const { return "/v1/workbooks/" + m_info.value("id").
 
 void MainWindow::showRelational(bool visible) {
     if(visible && (m_busy || m_unknown || m_info.isEmpty()))return;
-    if(visible){captureGridDraft(false);if(!resolveDraft())return;}
+    if(visible){captureGridDraft(false);if(!resolveDraft())return;cancelChartPick();}
     m_relationalActive=visible;m_objectStack->setCurrentIndex(visible?1:0);
     m_toolbar->setVisible(!visible);
     m_model->setSuspended(visible);
@@ -590,6 +601,7 @@ void MainWindow::createTableFromSelection() {
 void MainWindow::buildUi() {
     auto *file = menuBar()->addMenu(tr("&File"));
     auto *edit = menuBar()->addMenu(tr("&Edit"));
+    auto *insertMenu = menuBar()->addMenu(tr("&Insert"));insertMenu->setObjectName("insertMenu");
     auto *formatMenu = menuBar()->addMenu(tr("F&ormat"));
     auto *sheetMenu = menuBar()->addMenu(tr("&Sheet"));
     auto *dataMenu = menuBar()->addMenu(tr("&Data"));
@@ -606,7 +618,7 @@ void MainWindow::buildUi() {
     auto *savePortable=view->addAction(tr("Save view in workbook"));savePortable->setObjectName("savePortableViewAction");connect(savePortable,&QAction::triggered,this,[this]{portableView(true);});
     auto *loadPortable=view->addAction(tr("Load view from workbook"));loadPortable->setObjectName("loadPortableViewAction");connect(loadPortable,&QAction::triggered,this,[this]{portableView(false);});
     auto *help = menuBar()->addMenu(tr("&Help"));
-    m_sheetMenus={edit,formatMenu,sheetMenu,dataMenu,view};m_editingMenus={edit,formatMenu,sheetMenu,dataMenu};
+    m_sheetMenus={edit,insertMenu,formatMenu,sheetMenu,dataMenu,view};m_editingMenus={edit,insertMenu,formatMenu,sheetMenu,dataMenu};
     auto *tables=dataMenu->addAction(tr("Tables and queries…"));tables->setObjectName("relationalWorkbenchAction");
     connect(tables,&QAction::triggered,this,[this]{showRelational(true);});
     auto *promote=dataMenu->addAction(tr("Create table from selection…"));promote->setObjectName("tableFromSelectionAction");
@@ -696,9 +708,16 @@ void MainWindow::buildUi() {
     connect(m_client,&RestClient::configured,this,&MainWindow::clearFindResults);
     add(edit, tr("Replace all in selection…"), QKeySequence::Replace, [this] { findDialog(true); });
     add(edit, tr("Reconcile unknown operation"), {}, [this] { reconcile(); })->setObjectName("reconcileAction");
+    m_insertChartAction=add(insertMenu,tr("Chart"),QKeySequence(tr("Alt+F1")),[this]{insertChart();});m_insertChartAction->setObjectName("insertChartAction");
+    insertMenu->addSeparator();
+    m_selectNextChartAction=add(insertMenu,tr("Select Next Chart"),QKeySequence(tr("Ctrl+Alt+C")),[this]{m_charts->selectNext(1);});m_selectNextChartAction->setObjectName("selectNextChartAction");
+    m_selectPreviousChartAction=add(insertMenu,tr("Select Previous Chart"),QKeySequence(tr("Ctrl+Alt+Shift+C")),[this]{m_charts->selectNext(-1);});m_selectPreviousChartAction->setObjectName("selectPreviousChartAction");
     m_painterAction=add(formatMenu,tr("Format painter"),{},[this]{startFormatPainter();},true);m_painterAction->setObjectName("formatPainterAction");m_painterAction->setCheckable(true);m_painterAction->setToolTip(tr("Copy the selected style pattern, then click a destination or drag an exact multiple. Escape cancels."));
     m_painterCancel=new QAction(this);m_painterCancel->setShortcut(QKeySequence(Qt::Key_Escape));m_painterCancel->setShortcutContext(Qt::WidgetWithChildrenShortcut);m_painterCancel->setEnabled(false);addAction(m_painterCancel);connect(m_painterCancel,&QAction::triggered,this,[this]{cancelFormatPainter();m_status->setText(tr("Format painter cancelled"));});
     m_externalPickCancel=new QAction(this);m_externalPickCancel->setObjectName("cancelExternalPickAction");m_externalPickCancel->setShortcut(QKeySequence(Qt::Key_Escape));m_externalPickCancel->setShortcutContext(Qt::WidgetWithChildrenShortcut);m_externalPickCancel->setEnabled(false);addAction(m_externalPickCancel);connect(m_externalPickCancel,&QAction::triggered,this,&MainWindow::cancelExternalReferencePick);
+    // Enter and Escape during a chart range pick, with focus in the grid or the panel.
+    m_chartPickApply=new QAction(this);m_chartPickApply->setObjectName("applyChartPickAction");m_chartPickApply->setShortcuts({QKeySequence(Qt::Key_Return),QKeySequence(Qt::Key_Enter)});m_chartPickApply->setShortcutContext(Qt::WidgetWithChildrenShortcut);m_chartPickApply->setEnabled(false);addAction(m_chartPickApply);connect(m_chartPickApply,&QAction::triggered,this,[this]{endChartPick(true);});
+    m_chartPickCancel=new QAction(this);m_chartPickCancel->setObjectName("cancelChartPickAction");m_chartPickCancel->setShortcut(QKeySequence(Qt::Key_Escape));m_chartPickCancel->setShortcutContext(Qt::WidgetWithChildrenShortcut);m_chartPickCancel->setEnabled(false);addAction(m_chartPickCancel);connect(m_chartPickCancel,&QAction::triggered,this,[this]{endChartPick(false);});
     add(formatMenu,tr("Format Cells…"),QKeySequence("Ctrl+1"),[this]{showFormatCells();})->setObjectName("formatCellsAction");
     add(edit,tr("Enter date/time…"),{},[this]{enterTemporal();})->setObjectName("enterTemporalAction");
     add(formatMenu, tr("Bold"), QKeySequence::Bold, [this] { format({{"bold", !m_model->cell(m_grid->currentIndex())["style"].toObject()["bold"].toBool()}}); }, true);
@@ -809,6 +828,7 @@ void MainWindow::buildUi() {
     m_grid->setAlternatingRowColors(false);
     connect(m_model,&QAbstractItemModel::modelAboutToBeReset,this,[this]{
         QScopedValueRollback<bool> applying(m_applyingView,true);
+        if(m_charts)m_charts->holdLayout();
         m_frozenTop->setFrozen(false);m_frozenTop->setFirstColumnFrozen(false);
         for(int row:m_hiddenViewRows) m_grid->setRowHidden(row,false);
         for(int col:m_hiddenViewColumns) m_grid->setColumnHidden(col,false);
@@ -873,7 +893,86 @@ void MainWindow::buildUi() {
     // A stale read refreshes, as other stale reads do; the refresh lists again.
     connect(m_charts,&ChartLayer::stale,m_model,&SheetModel::externalChange);
     connect(m_model,&QAbstractItemModel::modelReset,this,[this]{
-        m_charts->bind(m_model->workbook().isEmpty()?QString():"/v1/workbooks/"+m_model->workbook(),m_model->sheet(),m_model->state(),m_model->projected());});
+        // Another workbook, none, or a list view ends a chart pick; another sheet keeps it.
+        if(chartPickActive() && (m_model->workbook()!=m_chartPickWorkbook || m_model->projected()))cancelChartPick();
+        // Returning to the chart's sheet, another sheet shown instead ends the pick.
+        if(chartPickActive() && m_chartPickReturning && m_model->sheet()!=m_chartPickSheet)cancelChartPick();
+        // Another workbook or sheet shown ends the wait for an inserted chart.
+        if(!m_chartToSelect.isEmpty() && (m_model->workbook()!=m_chartInsertTarget["workbook"].toString() || m_model->sheet()!=m_chartInsertTarget["sheet"].toString())){m_chartToSelect.clear();m_chartInsertTarget={};}
+        const auto chartBase=m_model->workbook().isEmpty()?QString():"/v1/workbooks/"+m_model->workbook();
+        // A key not yet listed holds the panel until the panel has taken its listing.
+        if(!m_charts->listedFor(chartBase,m_model->sheet(),m_model->state()))m_chartCatalogStale=true;
+        m_charts->bind(chartBase,m_model->sheet(),m_model->state(),m_model->projected());updateChartActions();});
+    // An inserted chart is selected by the first listing after its committed
+    // receipt (one of the state the create was sent at is an older read);
+    // that listing ends the wait whatever it holds, as does any other
+    // operation admitted. An unknown outcome waits for reconcile's receipt.
+    connect(this,&MainWindow::operationReceipt,this,[this](const QJsonObject &receipt){
+        if(m_pendingChartSelect.isEmpty() || receipt["operation_id"].toString()!=m_pendingChartSelect)return;
+        const auto outcome=receipt["outcome"].toString();
+        if(outcome=="unknown")return;
+        m_pendingChartSelect.clear();
+        if(outcome=="committed")m_chartToSelect=receipt["chart_id"].toString();else m_chartInsertTarget={};
+    });
+    connect(this,&MainWindow::operationAdmitted,this,[this](const QString &operationId){
+        if(operationId!=m_pendingChartSelect){m_chartToSelect.clear();if(m_pendingChartSelect.isEmpty())m_chartInsertTarget={};}
+    });
+    connect(m_charts,&ChartLayer::listed,this,[this]{
+        updateChartActions();
+        if(m_chartToSelect.isEmpty() || m_model->state()==m_chartInsertTarget["expected_state"].toString())return;
+        const auto id=std::exchange(m_chartToSelect,{});m_chartInsertTarget={};
+        if(m_charts->chart(id).isEmpty())return;
+        m_charts->select(id);showChartPanel();m_status->setText(tr("Chart inserted • Undo removes it"));
+        // Focus goes to the chart, scrolled into view when it is not, not to the grid that inserted it.
+        m_charts->focusChart(id);
+    });
+    // A new service session answers nothing asked of the last one.
+    connect(m_client,&RestClient::configured,this,[this]{
+        m_chartSuggesting=false;m_pendingChartSelect.clear();m_chartToSelect.clear();m_chartInsertTarget={};
+        m_chartPlacement.clear();m_queryReads.clear();
+        updateChartActions();
+    });
+    // Each move, resize, reorder or delete of a chart is one operation. A
+    // change not sent puts the chart back; a sent one is placed by the relist.
+    // A refused or rolled-back one does not refresh, so its receipt puts the
+    // chart back; an unknown one waits for reconcile's receipt.
+    auto place=[this](const QJsonObject &operation){
+        m_chartPlacement=submit(operation);
+        if(m_chartPlacement.isEmpty())m_charts->relayout();
+    };
+    connect(m_charts,&ChartLayer::moveRequested,this,[place](const QString &id,const QJsonObject &anchor,const QJsonObject &offset){
+        place({{"action","chart_update"},{"chart_id",id},{"anchor",anchor},{"offset",offset}});});
+    connect(m_charts,&ChartLayer::resizeRequested,this,[place](const QString &id,const QJsonObject &anchor,const QJsonObject &offset,const QJsonObject &size){
+        place({{"action","chart_update"},{"chart_id",id},{"anchor",anchor},{"offset",offset},{"size",size}});});
+    connect(this,&MainWindow::operationReceipt,this,[this](const QJsonObject &receipt){
+        if(m_chartPlacement.isEmpty() || receipt["operation_id"].toString()!=m_chartPlacement)return;
+        const auto outcome=receipt["outcome"].toString();
+        if(outcome=="unknown")return;
+        m_chartPlacement.clear();
+        if(outcome!="committed")m_charts->relayout();
+    });
+    connect(m_charts,&ChartLayer::orderRequested,this,[this](const QString &id,const QString &order){submit({{"action","chart_update"},{"chart_id",id},{"order",order}});});
+    connect(m_charts,&ChartLayer::deleteRequested,this,[this](const QString &id){submit({{"action","chart_delete"},{"chart_id",id}});});
+    // Enter, a double-click and Edit Chart open the panel and put focus on Name.
+    connect(m_charts,&ChartLayer::editRequested,this,[this](const QString &id){
+        m_chartPanel->setChart(panelChart(id));showChartPanel();
+        if(auto *name=m_chartPanel->findChild<QLineEdit *>("chartName"))name->setFocus(Qt::OtherFocusReason);
+    });
+    connect(m_charts,&ChartLayer::refused,this,[this](const QString &status){m_status->setText(status);});
+    // The context menu on the selected chart. Its commands act on the
+    // selected chart through the layer, as the chart's own keys do.
+    m_chartMenu=new QMenu(this);m_chartMenu->setObjectName("chartContextMenu");
+    m_editChartAction=m_chartMenu->addAction(tr("Edit Chart"));m_editChartAction->setObjectName("editChartAction");
+    m_chartToFrontAction=m_chartMenu->addAction(tr("Bring to Front"));m_chartToFrontAction->setObjectName("chartToFrontAction");
+    m_chartToBackAction=m_chartMenu->addAction(tr("Send to Back"));m_chartToBackAction->setObjectName("chartToBackAction");
+    m_chartMenu->addSeparator();
+    m_deleteChartAction=m_chartMenu->addAction(tr("Delete"));m_deleteChartAction->setObjectName("deleteChartAction");
+    connect(m_editChartAction,&QAction::triggered,m_charts,&ChartLayer::requestEdit);
+    connect(m_chartToFrontAction,&QAction::triggered,m_charts,[this]{m_charts->requestOrder("front");});
+    connect(m_chartToBackAction,&QAction::triggered,m_charts,[this]{m_charts->requestOrder("back");});
+    connect(m_deleteChartAction,&QAction::triggered,m_charts,&ChartLayer::requestDelete);
+    connect(m_charts,&ChartLayer::contextMenuRequested,this,[this](const QString &,const QPoint &position){updateChartActions();m_chartMenu->popup(position);});
+    updateChartActions();
     m_freezeAction=add(view,tr("Freeze top row"),{},[this]{
         if(m_busy || m_unknown || m_info.isEmpty() || m_model->projected() || m_hiddenRows.contains(0)) {
             QSignalBlocker blocker(m_freezeAction); m_freezeAction->setChecked(m_frozenTop->active());
@@ -987,6 +1086,84 @@ void MainWindow::buildUi() {
     auto *issuesDock = new QDockWidget(tr("Issues"), this); issuesDock->setObjectName("issuesDock");
     m_issues = new QPlainTextEdit; m_issues->setObjectName("operationIssues");m_issues->setReadOnly(true); m_issues->setAccessibleName(tr("Operation and calculation issues")); issuesDock->setWidget(m_issues);
     addDockWidget(Qt::BottomDockWidgetArea, issuesDock); issuesDock->hide(); view->addAction(issuesDock->toggleViewAction());
+    // The chart panel: a right-hand dock showing the selected chart. It
+    // scrolls vertically when the window is short and never sideways.
+    m_chartPanel=new ChartPanel;
+    auto *chartScroll=new QScrollArea;chartScroll->setWidget(m_chartPanel);chartScroll->setWidgetResizable(true);
+    chartScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);chartScroll->setFrameShape(QFrame::NoFrame);
+    m_chartDock=new QDockWidget(tr("Chart"),this);m_chartDock->setObjectName("chartDock");m_chartDock->setWidget(chartScroll);
+    addDockWidget(Qt::RightDockWidgetArea,m_chartDock);m_chartDock->hide();view->addAction(m_chartDock->toggleViewAction());
+    connect(m_chartDock,&QDockWidget::visibilityChanged,this,[this](bool visible){if(visible)readChartSources();else cancelChartPick();});
+    m_chartPanel->installEventFilter(this);
+    connect(m_chartPanel,&ChartPanel::queryColumnsWanted,this,&MainWindow::readQueryColumns);
+    connect(m_chartPanel,&ChartPanel::pickRequested,this,&MainWindow::beginChartPick);
+    connect(m_chartPanel,&ChartPanel::pickEnded,this,[this]{cancelChartPick();});
+    // A selection shows its chart at once; only a listing, the catalog read
+    // after a change, lets the panel ask again (settle). Whenever the layer
+    // has not listed the state the window is bound to (a commit of this
+    // window or another client, a refresh, a stale read) the panel keeps its
+    // chart, locked; after a failed chart read it shows no chart. Either
+    // way it takes no chart from the layer and stays locked until that
+    // listing, so it never builds a specification from a catalog older than
+    // the workbook; text held meanwhile is applied against the listed chart.
+    // During a chart pick the panel keeps its chart by id, also while
+    // another sheet is shown: the selection the layer drops then is not the
+    // panel's. A listing of the chart's sheet without it ends the pick.
+    connect(m_charts,&ChartLayer::selectionChanged,m_chartPanel,[this](const QString &id){if(!chartPickActive())m_chartPanel->setChart(panelChart(id));});
+    connect(m_charts,&ChartLayer::listed,m_chartPanel,[this]{
+        m_chartCatalogStale=false;
+        if(chartPickActive() && m_model->sheet()==m_chartPickSheet) {
+            if(m_charts->chart(m_chartPickChart).isEmpty())cancelChartPick();
+            else {
+                // Drawn selected again once its sheet is shown (binding another sheet cleared it).
+                m_charts->select(m_chartPickChart);
+                m_chartPanel->setChart(panelChart(m_chartPickChart));
+            }
+        }
+        if(!chartPickActive())m_chartPanel->setChart(panelChart(m_charts->selectedChart()));
+        // Unlocked only once the panel shows the listed chart.
+        updateChartActions();
+        // A pick ended on another sheet ends here, its chart's sheet listed again.
+        if(chartPickActive() && m_model->sheet()==m_chartPickSheet && m_chartPickReturning)finishChartPick(m_chartPickApplyOnReturn,true);
+        if(m_chartPanelOperation.isEmpty())m_chartPanel->settle();
+    });
+    connect(m_charts,&ChartLayer::failed,m_chartPanel,[this]{cancelChartPick();m_chartCatalogStale=true;m_chartPanel->setChart({});updateChartActions();});
+    // A stale read or render means the workbook moved on: the refresh that
+    // follows binds the new state, and the panel keeps its chart, locked,
+    // until that state is listed (text held meanwhile is kept for it).
+    connect(m_charts,&ChartLayer::stale,m_chartPanel,[this]{cancelChartPick();m_chartCatalogStale=true;updateChartActions();});
+    // A committed operation sets the window's state before the refresh binds
+    // it, so the catalog stops being current at once (chartCatalogCurrent).
+    connect(this,&MainWindow::operationReceipt,m_chartPanel,[this](const QJsonObject &receipt){
+        if(receipt["outcome"]=="committed")updateChartActions();
+    });
+    // Each panel change is one chart_update. One not sent puts its field
+    // back at once; a refused or rolled-back one when its receipt comes,
+    // with the service's message beside the field (submit also reports it
+    // in Issues). An unknown outcome waits for reconcile's receipt.
+    connect(m_chartPanel,&ChartPanel::changeRequested,this,[this](const QString &id,const QJsonObject &changes,const QString &field){
+        QJsonObject operation{{"action","chart_update"},{"chart_id",id}};
+        for(auto change=changes.begin();change!=changes.end();++change)operation[change.key()]=change.value();
+        m_chartPanelOperation=submit(operation);m_chartPanelField=field;m_chartPanelChart=id;
+        if(m_chartPanelOperation.isEmpty())m_chartPanel->refused(field,{});
+    });
+    connect(this,&MainWindow::operationReceipt,m_chartPanel,[this](const QJsonObject &receipt){
+        if(m_chartPanelOperation.isEmpty() || receipt["operation_id"].toString()!=m_chartPanelOperation)return;
+        const auto outcome=receipt["outcome"].toString();
+        if(outcome=="unknown")return;
+        m_chartPanelOperation.clear();
+        const auto field=std::exchange(m_chartPanelField,{});const auto chart=std::exchange(m_chartPanelChart,{});
+        if(outcome=="committed")return;
+        // The message goes beside the field only while the panel still shows that chart.
+        if(m_chartPanel->chartId()==chart)m_chartPanel->refused(field,receipt["message"].toString());
+        else m_chartPanel->settle();
+    });
+    connect(m_client,&RestClient::configured,m_chartPanel,[this]{
+        cancelChartPick();m_chartCatalogStale=true;m_chartPanel->setChart({});
+        if(!m_chartPanelOperation.isEmpty()){m_chartPanelOperation.clear();m_chartPanelChart.clear();m_chartPanel->refused(std::exchange(m_chartPanelField,{}),{});}
+        updateChartActions();
+    });
+    updateChartActions();
     view->addAction(m_toolbar->toggleViewAction());
     add(help, tr("Preview capabilities"), {}, [this] {
         m_client->request("/v1/capabilities", {}, [this](QJsonObject, QString error) {
@@ -1040,6 +1217,19 @@ void MainWindow::buildUi() {
     });
     auto referenceViews=m_frozenTop->views();referenceViews.append(m_grid);for(auto *pane:referenceViews){pane->installEventFilter(this);pane->viewport()->installEventFilter(this);}
     connect(m_model,&QAbstractItemModel::modelAboutToBeReset,this,[this]{finishReferencePick(false);if(!m_changingSheet)cancelExternalReferencePick();});
+    // A chart range pick follows the grid's selection on any sheet, and ends
+    // when a cell edit starts in the formula bar or in a cell, or focus goes
+    // to another text field outside the chart panel.
+    connect(m_grid->selectionModel(),&QItemSelectionModel::selectionChanged,this,[this]{if(chartPickActive() && !m_chartPickReturning)updateChartPick(true);});
+    connect(qApp,&QApplication::focusChanged,this,[this](QWidget *,QWidget *now){
+        if(!chartPickActive() || !now)return;
+        // Any text field outside the chart panel (the formula bar, the
+        // address box) takes Enter itself; so does a cell editor.
+        bool editor=qobject_cast<QLineEdit *>(now) && !m_chartPanel->isAncestorOf(now);
+        auto views=m_frozenTop->views();views.append(m_grid);
+        for(auto *view:views)editor=editor || (now!=view->viewport() && view->viewport()->isAncestorOf(now));
+        if(editor)cancelChartPick();
+    });
     connect(m_client,&RestClient::configured,this,[this]{finishReferencePick(false);cancelExternalReferencePick();});
     setBusy(true);
 }
@@ -1411,7 +1601,7 @@ void MainWindow::updateFormulaReferences() {
 }
 
 void MainWindow::startReferencePick() {
-    cancelFormatPainter();cancelExternalReferencePick();
+    cancelFormatPainter();cancelExternalReferencePick();cancelChartPick();
     ++m_referenceGeneration;
     QSignalBlocker blocker(m_pickReferenceAction);m_pickReferenceAction->setChecked(false);
     if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_model->projected()){issue("Reference picking needs an editable source sheet.");return;}
@@ -1423,7 +1613,7 @@ void MainWindow::startReferencePick() {
     if(length==0){start=context.start;length=context.end-context.start;}
     line->dismissAssistance();captureGridDraft(false);syncSource();
     if(!m_source->isEnabled() || m_draftTarget["workbook"]!=m_info["id"] || m_draftTarget["state"]!=m_info["state"] || m_draftTarget["input_kind"].toString()=="text")return;
-    m_referenceTarget=targetContext();m_referenceCurrent=m_grid->currentIndex();m_referenceText=m_source->text();m_referenceStart=start;m_referenceLength=length;m_referencePreview.clear();m_referenceIssue.clear();m_referenceDragging=false;m_pickingReference=true;m_pickReferenceAction->setChecked(true);
+    m_referenceTarget=targetContext();m_referenceCurrent=m_grid->currentIndex();m_referenceText=m_source->text();m_referenceStart=start;m_referenceLength=length;m_referencePreview.clear();m_referenceIssue.clear();m_referenceDragging=false;m_pickingReference=true;m_pickReferenceAction->setChecked(true);updateChartPassThrough();
     m_source->setFocus();m_source->setSelection(start,length);m_status->setText("Pick a cell or drag a range • Release inserts into the original formula draft • Escape cancels picking");
 }
 
@@ -1445,7 +1635,7 @@ void MainWindow::pickOtherSheetReference() {
 }
 
 void MainWindow::finishReferencePick(bool insert) {
-    if(!m_pickingReference)return;m_pickingReference=false;m_referenceDragging=false;QSignalBlocker blocker(m_pickReferenceAction);m_pickReferenceAction->setChecked(false);
+    if(!m_pickingReference)return;m_pickingReference=false;m_referenceDragging=false;QSignalBlocker blocker(m_pickReferenceAction);m_pickReferenceAction->setChecked(false);updateChartPassThrough();
     const bool valid=!m_busy && !m_unknown && !m_model->projected() && matchesTarget(m_referenceTarget) && m_referenceCurrent==m_grid->currentIndex() && m_source->text()==m_referenceText && m_source->cursorPosition()==m_referenceStart+m_referenceLength && m_source->selectionStart()==(m_referenceLength?m_referenceStart:-1) && m_source->isEnabled();
     if(insert && valid && m_referenceIssue.isEmpty() && !m_referencePreview.isEmpty()){
         m_source->setFocus();m_source->setCursorPosition(0);m_source->setSelection(m_referenceStart,m_referenceLength);m_source->insert(m_referencePreview);m_source->setModified(true);if(auto *line=dynamic_cast<FormulaLineEdit *>(m_source))line->updateAssistance(false);m_status->setText("Reference inserted into formula draft • Enter to submit, Escape to discard");
@@ -1481,7 +1671,7 @@ bool MainWindow::referenceMouseEvent(QObject *object,QEvent *event) {
 }
 
 bool MainWindow::startExternalReferencePick(ReferencePickTarget target,QString *refusal) {
-    finishReferencePick(false);cancelFormatPainter();cancelExternalReferencePick();
+    finishReferencePick(false);cancelFormatPainter();cancelExternalReferencePick();cancelChartPick();
     bool editing=false;auto views=m_frozenTop->views();views.append(m_grid);
     for(auto *view:views)if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))if(delegate->activeEditor())editing=true;
     QString problem;
@@ -1493,7 +1683,7 @@ bool MainWindow::startExternalReferencePick(ReferencePickTarget target,QString *
     else if(m_model->projected())problem=tr("Clear the list view before picking a reference; references name stored cells.");
     else if(!target.insert || !target.stillValid)problem=tr("Nothing can receive a picked reference.");
     if(!problem.isEmpty()){issue(problem);if(refusal)*refusal=problem;return false;}
-    m_externalTarget=std::move(target);m_externalPicking=true;m_externalInserted=false;
+    m_externalTarget=std::move(target);m_externalPicking=true;m_externalInserted=false;updateChartPassThrough();
     // Shortcuts reach actions without a key press in the grid: every command
     // that could change the workbook is off until picking ends.
     for(auto *action:pickBlockedActions()){if(!m_pickSuspended.contains(action))m_pickSuspended.insert(action,action->isEnabled());action->setEnabled(false);}
@@ -1544,7 +1734,7 @@ void MainWindow::setEditingEnabled(QAction *action,bool enabled) {
 
 void MainWindow::cancelExternalReferencePick() {
     if(!m_externalPicking)return;
-    m_externalPicking=false;m_referenceDragging=false;m_referencePreview.clear();m_referenceIssue.clear();m_externalPickCancel->setEnabled(false);
+    m_externalPicking=false;m_referenceDragging=false;m_referencePreview.clear();m_referenceIssue.clear();m_externalPickCancel->setEnabled(false);updateChartPassThrough();
     const auto suspended=std::exchange(m_pickSuspended,{});
     for(auto action=suspended.begin();action!=suspended.end();++action)action.key()->setEnabled(action.value());
     // Picking never moves the selection, but navigation during it may; it is
@@ -1725,6 +1915,7 @@ void MainWindow::acceptInfo(const QJsonObject &info, const QString &selectSheet)
     setEditingEnabled(m_redo,info["redo"].isString() && !info["readonly"].toBool());
     setWindowTitle(QFileInfo(info["path"].toString()).fileName() + " — DataHorizon development preview");
     syncSource();
+    readChartSources();
     if(info["repair"].toBool() && !m_relationalActive)showRelational(true);
     if (m_restoreDraft) restoreRecoveredDraft();
     if(!m_relationalAfterWrite.isEmpty()) {
@@ -1749,19 +1940,19 @@ void MainWindow::refresh(const QString &selectSheet) {
     }, false);
 }
 
-void MainWindow::submit(QJsonObject operation) {
-    if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return;
+QString MainWindow::submit(QJsonObject operation) {
+    if (m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool()) return {};
     const auto action=operation["action"].toString();
     if(m_relationalActive && !action.startsWith("module_") && action!="binding_save" && action!="binding_delete" && !action.startsWith("name_") && action!="macro_run" && !(action.startsWith("table_") || action.startsWith("index_") || action.startsWith("relationship_") || action.startsWith("query_") || action=="undo" || action=="redo")) {
-        issue(tr("Return to sheets before applying a sheet operation."));return;
+        issue(tr("Return to sheets before applying a sheet operation."));return {};
     }
     const auto defaults=targetContext();
     for (auto field=defaults.begin(); field!=defaults.end(); ++field)
         if (!operation.contains(field.key())) operation[field.key()]=field.value();
     captureGridDraft(false);
-    if (!resolveDraft()) return;
+    if (!resolveDraft()) return {};
     if (!matchesTarget(operation)) {
-        issue("Reviewed inputs changed. Review the target and state again before submitting."); return;
+        issue("Reviewed inputs changed. Review the target and state again before submitting."); return {};
     }
     operation.remove("workbook");
     m_pendingId = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -1813,6 +2004,110 @@ void MainWindow::submit(QJsonObject operation) {
         reportReferenceWarnings(result);
         refresh(); emit operationReceipt(result);emit operationFinished(true);
     },true,timeout);
+    return operationId;
+}
+
+void MainWindow::insertChart() {
+    if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool() || m_relationalActive || m_model->projected() || m_chartSuggesting)return;
+    const auto range=selectedRange();if(range.isEmpty())return;
+    const auto target=targetContext(range);
+    QJsonObject request{{"expected_state",m_info["state"]},{"sheet",m_model->sheet()}};
+    for(const char *key:{"r1","c1","r2","c2"})request[key]=range[key];
+    m_chartSuggesting=true;updateChartActions();
+    const auto generation=m_client->generation();
+    m_client->request(base()+"/charts/suggest",request,[this,target,generation](QJsonObject result,QString error){
+        if(generation!=m_client->generation())return;
+        m_chartSuggesting=false;updateChartActions();
+        // An answer for another workbook, sheet or state is dropped.
+        if(!matchesTarget(target))return;
+        if(m_busy || m_unknown || m_info["readonly"].toBool() || m_relationalActive || m_model->projected()){issue(tr("The chart was not inserted • Insert again"));return;}
+        if(!error.isEmpty()){issue(error);return;}
+        // One column to the right of the selection; the selection's own
+        // top-left cell when that column does not exist or is hidden.
+        const int r1=target["r1"].toInt(),c1=target["c1"].toInt(),c2=target["c2"].toInt();
+        const int col=c2<m_model->columnCount() && !m_hiddenColumns.contains(c2)?c2+1:c1;
+        auto operation=target;for(const char *key:{"r1","c1","r2","c2"})operation.remove(key);
+        operation["action"]="chart_create";operation["spec"]=result["spec"];operation["anchor"]=QJsonObject{{"row",r1},{"col",col}};
+        m_pendingChartSelect=submit(operation);
+        if(!m_pendingChartSelect.isEmpty())m_chartInsertTarget=target;
+    });
+}
+
+bool MainWindow::chartCatalogCurrent() const {
+    return !m_chartCatalogStale && m_charts && !m_info.isEmpty()
+        && m_charts->listedFor("/v1/workbooks/"+m_info["id"].toString(),m_model->sheet(),m_info["state"].toString());
+}
+
+QJsonObject MainWindow::panelChart(const QString &chartId) const {
+    return chartCatalogCurrent()?m_charts->chart(chartId):QJsonObject();
+}
+
+void MainWindow::readChartSources() {
+    if(!m_chartPanel || !m_chartDock->isVisible() || m_info.isEmpty())return;
+    QJsonArray sheets;
+    for(const auto &value:m_info["sheets"].toArray())sheets.append(QJsonObject{{"id",value.toObject()["id"]},{"name",value.toObject()["name"]}});
+    const auto workbook=m_info["id"].toString();const auto state=m_info["state"];
+    if(m_chartSourcesWorkbook!=workbook){m_chartSourcesWorkbook=workbook;m_chartTables={};m_chartQueries={};}
+    // A saved query's columns are read for one workbook state; another state forgets them.
+    if(const auto key=workbook+'\n'+state.toString();m_chartColumnsState!=key){m_chartColumnsState=key;m_chartPanel->queryColumnsObsolete();}
+    // The panel's lists are refilled only when what they offer changed: the
+    // sheets at once when they changed, the tables and queries when read.
+    // An ordinary edit's refresh refills nothing.
+    auto give=[this](const QJsonArray &sheets) {
+        if(sheets==m_chartGivenSheets && m_chartTables==m_chartGivenTables && m_chartQueries==m_chartGivenQueries)return;
+        m_chartGivenSheets=sheets;m_chartGivenTables=m_chartTables;m_chartGivenQueries=m_chartQueries;
+        m_chartPanel->setCatalog(sheets,m_chartTables,m_chartQueries);
+    };
+    // The tables and queries last read stand until the new ones arrive.
+    if(sheets!=m_chartGivenSheets)give(sheets);
+    const int generation=++m_chartSourcesGeneration;
+    auto current=[this,generation,workbook,state]{return generation==m_chartSourcesGeneration && m_info["id"].toString()==workbook && m_info["state"]==state;};
+    m_client->request(base()+"/tables",{{"expected_state",state}},[this,current,sheets,state,give](QJsonObject result,QString error){
+        if(!current() || !error.isEmpty() || result["state"]!=state)return;
+        // A saved query's columns are read only when the panel asks for them.
+        m_chartTables=result["tables"].toArray();m_chartQueries=result["queries"].toArray();
+        give(sheets);
+    });
+}
+
+void MainWindow::readQueryColumns(const QString &queryId) {
+    if(m_info.isEmpty())return;
+    const auto workbook=m_info["id"].toString();const auto state=m_info["state"];
+    // Asked again while the same read is answered (the panel asks once per catalog it is given), it is read once.
+    const auto key=workbook+'\n'+state.toString()+'\n'+queryId;
+    if(m_queryReads.contains(key))return;
+    m_queryReads.insert(key);
+    m_client->request(base()+"/queries/read",{{"query",queryId},{"expected_state",state}},[this,workbook,state,queryId,key](QJsonObject result,QString error){
+        m_queryReads.remove(key);
+        // An answer for another workbook or state is dropped and the panel may ask again.
+        if(m_info["id"].toString()!=workbook || m_info["state"]!=state){m_chartPanel->queryColumnsFailed(queryId);return;}
+        // A failed read is reported; the columns are asked for again when next wanted.
+        if(!error.isEmpty()){issue(tr("The columns of a saved query could not be read: %1").arg(error));m_chartPanel->queryColumnsFailed(queryId);return;}
+        if(result["state"]!=state){m_chartPanel->queryColumnsFailed(queryId);return;}
+        QStringList columns;
+        for(const auto &column:result["query"].toObject()["shape"].toArray())columns<<column.toObject()["name"].toString();
+        m_chartPanel->setQueryColumns(queryId,columns);
+    });
+}
+
+void MainWindow::showChartPanel() {
+    m_chartDock->show();m_chartDock->raise();
+}
+
+void MainWindow::updateChartActions() {
+    if(!m_insertChartAction)return;
+    const bool sheet=!m_info.isEmpty() && !m_relationalActive && !m_model->projected();
+    setEditingEnabled(m_insertChartAction,sheet && !m_busy && !m_unknown && !m_info["readonly"].toBool() && !m_chartSuggesting);
+    const bool charts=sheet && m_charts && !m_charts->overlays().isEmpty();
+    setEditingEnabled(m_selectNextChartAction,charts);setEditingEnabled(m_selectPreviousChartAction,charts);
+    // Charts are moved, resized, reordered and deleted only while the sheet
+    // takes edits; they are still selected, and edited in the panel (locked).
+    const bool editable=sheet && !m_busy && !m_unknown && !m_info.value("readonly").toBool();
+    if(m_charts){m_charts->setInteractive(editable);m_charts->setHeld(editable && !chartCatalogCurrent());}
+    if(m_chartPanel)m_chartPanel->setLocked(!editable || !chartCatalogCurrent());
+    if(!m_chartMenu)return;
+    m_editChartAction->setEnabled(charts);
+    for(auto *action:{m_chartToFrontAction,m_chartToBackAction,m_deleteChartAction})action->setEnabled(charts && editable);
 }
 
 void MainWindow::cancelPendingOperation(const QString &operation) {
@@ -1900,7 +2195,7 @@ void MainWindow::restartService() {
 
 void MainWindow::setBusy(bool busy, const QString &message) {
     busy=busy || !m_activeOperationJob.isEmpty();
-    if(busy){finishReferencePick(false);cancelExternalReferencePick();cancelFormatPainter();}
+    if(busy){finishReferencePick(false);cancelExternalReferencePick();cancelFormatPainter();cancelChartPick();}
     m_busy = busy || m_releasing;
     if(m_busy){clearFindResults();++m_navigationGeneration;m_navigationExtending=false;}
     for(auto *action:m_navigationActions)action->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected());
@@ -1914,7 +2209,7 @@ void MainWindow::setBusy(bool busy, const QString &message) {
     if(m_freezeAction) m_freezeAction->setEnabled(!m_busy && !m_unknown && !m_info.isEmpty() && !m_model->projected() && !m_hiddenRows.contains(0));
     syncSource();
     if (!message.isEmpty()) m_status->setText(m_releasing ? "Closing workbook…" : message);
-    queueSummary();updateListSummary();
+    queueSummary();updateListSummary();updateChartActions();
 }
 
 void MainWindow::issue(const QString &message) {
@@ -2157,17 +2452,22 @@ void MainWindow::reportReferenceWarnings(const QJsonObject &receipt) {
 }
 
 QJsonObject MainWindow::selectedRange() const {
-    if (m_model->projected()) { const_cast<MainWindow *>(this)->issue("Clear the list view before range operations. Single-cell edits target the original source row."); return {}; }
+    QJsonObject range;
+    const auto problem=selectionProblem(&range);
+    if(!problem.isEmpty())const_cast<MainWindow *>(this)->issue(problem);
+    return range;
+}
+
+QString MainWindow::selectionProblem(QJsonObject *result) const {
+    *result={};
+    if (m_model->projected()) return "Clear the list view before range operations. Single-cell edits target the original source row.";
     auto ranges = m_grid->selectionModel()->selection();
     if (ranges.isEmpty()) return {};
     const auto &range = ranges.first();
-    if(intersectsHidden(range.top()+1,range.left()+1,range.bottom()+1,range.right()+1)) {
-        const_cast<MainWindow *>(this)->issue("Show hidden rows and columns in this rectangle before range operations."); return {};
-    }
-    if (qint64(range.height())*range.width() > 10000) {
-        const_cast<MainWindow *>(this)->issue("Selection exceeds the 10,000-cell ordinary operation limit."); return {};
-    }
-    return {{"r1", range.top()+1}, {"c1", range.left()+1}, {"r2", range.bottom()+1}, {"c2", range.right()+1}};
+    if(intersectsHidden(range.top()+1,range.left()+1,range.bottom()+1,range.right()+1))return "Show hidden rows and columns in this rectangle before range operations.";
+    if (qint64(range.height())*range.width() > 10000) return "Selection exceeds the 10,000-cell ordinary operation limit.";
+    *result={{"r1", range.top()+1}, {"c1", range.left()+1}, {"r2", range.bottom()+1}, {"c2", range.right()+1}};
+    return {};
 }
 
 QJsonObject MainWindow::targetContext(QJsonObject arguments) const {
@@ -2203,15 +2503,107 @@ void MainWindow::cancelFormatPainter() {
     ++m_painterGeneration;m_painterPending=false;m_painterDragging=false;m_painterRows={};m_painterOrigin={};m_painterDestination={};
     if(m_painterAction){m_painterAction->setChecked(false);m_painterAction->setProperty("ready",false);}if(m_painterCancel)m_painterCancel->setEnabled(false);
     if(m_frozenTop){auto views=m_frozenTop->views();views.append(m_grid);for(auto *view:views)view->viewport()->unsetCursor();}
+    updateChartPassThrough();
+}
+
+void MainWindow::updateChartPassThrough() {
+    if(m_charts)m_charts->setPassThrough(m_pickingReference || m_externalPicking || m_painterPending || !m_painterRows.isEmpty() || chartPickActive());
+    // Only a chart range pick keeps the chart selected through a click on the grid.
+    if(m_charts)m_charts->setKeepSelection(chartPickActive());
+}
+
+bool MainWindow::chartPickActive() const { return !m_chartPickField.isEmpty(); }
+
+void MainWindow::beginChartPick(const QString &field) {
+    // Pick on the field being picked ends its pick; on another field starts
+    // that one for the same chart, on whatever sheet is shown.
+    QString carriedChart,carriedSheet;
+    if(chartPickActive()) {
+        if(field==m_chartPickField){endChartPick(false);return;}
+        if(!m_chartPickReturning){carriedChart=m_chartPickChart;carriedSheet=m_chartPickSheet;}
+        cancelChartPick();
+    }
+    finishReferencePick(false);cancelFormatPainter();cancelExternalReferencePick();
+    bool editing=false;auto views=m_frozenTop->views();views.append(m_grid);
+    for(auto *view:views)if(auto *delegate=dynamic_cast<CellDelegate *>(view->itemDelegate()))if(delegate->activeEditor())editing=true;
+    const auto chartId=m_chartPanel->chartId();const auto chart=m_charts->chart(chartId);
+    QString problem;
+    if(m_busy)problem=tr("Wait for the current operation to finish before picking a range.");
+    else if(m_unknown)problem=tr("Reconcile the unknown operation before picking a range.");
+    else if(m_info.isEmpty() || m_relationalActive || m_model->projected())problem=tr("Show the sheet's cells before picking a range.");
+    else if(editing || m_source->isModified())problem=tr("Enter or discard the cell draft before picking a range.");
+    else if(chartId.isEmpty() || (carriedChart.isEmpty()?chart.isEmpty():chartId!=carriedChart))problem=tr("Select the chart before picking a range.");
+    if(!problem.isEmpty()){issue(problem);return;}
+    m_chartPanel->beginPick(field);
+    if(m_chartPanel->pickField()!=field)return;
+    m_chartPickField=field;m_chartPickChart=chartId;m_chartPickWorkbook=m_info["id"].toString();
+    m_chartPickSheet=carriedSheet.isEmpty()?chart.value("sheet_id").toString(m_model->sheet()):carriedSheet;
+    m_chartPickStatus=m_status->text();
+    updateChartPassThrough();
+    // As for a Python pick, every command that could change the workbook is
+    // off until the pick ends; Insert Chart and Select Next/Previous Chart too.
+    for(auto *action:pickBlockedActions()){if(!m_pickSuspended.contains(action))m_pickSuspended.insert(action,action->isEnabled());action->setEnabled(false);}
+    m_chartPickApply->setEnabled(true);m_chartPickCancel->setEnabled(true);
+    // The grid keeps the keyboard, so the arrows extend the selection.
+    m_frozenTop->focusCurrent();
+    updateChartPick(false);
+}
+
+void MainWindow::endChartPick(bool apply) {
+    if(!chartPickActive() || m_chartPickReturning)return;
+    // Enter does nothing while the selection cannot be applied.
+    if(apply && !m_chartPickReady)return;
+    if(m_model->sheet()==m_chartPickSheet){finishChartPick(apply,true);return;}
+    // From another sheet, back to the chart's first. The pick ends once that
+    // sheet is listed, so the chart is known to be there and nothing is sent
+    // while that listing is read; the panel holds its chart meanwhile.
+    m_chartPickReturning=true;m_chartPickApplyOnReturn=apply;
+    m_chartPickApply->setEnabled(false);m_chartPickCancel->setEnabled(false);
+    for(int i=0;i<m_tabs->count();++i)if(m_tabs->tabData(i).toString()==m_chartPickSheet){m_tabs->setCurrentIndex(i);break;}
+    if(m_model->sheet()!=m_chartPickSheet)cancelChartPick();
+}
+
+void MainWindow::cancelChartPick() {
+    if(chartPickActive())finishChartPick(false,false);
+}
+
+void MainWindow::finishChartPick(bool apply,bool settle) {
+    const auto field=std::exchange(m_chartPickField,{});const auto chart=std::exchange(m_chartPickChart,{});
+    m_chartPickSheet.clear();m_chartPickWorkbook.clear();m_chartPickReady=false;m_chartPickReturning=false;
+    m_chartPickApply->setEnabled(false);m_chartPickCancel->setEnabled(false);
+    const auto suspended=std::exchange(m_pickSuspended,{});
+    for(auto action=suspended.begin();action!=suspended.end();++action)action.key()->setEnabled(action.value());
+    updateChartPassThrough();
+    m_status->setText(std::exchange(m_chartPickStatus,{}));
+    if(m_chartPanel->pickField()!=field)return;
+    // A chart no longer there (its sheet listed without it, or the panel
+    // showing another) ends the pick with nothing sent and nothing selected.
+    if(!settle || m_chartPanel->chartId()!=chart || m_charts->chart(chart).isEmpty()){m_chartPanel->endPick(false,false);return;}
+    m_charts->select(chart);
+    m_chartPanel->endPick(apply,true);
+}
+
+void MainWindow::updateChartPick(bool fill) {
+    QJsonObject range;const auto problem=selectionProblem(&range);
+    const auto label=ChartPanel::fieldLabel(m_chartPickField);
+    m_chartPickReady=false;
+    // Shown, not reported: the selection changes as the person drags it.
+    if(!problem.isEmpty()){m_status->setText(problem);return;}
+    const int r1=range["r1"].toInt(),c1=range["c1"].toInt(),r2=range["r2"].toInt(),c2=range["c2"].toInt();
+    // A series name takes one cell (owner question 10).
+    if(!range.isEmpty() && m_chartPickField.endsWith("Name") && (r1!=r2 || c1!=c2)){m_status->setText(tr("Pick one cell for %1 • Enter applies • Escape cancels").arg(label));return;}
+    m_chartPickReady=true;
+    m_status->setText(tr("Pick a range for %1 • Enter applies • Escape cancels").arg(label));
+    if(fill && !range.isEmpty())m_chartPanel->setPicked(m_chartPickField,ChartSpec::rangeSource(m_model->sheet(),r1,c1,r2,c2));
 }
 
 void MainWindow::startFormatPainter() {
     if(m_painterPending || !m_painterRows.isEmpty()){cancelFormatPainter();return;}
-    cancelFormatPainter();cancelExternalReferencePick();if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool())return;
+    cancelFormatPainter();cancelExternalReferencePick();cancelChartPick();if(m_busy || m_unknown || m_info.isEmpty() || m_info["readonly"].toBool())return;
     if(m_address->isModified()){issue("Finish address entry before copying formatting.");return;}
     const auto range=selectedRange();if(range.isEmpty() || m_grid->selectionModel()->selection().size()!=1)return;const auto target=targetContext(range);const auto selection=m_grid->selectionModel()->selection();const auto current=QPersistentModelIndex(m_grid->currentIndex());const auto service=m_client->url();
     captureGridDraft(false);if(!resolveDraft() || !matchesTarget(target) || current!=m_grid->currentIndex() || selection!=m_grid->selectionModel()->selection())return;
-    const auto generation=++m_painterGeneration,navigation=m_navigationGeneration,reference=m_referenceGeneration;m_painterPending=true;m_painterAction->setChecked(true);m_painterCancel->setEnabled(true);auto request=target;request.remove("workbook");m_status->setText(tr("Reading selected formatting…"));
+    const auto generation=++m_painterGeneration,navigation=m_navigationGeneration,reference=m_referenceGeneration;m_painterPending=true;updateChartPassThrough();m_painterAction->setChecked(true);m_painterCancel->setEnabled(true);auto request=target;request.remove("workbook");m_status->setText(tr("Reading selected formatting…"));
     m_client->request(base()+"/styles",request,[this,target,selection,current,service,generation,navigation,reference](QJsonObject result,QString error){
         if(generation!=m_painterGeneration)return;
         if(m_busy || m_unknown || !matchesTarget(target) || service!=m_client->url() || navigation!=m_navigationGeneration || reference!=m_referenceGeneration || current!=m_grid->currentIndex() || selection!=m_grid->selectionModel()->selection() || m_source->isModified() || m_address->isModified() || m_model->projected()){cancelFormatPainter();return;}
@@ -3233,6 +3625,14 @@ bool MainWindow::discardQueryDraft(){
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
+    // The chart panel never scrolls sideways: its dock stays as wide as the
+    // panel needs, as its Data group grows and shrinks (laid out once the
+    // request is handled).
+    if(object==m_chartPanel && event->type()==QEvent::LayoutRequest)
+        QTimer::singleShot(0,this,[this]{
+            auto *scroll=qobject_cast<QScrollArea *>(m_chartDock->widget());
+            scroll->setMinimumWidth(m_chartPanel->minimumSizeHint().width()+scroll->verticalScrollBar()->sizeHint().width()+2*scroll->frameWidth());
+        });
     if(event->type()==QEvent::Resize || event->type()==QEvent::Show || event->type()==QEvent::Hide) {
         if(object==m_grid || (m_frozenTop && m_frozenTop->views().contains(qobject_cast<QTableView *>(object))))
             QTimer::singleShot(0,this,[this]{updateVisibleCalculations();});
@@ -3240,6 +3640,14 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
     if(m_painterPending || !m_painterRows.isEmpty()) {
         if(event->type()==QEvent::KeyPress){const auto key=static_cast<QKeyEvent *>(event)->key();cancelFormatPainter();if(key==Qt::Key_Escape)return true;}
         else if(!m_painterRows.isEmpty() && formatPainterMouseEvent(object,event))return true;
+    }
+    if(chartPickActive() && event->type()==QEvent::KeyPress) {
+        // In the grid Enter and Escape belong to a chart pick; other keys navigate.
+        auto views=m_frozenTop->views();views.append(m_grid);bool pane=false;
+        for(auto *view:views)if(object==view || object==view->viewport())pane=true;
+        const int key=static_cast<QKeyEvent *>(event)->key();
+        if(pane && (key==Qt::Key_Return || key==Qt::Key_Enter)){endChartPick(true);return true;}
+        if(pane && key==Qt::Key_Escape){endChartPick(false);return true;}
     }
     if(m_externalPicking){
         // The grid neither edits nor navigates while picking for Python.

@@ -38,7 +38,10 @@ neither chart is visible.
 **Non-goals**
 
 - Authoring in the desktop: Insert Chart, the edit panel, select, move, resize,
-  delete, the object browser entry. They stay in charts stage 3.
+  delete, the object browser entry. They stay in charts stage 3. Authoring
+  (all but the object browser entry) was built later, on November 16, 2026, on
+  branch `claude/charts-authoring`, not merged; see
+  [charts-authoring-export-design.md](charts-authoring-export-design.md#4-authoring-on-the-sheet).
 - Chart export to XLSX or ODS. At the time, export kept reporting each chart as omitted. Export was built later, on November 15, 2026; see [charts-authoring-export-design.md](charts-authoring-export-design.md#6-export) and the [compatibility contract](compatibility-v0.md#chart-export).
 - New chart types or options. Specification version 1 is unchanged; nothing is
   added to carry Excel colours, data labels or gap width.
@@ -225,7 +228,12 @@ scrolls and when rows or columns are resized, hidden or inserted.
   are updated.
 - View-only: the overlay passes mouse and keyboard through to the grid, so
   cells under a chart stay selectable and editable. **Call**. It carries the
-  chart's name as its accessible name.
+  chart's name as its accessible name. Reversed by the authoring build
+  (November 16, 2026, branch `claude/charts-authoring`, not merged): a chart
+  takes mouse clicks over its area and focus by click, and its accessible name
+  is "Chart: <name>"; clicks still pass through charts during the formula
+  reference pick, the format painter and a Python pick
+  ([as built](charts-authoring-export-design.md#4-authoring-on-the-sheet)).
 - Charts are listed when a sheet is shown and when the workbook state changes
   (after any managed operation, refresh, import, undo or redo). Coarse
   staleness, as designed: a state change re-renders the charts that are in
@@ -256,7 +264,9 @@ scrolls and when rows or columns are resized, hidden or inserted.
 - Wireframe. The charts design requires wireframes before desktop chart work.
   For this view-only slice the sketch and rules of this section are the
   wireframe, and approving this document is the sign-off. The full stage 3
-  wireframe session is still owed before authoring is built.
+  wireframe session was owed before authoring; the authoring wireframes
+  ([charts-authoring-wireframes.md](charts-authoring-wireframes.md)) were
+  signed off by the owner on November 15, 2026, before authoring was built.
 - Zoom, if the grid has it, scales charts with the cells. **Builder**.
 - Printing, portable view export and screenshots of the grid are unchanged in
   this slice.
@@ -375,6 +385,8 @@ Recorded November 15, 2026. Each is also in the
 - **CLI.** The CLI has no one-sheet import, so only the SDK and the desktop
   carry charts on that path; the CLI's whole-workbook import carries them.
 - **Not built or not verified.** Export, authoring, workbook-Python chart
-  operations, and any verification on Windows and Linux. The manual desktop
+  operations, and any verification on Windows and Linux. (Export and desktop
+  authoring were built later, November 15 and 16, 2026; see
+  [implementation-status.md](implementation-status.md#charts-desktop-authoring--november-16-2026).) The manual desktop
   check of section 8 and the LibreOffice cross-format check were not run; see
   the [evidence](evidence/charts-import-view-verification.txt).

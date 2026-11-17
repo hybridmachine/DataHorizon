@@ -1,0 +1,161 @@
+Charts desktop authoring verification
+====================================
+Date: November 16, 2026 (the build ran November 15-16, 2026). Branch claude/charts-authoring, cut from main at 550cbe4;
+first commit 1439cbe. Every run below was made on commit b5c80dc (the last code commit; these documents are added on
+top and change no code). Machine: the reference Mac (macOS, Darwin 25.6.0), Qt 6.12.0 (the build directory's
+Qt6_DIR, /Users/btabone/Qt/6.12.0/macos, and QtTest's own "Config: ... Qt 6.12.0" line; 6.8 is only the minimum
+CMakeLists.txt asks for, wrongly given here before), system Python 3.14.6 (Homebrew).
+Item 8 records the final fix wave and its runs on commit 436d8fe, which supersede items 1 to 5 for the branch head.
+Desktop tests run on Qt's offscreen platform (QT_QPA_PLATFORM=offscreen, set by CTest).
+
+1. Build
+--------
+Command: cmake --build build --target chart_authoring_tests desktop_tests DataHorizon
+Result: exit 0, 3.2 s (the targets were already up to date apart from relinking DataHorizon); no compiler warnings
+(0 lines containing "warning"). The bundle step printed "Verified ad-hoc development bundle".
+
+2. Chart authoring tests
+------------------------
+Command: ctest --test-dir build -R '^chart_authoring$' --output-on-failure
+Result: 1/1 Test #5: chart_authoring ... Passed 116.41 sec; "100% tests passed out of 1".
+build/chart-authoring-tests.txt: "Totals: 211 passed, 0 failed, 0 skipped, 0 blacklisted, 116218ms".
+The 269 QWARN lines are all from the offscreen platform plugin ("does not support propagateSizeHints()" 217,
+"raise()" 14, "grabbing the keyboard" 10, and the same messages under data-row names).
+These tests drive real Qt mouse and key events (QTest press, move, release, key clicks, ShortcutOverride) on the
+offscreen platform, and assert through the real service: the stored chart in the catalog after the relist, operation
+receipts, Issues text and the Undo label. They are not a physical-input run.
+
+3. Desktop suite
+----------------
+Command: ctest --test-dir build -R '^desktop$' --output-on-failure
+Result: 1/1 Test #3: desktop ... Passed 263.20 sec; "100% tests passed out of 1".
+build/desktop-tests.txt: "Totals: 282 passed, 0 failed, 0 skipped, 0 blacklisted, 263067ms". The known unrelated
+flake (backgroundCalculationReportsSnapshotWithoutEdits) did not occur, so no single re-run was needed. Run alone,
+after the service suite had finished.
+
+4. Python workspace
+-------------------
+Command: ctest --test-dir build -R '^python_workspace$' --output-on-failure
+Result: 1/1 Test #4: python_workspace ... Passed 77.21 sec; "100% tests passed out of 1".
+build/python-workspace-tests.txt: "Totals: 72 passed, 0 failed, 0 skipped, 0 blacklisted, 77090ms".
+
+5. Service suite
+----------------
+Command: PYTHONPATH=service python3 -m unittest discover -s tests
+Result: "Ran 1716 tests in 369.189s", "OK (skipped=28)"; exit 0; 6 min 10 s wall clock. It ran at the same time as
+the chart_authoring run of item 2 and the export check of item 6. The output again holds ResourceWarning lines about
+unclosed SQLite connections, as recorded for the export block; they were not investigated here.
+No service code changed on this branch (git diff --stat 550cbe4..b5c80dc touches no file under service/).
+
+6. Export check of a chart made through the authoring operations
+-----------------------------------------------------------------
+Scope: an agent cannot use a physical mouse and keyboard. A throwaway script outside the repository (not committed)
+used the Python SDK (datahorizon.client.LocalService) to send exactly what the desktop sends, in the desktop's order:
+  - fill Sheet1!A1:C13 (Month, Sales, Cost; twelve rows);
+  - Insert -> Chart over A1:C13: suggest_chart(r1=1, c1=1, r2=13, c2=3), then chart_create with the suggested spec and
+    anchor row 1, column 4 (the selection's top row, one column right of it); name and size left to the engine
+    (it stored "Chart 1", column, clustered, anchor D1, offset 0,0, 480x300);
+  - the panel's type button Bar: chart_update with a whole spec in input form (sources by sheet id), type bar,
+    grouping kept clustered;
+  - the panel's Title on Enter: chart_update with a whole spec built from the relisted chart, title
+    {"text": "Sales and cost by month"};
+  - a drag: chart_update with anchor {row 3, col 6} and offset {12, 7};
+  - a top-left handle resize: chart_update with anchor, offset and size {520, 340}.
+All five operations committed. The script's first run stopped at the title step with "title must be an object": the
+script had sent the title as a string, which the panel never does (it sends {"text": ...}); the script was corrected
+and run again on a fresh workbook. That is a script error, not a product finding.
+The workbook was then exported with export_spreadsheet(fmt, scope="workbook") (the inline whole-workbook route) and
+each file read back with the import preview (xlsx_preview / ods_preview, scope "workbook"):
+  xlsx: 4,161 bytes; report "Charts: 1 written."; 1 chart read back; equal: yes; no chart or drawing import entry
+  ods:  2,367 bytes; report "Charts: 1 written."; 1 chart read back; equal: yes; no chart or drawing import entry
+Compared: name ("Chart 1"), type (bar), grouping (clustered), title, legend (right), categories (Sheet1 A2:A13),
+series names (B1, C1) and values (B2:B13, C2:C13), anchor (F3), offset (12, 7), size (520x340).
+Files (not tracked by git):
+  /Users/btabone/source/DataHorizon/output/charts-authoring-samples/authored-chart.xlsx
+  /Users/btabone/source/DataHorizon/output/charts-authoring-samples/authored-chart.ods
+This exercised the same operations the desktop sends, through the service, but not the desktop UI itself. The
+desktop UI path (Insert -> Chart, the drags, the keys and the panel sending these operations) is covered by the
+automated chart_authoring tests of item 2, which drive mouse and key events through Qt on the offscreen platform.
+
+7. Excel and LibreOffice
+------------------------
+Commands: ls /Applications | grep -i "excel\|libre"  (no output); which soffice  ("soffice not found", exit 1)
+Neither is installed: opening the exported files in Excel and in LibreOffice is not verified.
+
+8. Not verified
+---------------
+- The acceptance run by hand in the built application (build/DataHorizon.app) with a physical mouse and keyboard,
+  once with the mouse and once with the keyboard alone (design section 7; plan Task 9 Step 2): not run. The automated
+  tests drive Qt events on the offscreen platform only.
+- Opening the exported files in Excel and in LibreOffice: neither is installed.
+- VoiceOver; physical-input acceptance; Windows and Linux.
+- macOS Option as Alt for the 1-pixel arrow steps (Alt+arrows, Shift+Alt+arrows) on real hardware; Alt+F1 may need
+  the fn key on a Mac keyboard.
+- Behaviour with no test of its own (from the build ledger): the external Python pick's pass-through over charts, the
+  drag cancel on window deactivation, and the Shift+F10 shortcut override while the chart cannot be changed.
+
+8. Final fix wave (whole-branch review findings)
+------------------------------------------------
+The fixes and their tests are commit 436d8fe (code and tests only); every run below was made on 436d8fe, and the
+documents are committed on top of it without code changes. Eleven test functions were added to
+tests/test_chart_authoring.cpp; three existing ones were changed to the review's rulings (heldTextIsAppliedOnUnlock
+and unchangedTextSendsNothing: held text survives a rename, as its specification is unchanged;
+seriesNameTakesTextOrOneCell: a series name's text field has no 255 cap).
+Build: cmake --build build after touching the changed sources: 0 lines containing "warning".
+chart_authoring: ctest --test-dir build -R '^chart_authoring$' --output-on-failure: Passed 131.72 sec;
+  build/chart-authoring-tests.txt "Totals: 222 passed, 0 failed, 0 skipped, 0 blacklisted, 131002ms".
+desktop: ctest --test-dir build -R '^desktop$' --output-on-failure: Passed 274.04 sec;
+  build/desktop-tests.txt "Totals: 282 passed, 0 failed, 0 skipped, 0 blacklisted, 273369ms"; the known flake
+  backgroundCalculationReportsSnapshotWithoutEdits did not occur.
+python_workspace: ctest --test-dir build -R '^python_workspace$' --output-on-failure: Passed 80.52 sec;
+  "Totals: 72 passed, 0 failed, 0 skipped, 0 blacklisted, 79809ms".
+Service suite: PYTHONPATH=service python3 -m unittest discover -s tests: first run "Ran 1716 tests in 378.467s",
+  "FAILED (errors=1, skipped=28)": test_staging_shutdown.test_sigint_also_stops_in_order, "too many values to unpack
+  (expected 1, got 2)" from owned_directories(pid). It failed again alone. The system temporary directory held 8,203
+  leftover datahorizon-<pid>-* directories from earlier runs, so a new service's pid matched an old directory's
+  name; the test is environment-sensitive, not affected by this branch (git diff f55dc0c..436d8fe touches nothing
+  under service/). The leftovers were not deleted. Run again with a fresh temporary directory
+  (TMPDIR=<session scratch>/svc-tmp PYTHONPATH=service python3 -m unittest discover -s tests):
+  "Ran 1716 tests in 326.698s", "OK (skipped=28)".
+Seen failing before its fix (the test run against the code before the change): C1, I1, I2 (scroll, keyboard move,
+sheet switch), I3, M1, M6 and I4's Tab order. I5's wheel test passes on this macOS build either way (Qt compiles
+QComboBox's wheel handling out on macOS); only its focus-policy assertion depends on the fix there.
+Not verified: macOS Tab reach with the system's default keyboard setting on real hardware (offscreen reports "tab
+to all controls"); the wheel on Windows and Linux.
+
+Fix after the re-review of the final fix wave (November 16, 2026; run on the working tree committed after a59c89c)
+The re-review found, by running, that the fix for a hidden focused chart misfired during a refresh: the window shows
+hidden rows and default sizes as a model reset begins and puts them back afterwards, and the chart layer laid out in
+between, so a focused chart below hidden rows was taken for hidden, lost its selection and gave the grid the
+keyboard; Delete then cleared cells. The layer now holds its layout from the start of a model reset until the
+relayout the reset queues (ChartLayer::holdLayout, called from the window's reset handler).
+New test aFocusedChartBelowHiddenRowsKeepsTheKeyboardThroughARefresh (rows 2-35 hidden, chart at row 40, one arrow
+press): seen failing before the fix (selection empty), passing after.
+ctest --test-dir build -R '^(chart_authoring|desktop|python_workspace)$' --output-on-failure: 3 of 3 passed, 481.52 s;
+  chart_authoring "Totals: 223 passed, 0 failed"; desktop "Totals: 282 passed, 0 failed". The service suite was not
+  run again; nothing under service/ changed.
+Known and not changed: a chart that is selected while the grid holds the keyboard (after a formula reference pick or
+the format painter starts) stays selected, and Delete then acts on the grid's cells as an ordinary grid Delete; axis
+title and series name fields keep Qt's default 32,767-character field limit; after a reconnect to the same workbook,
+sheet and state the chart list may not be read again until the next change (read, not run).
+
+Pull request review fixes (November 16, 2026; run on the working tree committed after 95995fe)
+Four findings of the review of pull request 143, each reproduced by a new test seen failing before its fix:
+- A chart's keys and drags acted on charts listed for an older workbook state (a Shift+arrow resize overwrote another
+  client's size). The window now holds the chart layer while its listing is older than the workbook: no drag starts,
+  a drag under way is cancelled, and Delete, Backspace and the arrows stay with the chart and change nothing, so
+  Delete does not reach the grid. Test aChartIsNotChangedFromAnOlderListing. This replaces the earlier behaviour in
+  which a drag could begin before the relist (relistDuringADragKeepsTheDraggedChart is now
+  aDragWaitsForTheChartsToBeListed).
+- A saved-query column read dropped because the workbook changed left the panel waiting for it forever.
+  Test aDroppedQueryReadIsAskedAgain.
+- A saved query edited to give another column under the same name and counts kept its old column list. The panel
+  now forgets every column list when the workbook state changes and reads again when a query is chosen or its column
+  list is opened. Test anEditedQuerysColumnsAreReadAgain.
+- Enter on a focused chart did nothing in a read-only workbook; it now opens the panel, locked, as Edit Chart does.
+  Test enterOpensTheLockedPanelOfAReadOnlyChart; escapeDeselectsAndFocusesTheGrid changed to match.
+ctest --test-dir build -R '^(chart_authoring|desktop|python_workspace)$': chart_authoring "Totals: 227 passed, 0
+failed"; desktop "Totals: 282 passed, 0 failed"; python_workspace "Totals: 72 passed, 0 failed" (desktop and
+python_workspace were run before three chart authoring tests were updated; no product code changed after).
+The first CI run of the pull request failed python_workspace and chart_authoring without keeping their output; the
+workflow now uploads both logs on failure.

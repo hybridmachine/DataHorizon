@@ -1,6 +1,6 @@
 # Charts design
 
-Draft 0.7 | November 15, 2026 | Status: approved by the owner on November 11, 2026; rendering route confirmed with two changes on November 12, 2026; table and saved-query sources decided on November 13, 2026. Stage 1 (the experiment) and stage 2 are built: range sources on branch `claude/charts-stage-2`, and table and saved-query sources on branch `claude/charts-table-query-sources`; both, with chart import and the view-only display below, were merged to `main` through pull request 140. Chart import from XLSX and ODS and a view-only chart display in the desktop were pulled ahead of stages 3 and 4 and are built on branch `claude/charts-import-view` ([design](charts-import-view-design.md), [plan](charts-import-view-plan.md), [section 11](#11-interchange)). Chart export to XLSX and ODS (stage 4's export half) is built on branch `claude/charts-export`, which is not merged ([design](charts-authoring-export-design.md#6-export), [plan](charts-export-plan.md), [section 11](#11-interchange)). Desktop authoring and workbook Python are not built. Sections marked **Built** record what the code does; [section 15](#15-departures-from-draft-03-as-built) lists where it departs from Draft 0.3, and [section 16](#16-departures-from-draft-04-as-built) where table and saved-query sources depart from Draft 0.4.
+Draft 0.7 | November 15, 2026 | Status: approved by the owner on November 11, 2026; rendering route confirmed with two changes on November 12, 2026; table and saved-query sources decided on November 13, 2026. Stage 1 (the experiment) and stage 2 are built: range sources on branch `claude/charts-stage-2`, and table and saved-query sources on branch `claude/charts-table-query-sources`; both, with chart import and the view-only display below, were merged to `main` through pull request 140. Chart import from XLSX and ODS and a view-only chart display in the desktop were pulled ahead of stages 3 and 4 and are built on branch `claude/charts-import-view` ([design](charts-import-view-design.md), [plan](charts-import-view-plan.md), [section 11](#11-interchange)). Chart export to XLSX and ODS (stage 4's export half) is built on branch `claude/charts-export`, which is not merged ([design](charts-authoring-export-design.md#6-export), [plan](charts-export-plan.md), [section 11](#11-interchange)). Desktop authoring (Insert Chart, selecting, moving, resizing, ordering and deleting charts, and an edit panel) is built on branch `claude/charts-authoring`, which is not merged ([design](charts-authoring-export-design.md#4-authoring-on-the-sheet), [plan](charts-authoring-plan.md), [wireframes](charts-authoring-wireframes.md), [section 9](#9-desktop)). Workbook Python chart operations are not built. Sections marked **Built** record what the code does; [section 15](#15-departures-from-draft-03-as-built) lists where it departs from Draft 0.3, and [section 16](#16-departures-from-draft-04-as-built) where table and saved-query sources depart from Draft 0.4.
 
 This document proposes how DataHorizon stores, renders and exposes charts. It is
 a design to plan from. It is not an implementation plan; each stage gets a
@@ -607,6 +607,23 @@ wireframes-before-implementation rule. They should cover:
 - Keyboard access and an accessible description of the chart.
 - Charts in the workbook object browser beside Sheets, Tables and Queries.
 
+**Built (desktop authoring, November 16, 2026; branch `claude/charts-authoring`,
+not merged).** The wireframes are
+[charts-authoring-wireframes.md](charts-authoring-wireframes.md), signed off by
+the owner on November 15, 2026; the design is
+[charts-authoring-export-design.md](charts-authoring-export-design.md) sections
+4 and 5, with their "As built" paragraphs. An Insert menu holds Chart
+(`Alt+F1`), which suggests a chart for the selection and creates it one column
+right of it, and Select Next and Previous Chart. Charts over the grid can be
+selected, moved, resized, reordered and deleted with the mouse and the
+keyboard, and a docked panel on the right edits the name, order, type and
+grouping, title, categories and series (range, table column or query column;
+a range can be picked on the grid), axis titles and bounds, and the legend.
+Each change is one undoable managed operation. Not built from the list above:
+a type picker with a live preview (a new chart takes the suggested type and is
+changed in the panel), copy as image, and charts in the object browser. The
+states are shown as in the view-only layer, and the panel repeats the reason.
+
 ## 10. Python
 
 **Call**: workbook Python gets chart operations on its transaction-aware
@@ -665,7 +682,7 @@ interchange never carry charts.
 | --- | --- | --- |
 | 1. Renderer experiment | Section 6 measurements and a written result | The evidence confirms the service SVG route or triggers the fallback. Run November 11, 2026: thresholds not all met ([result](chart-render-experiment.md)). Owner ruling November 12, 2026: service SVG route confirmed with a pie point limit and a bundled font (section 6) |
 | 2. Engine and interfaces | Storage, specification validation, resolve, render, reference maintenance, staleness, REST/CLI/SDK, history | A script creates, changes and renders all six chart types with no desktop; structural edits and undo are verified. **Done**: range sources on November 12, 2026, table and saved-query sources on November 13, 2026 ([result](charts-stage-2-result.md), [plan](charts-table-query-sources-plan.md)) |
-| 3. Desktop and Python | Wireframes, Insert Chart, floating charts, edit panel, object browser entry, context operations | The wireframe session is completed in the installed application. **Partly pulled ahead, November 15, 2026**: a view-only slice draws every native chart over its sheet in the desktop (no Insert Chart, selection, move, resize, delete, edit panel or object browser entry); the full wireframe session is still owed before authoring is built ([design](charts-import-view-design.md#6-desktop-display)) |
+| 3. Desktop and Python | Wireframes, Insert Chart, floating charts, edit panel, object browser entry, context operations | The wireframe session is completed in the installed application. **Partly pulled ahead, November 15, 2026**: a view-only slice draws every native chart over its sheet in the desktop ([design](charts-import-view-design.md#6-desktop-display)). **Desktop authoring built, November 16, 2026**, on branch `claude/charts-authoring` (not merged): the authoring wireframes were signed off on November 15, 2026 ([wireframes](charts-authoring-wireframes.md), [plan](charts-authoring-plan.md)), and Insert Chart, selection, move, resize, order, delete and the edit panel are built and covered by the automated `chart_authoring` tests ([evidence](evidence/charts-authoring-verification.txt)); the run by hand in the installed application, VoiceOver, Windows and Linux are not verified. Not built: the object browser entry, copy as image, and workbook Python chart operations |
 | 4. Interchange | XLSX and ODS chart export, then import, with reports | A round trip keeps every supported chart and reports the rest. **Import pulled ahead, November 15, 2026** ([plan](charts-import-view-plan.md), [evidence](evidence/charts-import-view-verification.txt)); export built on branch `claude/charts-export`, November 15, 2026, with the round trip tested through both formats and both routes ([evidence](evidence/charts-export-verification.txt)); not opened in Excel or LibreOffice |
 | 5. More chart types | Combination charts, secondary axis, histogram, trendlines, chart sheets | Per-type criteria in that stage's plan |
 
