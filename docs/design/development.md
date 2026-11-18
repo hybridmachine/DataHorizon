@@ -517,9 +517,25 @@ inserts two rows before row 3. The managed CLI accepts the same fields through
 `apply` JSON. The Sheet menu applies these operations to the selected row or
 column span, including whole-header selections. The full span moves, even when
 only part of a row/column is selected. Confirmation explains history clearing;
-newly broken references appear with their locations in Issues. Required handlers
-and unsupported formula syntax reject atomically. Clear projected list views
-first. See the initial contracts for the ordinary-operation and grid-edge limits.
+newly broken references appear with their locations in Issues. Clear projected
+list views first. Required structural hooks run in the edit's transaction.
+
+If the edit needs background execution, the desktop offers **Run in Background**
+and displays its phase and a cancellation control. This also applies to sheet
+duplication and deletion. In scripts, `book.apply` returns the final receipt.
+For a reviewed command, pass `confirm_large_structure=True`, the operation ID
+and its reviewed `expected_state`. The optional `progress` callback receives a
+status dictionary each time the observed phase changes. The managed CLI accepts
+the same JSON fields or the `apply --confirm-large-structure` option. When
+attached to an existing service and live workbook, pass the operation ID and
+expected state from the offer. A standalone file-mode invocation starts a
+fresh service with a new state token. Use the confirmation option on that
+invocation to approve the command for the workbook it opens.
+
+Ctrl-C during a confirmed CLI edit requests cancellation and checks the
+original ID for the outcome. A final receipt records whether the edit committed
+or rolled back. If the outcome is still unknown, retain the operation ID for
+receipt lookup. [REST lifecycle and qualification](excel-fidelity-increment-9-plan.md)
 
 The install step deploys Qt and copies service sources. Use an absolute install
 prefix: Qt 6.8 deployment requires an absolute path when writing qt.conf on Linux

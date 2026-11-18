@@ -4,7 +4,7 @@ import hashlib
 import json
 import time
 import uuid
-from .engine import require,integer,encoded,valid_uuid,EngineError,sql_deadline
+from .engine import require,integer,encoded,valid_uuid,EngineError,sql_deadline,rectangle
 from .metadata import list_spec,name
 
 
@@ -73,6 +73,8 @@ def finish(book,request,context):
             if not delete:
                 if start<=low:spec[axis+'1']+=count;spec[axis+'2']+=count
                 elif start<=high:spec[axis+'2']+=count
+                # Check the new grid and record limits before allocating IDs or hashing the enlarged extent.
+                rectangle(spec)
                 if axis=='r':
                     for item in rows:
                         if item['row']>=start:item['row']+=count

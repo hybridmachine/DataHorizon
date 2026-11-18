@@ -69,6 +69,12 @@ def encoded(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
+def operation_fingerprint(request):
+    # The stage location and confirmation control execution, not the edit's identity.
+    return hashlib.sha256(encoded({key: value for key, value in request.items()
+                                   if key not in (STAGE_PATH, "confirm_large_structure")}).encode()).hexdigest()
+
+
 class EngineError(Exception):
     def __init__(self, code, message, status=400, outcome="rejected", **details):
         super().__init__(message)
@@ -403,6 +409,7 @@ class Workbook:
         self._operation_jobs=None
         self._query_jobs=None
         self.cancel_event=None
+        self.structure_before_image=None
         self._read_cancel_event=cancel_event
         self.epoch = str(uuid.uuid4())
         created_identity = None
@@ -426,6 +433,7 @@ class Workbook:
                 self.db.execute("PRAGMA page_size=8192")
             self.db.execute("PRAGMA foreign_keys=ON")
             self.db.execute("PRAGMA synchronous=FULL")
+            self.db.execute("PRAGMA temp_store=FILE")
             if create:
                 self.db.executescript(SCHEMA)
                 self.db.execute("BEGIN IMMEDIATE")
@@ -1081,7 +1089,12 @@ class Workbook:
             self.db.execute("INSERT INTO cells VALUES(?,?,?,?,?,?) ON CONFLICT(sheet_id,row,col) DO UPDATE SET source=excluded.source,kind=excluded.kind,style=excluded.style",
                             (*key, item["source"], item["kind"], encoded(item["style"])))
         if key in self.pending or input_signature(before) != input_signature(item):
-            original = self.pending.get(key, {}).get("before", before)
+            if key in self.pending:
+                original = self.pending[key]["before"]
+            elif self.structure_before_image is not None:
+                original = self.structure_before_image(key, before)
+            else:
+                original = before
             if input_signature(original) == input_signature(item):
                 self.pending.pop(key, None)
             else:
@@ -1187,9 +1200,10 @@ class Workbook:
             raise error
         return receipt
 
-    def mutate(self, request, *, cancel_event=None, on_commit=None):
+    def mutate(self, request, *, cancel_event=None, on_commit=None, large_structure_progress=None):
         """on_commit, if given, is called with no arguments once this call itself has committed the operation;
-        it is not called when a stored receipt is returned for a retried operation ID."""
+        it is not called when a stored receipt is returned for a retried operation ID.
+        large_structure_progress is reserved for the service's confirmed structural worker."""
         require(isinstance(request, dict), "INVALID_ARGUMENT", "Operation must be an object")
         operation = request.get("operation_id")
         require(isinstance(operation, str) and len(operation) <= 100 and bool(operation), "OPERATION_ID", "An operation_id is required")
@@ -1197,9 +1211,12 @@ class Workbook:
             operation.encode("utf-8")
         except UnicodeEncodeError as error:
             raise EngineError("OPERATION_ID","operation_id must be valid Unicode text") from error
-        # The service-only stage path is where a stage happens to be, not part of the request's identity.
-        fingerprint = hashlib.sha256(encoded({key:value for key,value in request.items() if key!=STAGE_PATH}).encode()).hexdigest()
+        fingerprint = operation_fingerprint(request)
         staged = request.get("action")=="workbook_import" and "stage_id" in request
+        large = large_structure_progress is not None
+        if large:
+            from . import large_structure
+            require(request.get("action") in large_structure.ACTIONS, "INVALID_ARGUMENT", "Unsupported large structural action")
         with self.lock:
             self.cancel_event=cancel_event
             try:
@@ -1213,7 +1230,7 @@ class Workbook:
                     raise EngineError("JOB_NOT_FOUND","Import stage is unavailable; prepare the workbook again",404,operation_id=operation)
                 # Also before any transaction or write, after the stored receipts were consulted: rejected, naming the operation.
                 if self.readonly: raise EngineError("READ_ONLY", "Workbook is open read-only", 403, operation_id=operation)
-                self.deadline = time.monotonic() + (STAGE_SECONDS if staged else 5)
+                self.deadline = time.monotonic() + (large_structure.SECONDS if large else STAGE_SECONDS if staged else 5)
                 self.bulk_loaded = 0
                 self.refresh(deadline=self.deadline)
                 self.changes, self.pending = {}, {}
@@ -1272,12 +1289,19 @@ class Workbook:
                 self.relational_before={item['id']:item for item in relational.tables(self.db)}
                 import_plan=self.plan_import(request) if kind=="workbook_import" else None
                 event_arguments=self.import_arguments(import_plan) if import_plan else None
+                if large:
+                    large_structure_progress("planning")
+                    structure_plan = large_structure.plan(self, request)
+                    self.check_operation()
                 before_catalog=self.structure_hook(operation,request,'before',None,event_arguments) if sheet_structural else None
                 # Cells edited so far (by a before-structure handler) are not structural content when moved.
                 self.structure_touched=set(self.changes)
                 reference_report = {}
                 sheet = self.sheet(request.get("sheet", "Sheet1")) if kind in ("edit", "paste", "move", "fill", "replace_all") else None
-                if kind=="macro_run":
+                if large:
+                    structural_edit = large_structure.StagedEdit(self, structure_plan, large_structure_progress)
+                    reference_report = structural_edit.apply()
+                elif kind=="macro_run":
                     from .macros import run as run_macro
                     reference_report=run_macro(self,request)
                 elif kind in ("module_save","module_delete"):
@@ -1483,7 +1507,15 @@ class Workbook:
                     raise EngineError("UNSUPPORTED_OPERATION", f"Operation is not available: {kind}")
                 # Records produced only by a structural rewrite are not cell-change events for bindings.
                 self.structural_records={key:self.pending[key]['after'] for key,quiet in self.structural_marks.items() if quiet and key in self.pending}
-                if sheet_structural:self.structure_hook(operation,request,'after',before_catalog,event_arguments)
+                if large:
+                    large_structure_progress("running_hooks")
+                    self.check_operation()
+                    self.structure_before_image = structural_edit.before_image
+                try:
+                    if sheet_structural:self.structure_hook(operation,request,'after',before_catalog,event_arguments)
+                finally:
+                    self.structure_before_image = None
+                if large:self.check_operation()
                 self.run_hooks(operation)
                 repaired_issues=None
                 if kind=='table_repair':
@@ -1492,9 +1524,12 @@ class Workbook:
                     repaired_issues=relational.validate_data(self.db,relational.tables(self.db),self.deadline,repair=True)
                 records.finish(self,request,record_context)
                 self.check_operation()
+                if large:
+                    changed_cells = structural_edit.finish()
+                    large_structure_progress("committing")
                 self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1] or key in self.table_schema_keys}
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
-                result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": sum(key[0] not in ('table','chart') for key in self.changes)+self.bulk_loaded,
+                result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": changed_cells if large else sum(key[0] not in ('table','chart') for key in self.changes)+self.bulk_loaded,
                           "changed_records":sum(key[0]=='table' for key in self.changes),"changed_charts":sum(key[0]=='chart' for key in self.changes)}
                 result.update(reference_report)
                 if self.binding_notices:result["binding_notices"]=self.binding_notices
@@ -1681,19 +1716,10 @@ class Workbook:
                 self.structural_put(key,item)
             for key in deleted:
                 self.structural_put(key,None)
-            from .names import break_sheet
-            broken_names = break_sheet(self,target)
-            from .bindings import break_sheet as break_binding_sheet
-            from .bindings import scoped_to_names
-            broken_bindings = sorted(break_binding_sheet(self,target)+scoped_to_names(self,broken_names))
-            from .charts import break_sheet as break_chart_sheet
-            broken_charts = break_chart_sheet(self,target)
+            from .large_structure import delete_metadata
+            metadata = delete_metadata(self, target)
             self.db.execute("DELETE FROM sheets WHERE id=?",(target,))
-        result = {"reference_warnings":warnings,"reference_issues":locations,**unmaintained_report(marked)}
-        if broken_names:result["broken_names"] = broken_names
-        if broken_charts:result["broken_charts"] = broken_charts
-        if broken_bindings:result["broken_bindings"] = broken_bindings
-        return result
+        return {"reference_warnings":warnings,"reference_issues":locations,**unmaintained_report(marked),**metadata}
 
     def duplicate_sheet(self, target, new_name):
         old_name = self.db.execute("SELECT name FROM sheets WHERE id=?", (target,)).fetchone()[0]
@@ -1719,9 +1745,8 @@ class Workbook:
             self.db.execute("INSERT INTO sheets VALUES(?,?,?)", (new_id,new_name,self.next_sheet_position()))
             for row, col, item in cells:
                 self.structural_put((new_id,row,col),item,(target,row,col))
-            if self.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=3:
-                self.db.execute("INSERT INTO dh_objects SELECT namespace,id,?,payload FROM dh_objects WHERE sheet_id=? AND namespace IN ('presentation','list')",(new_id,target))
-                require(self.db.execute('SELECT count(*)<=256 AND coalesce(sum(length(payload)),0)<=16777216 FROM dh_objects').fetchone()[0],'LIMIT','Native metadata exceeds its budget')
+            from .large_structure import copy_metadata
+            copy_metadata(self, target, new_id)
         return unmaintained_report(marked)
 
     def rename_references(self, target, new_name):
@@ -1819,19 +1844,9 @@ class Workbook:
                     self.structural_put(destination,item,key)
             for key, item in formulas.items():
                 self.structural_put(key,item)
-            from .names import adjust_structure
-            broken_names = adjust_structure(self,target,axis,start,count,delete)
-            from .bindings import adjust_structure as adjust_bindings
-            from .bindings import scoped_to_names
-            broken_bindings = sorted(adjust_bindings(self,target,axis,start,count,delete)+scoped_to_names(self,broken_names))
-            from .charts import adjust_structure as adjust_charts
-            broken_charts, over_limit_charts = adjust_charts(self,target,axis,start,count,delete)
-        result = {"reference_warnings":warnings,"reference_issues":locations,**unmaintained_report(marked)}
-        if broken_names:result["broken_names"] = broken_names
-        if broken_charts:result["broken_charts"] = broken_charts
-        if over_limit_charts:result["charts_over_limit"] = over_limit_charts
-        if broken_bindings:result["broken_bindings"] = broken_bindings
-        return result
+            from .large_structure import axis_metadata
+            metadata = axis_metadata(self, target, axis, start, count, delete)
+        return {"reference_warnings":warnings,"reference_issues":locations,**unmaintained_report(marked),**metadata}
 
     @staticmethod
     def check_name(name):

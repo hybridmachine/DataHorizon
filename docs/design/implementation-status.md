@@ -4,13 +4,23 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## Large structural edits — November 17, 2026
+
+Chart export and desktop authoring reached `main` in PRs #141 and #143.
+Excel fidelity increment 9 adds confirmed background execution for inserting and
+deleting whole rows and columns and duplicating and deleting sheets. Qt, REST,
+the managed CLI and the SDK use the same operation ID and transaction. The
+ordinary path keeps its existing limits. The large path stages coordinates on
+disk, streams formula rewrites, maintains native objects and checks cancellation
+before committing. [Plan and verification](excel-fidelity-increment-9-plan.md)
+
 ## Charts desktop authoring — November 16, 2026
 
 The [authoring design](charts-authoring-export-design.md#4-authoring-on-the-sheet)
 (sections 4 and 5), [plan](charts-authoring-plan.md) and signed-off
 [wireframes](charts-authoring-wireframes.md) are executed on branch
 `claude/charts-authoring`, built November 15-16, 2026 from `main` at 550cbe4
-and not merged. The [verification evidence](evidence/charts-authoring-verification.txt)
+and merged through PR #143. The [verification evidence](evidence/charts-authoring-verification.txt)
 records the commands and results. No service, REST, CLI or SDK code changed.
 The rulings made during the build and every departure from the design are in
 the "As built" paragraphs of design sections 4 and 5.
@@ -170,12 +180,10 @@ Not verified:
 
 The [export design](charts-authoring-export-design.md#6-export) and
 [plan](charts-export-plan.md) are executed on branch `claude/charts-export`,
-which is not merged (it follows the import and view-only work merged to `main`
-through pull request 140). The [verification evidence](evidence/charts-export-verification.txt)
-records the commands and results. Desktop authoring (design sections 4 and 5)
-is not built. (Authoring was built later, November 16, 2026:
-[Charts desktop authoring](#charts-desktop-authoring--november-16-2026); its
-wireframes were signed off November 15.)
+merged through PR #141 after the import and view-only work in PR #140.
+The [verification evidence](evidence/charts-export-verification.txt) records
+the commands and results. [Desktop authoring](#charts-desktop-authoring--november-16-2026)
+followed in PR #143.
 
 Built, and covered by service tests:
 - XLSX and ODS exports write native charts: the inline whole-workbook and
@@ -772,7 +780,7 @@ confirmation. Physical input, VoiceOver, Windows/Linux and release gates remain 
 | M3 | Typed entry/date functions and scalar contracts; bounded transitive dependency reuse/invalidation; state/generation/UTC-clock background calculations with pending/error/stale/cancelled results; transactional hook reads; bounded automatic visible/frozen viewport scheduling | Broader Excel functions/coercion/reference compatibility, native usability/accessibility and platform acceptance |
 | M4 | Typed/formula-aware copy, Cut/fill/history, supported sheet/row/column transforms; opt-in transactional before/after structural hooks; native v3 portable view settings; local hiding/freezing and cross-pane selection | Full Excel reference compatibility, broader presentation/view models, native platform conventions and screen-reader acceptance |
 | M5 | Portable named bounded list definitions and persistent declared-record UUIDs; explicit external-edit reconciliation; reviewed record bulk edits and formula-preserving filtered copy/XLSX/ODS export; explicit locale/temporal conversion; durable staged atomic/batched jobs, frozen global sort/find paging and cooperative cancellation | Wider locale/timezone/duration policies, larger scopes and performance qualification (including large-file opening budget), full SQL/query/relational models at M8, production job scheduling and platform/manual acceptance |
-| M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures; Excel fidelity increment 1: degrade-and-report XLSX/ODS import (strict namespaces, `mixed` mode, every unimported feature reported), large staged import/export at measured limits (1,000,000 cells on the reference Mac), corpus and scorecard ([verification](evidence/excel-fidelity-1-verification.txt)) | Excel-saved and LibreOffice-saved corpus; native features of fidelity increments 2–10; broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
+| M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures; Excel fidelity increment 1: degrade-and-report XLSX/ODS import (strict namespaces, `mixed` mode, every unimported feature reported), large staged import/export at measured limits (1,000,000 cells on the reference Mac), corpus and scorecard ([verification](evidence/excel-fidelity-1-verification.txt)) | Excel-saved and LibreOffice-saved corpus; native features of fidelity increments 2–8 and 10; broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
 | M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
 | M8 | Bounded native tables/relationships/indexes, read-only SQL and saved views; native v5 modules, exact service-local activation, atomic macros, required hooks/history and managed clients; native v6 names and cell/table event bindings, owner-channel approval and the Qt Python workspace (local branch, no PR) | Proven managed SQL writes, names in formulas/interchange, structure/open/code binding events, custom functions/packages, durable external effects, remote TLS/mTLS/password access, physical-input/VoiceOver acceptance of the workspace and remaining foundation/platform qualification |
 

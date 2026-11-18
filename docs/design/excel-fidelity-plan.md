@@ -3,6 +3,8 @@
 Draft 0.3 | November 11, 2026 | Status: approved by the owner on November 11, 2026. Increment 1 is built except for the open items in section 6 (the Excel-saved and LibreOffice-saved corpus); section 14 decisions remain open. Section 15 records how increment 1 was built.
 
 The [increment 1 plan](excel-fidelity-increment-1-plan.md) turns section 6 into tasks.
+The [increment 9 plan and results](excel-fidelity-increment-9-plan.md) cover
+large structural edits in the order specified in section 4.
 
 This document plans the work that takes DataHorizon from its bounded XLSX tier
 to holding, showing and round-tripping the data and formatting an Excel workbook

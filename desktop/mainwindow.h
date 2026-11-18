@@ -28,6 +28,7 @@ class ChartPanel;
 class QDockWidget;
 class QTimer;
 class QMenu;
+class QMessageBox;
 class QStackedWidget;
 class RelationalWorkbench;
 class PythonWorkspace;
@@ -205,6 +206,11 @@ private:
     void acceptInfo(const QJsonObject &info, const QString &selectSheet = {});
     void issue(const QString &message);
     void setBusy(bool busy, const QString &message = {});
+    void sendOperation(const QJsonObject &operation);
+    void finishOperation(const QString &action, const QJsonObject &result, QString error);
+    void reviewLargeStructure(QJsonObject operation);
+    void showLargeStructureProgress(const QString &phase);
+    void pollLargeStructure(const QString &operationId, int attempts = 3);
     void reconcile();
     void saveCopy(bool firstSave = false);
     void save(bool copy);
@@ -366,6 +372,9 @@ private:
     // The workbook handle whose unapproved-rules notice was decided.
     QString m_ruleNoticeHandle;
     QString m_pendingId;
+    QMessageBox *m_largeStructureReview = nullptr;
+    QPushButton *m_cancelStructure = nullptr;
+    bool m_largeStructurePending = false;
     // A sheet name to select when the next workbook info arrives (an import's
     // first sheet); cleared once used.
     QString m_selectSheetName, m_selectSheetWorkbook;

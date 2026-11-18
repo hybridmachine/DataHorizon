@@ -107,7 +107,7 @@ LARGE_ROUTES={
     ('/v1/jobs/{job}','get'):(None,'PreparationJob'),
     ('/v1/jobs/{job}/cancel','post'):('JobAction','PreparationJob'),
     ('/v1/jobs/{job}/release','post'):('JobAction','JobReleased'),
-    ('/v1/workbooks/{workbook}/operations','post'):('OperationRequest','Receipt'),
+    ('/v1/workbooks/{workbook}/operations','post'):('OperationRequest','OperationSubmission'),
     ('/v1/workbooks/{workbook}/export/xlsx/jobs','post'):('XlsxExportJobRequest','ExportJob'),
     ('/v1/workbooks/{workbook}/export/ods/jobs','post'):('OdsExportJobRequest','ExportJob'),
     ('/v1/workbooks/{workbook}/export/xlsx','post'):('SpreadsheetExport','SpreadsheetExportResult'),

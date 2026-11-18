@@ -548,9 +548,19 @@ class WorkbookClient:
 
     def drop_index(self,index):return self.apply('index_drop',index=index)
 
-    def cancel_operation(self,operation):
+    def cancel_operation(self, operation, *, request_timeout=REQUEST_SECONDS):
+        """Request cooperative cancellation; check status or the durable receipt for the final outcome."""
         self._ensure_open()
-        return self.client.request(self.base+'/operations/'+quote(operation,safe='')+'/cancel',{})
+        return self.client.request(self.base+'/operations/'+quote(operation,safe='')+'/cancel',{},
+                                   **({} if request_timeout == REQUEST_SECONDS else {"timeout": request_timeout}))
+
+    def operation_status(self, operation_id, *, request_timeout=REQUEST_SECONDS):
+        """Observe a large structural operation. Use outcome() to reconcile a pending write."""
+        self._ensure_open()
+        result = self.client.request(self.base + "/operations/" + quote(operation_id, safe="") + "/status",
+                                     **({} if request_timeout == REQUEST_SECONDS else {"timeout": request_timeout}))
+        self._validate_operation_status(result, operation_id)
+        return result
 
     def insert_records(self,table,rows):
         return self.apply('table_insert',table=table,rows=rows,label='Insert records')
@@ -719,7 +729,14 @@ class WorkbookClient:
         charts={"charts":preview["charts"]} if preview.get("charts") else {}
         return self.apply("edit",sheet,cells=preview["cells"],label="Import spreadsheet",**charts)
 
-    def apply(self, action, sheet="Sheet1", operation_id=None, *, request_timeout=REQUEST_SECONDS, **arguments):
+    def apply(self, action, sheet="Sheet1", operation_id=None, *, request_timeout=REQUEST_SECONDS,
+              progress=None, cancel_on_interrupt=False, **arguments):
+        """Apply one atomic operation and return its receipt.
+
+        For a large structural edit, pass confirm_large_structure=True with the reviewed
+        expected_state and operation_id. While it runs, progress receives status dictionaries.
+        cancel_on_interrupt requests cancellation on Ctrl-C and waits for the final outcome.
+        """
         self._ensure_open()
         if self.pending_operation:
             if self._refresh_receipt is not None:
@@ -742,8 +759,15 @@ class WorkbookClient:
         self.pending_operation=request["operation_id"]
         try:
             # Only a longer-running action names its own timeout; ordinary calls are sent exactly as before.
-            response = self.client.request(self.base + "/operations", request,
-                                           **({} if request_timeout == REQUEST_SECONDS else {"timeout": request_timeout}))
+            try:
+                response = self.client.request(self.base + "/operations", request,
+                                               **({} if request_timeout == REQUEST_SECONDS else {"timeout": request_timeout}))
+                if isinstance(response, dict) and response.get("status") == "running":
+                    response = self._poll_structure(response, operation, progress)
+            except KeyboardInterrupt:
+                if not cancel_on_interrupt or request.get("confirm_large_structure") is not True:
+                    raise
+                response = self._interrupt_structure(operation)
             self.validate_receipt(response, request["operation_id"], committed=True)
         except APIError as error:
             if (error.body.get("outcome") in ("rejected","rolled_back")
@@ -760,6 +784,39 @@ class WorkbookClient:
         self.state = response["state"]
         self._last_receipt=dict(response)
         return response
+
+    def _poll_structure(self, view, operation, progress, *, deadline=None):
+        self._validate_operation_status(view, operation)
+        last_phase = None
+        while view["status"] == "running":
+            if progress is not None and view["phase"] != last_phase:
+                progress(view.copy())
+            last_phase = view["phase"]
+            time.sleep(.05)
+            if deadline is None:
+                view = self.operation_status(operation)
+            else:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise UnknownOutcome(operation, "Cancellation has not reached a terminal outcome. Inspect the original operation ID.")
+                view = self.operation_status(operation, request_timeout=remaining)
+        if view["status"] == "failed":
+            error = view["error"]
+            raise APIError(error.get("http_status", 409), error)
+        return view["receipt"]
+
+    def _interrupt_structure(self, operation):
+        deadline = time.monotonic() + 5
+        try:
+            view = self.operation_status(operation, request_timeout=2)
+            if view["status"] == "running":
+                self.cancel_operation(operation, request_timeout=2)
+        except (APIError, OSError, ValueError, HTTPException, KeyboardInterrupt) as error:
+            raise UnknownOutcome(operation, "Interrupted before admission or cancellation could be confirmed. Inspect the original operation ID.") from error
+        try:
+            return self._poll_structure(view, operation, None, deadline=deadline)
+        except KeyboardInterrupt as error:
+            raise UnknownOutcome(operation, "Interrupted while waiting for cancellation. Inspect the original operation ID.") from error
 
     def set_localized(self,row,col,source,kind,locale,sheet='Sheet1'):
         converted=self.client.convert_value(source,kind,locale)
@@ -798,6 +855,27 @@ class WorkbookClient:
         elif committed or receipt.get("outcome") not in ("rejected", "rolled_back") or not isinstance(receipt.get("code"), str) or not receipt["code"] or not isinstance(receipt.get("message"), str):
             raise ValueError("Invalid operation outcome")
 
+    @classmethod
+    def _validate_operation_status(cls, view, operation_id):
+        if (not isinstance(view, dict) or view.get("operation_id") != operation_id
+                or view.get("status") not in ("running", "completed", "failed")
+                or not isinstance(view.get("phase"), str) or not view["phase"]):
+            raise ValueError("Invalid operation status or mismatched operation ID")
+        if view["status"] == "completed":
+            cls.validate_receipt(view.get("receipt"), operation_id, committed=True)
+        elif view["status"] == "failed":
+            error = view.get("error")
+            if (not isinstance(error, dict) or error.get("operation_id") != operation_id
+                    or not isinstance(error.get("code"), str) or not error["code"]
+                    or not isinstance(error.get("message"), str)
+                    or type(error.get("http_status", 409)) is not int
+                    or not 400 <= error.get("http_status", 409) <= 599):
+                raise ValueError("Invalid operation status error")
+            if error.get("outcome") != "unknown":
+                cls.validate_receipt(error, operation_id)
+                if error["outcome"] == "committed":
+                    raise ValueError("Committed receipt cannot be a failed operation")
+
     def close(self):
         if self._closed:
             return {"closed":True}
@@ -822,7 +900,7 @@ class WorkbookClient:
 class LocalService:
     """Owns only the child service it started; external services are never stopped."""
 
-    def __init__(self, handler=None, *, approved_code=(), owner_channel=False):
+    def __init__(self, handler=None, *, approved_code=(), owner_channel=False, isolate_interrupts=False):
         command = [sys.executable, "-I", "-B", "-X", "utf8", str(Path(__file__).resolve().with_name("launch.py"))]
         from .code_approval import validate_approvals
         for key in sorted(validate_approvals(approved_code)):command += ["--approve-code",key]
@@ -830,7 +908,13 @@ class LocalService:
             command += ["--handler", str(handler)]
         self.owner_channel = bool(owner_channel)
         if self.owner_channel:command.append("--owner-channel")
-        self.process = subprocess.Popen(command, stdin=subprocess.PIPE if self.owner_channel else subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        process_group = {}
+        if isolate_interrupts:
+            # The owning CLI handles terminal interrupts while its service remains available for cancellation.
+            process_group = {"creationflags":subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session":True}
+        self.process = subprocess.Popen(command, stdin=subprocess.PIPE if self.owner_channel else subprocess.DEVNULL,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+                                        **process_group)
         self.diagnostics = deque(maxlen=40)
         self._diagnostics_thread=threading.Thread(target=lambda:self.diagnostics.extend(iter(self.process.stderr.readline,"")),daemon=True)
         self._diagnostics_thread.start()
