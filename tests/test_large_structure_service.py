@@ -123,6 +123,7 @@ class LargeStructureServiceTests(unittest.TestCase):
                 release.set()
             view = self.terminal(operation)
         self.assertEqual(view["status"], "failed")
+        self.assertEqual(view["phase"], "failed")
         self.assertEqual(view["error"]["code"], "CANCELLED")
         self.assertEqual(view["error"], self.book.outcome(operation))
         with self.assertRaises(APIError) as replay:
@@ -226,6 +227,59 @@ class LargeStructureServiceTests(unittest.TestCase):
         self.assertEqual(unknown.exception.body["operation_id"], command["operation_id"])
         self.assertEqual(self.book.pending_operation, command["operation_id"])
         self.assertEqual(self.cell(1), 1)
+
+    def test_unconfirmed_admission_failure_is_attempted_again_under_the_same_id(self):
+        original = Workbook.mutate
+        attempts = []
+
+        def busy_once(workbook, request, **options):
+            attempts.append(request["operation_id"])
+            if len(attempts) == 1:
+                raise EngineError("OUTCOME_UNKNOWN", "Operation admission was not confirmed", 409, "unknown",
+                                  operation_id=request["operation_id"])
+            return original(workbook, request, **options)
+
+        command = self.command(confirm_large_structure=True)
+        operation = command["operation_id"]
+        with patch.object(Workbook, "mutate", busy_once):
+            self.assertEqual(self.client.request(self.operations, command)["status"], "running")
+            view = self.terminal(operation)
+            self.assertEqual((view["status"], view["phase"], view["error"]["outcome"]), ("failed", "failed", "unknown"))
+            # No receipt was stored, so the identical retry runs instead of replaying the failure.
+            self.assertEqual(self.client.request(self.operations, command)["status"], "running")
+            view = self.terminal(operation)
+        self.assertEqual(view["status"], "completed")
+        self.assertEqual(attempts, [operation, operation])
+        self.assertEqual(self.cell(6001), 1)
+
+    def test_outcome_lookup_waits_for_an_active_ordinary_operation(self):
+        entered, release = threading.Event(), threading.Event()
+        original = Workbook.mutate
+
+        def pause(workbook, request, **options):
+            entered.set()
+            self.assertTrue(release.wait(8))
+            return original(workbook, request, **options)
+
+        command = dict(action="edit", sheet="Sheet1", cells=[{"row":1, "col":2, "source":"x"}],
+                       expected_state=self.book.state, operation_id="ordinary-edit")
+        results = {}
+        submit = threading.Thread(target=lambda: results.update(receipt=self.client.request(self.operations, command)))
+        lookup = threading.Thread(target=lambda: results.update(
+            outcome=self.client.request(self.operations + "/ordinary-edit")))
+        with patch.object(Workbook, "mutate", pause):
+            submit.start()
+            try:
+                self.assertTrue(entered.wait(5))
+                lookup.start()
+                lookup.join(.3)
+                self.assertTrue(lookup.is_alive(), results)
+            finally:
+                release.set()
+            submit.join(10)
+            lookup.join(10)
+        self.assertEqual(results["outcome"], results["receipt"])
+        self.assertEqual(results["outcome"]["outcome"], "committed")
 
     def test_review_timeout_offers_background_execution(self):
         command = self.command()
@@ -338,6 +392,55 @@ class LargeStructureServiceTests(unittest.TestCase):
         error = json.loads(stderr)
         self.assertEqual(error["code"], "CANCELLED")
         self.assertEqual(error, self.book.outcome(command["operation_id"]))
+
+    @unittest.skipUnless(os.name == "posix", "Requires POSIX hangup signals")
+    def test_owned_cli_hangup_stops_its_isolated_service(self):
+        marker = self.path.with_name("service-pid")
+        handler = self.path.with_name("wait_structure.py")
+        handler.write_text(
+            "from pathlib import Path\nimport os\nimport time\n"
+            "def on_structure(context, event):\n"
+            f"    Path({str(marker)!r}).write_text(str(os.getppid()))\n"
+            "    while True:\n"
+            "        time.sleep(.01)\n", encoding="utf-8")
+        command = self.command()
+        command.pop("expected_state")  # Owned CLI opens its own workbook state.
+        process = subprocess.Popen([sys.executable,"-m","datahorizon.cli","--handler",str(handler),str(self.path),
+                                    "apply","--confirm-large-structure"],
+                                   start_new_session=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True)
+        service = None
+        try:
+            process.stdin.write(json.dumps(command))
+            process.stdin.close()
+            process.stdin = None
+            deadline = time.monotonic() + 10
+            while not (marker.exists() and marker.read_text()) and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(.02)
+            self.assertTrue(marker.exists(), "The structural hook was not reached")
+            service = int(marker.read_text())
+            self.assertNotEqual(service, process.pid)
+            process.send_signal(signal.SIGHUP)  # Only the CLI: its service has its own session.
+            process.communicate(timeout=15)
+            self.assertEqual(process.returncode, 128 + signal.SIGHUP)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(service, 0)
+                except ProcessLookupError:
+                    service = None
+                    break
+                time.sleep(.05)
+            self.assertIsNone(service, "The owned service outlived its CLI")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            if service is not None:
+                try: os.kill(service, signal.SIGKILL)
+                except ProcessLookupError: pass
+        self.assertEqual(self.cell(1), 1)
+        self.assertIsNone(self.cell(6001))
 
     def test_openapi_exposes_review_fields_and_status_variants(self):
         api = openapi()

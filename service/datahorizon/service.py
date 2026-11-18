@@ -1208,9 +1208,11 @@ class Service(ThreadingHTTPServer):
                     view = self._known_structure_status(book, operation)
                     if view is not None:
                         return view
-                if suffix[2:] in ([], ["status"]) and key in self.active_operations:
+                # Only a background structural job answers without waiting. An ordinary
+                # operation's lookup waits for the workbook and returns its receipt.
+                if suffix[2:] in ([], ["status"]) and key in self._structure_workers:
                     raise EngineError("OUTCOME_UNKNOWN", "Operation is still running; inspect its final receipt",
-                                      409, "unknown", operation_id=operation)
+                                      409, "unknown", operation_id=operation, running=True)
             if method == "POST" and suffix == ["operations"] and isinstance(body.get("operation_id"), str):
                 replay = self._running_structure_replay(book, body)
                 if replay is not None:
@@ -1308,6 +1310,12 @@ class Service(ThreadingHTTPServer):
         fingerprint = operation_fingerprint(body)
         with self.registry_lock:
             previous = self._structure_results.get((book, operation))
+            if (previous is not None and previous["fingerprint"] == fingerprint
+                    and (previous["view"].get("error") or {}).get("outcome") == "unknown"):
+                # Nothing proves this attempt committed or rolled back. A durable receipt
+                # answers the retry below; without one, the identical command is admitted again.
+                del self._structure_results[book, operation]
+                previous = None
         with book.lock:
             try:
                 book.verify_file()
@@ -1379,10 +1387,10 @@ class Service(ThreadingHTTPServer):
                 result = dict(status="completed", phase="completed", receipt=receipt)
             except EngineError as failure:
                 error = dict(failure.body, operation_id=operation, http_status=failure.status)
-                result = dict(status="failed", error=error)
+                result = dict(status="failed", phase="failed", error=error)
             except Exception:
                 traceback.print_exc(file=sys.stderr)
-                result = dict(status="failed", error={"code":"OUTCOME_UNKNOWN", "message":"Reconcile the durable operation receipt",
+                result = dict(status="failed", phase="failed", error={"code":"OUTCOME_UNKNOWN", "message":"Reconcile the durable operation receipt",
                                                        "outcome":"unknown", "operation_id":operation, "http_status":500})
             with self.registry_lock:
                 view.update(result)

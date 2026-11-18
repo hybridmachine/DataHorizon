@@ -16,6 +16,11 @@ from .formula import (
 ACTIONS = ("rows_insert", "rows_delete", "columns_insert", "columns_delete", "sheet_duplicate", "sheet_delete")
 SECONDS = 300
 ORDINARY_BYTES = 8 * 1024 * 1024
+# Below these totals an edit fits every ordinary budget without projecting it: at most
+# 2,000 moved coordinates plus 1,000 rewrites, and history images under 8 MiB even if every
+# character needs a 12-byte escape and every rewritten formula grows eightfold.
+SMALL_CELLS = 1000
+SMALL_CHARACTERS = 16384
 FORMULA = "c.source LIKE '=%' AND c.kind IN ('auto','formula')"
 NONBLANK = """NOT (source='' AND kind='auto' AND typeof(style)='text' AND
                    replace(replace(replace(replace(style,' ',''),char(9),''),char(10),''),char(13),'')='{}')"""
@@ -176,6 +181,17 @@ def insertion_bytes(record):
     return 0 if record == BLANK_INPUT else history_bytes(None, record)
 
 
+def clearly_ordinary(db, edit, where, args):
+    """True when bounded counts alone prove the edit is far inside the ordinary limits."""
+    measure = "SELECT count(*),coalesce(sum(length(source)+length(style)),0) FROM (SELECT source,style FROM cells"
+    cells, characters = db.execute(f"{measure} WHERE {where} LIMIT ?)", (*args, SMALL_CELLS + 1)).fetchone()
+    if not edit.new_name:  # A copy rewrites only its own cells.
+        clause, extra = ("", ()) if edit.axis else (" AND c.sheet_id<>?", (edit.target,))
+        formulas, more = db.execute(f"{measure} c WHERE {FORMULA}{clause} LIMIT ?)", (*extra, SMALL_CELLS + 1)).fetchone()
+        cells, characters = cells + formulas, characters + more
+    return cells <= SMALL_CELLS and characters <= SMALL_CHARACTERS
+
+
 def needs_large(book, request):
     """Find the ordinary path's exact admission boundary in a pinned read snapshot.
 
@@ -190,6 +206,8 @@ def needs_large(book, request):
         edit = plan(book, request)
         edit.check_grid(book.db)
         where, args = edit.source_filter()
+        if clearly_ordinary(book.db, edit, where, args):
+            return False
         moved = {}
         size = 0
         for row, col, source, kind, style in book.db.execute(

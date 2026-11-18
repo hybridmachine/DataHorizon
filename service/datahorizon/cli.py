@@ -197,6 +197,19 @@ def structure_progress(book):
     return report
 
 
+def stop_owned_service_on_termination():
+    """An isolated service no longer receives the terminal's signals. Unwind on hangup or
+    termination so the owning context stops it, which also cancels a running edit."""
+    import signal
+    def unwind(number, _frame):
+        sys.exit(128 + number)
+    for name in ("SIGHUP", "SIGTERM"):
+        number = getattr(signal, name, None)
+        if number is not None:
+            try: signal.signal(number, unwind)
+            except (OSError, ValueError): pass
+
+
 def confirm(question):
     """True on y/yes, False on anything else; None when stdin has nothing to answer with (non-interactive).
     The question goes to stderr, so it is seen when stdout is redirected."""
@@ -347,8 +360,11 @@ def main():
             releasing=False
             emit_result(output,result,args.command)
             return
+        isolated = not args.url and args.command == "apply"
+        if isolated:
+            stop_owned_service_on_termination()
         context = (nullcontext(Client(args.url, os.environ["DATAHORIZON_TOKEN"])) if args.url else
-                   LocalService(args.handler, approved_code=args.approve_code, isolate_interrupts=args.command=="apply"))
+                   LocalService(args.handler, approved_code=args.approve_code, isolate_interrupts=isolated))
         with context as client:
             if args.command=='cancel-operation':
                 result=client.request('/v1/workbooks/'+quote(args.handle,safe='')+'/operations/'+quote(args.operation_id,safe='')+'/cancel',{})

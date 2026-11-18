@@ -2266,7 +2266,14 @@ void MainWindow::reconcile() {
     const auto operationId=m_pendingId;
     m_client->request(base()+"/operations/"+QString::fromLatin1(QUrl::toPercentEncoding(m_pendingId)), {}, [this,operationId](QJsonObject result, QString error) {
         if(m_pendingId!=operationId) return;
-        if (!error.isEmpty()) { issue("Outcome remains unknown for " + m_pendingId + ". " + error); return; }
+        if (!error.isEmpty()) {
+            // A running background edit answers at once; ask again until its receipt exists.
+            if (result["code"]=="OUTCOME_UNKNOWN" && result["running"].toBool()) {
+                QTimer::singleShot(500,this,[this,operationId]{if(m_pendingId==operationId)reconcile();});
+                return;
+            }
+            issue("Outcome remains unknown for " + m_pendingId + ". " + error); return;
+        }
         if (!RestClient::validReceipt(result, m_pendingId)) { issue("Unrecognized operation receipt; editing remains stopped."); return; }
         if (m_draftSubmissionId==operationId) {
             if (result["outcome"]=="committed") clearRecoveredDraft();

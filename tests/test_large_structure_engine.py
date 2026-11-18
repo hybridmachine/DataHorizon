@@ -53,6 +53,21 @@ class LargeStructureEngine(unittest.TestCase):
             finally:
                 self.book.db.execute("ROLLBACK")
 
+    def test_small_edit_is_admitted_without_projecting_its_rewrites(self):
+        from unittest.mock import patch
+        self.mutate("sheet_add", name="Other")
+        self.load(self.book.db, self.sheet, 500, "=A1+1")
+        with patch("datahorizon.large_structure.rewrite", side_effect=AssertionError("projected")):
+            for action, args in (("rows_insert", dict(start=1, count=2)), ("columns_delete", dict(start=1)),
+                                 ("sheet_duplicate", dict(sheet="Sheet1", name="Copy")),
+                                 ("sheet_delete", dict(sheet="Sheet1"))):
+                self.assertFalse(self.admit(self.request(action, **args)), action)
+        # Past the bounded totals the review projects the edit as before.
+        self.book.db.execute("INSERT INTO cells(sheet_id,row,col,source) VALUES(?,?,2,?)", (self.sheet, 1, "x" * 20000))
+        with patch("datahorizon.large_structure.rewrite", side_effect=AssertionError("projected")):
+            with self.assertRaises(AssertionError):
+                self.admit(self.request("rows_insert", start=1, count=2))
+
     def test_disjoint_coordinates_threshold_and_atomic_receipt(self):
         self.load(self.book.db, self.sheet, 5000)
         request = self.request("rows_insert", start=1, count=6000)

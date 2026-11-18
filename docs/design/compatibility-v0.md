@@ -214,7 +214,9 @@ would discard a stored cell. A successful structural edit clears history.
 Oversized row/column edits and sheet duplication/deletion require explicit
 confirmation and run as atomic background jobs. Their receipts report affected
 references. The same workbook state, structural hooks and native metadata rules
-apply throughout the transaction. [Large structural edits](excel-fidelity-increment-9-plan.md)
+apply throughout the transaction. A confirmed job raises the structural event
+and delivers no per-cell change events for the cells it moves; edits authored by
+its handlers keep their ordinary change events. [Large structural edits](excel-fidelity-increment-9-plan.md)
 Wrap/borders are native styles; sizing, hiding and freezing use local view state
 as described below.
 
