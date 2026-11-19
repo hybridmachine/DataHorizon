@@ -57,6 +57,53 @@ def child_load(path):
         print(json.dumps({"seconds": seconds, "rss_added": peak_rss() - before, "formulas": len(data.formulas())}))
 
 
+def cell_key(sheet, row, col):
+    return sheet << 36 | row << 15 | col
+
+
+def child_load_compact(path):
+    """Fresh process: the same dependency data with integer keys, as an estimate of a compact in-memory form."""
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("SELECT count(*) FROM x_precedents_c").fetchone()
+        before, start = peak_rss(), time.perf_counter()
+        forward, single, columns = {}, {}, {}
+        for sheet, row, col, p_sheet, r1, c1, r2, c2 in db.execute("SELECT * FROM x_precedents_c"):
+            key = cell_key(sheet, row, col)
+            if r1 == r2 and c1 == c2:
+                target = cell_key(p_sheet, r1, c1)
+                forward[key] = (*forward.get(key, ()), target)
+                held = single.get(target)
+                single[target] = key if held is None else (*held, key) if isinstance(held, tuple) else (held, key)
+            else:
+                forward[key] = (*forward.get(key, ()), (p_sheet, r1, c1, r2, c2))
+                for column in range(c1, c2 + 1):
+                    columns.setdefault((p_sheet, column), []).append((r1, r2, key))
+        for ranges in columns.values():
+            ranges.sort()
+        loaded = time.perf_counter() - start
+        rss = peak_rss() - before
+        sheet, = db.execute("SELECT min(sheet) FROM x_precedents_c WHERE col=10").fetchone()
+        start, affected, pending = time.perf_counter(), set(), [(sheet, 1, 1)]
+        while pending:
+            s, r, c = pending.pop()
+            held = single.get(cell_key(s, r, c), ())
+            found = list(held if isinstance(held, tuple) else (held,))
+            found += [key for r1, r2, key in columns.get((s, c), ()) if r1 <= r <= r2]
+            for key in found:
+                if key not in affected:
+                    affected.add(key)
+                    pending.append((key >> 36, key >> 15 & 0x1FFFFF, key & 0x7FFF))
+        print(json.dumps({"seconds": loaded, "rss_added": rss, "formulas": len(forward),
+                          "affected": len(affected), "affected_seconds": time.perf_counter() - start}))
+
+
+def table_bytes(db):
+    try:
+        return dict(db.execute("SELECT name,sum(pgsize) FROM dbstat WHERE name LIKE 'x_%' GROUP BY name"))
+    except sqlite3.Error:
+        return None
+
+
 def stream_block_update(db, sheet, row, band, hash_name):
     block = (row - 1) // band
     hasher = _NEW[hash_name]()
@@ -73,9 +120,12 @@ def main():
     parser.add_argument("--prefix-rows", type=int, default=2_000)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--child-load", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--child-load-compact", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.child_load:
         return child_load(args.child_load)
+    if args.child_load_compact:
+        return child_load_compact(args.child_load_compact)
     if args.output is None:
         parser.error("--output is required")
     rows, runs, m = args.rows, args.runs, {}
@@ -134,6 +184,10 @@ def main():
                 print(f"Incorrect results: {wrong}", file=sys.stderr)
                 return 1
 
+            chain = {(data_sheet, row, 10) for row in range(1, rows + 1)}
+            m["recalculate_chain"], _ = timed(lambda: evaluate(db, data, chain, results), runs)
+            m["recalculate_chain"].update(formulas=len(chain), microseconds_per_formula=round(
+                m["recalculate_chain"]["median"] / len(chain) * 1e6, 1))
             m["range_cell_by_cell"], _ = timed(lambda: evaluate(db, data, {total}, results), runs)
             m["range_streamed"], streamed = timed(lambda: stream_sum(db, results, (data_sheet, 1, 1, rows, 1)), runs)
             if streamed != results[total]:
@@ -186,9 +240,42 @@ def main():
             db.executemany("INSERT INTO x_digests VALUES(?,?,?)",
                            ((*key, value) for key, value in digests["digest_scan.blake2b16.sum.256"].items()))
             db.commit()
+            tables = table_bytes(db)
         grown = stored.stat().st_size
         m["file_growth"] = {"fixture_bytes": fixture_bytes, "with_derived_bytes": grown,
-                            "fraction": round(grown / fixture_bytes - 1, 4), "unit": "fraction"}
+                            "fraction": round(grown / fixture_bytes - 1, 4), "unit": "fraction", "table_bytes": tables}
+
+        # The same derived data with small integer sheet numbers and no secondary indexes.
+        compact = copy("compact.dhwb")
+        with closing(sqlite3.connect(compact)) as db:
+            number = {sheet: index for index, (sheet,) in enumerate(db.execute("SELECT id FROM sheets ORDER BY id"), 1)}
+            db.executescript("""
+                CREATE TABLE x_precedents_c(sheet INTEGER NOT NULL,row INTEGER NOT NULL,col INTEGER NOT NULL,
+                    p_sheet INTEGER NOT NULL,r1 INTEGER NOT NULL,c1 INTEGER NOT NULL,r2 INTEGER NOT NULL,c2 INTEGER NOT NULL,
+                    PRIMARY KEY(sheet,row,col,p_sheet,r1,c1,r2,c2)) WITHOUT ROWID;
+                CREATE TABLE x_results_c(sheet INTEGER NOT NULL,row INTEGER NOT NULL,col INTEGER NOT NULL,
+                    value,error TEXT,PRIMARY KEY(sheet,row,col)) WITHOUT ROWID;""")
+            db.executemany("INSERT INTO x_precedents_c VALUES(?,?,?,?,?,?,?,?)",
+                           ((number[key[0]], key[1], key[2], number[r[0]], *r[1:])
+                            for key, rectangles in sorted(data.precedents.items()) for r in rectangles))
+            db.executemany("INSERT INTO x_results_c VALUES(?,?,?,?,?)",
+                           ((number[key[0]], key[1], key[2], None if isinstance(value, Exception) else value,
+                             value.code if isinstance(value, Exception) else None) for key, value in ordered))
+            db.commit()
+            tables = table_bytes(db)
+        grown = compact.stat().st_size
+        m["file_growth_compact"] = {"fixture_bytes": fixture_bytes, "with_derived_bytes": grown,
+                                    "fraction": round(grown / fixture_bytes - 1, 4), "unit": "fraction", "table_bytes": tables}
+        loads = [json.loads(subprocess.check_output([sys.executable, __file__, "--child-load-compact", str(compact)], text=True))
+                 for _ in range(runs)]
+        if any(item["affected"] != len(affected) for item in loads):
+            print("Compact dependents disagree", file=sys.stderr)
+            return 1
+        m["precedents_load_compact"] = {"runs": [round(item["seconds"], 6) for item in loads],
+                                        "median": round(statistics.median(item["seconds"] for item in loads), 6), "unit": "s"}
+        m["precedents_rss_compact"] = {"runs": [item["rss_added"] for item in loads],
+                                       "median": statistics.median(item["rss_added"] for item in loads), "unit": "bytes"}
+        m["affected_compact"] = {"median": round(statistics.median(item["affected_seconds"] for item in loads), 6), "unit": "s"}
 
         loads = [json.loads(subprocess.check_output([sys.executable, __file__, "--child-load", str(stored)], text=True))
                  for _ in range(runs)]
@@ -207,11 +294,12 @@ def main():
         "T2": {"sum": {h: m[f"digest_update.{h}.sum"]["median"] for h in HASHES},
                "stream": {f"{h}.{b}": m[f"digest_update.{h}.stream.{b}"]["median"] for h in HASHES for b in BANDS},
                "value": min(m[f"digest_update.{h}.sum"]["median"] for h in HASHES)},
-        "T3": {"value": [m["precedents_load"]["median"], m["precedents_rss"]["median"]]},
+        "T3": {"value": [m["precedents_load"]["median"], m["precedents_rss"]["median"]],
+               "compact": [m["precedents_load_compact"]["median"], m["precedents_rss_compact"]["median"]]},
         "T4": {"value": m["affected_memory"]["median"], "sql": m["affected_sql"]["median"]},
-        "T5": {"value": m["recalculate_edit_top"]["median"]},
+        "T5": {"value": m["recalculate_chain"]["median"], "edit_top_all_dependents": m["recalculate_edit_top"]["median"]},
         "T6": {"value": m["range_streamed"]["median"], "cell_by_cell": m["range_cell_by_cell"]["median"]},
-        "T7": {"value": m["file_growth"]["fraction"]},
+        "T7": {"value": m["file_growth"]["fraction"], "compact": m["file_growth_compact"]["fraction"]},
     }
     thresholds = {}
     for name, limit in LIMITS.items():
