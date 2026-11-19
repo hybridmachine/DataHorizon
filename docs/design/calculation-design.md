@@ -131,7 +131,9 @@ SQLite build can open it. **Call**
 
 **Measured**: the derived tables refer to a sheet by a small integer from a
 derived sheet-number table, and carry no secondary index. Repeating the text
-sheet identifiers grew the fixture by 57.5%; integers grow it by 11.0%.
+sheet identifiers grew the fixture by 57.5%; integers grow it by 11.0%. This
+fixes file growth only; memory needs a compact in-memory structure as well
+(section 13).
 
 Table and column names and the value encoding are left to the builder
 (section 13). The [native format document](native-format-v1.md) gains a v9
@@ -184,12 +186,13 @@ would look like an external edit to `data_version` and discard everything.
   measured and fixed in the format (section 13).
 - A block's digest covers, for every stored cell in it, the coordinates, the
   `source` and the `kind`. Style is excluded: it does not change a value.
-- **Measured**: a block is 64 rows of one sheet and its digest is one SHA-256
-  over its cells in key order, each cell length-prefixed. A commit re-reads and
-  re-hashes each block it touches (under 1 ms for a 640-cell block). Summing
-  per-cell hashes, which would avoid the re-read, was too slow in the opening
-  scan. Sheets wider than 10 columns were not measured; stage 3 measures them
-  and bounds blocks by columns too if needed.
+- **Measured**, and a close call: a block is 64 rows of one sheet and its
+  digest is one SHA-256 over its cells in key order, each cell length-prefixed.
+  A commit re-reads and re-hashes each block it touches (0.73 to 0.83 ms for a
+  640-cell block). Summing per-cell hashes avoids the re-read and passed its
+  threshold narrowly, but made the opening scan about 0.6 s slower. Sheets
+  wider than 10 columns were not measured; stage 3 measures them and
+  re-decides between the two, or bounds blocks by columns too.
 - One further digest covers the `sheets` table (identity and name of each
   sheet), because renaming or removing a sheet changes what a formula means.
 - The digest guards against accident, not attack. A person who can write the
@@ -220,8 +223,9 @@ continues in the background and releases results block by block. **Call**
 Either way no result is shown as current before its block has been verified in
 this session.
 
-**Measured**: on the 1,000,000-cell fixture the digest adds about 1.3 s to an
-opening that takes 0.4 to 0.7 s today, so verification runs during opening.
+**Measured**: on the 1,000,000-cell fixture the chosen digest adds 1.3 to
+1.8 s to an opening that takes 0.4 to 0.7 s today, so verification runs during
+opening.
 Stage 3 confirms this on the opening benchmark's long-text shape before
 relying on it; the fallback stays designed.
 
@@ -257,7 +261,8 @@ persist the repair; it recalculates into the temporary store (5.2).
 - Limits are per formula and are counts, not times: cells read by one formula
   and bytes held by one formula. They are measured, fixed and documented.
   **Measured**: 4,194,304 cells per formula is proposed (about 8 s at the
-  streamed rate of 2 µs per cell), on condition that stage 2 streams every
+  2 µs per cell measured for a streamed column of short numbers; other cell
+  kinds were not timed), on condition that stage 2 streams every
   range-reading function. A
   formula that exceeds one stores `#LIMIT!` and is counted in the calculation
   status. Because the limit is a count, the same inputs always give the same
@@ -445,11 +450,14 @@ Each stage is one or more reviewed pull requests that leave `main` working.
   conventions.
 - The hash function, the combining operation and the block height: fixed by
   stage 1 (6.1).
-- Dependency data is held in memory with integer keys: fixed by stage 1
-  (45.7 MiB and 0.27 s to load for 102,003 formulas; a SQL lookup took 41.6 s
-  where memory took 0.057 s). How dependents of a cell inside a precedent
-  rectangle are found stays the builder's choice; the prototype files ranges
-  by column and bisects.
+- Dependency data is held in memory in a compact integer-keyed form for
+  workbooks of about 100,000 formulas (a probe measured 45.7 MiB and 0.27 s to
+  load for 102,003; the tuple-keyed prototype needed 131.7 MiB). That form
+  reaches the 256-MiB service target at roughly 570,000 formulas, and the SQL
+  lookup as prototyped took 41.6 s, so what serves larger workbooks is still
+  open. How dependents of a cell inside a precedent rectangle are found stays
+  the builder's choice; the prototype's column-and-bisect lookup degrades when
+  many ranges cover a formula column and must not be carried over as it is.
 - Thread or child process for the worker.
 - Batch sizes and the worker's yielding rule.
 - The pull-request split inside each stage.

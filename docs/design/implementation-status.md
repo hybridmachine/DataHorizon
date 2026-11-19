@@ -17,17 +17,21 @@ formula or workbook behaviour is different.
 Measured on the reference Mac on a 1,002,003-cell workbook with 102,003
 formulas ([result](calculation-experiment.md),
 [evidence](evidence/calculation-experiment.json)):
-- Digests of every 64-row block add about 1.3 s to opening; a one-cell edit
-  re-hashes its block in under 1 ms.
+- Digests of every 64-row block (SHA-256) add 1.3 to 1.8 s to opening; a
+  one-cell edit re-hashes its block in 0.73 to 0.83 ms on a 10-column sheet.
 - The 100,000-row chained running total recalculates in 3.05 s. The affected
   set for an edit at its top is found in 0.057 s.
-- A streamed `SUM` over 100,000 cells takes 0.196 s, against 1.1 s cell by
-  cell.
+- A streamed `SUM` over 100,000 cells takes 0.196 s, against 1.1 to 1.8 s cell
+  by cell.
 - Two thresholds failed as first prototyped: dependency data needed 131.7 MiB
   (limit 64 MiB) and the derived tables grew the file by 57.5% (limit 25%).
-  With integer sheet numbers and keys, measured as a probe, they are 45.7 MiB
-  and 11.0%.
-- Finding dependents by SQL query took 41.6 s and is rejected.
+  A compact integer-keyed structure and integer sheet numbers, measured as a
+  probe and not as a tested implementation, give 45.7 MiB and 11.0%.
+- Finding dependents by SQL query took 41.6 s as prototyped; the cost is its
+  range join, and a better query was not measured.
+- The passes are specific to the fixture: its ranges cover input columns only.
+  A review probe with ranges over a formula column took 4.6 s to find
+  dependents in memory. No measured option covers a million formulas.
 
 Not verified: a cold file cache, sheets wider than 10 columns, long text cells
 in the digest, Windows and Linux, and anything inside the service. Stages 2 to
