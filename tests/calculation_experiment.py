@@ -70,7 +70,7 @@ def sheets_digest(db, hash_name):
 from bisect import bisect_right
 from collections import defaultdict, deque
 
-from datahorizon.formula import FormulaError, Parser, split_ref
+from datahorizon.formula import FormulaError, Parser, _fold, split_ref
 
 WIDE = 256  # A range wider than this many columns is kept in a per-sheet list and scanned.
 FORMULA_CELLS = "SELECT sheet_id,row,col,source FROM cells WHERE kind='formula' OR (kind='auto' AND source LIKE '=%')"
@@ -116,6 +116,12 @@ def extract_precedents(source, sheet_id, resolve):
     return list(rectangles), volatile, False
 
 
+def sheet_resolver(db):
+    """Sheet name to identifier, or None, matching names as the service's SQLite NOCASE does (ASCII only)."""
+    sheets = {_fold(name): sheet for sheet, name in db.execute("SELECT id,name FROM sheets")}
+    return lambda name: sheets.get(_fold(name))
+
+
 class DependencyData:
     """Precedent rectangles per formula, with a lookup from a changed cell to the formulas that read it.
 
@@ -143,8 +149,7 @@ class DependencyData:
 
     @classmethod
     def build(cls, db):
-        sheets = {name.lower(): sheet for sheet, name in db.execute("SELECT id,name FROM sheets")}
-        resolve = lambda name: sheets.get(name.lower())
+        resolve = sheet_resolver(db)
         precedents, volatile, unsafe = {}, set(), set()
         for sheet, row, col, source in db.execute(FORMULA_CELLS):
             key = sheet, row, col
@@ -274,15 +279,19 @@ class OrderedCalculator(Calculator):
     the only limit is the number of cells one formula reads.
     """
 
-    def __init__(self, db, data, results, cell_limit):
-        sheets = {name.lower(): sheet for sheet, name in db.execute("SELECT id,name FROM sheets")}
+    def __init__(self, db, data, results, cell_limit, unordered=()):
+        find = sheet_resolver(db)
 
         def resolve(name):
-            if name.lower() not in sheets:
+            sheet = find(name)
+            if sheet is None:
                 raise FormulaError("#REF!", "Referenced sheet does not exist")
-            return sheets[name.lower()]
+            return sheet
         super().__init__(None, resolve, 0)
         self.db, self.data, self.results, self.cell_limit, self.cells_read = db, data, results, cell_limit, 0
+        # Formulas the static order could not place: in, or downstream of, a possible cycle. They are
+        # evaluated by following the references a formula really reads, as the service does.
+        self.unordered, self.following, self.cycle_hits = set(unordered), [], 0
 
     def check(self):
         pass
@@ -292,6 +301,11 @@ class OrderedCalculator(Calculator):
         if self.cells_read > self.cell_limit:
             raise FormulaError("#LIMIT!", f"Formula reads more than {self.cell_limit} cells")
         key = sheet, row, col
+        if key in self.unordered:
+            result = self.follow(key)
+            if isinstance(result, FormulaError):
+                raise result
+            return result
         if key in self.data.precedents:
             result = self.results[key]
             if isinstance(result, FormulaError):
@@ -322,8 +336,33 @@ class OrderedCalculator(Calculator):
         (r1, r2), (c1, c2) = sorted((first[1], last[1])), sorted((first[2], last[2]))
         return first[0], r1, c1, r2, c2
 
+    def follow(self, key):
+        """The value of an unordered formula, reached from the formulas in self.following.
+
+        Meeting a formula that is already being followed is the cycle. A result is kept only if nothing
+        beneath it met one: a result that did depends on where evaluation entered the cycle.
+        """
+        if key in self.following:
+            self.cycle_hits += 1
+            return FormulaError("#CYCLE!", "Circular reference")
+        hits = self.cycle_hits
+        self.following.append(key)
+        try:
+            result = self.calculate(key)
+        finally:
+            self.following.pop()
+        if self.cycle_hits == hits:
+            self.unordered.discard(key)
+            self.results[key] = result
+        return result
+
     def formula(self, key):
         self.cells_read = 0
+        if key in self.unordered:
+            return self.follow(key)
+        return self.calculate(key)
+
+    def calculate(self, key):
         try:
             source = self.db.execute(CELL, key).fetchone()[0]
             result = self.evaluate(Parser(source[1:]).parse(), key[0])
@@ -346,10 +385,12 @@ def evaluate(db, data, cells, results, *, cell_limit=2_000_000):
     results holds the values that are already current. Nothing is timed: the only limit is cell_limit.
     """
     ordered, cyclic = data.order(cells)
-    new = {key: FormulaError("#CYCLE!", "Circular reference") for key in cyclic}
-    calculator = OrderedCalculator(db, data, {**results, **new} if results else new, cell_limit)
+    new = {}
+    calculator = OrderedCalculator(db, data, dict(results) if results else {}, cell_limit, cyclic)
     current = calculator.results
     for key in ordered:
+        current[key] = new[key] = calculator.formula(key)
+    for key in sorted(cyclic):
         current[key] = new[key] = calculator.formula(key)
     return new
 
@@ -359,7 +400,8 @@ def stream_sum(db, results, rect):
     sheet, r1, c1, r2, c2 = rect
     total = 0
     for row, col, source, kind in db.execute(
-            "SELECT row,col,source,kind FROM cells WHERE sheet_id=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ?",
+            "SELECT row,col,source,kind FROM cells WHERE sheet_id=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? "
+            "ORDER BY row,col",
             (sheet, r1, r2, c1, c2)):
         if kind == "number":
             value = float(source)

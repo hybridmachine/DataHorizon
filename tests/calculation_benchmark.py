@@ -129,6 +129,7 @@ def main():
     if args.output is None:
         parser.error("--output is required")
     rows, runs, m = args.rows, args.runs, {}
+    args.prefix_rows = min(args.prefix_rows, rows)  # the fixture has no prefix formula below its last row
     with tempfile.TemporaryDirectory() as directory:
         directory = Path(directory)
         template = directory / "fixture.dhwb"

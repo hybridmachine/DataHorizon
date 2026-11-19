@@ -10,7 +10,7 @@ The owner approved the [stored results and scaled recalculation design](calculat
 (increment 10 of the Excel fidelity programme) on November 18, 2026, with a
 content fingerprint as the freshness rule. Its stage 1 is built on branch
 `claude/calculation-stage-1` following the [plan](calculation-stage-1-plan.md):
-isolated test code in `tests/` (a fixture, three prototypes, 21 tests and a
+isolated test code in `tests/` (a fixture, three prototypes, 25 tests and a
 benchmark). No service, desktop or native format code changed, and no chart,
 formula or workbook behaviour is different.
 

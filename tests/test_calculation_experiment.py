@@ -253,6 +253,56 @@ class EvaluationTests(Case):
         self.assertEqual(stream_sum(db, results, (ids["data"],1,10,2000,10)), sum(expected_value(2000, "Sheet1", row, 10) for row in range(1, 2001)))
         self.assertEqual(stream_sum(db, results, (ids["data"],1,9,2000,9)), 0)
 
+    def engine_agrees(self, db, ids, results, name="book.dhwb"):
+        names = {sheet: name_ for name_, sheet in ids.items()}
+        with closing(Workbook(Path(self.temp.name) / name)) as book:
+            for (sheet, row, col), mine in sorted(results.items()):
+                with self.subTest(sheet=names[sheet], row=row, col=col):
+                    cell = book.read(names[sheet], dict(r1=row, r2=row, c1=col, c2=col))["cells"][0]
+                    if cell["calculation"] == "error":
+                        self.assertIsInstance(mine, FormulaError)
+                        self.assertEqual(mine.code, cell["display"])
+                    else:
+                        self.assertEqual(mine, cell["value"])
+
+    def test_an_untaken_branch_does_not_make_a_cycle(self):
+        db, ids = self.book({("Sheet1",1,1):"=IF(FALSE,A1,42)", ("Sheet1",1,2):"=A1+1",
+                             ("Sheet1",2,1):"=IFERROR(B2,5)", ("Sheet1",2,2):"=A2", ("Sheet1",2,3):"=B2*2",
+                             ("Sheet1",3,1):"=IF(TRUE,A3,1)", ("Sheet1",3,2):"=A3"})
+        data, results = self.everything(db); s = ids["Sheet1"]
+        self.assertEqual((results[(s,1,1)], results[(s,1,2)]), (42, 43))
+        for key in ((s,2,1), (s,2,2), (s,2,3), (s,3,1), (s,3,2)):  # IFERROR does not catch a cycle
+            self.assertEqual(results[key].code, "#CYCLE!")
+        self.engine_agrees(db, ids, results)
+
+    def test_sheet_names_match_as_sqlite_nocase_does(self):
+        db, ids = self.book({("\u00c9",1,1):"7", ("Sheet1",1,1):"='\u00e9'!A1", ("Sheet1",1,2):"='\u00c9'!A1",
+                             ("Sheet1",1,3):"=sheet1!B1+1"})
+        data, results = self.everything(db); s = ids["Sheet1"]
+        self.assertEqual(data.precedents[(s,1,1)], [])
+        self.assertEqual(data.precedents[(s,1,2)], [(ids["\u00c9"],1,1,1,1)])
+        self.assertEqual(results[(s,1,1)].code, "#REF!")
+        self.assertEqual((results[(s,1,2)], results[(s,1,3)]), (7, 8))
+        self.engine_agrees(db, ids, results)
+
+    def test_stream_sum_adds_in_row_then_column_order(self):
+        db, ids = self.book({("Sheet1",1,1):"1e16", ("Sheet1",2,1):"-1e16", ("Sheet1",3,1):"1",
+                             ("Sheet1",1,3):"=SUM(A1:A3)"})
+        data, results = self.everything(db); s = ids["Sheet1"]
+        db.execute("PRAGMA reverse_unordered_selects=ON")
+        self.assertEqual(stream_sum(db, results, (s,1,1,3,1)), 1)
+        self.assertEqual(results[(s,1,3)], 1)
+        self.engine_agrees(db, ids, results)
+
+    def test_benchmark_runs_with_fewer_rows_than_the_default_prefix(self):
+        import json, subprocess, sys
+        report = Path(self.temp.name) / "report.json"
+        subprocess.run([sys.executable, str(Path(__file__).with_name("calculation_benchmark.py")), "--rows", "100",
+                        "--runs", "1", "--output", str(report)], check=True, capture_output=True, timeout=300)
+        loaded = json.loads(report.read_text())
+        self.assertEqual(loaded["fixture"]["prefix_rows"], 100)
+        self.assertEqual(loaded["measurements"]["prefix_throughput"]["formulas"], 100)
+
 
 if __name__ == "__main__":
     unittest.main()

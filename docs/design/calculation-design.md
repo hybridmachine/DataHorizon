@@ -122,8 +122,9 @@ This is native format v9. The tables hold:
   for formulas whose references cannot be extracted. Opening must not need to
   parse every formula.
 - **Input digests**: one digest per block of cells (section 6).
-- **Pending roots**: the cells whose inputs changed and whose dependents have
-  not all been recalculated (section 7).
+- **Pending roots**: the cells that changed, or the block rectangles found
+  changed at open (section 6.2), whose dependents have not all been
+  recalculated (section 7).
 - **Calculation metadata**: the store's own version and a generation counter.
 
 No virtual tables, triggers or SQLite extensions are used in the file, so any
@@ -200,11 +201,28 @@ would look like an external edit to `data_version` and discard everything.
 
 ### 6.2 When it is checked
 
-- **On open.** The validation scan computes every block's digest and compares.
-  All equal: every stored result that is not pending is current, and no formula
-  is evaluated. A block that differs: its cells become pending roots
-  (section 7), its formulas' precedents are extracted again, and its digest is
-  replaced. A differing `sheets` digest invalidates every result.
+- **On open.** The validation scan computes every block's digest and compares
+  over the union of the stored block keys and the keys the scan finds. A block
+  differs if its digest changed, if it has a stored digest and no cells now, or
+  if it has cells and no stored digest. All equal: every stored result that is
+  not pending is current, and no formula is evaluated.
+- **A block that differs** becomes a pending root as a whole: the root is the
+  block's rectangle (its sheet and row band), not the cells now stored in it.
+  Every formula with a precedent that intersects the rectangle is recalculated,
+  including one that reads a coordinate which is now empty. Example: `A1` is
+  the only cell in its block and `B100` holds `=A1+1`; a direct edit deletes
+  `A1`; the block's stored digest has no cells to match, and `B100` loses its
+  result. Precedents and results stored for formulas that no longer exist in
+  the block are deleted, the precedents of the formulas now in it are
+  extracted again, and its digest is replaced or removed.
+- **A differing `sheets` digest** invalidates every result and every stored
+  precedent. A sheet's name decides what a formula reads, and the formula's
+  text and block do not change when a sheet is renamed, added or removed.
+  Example: `=Budget!A1` gives `#REF!` and has no precedents while no sheet is
+  called `Budget`; a direct edit renames `Draft` to `Budget`. Every formula's
+  precedents are extracted again against the new sheet list before the
+  dependents lookup is used for anything, so a later edit of `Budget!A1`
+  finds its reader.
 - **On refresh after an external change** (`data_version` moved): the same
   comparison, in the validation scan `refresh` already runs. The existing
   consequences stay: new state token, Undo cleared, no handler replay.
@@ -219,9 +237,14 @@ pass over the cells already happens. Stage 1 (section 12) measures it on the
 1,000,000-cell fixture before anything else is built. If the
 five-second opening budget cannot hold it, verification moves off the opening
 path: the workbook opens, every result is shown as pending, and verification
-continues in the background and releases results block by block. **Call**
-Either way no result is shown as current before its block has been verified in
-this session.
+continues in the background. No result is released until the whole scan has
+finished and the invalidation that follows from it has been applied. A result
+is not released when its own block verifies: `=Z1000` in `A1` sits in a block
+that verifies long before the scan reaches a changed `Z1000`. Releasing each
+result once every block it transitively depends on has verified would show
+values sooner and is not designed. **Call**
+Either way no result is shown as current before every block has been verified
+in this session.
 
 **Measured**: on the 1,000,000-cell fixture the chosen digest adds 1.3 to
 1.8 s to an opening that takes 0.4 to 0.7 s today, so verification runs during
@@ -253,8 +276,20 @@ persist the repair; it recalculates into the temporary store (5.2).
 
 - Evaluation is iterative, in dependency order. Chain depth is bounded by
   memory and time, not by 128.
-- A cycle gives `#CYCLE!` for its members and for what depends on them, stored
-  like any other result.
+- Precedents are every reference a formula could read, including the branch
+  of an `IF` that is not taken. They decide what is recalculated. They do not
+  decide what is a cycle: `=IF(FALSE,A1,42)` in `A1` is 42 today and stays 42.
+  Formulas the dependency order cannot place are evaluated by following the
+  references they really read, as today. `#CYCLE!` goes to a formula that
+  reaches itself that way and to what reads it, stored like any other result.
+  **Measured**: the prototype first gave `#CYCLE!` to the whole static cycle,
+  which disagreed with the service.
+- Sheet names in references are matched as the `sheets` table matches them
+  (SQLite `NOCASE`, ASCII letters only), in precedent extraction and in
+  evaluation alike. `='é'!A1` does not read a sheet named `É`.
+- A streamed range is read in row, then column order, the order the service
+  visits a rectangle today. The order decides floating-point rounding and
+  which cell's error surfaces first, so it must not depend on the query plan.
 - Aggregates, conditional aggregates and lookups over a range read the range as
   a stream from SQLite, joined to stored results for the formula cells in it,
   and do not materialise it.
@@ -392,7 +427,14 @@ writes would look like external edits to the other.
   sequence of edits equal a from-scratch evaluation of the final inputs.
 - Freshness tests that edit the file with an independent SQLite connection
   while the service is running and while it is stopped: changing, adding and
-  deleting cells, renaming a sheet, and deleting derived rows.
+  deleting cells, renaming a sheet, and deleting derived rows. They include
+  deleting the only cell of a block that a formula elsewhere reads, renaming a
+  sheet to a name that a `#REF!` formula refers to and then editing the cell
+  it now reads, and, under the background fallback, a formula in an early
+  block that reads a changed cell in a late one.
+- Differential cases against today's evaluation for an untaken branch that
+  refers to its own cell, a sheet name that differs only in a non-ASCII
+  letter's case, and a sum whose result depends on the order of addition.
 - Crash tests that kill the service during an edit's commit, during a result
   write and during open verification, then reopen and compare against the
   from-scratch evaluation.

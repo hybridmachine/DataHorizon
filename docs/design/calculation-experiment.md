@@ -172,6 +172,9 @@ took 24 to 52 s in total, of which the chain is 3 s.
 - `evaluate()` was always given a closed set of formulas. A caller that passes
   a set whose precedents are neither in it nor in the results gets a
   `KeyError`, and a cycle with a member outside the set is not detected.
+- Formulas in or downstream of a possible cycle are evaluated by recursion.
+  A long chain of them hits Python's recursion limit and gets `#LIMIT!`; the
+  service needs an iterative form.
 - `_encoded` assumes `source` and `kind` are text. A direct SQLite edit can
   store a BLOB there, and stage 3's scan must not fail on one.
 
@@ -195,11 +198,22 @@ took 24 to 52 s in total, of which the chain is 3 s.
 - Integer-keyed probes were added after T3 and T7 failed and the SQL fallback
   proved unusable. The thresholds are still judged on the plan's definitions.
 - Two test methods and one extra assertion were added beyond the plan's 19
-  tests, for a total of 21.
+  tests, for a total of 21. The pull-request review added four more, for 25.
 - A whole-branch review corrected this document: the opening cost for the
   chosen hash, the basis for choosing the stream mode, the cause of the memory
   failure and the standing of the SQL path. Its probes are cited where used
   and are not in the evidence files.
+
+- The pull-request review found four defects in the prototype and benchmark,
+  fixed after both evidence runs. The prototype gave `#CYCLE!` to every
+  formula in a static cycle, where the service follows only the branch taken
+  (`=IF(FALSE,A1,42)` in `A1` is 42); it matched sheet names with Python's
+  `lower()`, where the service folds ASCII letters only; the streamed `SUM`
+  had no `ORDER BY`, so its rounding depended on the query plan; and the
+  benchmark failed when `--rows` was below `--prefix-rows`. The fixture has no
+  cycles and one sheet-name spelling, and the ordered scan uses the same
+  primary-key search (0.12 s for the 100,000-cell `SUM` when rechecked), so
+  the evidence was not rerun.
 
 ## Next
 
