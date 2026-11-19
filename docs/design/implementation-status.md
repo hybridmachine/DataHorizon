@@ -4,6 +4,36 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## Calculation stage 1 (measurement) — November 18, 2026
+
+The owner approved the [stored results and scaled recalculation design](calculation-design.md)
+(increment 10 of the Excel fidelity programme) on November 18, 2026, with a
+content fingerprint as the freshness rule. Its stage 1 is built on branch
+`claude/calculation-stage-1` following the [plan](calculation-stage-1-plan.md):
+isolated test code in `tests/` (a fixture, three prototypes, 21 tests and a
+benchmark). No service, desktop or native format code changed, and no chart,
+formula or workbook behaviour is different.
+
+Measured on the reference Mac on a 1,002,003-cell workbook with 102,003
+formulas ([result](calculation-experiment.md),
+[evidence](evidence/calculation-experiment.json)):
+- Digests of every 64-row block add about 1.3 s to opening; a one-cell edit
+  re-hashes its block in under 1 ms.
+- The 100,000-row chained running total recalculates in 3.05 s. The affected
+  set for an edit at its top is found in 0.057 s.
+- A streamed `SUM` over 100,000 cells takes 0.196 s, against 1.1 s cell by
+  cell.
+- Two thresholds failed as first prototyped: dependency data needed 131.7 MiB
+  (limit 64 MiB) and the derived tables grew the file by 57.5% (limit 25%).
+  With integer sheet numbers and keys, measured as a probe, they are 45.7 MiB
+  and 11.0%.
+- Finding dependents by SQL query took 41.6 s and is rejected.
+
+Not verified: a cold file cache, sheets wider than 10 columns, long text cells
+in the digest, Windows and Linux, and anything inside the service. Stages 2 to
+5 are not planned or built; calculation in the product is unchanged
+(`evaluated_on_read`, with today's limits).
+
 ## Large structural edits — November 17, 2026
 
 Chart export and desktop authoring reached `main` in PRs #141 and #143.

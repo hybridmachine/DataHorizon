@@ -1,6 +1,6 @@
 # Stored results and scaled recalculation: design
 
-Draft 0.1 | November 18, 2026 | Status: approved by the owner on November 18, 2026, with the four decisions in section 14 accepted as written. Nothing here is built. [Stage 1 plan](calculation-stage-1-plan.md).
+Draft 0.1 | November 18, 2026 | Status: approved by the owner on November 18, 2026, with the four decisions in section 14 accepted as written. Stage 1 (measurement) is built on branch `claude/calculation-stage-1`: [plan](calculation-stage-1-plan.md), [result](calculation-experiment.md). It is isolated test code; no product code is built. Paragraphs marked **Measured** record what stage 1 fixed.
 
 This is the design note that [increment 10 of the Excel fidelity programme](excel-fidelity-plan.md#increment-10-stored-results-and-scaled-recalculation)
 requires before the increment is planned. It is a design to plan from, not a
@@ -129,6 +129,10 @@ This is native format v9. The tables hold:
 No virtual tables, triggers or SQLite extensions are used in the file, so any
 SQLite build can open it. **Call**
 
+**Measured**: the derived tables refer to a sheet by a small integer from a
+derived sheet-number table, and carry no secondary index. Repeating the text
+sheet identifiers grew the fixture by 57.5%; integers grow it by 11.0%.
+
 Table and column names and the value encoding are left to the builder
 (section 13). The [native format document](native-format-v1.md) gains a v9
 section that documents every table for external readers.
@@ -179,9 +183,13 @@ would look like an external edit to `data_version` and discard everything.
 - Cells are grouped into blocks: a sheet and a band of rows. The band height is
   measured and fixed in the format (section 13).
 - A block's digest covers, for every stored cell in it, the coordinates, the
-  `source` and the `kind`. Style is excluded: it does not change a value. The
-  per-cell hashes are combined so that the block digest does not depend on scan
-  order and one cell's change updates it without rereading the block.
+  `source` and the `kind`. Style is excluded: it does not change a value.
+- **Measured**: a block is 64 rows of one sheet and its digest is one SHA-256
+  over its cells in key order, each cell length-prefixed. A commit re-reads and
+  re-hashes each block it touches (under 1 ms for a 640-cell block). Summing
+  per-cell hashes, which would avoid the re-read, was too slow in the opening
+  scan. Sheets wider than 10 columns were not measured; stage 3 measures them
+  and bounds blocks by columns too if needed.
 - One further digest covers the `sheets` table (identity and name of each
   sheet), because renaming or removing a sheet changes what a formula means.
 - The digest guards against accident, not attack. A person who can write the
@@ -211,6 +219,11 @@ path: the workbook opens, every result is shown as pending, and verification
 continues in the background and releases results block by block. **Call**
 Either way no result is shown as current before its block has been verified in
 this session.
+
+**Measured**: on the 1,000,000-cell fixture the digest adds about 1.3 s to an
+opening that takes 0.4 to 0.7 s today, so verification runs during opening.
+Stage 3 confirms this on the opening benchmark's long-text shape before
+relying on it; the fallback stays designed.
 
 A workbook opened read-only that turns out to have changed blocks cannot
 persist the repair; it recalculates into the temporary store (5.2).
@@ -242,7 +255,10 @@ persist the repair; it recalculates into the temporary store (5.2).
   a stream from SQLite, joined to stored results for the formula cells in it,
   and do not materialise it.
 - Limits are per formula and are counts, not times: cells read by one formula
-  and bytes held by one formula. They are measured, fixed and documented. A
+  and bytes held by one formula. They are measured, fixed and documented.
+  **Measured**: 4,194,304 cells per formula is proposed (about 8 s at the
+  streamed rate of 2 µs per cell), on condition that stage 2 streams every
+  range-reading function. A
   formula that exceeds one stores `#LIMIT!` and is counted in the calculation
   status. Because the limit is a count, the same inputs always give the same
   result, so `#LIMIT!` is stored like any other error, is recalculated only
@@ -427,9 +443,13 @@ Each stage is one or more reviewed pull requests that leave `main` working.
 
 - Table, column, route and CLI names and JSON shapes, consistent with existing
   conventions.
-- The hash function, the combining operation and the block height, from stage 1.
-- Whether dependency data is held in memory or queried from SQLite, and how
-  dependents of a cell inside a precedent rectangle are found.
+- The hash function, the combining operation and the block height: fixed by
+  stage 1 (6.1).
+- Dependency data is held in memory with integer keys: fixed by stage 1
+  (45.7 MiB and 0.27 s to load for 102,003 formulas; a SQL lookup took 41.6 s
+  where memory took 0.057 s). How dependents of a cell inside a precedent
+  rectangle are found stays the builder's choice; the prototype files ranges
+  by column and bisects.
 - Thread or child process for the worker.
 - Batch sizes and the worker's yielding rule.
 - The pull-request split inside each stage.
