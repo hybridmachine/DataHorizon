@@ -11,6 +11,8 @@ from datahorizon.engine import Workbook
 from calculation_fixture import create_fixture, expected_value
 from calculation_experiment import HASHES, MODES, cell_hash, scan_digests, sheets_digest, updated_digest
 from calculation_experiment import DependencyData, extract_precedents, sql_dependents
+from calculation_experiment import evaluate, stream_sum
+from datahorizon.formula import FormulaError
 
 
 class Case(unittest.TestCase):
@@ -183,6 +185,73 @@ class DependencyDataTests(Case):
         position = {key: index for index, key in enumerate(ordered)}
         self.assertLess(position[(ids["data"],4999,10)], position[(ids["data"],5000,10)])
         self.assertLess(position[(ids["data"],5000,10)], position[(ids["summary"],2,1)])
+
+
+class EvaluationTests(Case):
+    def everything(self, db, **options):
+        data = DependencyData.build(db)
+        return data, evaluate(db, data, set(data.formulas()), {}, **options)
+
+    def test_chain_deeper_than_128_and_range_wider_than_10000(self):
+        ids = create_fixture(self.path, rows=12_000)
+        data, results = self.everything(self.connect())
+        self.assertEqual(results[(ids["data"], 12_000, 10)], expected_value(12_000, "Sheet1", 12_000, 10))
+        self.assertEqual(results[(ids["summary"], 1, 1)], expected_value(12_000, "Summary", 1, 1))
+        self.assertEqual(results[(ids["summary"], 3, 1)], 0)
+
+    def test_agrees_with_the_engine_on_every_formula_of_a_small_workbook(self):
+        ids = create_fixture(self.path, rows=100, prefix_rows=40)
+        db = self.connect()
+        extra = ["=1/0", '=A1&"x"', '=IF(A2>1,"y",NOW())', "=Missing!A1", "=B200", "=M1+1", '=COUNTIFS(A1:A50,">5")',
+                 "=XLOOKUP(7,A1:A50,B1:B50)", "=AVERAGE(J1:J10)", "=SUM(M1:M2)", "=A1 +* 2", "=I5", "=Summary!A1*2"]
+        db.executemany("INSERT INTO cells(sheet_id,row,col,source,kind) VALUES(?,?,13,?,'formula')",
+                       [(ids["data"], row, source) for row, source in enumerate(extra, 1)])
+        db.commit()
+        data, results = self.everything(db)
+        self.assertEqual(len(results), 100 + 40 + 3 + len(extra))
+        names = {ids["data"]: "Sheet1", ids["summary"]: "Summary"}
+        with closing(Workbook(self.path)) as book:
+            for (sheet, row, col), mine in sorted(results.items()):
+                with self.subTest(sheet=names[sheet], row=row, col=col):
+                    cell = book.read(names[sheet], dict(r1=row, r2=row, c1=col, c2=col))["cells"][0]
+                    if cell["calculation"] == "error":
+                        self.assertIsInstance(mine, FormulaError)
+                        self.assertEqual(mine.code, cell["display"])
+                    else:
+                        self.assertEqual(mine, cell["value"])
+
+    def test_cycles_get_cycle_errors_and_evaluation_terminates(self):
+        db, ids = self.book({("Sheet1",1,1):"=B1", ("Sheet1",1,2):"=SUM(A1:A2)", ("Sheet1",1,3):"=A1+1",
+                             ("Sheet1",2,1):"=A2", ("Sheet1",3,1):"1", ("Sheet1",3,2):"=A3", ("Sheet1",3,3):"=B3",
+                             ("Sheet1",4,4):"=D4"})
+        data, results = self.everything(db); s = ids["Sheet1"]
+        for key in ((s,1,1), (s,1,2), (s,1,3), (s,2,1), (s,4,4)):
+            self.assertIsInstance(results[key], FormulaError)
+            self.assertEqual(results[key].code, "#CYCLE!")
+        self.assertEqual((results[(s,3,2)], results[(s,3,3)]), (1, 1))
+
+    def test_cell_limit_is_a_deterministic_count(self):
+        ids = create_fixture(self.path, rows=500); db = self.connect(); data = DependencyData.build(db)
+        first = evaluate(db, data, {(ids["summary"],1,1)}, {}, cell_limit=499)
+        self.assertEqual(first[(ids["summary"],1,1)].code, "#LIMIT!")
+        self.assertEqual(evaluate(db, data, {(ids["summary"],1,1)}, {}, cell_limit=500)[(ids["summary"],1,1)], expected_value(500, "Summary", 1, 1))
+
+    def test_edit_recalculates_only_dependents(self):
+        ids = create_fixture(self.path, rows=300); db = self.connect()
+        data, old = self.everything(db)
+        db.execute("UPDATE cells SET source='1000' WHERE sheet_id=? AND row=150 AND col=1", (ids["data"],)); db.commit()
+        affected = data.dependents([(ids["data"],150,1)])
+        self.assertEqual(affected, {(ids["data"],row,10) for row in range(150, 301)} | {(ids["summary"],row,1) for row in (1,2,3)})
+        merged = {**old, **evaluate(db, data, affected, old)}
+        self.assertEqual(merged, evaluate(db, data, set(data.formulas()), {}))
+        self.assertEqual(merged[(ids["data"],300,10)], expected_value(300, "Sheet1", 300, 10) - 150 % 97 + 1000)
+
+    def test_stream_sum_equals_evaluated_sum_over_inputs_and_formulas(self):
+        ids = create_fixture(self.path, rows=2_000); db = self.connect()
+        data, results = self.everything(db)
+        self.assertEqual(stream_sum(db, results, (ids["data"],1,1,2000,1)), expected_value(2000, "Summary", 1, 1))
+        self.assertEqual(stream_sum(db, results, (ids["data"],1,10,2000,10)), sum(expected_value(2000, "Sheet1", row, 10) for row in range(1, 2001)))
+        self.assertEqual(stream_sum(db, results, (ids["data"],1,9,2000,9)), 0)
 
 
 if __name__ == "__main__":

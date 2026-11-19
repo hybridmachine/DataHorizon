@@ -255,3 +255,124 @@ def sql_dependents(db, cells):
               "ON p.p_sheet=a.s AND p.c1<=a.c AND p.c2>=a.c AND p.r1<=a.r AND p.r2>=a.r WHERE NOT (p.r1=p.r2 AND p.c1=p.c2)")
     terms = " UNION ".join(term.format(source) for source in ("x_roots", "affected") for term in (single, ranges))
     return set(db.execute(f"WITH RECURSIVE affected(s,r,c) AS ({terms}) SELECT s,r,c FROM affected"))
+
+
+# ---- Ordered evaluation --------------------------------------------------------------------------
+
+import math
+
+from datahorizon.engine import typed
+from datahorizon.formula import Calculator
+
+CELL = "SELECT source,kind FROM cells WHERE sheet_id=? AND row=? AND col=?"
+
+
+class OrderedCalculator(Calculator):
+    """The service's functions over results that already exist.
+
+    A formula cell's value comes from the results, so evaluating one formula never descends into another;
+    the only limit is the number of cells one formula reads.
+    """
+
+    def __init__(self, db, data, results, cell_limit):
+        sheets = {name.lower(): sheet for sheet, name in db.execute("SELECT id,name FROM sheets")}
+
+        def resolve(name):
+            if name.lower() not in sheets:
+                raise FormulaError("#REF!", "Referenced sheet does not exist")
+            return sheets[name.lower()]
+        super().__init__(None, resolve, 0)
+        self.db, self.data, self.results, self.cell_limit, self.cells_read = db, data, results, cell_limit, 0
+
+    def check(self):
+        pass
+
+    def cell(self, sheet, row, col):
+        self.cells_read += 1
+        if self.cells_read > self.cell_limit:
+            raise FormulaError("#LIMIT!", f"Formula reads more than {self.cell_limit} cells")
+        key = sheet, row, col
+        if key in self.data.precedents:
+            result = self.results[key]
+            if isinstance(result, FormulaError):
+                raise result
+            return result
+        stored = self.db.execute(CELL, key).fetchone()
+        if stored is None:
+            return None
+        if stored[1] == "unmaintained":
+            raise FormulaError("#REF!", "Unmaintained formula")
+        return typed({"source": stored[0], "kind": stored[1], "style": {}})["value"]
+
+    def range_geometry(self, node, sheet):
+        # Calculator.range_geometry without its 10,000-cell bound.
+        if node[0] == "error":
+            raise FormulaError(node[1])
+        if node[0] == "ref":
+            target = self.reference(node[1], sheet)
+            return target[0], target[1], target[2], target[1], target[2]
+        if node[0] != "range":
+            raise FormulaError("#VALUE!", "Expected a cell or rectangular range")
+        if node[2][0] != "ref" or node[3][0] != "ref":
+            raise FormulaError("#REF!", "Range endpoints must be cell references")
+        first = self.reference(node[2][1], sheet)
+        last = self.reference(node[3][1], first[0] if split_ref(node[3][1])[0] is None else sheet)
+        if first[0] != last[0]:
+            raise FormulaError("#REF!", "3D ranges are unsupported")
+        (r1, r2), (c1, c2) = sorted((first[1], last[1])), sorted((first[2], last[2]))
+        return first[0], r1, c1, r2, c2
+
+    def formula(self, key):
+        self.cells_read = 0
+        try:
+            source = self.db.execute(CELL, key).fetchone()[0]
+            result = self.evaluate(Parser(source[1:]).parse(), key[0])
+            if isinstance(result, list):
+                raise FormulaError("#VALUE!", "Range cannot be a scalar result")
+            if isinstance(result, (int, float)) and not math.isfinite(result):
+                raise FormulaError("#NUM!", "Non-finite result")
+            return result
+        except OverflowError:
+            return FormulaError("#NUM!", "Numeric overflow")
+        except RecursionError:
+            return FormulaError("#LIMIT!", "Calculation nesting limit exceeded")
+        except FormulaError as error:
+            return error
+
+
+def evaluate(db, data, cells, results, *, cell_limit=2_000_000):
+    """Results for the formulas in cells, evaluated in dependency order; each is a value or a FormulaError.
+
+    results holds the values that are already current. Nothing is timed: the only limit is cell_limit.
+    """
+    ordered, cyclic = data.order(cells)
+    new = {key: FormulaError("#CYCLE!", "Circular reference") for key in cyclic}
+    calculator = OrderedCalculator(db, data, {**results, **new} if results else new, cell_limit)
+    current = calculator.results
+    for key in ordered:
+        current[key] = new[key] = calculator.formula(key)
+    return new
+
+
+def stream_sum(db, results, rect):
+    """SUM over one rectangle from a single range scan, taking formula cells' values from results."""
+    sheet, r1, c1, r2, c2 = rect
+    total = 0
+    for row, col, source, kind in db.execute(
+            "SELECT row,col,source,kind FROM cells WHERE sheet_id=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ?",
+            (sheet, r1, r2, c1, c2)):
+        if kind == "number":
+            value = float(source)
+        elif kind == "formula" or (kind == "auto" and source.startswith("=")):
+            value = results[(sheet, row, col)]
+            if isinstance(value, FormulaError):
+                raise value
+        elif kind == "unmaintained":
+            raise FormulaError("#REF!", "Unmaintained formula")
+        else:
+            value = typed({"source": source, "kind": kind, "style": {}})["value"]
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            total += value
+            if not math.isfinite(total):
+                raise FormulaError("#NUM!", "SUM exceeds the finite numeric range")
+    return total
