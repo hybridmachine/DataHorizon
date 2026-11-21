@@ -1,6 +1,6 @@
 # Stored results and scaled recalculation: design
 
-Draft 0.1 | November 18, 2026 | Status: approved by the owner on November 18, 2026, with the four decisions in section 14 accepted as written. Stage 1 (measurement) is built on branch `claude/calculation-stage-1`: [plan](calculation-stage-1-plan.md), [result](calculation-experiment.md). It is isolated test code; no product code is built. Paragraphs marked **Measured** record what stage 1 fixed.
+Draft 0.1 | November 18, 2026 | Status: approved by the owner on November 18, 2026, with the four decisions in section 14 accepted as written. Stage 1 (measurement) is built on branch `claude/calculation-stage-1`: [plan](calculation-stage-1-plan.md), [result](calculation-experiment.md). Stage 1 is isolated test code. Stage 2 (iterative evaluation and streamed ranges) is built on branch `claude/calculation-stage-2`: [plan](calculation-stage-2-plan.md), [result](calculation-stage-2.md); the 128-cell and 10,000-cell limits are gone, stored results, digests and background recalculation (stages 3 to 5) are not built. Paragraphs marked **Measured** record what stages 1 and 2 fixed.
 
 This is the design note that [increment 10 of the Excel fidelity programme](excel-fidelity-plan.md#increment-10-stored-results-and-scaled-recalculation)
 requires before the increment is planned. It is a design to plan from, not a
@@ -56,8 +56,11 @@ Anti-goals (a failure even if everything else works):
 
 - Each read builds a `Calculator` ([formula.py](../../service/datahorizon/formula.py))
   with a 0.25-second budget (2 seconds for lists, find, export and calculation
-  jobs), a 10,000-step count, an 8-MiB input cap and recursive evaluation, which
-  bounds a dependency chain at 128 cells.
+  jobs), a per-formula count of 4,194,304 stored cells read, an 8-MiB cap on
+  cells read one at a time, and evaluation by an explicit stack, so a
+  dependency chain has no fixed depth. Stage 2 replaced a 10,000-step count and
+  recursive evaluation, which bounded a chain at 128 cells and a range at
+  10,000.
 - [dependencies.py](../../service/datahorizon/dependencies.py) keeps up to
   4,096 results and 50,000 edges in memory. It clears itself when it overflows,
   on every structural edit, and on every external change. Volatile formulas
@@ -322,6 +325,14 @@ rule the old error would be served for ever.
   reaches itself that way and to what reads it, stored like any other result.
   **Measured**: the prototype first gave `#CYCLE!` to the whole static cycle,
   which disagreed with the service.
+  **Measured** (stage 2): the service now evaluates a chain with an explicit
+  stack, so depth is no longer limited to 128. On the plain calculator a chain
+  costs about 35 µs per formula, and a 2 s read completes 32,768 formulas and not
+  65,536. The cached calculator that ordinary reads use is quadratic in chain
+  length while the cache accepts results (it walks every precedent of each result
+  it saves) and linear after it turns itself off at 4,096 results, so a default
+  0.25 s read completes chains of 512 and 4,096 but not 1,024 or 2,048
+  ([result](calculation-stage-2.md#s2-how-long-a-chain-one-read-completes)).
 - Sheet names in references are matched as the `sheets` table matches them
   (SQLite `NOCASE`, ASCII letters only), in precedent extraction and in
   evaluation alike. `='é'!A1` does not read a sheet named `É`.
@@ -336,7 +347,15 @@ rule the old error would be served for ever.
   **Measured**: 4,194,304 cells per formula is proposed (about 8 s at the
   2 µs per cell measured for a streamed column of short numbers; other cell
   kinds were not timed), on condition that stage 2 streams every
-  range-reading function. A
+  range-reading function. **Measured** (stage 2): every range-reading function
+  now streams, and a streamed cell costs 4.2 µs for numbers, 2.9 µs for
+  40-character text, 4.1 µs for dates and 32.7 µs for a column of formulas that
+  have to be evaluated, not 2 µs. A formula that read 4,194,304 cells would take
+  about 12 to 17 s over stored values and over 2 minutes over uncalculated
+  formulas. The count stands as a count; the time attached to it does not, and
+  stage 4 must settle whether to keep, lower or weight it. The count is charged
+  where cells are read and counts stored cells only, not empty coordinates. A
+  range is read in bands of 1,024 rows, with the time budget checked before each. A
   formula that exceeds one stores `#LIMIT!` and is counted in the calculation
   status. Because the limit is a count, the same inputs always give the same
   result, so `#LIMIT!` is stored like any other error, is recalculated only
@@ -481,6 +500,17 @@ within the per-formula limits, so none shows `#LIMIT!`; the whole column simply
 takes long in the background. Its throughput is measured and documented, and it
 is not part of the completion criteria.
 
+**Measured** (stage 2): `=SUM(Sheet1!A1:A100000)` takes 0.41 s with a 2 s budget
+and shows `#LIMIT!` in a default 0.25 s read, so the stage-1 target (at most
+0.25 s) is missed on the service. A `SUM` over 1,000,000 stored cells took 4.1 s
+and added at most 32 KiB to the process's peak resident memory, because the
+cells are not held. `COUNTIF`, a three-criteria `SUMIFS` and an `XLOOKUP` to the
+last row over 100,000 rows take 0.64, 2.18 and 0.94 s. With 4,096 cached range
+readers an edit's invalidation takes 2.7 ms when it touches a few and 0.48 s
+when it touches 2,098, because the cache has no spatial index (8.6 million
+containment checks). Medians on a machine that was not idle
+([result](calculation-stage-2.md)).
+
 Two services opening one file is unsupported, as today: each one's result
 writes would look like external edits to the other.
 
@@ -574,6 +604,9 @@ Each stage is one or more reviewed pull requests that leave `main` working.
   open. How dependents of a cell inside a precedent rectangle are found stays
   the builder's choice; the prototype's column-and-bisect lookup degrades when
   many ranges cover a formula column and must not be carried over as it is.
+  **Measured** (stage 2): stage 2's in-memory cache records a range as one
+  rectangle and still has no interval structure; with 4,096 cached readers over
+  a column one edit checked 8.6 million rectangles in 0.48 s, so the point stands.
 - Thread or child process for the worker.
 - Batch sizes and the worker's yielding rule.
 - The pull-request split inside each stage.

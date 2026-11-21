@@ -50,10 +50,9 @@ def formula_measurements(book, samples):
             "source":"1" if row == 1 else f"={letter}{row-1}+1"} for row in range(1,depth+1)])
         def read_tail():
             cell = book.read(sheet="Chains",r1=depth,r2=depth,c1=col,c2=col)["cells"][0]
-            expected = "#LIMIT!" if depth == 129 else None
-            if (expected is not None and cell["display"] != expected) or (expected is None and (cell["calculation"] != "current" or cell["value"] != depth)):
+            if cell["calculation"] != "current" or cell["value"] != depth:
                 raise AssertionError(f"Unexpected depth-{depth} chain result: {cell}")
-        results[str(depth)] = {**measure(read_tail,samples),"expected": "#LIMIT!" if depth == 129 else depth,
+        results[str(depth)] = {**measure(read_tail,samples),"expected": depth,
                               "p95_target_ms":150}
     counter = iter(range(2,samples+2))
     def edit_and_recalculate():

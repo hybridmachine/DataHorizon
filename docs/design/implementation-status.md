@@ -4,6 +4,42 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## Calculation stage 2 (iterative evaluation and streamed ranges) — November 21, 2026
+
+Stage 2 of the [calculation design](calculation-design.md) is built on branch
+`claude/calculation-stage-2` and ships as one pull request ([plan](calculation-stage-2-plan.md),
+[result](calculation-stage-2.md), [evidence](evidence/calculation-stage-2.json)).
+The service evaluates dependency chains with an explicit stack and reads ranges
+as ordered streams, so the 128-cell chain limit and the 10,000-cell range limit
+are gone. A formula may now read up to 4,194,304 stored cells (the per-formula
+count, replacing the 10,000-step count); the 0.25 s and 2 s time budgets and
+`#LIMIT!` behave as before. The dependency cache records a range as one
+rectangle and keeps its bounds. REST, CLI, SDK, the native format (v8) and the
+desktop are unchanged, and a 178-case characterization corpus passes with
+nothing re-recorded.
+
+Measured on an Apple M1 that was not idle (medians of five):
+- `=SUM` over 100,000 stored cells shows `#LIMIT!` in a default read (target
+  0.25 s, **missed**); it takes 0.41 s with a 2 s budget (4.1 µs per cell).
+- A default read completes a chain of 512 and of 4,096 formulas but not 1,024
+  or 2,048, because the cache's per-result precedent walk is quadratic until the
+  cache turns itself off; a 2 s read completes 32,768 on the plain calculator.
+- A streamed cell costs 2.9 to 4.2 µs for stored values and 32.7 µs for formulas
+  that must be evaluated, against the 2 µs the design assumed, so 4,194,304
+  cells is about 12 to 17 s (stored) and over 2 minutes (formulas).
+- `COUNTIF`, a three-criteria `SUMIFS` and an `XLOOKUP` over 100,000 rows take
+  0.64, 2.18 and 0.94 s. A `SUM` over 1,000,000 cells added at most 32 KiB of peak
+  memory.
+- Invalidating with 4,096 cached range readers takes 2.7 ms for a small edit and
+  0.48 s when 2,098 readers contain it; there is no spatial index.
+
+Still true: nothing is stored between reads, a 100,000-row running total shows
+`#LIMIT!` in a default read, and a formula near a budget can pass on one read
+and fail on the next. Stages 3 to 5 are not planned or built. Verified on this
+Mac: the service suite and the desktop, Python workspace and chart suites
+through `ctest`. Not verified: Windows and Linux, a cold file cache, an idle
+machine.
+
 ## Calculation stage 1 (measurement) — November 18, 2026
 
 The owner approved the [stored results and scaled recalculation design](calculation-design.md)
