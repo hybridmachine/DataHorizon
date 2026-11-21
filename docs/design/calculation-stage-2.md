@@ -20,15 +20,25 @@ stages 3 and 4.
 
 Figures are medians of five runs in one process with a warm file cache. Host:
 Apple M1 (8 cores), macOS 26.6.2, Python 3.14.6, SQLite 3.53.4. **The machine
-was not idle:** the load average was about 12 during the final run (11.6 to
-13.5), mostly from other processes (a media-analysis daemon was holding about
-two cores; the first run, before a fix described under S2, saw 4 to 6). Stage 1 also ran on a machine that was not idle, so compare
+was not idle:** the load was not controlled. The evidence records the load averages
+(1, 5 and 15 minutes) at the end of each run: 11.92, 12.25 and 9.35 for the final
+run, and 5.14, 6.29 and 6.51 for the first run, which was taken before the fix
+described under S2. Stage 1 also ran on a machine that was not idle, so compare
 the two sets of figures with care. Evidence: [calculation-stage-2.json](evidence/calculation-stage-2.json),
 produced by `tests/calculation_stage2_benchmark.py` on revision `09b21cc`, which
 holds the full set of per-run timings. The first run, on `e28415d` before the
 cache fix described under S2, is kept as
-[calculation-stage-2-run1.json](evidence/calculation-stage-2-run1.json). Everything is measured through
-`Workbook`; no service code is called from the benchmark in any other way.
+[calculation-stage-2-run1.json](evidence/calculation-stage-2-run1.json).
+
+What the benchmark uses: the fixtures are written with SQL through the
+workbook's connection. S1 and the default-read column of S2 call
+`Workbook.read`. The 2 s columns of S2, S3, S4, S5 and S6 call
+`Workbook.calculator()` (the cached calculator, or the plain one with
+`transactional=True`) directly, with the budget given, not the default read path.
+S5 calls `book.dependencies.invalidate` directly, and every run clears or reads
+`book.dependencies` (its results, ranges and `checks` counter). The probe
+formulas of S3 and S4 are written with `book.db.execute`. S6 runs in a fresh
+process and also uses a plain calculator.
 
 | # | Measure | Target | Measured | Result |
 | --- | --- | --- | --- | --- |
@@ -37,12 +47,12 @@ cache fix described under S2, is kept as
 | S3 | Cost per stored cell of a streamed range | 2 µs assumed by the design | 3.7 µs numbers, 2.7 µs 40-character text, 3.9 µs dates, 31.7 µs formula results | Slower than assumed |
 | S4 | Conditional aggregates and a lookup over 100,000 rows | none | `COUNTIF` 0.58 s; `SUMIFS` with three criteria 1.93 s; `XLOOKUP` to the last row 0.89 s | Each exceeds a default read |
 | S5 | `invalidate` for one edit with 4,096 cached range readers | none | 2.7 ms when the edit falls inside 11 readers; 0.47 s when it falls inside 2,098 (8.6 million containment checks) | See below |
-| S6 | Peak resident memory of a `SUM` over 1,000,000 stored cells | none | The sum added at most 32 KiB to the process peak (median 16 KiB); the process peaked at about 46 to 48 MiB; the calculator cache held one entry. 4.15 s | Memory is bounded |
+| S6 | Peak resident memory of a `SUM` over 1,000,000 stored cells | none | The sum added at most 32 KiB to the process peak (median 16 KiB); the process peaked at 46.3 to 46.4 MiB (44.2 to 46.3 MiB in the first run); the calculator cache held one entry. 4.15 s | Memory is bounded |
 
 Between the first run and the final one every timing moved by 0 to 12%, mostly
 faster (`SUMIFS` 2.18 s to 1.93 s, `COUNTIF` 0.64 s to 0.58 s, numbers 4.2 µs
-to 3.7 µs per cell), although the second run saw about twice the load. I cannot
-name the cause; the code on the read path of S1, S3, S4 and S6 did not change
+to 3.7 µs per cell), although the load at the end of the second run was about twice that of the first.
+The cause is not known; the code on the read path of S1, S3, S4 and S6 did not change
 between the runs. Treat differences of that size as run-to-run noise on this
 machine and read the figures to one significant digit. The only change that is
 understood is S2.
@@ -53,7 +63,7 @@ The streamed `SUM` costs 3.9 µs per cell here (4.1 µs in the first run). Stage
 2 µs, and the service adds the calculator's per-cell accounting, the type
 conversion of each stored cell and the deadline check. Reading 100,000 cells
 therefore takes about 0.4 s, above the 0.25 s default budget. The read gives up at
-0.2509 s with `#LIMIT!` and the message `Calculation budget exceeded`. Before
+0.2506 s with `#LIMIT!` and the message `Calculation budget exceeded`. Before
 stage 2 the same read failed too, for a different reason (a range over 10,000
 cells), so no previous behaviour regressed; the range is simply not yet fast
 enough to show in a grid read. By the same rate a `SUM` over about 60,000 stored cells fits the
@@ -93,8 +103,8 @@ as long as the cache accepted results, until it turned itself off at its cap of
 4,096 results. A default read completed 512 formulas (0.14 s) but failed at
 1,024 and 2,048, completed 4,096 (0.13 s), and sat on its budget at 8,192; a 2 s
 cached read took 0.55 s for 1,024 and failed at 2,048 while completing 4,096 to
-32,768. The plain calculator, which has no cache, was linear throughout. The
-coordinator fixed it in commit `09b21cc` ("Decide whether a result is cacheable
+32,768. The plain calculator, which has no cache, was linear throughout. It was
+fixed in commit `09b21cc` ("Decide whether a result is cacheable
 from its direct reads only"): `cacheable` now checks only a formula's direct
 reads. After the fix a default read completes 512, 1,024, 2,048 and 4,096, and
 8,192 as well, and the cached 2 s read completes 1,024 and 2,048 in 0.04 and 0.09
@@ -103,8 +113,8 @@ s where it took 0.55 s and failed. The first run is kept as
 before and after are both on record. At 4,096 results the cache still turns
 itself off, as designed.
 
-Reads that fail also overrun their budget: a 0.25 s read gave up after 0.25 to
-0.36 s, and a 2 s read after up to 2.7 s, because the deadline is checked
+Reads that fail also overrun their budget: a 0.25 s read gave up after up to
+0.35 s, and a 2 s read after up to 2.74 s, because the deadline is checked
 between units of work and a unit can be long.
 
 ### S3: cost per stored cell
@@ -169,16 +179,16 @@ of readers, not the number of cells they cover. An invalidation checks each
 affected cell against every rectangle on the sheet and has no spatial index,
 which is why the second shape costs 8.6 million checks: 2,098 affected cells
 times about 4,096 rectangles. Both cases are inside the cache's bounds (4,096
-results, 50,000 edges, 4 MiB), so the cost is bounded by them. A managed edit
-pays this inside its own commit, so a sheet with thousands of range readers
-cached makes an edit that touches them take about half a second. Stage 4's
+results, 50,000 edges, 4 MiB), so the cost is bounded by them. The benchmark calls `invalidate` directly; the cost of an edit made through
+`Workbook`, which invalidates inside its commit, was not measured, so what this
+adds to an edit is an inference, not a figure. Stage 4's
 dependents index should be an interval structure; see stage 1.
 
 ### S6: memory
 
 A `SUM` over 1,000,000 stored cells, in a fresh process, did not hold the
 cells: the peak resident memory rose by at most 32 KiB, the process peaked at
-about 46 to 48 MiB, and the calculator's cache held one entry (the formula
+46.3 to 46.4 MiB, and the calculator's cache held one entry (the formula
 itself). It took 4.15 s (4.1 µs per cell). A read of the same cells as a list
 would hold about a million Python objects. Peak memory is measured with the
 operating system's resident-set counter and is not available on Windows.
@@ -241,7 +251,7 @@ that had no value yet, and the design requires every pull request to leave
 
 ## Known limitations
 
-These were found in review and deferred. The ones a user or a later stage
+These are known and not fixed in this stage. The ones a user or a later stage
 would notice:
 
 - **A formula can reach `#LIMIT!` by time, not by count.** At the measured
@@ -249,8 +259,9 @@ would notice:
   (see S3). The count is the bound for reads without one.
 - **Time is checked between bands of 1,024 rows, not within one.** On a very
   wide, dense sheet a single band is one SQL statement, so a read can overrun its
-  budget by that statement's duration. Budget overruns of 0.1 to 0.5 s were
-  measured above.
+  budget by that statement's duration. Overruns were measured above: reads
+  with a 0.25 s budget gave up up to 0.10 s late and reads with a 2 s budget up to
+  0.74 s late (2.74 s, plain calculator, 131,072 formulas).
 - **A range reached through a function can be charged twice.** `SUM(IF(TRUE,A1:A60,0))`
   counts its cells twice toward the per-formula limit.
 - **Chart jobs charge more than reads.** A chart job charges two to three per
@@ -294,7 +305,9 @@ would notice:
 - `AVERAGE`, `MIN`, `MAX`, `CONCAT`, `TEXTJOIN`, `MATCH` and `INDEX` over large
   ranges. They share the stream with `SUM` and the criteria functions but their
   own cost was not timed.
-- Memory for the conditional aggregates and lookups (S6 measured `SUM` only).
+- Memory for the conditional aggregates and lookups (S6 measured `SUM` only),
+  and any read path other than `Workbook.read` and `Workbook.calculator()`.
+- The time an edit through `Workbook` spends invalidating (S5).
 - The test suites on Windows and Linux. The desktop, Python workspace and chart
   suites and the service suite pass on this Mac (see the
   [status](implementation-status.md)).

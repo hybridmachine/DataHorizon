@@ -353,8 +353,8 @@ rule the old error would be served for ever.
   40-character text, 3.9 µs for dates and 31.7 µs for a column of formulas that
   have to be evaluated, not 2 µs. A formula that read 4,194,304 cells would take
   about 11 to 16 s over stored values and over 2 minutes over uncalculated
-  formulas. The count stands as a count; the time attached to it does not, and
-  stage 4 must settle whether to keep, lower or weight it. The count is charged
+  formulas. The count stands as a count; the time attached to it does not
+  ([result](calculation-stage-2.md#does-4194304-still-stand)). The count is charged
   where cells are read and counts stored cells only, not empty coordinates. A
   range is read in bands of 1,024 rows, with the time budget checked before each. A
   formula that exceeds one stores `#LIMIT!` and is counted in the calculation

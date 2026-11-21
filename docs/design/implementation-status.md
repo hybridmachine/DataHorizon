@@ -38,10 +38,20 @@ the figures to one significant digit):
 
 Still true: nothing is stored between reads, a 100,000-row running total shows
 `#LIMIT!` in a default read, and a formula near a budget can pass on one read
-and fail on the next. Stages 3 to 5 are not planned or built. Verified on this
-Mac: the service suite and the desktop, Python workspace and chart suites
-through `ctest`. Not verified: Windows and Linux, a cold file cache, an idle
-machine.
+and fail on the next. Stages 3 to 5 are not planned or built.
+
+Verified on this Mac only. The desktop, Python workspace and chart suites (with
+the bundle and SVG smoke tests) passed through `ctest` at revision `d4dceca`; the
+service suite passed in that run too. The whole service suite was run at
+`09b21cc` by the author of the cache fix (1,822 tests, OK, 28 skipped) and again
+on the working tree of the commit that corrected the function help text
+(1,822 tests, 28 skipped, one failure). The failure was
+`test_large_structure_service.LargeStructureServiceTests.test_owned_cli_group_interrupt_leaves_its_service_available_for_cancel`
+("Required Python handler timed out"), which also failed in an earlier whole-suite
+run at `d4dceca`. It passed on its own twice after each failure and passed in the
+`ctest` run, and the machine was heavily loaded during both failing runs, so it
+is treated as sensitive to load, not as a defect of this stage; its cause was not
+investigated. Not verified: Windows and Linux, a cold file cache, an idle machine.
 
 ## Calculation stage 1 (measurement) — November 18, 2026
 
