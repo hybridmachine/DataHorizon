@@ -2901,18 +2901,39 @@ void MainWindow::calculateSelection() {
     const auto resource=base()+"/calculation/jobs/"+request["job_id"].toString();
     auto *progress=new QProgressDialog(tr("Calculating stored selection…"),tr("Cancel"),0,0,this);progress->setObjectName("backgroundCalculationProgress");progress->setWindowModality(Qt::NonModal);progress->setMinimumDuration(0);progress->show();
     auto *timer=new QTimer(progress);timer->setInterval(100);
-    connect(progress,&QProgressDialog::canceled,this,[this,resource]{m_client->request(resource+"/cancel",{},[](QJsonObject,QString){});});
-    auto finish=[this,target,service,generation,resource,progress,timer](QJsonObject result,QString error){
+    // The service runs one calculation job per workbook, and a viewport job that was just told to stop may
+    // still hold that place. Ask again with the same job ID until it is free, for at most ten seconds.
+    // Cancel can arrive before the job exists: it stops a pending attempt, and a start request already
+    // sent is cancelled as soon as its answer admits the job. A cancelled command never shows a snapshot.
+    struct Admission { bool admitted=false,cancelled=false,cancelSent=false,posting=true; QElapsedTimer waited; };
+    auto admission=std::make_shared<Admission>();admission->waited.start();
+    auto finish=[this,target,service,generation,resource,progress,timer,admission](QJsonObject result,QString error){
+        admission->posting=false;
+        if(error.isEmpty())admission->admitted=true;
+        if(admission->admitted && admission->cancelled && !admission->cancelSent){admission->cancelSent=true;m_client->request(resource+"/cancel",{},[](QJsonObject,QString){});}
         if(error.isEmpty() && result["status"]=="running"){progress->setLabelText(result["phase"].toString());timer->start();return;}
-        timer->stop();progress->hide();progress->deleteLater();m_client->request(resource+"/release",{},[](QJsonObject,QString){});
+        const bool busy=!admission->admitted && result["code"]=="JOB_BUSY";
+        if(busy && !admission->cancelled && admission->waited.elapsed()<10000 && service==m_client->url() && generation==m_calculationGeneration){timer->start();return;}
+        if(busy && admission->cancelled){error.clear();result=QJsonObject{{"status","cancelled"}};}
+        if(admission->cancelled && error.isEmpty() && result["status"]=="completed")result["status"]="cancelled";
+        timer->stop();progress->hide();progress->deleteLater();if(admission->admitted)m_client->request(resource+"/release",{},[](QJsonObject,QString){});
         if(service==m_client->url() && generation==m_calculationGeneration)m_model->setBackgroundEnabled(true);
         if(service!=m_client->url() || generation!=m_calculationGeneration || !matchesTarget(target))return;
         if(!error.isEmpty()){issue(error);return;}const auto status=result["status"].toString();
         if(status=="completed"){const auto snapshot=result["result"].toObject();int errors=0;for(const auto &cell:snapshot["cells"].toArray())errors+=cell.toObject()["calculation"]=="error";m_status->setText(tr("Background snapshot: %1 cells, %2 formula errors • UTC %3").arg(snapshot["cells"].toArray().size()).arg(errors).arg(result["clock"].toString()));}
         else m_status->setText(tr("Background calculation: %1").arg(status));
     };
-    connect(timer,&QTimer::timeout,this,[this,timer,resource,finish]{timer->stop();m_client->request(resource,{},finish,false);});
-    m_client->request(base()+"/calculation/jobs",request,finish);
+    const auto jobs=base()+"/calculation/jobs";
+    connect(timer,&QTimer::timeout,this,[this,timer,resource,jobs,request,finish,admission]{timer->stop();if(admission->admitted)m_client->request(resource,{},finish,false);else{admission->posting=true;m_client->request(jobs,request,finish);}});
+    connect(progress,&QProgressDialog::canceled,this,[finish,admission,progress]{
+        if(admission->cancelled)return;
+        admission->cancelled=true;
+        // Not admitted and nothing in flight: the job was never created, so end here. Otherwise the next
+        // answer sends the cancel.
+        if(!admission->admitted && !admission->posting)finish(QJsonObject{{"code","JOB_BUSY"}},QStringLiteral("cancelled"));
+        else if(admission->admitted)finish(QJsonObject{{"status","running"},{"phase",progress->labelText()}},{});
+    });
+    m_client->request(jobs,request,finish);
 }
 
 void MainWindow::enterLocalized() {

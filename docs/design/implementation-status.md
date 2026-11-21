@@ -4,6 +4,49 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## Calculation stage 1 (measurement) — November 18, 2026
+
+The owner approved the [stored results and scaled recalculation design](calculation-design.md)
+(increment 10 of the Excel fidelity programme) on November 18, 2026, with a
+content fingerprint as the freshness rule. Its stage 1 is built on branch
+`claude/calculation-stage-1` following the [plan](calculation-stage-1-plan.md):
+isolated test code in `tests/` (a fixture, three prototypes, 28 tests and a
+benchmark). No service or native format code changed, and no chart, formula
+or workbook behaviour is different.
+
+One desktop fix rides on the branch because the pull request's build exposed
+it: "Recalculate selection in background" failed with "Another preparation
+job is running" when a visible-formula job was still stopping, since the
+service runs one calculation job per workbook. The command now asks again
+with the same job ID for up to ten seconds, and Cancel takes effect before
+the job exists: it stops a pending attempt and cancels a job that a request
+already sent goes on to create. Covered by desktop tests that hold the place
+with a slow job and that delay or refuse the start through a proxy.
+
+Measured on the reference Mac on a 1,002,003-cell workbook with 102,003
+formulas ([result](calculation-experiment.md),
+[evidence](evidence/calculation-experiment.json)):
+- Digests of every 64-row block (SHA-256) add 1.3 to 1.8 s to opening; a
+  one-cell edit re-hashes its block in 0.73 to 0.83 ms on a 10-column sheet.
+- The 100,000-row chained running total recalculates in 3.05 s. The affected
+  set for an edit at its top is found in 0.057 s.
+- A streamed `SUM` over 100,000 cells takes 0.196 s, against 1.1 to 1.8 s cell
+  by cell.
+- Two thresholds failed as first prototyped: dependency data needed 131.7 MiB
+  (limit 64 MiB) and the derived tables grew the file by 57.5% (limit 25%).
+  A compact integer-keyed structure and integer sheet numbers, measured as a
+  probe and not as a tested implementation, give 45.7 MiB and 11.0%.
+- Finding dependents by SQL query took 41.6 s as prototyped; the cost is its
+  range join, and a better query was not measured.
+- The passes are specific to the fixture: its ranges cover input columns only.
+  A review probe with ranges over a formula column took 4.6 s to find
+  dependents in memory. No measured option covers a million formulas.
+
+Not verified: a cold file cache, sheets wider than 10 columns, long text cells
+in the digest, Windows and Linux, and anything inside the service. Stages 2 to
+5 are not planned or built; calculation in the product is unchanged
+(`evaluated_on_read`, with today's limits).
+
 ## Large structural edits — November 17, 2026
 
 Chart export and desktop authoring reached `main` in PRs #141 and #143.
