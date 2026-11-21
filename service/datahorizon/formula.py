@@ -812,6 +812,9 @@ class Pending(Exception):
         self.keys = keys
 
 
+FORMULA_CELL_LIMIT = 4_194_304  # cells (and text-size units) one evaluation of one formula may read
+
+
 class Calculator:
     def __init__(self, read, resolve_sheet, seconds=0.25, *, clock=None):
         self.read, self.resolve_sheet = read, resolve_sheet
@@ -824,11 +827,15 @@ class Calculator:
         self.bytes = 0
 
     def check(self):
-        self.count += 1
-        if self.count > 10_000 or time.monotonic() > self.deadline:
+        """Raise #LIMIT! past the deadline or when the formula being evaluated has read too many cells; callers that
+        do work charge it to self.count first (cell reads, text_work); other calls only watch the deadline."""
+        if time.monotonic() > self.deadline:
             raise FormulaError("#LIMIT!", "Calculation budget exceeded")
+        if self.count > FORMULA_CELL_LIMIT:
+            raise FormulaError("#LIMIT!", f"Formula reads more than {FORMULA_CELL_LIMIT:,} cells")
 
     def cell(self, sheet, row, col):
+        self.count += 1
         self.check()
         key = sheet, row, col
         if key in self.active:
@@ -899,6 +906,7 @@ class Calculator:
                 if tree is None:
                     tree = Parser(item["source"][1:]).parse()
                     self.waiting[key] = item, tree
+                self.count = 0  # the count is per evaluation of a formula; an attempt that waits on a precedent is repeated
                 result = self.evaluate(tree, sheet)
                 if isinstance(result, list):
                     raise FormulaError("#VALUE!", "Range cannot be a scalar result")
@@ -1262,7 +1270,7 @@ class Calculator:
         return 0.0 if result==0 else result
 
     def text_work(self,text):
-        self.count+=max(0,(len(text)+255)//256-1)
+        self.count+=max(1,(len(text)+255)//256)
         self.check()
 
     def concatenate_values(self,values):

@@ -60,7 +60,6 @@ class IterativeEvaluationTests(unittest.TestCase):
         book = self.chain(129)
         self.assertEqual(self.outcome(self.calculator(book), book, "A129"), 129)
 
-    @unittest.expectedFailure  # the 10,000-step count stays until Task 3 makes it per formula
     def test_a_chain_of_20000_gives_its_value_without_recursion(self):
         book = self.chain(20_000)
         calculator, limit = self.calculator(book), sys.getrecursionlimit()
@@ -136,6 +135,42 @@ class IterativeEvaluationTests(unittest.TestCase):
         sheet = book.sheet(S)
         self.assertEqual({row: book.dependencies.values.get((sheet, row, 1)) for row in (2, 100, 199, 200)},
                          {2: 2, 100: 100, 199: 199, 200: 200})
+
+    def test_the_count_is_per_formula(self):
+        cells = {"B1": "1", "B2": "2", "B3": "3", "A1": "=B1+B2+B3", "C1": "=A1+B1+B2+B3"}
+        book = self.book(cells)
+        with patch.object(formula, "FORMULA_CELL_LIMIT", 3):
+            calculator = self.calculator(book)
+            self.assertEqual(self.outcome(calculator, book, "A1"), 6)
+            with self.assertRaises(FormulaError) as error:
+                calculator.cell(book.sheet(S), 1, 3)
+            self.assertEqual((error.exception.code, error.exception.args[1] if len(error.exception.args) > 1 else str(error.exception)),
+                             ("#LIMIT!", "Formula reads more than 3 cells"))
+            chain = self.book({"A1": "1", "B1": "1", **{f"A{row}": f"=A{row-1}+B1" for row in range(2, 11)}})
+            self.assertEqual(self.outcome(self.calculator(chain), chain, "A10"), 10)
+
+    def test_the_count_limit_message_uses_thousands_separators(self):
+        book = self.book({"B1": "1", "A1": "=B1+B1"})
+        with patch.object(formula, "FORMULA_CELL_LIMIT", 1):
+            with self.assertRaises(FormulaError) as error:
+                self.calculator(book).cell(book.sheet(S), 1, 1)
+        self.assertIn("Formula reads more than 1 cells", str(error.exception))
+        self.assertEqual(f"{formula.FORMULA_CELL_LIMIT:,}", "4,194,304")
+
+    def test_the_count_limit_is_repeatable(self):
+        book = self.book({"B1": "1", "B2": "2", "B3": "3", "A1": "=B1+B2+B3", "C1": "=A1+B1+B2+B3"})
+        with patch.object(formula, "FORMULA_CELL_LIMIT", 3):
+            results = [(self.outcome(self.calculator(book), book, "A1"), self.outcome(self.calculator(book), book, "C1"))
+                       for _ in range(10)]
+        self.assertEqual(set(results), {(6, "#LIMIT!")})
+
+    def test_a_read_past_its_deadline_is_a_limit_error(self):
+        book = self.book({"B1": "1", "A1": "=B1+1"})
+        calculator = book.calculator(seconds=0, transactional=True)
+        with self.assertRaises(FormulaError) as error:
+            calculator.cell(book.sheet(S), 1, 1)
+        self.assertEqual(error.exception.code, "#LIMIT!")
+        self.assertIn("Calculation budget exceeded", str(error.exception))
 
 
 if __name__ == "__main__":

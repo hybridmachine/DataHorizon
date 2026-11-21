@@ -6,6 +6,8 @@ import tempfile
 import itertools
 import re
 import unittest
+from unittest.mock import patch
+from datahorizon import formula as formula_module
 from datahorizon.formula import FormulaError
 from datahorizon.functions import function_catalog
 from datahorizon.engine import Workbook
@@ -98,7 +100,7 @@ class FollowOnTests(unittest.TestCase):
         self.errors([('=COUNTIFS(B1,"no match",C1,1)','#CYCLE!')],{(1,2):cell('x'),(1,3):dict(source='=A1',kind='formula',value=None)})
         self.errors([('=SUMIFS(B1:B2,C1:C2,1)','#NUM!')],{(1,2):cell(1e308),(2,2):cell(1e308),(1,3):cell(1),(2,3):cell(1)})
         formula='=COUNTIFS('+','.join(['B1:B1000,1']*20)+')'
-        self.errors([(formula,'#LIMIT!')])
+        with patch.object(formula_module,'FORMULA_CELL_LIMIT',10_000):self.errors([(formula,'#LIMIT!')])  # 20,000 reads in one formula
 
     def test_multiple_criteria_required_hook_rolls_back_parent_and_generated_edits(self):
         with tempfile.TemporaryDirectory() as temp:
