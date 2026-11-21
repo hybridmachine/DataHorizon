@@ -82,6 +82,38 @@ class DependencyTests(unittest.TestCase):
         self.assertTrue(0<index.checks<=2*4096,index.checks)
         self.assertNotIn(self.key(1,2),index.values);self.assertEqual(index.info()['cached'],4095)
 
+    def chain(self,head,length,second=None):
+        """J1 holds head, J2 second (default =J1+1) and each later J<r> =J<r-1>+1."""
+        self.apply(cells=[dict(row=1,col=10,source=head)]+[dict(row=row,col=10,source=second if row==2 and second else f'=J{row-1}+1') for row in range(2,length+1)])
+        return [self.key(row,10) for row in range(1,length+1)]
+
+    def cached(self,keys):return [key for key in keys if key in self.book.dependencies.values]
+
+    def test_saving_a_chain_costs_work_linear_in_its_length(self):
+        class Counted(dict):
+            def get(self,*args):
+                Counted.calls+=1;return super().get(*args)
+        Counted.calls=0;keys=self.chain('1',2000);index=self.book.dependencies;index.edges=Counted()
+        calculator=self.book.calculator(seconds=30);calls=Counted.calls
+        self.assertEqual(calculator.cell(*keys[-1]),2000);self.assertEqual(len(self.cached(keys)),2000)
+        # Each of the 2,000 formulas is linked once and saved at most twice, each save looking at its own edges only.
+        self.assertLessEqual(Counted.calls-calls,4*2000)
+
+    def test_a_chain_headed_by_a_volatile_or_unparseable_formula_is_never_cached(self):
+        for head,second in (('=YEAR(NOW())',None),('=SUM(','=IFERROR(J1,0)+1')):
+            with self.subTest(head=head):
+                self.tearDown();self.setUp();keys=self.chain(head,50,second)
+                self.book.calculator(seconds=30).cell(*keys[-1]);self.assertEqual(self.cached(keys),[])
+                for key in reversed(keys):self.value(key[1],key[2])
+                self.assertEqual(self.cached(keys),[])
+
+    def test_a_chain_whose_head_becomes_volatile_is_not_served_stale(self):
+        keys=self.chain('1',50);self.assertEqual(self.value(50,10),50);self.assertEqual(len(self.cached(keys)),50)
+        self.apply(cells=[dict(row=1,col=10,source='=YEAR(NOW())')])
+        with patch('datahorizon.formula.utc_clock',side_effect=[datetime(2024,12,31),datetime(2025,1,1)]):
+            self.assertEqual(self.value(50,10),2024+49);self.assertEqual(self.value(50,10),2025+49)
+        self.assertEqual(self.cached(keys),[])
+
     def test_transactional_calculation_never_publishes_uncommitted_values(self):
         self.apply(cells=[dict(row=1,col=1,source='2'),dict(row=1,col=2,source='=A1*2')]);self.assertEqual(self.value(1,2),4)
         self.book.db.execute('BEGIN IMMEDIATE')

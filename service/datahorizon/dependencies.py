@@ -7,8 +7,9 @@ from .formula import Calculator, Parser, FormulaError, CELL_ERRORS
 class DependencyIndex:
     """edges[key] holds the rectangles (sheet, r1, c1, r2, c2) the formula at key reads, a single cell as a rectangle of
     one. Single cells are found again through reverse[cell]; larger rectangles through ranges[sheet][(r1, c1, r2, c2)],
-    each checked for containment (counted in checks). uncacheable holds formulas found to read a volatile or
-    unparseable one when their result was saved: a reader is saved only after the formulas it read have completed."""
+    each checked for containment (counted in checks). uncacheable holds the cells whose result must not be kept: the
+    volatile and unsafe formulas, those that read one of them (found when their result was saved), and those whose
+    evaluation ended in an error that is not kept, so that a reader of a cell whose status is unknown is not kept."""
     def __init__(self):
         self.checks=0
         self.clear()
@@ -55,18 +56,23 @@ class DependencyIndex:
         return affected
 
     def cacheable(self,key):
-        pending=[key];seen=set();tainted=self.volatile|self.unsafe|self.uncacheable
-        while pending:
-            item=pending.pop()
-            if item in seen:continue
-            seen.add(item)
-            if item in tainted:return False
-            for sheet,r1,c1,r2,c2 in self.edges.get(item,()):
-                if r1==r2 and c1==c2:pending.append((sheet,r1,c1));continue
-                for other in tainted:
-                    self.checks+=1
-                    if other[0]==sheet and r1<=other[1]<=r2 and c1<=other[2]<=c2:return False
+        """Whether key's result may be kept: key is neither volatile nor unsafe and no cell it reads directly, alone or
+        inside one of its rectangles, is uncacheable. One level suffices: a reader is saved only after every formula it
+        read was saved (its own direct reads checked the same way) or marked uncacheable, or came from values."""
+        if key in self.volatile or key in self.unsafe:return False
+        for sheet,r1,c1,r2,c2 in self.edges.get(key,()):
+            self.checks+=1
+            if r1==r2 and c1==c2:
+                if (sheet,r1,c1) in self.uncacheable:return False
+                continue
+            for other in self.uncacheable:
+                self.checks+=1
+                if other[0]==sheet and r1<=other[1]<=r2 and c1<=other[2]<=c2:return False
         return True
+
+    def drop(self,key):
+        """Mark key's result as one never to keep, keeping its edges so that edits still reach its readers."""
+        self.bytes-=self.sizes.pop(key,0);self.values.pop(key,None);self.uncacheable.add(key)
 
     def calculator(self,read,resolve,seconds,clock=None,*,scan=None):
         index=self
@@ -84,11 +90,11 @@ class DependencyIndex:
                             self.check();node=pending.pop()
                             if node[0] in ('ref','range'):targets.add(self.range_geometry(node,sheet))  # one rectangle per reference
                             elif node[0]=='call':
-                                if node[1] in ('TODAY','NOW'):index.volatile.add(key)
+                                if node[1] in ('TODAY','NOW'):index.volatile.add(key);index.uncacheable.add(key)
                                 pending.extend(node[2])
                             elif node[0]=='binary':pending.extend(node[2:])
                             elif node[0]=='unary':pending.append(node[2])
-                    except FormulaError:index.unsafe.add(key)
+                    except FormulaError:index.unsafe.add(key);index.uncacheable.add(key)
                 if not self.disabled:
                     if len(index.edges)>=4096 or index.edge_count+len(targets)>50000:
                         index.clear();self.disabled=True
@@ -113,10 +119,12 @@ class DependencyIndex:
                 # Formulas evaluated on the way to the one read no longer pass through cell().
                 super().remember(key,result)
                 if not isinstance(result,FormulaError) or result.code in CELL_ERRORS:self.save(key,result)
+                elif not self.disabled:index.drop(key)  # #LIMIT!, #CYCLE!: what reads it is not kept either
 
             def save(self,key,result):
                 if self.disabled:return
-                if not index.cacheable(key):index.uncacheable.add(key);return
+                index.uncacheable.discard(key)  # its status is decided again from its direct reads
+                if not index.cacheable(key):index.drop(key);return
                 size=64+len(str(result).encode('utf-8'))
                 if key not in index.values and (len(index.values)>=4096 or index.bytes+size>4*1024*1024):
                     index.clear();self.disabled=True;return
