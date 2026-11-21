@@ -184,6 +184,15 @@ results, 50,000 edges, 4 MiB), so the cost is bounded by them. The benchmark cal
 adds to an edit is an inference, not a figure. Stage 4's
 dependents index should be an interval structure; see stage 1.
 
+**Changed after the final review.** The paragraph and table above describe
+revision `09b21cc`. The final review measured the edit path and found the cost
+was affected cells times rectangles there too; `invalidate` was then changed
+(see [Fixes from the final review](#fixes-from-the-final-review)). On the fixed
+code the benchmark's S5 step, run on its own, gives 45,056 checks and 2.1 ms for
+the first shape (unchanged: 11 cells against 4,096 rectangles is inside the
+budget and exact) and 8,190 checks and 3.0 ms for the second, where it was
+8,591,310 checks and 0.47 s. The evidence file was not regenerated.
+
 ### S6: memory
 
 A `SUM` over 1,000,000 stored cells, in a fresh process, did not hold the
@@ -201,8 +210,9 @@ operating system's resident-set counter and is not available on Windows.
   formula is parsed once per calculator. Cycles are still decided by the
   references actually followed, so `=IF(FALSE,A1,42)` in `A1` is 42.
 - **A per-formula cell count.** The 10,000-step count per read is replaced by
-  `FORMULA_CELL_LIMIT = 4_194_304`: the stored cells one formula reads, counting
-  stored cells for streams and nothing for empty coordinates. It is enforced
+  `FORMULA_CELL_LIMIT = 4_194_304`: the cells one formula reads. A range read
+  as a stream counts its stored cells and nothing for its empty coordinates; a
+  single reference counts one whether the coordinate is stored or empty. It is enforced
   where the count is charged, so it holds in chart jobs too, and it resets with
   each top-level read. The 8 MiB input cap stays for cells read one at a time;
   cells read through a stream are not held and not charged to it.
@@ -218,12 +228,16 @@ operating system's resident-set counter and is not available on Windows.
 - **Missing formula cells in a range.** A range that holds formulas with no
   value yet has its missing cells evaluated in one pass, the later ones
   speculatively: a speculative result is kept only if no `#CYCLE!` was raised
-  beneath it, so a branch that is not taken does not leave a cycle behind.
+  beneath it, so a branch that is not taken does not leave a cycle behind. A
+  cell abandoned that way is not evaluated speculatively again while the same
+  formula waits, and a speculative evaluation that needs it is abandoned
+  without evaluating it; it is evaluated when it is read.
 - **Rectangles in the dependency cache.** `DependencyIndex` records a range as
   one rectangle edge, finds readers of an edited coordinate (including one that
   was empty) by containment, and treats a reader of a volatile or unparseable
   formula inside a range as uncacheable. It keeps its bounds (4,096 results,
-  50,000 edges, 4 MiB) and has no spatial index.
+  50,000 edges, 4 MiB) and has no spatial index; an invalidation spends at
+  most 100,000 containment checks and is conservative past that (below).
 - **Corpus.** `tests/calculation_corpus.py` and a recorded fixture hold 178
   cases from the evaluator before stage 2. They pass unchanged: none was
   re-recorded.
@@ -272,24 +286,123 @@ would notice:
   read through a range does not raise `INVALID_INPUT`, as a direct read of the
   cell does.
 - **Missing formula cells are evaluated speculatively.** Every pending cell of a
-  range is evaluated even when an earlier one has turned out to be an error,
-  which is extra work and never a different result. A formula whose value is
+  range is evaluated even when an earlier one has turned out to be an error.
+  That is extra work, and since the final review it is linear in the cells of
+  the range for the shapes measured there: a cell abandoned because a `#CYCLE!`
+  was raised beneath it costs one evaluation, not a walk of the chain under it.
+  The extra work is charged to the read's time budget like any other, so it can
+  still be what makes a read near its budget show `#LIMIT!`; it changes no
+  result otherwise. One shape is still more than linear: when a formula waits
+  on a range again after its first missing cell is settled, the cells abandoned
+  before are tried again, so a range whose cells each give a value when read
+  but each raise a cycle in something they evaluate ahead and do not read costs
+  one pass per cell. No such workbook was measured. A formula whose value is
   blank is not charged on the scan path, as it is on the stream path.
-- **Invalidation has no spatial index.** Its cost is affected cells times
-  rectangles on the sheet (S5). `cacheable` also rebuilds its list of tainted
-  formulas on every save.
-- **Untested cases.** There is no test for a deleted cell inside a range, for an
-  edit to a range on another sheet, or for a volatile formula written into the
-  rectangle of a cached reader. Whether a deleted cell's key is in the engine's
-  change set is pre-existing behaviour.
+- **Invalidation has no spatial index and is conservative past a budget.** One
+  invalidation spends at most 100,000 containment checks (plus one pass over a
+  sheet's rectangles). Within that it is exact. Past it, the cells found in a
+  step are replaced by their bounding box, so a reader whose range meets the
+  box is forgotten even if no edited cell is inside the range: exact for a
+  filled block, more than necessary for scattered cells. Formulas chained
+  through ranges that spend the budget clear the whole cache. Neither leaves a
+  stale value; both can cost a recalculation that was not needed.
+- **`marked` is not a spatial index either.** Whether a range holds an
+  uncacheable cell is decided along rows or columns, whichever has fewer lines
+  to try. A sheet with uncacheable cells in thousands of different rows and
+  thousands of different columns, read by ranges thousands of cells wide and
+  tall, would still cost up to the number of uncacheable cells (at most 4,096)
+  per range saved.
 - **`DependencyIndex.hits` counts re-reads** during re-evaluation; it is a
   diagnostic only.
-- **Stray `ResourceWarning` lines.** The full suite prints about three
-  "unclosed database" warnings, in the corpus test and in one chart test, raised
-  by garbage collection; their source was not traced.
-- **Stale wording in code.** A comment in `chart_jobs.py` still mentions a
-  10,000-step budget, and the tests keep a few cases that patch the limit
-  instead of reaching it.
+- **Stray `ResourceWarning` lines.** The full suite printed about three
+  "unclosed database" warnings, raised by garbage collection. Two came from
+  `tests/test_bindings.py`: `setUp` registers the first workbook's `close` for
+  cleanup, and two tests (a reopened copy and a corrupt binding) assigned a
+  second `Workbook` to `self.book` that was never closed. That is not this
+  stage's code; the corpus test allocates enough to trigger collection while
+  those objects are waiting, which is why the warnings appeared beside it. Both
+  tests now close the second workbook. The third warning, printed during
+  `test_charts.test_limit_charts`, was not traced.
+- **Tests that patch the limit.** The tests keep a few cases that patch the
+  per-formula limit instead of reaching it.
+
+## Fixes from the final review
+
+The whole-branch review at `42f30fb` found the results correct and three
+performance defects, one of which changed results against `main`. All three are
+fixed in this stage, each with a test that counts work (evaluations,
+containment checks) rather than time.
+
+The figures below are **probe measurements, not benchmark evidence**: single
+runs of the reviewer's scripts on the same Apple M1, not idle (one-minute load
+average between 3 and 11 during the runs), before the fix at `42f30fb` and
+after it.
+Read them for their order of magnitude.
+
+**1. Abandoned speculative evaluation was quadratic and changed results.** With
+`A<r>` `=A<r-1>+B1` down a column and `B1` `=SUM(A1:An)`, every `A<r>` evaluated
+ahead of time meets `B1` on the stack and is abandoned; the next one walked the
+whole chain beneath it again, and each walk charged the cells' sources to the
+8 MiB input cap again. `main` gives `#CYCLE!` when `A1` is `=1` and `#DIV/0!`
+when `A1` is `=1/0`.
+
+| Read of `B1` | Before | After |
+| --- | --- | --- |
+| Default read, real cycle, n = 400, 1,000, 3,000 | `#LIMIT!` after 0.25 s | `#CYCLE!` in 0.01, 0.03, 0.08 s |
+| Default read, `A1` `=1/0`, n = 400, 1,000, 3,000 | `#LIMIT!` after 0.25 s | `#DIV/0!` in 0.01, 0.02, 0.06 s |
+| 120 s budget, real cycle, n = 1,000 | `#CYCLE!` in 8.5 s | `#CYCLE!` in 0.03 s |
+| 120 s budget, real cycle, n = 3,000 | `#LIMIT!` in 18 s (`Calculation input cache exceeds 8 MiB`) | `#CYCLE!` in 0.07 s |
+| Evaluations at n = 1,500, either shape | 2,108,042 | 4,500 (cycle), 2,999 (`=1/0`) |
+
+The fix: a cell abandoned while a formula waits is not evaluated speculatively
+again during that wait; a speculative evaluation whose next missing cell is one
+of them is abandoned without evaluating it; and an abandoned cell keeps its
+stored input and parsed tree until the read ends, so it is read, parsed and
+charged once. A cell is still evaluated, for real, when a formula reads it.
+
+**2. Invalidation at commit was affected cells times rectangles.** With 4,000
+cached `=SUM(A<r>:A<r+5>)`, one edit of 10,000 unrelated cells on the same sheet:
+
+| | Before | After |
+| --- | --- | --- |
+| The edit, through `Workbook.mutate` | 1.95 s (2.50 s in the review), 40,000,000 checks; the next such edit the same | 0.19 s, 4,000 checks; the next such edit the same (the review measured 0.23 s on `main`) |
+| Edit at the head of a 2,000-formula chain beside 2,000 cached range readers | 0.18 s, 4,000,000 checks | 0.005 s, 2,000 checks |
+
+The fix: readers through single-cell edges are followed first, which costs no
+containment check. The cells gathered are then checked together against the
+rectangles of their sheet: exactly, while the invalidation has spent no more
+than 100,000 checks; past that, as one bounding box, one check per rectangle.
+An invalidation still over the budget after a step clears the cache. The
+budget is two single-cell lookups against a cache at its 50,000-edge cap (a
+few milliseconds of checks here), so one edited cell is always exact. Both fallbacks only
+forget more than necessary. In the first row above nothing is forgotten, as on
+`main`, because the edit's box meets no range.
+
+**3. `cacheable` walked every uncacheable cell for each range, on every save.**
+The calculator also saved each result twice, decided again on every cache hit,
+and went on marking volatile cells after it had stopped recording edges, so
+marks outlived the read. With 2,000 `=TODAY()` cells read first, then 1,900
+`=SUM(D<r>:F<r>)` beside them in a default read:
+
+| | Before | After |
+| --- | --- | --- |
+| First read of the 1,900 formulas | 881 values, 1,019 `#LIMIT!`; 3,525,762 checks | 1,900 values in 0.11 s; 5,700 checks |
+| Second read | 1,375 values, 525 `#LIMIT!` | 1,900 values in 0.02 s; no further checks |
+| Marks left after two 4,000-cell reads of `=TODAY()` (the review's probe) | 3,903 | 0 |
+
+The fix: uncacheable cells are also held by row and by column for each sheet,
+and a range is decided along whichever has fewer lines to try; a result is
+saved once, when its evaluation completes, and not decided again when it is
+served from the cache; and nothing is marked once the calculator has stopped
+recording.
+
+The properties these mechanisms guarantee were re-checked after the fixes with
+the reviewer's probes: 4,200 random workbooks gave the same results as `main`
+case for case; streamed and cell-by-cell evaluation agreed on 3,533 formulas;
+22,342 cached values read after random edits, clears and undos equalled a fresh
+calculation, and so did a further 10,848 read three times over with the
+invalidation budget set to 0, 3 and 12 to force the fallbacks; and a volatile
+formula behind a range was never served from the cache.
 
 ## Not measured
 
@@ -307,7 +420,8 @@ would notice:
   own cost was not timed.
 - Memory for the conditional aggregates and lookups (S6 measured `SUM` only),
   and any read path other than `Workbook.read` and `Workbook.calculator()`.
-- The time an edit through `Workbook` spends invalidating (S5).
+- The time an edit through `Workbook` spends invalidating, beyond the probe
+  figures under [Fixes from the final review](#fixes-from-the-final-review).
 - The test suites on Windows and Linux. The desktop, Python workspace and chart
   suites and the service suite pass on this Mac (see the
   [status](implementation-status.md)).

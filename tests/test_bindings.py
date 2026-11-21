@@ -192,7 +192,7 @@ class BindingTests(unittest.TestCase):
         with closing(Workbook(self.dir/'copy.dhwb')) as copy:
             self.assertEqual(len(read_code(copy,dict(expected_state=copy.state()))['bindings']),1)
         self.assertFalse(marker.exists())
-        self.book=Workbook(path)
+        self.book=Workbook(path);self.addCleanup(self.book.close)
 
     def test_corrupt_stored_binding_rejected_on_open(self):
         import sqlite3,json
@@ -202,7 +202,7 @@ class BindingTests(unittest.TestCase):
             value=json.loads(row[0]);value['module_id']=str(uuid.uuid4())
             db.execute("UPDATE dh_relational SET payload=?",(json.dumps(value),))
         with self.assertRaises(EngineError):Workbook(path)
-        self.book=Workbook(self.dir/'other.dhwb',create=True)
+        self.book=Workbook(self.dir/'other.dhwb',create=True);self.addCleanup(self.book.close)
 
 
 if __name__=='__main__':unittest.main()

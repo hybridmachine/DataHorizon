@@ -355,7 +355,8 @@ rule the old error would be served for ever.
   about 11 to 16 s over stored values and over 2 minutes over uncalculated
   formulas. The count stands as a count; the time attached to it does not
   ([result](calculation-stage-2.md#does-4194304-still-stand)). The count is charged
-  where cells are read and counts stored cells only, not empty coordinates. A
+  where cells are read. A range read as a stream counts its stored cells only,
+  not its empty coordinates; a single reference counts one either way. A
   range is read in bands of 1,024 rows, with the time budget checked before each. A
   formula that exceeds one stores `#LIMIT!` and is counted in the calculation
   status. Because the limit is a count, the same inputs always give the same

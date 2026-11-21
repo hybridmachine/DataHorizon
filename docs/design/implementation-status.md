@@ -34,7 +34,26 @@ the figures to one significant digit):
   0.58, 1.93 and 0.89 s. A `SUM` over 1,000,000 cells added at most 32 KiB of
   peak memory.
 - Invalidating with 4,096 cached range readers takes 2.7 ms for a small edit and
-  0.47 s when 2,098 readers contain it; there is no spatial index.
+  0.47 s when 2,098 readers contain it (3.0 ms after the final-review fix
+  below); there is no spatial index.
+
+The whole-branch review at `42f30fb` found the results correct and three
+performance defects, fixed in this stage with tests that count work
+([details](calculation-stage-2.md#fixes-from-the-final-review)). The figures
+are probe measurements (single runs, load between 3 and 11), not benchmark
+evidence:
+- A column of `=A<r-1>+B1` under `B1` `=SUM(A1:An)` was quadratic and showed
+  `#LIMIT!` from 400 rows in a default read, where `main` shows `#CYCLE!` (or
+  `#DIV/0!` when `A1` is an error). It is linear and shows what `main` shows:
+  2,108,042 evaluations at 1,500 rows became 4,500; 3,000 rows take 0.08 s.
+- One edit of 10,000 cells with 4,000 cached range readers on the sheet took
+  1.95 s and 40,000,000 containment checks at commit; it takes 0.19 s and 4,000.
+  An invalidation now spends at most 100,000 checks and is conservative past
+  that: it forgets every reader whose range meets the bounding box of the
+  cells, or clears the cache. It never leaves a stale value.
+- Deciding whether a range reader may be cached walked every volatile cell on
+  record: 1,900 range formulas beside 2,000 `=TODAY()` cells gave 1,019
+  `#LIMIT!` in a default read and now give 1,900 values in 0.11 s.
 
 Still true: nothing is stored between reads, a 100,000-row running total shows
 `#LIMIT!` in a default read, and a formula near a budget can pass on one read
@@ -51,7 +70,14 @@ on the working tree of the commit that corrected the function help text
 run at `d4dceca`. It passed on its own twice after each failure and passed in the
 `ctest` run, and the machine was heavily loaded during both failing runs, so it
 is treated as sensitive to load, not as a defect of this stage; its cause was not
-investigated. Not verified: Windows and Linux, a cold file cache, an idle machine.
+investigated. After the fixes from the final review the whole service suite was
+run once on the working tree of the commit that made them, on top of `42f30fb`:
+1,836 tests, OK, 28 skipped, with that test passing; the desktop, Python
+workspace and chart suites were not run again (the fixes touch the service
+only). The run printed one "unclosed database" `ResourceWarning`, where earlier
+runs printed about three: two came from two tests in `tests/test_bindings.py`
+that never closed a second workbook and now do. Not verified: Windows and Linux,
+a cold file cache, an idle machine.
 
 ## Calculation stage 1 (measurement) — November 18, 2026
 
