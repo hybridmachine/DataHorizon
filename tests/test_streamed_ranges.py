@@ -480,6 +480,58 @@ class StreamedCriteriaAndLookupTests(RangeCase):
         self.assertTrue(self.scans)
         self.assertTrue(all(scan[1] == 1 for scan in self.scans if scan[2] == 1), self.scans)
 
+    def limited(self, cells, ref, limit, *, scan=True):
+        with patch.object(formula, "FORMULA_CELL_LIMIT", limit):
+            return self.results(cells, [ref], scan=scan)[ref]
+
+    def test_the_limit_counts_only_the_cells_a_function_reads(self):
+        sumifs = '=SUMIFS(B1:B40,A1:A40,"x")'
+        # Uncalculated criteria and a matching sum error: each pass counts what it reads, not what it scans to collect.
+        cells = {**{f"A{r}": '="x"' for r in range(1, 41)}, "B1": "=1/0", "E1": sumifs}
+        # A1 (one cell and one text unit) and B1: what the old evaluator read before it raised.
+        for limit, expected in ((2, "#LIMIT!"), (3, "#DIV/0!"), (60, "#DIV/0!"), (100, "#DIV/0!")):
+            with self.subTest(case="error under a match", limit=limit):
+                self.assertEqual(self.limited(cells, "E1", limit), expected)
+        # No row matches: the 40 criteria cells are read (a cell and a text unit each), the sum cells never.
+        for criteria in ("y", '="y"'):
+            cells = {**column("A", [criteria]*40), **column("B", ["1"]*40), "E1": sumifs}
+            for limit, expected in ((79, "#LIMIT!"), (80, 0), (81, 0), (100, 0)):
+                for scan in (True, False):
+                    with self.subTest(case="no match", criteria=criteria, limit=limit, scan=scan):
+                        self.assertEqual(self.limited(cells, "E1", limit, scan=scan), expected)
+        # A lookup counts its key's text unit, its vector up to the match (a cell and a text unit each) and the return
+        # cell there; MATCH only the key and the vector. Nothing after the match counts.
+        cells = {**column("A", [f"k{n}" for n in range(1, 1001)]), **column("B", ["7"]*1000),
+                 "E1": '=XLOOKUP("k3",A1:A1000,B1:B1000)', "E2": '=MATCH("k3",A1:A1000,0)'}
+        for ref, enough, value in (("E1", 8, 7), ("E2", 7, 3)):
+            for scan in (True, False):
+                with self.subTest(case="lookup", formula=ref, scan=scan):
+                    self.assertEqual(self.limited(cells, ref, enough, scan=scan), value)
+                    self.assertEqual(self.limited(cells, ref, enough-1, scan=scan), "#LIMIT!")
+
+    def test_two_column_criteria_ranges_with_different_gaps(self):
+        rows = 3_000
+        first = {(5, 1): "x", (10, 2): "a", (2000, 1): "y", (2999, 2): "x", (3000, 1): "x"}  # A1:B3000
+        second = {(5, 1): "q", (7, 2): "q", (10, 2): "x", (1500, 1): "z"}  # C1:D3000
+        numbers = {(5, 1): 1, (7, 2): 2, (10, 2): 4, (11, 1): 8, (2999, 2): 16, (1, 1): 32}  # E1:F3000
+        cells = {}
+        for grid, letters in ((first, "AB"), (second, "CD"), (numbers, "EF")):
+            cells.update({f"{letters[col-1]}{row}": str(value) for (row, col), value in grid.items()})
+        cells.update({"H1": f'=COUNTIFS(A1:B{rows},"",C1:D{rows},"")', "H2": f'=COUNTIFS(A1:B{rows},"<>x",C1:D{rows},"")',
+                      "H3": f'=SUMIFS(E1:F{rows},A1:B{rows},"",C1:D{rows},"<>x")', "H4": f'=COUNTIF(A1:B{rows},"")',
+                      "H5": f'=COUNTIF(C1:D{rows},"<>x")', "H6": f'=SUMIF(C1:D{rows},"",E1:F{rows})'})
+        positions = [(row, col) for row in range(1, rows+1) for col in (1, 2)]
+        expected = {
+            "H1": sum(1 for p in positions if p not in first and p not in second),
+            "H2": sum(1 for p in positions if first.get(p) != "x" and p not in second),
+            "H3": sum(numbers.get(p, 0) for p in positions if p not in first and second.get(p) != "x"),
+            "H4": sum(1 for p in positions if p not in first),
+            "H5": sum(1 for p in positions if second.get(p) != "x"),
+            "H6": sum(numbers.get(p, 0) for p in positions if p not in second)}
+        refs = list(expected)
+        self.assertEqual(self.results(cells, refs), expected)
+        self.assertEqual(self.results(cells, refs, scan=False), expected)
+
     def test_without_scan_the_functions_read_each_coordinate(self):
         cells = {"A1": "x", "A2": "=1/0", "A4": "x", "B1": "2", "B3": "=A1", "B4": "5",
                  "E1": '=COUNTIF(A1:A4,"x")', "E2": '=SUMIF(A1:A4,"x",B1:B4)', "E3": '=COUNTIFS(A1:A4,"",B1:B4,"<>")',

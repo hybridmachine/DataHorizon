@@ -1046,9 +1046,10 @@ class Calculator:
         is raised for a cell: what reading it would raise is its value, for the caller to raise with fail() only when
         it reads that cell. A cell error, or any other FormulaError, is a FormulaError value; a cell on the stack is
         CIRCULAR, counted as a cycle when it is raised; a formula cell with no value yet is Pending([key]), whose keys
-        the caller collects. Each stored cell counts one toward the formula's limit. The scopes are scanned together in
-        bands of SCAN_ROWS rows, so a caller that stops leaves later bands unread; with bands=True, (end, None) follows
-        each band, end the first index after it."""
+        the caller collects. Nothing counts toward the formula's limit here: the caller counts each cell it reads with
+        taken(), so cells it skips, or scans only to collect Pending keys, cost nothing. The scopes are scanned together
+        in bands of SCAN_ROWS rows, so a caller that stops leaves later bands unread; with bands=True, (end, None)
+        follows each band, end the first index after it."""
         _,r1,c1,r2,c2=scopes[0];height,width=r2-r1+1,c2-c1+1
         if self.scan is None:
             for index in range(height*width):
@@ -1062,7 +1063,7 @@ class Calculator:
             for row,col,item in self.scan(target,top+first,left,top+last,right):
                 seen+=1
                 if seen%256==0:self.check()
-                self.charge(1);key=target,row,col
+                key=target,row,col
                 if key in self.active:value=CIRCULAR
                 elif item["kind"]=="formula":value=self.cache[key] if key in self.cache else Pending([key])
                 elif item["kind"]=="unmaintained":value=FormulaError("#REF!",UNMAINTAINED_MESSAGE)
@@ -1081,11 +1082,26 @@ class Calculator:
             if bands:yield (last+1)*width,None
 
     def probe(self,key):
-        """What aligned gives for key without scan: its value, or what reading it would raise."""
-        if key in self.active:self.charge(1);return CIRCULAR
+        """What aligned gives for key without scan: its value, or what reading it would raise. The read is not counted
+        here (taken() counts it if the caller reads it), so cell()'s own count is undone."""
+        if key in self.active:return CIRCULAR
+        count=self.count  # a #LIMIT! from cell()'s count is raised again by taken() if the caller reads the cell
         try:return self.cell(*key)
         except FormulaError as error:return error
         except Pending as need:return need
+        finally:self.count=count
+
+    def uncounted(self,work,*args):
+        """work(*args) for a caller that is only collecting Pending keys: nothing it charges counts toward the formula's
+        limit, and a #LIMIT! it raises gives None (the next pass meets it in order)."""
+        count=self.count
+        try:return work(*args)
+        except FormulaError:return None
+        finally:self.count=count
+
+    def taken(self,value):
+        """Count a cell from aligned that the caller reads: a stored cell, or without scan any coordinate."""
+        if value is not None or self.scan is None:self.charge(1)
 
     def fail(self,value):
         """Raise a FormulaError value from aligned, as reading its cell would have."""
@@ -1331,13 +1347,15 @@ class Calculator:
                 return expected,None
             if values is None:continue
             expected=index+1;value=values[0]
+            if not waiting:self.taken(value)
             if isinstance(value,Pending):waiting+=value.keys;continue
             if isinstance(value,FormulaError):
                 if waiting:break
                 self.fail(value)
-            if self.exact_lookup_key(value)!=key:continue
+            if (self.uncounted(self.exact_lookup_key,value) if waiting else self.exact_lookup_key(value))!=key:continue
             if waiting:break
             value=values[1] if returns else None
+            if returns:self.taken(value)
             if isinstance(value,Pending):raise value
             if isinstance(value,FormulaError):self.fail(value)
             return index,value
@@ -1371,16 +1389,24 @@ class Calculator:
         for _,values in self.aligned(scopes):
             visited+=1;matched=known=True
             for value,(_,criterion) in zip(values,pairs):
+                if not waiting:self.taken(value)
                 if isinstance(value,Pending):waiting+=value.keys;known=False
                 elif isinstance(value,FormulaError) and value.code not in CELL_ERRORS:
                     if not waiting:self.fail(value)
                     known=False
+                elif waiting:
+                    eligible=self.uncounted(criterion.matches,value)
+                    if eligible is None:known=False
+                    elif not eligible:matched=False
                 elif not criterion.matches(value):matched=False
             if not (known and matched):continue
             if sums is None:total+=1;continue
             value=values[-1]
+            if waiting:
+                if isinstance(value,Pending):waiting+=value.keys
+                continue
+            self.taken(value)
             if isinstance(value,Pending):waiting+=value.keys;continue
-            if waiting:continue
             if isinstance(value,FormulaError):self.fail(value)
             if type(value) in (int,float):
                 total+=value
