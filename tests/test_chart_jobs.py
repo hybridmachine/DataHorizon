@@ -350,13 +350,15 @@ class ChartJobCalculationTests(unittest.TestCase):
 
     def test_a_limit_error_cell_fails_the_resolve(self):
         self.chain(300)
-        chart_id = self.chart_over("A300")  # its own chain of 300 cells is deeper than the engine allows
+        # The chain starts from a formula nested deeper than the parser allows; A300 reads its #LIMIT! through 299 cells.
+        self.apply("edit", sheet="Sheet1", cells=[{"row": 1, "col": 1, "source": "=" + "(" * 130 + "1" + ")" * 130}])
+        chart_id = self.chart_over("A300")
         self.reopen()
         view = self.resolve(chart_id)
         self.assertEqual(view["status"], "failed")
         self.assertNotIn("result", view)
         self.assertEqual(view["error"]["code"], "CALCULATION_FAILED")
-        self.assertEqual(view["error"]["message"], "A300 could not be calculated: Dependency chain exceeds 128 cells")
+        self.assertEqual(view["error"]["message"], "A300 could not be calculated: Formula nesting limit exceeded")
 
     def test_a_division_by_zero_cell_stays_a_counted_gap(self):
         self.apply("edit", sheet="Sheet1", cells=[{"row": 1, "col": 1, "source": "1"}, {"row": 2, "col": 1, "source": "=1/0"},

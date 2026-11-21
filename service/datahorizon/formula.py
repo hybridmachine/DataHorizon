@@ -802,11 +802,24 @@ class Criterion:
         return {"=":lambda:left==right,"<>":lambda:left!=right,"<":lambda:left<right,">":lambda:left>right,"<=":lambda:left<=right,">=":lambda:left>=right}[self.op]()
 
 
+class Pending(Exception):
+    """Raised while a formula is evaluated when it reads formula cells that have no value yet.
+
+    keys lists them. Calculator.cell evaluates them and then the reader again; Pending never escapes it.
+    """
+    def __init__(self, keys):
+        super().__init__(keys)
+        self.keys = keys
+
+
 class Calculator:
     def __init__(self, read, resolve_sheet, seconds=0.25, *, clock=None):
         self.read, self.resolve_sheet = read, resolve_sheet
         self.clock = utc_clock() if clock is None else clock
         self.cache, self.active = {}, set()
+        # The cells being evaluated, outermost first; active holds the same cells. A formula waiting for a
+        # precedent keeps its stored input and parsed tree, so it is read and parsed once.
+        self.following, self.waiting = [], {}
         self.deadline, self.count = time.monotonic() + seconds, 0
         self.bytes = 0
 
@@ -820,47 +833,84 @@ class Calculator:
         key = sheet, row, col
         if key in self.active:
             raise FormulaError("#CYCLE!", "Circular reference")
-        if len(self.active) >= 128:
-            raise FormulaError("#LIMIT!", "Dependency chain exceeds 128 cells")
-        if key in self.cache:
-            result = self.cache[key]
-            if isinstance(result, FormulaError):
-                raise result
-            return result
+        if key not in self.cache:
+            if self.following:  # read by following[-1]: an input is settled here, a formula raises Pending
+                self.remember(key, self.outcome(key))
+            else:
+                self.follow(key)
+        result = self.cache[key]
+        if isinstance(result, FormulaError):
+            raise result
+        return result
+
+    def follow(self, key):
+        """Evaluate key and the formulas it reads, innermost first, over an explicit stack instead of recursion."""
+        following = self.following
+        following.append(key)
         self.active.add(key)
         try:
-            item = self.read(sheet, row, col)
-            if item:
-                self.bytes += len(item["source"].encode())
-                if self.bytes > 8*1024*1024:
-                    raise FormulaError("#LIMIT!", "Calculation input cache exceeds 8 MiB")
+            while following:
+                top = following[-1]
+                try:
+                    result = self.outcome(top)
+                except Pending as need:
+                    following.append(need.keys[0])
+                    self.active.add(need.keys[0])
+                    continue
+                following.pop()
+                self.active.remove(top)
+                self.waiting.pop(top, None)
+                self.remember(top, result)
+        finally:
+            self.active.difference_update(following)
+            following.clear()
+            self.waiting.clear()
+
+    def remember(self, key, result):
+        """Keep a cell's completed value or FormulaError; every cell whose evaluation completes passes here."""
+        self.cache[key] = result
+
+    def outcome(self, key):
+        try:
+            return self._evaluate_cell(key)
+        except FormulaError as error:
+            return error
+
+    def _evaluate_cell(self, key):
+        """The cell's value, or raises its FormulaError. A formula cell other than following[-1] raises Pending."""
+        sheet, row, col = key
+        try:
+            if key in self.waiting:
+                item, tree = self.waiting[key]
+            else:
+                item, tree = self.read(sheet, row, col), None
+                if item:
+                    self.bytes += len(item["source"].encode())
+                    if self.bytes > 8*1024*1024:
+                        raise FormulaError("#LIMIT!", "Calculation input cache exceeds 8 MiB")
             if item is None:
                 result = None
             elif item["kind"] == "unmaintained":
                 raise FormulaError("#REF!", UNMAINTAINED_MESSAGE)
             elif item["kind"] == "formula":
-                result = self.evaluate(Parser(item["source"][1:]).parse(), sheet)
+                if key != self.following[-1]:
+                    self.waiting[key] = item, None
+                    raise Pending([key])
+                if tree is None:
+                    tree = Parser(item["source"][1:]).parse()
+                    self.waiting[key] = item, tree
+                result = self.evaluate(tree, sheet)
                 if isinstance(result, list):
                     raise FormulaError("#VALUE!", "Range cannot be a scalar result")
             else:
                 result = item["value"]
             if isinstance(result, (int, float)) and not math.isfinite(result):
                 raise FormulaError("#NUM!", "Non-finite result")
-            self.cache[key] = result
             return result
         except OverflowError:
-            error = FormulaError("#NUM!", "Numeric overflow")
-            self.cache[key] = error
-            raise error
+            raise FormulaError("#NUM!", "Numeric overflow")
         except RecursionError:
-            error = FormulaError("#LIMIT!", "Calculation nesting limit exceeded")
-            self.cache[key] = error
-            raise error
-        except FormulaError as error:
-            self.cache[key] = error
-            raise
-        finally:
-            self.active.remove(key)
+            raise FormulaError("#LIMIT!", "Calculation nesting limit exceeded")
 
     def reference(self, ref, sheet):
         name, row, col = split_ref(ref)

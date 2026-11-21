@@ -514,15 +514,19 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.cells()[(3, 4)]["source"], "=B3*C3")
 
     def test_runtime_formula_recursion_is_a_limit_error(self):
-        self.edit(*[(row,1,"="+"+"*20+f"A{row+1}") for row in range(1,61)],(61,1,"1"))
+        # A dependency chain no longer deepens the Python stack, so the recursion comes from one formula's own
+        # nesting (128 unary operators, the most the parser accepts) under a limit just above the current depth.
+        self.edit((1,1,"="+"+"*128+"A2"),(2,1,"1"),(3,1,"=A2"))
+        depth,frame=0,sys._getframe()
+        while frame:depth,frame=depth+1,frame.f_back
         previous=sys.getrecursionlimit()
         try:
-            sys.setrecursionlimit(400)
-            result=self.book.read("Sheet1",{"r2":61,"c2":1})
+            sys.setrecursionlimit(depth+80)
+            result=self.book.read("Sheet1",{"r2":3,"c2":1})
         finally:
             sys.setrecursionlimit(previous)
-        self.assertEqual(result["cells"][0]["display"],"#LIMIT!")
-        self.assertEqual(result["cells"][-1]["value"],1)
+        self.assertEqual((result["cells"][0]["display"],result["cells"][0]["error"]),("#LIMIT!","Calculation nesting limit exceeded"))
+        self.assertEqual([cell["value"] for cell in result["cells"][1:]],[1,1])
 
     def test_formula_errors_and_lazy_if(self):
         self.edit((1, 1, "=SUUM(B1:B2)"), (1, 2, "=IF(TRUE,7,1/0)"),

@@ -81,6 +81,11 @@ class DependencyIndex:
                 self.save(key,result)
                 return result
 
+            def remember(self,key,result):
+                # Formulas evaluated on the way to the one read no longer pass through cell().
+                super().remember(key,result)
+                if not isinstance(result,FormulaError) or result.code in CELL_ERRORS:self.save(key,result)
+
             def save(self,key,result):
                 if self.disabled or not index.cacheable(key):return
                 size=64+len(str(result).encode('utf-8'))
