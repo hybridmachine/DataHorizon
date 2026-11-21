@@ -5,38 +5,67 @@ from .formula import Calculator, Parser, FormulaError, CELL_ERRORS
 
 
 class DependencyIndex:
+    """edges[key] holds the rectangles (sheet, r1, c1, r2, c2) the formula at key reads, a single cell as a rectangle of
+    one. Single cells are found again through reverse[cell]; larger rectangles through ranges[sheet][(r1, c1, r2, c2)],
+    each checked for containment (counted in checks). uncacheable holds formulas found to read a volatile or
+    unparseable one when their result was saved: a reader is saved only after the formulas it read have completed."""
     def __init__(self):
+        self.checks=0
         self.clear()
 
     def clear(self):
-        self.edges={};self.edge_count=0;self.reverse=defaultdict(set);self.volatile=set();self.unsafe=set()
+        self.edges={};self.edge_count=0;self.reverse=defaultdict(set);self.ranges=defaultdict(dict)
+        self.volatile=set();self.unsafe=set();self.uncacheable=set()
         self.values={};self.sizes={};self.bytes=0;self.hits=0;self.invalidated=0
+
+    def link(self,key,rectangles):
+        self.edge_count+=len(rectangles)-len(self.edges.get(key,()))
+        self.unlink(key);self.edges[key]=rectangles
+        for sheet,r1,c1,r2,c2 in rectangles:
+            if r1==r2 and c1==c2:self.reverse[sheet,r1,c1].add(key)
+            else:self.ranges[sheet].setdefault((r1,c1,r2,c2),set()).add(key)
+
+    def unlink(self,key):
+        for sheet,r1,c1,r2,c2 in self.edges.pop(key,()):
+            readers,target=(self.reverse,(sheet,r1,c1)) if r1==r2 and c1==c2 else (self.ranges[sheet],(r1,c1,r2,c2))
+            readers[target].discard(key)
+            if not readers[target]:readers.pop(target)
+            if not self.ranges.get(sheet,True):self.ranges.pop(sheet)
 
     def forget(self,key):
         self.bytes-=self.sizes.pop(key,0);self.values.pop(key,None)
-        self.edge_count-=len(self.edges.get(key,()))
-        for target in self.edges.pop(key,()):
-            self.reverse[target].discard(key)
-            if not self.reverse[target]:self.reverse.pop(target,None)
-        self.volatile.discard(key);self.unsafe.discard(key)
+        self.edge_count-=len(self.edges.get(key,()));self.unlink(key)
+        self.volatile.discard(key);self.unsafe.discard(key);self.uncacheable.discard(key)
+
+    def readers(self,key):
+        """The formulas that read the cell key, through a single-cell edge or a rectangle containing it."""
+        sheet,row,col=key;found=set(self.reverse.get(key,()))
+        for (r1,c1,r2,c2),keys in self.ranges.get(sheet,{}).items():
+            self.checks+=1
+            if r1<=row<=r2 and c1<=col<=c2:found|=keys
+        return found
 
     def invalidate(self,keys):
         affected=set(keys);pending=list(affected)
         while pending:
-            for parent in self.reverse.get(pending.pop(),()):
+            for parent in self.readers(pending.pop()):
                 if parent not in affected:affected.add(parent);pending.append(parent)
         for key in affected:self.forget(key)
         self.invalidated+=len(affected)
         return affected
 
     def cacheable(self,key):
-        pending=[key];seen=set()
+        pending=[key];seen=set();tainted=self.volatile|self.unsafe|self.uncacheable
         while pending:
             item=pending.pop()
             if item in seen:continue
             seen.add(item)
-            if item in self.volatile or item in self.unsafe:return False
-            pending.extend(self.edges.get(item,()))
+            if item in tainted:return False
+            for sheet,r1,c1,r2,c2 in self.edges.get(item,()):
+                if r1==r2 and c1==c2:pending.append((sheet,r1,c1));continue
+                for other in tainted:
+                    self.checks+=1
+                    if other[0]==sheet and r1<=other[1]<=r2 and c1<=other[2]<=c2:return False
         return True
 
     def calculator(self,read,resolve,seconds,clock=None,*,scan=None):
@@ -53,13 +82,7 @@ class DependencyIndex:
                         pending=[Parser(item['source'][1:]).parse()]
                         while pending:
                             self.check();node=pending.pop()
-                            if node[0]=='ref':targets.add(self.reference(node[1],sheet))
-                            elif node[0]=='range':
-                                # One edge per coordinate: a range of more than 10,000 makes its reader uncacheable
-                                # rather than iterating it (Task 6 of calculation stage 2 records rectangles).
-                                _,r1,c1,r2,c2=self.range_geometry(node,sheet)
-                                if (r2-r1+1)*(c2-c1+1)>10000:raise FormulaError("#LIMIT!","Range too large to index")
-                                targets.update(self.range_targets(node,sheet))
+                            if node[0] in ('ref','range'):targets.add(self.range_geometry(node,sheet))  # one rectangle per reference
                             elif node[0]=='call':
                                 if node[1] in ('TODAY','NOW'):index.volatile.add(key)
                                 pending.extend(node[2])
@@ -70,8 +93,7 @@ class DependencyIndex:
                     if len(index.edges)>=4096 or index.edge_count+len(targets)>50000:
                         index.clear();self.disabled=True
                     else:
-                        index.edge_count+=len(targets)-len(index.edges.get(key,()));index.edges[key]=targets
-                        for target in targets:index.reverse[target].add(key)
+                        index.link(key,targets)
                 return item
 
             def cell(self,sheet,row,col):
@@ -93,7 +115,8 @@ class DependencyIndex:
                 if not isinstance(result,FormulaError) or result.code in CELL_ERRORS:self.save(key,result)
 
             def save(self,key,result):
-                if self.disabled or not index.cacheable(key):return
+                if self.disabled:return
+                if not index.cacheable(key):index.uncacheable.add(key);return
                 size=64+len(str(result).encode('utf-8'))
                 if key not in index.values and (len(index.values)>=4096 or index.bytes+size>4*1024*1024):
                     index.clear();self.disabled=True;return

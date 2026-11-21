@@ -284,7 +284,7 @@ class StreamedRangeTests(RangeCase):
         self.assertEqual((self.outcome(calculator, book, "C1"), self.outcome(calculator, book, "C2")), ("#VALUE!", "#VALUE!"))
         self.assertLess(len(calculator.cache), 10)
 
-    def test_the_dependency_cache_does_not_expand_a_large_range(self):
+    def test_the_dependency_cache_records_a_large_range_without_expanding_it(self):
         book = self.book({"A1": "1", "A1048576": "2", "C1": "=SUM(A1:A1048576)"})
         calculator, expanded = book.calculator(seconds=30), []
         range_targets = calculator.range_targets
@@ -297,7 +297,7 @@ class StreamedRangeTests(RangeCase):
         self.assertEqual(self.outcome(calculator, book, "C1"), 3)
         self.assertEqual(expanded, [])
         self.assertLess(book.dependencies.info()["edges"], 10)
-        self.assertNotIn((book.sheet(S), 1, 3), book.dependencies.values)
+        self.assertIn((book.sheet(S), 1, 3), book.dependencies.values)  # one rectangle (Task 6), so the reader is cached
 
 
 class StreamedCriteriaAndLookupTests(RangeCase):

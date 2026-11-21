@@ -45,6 +45,43 @@ class DependencyTests(unittest.TestCase):
     def test_lazy_missing_references_do_not_change_semantics(self):
         self.apply(cells=[dict(row=1,col=1,source='=IF(FALSE,Missing!A1,7)')]);self.assertEqual(self.value(),7)
 
+    def key(self,row,col):return self.book.sheet('Sheet1'),row,col
+
+    def test_a_large_range_does_not_clear_the_cache(self):
+        self.apply(cells=[dict(row=1,col=1,source='2'),dict(row=60000,col=1,source='3'),dict(row=1,col=2,source='=SUM(A1:A60000)')])
+        self.assertEqual(self.value(1,2),5);hits=self.book.dependencies.hits
+        self.assertEqual(self.value(1,2),5)
+        self.assertGreaterEqual(self.book.dependencies.info()['cached'],1);self.assertGreater(self.book.dependencies.hits,hits)
+        self.assertEqual(self.book.dependencies.edges[self.key(1,2)],{(self.key(1,1)[0],1,1,60000,1)})
+
+    def test_an_edit_inside_a_range_invalidates_its_reader(self):
+        self.apply(cells=[dict(row=2,col=1,source='2'),dict(row=3,col=1,source='=C3*2'),dict(row=3,col=3,source='=D3+1'),
+                          dict(row=3,col=4,source='1'),dict(row=1,col=2,source='=SUM(A1:A10)')])
+        reader=self.key(1,2)
+        for cell,expected in ((None,6),(dict(row=2,col=1,source='5'),9),(dict(row=7,col=1,source='10'),19),(dict(row=3,col=4,source='4'),25)):
+            if cell:self.apply(cells=[cell]);self.assertNotIn(reader,self.book.dependencies.values)
+            self.assertEqual(self.value(1,2),expected);self.assertIn(reader,self.book.dependencies.values)
+
+    def test_a_volatile_formula_inside_a_range_is_not_cached(self):
+        self.apply(cells=[dict(row=1,col=1,source='1'),dict(row=2,col=1,source='=YEAR(NOW())'),dict(row=1,col=2,source='=SUM(A1:A3)')])
+        with patch('datahorizon.formula.utc_clock',side_effect=[datetime(2024,12,31),datetime(2025,1,1)]):
+            self.assertEqual(self.value(1,2),2025);self.assertEqual(self.value(1,2),2026)
+        self.assertNotIn(self.key(1,2),self.book.dependencies.values)
+
+    def test_an_unparseable_formula_inside_a_range_is_not_cached(self):
+        self.apply(cells=[dict(row=1,col=1,source='1'),dict(row=2,col=1,source='=SUM('),dict(row=1,col=2,source='=IFERROR(SUM(A1:A3),7)')])
+        self.assertEqual(self.value(1,2),7);self.assertIn(self.key(2,1),self.book.dependencies.unsafe)
+        self.assertNotIn(self.key(1,2),self.book.dependencies.values)
+
+    def test_invalidation_with_4096_cached_range_readers_stays_bounded(self):
+        self.apply(cells=[dict(row=row,col=2,source=f'=SUM(A{row}:A{row+1})') for row in range(1,4097)])
+        self.book.read('Sheet1',dict(r1=1,r2=4096,c1=2,c2=2));index=self.book.dependencies
+        self.assertEqual((index.info()['cached'],index.info()['edges']),(4096,4096))
+        index.checks=0;self.apply(cells=[dict(row=1,col=1,source='1')])
+        # The edited cell, then its one reader, are each checked against every rectangle on the sheet once.
+        self.assertTrue(0<index.checks<=2*4096,index.checks)
+        self.assertNotIn(self.key(1,2),index.values);self.assertEqual(index.info()['cached'],4095)
+
     def test_transactional_calculation_never_publishes_uncommitted_values(self):
         self.apply(cells=[dict(row=1,col=1,source='2'),dict(row=1,col=2,source='=A1*2')]);self.assertEqual(self.value(1,2),4)
         self.book.db.execute('BEGIN IMMEDIATE')
