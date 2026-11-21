@@ -125,7 +125,9 @@ This is native format v9. The tables hold:
 - **Pending roots**: the cells that changed, or the block rectangles found
   changed at open (section 6.2), whose dependents have not all been
   recalculated (section 7).
-- **Calculation metadata**: the store's own version and a generation counter.
+- **Calculation metadata**: the store's own version, the calculation version
+  that produced the stored results and precedents (section 6.4), and a
+  generation counter.
 
 No virtual tables, triggers or SQLite extensions are used in the file, so any
 SQLite build can open it. **Call**
@@ -161,6 +163,8 @@ section that documents every table for external readers.
   **Call**
 - A read-only snapshot connection (calculation jobs, chart jobs, query jobs)
   reads the stored results of the state it captured and never writes them.
+  A pinned snapshot cannot see a result the worker commits later, so a job
+  obtains pending values before it pins (section 8.2).
 - Older services reject v9 files, as they reject any newer version today.
 
 ### 5.3 What external tools may assume
@@ -212,9 +216,14 @@ would look like an external edit to `data_version` and discard everything.
   including one that reads a coordinate which is now empty. Example: `A1` is
   the only cell in its block and `B100` holds `=A1+1`; a direct edit deletes
   `A1`; the block's stored digest has no cells to match, and `B100` loses its
-  result. Precedents and results stored for formulas that no longer exist in
-  the block are deleted, the precedents of the formulas now in it are
-  extracted again, and its digest is replaced or removed.
+  result.
+- **Every formula now stored in a differing block is itself pending**, whether
+  or not it has precedents, because its own text may be what changed. Example:
+  `A1` holds `=1+1` with the stored result 2; a direct edit makes it `=3+4`;
+  the formula reads nothing, so no precedent rule reaches it, and it must
+  still be recalculated to 7. Precedents and results stored for formulas that
+  no longer exist in the block are deleted, the precedents of the formulas now
+  in it are extracted again, and its digest is replaced or removed.
 - **A differing `sheets` digest** invalidates every result and every stored
   precedent. A sheet's name decides what a formula reads, and the formula's
   text and block do not change when a sheet is renamed, added or removed.
@@ -255,6 +264,33 @@ relying on it; the fallback stays designed.
 A workbook opened read-only that turns out to have changed blocks cannot
 persist the repair; it recalculates into the temporary store (5.2).
 
+### 6.4 The calculation version
+
+Digests cover a workbook's inputs. They do not cover the code that turned
+those inputs into results. A workbook can hold `#NAME?` for a function that a
+later service implements; every digest still matches, and without a further
+rule the old error would be served for ever.
+
+- The service has one integer, the calculation version. It is raised in any
+  release that can change the result of some formula on unchanged inputs, or
+  the precedents extracted from some formula: a function added or corrected,
+  a change to coercion, error precedence or limits, a change to the parser or
+  to reference resolution. Releases that change none of these keep it.
+- The store records the calculation version that produced its results and
+  precedents. On open, a stored version that differs from the service's, in
+  either direction, invalidates every stored result and every stored
+  precedent: precedents are extracted again and every formula is pending.
+  Input digests stay valid, because they do not depend on the evaluator. A
+  writable open then records the service's version; a read-only open
+  recalculates into the temporary store.
+- This is separate from the store's own version, which describes the layout of
+  the derived tables, and from the native format version.
+- Finer invalidation (only the formulas that use a changed function) is not
+  designed. Recalculating everything after an upgrade is the cost. **Call**
+- A test fails when the set of implemented functions changes without the
+  calculation version changing, so that the commonest case cannot be
+  forgotten. Other semantic changes rely on review.
+
 ## 7. Recalculation
 
 ### 7.1 Marking
@@ -262,6 +298,8 @@ persist the repair; it recalculates into the temporary store (5.2).
 - A managed commit records the changed input cells as pending roots in its own
   transaction. This is the durable fact. The commit does not persist the
   transitive set of dependents.
+- A root that holds a formula is itself recalculated, as well as what reads
+  it: editing `=1+1` to `=3+4` changes a formula that has no precedents.
 - After the commit, the service derives the set of affected formulas from the
   roots and the precedents. No read may return an affected formula's stored
   result as current, from the moment the commit is visible.
@@ -380,7 +418,8 @@ value, `error` with its stored error, or `pending` with no value.
   one needs go to the front of the worker's queue and it waits for them inside
   its existing deadline (two seconds for the synchronous calls, the job's own
   deadline for chart, export and operation jobs), so a call that succeeds on a
-  small workbook today still succeeds. If a needed value is still pending at
+  small workbook today still succeeds. Jobs wait before they pin their
+  snapshot (section 8.2). If a needed value is still pending at
   the deadline it fails with a structured `CALCULATION_PENDING` error that
   carries the calculation status, and never substitutes a stale or empty
   value. **Call**
@@ -401,6 +440,31 @@ value, `error` with its stored error, or `pending` with no value.
   visible tiles when it moves, and shows "Calculating… N cells" in the status
   bar. Pending cells show the ellipsis they show today. No new window or
   dialog. **Call**
+
+### 8.2 Jobs that read a snapshot
+
+Chart, export, query and calculation jobs read through a pinned SQLite
+snapshot so that their inputs cannot change under them. Results are committed
+to the same file, so a snapshot pinned while a needed formula is pending never
+sees its value, however long the job waits.
+
+- A job waits before it pins. It names the values it needs, they go to the
+  front of the worker's queue, and it waits for them while holding no read
+  transaction, inside its own deadline.
+- It then pins the snapshot and checks, inside it, that every needed result is
+  current: results, pending roots and inputs in one snapshot belong to one
+  committed state, so a result that no pending root reaches is the value of
+  the inputs the job reads. A job therefore cannot combine one state's inputs
+  with another state's results.
+- If an edit committed between the wait and the pin, some needed value is
+  pending again in the snapshot. The job releases the snapshot and waits
+  again, inside the same deadline. At the deadline it fails with
+  `CALCULATION_PENDING`.
+- A job that must report the state it captured (`expected_state`) compares it
+  after pinning, as today, and reports `stale` if it moved.
+- Evaluating the missing values privately against the captured inputs was the
+  alternative. It would put a second evaluator beside the worker, with its own
+  limits, for formulas of any depth; it is not designed. **Call**
 
 ## 9. Limits
 
@@ -432,6 +496,16 @@ writes would look like external edits to the other.
   sheet to a name that a `#REF!` formula refers to and then editing the cell
   it now reads, and, under the background fallback, a formula in an early
   block that reads a changed cell in a late one.
+- A workbook edited directly so that a formula with no precedents has new
+  text (`=1+1` with a stored 2, changed to `=3+4`) reopens with 7; the same
+  through a managed edit.
+- A workbook prepopulated with results and precedents from an older
+  calculation version (a stored `#NAME?` for a function that now exists)
+  reopens with every formula pending and then the new value.
+- A snapshot job whose needed value is pending when it starts gets the value
+  once the worker finishes; one with an edit committed between its wait and
+  its pin returns values of a single input state, or `CALCULATION_PENDING`,
+  and never a mixture.
 - Differential cases against today's evaluation for an untaken branch that
   refers to its own cell, a sheet name that differs only in a non-ASCII
   letter's case, and a sum whose result depends on the order of addition.

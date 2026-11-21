@@ -303,6 +303,37 @@ class EvaluationTests(Case):
         self.assertEqual(loaded["fixture"]["prefix_rows"], 100)
         self.assertEqual(loaded["measurements"]["prefix_throughput"]["formulas"], 100)
 
+    def test_a_followed_formula_has_its_own_cell_budget(self):
+        db, ids = self.book({("Sheet1",1,1):"=B1", ("Sheet1",1,2):"=IF(FALSE,A1,C1)", ("Sheet1",1,3):"7"})
+        data = DependencyData.build(db); s = ids["Sheet1"]
+        results = evaluate(db, data, set(data.formulas()), {}, cell_limit=1)
+        self.assertEqual((results[(s,1,1)], results[(s,1,2)]), (7, 7))
+
+    def test_stream_sum_reports_a_cell_error_before_its_own_overflow(self):
+        db, ids = self.book({("Sheet1",1,1):"1e308", ("Sheet1",1,2):"1e308", ("Sheet1",1,3):"=1/0",
+                             ("Sheet1",2,1):"=SUM(A1:C1)", ("Sheet1",2,2):"=SUM(A1:B1)"})
+        data, results = self.everything(db); s = ids["Sheet1"]
+        self.assertEqual((results[(s,2,1)].code, results[(s,2,2)].code), ("#DIV/0!", "#NUM!"))
+        for rect, code in (((s,1,1,1,3), "#DIV/0!"), ((s,1,1,1,2), "#NUM!")):
+            with self.assertRaises(FormulaError) as raised:
+                stream_sum(db, results, rect)
+            self.assertEqual(raised.exception.code, code)
+        self.engine_agrees(db, ids, results)
+
+    def test_benchmark_runs_where_the_resource_module_is_missing(self):
+        import json, os, subprocess, sys
+        stub = Path(self.temp.name) / "stub"; stub.mkdir()
+        (stub / "resource.py").write_text("raise ImportError('No module named resource')\n")  # as on Windows
+        report = Path(self.temp.name) / "report.json"
+        subprocess.run([sys.executable, str(Path(__file__).with_name("calculation_benchmark.py")), "--rows", "100",
+                        "--runs", "1", "--output", str(report)], check=True, capture_output=True, timeout=300,
+                       env={**os.environ, "PYTHONPATH": str(stub)})
+        loaded = json.loads(report.read_text())
+        self.assertIsNone(loaded["measurements"]["precedents_rss"]["median"])
+        self.assertIsNone(loaded["measurements"]["peak_rss"]["median"])
+        self.assertIsNone(loaded["thresholds"]["T3"]["passed"])
+        self.assertEqual(loaded["measurements"]["prefix_throughput"]["formulas"], 100)
+
 
 if __name__ == "__main__":
     unittest.main()

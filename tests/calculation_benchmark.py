@@ -12,7 +12,10 @@ import hashlib
 import json
 from pathlib import Path
 import platform
-import resource
+try:
+    import resource
+except ImportError:  # Windows: memory is reported as unmeasured
+    resource = None
 import shutil
 import sqlite3
 import statistics
@@ -34,8 +37,18 @@ LIMITS = {"T1": 2.0, "T2": 0.001, "T3": (1.0, 64 * MIB), "T4": 0.5, "T5": 10.0, 
 
 
 def peak_rss():
+    if resource is None:
+        return None
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return peak if sys.platform == "darwin" else peak * 1024
+
+
+def rss_added(before):
+    return None if before is None else peak_rss() - before
+
+
+def median_bytes(values):
+    return None if None in values else statistics.median(values)
 
 
 def timed(action, runs, unit="s"):
@@ -54,7 +67,7 @@ def child_load(path):
         before, start = peak_rss(), time.perf_counter()
         data = DependencyData.load(db)
         seconds = time.perf_counter() - start
-        print(json.dumps({"seconds": seconds, "rss_added": peak_rss() - before, "formulas": len(data.formulas())}))
+        print(json.dumps({"seconds": seconds, "rss_added": rss_added(before), "formulas": len(data.formulas())}))
 
 
 def cell_key(sheet, row, col):
@@ -81,7 +94,7 @@ def child_load_compact(path):
         for ranges in columns.values():
             ranges.sort()
         loaded = time.perf_counter() - start
-        rss = peak_rss() - before
+        rss = rss_added(before)
         sheet, = db.execute("SELECT min(sheet) FROM x_precedents_c WHERE col=10").fetchone()
         start, affected, pending = time.perf_counter(), set(), [(sheet, 1, 1)]
         while pending:
@@ -275,7 +288,7 @@ def main():
         m["precedents_load_compact"] = {"runs": [round(item["seconds"], 6) for item in loads],
                                         "median": round(statistics.median(item["seconds"] for item in loads), 6), "unit": "s"}
         m["precedents_rss_compact"] = {"runs": [item["rss_added"] for item in loads],
-                                       "median": statistics.median(item["rss_added"] for item in loads), "unit": "bytes"}
+                                       "median": median_bytes([item["rss_added"] for item in loads]), "unit": "bytes"}
         m["affected_compact"] = {"median": round(statistics.median(item["affected_seconds"] for item in loads), 6), "unit": "s"}
 
         loads = [json.loads(subprocess.check_output([sys.executable, __file__, "--child-load", str(stored)], text=True))
@@ -283,7 +296,7 @@ def main():
         m["precedents_load"] = {"runs": [round(item["seconds"], 6) for item in loads],
                                 "median": round(statistics.median(item["seconds"] for item in loads), 6), "unit": "s"}
         m["precedents_rss"] = {"runs": [item["rss_added"] for item in loads],
-                               "median": statistics.median(item["rss_added"] for item in loads), "unit": "bytes"}
+                               "median": median_bytes([item["rss_added"] for item in loads]), "unit": "bytes"}
     m["peak_rss"] = {"median": peak_rss(), "unit": "bytes"}
 
     def best(mode):
@@ -305,7 +318,10 @@ def main():
     thresholds = {}
     for name, limit in LIMITS.items():
         value = measured[name]["value"]
-        passed = all(v <= l for v, l in zip(value, limit)) if isinstance(limit, tuple) else value <= limit
+        if isinstance(limit, tuple) and None in value:
+            passed = None  # part of the measure is unavailable on this platform
+        else:
+            passed = all(v <= l for v, l in zip(value, limit)) if isinstance(limit, tuple) else value <= limit
         thresholds[name] = {"limit": limit, "measured": measured[name], "passed": passed}
     report = {"date_utc": datetime.now(timezone.utc).isoformat(),
               "host": {"platform": platform.platform(), "machine": platform.machine(),
@@ -318,7 +334,7 @@ def main():
               "runs": runs, "measurements": m, "thresholds": thresholds}
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     for name, item in thresholds.items():
-        print(f"{name}: {'pass' if item['passed'] else 'FAIL'} measured {item['measured']['value']} limit {item['limit']}")
+        print(f"{name}: {'unmeasured' if item['passed'] is None else 'pass' if item['passed'] else 'FAIL'} measured {item['measured']['value']} limit {item['limit']}")
     return 0
 
 

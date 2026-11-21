@@ -199,7 +199,8 @@ took 24 to 52 s in total, of which the chain is 3 s.
 - Integer-keyed probes were added after T3 and T7 failed and the SQL fallback
   proved unusable. The thresholds are still judged on the plan's definitions.
 - Two test methods and one extra assertion were added beyond the plan's 19
-  tests, for a total of 21. The pull-request review added four more, for 25.
+  tests, for a total of 21. Two rounds of pull-request review added seven
+  more, for 28.
 - A whole-branch review corrected this document: the opening cost for the
   chosen hash, the basis for choosing the stream mode, the cause of the memory
   failure and the standing of the SQL path. Its probes are cited where used
@@ -215,6 +216,13 @@ took 24 to 52 s in total, of which the chain is 3 s.
   cycles and one sheet-name spelling, and the ordered scan uses the same
   primary-key search (0.12 s for the 100,000-cell `SUM` when rechecked), so
   the evidence was not rerun.
+- A second review round found three more. A formula reached by following
+  references charged its reads to the formula that reached it, so the
+  per-formula limit was not per formula; the streamed `SUM` reported its own
+  overflow before a later cell's error, where the service reads the whole
+  range first; and the benchmark needed the Unix-only `resource` module, so
+  it now reports memory, and T3, as unmeasured where that is missing. None
+  changes a measured figure.
 
 ## Next
 

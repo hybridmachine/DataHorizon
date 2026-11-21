@@ -345,12 +345,14 @@ class OrderedCalculator(Calculator):
         if key in self.following:
             self.cycle_hits += 1
             return FormulaError("#CYCLE!", "Circular reference")
-        hits = self.cycle_hits
+        hits, read = self.cycle_hits, self.cells_read
         self.following.append(key)
+        self.cells_read = 0  # the limit is per formula: what this one reads is not charged to its reader
         try:
             result = self.calculate(key)
         finally:
             self.following.pop()
+            self.cells_read = read
         if self.cycle_hits == hits:
             self.unordered.discard(key)
             self.results[key] = result
@@ -398,7 +400,7 @@ def evaluate(db, data, cells, results, *, cell_limit=2_000_000):
 def stream_sum(db, results, rect):
     """SUM over one rectangle from a single range scan, taking formula cells' values from results."""
     sheet, r1, c1, r2, c2 = rect
-    total = 0
+    total, overflowed = 0, False
     for row, col, source, kind in db.execute(
             "SELECT row,col,source,kind FROM cells WHERE sheet_id=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? "
             "ORDER BY row,col",
@@ -415,6 +417,8 @@ def stream_sum(db, results, rect):
             value = typed({"source": source, "kind": kind, "style": {}})["value"]
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             total += value
-            if not math.isfinite(total):
-                raise FormulaError("#NUM!", "SUM exceeds the finite numeric range")
+            # The service reads the whole range before it adds, so a later cell's error comes first.
+            overflowed = overflowed or not math.isfinite(total)
+    if overflowed:
+        raise FormulaError("#NUM!", "SUM exceeds the finite numeric range")
     return total

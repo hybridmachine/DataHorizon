@@ -240,6 +240,9 @@ public:
     int startDelayMs = 450;
     QStringList cancelErrors;   // one entry per /cancel answer; empty when accepted
     QString lastStatus;         // last job status the service reported
+    bool calculations = false;  // treat calculation jobs as the held job instead of imports
+    int busyAnswers = 0;        // calculation starts still to refuse with JOB_BUSY, unforwarded
+    int refused = 0, forwardedStarts = 0;
     HeldStartProxy(const QJsonObject &service) : m_upstream(this) {
         m_upstream.configure(service["url"].toString(),service["token"].toString());
         connect(this,&QTcpServer::newConnection,this,[this] {
@@ -252,13 +255,19 @@ public:
                 if(request.size()<end+4+length) return;
                 socket->setProperty("handled",true);
                 const auto path=QString::fromLatin1(request.left(request.indexOf("\r\n")).split(' ').at(1));
-                const bool post=request.startsWith("POST "), start=post && path.startsWith("/v1/import/") && path.endsWith("/jobs");
+                const bool post=request.startsWith("POST "), start=post && (calculations?path.endsWith("/calculation/jobs"):path.startsWith("/v1/import/") && path.endsWith("/jobs"));
+                const bool job=calculations?path.contains("/calculation/jobs/"):path.startsWith("/v1/jobs/");
                 const auto body=QJsonDocument::fromJson(request.mid(end+4)).object();
                 const QPointer<QTcpSocket> guarded=socket;
-                QTimer::singleShot(start?startDelayMs:0,this,[this,guarded,path,body,post,start] {
-                    m_upstream.request(path,body,[this,guarded,path,start](QJsonObject result,QString error) {
-                        if(path.startsWith("/v1/jobs/") && path.endsWith("/cancel")) cancelErrors.append(error);
-                        else if(error.isEmpty() && (start || path.startsWith("/v1/jobs/")) && result["status"].isString()) lastStatus=result["status"].toString();
+                if(start && busyAnswers>0) {
+                    --busyAnswers;++refused;const QByteArray bytes="{\"code\":\"JOB_BUSY\",\"message\":\"Another preparation job is running\"}";
+                    socket->write("HTTP/1.1 409 Conflict\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "+QByteArray::number(bytes.size())+"\r\n\r\n"+bytes);socket->disconnectFromHost();return;
+                }
+                if(start)++forwardedStarts;
+                QTimer::singleShot(start?startDelayMs:0,this,[this,guarded,path,body,post,start,job] {
+                    m_upstream.request(path,body,[this,guarded,path,start,job](QJsonObject result,QString error) {
+                        if(job && path.endsWith("/cancel")) cancelErrors.append(error);
+                        else if(error.isEmpty() && (start || job) && !path.endsWith("/release") && result["status"].isString()) lastStatus=result["status"].toString();
                         if(!guarded) return;
                         const auto bytes=QJsonDocument(error.isEmpty() || !result.isEmpty()?result:QJsonObject{{"code","UNAVAILABLE"},{"message",error}})
                             .toJson(QJsonDocument::Compact);
@@ -2107,6 +2116,44 @@ private slots:
         QTRY_VERIFY2_WITH_TIMEOUT(window.findChild<QLabel *>("storageStatus")->text().contains("Background snapshot: 1 cells"),qPrintable(window.findChild<QLabel *>("storageStatus")->text()+" | "+window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText()),10000);
         QVERIFY(!window.findChild<QPlainTextEdit *>("operationIssues")->toPlainText().contains("Another preparation job"));QCOMPARE(edits.count(),0);
         syncRequest(client,base+"/calculation/jobs/"+other+"/release",{});
+    }
+    void cancellingABackgroundCalculationBeforeItIsAdmittedShowsNoSnapshot_data() {
+        QTest::addColumn<bool>("busyFirst");
+        QTest::newRow("while the start request is in flight")<<false;
+        QTest::newRow("between a busy answer and the next attempt")<<true;
+    }
+    void cancellingABackgroundCalculationBeforeItIsAdmittedShowsNoSnapshot() {
+        QFETCH(bool,busyFirst);
+        QTemporaryDir temp; QJsonObject service; StartupOptions ownerOptions; ownerOptions.automaticWorkbook=false;
+        MainWindow owner(ownerOptions); observeOwnedServiceStartup(owner,service); QSignalSpy serviceReady(&owner,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(serviceReady.count(),1,10000);
+        HeldStartProxy proxy(service); proxy.calculations=true; QVERIFY(proxy.listen(QHostAddress::LocalHost,0));
+        StartupOptions options; options.automaticWorkbook=false; options.url="http://127.0.0.1:"+QString::number(proxy.serverPort());
+        options.token=service["token"].toString(); options.recoveryDirectory=temp.filePath("recovery");
+        MainWindow window(options); window.show(); QSignalSpy ready(&window,&MainWindow::serviceReady);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);
+        QSignalSpy opened(&window,&MainWindow::workbookReady); window.openBook(temp.filePath("cancel-calculation.dhwb"),true);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);
+        window.submit({{"action","edit"},{"cells",QJsonArray{QJsonObject{{"row",1},{"col",1},{"source","7"}}}}}); QTRY_COMPARE_WITH_TIMEOUT(opened.count(),2,10000);
+        auto *grid=window.findChild<QTableView *>("grid"); grid->setCurrentIndex(window.model()->index(0,0));
+        QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);
+        auto *status=window.findChild<QLabel *>("storageStatus");
+        if(busyFirst){proxy.busyAnswers=1;proxy.startDelayMs=0;}
+        window.findChild<QAction *>("calculateSelectionAction")->trigger();
+        auto *progress=window.findChild<QProgressDialog *>("backgroundCalculationProgress"); QVERIFY(progress); QVERIFY(progress->findChild<QPushButton *>());
+        if(busyFirst) {
+            // Refused once; the next attempt is 100 ms away. Cancel must stop it from being sent.
+            QTRY_COMPARE_WITH_TIMEOUT(proxy.refused,1,5000); QTest::qWait(20); progress->findChild<QPushButton *>()->click();
+            QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Background calculation: cancelled"),5000);
+            QTest::qWait(400); QCOMPARE(proxy.forwardedStarts,0);
+        } else {
+            // The start is held for 450 ms. The job it admits must be cancelled, not polled to completion.
+            QTRY_COMPARE_WITH_TIMEOUT(proxy.forwardedStarts,1,5000); progress->findChild<QPushButton *>()->click();
+            QTRY_COMPARE_WITH_TIMEOUT(proxy.cancelErrors.size(),1,5000); QCOMPARE(proxy.cancelErrors.first(),QString());
+            QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Background calculation: cancelled"),5000);
+            QTest::qWait(400);
+        }
+        QVERIFY2(!status->text().contains("Background snapshot"),qPrintable(status->text()));
     }
     void temporalCsvCompanionPreviewRestoresMixedTypes() {
         QTemporaryDir temp;StartupOptions options;options.automaticWorkbook=false;MainWindow window(options);window.show();QSignalSpy ready(&window,&MainWindow::serviceReady);QTRY_COMPARE_WITH_TIMEOUT(ready.count(),1,10000);QSignalSpy opened(&window,&MainWindow::workbookReady);window.openBook(temp.filePath("csv-temporal.dhwb"),true);QTRY_COMPARE_WITH_TIMEOUT(opened.count(),1,10000);auto *grid=window.findChild<QTableView *>("grid");grid->setCurrentIndex(window.model()->index(0,0));QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);

@@ -10,7 +10,7 @@ The owner approved the [stored results and scaled recalculation design](calculat
 (increment 10 of the Excel fidelity programme) on November 18, 2026, with a
 content fingerprint as the freshness rule. Its stage 1 is built on branch
 `claude/calculation-stage-1` following the [plan](calculation-stage-1-plan.md):
-isolated test code in `tests/` (a fixture, three prototypes, 25 tests and a
+isolated test code in `tests/` (a fixture, three prototypes, 28 tests and a
 benchmark). No service or native format code changed, and no chart, formula
 or workbook behaviour is different.
 
@@ -18,8 +18,10 @@ One desktop fix rides on the branch because the pull request's build exposed
 it: "Recalculate selection in background" failed with "Another preparation
 job is running" when a visible-formula job was still stopping, since the
 service runs one calculation job per workbook. The command now asks again
-with the same job ID for up to ten seconds. Covered by a desktop test that
-holds the place with a slow job; desktop suite 290 passed in 265 s.
+with the same job ID for up to ten seconds, and Cancel takes effect before
+the job exists: it stops a pending attempt and cancels a job that a request
+already sent goes on to create. Covered by desktop tests that hold the place
+with a slow job and that delay or refuse the start through a proxy.
 
 Measured on the reference Mac on a 1,002,003-cell workbook with 102,003
 formulas ([result](calculation-experiment.md),
