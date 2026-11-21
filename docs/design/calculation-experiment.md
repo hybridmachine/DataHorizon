@@ -3,8 +3,9 @@
 November 18, 2026 | Branch `claude/calculation-stage-1` | [Plan](calculation-stage-1-plan.md) | [Design](calculation-design.md)
 
 Stage 1 is isolated test code: prototypes of input digests, dependency data and
-dependency-ordered evaluation, and a benchmark. No service, desktop or format
-code changed. This document records what was measured and the choices it fixes
+dependency-ordered evaluation, and a benchmark. No service or format code
+changed; the branch also carries one unrelated desktop fix, described in the
+[status](implementation-status.md). This document records what was measured and the choices it fixes
 for stages 2 to 5.
 
 ## Result

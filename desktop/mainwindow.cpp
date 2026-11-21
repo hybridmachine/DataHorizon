@@ -2901,18 +2901,27 @@ void MainWindow::calculateSelection() {
     const auto resource=base()+"/calculation/jobs/"+request["job_id"].toString();
     auto *progress=new QProgressDialog(tr("Calculating stored selection…"),tr("Cancel"),0,0,this);progress->setObjectName("backgroundCalculationProgress");progress->setWindowModality(Qt::NonModal);progress->setMinimumDuration(0);progress->show();
     auto *timer=new QTimer(progress);timer->setInterval(100);
-    connect(progress,&QProgressDialog::canceled,this,[this,resource]{m_client->request(resource+"/cancel",{},[](QJsonObject,QString){});});
-    auto finish=[this,target,service,generation,resource,progress,timer](QJsonObject result,QString error){
+    // The service runs one calculation job per workbook, and a viewport job that was just told to stop may
+    // still hold that place. Ask again with the same job ID until it is free, for at most ten seconds.
+    struct Admission { bool admitted=false,cancelled=false; QElapsedTimer waited; };
+    auto admission=std::make_shared<Admission>();admission->waited.start();
+    connect(progress,&QProgressDialog::canceled,this,[this,resource,admission]{admission->cancelled=true;if(admission->admitted)m_client->request(resource+"/cancel",{},[](QJsonObject,QString){});});
+    auto finish=[this,target,service,generation,resource,progress,timer,admission](QJsonObject result,QString error){
+        if(error.isEmpty())admission->admitted=true;
         if(error.isEmpty() && result["status"]=="running"){progress->setLabelText(result["phase"].toString());timer->start();return;}
-        timer->stop();progress->hide();progress->deleteLater();m_client->request(resource+"/release",{},[](QJsonObject,QString){});
+        const bool busy=!admission->admitted && result["code"]=="JOB_BUSY";
+        if(busy && !admission->cancelled && admission->waited.elapsed()<10000 && service==m_client->url() && generation==m_calculationGeneration){timer->start();return;}
+        if(busy && admission->cancelled){error.clear();result=QJsonObject{{"status","cancelled"}};}
+        timer->stop();progress->hide();progress->deleteLater();if(admission->admitted)m_client->request(resource+"/release",{},[](QJsonObject,QString){});
         if(service==m_client->url() && generation==m_calculationGeneration)m_model->setBackgroundEnabled(true);
         if(service!=m_client->url() || generation!=m_calculationGeneration || !matchesTarget(target))return;
         if(!error.isEmpty()){issue(error);return;}const auto status=result["status"].toString();
         if(status=="completed"){const auto snapshot=result["result"].toObject();int errors=0;for(const auto &cell:snapshot["cells"].toArray())errors+=cell.toObject()["calculation"]=="error";m_status->setText(tr("Background snapshot: %1 cells, %2 formula errors • UTC %3").arg(snapshot["cells"].toArray().size()).arg(errors).arg(result["clock"].toString()));}
         else m_status->setText(tr("Background calculation: %1").arg(status));
     };
-    connect(timer,&QTimer::timeout,this,[this,timer,resource,finish]{timer->stop();m_client->request(resource,{},finish,false);});
-    m_client->request(base()+"/calculation/jobs",request,finish);
+    const auto jobs=base()+"/calculation/jobs";
+    connect(timer,&QTimer::timeout,this,[this,timer,resource,jobs,request,finish,admission]{timer->stop();if(admission->admitted)m_client->request(resource,{},finish,false);else m_client->request(jobs,request,finish);});
+    m_client->request(jobs,request,finish);
 }
 
 void MainWindow::enterLocalized() {
