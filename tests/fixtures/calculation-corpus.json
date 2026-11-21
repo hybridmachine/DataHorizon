@@ -1,0 +1,7871 @@
+{
+ "revision": "250dd161cbf45194ade79f2c3c784d17b85c44ce",
+ "cases": {
+  "SUM-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "AVERAGE-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "MIN-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "MAX-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "COUNT-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "6",
+     6
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "6",
+     6
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "COUNTA-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "13",
+     13
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "13",
+     13
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "AND-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "OR-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "CONCAT-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "TEXTJOIN-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "COUNTIF-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "6",
+     6
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "6",
+     6
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "SUMIF-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "30",
+     30.0
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "30",
+     30.0
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "COUNTIFS-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "6",
+     6
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "6",
+     6
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "SUMIFS-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "30",
+     30.0
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "30",
+     30.0
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "XLOOKUP-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "MATCH-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "3",
+     3
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "3",
+     3
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "INDEX-mixed-6x3": {
+   "alone": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C4": [
+     "current",
+     "2024-01-15",
+     {
+      "temporal": "date",
+      "value": "2024-01-15"
+     }
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R3C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "SUM-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "AVERAGE-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "MIN-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "MAX-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "COUNT-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "COUNTA-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "AND-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   }
+  },
+  "OR-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   }
+  },
+  "CONCAT-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "TEXTJOIN-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "COUNTIF-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "SUMIF-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "COUNTIFS-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "SUMIFS-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "XLOOKUP-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#N/A",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#N/A",
+     null
+    ]
+   }
+  },
+  "MATCH-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#N/A",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#N/A",
+     null
+    ]
+   }
+  },
+  "INDEX-no-stored-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "SUM-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "SUM-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "AVERAGE-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "AVERAGE-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "MIN-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "MIN-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "MAX-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "MAX-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "COUNT-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "1",
+     1
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "1",
+     1
+    ]
+   }
+  },
+  "COUNT-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "COUNTA-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "1",
+     1
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "1",
+     1
+    ]
+   }
+  },
+  "COUNTA-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "AND-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "TRUE",
+     true
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "TRUE",
+     true
+    ]
+   }
+  },
+  "AND-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   }
+  },
+  "OR-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "TRUE",
+     true
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "TRUE",
+     true
+    ]
+   }
+  },
+  "OR-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   }
+  },
+  "CONCAT-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     "5"
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     "5"
+    ]
+   }
+  },
+  "CONCAT-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "TEXTJOIN-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     "5"
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     "5"
+    ]
+   }
+  },
+  "TEXTJOIN-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "COUNTIF-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "1",
+     1
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "1",
+     1
+    ]
+   }
+  },
+  "COUNTIF-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "SUMIF-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "SUMIF-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "COUNTIFS-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "1",
+     1
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "1",
+     1
+    ]
+   }
+  },
+  "COUNTIFS-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "SUMIFS-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "SUMIFS-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "XLOOKUP-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#N/A",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#N/A",
+     null
+    ]
+   }
+  },
+  "XLOOKUP-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#N/A",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#N/A",
+     null
+    ]
+   }
+  },
+  "MATCH-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#N/A",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#N/A",
+     null
+    ]
+   }
+  },
+  "MATCH-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#N/A",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#N/A",
+     null
+    ]
+   }
+  },
+  "INDEX-single-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5.0
+    ]
+   }
+  },
+  "INDEX-single-empty-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ]
+   }
+  },
+  "SUM-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "SUM-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "SUM-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "AVERAGE-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "AVERAGE-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "AVERAGE-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "MIN-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "MIN-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "MIN-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "MAX-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "MAX-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "MAX-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "COUNT-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "2",
+     2
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "2",
+     2
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "COUNT-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "2",
+     2
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "2",
+     2
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "COUNT-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "COUNTA-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "4",
+     4
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "4",
+     4
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "COUNTA-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "4",
+     4
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "4",
+     4
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "COUNTA-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "3",
+     3
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "3",
+     3
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "AND-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "AND-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "AND-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "OR-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "OR-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "OR-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "CONCAT-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "CONCAT-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "CONCAT-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "TEXTJOIN-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "TEXTJOIN-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "TEXTJOIN-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "COUNTIF-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "2",
+     2
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "2",
+     2
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "COUNTIF-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "2",
+     2
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "2",
+     2
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "COUNTIF-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "SUMIF-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "8",
+     8.0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "8",
+     8.0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "SUMIF-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "8",
+     8.0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "8",
+     8.0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "SUMIF-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "COUNTIFS-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "2",
+     2
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "2",
+     2
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "COUNTIFS-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "2",
+     2
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "2",
+     2
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "COUNTIFS-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "SUMIFS-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "8",
+     8.0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "8",
+     8.0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "SUMIFS-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "8",
+     8.0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "8",
+     8.0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "SUMIFS-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "current",
+     "0",
+     0
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "XLOOKUP-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "XLOOKUP-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "XLOOKUP-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "MATCH-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "MATCH-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "MATCH-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "INDEX-errors-div-then-ref": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#REF!",
+     null
+    ]
+   }
+  },
+  "INDEX-errors-ref-then-div": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "INDEX-errors-column-order": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "COUNTIF-criteria-empty-text": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "6",
+     6
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "6",
+     6
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "SUMIF-criteria-empty-text": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "210",
+     210.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "210",
+     210.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "COUNTIFS-criteria-empty-text": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "4",
+     4
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "4",
+     4
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "SUMIFS-criteria-empty-text": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "210",
+     210.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "210",
+     210.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "COUNTIF-criteria-not-x": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "8",
+     8
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "8",
+     8
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "SUMIF-criteria-not-x": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "220",
+     220.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "220",
+     220.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "COUNTIFS-criteria-not-x": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "5",
+     5
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "SUMIFS-criteria-not-x": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "220",
+     220.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "220",
+     220.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "COUNTIF-criteria-equals": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "6",
+     6
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "6",
+     6
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "SUMIF-criteria-equals": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "210",
+     210.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "210",
+     210.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "COUNTIFS-criteria-equals": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "4",
+     4
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "4",
+     4
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "SUMIFS-criteria-equals": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "210",
+     210.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "210",
+     210.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "COUNTIF-criteria-not-equal-empty": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "3",
+     3
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "3",
+     3
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "SUMIF-criteria-not-equal-empty": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "30",
+     30.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "30",
+     30.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "COUNTIFS-criteria-not-equal-empty": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "2",
+     2
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "2",
+     2
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "SUMIFS-criteria-not-equal-empty": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "30",
+     30.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "30",
+     30.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "XLOOKUP-blank-key": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "30",
+     30.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "30",
+     30.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "MATCH-blank-key": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "3",
+     3
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "3",
+     3
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "XLOOKUP-text-blank-key": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "40",
+     40.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "40",
+     40.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "MATCH-text-blank-key": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "4",
+     4
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "4",
+     4
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "",
+     ""
+    ]
+   }
+  },
+  "SUMIFS-empty-criteria-cell-stored-sum-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "30",
+     30.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "30",
+     30.0
+    ]
+   }
+  },
+  "SUMIFS-empty-criteria-text-stored-sum-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "30",
+     30.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "30",
+     30.0
+    ]
+   }
+  },
+  "SUM-overflow-then-div": {
+   "alone": {
+    "Sheet1!R1C3": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C3": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "SUMIF-overflow-then-div": {
+   "alone": {
+    "Sheet1!R1C3": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#NUM!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C3": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C5": [
+     "error",
+     "#NUM!",
+     null
+    ]
+   }
+  },
+  "SUM-overflow": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#NUM!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#NUM!",
+     null
+    ]
+   }
+  },
+  "SUMIF-overflow": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#NUM!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#NUM!",
+     null
+    ]
+   }
+  },
+  "SUM-cancellation": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "1",
+     1.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "1",
+     1.0
+    ]
+   }
+  },
+  "AVERAGE-cancellation": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "current",
+     "0.333333333333333",
+     0.3333333333333333
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "current",
+     "0.333333333333333",
+     0.3333333333333333
+    ]
+   }
+  },
+  "cycle-self": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   }
+  },
+  "cycle-pair": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   }
+  },
+  "cycle-untaken-if": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "current",
+     "42",
+     42.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "current",
+     "42",
+     42.0
+    ]
+   }
+  },
+  "cycle-taken-if": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   }
+  },
+  "cycle-iferror-of-cycle": {
+   "alone": {
+    "Sheet1!R2C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R2C2": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R2C3": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R2C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R2C2": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R2C3": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   }
+  },
+  "cycle-iferror-of-self-reader": {
+   "alone": {
+    "Sheet1!R2C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R2C2": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R2C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R2C2": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   }
+  },
+  "cycle-range-includes-own-formula": {
+   "alone": {
+    "Sheet1!R3C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R3C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   }
+  },
+  "cycle-countif-includes-own-formula": {
+   "alone": {
+    "Sheet1!R2C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R2C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   }
+  },
+  "cycle-range-through-untaken-branch": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "cycle-reader-of-member": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C3": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C4": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C3": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C4": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   }
+  },
+  "cycle-reader-of-pair-member": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C3": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C4": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C2": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C3": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C4": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   }
+  },
+  "chain-128": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "current",
+     "1",
+     1.0
+    ],
+    "Sheet1!R2C1": [
+     "current",
+     "2",
+     2.0
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "3",
+     3.0
+    ],
+    "Sheet1!R4C1": [
+     "current",
+     "4",
+     4.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "5",
+     5.0
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "6",
+     6.0
+    ],
+    "Sheet1!R7C1": [
+     "current",
+     "7",
+     7.0
+    ],
+    "Sheet1!R8C1": [
+     "current",
+     "8",
+     8.0
+    ],
+    "Sheet1!R9C1": [
+     "current",
+     "9",
+     9.0
+    ],
+    "Sheet1!R10C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R11C1": [
+     "current",
+     "11",
+     11.0
+    ],
+    "Sheet1!R12C1": [
+     "current",
+     "12",
+     12.0
+    ],
+    "Sheet1!R13C1": [
+     "current",
+     "13",
+     13.0
+    ],
+    "Sheet1!R14C1": [
+     "current",
+     "14",
+     14.0
+    ],
+    "Sheet1!R15C1": [
+     "current",
+     "15",
+     15.0
+    ],
+    "Sheet1!R16C1": [
+     "current",
+     "16",
+     16.0
+    ],
+    "Sheet1!R17C1": [
+     "current",
+     "17",
+     17.0
+    ],
+    "Sheet1!R18C1": [
+     "current",
+     "18",
+     18.0
+    ],
+    "Sheet1!R19C1": [
+     "current",
+     "19",
+     19.0
+    ],
+    "Sheet1!R20C1": [
+     "current",
+     "20",
+     20.0
+    ],
+    "Sheet1!R21C1": [
+     "current",
+     "21",
+     21.0
+    ],
+    "Sheet1!R22C1": [
+     "current",
+     "22",
+     22.0
+    ],
+    "Sheet1!R23C1": [
+     "current",
+     "23",
+     23.0
+    ],
+    "Sheet1!R24C1": [
+     "current",
+     "24",
+     24.0
+    ],
+    "Sheet1!R25C1": [
+     "current",
+     "25",
+     25.0
+    ],
+    "Sheet1!R26C1": [
+     "current",
+     "26",
+     26.0
+    ],
+    "Sheet1!R27C1": [
+     "current",
+     "27",
+     27.0
+    ],
+    "Sheet1!R28C1": [
+     "current",
+     "28",
+     28.0
+    ],
+    "Sheet1!R29C1": [
+     "current",
+     "29",
+     29.0
+    ],
+    "Sheet1!R30C1": [
+     "current",
+     "30",
+     30.0
+    ],
+    "Sheet1!R31C1": [
+     "current",
+     "31",
+     31.0
+    ],
+    "Sheet1!R32C1": [
+     "current",
+     "32",
+     32.0
+    ],
+    "Sheet1!R33C1": [
+     "current",
+     "33",
+     33.0
+    ],
+    "Sheet1!R34C1": [
+     "current",
+     "34",
+     34.0
+    ],
+    "Sheet1!R35C1": [
+     "current",
+     "35",
+     35.0
+    ],
+    "Sheet1!R36C1": [
+     "current",
+     "36",
+     36.0
+    ],
+    "Sheet1!R37C1": [
+     "current",
+     "37",
+     37.0
+    ],
+    "Sheet1!R38C1": [
+     "current",
+     "38",
+     38.0
+    ],
+    "Sheet1!R39C1": [
+     "current",
+     "39",
+     39.0
+    ],
+    "Sheet1!R40C1": [
+     "current",
+     "40",
+     40.0
+    ],
+    "Sheet1!R41C1": [
+     "current",
+     "41",
+     41.0
+    ],
+    "Sheet1!R42C1": [
+     "current",
+     "42",
+     42.0
+    ],
+    "Sheet1!R43C1": [
+     "current",
+     "43",
+     43.0
+    ],
+    "Sheet1!R44C1": [
+     "current",
+     "44",
+     44.0
+    ],
+    "Sheet1!R45C1": [
+     "current",
+     "45",
+     45.0
+    ],
+    "Sheet1!R46C1": [
+     "current",
+     "46",
+     46.0
+    ],
+    "Sheet1!R47C1": [
+     "current",
+     "47",
+     47.0
+    ],
+    "Sheet1!R48C1": [
+     "current",
+     "48",
+     48.0
+    ],
+    "Sheet1!R49C1": [
+     "current",
+     "49",
+     49.0
+    ],
+    "Sheet1!R50C1": [
+     "current",
+     "50",
+     50.0
+    ],
+    "Sheet1!R51C1": [
+     "current",
+     "51",
+     51.0
+    ],
+    "Sheet1!R52C1": [
+     "current",
+     "52",
+     52.0
+    ],
+    "Sheet1!R53C1": [
+     "current",
+     "53",
+     53.0
+    ],
+    "Sheet1!R54C1": [
+     "current",
+     "54",
+     54.0
+    ],
+    "Sheet1!R55C1": [
+     "current",
+     "55",
+     55.0
+    ],
+    "Sheet1!R56C1": [
+     "current",
+     "56",
+     56.0
+    ],
+    "Sheet1!R57C1": [
+     "current",
+     "57",
+     57.0
+    ],
+    "Sheet1!R58C1": [
+     "current",
+     "58",
+     58.0
+    ],
+    "Sheet1!R59C1": [
+     "current",
+     "59",
+     59.0
+    ],
+    "Sheet1!R60C1": [
+     "current",
+     "60",
+     60.0
+    ],
+    "Sheet1!R61C1": [
+     "current",
+     "61",
+     61.0
+    ],
+    "Sheet1!R62C1": [
+     "current",
+     "62",
+     62.0
+    ],
+    "Sheet1!R63C1": [
+     "current",
+     "63",
+     63.0
+    ],
+    "Sheet1!R64C1": [
+     "current",
+     "64",
+     64.0
+    ],
+    "Sheet1!R65C1": [
+     "current",
+     "65",
+     65.0
+    ],
+    "Sheet1!R66C1": [
+     "current",
+     "66",
+     66.0
+    ],
+    "Sheet1!R67C1": [
+     "current",
+     "67",
+     67.0
+    ],
+    "Sheet1!R68C1": [
+     "current",
+     "68",
+     68.0
+    ],
+    "Sheet1!R69C1": [
+     "current",
+     "69",
+     69.0
+    ],
+    "Sheet1!R70C1": [
+     "current",
+     "70",
+     70.0
+    ],
+    "Sheet1!R71C1": [
+     "current",
+     "71",
+     71.0
+    ],
+    "Sheet1!R72C1": [
+     "current",
+     "72",
+     72.0
+    ],
+    "Sheet1!R73C1": [
+     "current",
+     "73",
+     73.0
+    ],
+    "Sheet1!R74C1": [
+     "current",
+     "74",
+     74.0
+    ],
+    "Sheet1!R75C1": [
+     "current",
+     "75",
+     75.0
+    ],
+    "Sheet1!R76C1": [
+     "current",
+     "76",
+     76.0
+    ],
+    "Sheet1!R77C1": [
+     "current",
+     "77",
+     77.0
+    ],
+    "Sheet1!R78C1": [
+     "current",
+     "78",
+     78.0
+    ],
+    "Sheet1!R79C1": [
+     "current",
+     "79",
+     79.0
+    ],
+    "Sheet1!R80C1": [
+     "current",
+     "80",
+     80.0
+    ],
+    "Sheet1!R81C1": [
+     "current",
+     "81",
+     81.0
+    ],
+    "Sheet1!R82C1": [
+     "current",
+     "82",
+     82.0
+    ],
+    "Sheet1!R83C1": [
+     "current",
+     "83",
+     83.0
+    ],
+    "Sheet1!R84C1": [
+     "current",
+     "84",
+     84.0
+    ],
+    "Sheet1!R85C1": [
+     "current",
+     "85",
+     85.0
+    ],
+    "Sheet1!R86C1": [
+     "current",
+     "86",
+     86.0
+    ],
+    "Sheet1!R87C1": [
+     "current",
+     "87",
+     87.0
+    ],
+    "Sheet1!R88C1": [
+     "current",
+     "88",
+     88.0
+    ],
+    "Sheet1!R89C1": [
+     "current",
+     "89",
+     89.0
+    ],
+    "Sheet1!R90C1": [
+     "current",
+     "90",
+     90.0
+    ],
+    "Sheet1!R91C1": [
+     "current",
+     "91",
+     91.0
+    ],
+    "Sheet1!R92C1": [
+     "current",
+     "92",
+     92.0
+    ],
+    "Sheet1!R93C1": [
+     "current",
+     "93",
+     93.0
+    ],
+    "Sheet1!R94C1": [
+     "current",
+     "94",
+     94.0
+    ],
+    "Sheet1!R95C1": [
+     "current",
+     "95",
+     95.0
+    ],
+    "Sheet1!R96C1": [
+     "current",
+     "96",
+     96.0
+    ],
+    "Sheet1!R97C1": [
+     "current",
+     "97",
+     97.0
+    ],
+    "Sheet1!R98C1": [
+     "current",
+     "98",
+     98.0
+    ],
+    "Sheet1!R99C1": [
+     "current",
+     "99",
+     99.0
+    ],
+    "Sheet1!R100C1": [
+     "current",
+     "100",
+     100.0
+    ],
+    "Sheet1!R101C1": [
+     "current",
+     "101",
+     101.0
+    ],
+    "Sheet1!R102C1": [
+     "current",
+     "102",
+     102.0
+    ],
+    "Sheet1!R103C1": [
+     "current",
+     "103",
+     103.0
+    ],
+    "Sheet1!R104C1": [
+     "current",
+     "104",
+     104.0
+    ],
+    "Sheet1!R105C1": [
+     "current",
+     "105",
+     105.0
+    ],
+    "Sheet1!R106C1": [
+     "current",
+     "106",
+     106.0
+    ],
+    "Sheet1!R107C1": [
+     "current",
+     "107",
+     107.0
+    ],
+    "Sheet1!R108C1": [
+     "current",
+     "108",
+     108.0
+    ],
+    "Sheet1!R109C1": [
+     "current",
+     "109",
+     109.0
+    ],
+    "Sheet1!R110C1": [
+     "current",
+     "110",
+     110.0
+    ],
+    "Sheet1!R111C1": [
+     "current",
+     "111",
+     111.0
+    ],
+    "Sheet1!R112C1": [
+     "current",
+     "112",
+     112.0
+    ],
+    "Sheet1!R113C1": [
+     "current",
+     "113",
+     113.0
+    ],
+    "Sheet1!R114C1": [
+     "current",
+     "114",
+     114.0
+    ],
+    "Sheet1!R115C1": [
+     "current",
+     "115",
+     115.0
+    ],
+    "Sheet1!R116C1": [
+     "current",
+     "116",
+     116.0
+    ],
+    "Sheet1!R117C1": [
+     "current",
+     "117",
+     117.0
+    ],
+    "Sheet1!R118C1": [
+     "current",
+     "118",
+     118.0
+    ],
+    "Sheet1!R119C1": [
+     "current",
+     "119",
+     119.0
+    ],
+    "Sheet1!R120C1": [
+     "current",
+     "120",
+     120.0
+    ],
+    "Sheet1!R121C1": [
+     "current",
+     "121",
+     121.0
+    ],
+    "Sheet1!R122C1": [
+     "current",
+     "122",
+     122.0
+    ],
+    "Sheet1!R123C1": [
+     "current",
+     "123",
+     123.0
+    ],
+    "Sheet1!R124C1": [
+     "current",
+     "124",
+     124.0
+    ],
+    "Sheet1!R125C1": [
+     "current",
+     "125",
+     125.0
+    ],
+    "Sheet1!R126C1": [
+     "current",
+     "126",
+     126.0
+    ],
+    "Sheet1!R127C1": [
+     "current",
+     "127",
+     127.0
+    ],
+    "Sheet1!R128C1": [
+     "current",
+     "128",
+     128.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "current",
+     "1",
+     1.0
+    ],
+    "Sheet1!R2C1": [
+     "current",
+     "2",
+     2.0
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "3",
+     3.0
+    ],
+    "Sheet1!R4C1": [
+     "current",
+     "4",
+     4.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "5",
+     5.0
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "6",
+     6.0
+    ],
+    "Sheet1!R7C1": [
+     "current",
+     "7",
+     7.0
+    ],
+    "Sheet1!R8C1": [
+     "current",
+     "8",
+     8.0
+    ],
+    "Sheet1!R9C1": [
+     "current",
+     "9",
+     9.0
+    ],
+    "Sheet1!R10C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R11C1": [
+     "current",
+     "11",
+     11.0
+    ],
+    "Sheet1!R12C1": [
+     "current",
+     "12",
+     12.0
+    ],
+    "Sheet1!R13C1": [
+     "current",
+     "13",
+     13.0
+    ],
+    "Sheet1!R14C1": [
+     "current",
+     "14",
+     14.0
+    ],
+    "Sheet1!R15C1": [
+     "current",
+     "15",
+     15.0
+    ],
+    "Sheet1!R16C1": [
+     "current",
+     "16",
+     16.0
+    ],
+    "Sheet1!R17C1": [
+     "current",
+     "17",
+     17.0
+    ],
+    "Sheet1!R18C1": [
+     "current",
+     "18",
+     18.0
+    ],
+    "Sheet1!R19C1": [
+     "current",
+     "19",
+     19.0
+    ],
+    "Sheet1!R20C1": [
+     "current",
+     "20",
+     20.0
+    ],
+    "Sheet1!R21C1": [
+     "current",
+     "21",
+     21.0
+    ],
+    "Sheet1!R22C1": [
+     "current",
+     "22",
+     22.0
+    ],
+    "Sheet1!R23C1": [
+     "current",
+     "23",
+     23.0
+    ],
+    "Sheet1!R24C1": [
+     "current",
+     "24",
+     24.0
+    ],
+    "Sheet1!R25C1": [
+     "current",
+     "25",
+     25.0
+    ],
+    "Sheet1!R26C1": [
+     "current",
+     "26",
+     26.0
+    ],
+    "Sheet1!R27C1": [
+     "current",
+     "27",
+     27.0
+    ],
+    "Sheet1!R28C1": [
+     "current",
+     "28",
+     28.0
+    ],
+    "Sheet1!R29C1": [
+     "current",
+     "29",
+     29.0
+    ],
+    "Sheet1!R30C1": [
+     "current",
+     "30",
+     30.0
+    ],
+    "Sheet1!R31C1": [
+     "current",
+     "31",
+     31.0
+    ],
+    "Sheet1!R32C1": [
+     "current",
+     "32",
+     32.0
+    ],
+    "Sheet1!R33C1": [
+     "current",
+     "33",
+     33.0
+    ],
+    "Sheet1!R34C1": [
+     "current",
+     "34",
+     34.0
+    ],
+    "Sheet1!R35C1": [
+     "current",
+     "35",
+     35.0
+    ],
+    "Sheet1!R36C1": [
+     "current",
+     "36",
+     36.0
+    ],
+    "Sheet1!R37C1": [
+     "current",
+     "37",
+     37.0
+    ],
+    "Sheet1!R38C1": [
+     "current",
+     "38",
+     38.0
+    ],
+    "Sheet1!R39C1": [
+     "current",
+     "39",
+     39.0
+    ],
+    "Sheet1!R40C1": [
+     "current",
+     "40",
+     40.0
+    ],
+    "Sheet1!R41C1": [
+     "current",
+     "41",
+     41.0
+    ],
+    "Sheet1!R42C1": [
+     "current",
+     "42",
+     42.0
+    ],
+    "Sheet1!R43C1": [
+     "current",
+     "43",
+     43.0
+    ],
+    "Sheet1!R44C1": [
+     "current",
+     "44",
+     44.0
+    ],
+    "Sheet1!R45C1": [
+     "current",
+     "45",
+     45.0
+    ],
+    "Sheet1!R46C1": [
+     "current",
+     "46",
+     46.0
+    ],
+    "Sheet1!R47C1": [
+     "current",
+     "47",
+     47.0
+    ],
+    "Sheet1!R48C1": [
+     "current",
+     "48",
+     48.0
+    ],
+    "Sheet1!R49C1": [
+     "current",
+     "49",
+     49.0
+    ],
+    "Sheet1!R50C1": [
+     "current",
+     "50",
+     50.0
+    ],
+    "Sheet1!R51C1": [
+     "current",
+     "51",
+     51.0
+    ],
+    "Sheet1!R52C1": [
+     "current",
+     "52",
+     52.0
+    ],
+    "Sheet1!R53C1": [
+     "current",
+     "53",
+     53.0
+    ],
+    "Sheet1!R54C1": [
+     "current",
+     "54",
+     54.0
+    ],
+    "Sheet1!R55C1": [
+     "current",
+     "55",
+     55.0
+    ],
+    "Sheet1!R56C1": [
+     "current",
+     "56",
+     56.0
+    ],
+    "Sheet1!R57C1": [
+     "current",
+     "57",
+     57.0
+    ],
+    "Sheet1!R58C1": [
+     "current",
+     "58",
+     58.0
+    ],
+    "Sheet1!R59C1": [
+     "current",
+     "59",
+     59.0
+    ],
+    "Sheet1!R60C1": [
+     "current",
+     "60",
+     60.0
+    ],
+    "Sheet1!R61C1": [
+     "current",
+     "61",
+     61.0
+    ],
+    "Sheet1!R62C1": [
+     "current",
+     "62",
+     62.0
+    ],
+    "Sheet1!R63C1": [
+     "current",
+     "63",
+     63.0
+    ],
+    "Sheet1!R64C1": [
+     "current",
+     "64",
+     64.0
+    ],
+    "Sheet1!R65C1": [
+     "current",
+     "65",
+     65.0
+    ],
+    "Sheet1!R66C1": [
+     "current",
+     "66",
+     66.0
+    ],
+    "Sheet1!R67C1": [
+     "current",
+     "67",
+     67.0
+    ],
+    "Sheet1!R68C1": [
+     "current",
+     "68",
+     68.0
+    ],
+    "Sheet1!R69C1": [
+     "current",
+     "69",
+     69.0
+    ],
+    "Sheet1!R70C1": [
+     "current",
+     "70",
+     70.0
+    ],
+    "Sheet1!R71C1": [
+     "current",
+     "71",
+     71.0
+    ],
+    "Sheet1!R72C1": [
+     "current",
+     "72",
+     72.0
+    ],
+    "Sheet1!R73C1": [
+     "current",
+     "73",
+     73.0
+    ],
+    "Sheet1!R74C1": [
+     "current",
+     "74",
+     74.0
+    ],
+    "Sheet1!R75C1": [
+     "current",
+     "75",
+     75.0
+    ],
+    "Sheet1!R76C1": [
+     "current",
+     "76",
+     76.0
+    ],
+    "Sheet1!R77C1": [
+     "current",
+     "77",
+     77.0
+    ],
+    "Sheet1!R78C1": [
+     "current",
+     "78",
+     78.0
+    ],
+    "Sheet1!R79C1": [
+     "current",
+     "79",
+     79.0
+    ],
+    "Sheet1!R80C1": [
+     "current",
+     "80",
+     80.0
+    ],
+    "Sheet1!R81C1": [
+     "current",
+     "81",
+     81.0
+    ],
+    "Sheet1!R82C1": [
+     "current",
+     "82",
+     82.0
+    ],
+    "Sheet1!R83C1": [
+     "current",
+     "83",
+     83.0
+    ],
+    "Sheet1!R84C1": [
+     "current",
+     "84",
+     84.0
+    ],
+    "Sheet1!R85C1": [
+     "current",
+     "85",
+     85.0
+    ],
+    "Sheet1!R86C1": [
+     "current",
+     "86",
+     86.0
+    ],
+    "Sheet1!R87C1": [
+     "current",
+     "87",
+     87.0
+    ],
+    "Sheet1!R88C1": [
+     "current",
+     "88",
+     88.0
+    ],
+    "Sheet1!R89C1": [
+     "current",
+     "89",
+     89.0
+    ],
+    "Sheet1!R90C1": [
+     "current",
+     "90",
+     90.0
+    ],
+    "Sheet1!R91C1": [
+     "current",
+     "91",
+     91.0
+    ],
+    "Sheet1!R92C1": [
+     "current",
+     "92",
+     92.0
+    ],
+    "Sheet1!R93C1": [
+     "current",
+     "93",
+     93.0
+    ],
+    "Sheet1!R94C1": [
+     "current",
+     "94",
+     94.0
+    ],
+    "Sheet1!R95C1": [
+     "current",
+     "95",
+     95.0
+    ],
+    "Sheet1!R96C1": [
+     "current",
+     "96",
+     96.0
+    ],
+    "Sheet1!R97C1": [
+     "current",
+     "97",
+     97.0
+    ],
+    "Sheet1!R98C1": [
+     "current",
+     "98",
+     98.0
+    ],
+    "Sheet1!R99C1": [
+     "current",
+     "99",
+     99.0
+    ],
+    "Sheet1!R100C1": [
+     "current",
+     "100",
+     100.0
+    ],
+    "Sheet1!R101C1": [
+     "current",
+     "101",
+     101.0
+    ],
+    "Sheet1!R102C1": [
+     "current",
+     "102",
+     102.0
+    ],
+    "Sheet1!R103C1": [
+     "current",
+     "103",
+     103.0
+    ],
+    "Sheet1!R104C1": [
+     "current",
+     "104",
+     104.0
+    ],
+    "Sheet1!R105C1": [
+     "current",
+     "105",
+     105.0
+    ],
+    "Sheet1!R106C1": [
+     "current",
+     "106",
+     106.0
+    ],
+    "Sheet1!R107C1": [
+     "current",
+     "107",
+     107.0
+    ],
+    "Sheet1!R108C1": [
+     "current",
+     "108",
+     108.0
+    ],
+    "Sheet1!R109C1": [
+     "current",
+     "109",
+     109.0
+    ],
+    "Sheet1!R110C1": [
+     "current",
+     "110",
+     110.0
+    ],
+    "Sheet1!R111C1": [
+     "current",
+     "111",
+     111.0
+    ],
+    "Sheet1!R112C1": [
+     "current",
+     "112",
+     112.0
+    ],
+    "Sheet1!R113C1": [
+     "current",
+     "113",
+     113.0
+    ],
+    "Sheet1!R114C1": [
+     "current",
+     "114",
+     114.0
+    ],
+    "Sheet1!R115C1": [
+     "current",
+     "115",
+     115.0
+    ],
+    "Sheet1!R116C1": [
+     "current",
+     "116",
+     116.0
+    ],
+    "Sheet1!R117C1": [
+     "current",
+     "117",
+     117.0
+    ],
+    "Sheet1!R118C1": [
+     "current",
+     "118",
+     118.0
+    ],
+    "Sheet1!R119C1": [
+     "current",
+     "119",
+     119.0
+    ],
+    "Sheet1!R120C1": [
+     "current",
+     "120",
+     120.0
+    ],
+    "Sheet1!R121C1": [
+     "current",
+     "121",
+     121.0
+    ],
+    "Sheet1!R122C1": [
+     "current",
+     "122",
+     122.0
+    ],
+    "Sheet1!R123C1": [
+     "current",
+     "123",
+     123.0
+    ],
+    "Sheet1!R124C1": [
+     "current",
+     "124",
+     124.0
+    ],
+    "Sheet1!R125C1": [
+     "current",
+     "125",
+     125.0
+    ],
+    "Sheet1!R126C1": [
+     "current",
+     "126",
+     126.0
+    ],
+    "Sheet1!R127C1": [
+     "current",
+     "127",
+     127.0
+    ],
+    "Sheet1!R128C1": [
+     "current",
+     "128",
+     128.0
+    ]
+   }
+  },
+  "chain-129": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "current",
+     "1",
+     1.0
+    ],
+    "Sheet1!R2C1": [
+     "current",
+     "2",
+     2.0
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "3",
+     3.0
+    ],
+    "Sheet1!R4C1": [
+     "current",
+     "4",
+     4.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "5",
+     5.0
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "6",
+     6.0
+    ],
+    "Sheet1!R7C1": [
+     "current",
+     "7",
+     7.0
+    ],
+    "Sheet1!R8C1": [
+     "current",
+     "8",
+     8.0
+    ],
+    "Sheet1!R9C1": [
+     "current",
+     "9",
+     9.0
+    ],
+    "Sheet1!R10C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R11C1": [
+     "current",
+     "11",
+     11.0
+    ],
+    "Sheet1!R12C1": [
+     "current",
+     "12",
+     12.0
+    ],
+    "Sheet1!R13C1": [
+     "current",
+     "13",
+     13.0
+    ],
+    "Sheet1!R14C1": [
+     "current",
+     "14",
+     14.0
+    ],
+    "Sheet1!R15C1": [
+     "current",
+     "15",
+     15.0
+    ],
+    "Sheet1!R16C1": [
+     "current",
+     "16",
+     16.0
+    ],
+    "Sheet1!R17C1": [
+     "current",
+     "17",
+     17.0
+    ],
+    "Sheet1!R18C1": [
+     "current",
+     "18",
+     18.0
+    ],
+    "Sheet1!R19C1": [
+     "current",
+     "19",
+     19.0
+    ],
+    "Sheet1!R20C1": [
+     "current",
+     "20",
+     20.0
+    ],
+    "Sheet1!R21C1": [
+     "current",
+     "21",
+     21.0
+    ],
+    "Sheet1!R22C1": [
+     "current",
+     "22",
+     22.0
+    ],
+    "Sheet1!R23C1": [
+     "current",
+     "23",
+     23.0
+    ],
+    "Sheet1!R24C1": [
+     "current",
+     "24",
+     24.0
+    ],
+    "Sheet1!R25C1": [
+     "current",
+     "25",
+     25.0
+    ],
+    "Sheet1!R26C1": [
+     "current",
+     "26",
+     26.0
+    ],
+    "Sheet1!R27C1": [
+     "current",
+     "27",
+     27.0
+    ],
+    "Sheet1!R28C1": [
+     "current",
+     "28",
+     28.0
+    ],
+    "Sheet1!R29C1": [
+     "current",
+     "29",
+     29.0
+    ],
+    "Sheet1!R30C1": [
+     "current",
+     "30",
+     30.0
+    ],
+    "Sheet1!R31C1": [
+     "current",
+     "31",
+     31.0
+    ],
+    "Sheet1!R32C1": [
+     "current",
+     "32",
+     32.0
+    ],
+    "Sheet1!R33C1": [
+     "current",
+     "33",
+     33.0
+    ],
+    "Sheet1!R34C1": [
+     "current",
+     "34",
+     34.0
+    ],
+    "Sheet1!R35C1": [
+     "current",
+     "35",
+     35.0
+    ],
+    "Sheet1!R36C1": [
+     "current",
+     "36",
+     36.0
+    ],
+    "Sheet1!R37C1": [
+     "current",
+     "37",
+     37.0
+    ],
+    "Sheet1!R38C1": [
+     "current",
+     "38",
+     38.0
+    ],
+    "Sheet1!R39C1": [
+     "current",
+     "39",
+     39.0
+    ],
+    "Sheet1!R40C1": [
+     "current",
+     "40",
+     40.0
+    ],
+    "Sheet1!R41C1": [
+     "current",
+     "41",
+     41.0
+    ],
+    "Sheet1!R42C1": [
+     "current",
+     "42",
+     42.0
+    ],
+    "Sheet1!R43C1": [
+     "current",
+     "43",
+     43.0
+    ],
+    "Sheet1!R44C1": [
+     "current",
+     "44",
+     44.0
+    ],
+    "Sheet1!R45C1": [
+     "current",
+     "45",
+     45.0
+    ],
+    "Sheet1!R46C1": [
+     "current",
+     "46",
+     46.0
+    ],
+    "Sheet1!R47C1": [
+     "current",
+     "47",
+     47.0
+    ],
+    "Sheet1!R48C1": [
+     "current",
+     "48",
+     48.0
+    ],
+    "Sheet1!R49C1": [
+     "current",
+     "49",
+     49.0
+    ],
+    "Sheet1!R50C1": [
+     "current",
+     "50",
+     50.0
+    ],
+    "Sheet1!R51C1": [
+     "current",
+     "51",
+     51.0
+    ],
+    "Sheet1!R52C1": [
+     "current",
+     "52",
+     52.0
+    ],
+    "Sheet1!R53C1": [
+     "current",
+     "53",
+     53.0
+    ],
+    "Sheet1!R54C1": [
+     "current",
+     "54",
+     54.0
+    ],
+    "Sheet1!R55C1": [
+     "current",
+     "55",
+     55.0
+    ],
+    "Sheet1!R56C1": [
+     "current",
+     "56",
+     56.0
+    ],
+    "Sheet1!R57C1": [
+     "current",
+     "57",
+     57.0
+    ],
+    "Sheet1!R58C1": [
+     "current",
+     "58",
+     58.0
+    ],
+    "Sheet1!R59C1": [
+     "current",
+     "59",
+     59.0
+    ],
+    "Sheet1!R60C1": [
+     "current",
+     "60",
+     60.0
+    ],
+    "Sheet1!R61C1": [
+     "current",
+     "61",
+     61.0
+    ],
+    "Sheet1!R62C1": [
+     "current",
+     "62",
+     62.0
+    ],
+    "Sheet1!R63C1": [
+     "current",
+     "63",
+     63.0
+    ],
+    "Sheet1!R64C1": [
+     "current",
+     "64",
+     64.0
+    ],
+    "Sheet1!R65C1": [
+     "current",
+     "65",
+     65.0
+    ],
+    "Sheet1!R66C1": [
+     "current",
+     "66",
+     66.0
+    ],
+    "Sheet1!R67C1": [
+     "current",
+     "67",
+     67.0
+    ],
+    "Sheet1!R68C1": [
+     "current",
+     "68",
+     68.0
+    ],
+    "Sheet1!R69C1": [
+     "current",
+     "69",
+     69.0
+    ],
+    "Sheet1!R70C1": [
+     "current",
+     "70",
+     70.0
+    ],
+    "Sheet1!R71C1": [
+     "current",
+     "71",
+     71.0
+    ],
+    "Sheet1!R72C1": [
+     "current",
+     "72",
+     72.0
+    ],
+    "Sheet1!R73C1": [
+     "current",
+     "73",
+     73.0
+    ],
+    "Sheet1!R74C1": [
+     "current",
+     "74",
+     74.0
+    ],
+    "Sheet1!R75C1": [
+     "current",
+     "75",
+     75.0
+    ],
+    "Sheet1!R76C1": [
+     "current",
+     "76",
+     76.0
+    ],
+    "Sheet1!R77C1": [
+     "current",
+     "77",
+     77.0
+    ],
+    "Sheet1!R78C1": [
+     "current",
+     "78",
+     78.0
+    ],
+    "Sheet1!R79C1": [
+     "current",
+     "79",
+     79.0
+    ],
+    "Sheet1!R80C1": [
+     "current",
+     "80",
+     80.0
+    ],
+    "Sheet1!R81C1": [
+     "current",
+     "81",
+     81.0
+    ],
+    "Sheet1!R82C1": [
+     "current",
+     "82",
+     82.0
+    ],
+    "Sheet1!R83C1": [
+     "current",
+     "83",
+     83.0
+    ],
+    "Sheet1!R84C1": [
+     "current",
+     "84",
+     84.0
+    ],
+    "Sheet1!R85C1": [
+     "current",
+     "85",
+     85.0
+    ],
+    "Sheet1!R86C1": [
+     "current",
+     "86",
+     86.0
+    ],
+    "Sheet1!R87C1": [
+     "current",
+     "87",
+     87.0
+    ],
+    "Sheet1!R88C1": [
+     "current",
+     "88",
+     88.0
+    ],
+    "Sheet1!R89C1": [
+     "current",
+     "89",
+     89.0
+    ],
+    "Sheet1!R90C1": [
+     "current",
+     "90",
+     90.0
+    ],
+    "Sheet1!R91C1": [
+     "current",
+     "91",
+     91.0
+    ],
+    "Sheet1!R92C1": [
+     "current",
+     "92",
+     92.0
+    ],
+    "Sheet1!R93C1": [
+     "current",
+     "93",
+     93.0
+    ],
+    "Sheet1!R94C1": [
+     "current",
+     "94",
+     94.0
+    ],
+    "Sheet1!R95C1": [
+     "current",
+     "95",
+     95.0
+    ],
+    "Sheet1!R96C1": [
+     "current",
+     "96",
+     96.0
+    ],
+    "Sheet1!R97C1": [
+     "current",
+     "97",
+     97.0
+    ],
+    "Sheet1!R98C1": [
+     "current",
+     "98",
+     98.0
+    ],
+    "Sheet1!R99C1": [
+     "current",
+     "99",
+     99.0
+    ],
+    "Sheet1!R100C1": [
+     "current",
+     "100",
+     100.0
+    ],
+    "Sheet1!R101C1": [
+     "current",
+     "101",
+     101.0
+    ],
+    "Sheet1!R102C1": [
+     "current",
+     "102",
+     102.0
+    ],
+    "Sheet1!R103C1": [
+     "current",
+     "103",
+     103.0
+    ],
+    "Sheet1!R104C1": [
+     "current",
+     "104",
+     104.0
+    ],
+    "Sheet1!R105C1": [
+     "current",
+     "105",
+     105.0
+    ],
+    "Sheet1!R106C1": [
+     "current",
+     "106",
+     106.0
+    ],
+    "Sheet1!R107C1": [
+     "current",
+     "107",
+     107.0
+    ],
+    "Sheet1!R108C1": [
+     "current",
+     "108",
+     108.0
+    ],
+    "Sheet1!R109C1": [
+     "current",
+     "109",
+     109.0
+    ],
+    "Sheet1!R110C1": [
+     "current",
+     "110",
+     110.0
+    ],
+    "Sheet1!R111C1": [
+     "current",
+     "111",
+     111.0
+    ],
+    "Sheet1!R112C1": [
+     "current",
+     "112",
+     112.0
+    ],
+    "Sheet1!R113C1": [
+     "current",
+     "113",
+     113.0
+    ],
+    "Sheet1!R114C1": [
+     "current",
+     "114",
+     114.0
+    ],
+    "Sheet1!R115C1": [
+     "current",
+     "115",
+     115.0
+    ],
+    "Sheet1!R116C1": [
+     "current",
+     "116",
+     116.0
+    ],
+    "Sheet1!R117C1": [
+     "current",
+     "117",
+     117.0
+    ],
+    "Sheet1!R118C1": [
+     "current",
+     "118",
+     118.0
+    ],
+    "Sheet1!R119C1": [
+     "current",
+     "119",
+     119.0
+    ],
+    "Sheet1!R120C1": [
+     "current",
+     "120",
+     120.0
+    ],
+    "Sheet1!R121C1": [
+     "current",
+     "121",
+     121.0
+    ],
+    "Sheet1!R122C1": [
+     "current",
+     "122",
+     122.0
+    ],
+    "Sheet1!R123C1": [
+     "current",
+     "123",
+     123.0
+    ],
+    "Sheet1!R124C1": [
+     "current",
+     "124",
+     124.0
+    ],
+    "Sheet1!R125C1": [
+     "current",
+     "125",
+     125.0
+    ],
+    "Sheet1!R126C1": [
+     "current",
+     "126",
+     126.0
+    ],
+    "Sheet1!R127C1": [
+     "current",
+     "127",
+     127.0
+    ],
+    "Sheet1!R128C1": [
+     "current",
+     "128",
+     128.0
+    ],
+    "Sheet1!R129C1": [
+     "error",
+     "#LIMIT!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "current",
+     "1",
+     1.0
+    ],
+    "Sheet1!R2C1": [
+     "current",
+     "2",
+     2.0
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "3",
+     3.0
+    ],
+    "Sheet1!R4C1": [
+     "current",
+     "4",
+     4.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "5",
+     5.0
+    ],
+    "Sheet1!R6C1": [
+     "current",
+     "6",
+     6.0
+    ],
+    "Sheet1!R7C1": [
+     "current",
+     "7",
+     7.0
+    ],
+    "Sheet1!R8C1": [
+     "current",
+     "8",
+     8.0
+    ],
+    "Sheet1!R9C1": [
+     "current",
+     "9",
+     9.0
+    ],
+    "Sheet1!R10C1": [
+     "current",
+     "10",
+     10.0
+    ],
+    "Sheet1!R11C1": [
+     "current",
+     "11",
+     11.0
+    ],
+    "Sheet1!R12C1": [
+     "current",
+     "12",
+     12.0
+    ],
+    "Sheet1!R13C1": [
+     "current",
+     "13",
+     13.0
+    ],
+    "Sheet1!R14C1": [
+     "current",
+     "14",
+     14.0
+    ],
+    "Sheet1!R15C1": [
+     "current",
+     "15",
+     15.0
+    ],
+    "Sheet1!R16C1": [
+     "current",
+     "16",
+     16.0
+    ],
+    "Sheet1!R17C1": [
+     "current",
+     "17",
+     17.0
+    ],
+    "Sheet1!R18C1": [
+     "current",
+     "18",
+     18.0
+    ],
+    "Sheet1!R19C1": [
+     "current",
+     "19",
+     19.0
+    ],
+    "Sheet1!R20C1": [
+     "current",
+     "20",
+     20.0
+    ],
+    "Sheet1!R21C1": [
+     "current",
+     "21",
+     21.0
+    ],
+    "Sheet1!R22C1": [
+     "current",
+     "22",
+     22.0
+    ],
+    "Sheet1!R23C1": [
+     "current",
+     "23",
+     23.0
+    ],
+    "Sheet1!R24C1": [
+     "current",
+     "24",
+     24.0
+    ],
+    "Sheet1!R25C1": [
+     "current",
+     "25",
+     25.0
+    ],
+    "Sheet1!R26C1": [
+     "current",
+     "26",
+     26.0
+    ],
+    "Sheet1!R27C1": [
+     "current",
+     "27",
+     27.0
+    ],
+    "Sheet1!R28C1": [
+     "current",
+     "28",
+     28.0
+    ],
+    "Sheet1!R29C1": [
+     "current",
+     "29",
+     29.0
+    ],
+    "Sheet1!R30C1": [
+     "current",
+     "30",
+     30.0
+    ],
+    "Sheet1!R31C1": [
+     "current",
+     "31",
+     31.0
+    ],
+    "Sheet1!R32C1": [
+     "current",
+     "32",
+     32.0
+    ],
+    "Sheet1!R33C1": [
+     "current",
+     "33",
+     33.0
+    ],
+    "Sheet1!R34C1": [
+     "current",
+     "34",
+     34.0
+    ],
+    "Sheet1!R35C1": [
+     "current",
+     "35",
+     35.0
+    ],
+    "Sheet1!R36C1": [
+     "current",
+     "36",
+     36.0
+    ],
+    "Sheet1!R37C1": [
+     "current",
+     "37",
+     37.0
+    ],
+    "Sheet1!R38C1": [
+     "current",
+     "38",
+     38.0
+    ],
+    "Sheet1!R39C1": [
+     "current",
+     "39",
+     39.0
+    ],
+    "Sheet1!R40C1": [
+     "current",
+     "40",
+     40.0
+    ],
+    "Sheet1!R41C1": [
+     "current",
+     "41",
+     41.0
+    ],
+    "Sheet1!R42C1": [
+     "current",
+     "42",
+     42.0
+    ],
+    "Sheet1!R43C1": [
+     "current",
+     "43",
+     43.0
+    ],
+    "Sheet1!R44C1": [
+     "current",
+     "44",
+     44.0
+    ],
+    "Sheet1!R45C1": [
+     "current",
+     "45",
+     45.0
+    ],
+    "Sheet1!R46C1": [
+     "current",
+     "46",
+     46.0
+    ],
+    "Sheet1!R47C1": [
+     "current",
+     "47",
+     47.0
+    ],
+    "Sheet1!R48C1": [
+     "current",
+     "48",
+     48.0
+    ],
+    "Sheet1!R49C1": [
+     "current",
+     "49",
+     49.0
+    ],
+    "Sheet1!R50C1": [
+     "current",
+     "50",
+     50.0
+    ],
+    "Sheet1!R51C1": [
+     "current",
+     "51",
+     51.0
+    ],
+    "Sheet1!R52C1": [
+     "current",
+     "52",
+     52.0
+    ],
+    "Sheet1!R53C1": [
+     "current",
+     "53",
+     53.0
+    ],
+    "Sheet1!R54C1": [
+     "current",
+     "54",
+     54.0
+    ],
+    "Sheet1!R55C1": [
+     "current",
+     "55",
+     55.0
+    ],
+    "Sheet1!R56C1": [
+     "current",
+     "56",
+     56.0
+    ],
+    "Sheet1!R57C1": [
+     "current",
+     "57",
+     57.0
+    ],
+    "Sheet1!R58C1": [
+     "current",
+     "58",
+     58.0
+    ],
+    "Sheet1!R59C1": [
+     "current",
+     "59",
+     59.0
+    ],
+    "Sheet1!R60C1": [
+     "current",
+     "60",
+     60.0
+    ],
+    "Sheet1!R61C1": [
+     "current",
+     "61",
+     61.0
+    ],
+    "Sheet1!R62C1": [
+     "current",
+     "62",
+     62.0
+    ],
+    "Sheet1!R63C1": [
+     "current",
+     "63",
+     63.0
+    ],
+    "Sheet1!R64C1": [
+     "current",
+     "64",
+     64.0
+    ],
+    "Sheet1!R65C1": [
+     "current",
+     "65",
+     65.0
+    ],
+    "Sheet1!R66C1": [
+     "current",
+     "66",
+     66.0
+    ],
+    "Sheet1!R67C1": [
+     "current",
+     "67",
+     67.0
+    ],
+    "Sheet1!R68C1": [
+     "current",
+     "68",
+     68.0
+    ],
+    "Sheet1!R69C1": [
+     "current",
+     "69",
+     69.0
+    ],
+    "Sheet1!R70C1": [
+     "current",
+     "70",
+     70.0
+    ],
+    "Sheet1!R71C1": [
+     "current",
+     "71",
+     71.0
+    ],
+    "Sheet1!R72C1": [
+     "current",
+     "72",
+     72.0
+    ],
+    "Sheet1!R73C1": [
+     "current",
+     "73",
+     73.0
+    ],
+    "Sheet1!R74C1": [
+     "current",
+     "74",
+     74.0
+    ],
+    "Sheet1!R75C1": [
+     "current",
+     "75",
+     75.0
+    ],
+    "Sheet1!R76C1": [
+     "current",
+     "76",
+     76.0
+    ],
+    "Sheet1!R77C1": [
+     "current",
+     "77",
+     77.0
+    ],
+    "Sheet1!R78C1": [
+     "current",
+     "78",
+     78.0
+    ],
+    "Sheet1!R79C1": [
+     "current",
+     "79",
+     79.0
+    ],
+    "Sheet1!R80C1": [
+     "current",
+     "80",
+     80.0
+    ],
+    "Sheet1!R81C1": [
+     "current",
+     "81",
+     81.0
+    ],
+    "Sheet1!R82C1": [
+     "current",
+     "82",
+     82.0
+    ],
+    "Sheet1!R83C1": [
+     "current",
+     "83",
+     83.0
+    ],
+    "Sheet1!R84C1": [
+     "current",
+     "84",
+     84.0
+    ],
+    "Sheet1!R85C1": [
+     "current",
+     "85",
+     85.0
+    ],
+    "Sheet1!R86C1": [
+     "current",
+     "86",
+     86.0
+    ],
+    "Sheet1!R87C1": [
+     "current",
+     "87",
+     87.0
+    ],
+    "Sheet1!R88C1": [
+     "current",
+     "88",
+     88.0
+    ],
+    "Sheet1!R89C1": [
+     "current",
+     "89",
+     89.0
+    ],
+    "Sheet1!R90C1": [
+     "current",
+     "90",
+     90.0
+    ],
+    "Sheet1!R91C1": [
+     "current",
+     "91",
+     91.0
+    ],
+    "Sheet1!R92C1": [
+     "current",
+     "92",
+     92.0
+    ],
+    "Sheet1!R93C1": [
+     "current",
+     "93",
+     93.0
+    ],
+    "Sheet1!R94C1": [
+     "current",
+     "94",
+     94.0
+    ],
+    "Sheet1!R95C1": [
+     "current",
+     "95",
+     95.0
+    ],
+    "Sheet1!R96C1": [
+     "current",
+     "96",
+     96.0
+    ],
+    "Sheet1!R97C1": [
+     "current",
+     "97",
+     97.0
+    ],
+    "Sheet1!R98C1": [
+     "current",
+     "98",
+     98.0
+    ],
+    "Sheet1!R99C1": [
+     "current",
+     "99",
+     99.0
+    ],
+    "Sheet1!R100C1": [
+     "current",
+     "100",
+     100.0
+    ],
+    "Sheet1!R101C1": [
+     "current",
+     "101",
+     101.0
+    ],
+    "Sheet1!R102C1": [
+     "current",
+     "102",
+     102.0
+    ],
+    "Sheet1!R103C1": [
+     "current",
+     "103",
+     103.0
+    ],
+    "Sheet1!R104C1": [
+     "current",
+     "104",
+     104.0
+    ],
+    "Sheet1!R105C1": [
+     "current",
+     "105",
+     105.0
+    ],
+    "Sheet1!R106C1": [
+     "current",
+     "106",
+     106.0
+    ],
+    "Sheet1!R107C1": [
+     "current",
+     "107",
+     107.0
+    ],
+    "Sheet1!R108C1": [
+     "current",
+     "108",
+     108.0
+    ],
+    "Sheet1!R109C1": [
+     "current",
+     "109",
+     109.0
+    ],
+    "Sheet1!R110C1": [
+     "current",
+     "110",
+     110.0
+    ],
+    "Sheet1!R111C1": [
+     "current",
+     "111",
+     111.0
+    ],
+    "Sheet1!R112C1": [
+     "current",
+     "112",
+     112.0
+    ],
+    "Sheet1!R113C1": [
+     "current",
+     "113",
+     113.0
+    ],
+    "Sheet1!R114C1": [
+     "current",
+     "114",
+     114.0
+    ],
+    "Sheet1!R115C1": [
+     "current",
+     "115",
+     115.0
+    ],
+    "Sheet1!R116C1": [
+     "current",
+     "116",
+     116.0
+    ],
+    "Sheet1!R117C1": [
+     "current",
+     "117",
+     117.0
+    ],
+    "Sheet1!R118C1": [
+     "current",
+     "118",
+     118.0
+    ],
+    "Sheet1!R119C1": [
+     "current",
+     "119",
+     119.0
+    ],
+    "Sheet1!R120C1": [
+     "current",
+     "120",
+     120.0
+    ],
+    "Sheet1!R121C1": [
+     "current",
+     "121",
+     121.0
+    ],
+    "Sheet1!R122C1": [
+     "current",
+     "122",
+     122.0
+    ],
+    "Sheet1!R123C1": [
+     "current",
+     "123",
+     123.0
+    ],
+    "Sheet1!R124C1": [
+     "current",
+     "124",
+     124.0
+    ],
+    "Sheet1!R125C1": [
+     "current",
+     "125",
+     125.0
+    ],
+    "Sheet1!R126C1": [
+     "current",
+     "126",
+     126.0
+    ],
+    "Sheet1!R127C1": [
+     "current",
+     "127",
+     127.0
+    ],
+    "Sheet1!R128C1": [
+     "current",
+     "128",
+     128.0
+    ],
+    "Sheet1!R129C1": [
+     "current",
+     "129",
+     129.0
+    ]
+   }
+  },
+  "range-as-scalar-whole-plain": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   }
+  },
+  "range-as-scalar-plus-plain": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   }
+  },
+  "range-as-scalar-if-plain": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   }
+  },
+  "range-as-scalar-isblank-plain": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   }
+  },
+  "range-as-scalar-whole-error-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "range-as-scalar-plus-error-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "range-as-scalar-if-error-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#DIV/0!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "range-as-scalar-isblank-error-cell": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#DIV/0!",
+     null
+    ]
+   }
+  },
+  "range-as-scalar-whole-empty-cells": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   }
+  },
+  "range-as-scalar-plus-empty-cells": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   }
+  },
+  "range-as-scalar-if-empty-cells": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   }
+  },
+  "range-as-scalar-isblank-empty-cells": {
+   "alone": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   },
+   "together": {
+    "Sheet1!R1C5": [
+     "error",
+     "#VALUE!",
+     null
+    ]
+   }
+  },
+  "cross-sheet-cell": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "current",
+     "8",
+     8.0
+    ],
+    "Sheet1!R2C1": [
+     "current",
+     "4",
+     4.0
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "4",
+     4.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "current",
+     "8",
+     8.0
+    ],
+    "Sheet1!R2C1": [
+     "current",
+     "4",
+     4.0
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "4",
+     4.0
+    ]
+   }
+  },
+  "cross-sheet-chain": {
+   "alone": {
+    "Other!R1C1": [
+     "current",
+     "3",
+     3.0
+    ],
+    "Sheet1!R1C1": [
+     "current",
+     "4",
+     4.0
+    ]
+   },
+   "together": {
+    "Other!R1C1": [
+     "current",
+     "3",
+     3.0
+    ],
+    "Sheet1!R1C1": [
+     "current",
+     "4",
+     4.0
+    ]
+   }
+  },
+  "cross-sheet-cycle": {
+   "alone": {
+    "Other!R1C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   },
+   "together": {
+    "Other!R1C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ],
+    "Sheet1!R1C1": [
+     "error",
+     "#CYCLE!",
+     null
+    ]
+   }
+  },
+  "missing-sheet": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "1",
+     1.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#REF!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "1",
+     1.0
+    ]
+   }
+  },
+  "accent-sheets": {
+   "alone": {
+    "Sheet1!R1C1": [
+     "error",
+     "#VALUE!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#VALUE!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "2",
+     2.0
+    ],
+    "Sheet1!R4C1": [
+     "current",
+     "1",
+     1.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "2",
+     2.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C1": [
+     "error",
+     "#VALUE!",
+     null
+    ],
+    "Sheet1!R2C1": [
+     "error",
+     "#VALUE!",
+     null
+    ],
+    "Sheet1!R3C1": [
+     "current",
+     "2",
+     2.0
+    ],
+    "Sheet1!R4C1": [
+     "current",
+     "1",
+     1.0
+    ],
+    "Sheet1!R5C1": [
+     "current",
+     "2",
+     2.0
+    ]
+   }
+  },
+  "SUM-40x40": {
+   "alone": {
+    "Sheet1!R1C42": [
+     "current",
+     "4285",
+     4285.0
+    ]
+   },
+   "together": {
+    "Sheet1!R1C42": [
+     "current",
+     "4285",
+     4285.0
+    ]
+   }
+  },
+  "COUNTIF-40x40": {
+   "alone": {
+    "Sheet1!R1C42": [
+     "current",
+     "612",
+     612
+    ]
+   },
+   "together": {
+    "Sheet1!R1C42": [
+     "current",
+     "612",
+     612
+    ]
+   }
+  }
+ }
+}
