@@ -20,28 +20,39 @@ stages 3 and 4.
 
 Figures are medians of five runs in one process with a warm file cache. Host:
 Apple M1 (8 cores), macOS 26.6.2, Python 3.14.6, SQLite 3.53.4. **The machine
-was not idle:** the load average was 4 to 6 during the run, mostly from other
-processes (a media-analysis daemon was holding about two cores). Stage 1 also ran on a machine that was not idle, so compare
+was not idle:** the load average was about 12 during the final run (11.6 to
+13.5), mostly from other processes (a media-analysis daemon was holding about
+two cores; the first run, before a fix described under S2, saw 4 to 6). Stage 1 also ran on a machine that was not idle, so compare
 the two sets of figures with care. Evidence: [calculation-stage-2.json](evidence/calculation-stage-2.json),
-produced by `tests/calculation_stage2_benchmark.py` on revision `e28415d`, which
-holds the full set of per-run timings. Everything is measured through
+produced by `tests/calculation_stage2_benchmark.py` on revision `09b21cc`, which
+holds the full set of per-run timings. The first run, on `e28415d` before the
+cache fix described under S2, is kept as
+[calculation-stage-2-run1.json](evidence/calculation-stage-2-run1.json). Everything is measured through
 `Workbook`; no service code is called from the benchmark in any other way.
 
 | # | Measure | Target | Measured | Result |
 | --- | --- | --- | --- | --- |
-| S1 | `=SUM(Sheet1!A1:A100000)` in one default read (0.25 s) | ≤ 0.25 s | `#LIMIT!` in all five runs (0.2509 s to give up); the same sum takes 0.41 s with a 2 s budget (4.1 µs per cell) | **Missed** |
-| S2 | Longest chained running total one read completes | none | Default read: 512 in the doubling; 1,024 and 2,048 fail, 4,096 completes, 8,192 is at the edge (below). List budget (2 s), cached calculator: 1,024, then 2,048 fails, 4,096 to 32,768 complete. List budget, plain calculator: 32,768, fails at 65,536 | See below |
-| S3 | Cost per stored cell of a streamed range | 2 µs assumed by the design | 4.2 µs numbers, 2.9 µs 40-character text, 4.1 µs dates, 32.7 µs formula results | Slower than assumed |
-| S4 | Conditional aggregates and a lookup over 100,000 rows | none | `COUNTIF` 0.64 s; `SUMIFS` with three criteria 2.18 s; `XLOOKUP` to the last row 0.94 s | Each exceeds a default read |
-| S5 | `invalidate` for one edit with 4,096 cached range readers | none | 2.7 ms when the edit falls inside 11 readers; 0.48 s when it falls inside 2,098 (8.6 million containment checks) | See below |
-| S6 | Peak resident memory of a `SUM` over 1,000,000 stored cells | none | The sum added at most 32 KiB to the process peak (median 16 KiB); the process peaked at about 46 to 48 MiB; the calculator cache held one entry. 4.06 s | Memory is bounded |
+| S1 | `=SUM(Sheet1!A1:A100000)` in one default read (0.25 s) | ≤ 0.25 s | `#LIMIT!` in all five runs (0.2506 s to give up); the same sum takes 0.39 s with a 2 s budget (3.9 µs per cell) | **Missed** |
+| S2 | Longest chained running total one read completes | none | Default read: 8,192 (0.23 s), 16,384 fails. List budget (2 s), cached or plain calculator: 32,768, 65,536 fails. Before the cache fix a default read completed 512 and then 4,096 but not 1,024 or 2,048 | See below |
+| S3 | Cost per stored cell of a streamed range | 2 µs assumed by the design | 3.7 µs numbers, 2.7 µs 40-character text, 3.9 µs dates, 31.7 µs formula results | Slower than assumed |
+| S4 | Conditional aggregates and a lookup over 100,000 rows | none | `COUNTIF` 0.58 s; `SUMIFS` with three criteria 1.93 s; `XLOOKUP` to the last row 0.89 s | Each exceeds a default read |
+| S5 | `invalidate` for one edit with 4,096 cached range readers | none | 2.7 ms when the edit falls inside 11 readers; 0.47 s when it falls inside 2,098 (8.6 million containment checks) | See below |
+| S6 | Peak resident memory of a `SUM` over 1,000,000 stored cells | none | The sum added at most 32 KiB to the process peak (median 16 KiB); the process peaked at about 46 to 48 MiB; the calculator cache held one entry. 4.15 s | Memory is bounded |
+
+Between the first run and the final one every timing moved by 0 to 12%, mostly
+faster (`SUMIFS` 2.18 s to 1.93 s, `COUNTIF` 0.64 s to 0.58 s, numbers 4.2 µs
+to 3.7 µs per cell), although the second run saw about twice the load. I cannot
+name the cause; the code on the read path of S1, S3, S4 and S6 did not change
+between the runs. Treat differences of that size as run-to-run noise on this
+machine and read the figures to one significant digit. The only change that is
+understood is S2.
 
 ### S1: why it is missed
 
-The streamed `SUM` costs 4.1 µs per cell here. Stage 1's prototype measured
+The streamed `SUM` costs 3.9 µs per cell here (4.1 µs in the first run). Stage 1's prototype measured
 2 µs, and the service adds the calculator's per-cell accounting, the type
 conversion of each stored cell and the deadline check. Reading 100,000 cells
-therefore takes 0.41 s, above the 0.25 s default budget. The read gives up at
+therefore takes about 0.4 s, above the 0.25 s default budget. The read gives up at
 0.2509 s with `#LIMIT!` and the message `Calculation budget exceeded`. Before
 stage 2 the same read failed too, for a different reason (a range over 10,000
 cells), so no previous behaviour regressed; the range is simply not yet fast
@@ -52,44 +63,48 @@ export, jobs) completes it.
 ### S2: how long a chain one read completes
 
 The chain is `=J<r-1>+A<r>` in column J, read at its last cell with nothing
-cached.
+cached. Each length is one read; the evidence file holds them all.
 
 | Chain length | Default read (0.25 s) | 2 s, cached calculator | 2 s, plain calculator |
 | --- | --- | --- | --- |
-| 256 | 0.04 s, done | 0.04 s, done | 0.01 s, done |
-| 512 | 0.14 s, done | 0.15 s, done | 0.02 s, done |
-| 1,024 | `#LIMIT!` | 0.55 s, done | 0.04 s, done |
-| 2,048 | `#LIMIT!` | `#LIMIT!` | 0.09 s, done |
-| 4,096 | 0.13 s, done | 0.18 s, done | 0.16 s, done |
-| 8,192 | `#LIMIT!` (0.2505 s) | 0.39 s, done | 0.32 s, done |
-| 16,384 | `#LIMIT!` | 0.66 s, done | 0.91 s, done |
-| 32,768 | `#LIMIT!` | 1.34 s, done | 1.15 s, done |
+| 256 | 0.01 s, done | 0.01 s, done | 0.01 s, done |
+| 512 | 0.02 s, done | 0.02 s, done | 0.02 s, done |
+| 1,024 | 0.04 s, done | 0.04 s, done | 0.03 s, done |
+| 2,048 | 0.07 s, done | 0.09 s, done | 0.06 s, done |
+| 4,096 | 0.12 s, done | 0.16 s, done | 0.13 s, done |
+| 8,192 | 0.23 s, done | 0.33 s, done | 0.26 s, done |
+| 16,384 | `#LIMIT!` | 0.64 s, done | 0.52 s, done |
+| 32,768 | `#LIMIT!` | 1.31 s, done | 1.05 s, done |
 | 65,536 and above | `#LIMIT!` | `#LIMIT!` | `#LIMIT!` |
 
-Each length is one read in the final run (the evidence file holds them all). At
-8,192 the default read sits on its budget: it completed in 0.2474 s in an
-earlier run and gave up at 0.2505 s in the final one.
-
-The doubling does not behave as a simple threshold, and the table says why.
-The plain calculator (hooks, calculation jobs) is linear: about 35 µs per
-formula, so a 2 s budget completes 32,768 and not 65,536. The calculator that
-ordinary reads use keeps results in the dependency cache, and for each result it
-saves, `DependencyIndex.cacheable` walks every precedent of the formula. For a
-chain that walk is as long as the chain, so the cost is quadratic in chain
-length for as long as the cache accepts results. The cache gives up and turns
-itself off at 4,096 results, after which the cost is linear again. That is why
-1,024 and 2,048 fail a default read while 4,096 completes. A default read
-therefore completes a chain of 512 and one of 4,096 (about 30 µs per formula) on
-this machine, and sits on its budget at 8,192; a chain of 20,000 needs a 2 s
+Chains are now linear for all three: about 30 to 40 µs per formula, so a 2 s
+budget completes 32,768 and not 65,536, and a default read completes 8,192 and
+sits close to its budget there (0.23 s here). A chain of 20,000 needs a 2 s
 budget. The time at the longest length before the first failure is a median of
-five reads: 0.14 s (512, default), 0.55 s (1,024, cached 2 s) and 1.20 s (32,768,
-plain 2 s).
-This quadratic walk is a finding of this measurement, not of the plan or the
-review; it is not fixed here, because this task changes no service code.
-Stage 4 replaces the in-memory cache.
+five reads: 0.24 s (8,192, default), 1.33 s (32,768, cached 2 s) and 1.05 s
+(32,768, plain 2 s).
+
+**A defect this measurement found, fixed in this stage.** The first run (on
+`e28415d`) was not linear for ordinary reads. The calculator that reads use
+keeps results in the dependency cache, and for each result it saved,
+`DependencyIndex.cacheable` walked every precedent of the formula. For a chain
+that walk is as long as the chain, so the cost was quadratic in chain length for
+as long as the cache accepted results, until it turned itself off at its cap of
+4,096 results. A default read completed 512 formulas (0.14 s) but failed at
+1,024 and 2,048, completed 4,096 (0.13 s), and sat on its budget at 8,192; a 2 s
+cached read took 0.55 s for 1,024 and failed at 2,048 while completing 4,096 to
+32,768. The plain calculator, which has no cache, was linear throughout. The
+coordinator fixed it in commit `09b21cc` ("Decide whether a result is cacheable
+from its direct reads only"): `cacheable` now checks only a formula's direct
+reads. After the fix a default read completes 512, 1,024, 2,048 and 4,096, and
+8,192 as well, and the cached 2 s read completes 1,024 and 2,048 in 0.04 and 0.09
+s where it took 0.55 s and failed. The first run is kept as
+[calculation-stage-2-run1.json](evidence/calculation-stage-2-run1.json) so the
+before and after are both on record. At 4,096 results the cache still turns
+itself off, as designed.
 
 Reads that fail also overrun their budget: a 0.25 s read gave up after 0.25 to
-0.38 s, and a 2 s read after up to 2.5 s, because the deadline is checked
+0.36 s, and a 2 s read after up to 2.7 s, because the deadline is checked
 between units of work and a unit can be long.
 
 ### S3: cost per stored cell
@@ -98,10 +113,10 @@ between units of work and a unit can be long.
 
 | Column | Median | Per cell |
 | --- | --- | --- |
-| Numbers (`row % 97`) | 0.42 s | 4.2 µs |
-| Text, 40 characters | 0.29 s | 2.9 µs |
-| Dates | 0.41 s | 4.1 µs |
-| Formula results (`=A<r>`) | 3.27 s | 32.7 µs |
+| Numbers (`row % 97`) | 0.37 s | 3.7 µs |
+| Text, 40 characters | 0.27 s | 2.7 µs |
+| Dates | 0.39 s | 3.9 µs |
+| Formula results (`=A<r>`) | 3.17 s | 31.7 µs |
 
 The formula column's figure includes evaluating each formula (each one reads
 one cell and is parsed and evaluated); it is the cost of an uncalculated
@@ -115,8 +130,8 @@ The count stands as a count: it bounds how many stored cells one formula reads,
 it is enforced where the count is charged, and the same inputs always give the
 same result. What does not stand is the time the design attached to it. The
 design note assumed 2 µs per cell, so about 8 s for a formula that reads the
-limit. At the measured rates the same formula takes about 12 s over text, 17 s
-over numbers, 17 s over dates and over 2 minutes over a column of formulas that
+limit. At the measured rates the same formula takes about 11 s over text, 16 s
+over numbers, 16 s over dates and over 2 minutes over a column of formulas that
 have to be evaluated. Under today's time budgets (0.25 s, 2 s) that does not
 matter, because the budget ends the read first; the limit is reached only by a
 read with no time budget. Stage 4 removes the cumulative budget for background
@@ -131,12 +146,12 @@ pass over the streamed columns.
 
 | Formula | Median | Per row |
 | --- | --- | --- |
-| `COUNTIF(A1:A100000,">50")` | 0.64 s | 6.4 µs |
-| `SUMIFS(E,A,">10",F,"<500",B,"<>x")` (three criteria, four columns) | 2.18 s | 21.8 µs |
-| `XLOOKUP(100000,E1:E100000,A1:A100000)` (match on the last row) | 0.94 s | 9.4 µs |
+| `COUNTIF(A1:A100000,">50")` | 0.58 s | 5.8 µs |
+| `SUMIFS(E,A,">10",F,"<500",B,"<>x")` (three criteria, four columns) | 1.93 s | 19.3 µs |
+| `XLOOKUP(100000,E1:E100000,A1:A100000)` (match on the last row) | 0.89 s | 8.9 µs |
 
-None fits a 0.25 s read at 100,000 rows. Each does fit a 2 s read except the
-three-criteria `SUMIFS`, which needs a little over 2 s here. `SUMIFS` at
+None fits a 0.25 s read at 100,000 rows. Each fits a 2 s read, the
+three-criteria `SUMIFS` with little to spare (1.9 s here; 2.2 s in the first run). `SUMIFS` at
 5 µs per cell per column is in line with a plain `SUM` at 4 µs, so there is no
 per-criterion surprise; the cost is the number of cells read.
 
@@ -147,7 +162,7 @@ With 4,096 formulas cached, each reading a range:
 | Shape | Edit | Readers invalidated | Containment checks | Median |
 | --- | --- | --- | --- | --- |
 | `=SUM(A<r>:A<r+9>)`, ten cells each | one cell of column A | 11 | 45,056 | 2.7 ms |
-| `=SUM(Z1:Z<r>)`, over an empty column | `Z2000`, an empty coordinate | 2,098 | 8,591,310 | 0.48 s |
+| `=SUM(Z1:Z<r>)`, over an empty column | `Z2000`, an empty coordinate | 2,098 | 8,591,310 | 0.47 s |
 
 The cache holds a range as one rectangle, so the number of edges is the number
 of readers, not the number of cells they cover. An invalidation checks each
@@ -164,7 +179,7 @@ dependents index should be an interval structure; see stage 1.
 A `SUM` over 1,000,000 stored cells, in a fresh process, did not hold the
 cells: the peak resident memory rose by at most 32 KiB, the process peaked at
 about 46 to 48 MiB, and the calculator's cache held one entry (the formula
-itself). It took 4.06 s (4.1 µs per cell). A read of the same cells as a list
+itself). It took 4.15 s (4.1 µs per cell). A read of the same cells as a list
 would hold about a million Python objects. Peak memory is measured with the
 operating system's resident-set counter and is not available on Windows.
 
@@ -213,8 +228,7 @@ that had no value yet, and the design requires every pull request to leave
 - The 100,000-row running total still returns `#LIMIT!` in a default read. The
   chain at that length needs about 3.5 s here (35 µs per formula on the plain calculator, extrapolated) and the
   budget is 0.25 s, and nothing is kept between reads. The longest chain a read
-  completes is in the S2 table (a default read: 512, and 4,096 where the cache
-  has turned itself off; a 2 s read: 32,768 on the plain calculator). Stage 4
+  completes is in the S2 table (a default read: 8,192; a 2 s read: 32,768). Stage 4
   ends this.
 - A formula near a time budget can succeed on one read and fail on the next,
   because the step count that used to trip first is gone and the time budget is
@@ -252,9 +266,7 @@ would notice:
   blank is not charged on the scan path, as it is on the stream path.
 - **Invalidation has no spatial index.** Its cost is affected cells times
   rectangles on the sheet (S5). `cacheable` also rebuilds its list of tainted
-  formulas on every save, and walks a formula's precedents for each result it
-  saves, which makes ordinary reads quadratic in chain length until the cache
-  turns itself off at 4,096 results (S2).
+  formulas on every save.
 - **Untested cases.** There is no test for a deleted cell inside a range, for an
   edit to a range on another sheet, or for a volatile formula written into the
   rectangle of a cached reader. Whether a deleted cell's key is in the engine's
@@ -297,10 +309,10 @@ would notice:
   complete where a shorter one did not (above).
 - `tests/benchmark.py`, the earlier formula harness, asserted that a chain of
   129 formulas gives `#LIMIT!`. It now expects the value.
+- The first S2 run exposed a quadratic walk in the dependency cache; it was fixed in the same stage (`09b21cc`) and S2 re-run, with both runs kept.
 - The stage shipped as one pull request, not two.
 
 ## Next
 
-Stage 3: the v9 store and freshness. Stage 4 will want the per-cell cost, the
-quadratic cache walk and the invalidation cost in this document before it
+Stage 3: the v9 store and freshness. Stage 4 will want the per-cell cost and the invalidation cost in this document before it
 chooses its limits.

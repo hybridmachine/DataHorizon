@@ -18,20 +18,23 @@ rectangle and keeps its bounds. REST, CLI, SDK, the native format (v8) and the
 desktop are unchanged, and a 178-case characterization corpus passes with
 nothing re-recorded.
 
-Measured on an Apple M1 that was not idle (medians of five):
+Measured on an Apple M1 that was not idle (load about 12; medians of five;
+the figures to one significant digit):
 - `=SUM` over 100,000 stored cells shows `#LIMIT!` in a default read (target
-  0.25 s, **missed**); it takes 0.41 s with a 2 s budget (4.1 µs per cell).
-- A default read completes a chain of 512 and of 4,096 formulas but not 1,024
-  or 2,048, because the cache's per-result precedent walk is quadratic until the
-  cache turns itself off; a 2 s read completes 32,768 on the plain calculator.
-- A streamed cell costs 2.9 to 4.2 µs for stored values and 32.7 µs for formulas
-  that must be evaluated, against the 2 µs the design assumed, so 4,194,304
-  cells is about 12 to 17 s (stored) and over 2 minutes (formulas).
+  0.25 s, **missed**); it takes 0.39 s with a 2 s budget (3.9 µs per cell).
+- A chain is linear: a default read completes 8,192 formulas and a 2 s read
+  32,768 (not 65,536). The first run found a defect, now fixed in this stage:
+  the dependency cache walked every precedent of each result it saved, so a
+  default read completed 512 and 4,096 formulas but failed at 1,024 and 2,048.
+  Both runs are kept as evidence.
+- A streamed cell costs 2.7 to 3.7 µs for stored values and 31.7 µs for
+  formulas that must be evaluated, against the 2 µs the design assumed, so
+  4,194,304 cells is about 11 to 16 s (stored) and over 2 minutes (formulas).
 - `COUNTIF`, a three-criteria `SUMIFS` and an `XLOOKUP` over 100,000 rows take
-  0.64, 2.18 and 0.94 s. A `SUM` over 1,000,000 cells added at most 32 KiB of peak
-  memory.
+  0.58, 1.93 and 0.89 s. A `SUM` over 1,000,000 cells added at most 32 KiB of
+  peak memory.
 - Invalidating with 4,096 cached range readers takes 2.7 ms for a small edit and
-  0.48 s when 2,098 readers contain it; there is no spatial index.
+  0.47 s when 2,098 readers contain it; there is no spatial index.
 
 Still true: nothing is stored between reads, a 100,000-row running total shows
 `#LIMIT!` in a default read, and a formula near a budget can pass on one read

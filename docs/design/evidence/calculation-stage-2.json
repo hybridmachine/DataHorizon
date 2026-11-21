@@ -1,5 +1,5 @@
 {
-  "date_utc": "2026-11-21T22:09:02.152610+00:00",
+  "date_utc": "2026-11-21T22:28:34.172105+00:00",
   "host": {
     "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
     "machine": "arm64",
@@ -7,12 +7,12 @@
     "sqlite": "3.53.4",
     "cpu_count": 8,
     "load_average_at_end": [
-      5.14,
-      6.29,
-      6.51
+      11.92,
+      12.25,
+      9.35
     ]
   },
-  "revision": "e28415d8440be78cc977bc63a9b096fff5225048",
+  "revision": "09b21ccfdbdca4b4de45c8ed64bcbb8c18544938",
   "source_sha256": {
     "calculation_stage2_benchmark.py": "ea3af1f30cf2f80e80c551503ffe05ee388ce9dc92ad3a21aacafbb56437827d",
     "calculation_benchmark.py": "9084706af8ebaee9aa42be4a0ce3101947bc837bc5b486cfd59268cb17d22c05",
@@ -27,13 +27,13 @@
   "measurements": {
     "S1": {
       "runs": [
-        0.250876,
-        0.250682,
-        0.250927,
-        0.250977,
-        0.250434
+        0.251138,
+        0.250371,
+        0.250612,
+        0.250663,
+        0.250379
       ],
-      "median": 0.250876,
+      "median": 0.250612,
       "unit": "s",
       "cells": 100000,
       "displayed": [
@@ -46,164 +46,164 @@
       "completed_runs": 0,
       "with_2s_budget": {
         "runs": [
-          0.410586,
-          0.407903,
-          0.40951,
-          0.410338,
-          0.423009
+          0.393918,
+          0.389174,
+          0.41036,
+          0.388063,
+          0.395749
         ],
-        "median": 0.410338,
+        "median": 0.393918,
         "unit": "s",
         "cells": 100000,
-        "microseconds_per_cell": 4.1
+        "microseconds_per_cell": 3.94
       },
       "target": 0.25,
       "met": false
     },
     "S2": {
       "default_read_0.25s": {
-        "longest_completed_before_first_failure": 512,
-        "first_failure": 1024,
-        "largest_completed": 4096,
+        "longest_completed_before_first_failure": 8192,
+        "first_failure": 16384,
+        "largest_completed": 8192,
         "steps": [
           {
             "length": 256,
-            "seconds": 0.0397,
+            "seconds": 0.0091,
             "completed": true
           },
           {
             "length": 512,
-            "seconds": 0.1363,
+            "seconds": 0.0168,
             "completed": true
           },
           {
             "length": 1024,
-            "seconds": 0.251,
-            "completed": false
+            "seconds": 0.0351,
+            "completed": true
           },
           {
             "length": 2048,
-            "seconds": 0.2537,
-            "completed": false
+            "seconds": 0.0666,
+            "completed": true
           },
           {
             "length": 4096,
-            "seconds": 0.1259,
+            "seconds": 0.1202,
             "completed": true
           },
           {
             "length": 8192,
-            "seconds": 0.2505,
-            "completed": false
+            "seconds": 0.2315,
+            "completed": true
           },
           {
             "length": 16384,
-            "seconds": 0.3034,
+            "seconds": 0.304,
             "completed": false
           },
           {
             "length": 32768,
-            "seconds": 0.3593,
+            "seconds": 0.3472,
             "completed": false
           },
           {
             "length": 65536,
-            "seconds": 0.358,
+            "seconds": 0.3505,
             "completed": false
           },
           {
             "length": 131072,
-            "seconds": 0.3516,
+            "seconds": 0.3163,
             "completed": false
           },
           {
             "length": 262144,
-            "seconds": 0.2901,
+            "seconds": 0.2729,
             "completed": false
           }
         ],
         "time_at_longest_before_first_failure": {
           "runs": [
-            0.1368,
-            0.1388,
-            0.1365,
-            0.1473,
-            0.1439
+            0.239,
+            0.2563,
+            0.2362,
+            0.2503,
+            0.239
           ],
-          "median": 0.1388,
+          "median": 0.239,
           "unit": "s"
         }
       },
       "list_budget_2s_cached": {
-        "longest_completed_before_first_failure": 1024,
-        "first_failure": 2048,
+        "longest_completed_before_first_failure": 32768,
+        "first_failure": 65536,
         "largest_completed": 32768,
         "steps": [
           {
             "length": 256,
-            "seconds": 0.0399,
+            "seconds": 0.011,
             "completed": true
           },
           {
             "length": 512,
-            "seconds": 0.1506,
+            "seconds": 0.0218,
             "completed": true
           },
           {
             "length": 1024,
-            "seconds": 0.5496,
+            "seconds": 0.0433,
             "completed": true
           },
           {
             "length": 2048,
-            "seconds": 2.0007,
-            "completed": false
+            "seconds": 0.0947,
+            "completed": true
           },
           {
             "length": 4096,
-            "seconds": 0.1783,
+            "seconds": 0.1622,
             "completed": true
           },
           {
             "length": 8192,
-            "seconds": 0.3869,
+            "seconds": 0.3311,
             "completed": true
           },
           {
             "length": 16384,
-            "seconds": 0.6631,
+            "seconds": 0.64,
             "completed": true
           },
           {
             "length": 32768,
-            "seconds": 1.3442,
+            "seconds": 1.3074,
             "completed": true
           },
           {
             "length": 65536,
-            "seconds": 2.246,
+            "seconds": 2.1967,
             "completed": false
           },
           {
             "length": 131072,
-            "seconds": 2.4152,
+            "seconds": 2.4592,
             "completed": false
           },
           {
             "length": 262144,
-            "seconds": 2.3857,
+            "seconds": 2.2791,
             "completed": false
           }
         ],
         "time_at_longest_before_first_failure": {
           "runs": [
-            0.5354,
-            0.5476,
-            0.5448,
-            0.5528,
-            0.8019
+            1.6156,
+            1.3255,
+            1.3239,
+            1.3603,
+            1.2744
           ],
-          "median": 0.5476,
+          "median": 1.3255,
           "unit": "s"
         }
       },
@@ -214,160 +214,160 @@
         "steps": [
           {
             "length": 256,
-            "seconds": 0.0112,
+            "seconds": 0.0082,
             "completed": true
           },
           {
             "length": 512,
-            "seconds": 0.0198,
+            "seconds": 0.0161,
             "completed": true
           },
           {
             "length": 1024,
-            "seconds": 0.0416,
+            "seconds": 0.0324,
             "completed": true
           },
           {
             "length": 2048,
-            "seconds": 0.0899,
+            "seconds": 0.0646,
             "completed": true
           },
           {
             "length": 4096,
-            "seconds": 0.1564,
+            "seconds": 0.1278,
             "completed": true
           },
           {
             "length": 8192,
-            "seconds": 0.3221,
+            "seconds": 0.2645,
             "completed": true
           },
           {
             "length": 16384,
-            "seconds": 0.9051,
+            "seconds": 0.5227,
             "completed": true
           },
           {
             "length": 32768,
-            "seconds": 1.1509,
+            "seconds": 1.0466,
             "completed": true
           },
           {
             "length": 65536,
-            "seconds": 2.1077,
+            "seconds": 2.0196,
             "completed": false
           },
           {
             "length": 131072,
-            "seconds": 2.6513,
+            "seconds": 2.7373,
             "completed": false
           },
           {
             "length": 262144,
-            "seconds": 2.4783,
+            "seconds": 2.4641,
             "completed": false
           }
         ],
         "time_at_longest_before_first_failure": {
           "runs": [
-            1.1457,
-            1.4867,
-            1.3953,
-            1.1978,
-            1.1515
+            1.4251,
+            1.0549,
+            1.0537,
+            1.0473,
+            1.0389
           ],
-          "median": 1.1978,
+          "median": 1.0537,
           "unit": "s"
         }
       }
     },
     "S3.numbers": {
       "runs": [
-        0.458165,
-        0.458992,
-        0.407556,
-        0.420658,
-        0.407142
+        0.366974,
+        0.381172,
+        0.370967,
+        0.375137,
+        0.37432
       ],
-      "median": 0.420658,
+      "median": 0.37432,
       "unit": "s",
       "cells": 100000,
-      "microseconds_per_cell": 4.21
+      "microseconds_per_cell": 3.74
     },
     "S3.text_40": {
       "runs": [
-        0.292324,
-        0.282378,
-        0.285412,
-        0.295803,
-        0.28794
+        0.255997,
+        0.259484,
+        0.267888,
+        0.266516,
+        0.279583
       ],
-      "median": 0.28794,
+      "median": 0.266516,
       "unit": "s",
       "cells": 100000,
-      "microseconds_per_cell": 2.88
+      "microseconds_per_cell": 2.67
     },
     "S3.dates": {
       "runs": [
-        0.40412,
-        0.423467,
-        0.407965,
-        0.415574,
-        0.410786
+        0.502972,
+        0.387017,
+        0.380086,
+        0.376517,
+        0.385643
       ],
-      "median": 0.410786,
+      "median": 0.385643,
       "unit": "s",
       "cells": 100000,
-      "microseconds_per_cell": 4.11
+      "microseconds_per_cell": 3.86
     },
     "S3.formula_results": {
       "runs": [
-        3.144211,
-        3.143092,
-        3.268595,
-        3.526478,
-        3.866804
+        3.022378,
+        3.184747,
+        3.041218,
+        3.168688,
+        3.284931
       ],
-      "median": 3.268595,
+      "median": 3.168688,
       "unit": "s",
       "cells": 100000,
-      "microseconds_per_cell": 32.69
+      "microseconds_per_cell": 31.69
     },
     "S4.countif": {
       "runs": [
-        0.728193,
-        0.638492,
-        0.677182,
-        0.631308,
-        0.629747
+        0.575719,
+        0.583688,
+        0.554203,
+        0.569912,
+        0.595733
       ],
-      "median": 0.638492,
+      "median": 0.575719,
       "unit": "s",
       "rows": 100000,
       "within_default_budget": false
     },
     "S4.sumifs_3_criteria": {
       "runs": [
-        2.129182,
-        2.457516,
-        2.146615,
-        2.178902,
-        2.386124
+        1.8034,
+        1.816623,
+        2.010944,
+        1.927745,
+        2.023837
       ],
-      "median": 2.178902,
+      "median": 1.927745,
       "unit": "s",
       "rows": 100000,
       "within_default_budget": false
     },
     "S4.xlookup_last_row": {
       "runs": [
-        0.957847,
-        0.923586,
-        0.920745,
-        0.9379,
-        1.116854
+        0.932856,
+        0.904975,
+        0.872774,
+        0.892287,
+        0.890423
       ],
-      "median": 0.9379,
+      "median": 0.892287,
       "unit": "s",
       "rows": 100000,
       "within_default_budget": false
@@ -375,13 +375,13 @@
     "S5": {
       "ten_cell_ranges_edit_inside_one": {
         "runs": [
-          0.002904,
-          0.002611,
-          0.002669,
-          0.002887,
-          0.002558
+          0.002667,
+          0.002568,
+          0.002684,
+          0.002673,
+          0.002498
         ],
-        "median": 0.002669,
+        "median": 0.002667,
         "unit": "s",
         "cached_before": 4096,
         "range_edges_recorded": 4096,
@@ -390,13 +390,13 @@
       },
       "all_readers_contain_the_edit": {
         "runs": [
-          0.485515,
-          0.484737,
-          0.65988,
-          0.479865,
-          0.461268
+          0.461959,
+          0.470761,
+          0.47498,
+          0.483358,
+          0.473012
         ],
-        "median": 0.484737,
+        "median": 0.473012,
         "unit": "s",
         "cached_before": 4096,
         "range_edges_recorded": 4095,
@@ -408,33 +408,33 @@
       "cells": 1000000,
       "seconds": {
         "runs": [
-          4.024,
-          4.083,
-          4.058,
-          4.332,
-          4.059
+          4.272,
+          4.145,
+          4.091,
+          4.248,
+          4.132
         ],
-        "median": 4.059,
+        "median": 4.145,
         "unit": "s"
       },
       "rss_added": {
         "runs": [
           16384,
+          16384,
+          16384,
           32768,
-          32768,
-          0,
-          0
+          16384
         ],
         "median": 16384,
         "unit": "bytes"
       },
       "peak_rss": {
         "runs": [
-          48480256,
-          48562176,
-          48562176,
-          46301184,
-          46481408
+          48627712,
+          48660480,
+          48545792,
+          48693248,
+          48562176
         ],
         "unit": "bytes"
       },

@@ -326,12 +326,13 @@ rule the old error would be served for ever.
   **Measured**: the prototype first gave `#CYCLE!` to the whole static cycle,
   which disagreed with the service.
   **Measured** (stage 2): the service now evaluates a chain with an explicit
-  stack, so depth is no longer limited to 128. On the plain calculator a chain
-  costs about 35 µs per formula, and a 2 s read completes 32,768 formulas and not
-  65,536. The cached calculator that ordinary reads use is quadratic in chain
-  length while the cache accepts results (it walks every precedent of each result
-  it saves) and linear after it turns itself off at 4,096 results, so a default
-  0.25 s read completes chains of 512 and 4,096 but not 1,024 or 2,048
+  stack, so depth is no longer limited to 128. A chain costs about 30 to 40 µs
+  per formula, linear in its length: a default 0.25 s read completes 8,192
+  formulas and a 2 s read 32,768, not 65,536. The first measurement found a
+  defect: for each result the cache saved it walked every precedent of the
+  formula, so reads were quadratic in chain length (a default read completed 512
+  and 4,096 formulas but failed at 1,024 and 2,048). It was fixed in the same
+  stage by checking only a formula's direct reads, and both runs are kept
   ([result](calculation-stage-2.md#s2-how-long-a-chain-one-read-completes)).
 - Sheet names in references are matched as the `sheets` table matches them
   (SQLite `NOCASE`, ASCII letters only), in precedent extraction and in
@@ -348,10 +349,10 @@ rule the old error would be served for ever.
   2 µs per cell measured for a streamed column of short numbers; other cell
   kinds were not timed), on condition that stage 2 streams every
   range-reading function. **Measured** (stage 2): every range-reading function
-  now streams, and a streamed cell costs 4.2 µs for numbers, 2.9 µs for
-  40-character text, 4.1 µs for dates and 32.7 µs for a column of formulas that
+  now streams, and a streamed cell costs 3.7 µs for numbers, 2.7 µs for
+  40-character text, 3.9 µs for dates and 31.7 µs for a column of formulas that
   have to be evaluated, not 2 µs. A formula that read 4,194,304 cells would take
-  about 12 to 17 s over stored values and over 2 minutes over uncalculated
+  about 11 to 16 s over stored values and over 2 minutes over uncalculated
   formulas. The count stands as a count; the time attached to it does not, and
   stage 4 must settle whether to keep, lower or weight it. The count is charged
   where cells are read and counts stored cells only, not empty coordinates. A
@@ -500,13 +501,13 @@ within the per-formula limits, so none shows `#LIMIT!`; the whole column simply
 takes long in the background. Its throughput is measured and documented, and it
 is not part of the completion criteria.
 
-**Measured** (stage 2): `=SUM(Sheet1!A1:A100000)` takes 0.41 s with a 2 s budget
+**Measured** (stage 2): `=SUM(Sheet1!A1:A100000)` takes 0.39 s with a 2 s budget
 and shows `#LIMIT!` in a default 0.25 s read, so the stage-1 target (at most
-0.25 s) is missed on the service. A `SUM` over 1,000,000 stored cells took 4.1 s
+0.25 s) is missed on the service. A `SUM` over 1,000,000 stored cells took 4.15 s
 and added at most 32 KiB to the process's peak resident memory, because the
 cells are not held. `COUNTIF`, a three-criteria `SUMIFS` and an `XLOOKUP` to the
-last row over 100,000 rows take 0.64, 2.18 and 0.94 s. With 4,096 cached range
-readers an edit's invalidation takes 2.7 ms when it touches a few and 0.48 s
+last row over 100,000 rows take 0.58, 1.93 and 0.89 s. With 4,096 cached range
+readers an edit's invalidation takes 2.7 ms when it touches a few and 0.47 s
 when it touches 2,098, because the cache has no spatial index (8.6 million
 containment checks). Medians on a machine that was not idle
 ([result](calculation-stage-2.md)).
@@ -606,7 +607,7 @@ Each stage is one or more reviewed pull requests that leave `main` working.
   many ranges cover a formula column and must not be carried over as it is.
   **Measured** (stage 2): stage 2's in-memory cache records a range as one
   rectangle and still has no interval structure; with 4,096 cached readers over
-  a column one edit checked 8.6 million rectangles in 0.48 s, so the point stands.
+  a column one edit checked 8.6 million rectangles in 0.47 s, so the point stands.
 - Thread or child process for the worker.
 - Batch sizes and the worker's yielding rule.
 - The pull-request split inside each stage.
