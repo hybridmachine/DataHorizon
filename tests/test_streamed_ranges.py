@@ -2,7 +2,6 @@
 """Ranges are read as one ordered scan and folded by the functions that read them (calculation stage 2, Task 4)."""
 from pathlib import Path
 import tempfile
-import time
 import unittest
 from unittest.mock import patch
 
@@ -81,13 +80,76 @@ class StreamedRangeTests(unittest.TestCase):
             return scan(*rectangle)
         calculator.scan = counted
         self.assertEqual(self.outcome(calculator, book, "C1"), rows*(rows+1))
-        self.assertLessEqual(scans.count((book.sheet(S), 1, 1, rows, 1)), 3)
+        self.assertLessEqual(self.passes(scans, book.sheet(S), 1), 3)
 
-    def test_a_sum_over_2000_uncalculated_formulas_fits_the_default_budget(self):
+    @staticmethod
+    def passes(scans, sheet, col):
+        """How many times a range in column col starting at row 1 was scanned from its start: once per pass."""
+        return sum(1 for scan in scans if scan[:3] == (sheet, 1, col) and scan[4] == col)
+
+    def test_a_sum_over_2000_uncalculated_formulas_is_linear(self):
         rows = 2_000
         book = self.book({**{f"B{r}": f"=C{r}*2" for r in range(1, rows+1)}, **column("C", [str(r) for r in range(1, rows+1)]),
                           "A1": f"=SUM(B1:B{rows})"})
-        self.assertEqual(self.together(book, ["A1"]), {"A1": rows*(rows+1)})
+        calculator, scans, evaluations = self.calculator(book), [], []
+        scan, evaluate_cell, reader = calculator.scan, calculator._evaluate_cell, (book.sheet(S), 1, 1)
+
+        def counted_scan(*rectangle):
+            scans.append(rectangle)
+            return scan(*rectangle)
+
+        def counted_evaluation(key):
+            evaluations.append(key)
+            return evaluate_cell(key)
+        calculator.scan, calculator._evaluate_cell = counted_scan, counted_evaluation
+        self.assertEqual(self.outcome(calculator, book, "A1"), rows*(rows+1))
+        self.assertLessEqual(evaluations.count(reader), 3)
+        self.assertLessEqual(self.passes(scans, book.sheet(S), 2), 3)
+
+    def test_a_range_is_scanned_in_bands_with_the_deadline_checked_between_them(self):
+        rows = 5*formula.SCAN_ROWS
+        # Many stored cells beside the range, none in it: every band yields nothing.
+        book = self.book({**{f"B{r}": "1" for r in range(1, rows+1)}, **{f"C{r}": "1" for r in range(1, rows+1)},
+                          "E1": f"=SUM(A1:A{rows})"})
+        calculator, checks, scans = self.calculator(book), [], []
+        check, scan = calculator.check, calculator.scan
+
+        def counted_check():
+            checks.append(len(scans))
+            check()
+
+        def counted_scan(*rectangle):
+            scans.append(rectangle)
+            return scan(*rectangle)
+        calculator.check, calculator.scan = counted_check, counted_scan
+        self.assertEqual(self.outcome(calculator, book, "E1"), 0)
+        sheet = book.sheet(S)
+        self.assertEqual(scans, [(sheet, 1+band*formula.SCAN_ROWS, 1, (band+1)*formula.SCAN_ROWS, 1) for band in range(5)])
+        self.assertTrue(all(band in checks for band in range(5)))  # a check before each band
+        late = book.calculator(seconds=0, transactional=True)
+        self.assertEqual(self.outcome(late, book, "E1"), "#LIMIT!")
+
+    def test_a_scan_stops_reading_bands_when_its_reader_stops(self):
+        rows = 5*formula.SCAN_ROWS
+        book = self.book(column("A", ["1"]*rows))
+        calculator, scans = self.calculator(book), []
+        scan = calculator.scan
+        calculator.scan = lambda *rectangle: scans.append(rectangle) or scan(*rectangle)
+        stream = calculator.stored((book.sheet(S), 1, 1, rows, 1))
+        self.assertEqual(next(stream), (1, 1, 1))
+        stream.close()
+        self.assertEqual(len(scans), 1)
+
+    def test_the_count_belongs_to_one_formula(self):
+        # An over-limit formula leaves nothing behind for the next read of the same calculator.
+        book = self.book({**column("A", ["1"]*60), "E1": "=SUM(A1:A60)", "E2": "7", "E3": "=A1+1"})
+        with patch.object(formula, "FORMULA_CELL_LIMIT", 50):
+            calculator = self.calculator(book)
+            self.assertEqual([self.outcome(calculator, book, ref) for ref in ("E1", "E2", "E3")], ["#LIMIT!", 7, 2])
+        # A formula that waits on a precedent reading just under the limit is not charged that precedent's reads.
+        book = self.book({**column("A", ["1"]*49), "B1": "=SUM(A1:A49)", "C1": "=B1+A1"})
+        with patch.object(formula, "FORMULA_CELL_LIMIT", 50):
+            self.assertEqual(self.outcome(self.calculator(book), book, "C1"), 50)
 
     def test_review_focus_1(self):
         cells = {"B1": "=SUM(A1:A2)", "A1": "=1/0", "A2": "=B1"}
@@ -222,10 +284,16 @@ class StreamedRangeTests(unittest.TestCase):
 
     def test_the_dependency_cache_does_not_expand_a_large_range(self):
         book = self.book({"A1": "1", "A1048576": "2", "C1": "=SUM(A1:A1048576)"})
-        calculator = book.calculator(seconds=30)
-        started = time.monotonic()
+        calculator, expanded = book.calculator(seconds=30), []
+        range_targets = calculator.range_targets
+
+        def counted(node, sheet):
+            for target in range_targets(node, sheet):
+                expanded.append(target)
+                yield target
+        calculator.range_targets = counted
         self.assertEqual(self.outcome(calculator, book, "C1"), 3)
-        self.assertLess(time.monotonic()-started, 5)
+        self.assertEqual(expanded, [])
         self.assertLess(book.dependencies.info()["edges"], 10)
         self.assertNotIn((book.sheet(S), 1, 3), book.dependencies.values)
 

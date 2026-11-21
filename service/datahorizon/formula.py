@@ -813,6 +813,7 @@ class Pending(Exception):
 
 
 FORMULA_CELL_LIMIT = 4_194_304  # stored cells (and text-size units) one evaluation of one formula may read
+SCAN_ROWS = 1024  # rows per scan statement: the deadline is checked between them, and all 1,048,576 rows take 1,024
 
 
 class RangeValue(list):
@@ -859,6 +860,8 @@ class Calculator:
         return FormulaError("#CYCLE!", "Circular reference")
 
     def cell(self, sheet, row, col):
+        if not self.following:
+            self.count = 0  # a read from outside starts afresh: the count belongs to one evaluation of one formula
         self.charge(1)
         self.check()
         key = sheet, row, col
@@ -1007,7 +1010,7 @@ class Calculator:
                     yield row,col,value
             return
         pending=[];seen=0
-        for row,col,item in self.scan(target,r1,c1,r2,c2):
+        for row,col,item in self.scanned(target,r1,c1,r2,c2):
             seen+=1
             if seen%256==0:self.check()
             key=target,row,col
@@ -1024,6 +1027,13 @@ class Calculator:
             if isinstance(value,FormulaError) and (not errors or value.code not in CELL_ERRORS):raise value
             yield row,col,value
         if pending:raise Pending(pending)
+
+    def scanned(self,target,r1,c1,r2,c2):
+        """scan in bands of SCAN_ROWS rows, lazily, checking the deadline before each: SQLite visits every stored cell
+        of a band's rows, including those outside the columns, within one statement."""
+        for first in range(r1,r2+1,SCAN_ROWS):
+            self.check()
+            yield from self.scan(target,first,c1,min(first+SCAN_ROWS-1,r2),c2)
 
     def range_values(self,scope,*,empty=False):
         """The values of scope for argument_values, cell errors as FormulaError values; with empty=True an empty
