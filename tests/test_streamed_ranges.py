@@ -30,7 +30,7 @@ def column(letter, sources, start=1):
     return {f"{letter}{start+i}": source for i, source in enumerate(sources)}
 
 
-class StreamedRangeTests(unittest.TestCase):
+class RangeCase(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -63,6 +63,13 @@ class StreamedRangeTests(unittest.TestCase):
         found = {(cell["row"], cell["col"]): cell["display"] if cell["calculation"] == "error" else cell["value"] for cell in cells}
         return {ref: found[key[1], key[2]] for ref, key in zip(refs, keys)}
 
+    @staticmethod
+    def passes(scans, sheet, col):
+        """How many times a range in column col starting at row 1 was scanned from its start: once per pass."""
+        return sum(1 for scan in scans if scan[:3] == (sheet, 1, col) and scan[4] == col)
+
+
+class StreamedRangeTests(RangeCase):
     def test_sum_over_more_than_10000_cells(self):
         numbers = [str(n % 97) for n in range(20_000)]
         book = self.book({**column("A", numbers), "C1": "=SUM(A1:A20000)"})
@@ -81,11 +88,6 @@ class StreamedRangeTests(unittest.TestCase):
         calculator.scan = counted
         self.assertEqual(self.outcome(calculator, book, "C1"), rows*(rows+1))
         self.assertLessEqual(self.passes(scans, book.sheet(S), 1), 3)
-
-    @staticmethod
-    def passes(scans, sheet, col):
-        """How many times a range in column col starting at row 1 was scanned from its start: once per pass."""
-        return sum(1 for scan in scans if scan[:3] == (sheet, 1, col) and scan[4] == col)
 
     def test_a_sum_over_2000_uncalculated_formulas_is_linear(self):
         rows = 2_000
@@ -296,6 +298,197 @@ class StreamedRangeTests(unittest.TestCase):
         self.assertEqual(expanded, [])
         self.assertLess(book.dependencies.info()["edges"], 10)
         self.assertNotIn((book.sheet(S), 1, 3), book.dependencies.values)
+
+
+class StreamedCriteriaAndLookupTests(RangeCase):
+    """COUNTIF, SUMIF, COUNTIFS, SUMIFS, XLOOKUP and MATCH read their ranges as aligned scans (Task 5)."""
+    ROWS = 20_000
+
+    def counted(self, book):
+        """A calculator whose calls to read, scan and _evaluate_cell are recorded in self.reads, .scans, .evaluations."""
+        calculator = self.calculator(book)
+        self.reads, self.scans, self.evaluations = [], [], []
+        read, scan, evaluate_cell = calculator.read, calculator.scan, calculator._evaluate_cell
+        calculator.read = lambda *key: self.reads.append(key) or read(*key)
+        calculator.scan = lambda *rectangle: self.scans.append(rectangle) or scan(*rectangle)
+        calculator._evaluate_cell = lambda key: self.evaluations.append(key) or evaluate_cell(key)
+        return calculator
+
+    def results(self, cells, refs, *, scan=True):
+        book = self.book(cells)
+        calculator = self.counted(book)
+        if not scan:
+            calculator.scan = None
+        return {ref: self.outcome(calculator, book, ref) for ref in refs}
+
+    def test_criteria_functions_over_20000_rows(self):
+        rows = self.ROWS
+        cells = {**column("A", [("x", "y")[n % 2] for n in range(rows)]), **column("B", [str(n % 7) for n in range(rows)]),
+                 **column("C", [str(n % 3) for n in range(rows)]),
+                 "E1": f'=COUNTIF(A1:A{rows},"x")', "E2": f'=SUMIF(A1:A{rows},"y",B1:B{rows})', "E3": f'=SUMIF(B1:B{rows},">3")',
+                 "E4": f'=COUNTIFS(A1:A{rows},"x")', "E5": f'=SUMIFS(B1:B{rows},A1:A{rows},"y")',
+                 "E6": f'=COUNTIFS(A1:A{rows},"x",B1:B{rows},">2",C1:C{rows},1)',
+                 "E7": f'=SUMIFS(B1:B{rows},A1:A{rows},"y",B1:B{rows},">2",C1:C{rows},"<>0")'}
+        a, b, c = [("x", "y")[n % 2] for n in range(rows)], [n % 7 for n in range(rows)], [n % 3 for n in range(rows)]
+        expected = {"E1": a.count("x"), "E2": sum(b[n] for n in range(rows) if a[n] == "y"), "E3": sum(n for n in b if n > 3),
+                    "E4": a.count("x"), "E5": sum(b[n] for n in range(rows) if a[n] == "y"),
+                    "E6": sum(1 for n in range(rows) if a[n] == "x" and b[n] > 2 and c[n] == 1),
+                    "E7": sum(b[n] for n in range(rows) if a[n] == "y" and b[n] > 2 and c[n] != 0)}
+        book = self.book(cells)
+        for ref, value in expected.items():
+            with self.subTest(formula=ref):
+                calculator = self.counted(book)
+                self.assertEqual(self.outcome(calculator, book, ref), value)
+                self.assertEqual(len(self.reads), 1)  # the formula itself: its ranges are scanned
+
+    def test_blank_matching_criteria_count_the_empty_positions_from_the_area(self):
+        rows = self.ROWS
+        stored = {f"A{r}": ("x" if r == 500 else "a") for r in (1, 2, 3, 500, 4000, 9000, 12000, 15000, 19000, rows)}
+        book = self.book({**stored, "E1": f'=COUNTIF(A1:A{rows},"")', "E2": f'=COUNTIF(A1:A{rows},"<>x")',
+                          "E3": f'=COUNTIFS(A1:A{rows},"<>",B1:B{rows},"")', "E4": f'=COUNTIF(A1:A{rows},"=")'})
+        matches = formula.Criterion.matches
+        for ref, value in (("E1", rows-10), ("E2", rows-1), ("E3", 10), ("E4", rows-10)):
+            with self.subTest(formula=ref):
+                calls = []
+                calculator = self.counted(book)
+                with patch.object(formula.Criterion, "matches", lambda criterion, left: calls.append(left) or matches(criterion, left)):
+                    self.assertEqual(self.outcome(calculator, book, ref), value)
+                self.assertEqual(len(self.reads), 1)
+                self.assertLessEqual(len(calls), 2*10+2)  # the stored cells and the empty positions once
+
+    def test_an_empty_criteria_cell_beside_a_stored_sum_cell(self):
+        rows = self.ROWS
+        cells = {"B1": "10", "B700": "20", "A9000": "1", f"B{rows}": "5",
+                 "E1": f"=SUMIFS(B1:B{rows},A1:A{rows},D1)", "E2": f'=SUMIFS(B1:B{rows},A1:A{rows},"")',
+                 "E3": f"=SUMIF(A1:A{rows},D1,B1:B{rows})", "E4": f'=SUMIFS(B1:B{rows},A1:A{rows},"<>")',
+                 "E5": f"=SUMIFS(B1:B{rows},A1:A{rows},1)", "E6": f"=COUNTIFS(B1:B{rows},\"\",A1:A{rows},1)"}
+        self.assertEqual(self.results(cells, ["E1", "E2", "E3", "E4", "E5", "E6"]), {"E1": 35, "E2": 35, "E3": 35, "E4": 0, "E5": 0, "E6": 1})
+        self.assertLessEqual(len(self.reads), 7)  # the formulas and D1
+
+    def test_lookups_over_20000_rows(self):
+        rows = self.ROWS
+        keys = column("A", [f"k{n}" for n in range(1, rows+1)])
+        returns = column("B", [str(n) for n in range(1, rows+1)])
+        cells = {**keys, **returns, "E1": f'=XLOOKUP("k{rows}",A1:A{rows},B1:B{rows})', "E2": f'=MATCH("k{rows}",A1:A{rows},0)',
+                 "E3": f'=XLOOKUP("none",A1:A{rows},B1:B{rows})', "E4": f'=MATCH("none",A1:A{rows},0)',
+                 "E5": f'=XLOOKUP("none",A1:A{rows},B1:B{rows},"fallback")'}
+        book = self.book(cells)
+        for ref, value in (("E1", rows), ("E2", rows), ("E3", "#N/A"), ("E4", "#N/A"), ("E5", "fallback")):
+            with self.subTest(formula=ref):
+                calculator = self.counted(book)
+                self.assertEqual(self.outcome(calculator, book, ref), value)
+                self.assertEqual(len(self.reads), 1)
+
+    def test_a_blank_lookup_key_matches_the_first_gap(self):
+        rows = self.ROWS
+        returns = column("B", [str(n) for n in range(1, rows+1)])
+        cases = {"gap inside": ({**column("A", ["a"]*1500), "A1502": "b", **returns}, 1501, 1501),
+                 "gap before the first stored cell": ({"A3000": "a", **returns}, 1, 1),
+                 "gap where the return range is empty": ({**column("A", ["a"]*7000), "B7002": "9"}, 0, 7001),
+                 "no stored cell": ({}, 0, 1),
+                 "no gap": (column("A", ["a"]*rows), "#N/A", "#N/A")}
+        for label, (cells, value, position) in cases.items():
+            for key in ("Z1", '""'):
+                with self.subTest(case=label, key=key):
+                    found = self.results({**cells, "E1": f"=XLOOKUP({key},A1:A{rows},B1:B{rows})", "E2": f"=MATCH({key},A1:A{rows},0)"},
+                                         ["E1", "E2"])
+                    # Text "" is not blank: it matches no empty coordinate.
+                    self.assertEqual(found, {"E1": value, "E2": position} if key == "Z1" else {"E1": "#N/A", "E2": "#N/A"})
+                    self.assertLessEqual(len(self.reads), 3)  # the formulas and Z1
+
+    def test_a_lookup_stops_scanning_at_its_match(self):
+        rows = 5*formula.SCAN_ROWS
+        book = self.book({**column("A", [f"k{n}" for n in range(1, rows+1)]), "B9": "9", f"B{rows}": "last",
+                          "E1": f'=XLOOKUP("k3",A1:A{rows},B1:B{rows})', "E2": f'=MATCH("k3",A1:A{rows},0)',
+                          "E3": f"=XLOOKUP(Z1,C1:C{rows},B1:B{rows})", "E4": f"=MATCH(Z1,C1:C{rows},0)",
+                          "E5": f"=XLOOKUP(Z1,C1:C{rows},D1:D{rows})"})
+        sheet = book.sheet(S)
+        for ref, value in (("E1", 0), ("E2", 3), ("E3", 0), ("E4", 1), ("E5", 0)):
+            with self.subTest(formula=ref):
+                calculator = self.counted(book)
+                self.assertEqual(self.outcome(calculator, book, ref), value)
+                self.assertTrue(self.scans)
+                self.assertTrue(all(scan[1] == 1 for scan in self.scans if scan[0] == sheet), self.scans)  # the first band only
+
+    def test_cell_errors_in_criteria_and_sum_ranges(self):
+        rows = self.ROWS
+        cells = {**column("A", ["x"]*rows), **column("B", ["1"]*rows), "A700": "=1/0", "B9000": "=Nowhere!A1",
+                 "A9500": "y", "B9500": "=1/0",
+                 "E1": f'=COUNTIF(A1:A{rows},"x")', "E2": f'=SUMIF(A1:A{rows},"x",B1:B{rows})',
+                 "E3": f'=COUNTIFS(A1:A{rows},"<>y",B1:B{rows},">0")', "E4": f'=SUMIFS(B1:B{rows},A1:A{rows},"y")',
+                 "E5": f'=SUMIFS(B1:B9499,A1:A9499,"<>y")', "E6": f'=SUMIFS(B1:B{rows},A1:A{rows},"x",B1:B{rows},"<>")'}
+        found = self.results(cells, ["E1", "E2", "E3", "E4", "E5", "E6"])
+        self.assertEqual(found, {"E1": rows-2, "E2": "#REF!", "E3": rows-3, "E4": "#DIV/0!", "E5": "#REF!", "E6": rows-3})
+
+    def test_a_cycle_in_a_criteria_or_sum_range_raises(self):
+        rows = self.ROWS
+        cells = {**column("A", ["x"]*rows), **column("B", ["1"]*rows), "A9000": "y"}
+        for ref, source in (("A600", f'=COUNTIF(A1:A{rows},"x")'), ("B600", f'=SUMIF(A1:A{rows},"x",B1:B{rows})'),
+                            ("A601", f'=SUMIFS(B1:B{rows},A1:A{rows},"x")'), ("B602", f'=SUMIFS(B1:B{rows},A1:A{rows},"x")'),
+                            ("B601", f'=COUNTIFS(A1:A{rows},"x",B1:B{rows},1)')):
+            with self.subTest(formula=source, at=ref):
+                self.assertEqual(self.results({**cells, ref: source}, [ref]), {ref: "#CYCLE!"})
+        # The sum cell under a row that does not match is not read.
+        self.assertEqual(self.results({**cells, "B9000": f'=SUMIF(A1:A{rows},"x",B1:B{rows})'}, ["B9000"]), {"B9000": rows-1})
+        # A lookup reads its return range at its match only, and its lookup range up to it.
+        self.assertEqual(self.results({**cells, "B9000": f'=XLOOKUP("x",A1:A{rows},B1:B{rows})'}, ["B9000"]), {"B9000": 1})
+        self.assertEqual(self.results({**cells, "A9001": f'=MATCH("x",A1:A{rows},0)'}, ["A9001"]), {"A9001": 1})
+        self.assertEqual(self.results({**cells, "B9000": f'=XLOOKUP("y",A1:A{rows},B1:B{rows})'}, ["B9000"]), {"B9000": "#CYCLE!"})
+        self.assertEqual(self.results({**cells, "A9001": f'=MATCH("z",A1:A{rows},0)'}, ["A9001"]), {"A9001": "#CYCLE!"})
+
+    def test_a_sum_cell_that_reads_its_reader_under_a_row_that_does_not_match(self):
+        # The old evaluator never read B2: it is not evaluated on E1's behalf, where it would meet E1 on the stack.
+        cells = {"A1": "x", "A2": "y", "B1": "=3", "B2": "=E1+1", "E1": '=SUMIF(A1:A2,"x",B1:B2)'}
+        for first in ("E1", "B2"):
+            with self.subTest(first=first):
+                book = self.book(cells)
+                calculator = self.calculator(book)
+                second = "B2" if first == "E1" else "E1"
+                self.assertEqual((self.outcome(calculator, book, first), self.outcome(calculator, book, second)),
+                                 (3, 4) if first == "E1" else (4, 3))
+        self.assertEqual(self.together(self.book(cells), ["E1", "B2"]), {"E1": 3, "B2": 4})
+
+    def test_criteria_over_uncalculated_formulas_are_evaluated_a_constant_number_of_times(self):
+        rows = 2_000
+        cells = {**{f"A{r}": f'="{("y", "x")[r % 2 == 0]}"' for r in range(1, rows+1)}, **{f"B{r}": f"={r}*1" for r in range(1, rows+1)}}
+        for source, value in ((f'=COUNTIF(A1:A{rows},"x")', rows//2), (f'=SUMIF(A1:A{rows},"x",B1:B{rows})', sum(range(2, rows+1, 2))),
+                              (f'=COUNTIFS(A1:A{rows},"y",B1:B{rows},">10")', (rows-10)//2),
+                              (f'=SUMIFS(B1:B{rows},A1:A{rows},"y",B1:B{rows},"<100")', sum(range(1, 100, 2)))):
+            with self.subTest(formula=source):
+                book = self.book({**cells, "E1": source})
+                calculator = self.counted(book)
+                self.assertEqual(self.outcome(calculator, book, "E1"), value)
+                self.assertLessEqual(self.evaluations.count((book.sheet(S), 1, 5)), 3)
+                self.assertLessEqual(len(self.evaluations), 2*rows+3)
+
+    def test_lookups_over_uncalculated_formulas(self):
+        rows = 2_000
+        cells = {**{f"A{r}": f'="k"&{r}' for r in range(1, rows+1)}, **{f"B{r}": f"={r}*10" for r in range(1, rows+1)}}
+        for source, value in ((f'=XLOOKUP("k{rows}",A1:A{rows},B1:B{rows})', rows*10), (f'=MATCH("k{rows}",A1:A{rows},0)', rows),
+                              (f'=XLOOKUP("none",A1:A{rows},B1:B{rows},-1)', -1)):
+            with self.subTest(formula=source):
+                book = self.book({**cells, "E1": source})
+                calculator = self.counted(book)
+                self.assertEqual(self.outcome(calculator, book, "E1"), value)
+                self.assertLessEqual(self.evaluations.count((book.sheet(S), 1, 5)), 3)
+                self.assertLessEqual(len(self.evaluations), rows+4)  # one return cell, not the whole return range
+        # A calculated match bounds the cells evaluated: none after it is evaluated on the lookup's behalf.
+        book = self.book({**cells, "A50": "k50", "E1": f'=XLOOKUP("k50",A1:A{rows},B1:B{rows})'})
+        calculator = self.counted(book)
+        self.assertEqual(self.outcome(calculator, book, "E1"), 500)
+        self.assertFalse(any(key[1] > 50 for key in self.evaluations), sorted(self.evaluations)[-3:])
+        self.assertTrue(self.scans)
+        self.assertTrue(all(scan[1] == 1 for scan in self.scans if scan[2] == 1), self.scans)
+
+    def test_without_scan_the_functions_read_each_coordinate(self):
+        cells = {"A1": "x", "A2": "=1/0", "A4": "x", "B1": "2", "B3": "=A1", "B4": "5",
+                 "E1": '=COUNTIF(A1:A4,"x")', "E2": '=SUMIF(A1:A4,"x",B1:B4)', "E3": '=COUNTIFS(A1:A4,"",B1:B4,"<>")',
+                 "E4": '=SUMIFS(A1:A4,B1:B4,"<>5")', "E5": '=XLOOKUP(D1,A1:A4,B1:B4)', "E6": '=MATCH("x",A4:A1,0)',
+                 "E7": '=COUNTIF(A1:A9,"")', "E8": '=XLOOKUP("x",A1:A4,B1:B4)'}
+        refs = [f"E{n}" for n in range(1, 9)]
+        expected = {"E1": 2, "E2": 7, "E3": 1, "E4": "#DIV/0!", "E5": "#DIV/0!", "E6": 1, "E7": 6, "E8": 2}
+        self.assertEqual(self.results(cells, refs), expected)
+        self.assertEqual(self.results(cells, refs, scan=False), expected)
 
 
 if __name__ == "__main__":
