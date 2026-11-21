@@ -9,11 +9,12 @@ class DependencyIndex:
         self.clear()
 
     def clear(self):
-        self.edges={};self.reverse=defaultdict(set);self.volatile=set();self.unsafe=set()
+        self.edges={};self.edge_count=0;self.reverse=defaultdict(set);self.volatile=set();self.unsafe=set()
         self.values={};self.sizes={};self.bytes=0;self.hits=0;self.invalidated=0
 
     def forget(self,key):
         self.bytes-=self.sizes.pop(key,0);self.values.pop(key,None)
+        self.edge_count-=len(self.edges.get(key,()))
         for target in self.edges.pop(key,()):
             self.reverse[target].discard(key)
             if not self.reverse[target]:self.reverse.pop(target,None)
@@ -38,11 +39,11 @@ class DependencyIndex:
             pending.extend(self.edges.get(item,()))
         return True
 
-    def calculator(self,read,resolve,seconds,clock=None):
+    def calculator(self,read,resolve,seconds,clock=None,*,scan=None):
         index=self
         class IndexedCalculator(Calculator):
             def __init__(self):
-                super().__init__(self.input,resolve,seconds,clock=clock)
+                super().__init__(self.input,resolve,seconds,clock=clock,scan=scan)
                 self.cache=dict(index.values);self.disabled=False
 
             def input(self,sheet,row,col):
@@ -53,7 +54,12 @@ class DependencyIndex:
                         while pending:
                             self.check();node=pending.pop()
                             if node[0]=='ref':targets.add(self.reference(node[1],sheet))
-                            elif node[0]=='range':targets.update(self.range_targets(node,sheet))
+                            elif node[0]=='range':
+                                # One edge per coordinate: a range of more than 10,000 makes its reader uncacheable
+                                # rather than iterating it (Task 6 of calculation stage 2 records rectangles).
+                                _,r1,c1,r2,c2=self.range_geometry(node,sheet)
+                                if (r2-r1+1)*(c2-c1+1)>10000:raise FormulaError("#LIMIT!","Range too large to index")
+                                targets.update(self.range_targets(node,sheet))
                             elif node[0]=='call':
                                 if node[1] in ('TODAY','NOW'):index.volatile.add(key)
                                 pending.extend(node[2])
@@ -61,10 +67,10 @@ class DependencyIndex:
                             elif node[0]=='unary':pending.append(node[2])
                     except FormulaError:index.unsafe.add(key)
                 if not self.disabled:
-                    if len(index.edges)>=4096 or sum(map(len,index.edges.values()))+len(targets)>50000:
+                    if len(index.edges)>=4096 or index.edge_count+len(targets)>50000:
                         index.clear();self.disabled=True
                     else:
-                        index.edges[key]=targets
+                        index.edge_count+=len(targets)-len(index.edges.get(key,()));index.edges[key]=targets
                         for target in targets:index.reverse[target].add(key)
                 return item
 

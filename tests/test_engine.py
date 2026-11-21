@@ -980,7 +980,8 @@ class EngineTests(unittest.TestCase):
             self.book.csv_export("Sheet1",{"r2":70})
         with self.assertRaises(EngineError):
             self.book.find("Sheet1",{"r2":139,"needle":"x"})
-        self.edit((1,2,"=SUM(A1:A139)"))
+        # The 8 MiB input cap holds for cells read one at a time; a range is streamed and is not charged to it.
+        self.edit((1,2,"="+"+".join(f"ISBLANK(A{row})" for row in range(1,140))))
         self.assertEqual(self.cells()[(1,2)]["display"],"#LIMIT!")
 
     def test_failed_receipt_reconciles_without_reexecuting_code(self):

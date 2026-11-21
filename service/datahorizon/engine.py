@@ -638,7 +638,15 @@ class Workbook:
             except EngineError as error:
                 raise FormulaError("#REF!", "Referenced sheet does not exist") from error
         read=lambda s,r,c: typed(self.raw(s,r,c))
-        return Calculator(read,resolve,seconds,clock=clock) if transactional else self.dependencies.calculator(read,resolve,seconds,clock)
+        return Calculator(read,resolve,seconds,clock=clock,scan=self.scan) if transactional else self.dependencies.calculator(read,resolve,seconds,clock,scan=self.scan)
+
+    def scan(self, sheet, r1, c1, r2, c2):
+        """(row, col, item) for the stored cells of a rectangle in row, then column order, item as typed gives it with
+        the style left unparsed (calculation does not use it). Uses this connection, so a hook sees uncommitted cells."""
+        for row, col, source, kind in self.db.execute(
+                "SELECT row,col,source,kind FROM cells WHERE sheet_id=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? ORDER BY row,col",
+                (sheet, r1, r2, c1, c2)):
+            yield row, col, typed({"source": source, "kind": kind, "style": {}})
 
     def range_cells(self, sheet, rows, c1, c2, deadline):
         for row in rows:
