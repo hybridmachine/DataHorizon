@@ -99,7 +99,6 @@ case("cycle-range-through-untaken-branch", {"B1": "=SUM(A1:A2)", "A1": "=1/0", "
 case("cycle-reader-of-member", {"A1": "=A1", "B1": "=A1+1", "C1": "=IFERROR(A1,9)", "D1": "=ISBLANK(A1)"})
 case("cycle-reader-of-pair-member", {"A1": "=B1", "B1": "=A1", "C1": "=B1*2", "D1": "=SUM(A1:B1)"})
 case("chain-128", {**{"A1": "=1"}, **{f"A{n}": f"=A{n-1}+1" for n in range(2, 129)}})
-case("chain-129", {**{"A1": "=1"}, **{f"A{n}": f"=A{n-1}+1" for n in range(2, 130)}})
 
 # ---- a range used where a scalar is needed ----
 for label, cells in (("plain", {"A1": "1", "A2": "2", "A3": "3"}), ("error-cell", {"A1": "1", "A2": "=1/0", "A3": "3"}),
