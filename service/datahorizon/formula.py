@@ -805,7 +805,8 @@ class Criterion:
 class Pending(Exception):
     """Raised while a formula is evaluated when it reads formula cells that have no value yet.
 
-    keys lists them. Calculator.cell evaluates them and then the reader again; Pending never escapes it.
+    keys lists them. Calculator.cell evaluates them and then the reader again. An inner call of cell (a formula
+    reading a precedent) lets Pending through to the loop that follows the chain; it never escapes the outermost call.
     """
     def __init__(self, keys):
         super().__init__(keys)
@@ -839,8 +840,9 @@ class Calculator:
         # precedent keeps its stored input and parsed tree, so it is read and parsed once. marks holds, for each
         # cell in following, the number of #CYCLE! errors raised before it was pushed and the position in following
         # of the speculative evaluation it belongs to (-1 for none); ahead holds, for a formula waiting on the
-        # first of several precedents, the others, last first, to evaluate speculatively before it runs again.
-        self.following, self.waiting, self.marks, self.ahead = [], {}, [], {}
+        # first of several precedents, the others, last first, to evaluate speculatively before it runs again;
+        # abandoned holds, for a formula that is waiting, the cells abandoned so far in that wait.
+        self.following, self.waiting, self.marks, self.ahead, self.abandoned = [], {}, [], {}, {}
         self.deadline, self.count, self.cycles = time.monotonic() + seconds, 0, 0
         self.bytes = 0
 
@@ -887,47 +889,73 @@ class Calculator:
         A formula that waits on several precedents (a range) gets the first evaluated as a precedent always is, and
         the others speculatively, before it runs again. A speculative evaluation, and everything evaluated on its
         behalf, is abandoned unkept if a #CYCLE! is raised beneath it: that result would depend on what is on the
-        stack. Its formulas are evaluated again when they are read."""
-        following, marks, ahead = self.following, self.marks, self.ahead
+        stack. Its formulas are evaluated again when they are read, and not before: for the rest of that wait an
+        abandoned cell is not evaluated speculatively again, and a speculative evaluation that needs one is
+        abandoned in its turn without evaluating it, so a chain of them costs one evaluation each, not one walk of
+        the chain each. An abandoned cell keeps its stored input and tree until the read ends."""
+        following, marks, ahead, abandoned = self.following, self.marks, self.ahead, self.abandoned
 
         def push(key, speculative):
             marks.append((self.cycles, len(following) if speculative else marks[-1][1] if marks else -1))
             following.append(key)
             self.active.add(key)
+
+        def abandon(root):
+            # following[root] is the speculative evaluation; the formula beneath it is the one waiting for it.
+            gone = following[root:]
+            del following[root:], marks[root:]
+            abandoned.setdefault(following[-1], set()).update(gone)
+            for key in gone:
+                self.active.remove(key)
+                ahead.pop(key, None)
+                abandoned.pop(key, None)
         push(key, False)
+        skipped = 0
         try:
             while following:
                 top = following[-1]
                 rest = ahead.get(top)
-                if rest:
-                    key = rest.pop()
-                    if key not in self.cache and key not in self.active:
-                        push(key, True)
-                    continue
                 try:
-                    result = self.outcome(top)
+                    if rest:
+                        key, root = rest.pop(), marks[-1][1]
+                        if (key in self.cache or key in self.active or key in abandoned.get(top, ())
+                                or root >= 0 and key in abandoned.get(following[root-1], ())):
+                            skipped += 1
+                            if skipped % 256 == 0:  # a long run of precedents not evaluated still meets the deadline
+                                self.count = 0  # no formula is being evaluated here: top starts again from nothing
+                                self.check()
+                        else:
+                            push(key, True)
+                        continue
+                    result = self._evaluate_cell(top)
                 except Pending as need:
+                    root = marks[-1][1]
+                    if root >= 0 and need.keys[0] in abandoned.get(following[root-1], ()):
+                        abandon(root)
+                        continue
                     ahead[top] = need.keys[:0:-1]
+                    abandoned.pop(top, None)  # a new wait: what its first precedent settles may let the others complete
                     push(need.keys[0], False)
                     continue
+                except FormulaError as error:
+                    result = error
+                cycles, root = marks[-1]
+                if root >= 0 and cycles != self.cycles:
+                    abandon(root)
+                    continue
                 following.pop()
-                cycles, root = marks.pop()
+                marks.pop()
                 self.active.remove(top)
                 self.waiting.pop(top, None)
                 ahead.pop(top, None)
-                if root >= 0 and cycles != self.cycles:
-                    for key in following[root:]:
-                        self.active.remove(key)
-                        self.waiting.pop(key, None)
-                        ahead.pop(key, None)
-                    del following[root:], marks[root:]
-                    continue
+                abandoned.pop(top, None)
                 self.remember(top, result)
         finally:
             self.active.difference_update(following)
             following.clear()
             marks.clear()
             ahead.clear()
+            abandoned.clear()
             self.waiting.clear()
 
     def remember(self, key, result):
@@ -958,7 +986,7 @@ class Calculator:
                 raise FormulaError("#REF!", UNMAINTAINED_MESSAGE)
             elif item["kind"] == "formula":
                 if key != self.following[-1]:
-                    self.waiting[key] = item, None
+                    self.waiting[key] = item, tree  # an abandoned cell read again keeps the tree it was parsed to
                     raise Pending([key])
                 if tree is None:
                     tree = Parser(item["source"][1:]).parse()

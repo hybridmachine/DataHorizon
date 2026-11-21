@@ -189,6 +189,80 @@ class StreamedRangeTests(RangeCase):
         self.assertNotIn((sheet, 1, 3), calculator.cache)
         self.assertEqual({ref: self.outcome(calculator, book, ref) for ref in ("A3", "C1")}, {"A3": "#DIV/0!", "C1": "#DIV/0!"})
 
+    def counted(self, book):
+        """A calculator and the list its evaluations of a cell are appended to, one entry per attempt."""
+        calculator, evaluations = self.calculator(book), []
+        evaluate_cell = calculator._evaluate_cell
+
+        def counted_evaluation(key):
+            evaluations.append(key)
+            return evaluate_cell(key)
+        calculator._evaluate_cell = counted_evaluation
+        return calculator, evaluations
+
+    def test_a_running_column_that_reads_its_own_total_is_a_cycle_in_linear_work(self):
+        # Every A<r> evaluated ahead of time meets B1 on the stack and is abandoned. The next one must stop at
+        # the abandoned cell instead of walking the whole chain beneath it again: n cells, not n*n/2 evaluations.
+        rows = 1_500
+        cells = {"A1": "=1", **{f"A{r}": f"=A{r-1}+B1" for r in range(2, rows+1)}, "B1": f"=SUM(A1:A{rows})"}
+        book = self.book(cells)
+        calculator, evaluations = self.counted(book)
+        self.assertEqual(self.outcome(calculator, book, "B1"), "#CYCLE!")  # what the evaluator before stage 2 gives
+        # B1 three times. Each A<r> twice ahead of time (itself, and its look at the abandoned A<r-1>, which
+        # ends it) and once more after A2 is read and kept as #CYCLE!. Before, this was 2,108,042 at 1,500 rows.
+        self.assertLessEqual(len(evaluations), 3*rows + 3, len(evaluations))
+        # Each cell's source is charged to the 8 MiB input cap once, however often it is evaluated.
+        self.assertEqual(calculator.bytes, sum(len(source.encode()) for source in cells.values()))
+        self.assertEqual((calculator.following, calculator.active, calculator.waiting), ([], set(), {}))
+        self.assertEqual({ref: self.outcome(calculator, book, ref) for ref in ("A1", "A2", f"A{rows}")},
+                         {"A1": 1, "A2": "#CYCLE!", f"A{rows}": "#CYCLE!"})
+        for first in ("A2", f"A{rows}"):  # a member of the cycle is #CYCLE! whichever cell is read first
+            with self.subTest(first=first):
+                calculator = self.calculator(book)
+                self.assertEqual([self.outcome(calculator, book, ref) for ref in (first, "B1", "A3")], ["#CYCLE!"]*3)
+
+    def test_review_focus_1_at_size_is_linear_work(self):
+        # No cycle is ever read: B1 stops at A1's error. The cells evaluated ahead of time that meet B1 are
+        # abandoned, each once, and nothing they would have recorded is kept.
+        rows = 1_500
+        cells = {"A1": "=1/0", "A2": "=2+3", **{f"A{r}": f"=A{r-1}+B1" for r in range(3, rows+1)}, "B1": f"=SUM(A1:A{rows})"}
+        book = self.book(cells)
+        calculator, evaluations = self.counted(book)
+        self.assertEqual(self.outcome(calculator, book, "B1"), "#DIV/0!")  # what the evaluator before stage 2 gives
+        self.assertLessEqual(len(evaluations), 2*rows, len(evaluations))
+        self.assertEqual(calculator.bytes, sum(len(source.encode()) for source in cells.values()))
+        sheet = book.sheet(S)
+        self.assertEqual(calculator.cache.get((sheet, 2, 1)), 5)
+        self.assertEqual([row for row in range(3, rows+1) if (sheet, row, 1) in calculator.cache], [])
+        self.assertEqual({ref: self.outcome(calculator, book, ref) for ref in ("A3", f"A{rows}")},
+                         {"A3": "#DIV/0!", f"A{rows}": "#DIV/0!"})
+
+    def test_precedents_passed_over_while_a_range_waits_still_meet_the_deadline(self):
+        # A1 reads A2, which reads A3, and so on: evaluating A1 for B1 settles the whole column, so every other
+        # precedent B1 waits for is passed over. That run is as long as the range and must look at the clock.
+        rows = 2_000
+        book = self.book({**{f"A{r}": f"=A{r+1}+1" for r in range(1, rows)}, f"A{rows}": "=1", "B1": f"=SUM(A1:A{rows})"})
+        calculator, events = self.calculator(book), []
+        sheet = book.sheet(S)
+        remember, check, evaluate_cell = calculator.remember, calculator.check, calculator._evaluate_cell
+
+        def noted_remember(key, result):
+            events.append("first precedent done" if key == (sheet, 1, 1) else None)
+            return remember(key, result)
+
+        def noted_check():
+            events.append("check")
+            return check()
+
+        def noted_evaluation(key):
+            events.append("reader" if key == (sheet, 1, 2) else None)
+            return evaluate_cell(key)
+        calculator.remember, calculator.check, calculator._evaluate_cell = noted_remember, noted_check, noted_evaluation
+        self.assertEqual(self.outcome(calculator, book, "B1"), rows*(rows+1)//2)
+        start = events.index("first precedent done")
+        passed_over = events[start:events.index("reader", start)]
+        self.assertEqual(passed_over.count("check"), (rows-1)//256)
+
     def test_first_error_in_row_then_column_order(self):
         # Row order meets B1 (#DIV/0!) before A2 (#REF!); column order would meet A2 first.
         cells = {"A1": "1", "B1": "=1/0", "A2": "=Nowhere!A1", "B2": "2"}
