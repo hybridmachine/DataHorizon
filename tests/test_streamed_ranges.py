@@ -237,6 +237,95 @@ class StreamedRangeTests(RangeCase):
         self.assertEqual({ref: self.outcome(calculator, book, ref) for ref in ("A3", f"A{rows}")},
                          {"A3": "#DIV/0!", f"A{rows}": "#DIV/0!"})
 
+    def test_a_cell_whose_unread_precedent_meets_the_total_is_kept_in_linear_work(self):
+        # A<r> looks up C<r>:D<r> and stops at C<r>. D<r>, evaluated ahead for it, reads the total B1, which is
+        # on the stack, and is abandoned; A<r> itself never reads D<r>, so its value stands and must be kept:
+        # abandoning it with D<r> makes every later A<r> wait for it, one pass of the column per cell.
+        rows = 1_000
+        for name, share in (("the total", lambda r: "=B1"), ("a share of the total", lambda r: f"=C{r}/B1")):
+            with self.subTest(column_d=name):
+                cells = {"A1": "=MATCH(1,C1:D1,0)", **{f"A{r}": f"=A{r-1}+MATCH(1,C{r}:D{r},0)" for r in range(2, rows+1)},
+                         **{f"C{r}": "=1" for r in range(1, rows+1)}, **{f"D{r}": share(r) for r in range(1, rows+1)},
+                         "B1": f"=SUM(A1:A{rows})"}
+                book = self.book(cells)
+                calculator, evaluations = self.counted(book)
+                self.assertEqual(self.outcome(calculator, book, "B1"), rows*(rows+1)//2)
+                # Per row: A<r> three times (it waits, completes, and is evaluated once more with nothing raised
+                # beneath it), C<r> and D<r> once each. This was 1,003,002 at 1,000 rows.
+                self.assertLessEqual(len(evaluations), 5*rows + 3, len(evaluations))
+                self.assertEqual(calculator.bytes, sum(len(source.encode()) for source in cells.values()))
+                sheet = book.sheet(S)
+                self.assertEqual([r for r in range(1, rows+1) if (sheet, r, 4) in calculator.cache], [])
+                # Once the total has its value nothing stands in the way of column D.
+                self.assertEqual(self.outcome(calculator, book, f"D{rows}"),
+                                 rows*(rows+1)//2 if name == "the total" else 1/(rows*(rows+1)//2))
+
+    def test_cells_abandoned_under_a_total_can_be_evaluated_ahead_once_it_has_its_value(self):
+        # Column D is abandoned while B1 is on the stack. E1 then sums column D after B1: by then nothing
+        # stands in its way, and it must be evaluated ahead in one pass, not one pass of the range per cell.
+        rows = 1_000
+        cells = {**{f"A{r}": f"=MATCH(1,C{r}:D{r},0)" for r in range(1, rows+1)}, **{f"C{r}": "=1" for r in range(1, rows+1)},
+                 **{f"D{r}": "=B1" for r in range(1, rows+1)}, "B1": f"=SUM(A1:A{rows})", "E1": f"=B1+SUM(D1:D{rows})"}
+        book = self.book(cells)
+        calculator, evaluations = self.counted(book)
+        scans, scan = [], calculator.scan
+
+        def counted_scan(*rectangle):
+            scans.append(rectangle)
+            return scan(*rectangle)
+        calculator.scan = counted_scan
+        self.assertEqual(self.outcome(calculator, book, "E1"), rows + rows*rows)
+        self.assertLessEqual(len(evaluations), 6*rows + 6, len(evaluations))
+        self.assertLessEqual(self.passes(scans, book.sheet(S), 4), 3)
+
+    def test_ranges_that_each_look_ahead_into_one_chain_that_meets_the_total_walk_it_once(self):
+        # T sums W1 to Wm. Each W<i> is an error at its first cell, so it never reads its second, K<n>, the end of
+        # a chain that leads back to T. Every W<i> evaluates K<n> ahead; only the first may walk the chain.
+        readers, links = 300, 1_000
+        cells = {"A1": f"=SUM(B1:B{readers})", **{f"B{i}": f"=SUM(C{i}:D{i})" for i in range(1, readers+1)},
+                 **{f"C{i}": "=1/0" for i in range(1, readers+1)}, **{f"D{i}": f"=F{links}" for i in range(1, readers+1)},
+                 "F1": "=A1+1", **{f"F{j}": f"=F{j-1}+1" for j in range(2, links+1)}}
+        book = self.book(cells)
+        calculator, evaluations = self.counted(book)
+        self.assertEqual(self.outcome(calculator, book, "A1"), "#DIV/0!")
+        # The chain twice (each link and its look at the one before); each W<i> at most four times, C and D.
+        self.assertLessEqual(len(evaluations), 2*links + 8*readers, len(evaluations))
+        sheet = book.sheet(S)
+        self.assertEqual([j for j in (1, links) if (sheet, j, 6) in calculator.cache], [])
+        self.assertEqual({ref: self.outcome(calculator, book, ref) for ref in ("F1", f"F{links}", "D7")},
+                         {"F1": "#DIV/0!", f"F{links}": "#DIV/0!", "D7": "#DIV/0!"})
+
+    def test_a_cycle_off_to_one_side_that_many_ranges_look_ahead_into_is_walked_once(self):
+        # F1 to F<n> are a cycle of their own. Each W<i> would read F1 only after an error, so it never does.
+        readers, links = 300, 1_000
+        cells = {"A1": f"=SUM(B1:B{readers})", **{f"B{i}": f"=SUM(C{i}:D{i})" for i in range(1, readers+1)},
+                 **{f"C{i}": "=1/0" for i in range(1, readers+1)}, **{f"D{i}": "=F1" for i in range(1, readers+1)},
+                 **{f"F{j}": f"=F{j+1}+1" for j in range(1, links)}, f"F{links}": "=F1"}
+        book = self.book(cells)
+        calculator, evaluations = self.counted(book)
+        self.assertEqual(self.outcome(calculator, book, "A1"), "#DIV/0!")
+        self.assertLessEqual(len(evaluations), 2*links + 8*readers, len(evaluations))
+        for first in ("F1", "F500", "D3"):  # the cycle is still a cycle, whichever of its cells is read first
+            with self.subTest(first=first):
+                calculator = self.calculator(book)
+                self.assertEqual([self.outcome(calculator, book, ref) for ref in (first, "F2", f"F{links}", "D9", "B9")],
+                                 ["#CYCLE!"]*4 + ["#DIV/0!"])
+
+    def test_a_chain_whose_first_cell_meets_one_range_after_another_is_not_walked_for_each(self):
+        # As above, but F1 reads every W<i> (tolerating its error), so it meets W1 while W1 is on the stack, then,
+        # once W1 has its value, W2, and so on. Each time only F1 is evaluated again, not the chain above it.
+        readers, links = 100, 1_000
+        cells = {"A1": f"=SUM(B1:B{readers})", **{f"B{i}": f"=SUM(C{i}:D{i})" for i in range(1, readers+1)},
+                 **{f"C{i}": "=1/0" for i in range(1, readers+1)}, **{f"D{i}": f"=F{links}" for i in range(1, readers+1)},
+                 "F1": "=" + "+".join(f"IFERROR(B{i},0)" for i in range(1, readers+1)),
+                 **{f"F{j}": f"=F{j-1}+1" for j in range(2, links+1)}}
+        book = self.book(cells)
+        calculator, evaluations = self.counted(book)
+        self.assertEqual(self.outcome(calculator, book, "A1"), "#DIV/0!")
+        self.assertLessEqual(len(evaluations), 2*links + 12*readers, len(evaluations))  # was 200,696 at these sizes
+        self.assertEqual({ref: self.outcome(calculator, book, ref) for ref in ("F1", f"F{links}", "D7")},
+                         {"F1": 0, f"F{links}": links-1, "D7": links-1})
+
     def test_precedents_passed_over_while_a_range_waits_still_meet_the_deadline(self):
         # A1 reads A2, which reads A3, and so on: evaluating A1 for B1 settles the whole column, so every other
         # precedent B1 waits for is passed over. That run is as long as the range and must look at the clock.

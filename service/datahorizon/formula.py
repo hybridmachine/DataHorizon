@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Small, deliberately bounded spreadsheet parser. Never evaluates Python source."""
 
+from bisect import bisect_left
 from decimal import Context, Decimal, InvalidOperation, localcontext, ROUND_HALF_UP, ROUND_UP, ROUND_DOWN
 import math
 import re
@@ -813,8 +814,12 @@ class Pending(Exception):
         self.keys = keys
 
 
-# What Calculator.aligned gives for a cell on the stack: reading it is a cycle, counted only when it is read (fail).
-CIRCULAR = FormulaError("#CYCLE!", "Circular reference")
+class Circular(FormulaError):
+    """What Calculator.aligned gives for a cell on the stack (key): reading it is a cycle, counted only when it is
+    read (fail)."""
+    def __init__(self, key):
+        super().__init__("#CYCLE!", "Circular reference")
+        self.key = key
 
 
 FORMULA_CELL_LIMIT = 4_194_304  # stored cells (and text-size units) one evaluation of one formula may read
@@ -836,13 +841,18 @@ class Calculator:
         self.read, self.resolve_sheet, self.scan = read, resolve_sheet, scan
         self.clock = utc_clock() if clock is None else clock
         self.cache, self.active = {}, set()
-        # The cells being evaluated, outermost first; active holds the same cells. A formula waiting for a
-        # precedent keeps its stored input and parsed tree, so it is read and parsed once. marks holds, for each
-        # cell in following, the number of #CYCLE! errors raised before it was pushed and the position in following
-        # of the speculative evaluation it belongs to (-1 for none); ahead holds, for a formula waiting on the
-        # first of several precedents, the others, last first, to evaluate speculatively before it runs again;
-        # abandoned holds, for a formula that is waiting, the cells abandoned so far in that wait.
-        self.following, self.waiting, self.marks, self.ahead, self.abandoned = [], {}, [], {}, {}
+        # The cells being evaluated, outermost first; active holds the same cells and depth their positions. A
+        # formula waiting for a precedent keeps its stored input and parsed tree, so it is read and parsed once.
+        # marks holds, for each cell in following, the number of #CYCLE! errors raised before its evaluation began,
+        # the position in following of the speculative evaluation it belongs to (-1 for none) and whether it has
+        # been evaluated a second time; frames holds a number for each, rising up the stack; ahead holds, for a
+        # formula waiting on the first of several precedents, the others, last first, to evaluate speculatively
+        # before it runs again. abandoned maps an abandoned cell to the frame whose presence on the stack stands in
+        # its way (0: it is in a cycle whatever is on the stack) if its own read met the cycle, and otherwise to the
+        # cell that did, which it was waiting for; forward maps an abandoned frame to the frame that stood in its
+        # own way. struck is the position of the cell on the stack that the last #CYCLE! read.
+        self.following, self.waiting, self.marks, self.ahead = [], {}, [], {}
+        self.depth, self.frames, self.abandoned, self.forward, self.struck, self.pushed = {}, [], {}, {}, None, 0
         self.deadline, self.count, self.cycles = time.monotonic() + seconds, 0, 0
         self.bytes = 0
 
@@ -861,8 +871,10 @@ class Calculator:
         if self.count > FORMULA_CELL_LIMIT:
             raise FormulaError("#LIMIT!", f"Formula reads more than {FORMULA_CELL_LIMIT:,} cells")
 
-    def cycle(self):
+    def cycle(self, key):
+        """The error for a read of key, a cell on the stack."""
         self.cycles += 1
+        self.struck = self.depth.get(key)
         return FormulaError("#CYCLE!", "Circular reference")
 
     def cell(self, sheet, row, col):
@@ -872,7 +884,7 @@ class Calculator:
         self.check()
         key = sheet, row, col
         if key in self.active:
-            raise self.cycle()
+            raise self.cycle(key)
         if key not in self.cache:
             if self.following:  # read by following[-1]: an input is settled here, a formula raises Pending
                 self.remember(key, self.outcome(key))
@@ -887,28 +899,80 @@ class Calculator:
         """Evaluate key and the formulas it reads, innermost first, over an explicit stack instead of recursion.
 
         A formula that waits on several precedents (a range) gets the first evaluated as a precedent always is, and
-        the others speculatively, before it runs again. A speculative evaluation, and everything evaluated on its
-        behalf, is abandoned unkept if a #CYCLE! is raised beneath it: that result would depend on what is on the
-        stack. Its formulas are evaluated again when they are read, and not before: for the rest of that wait an
-        abandoned cell is not evaluated speculatively again, and a speculative evaluation that needs one is
-        abandoned in its turn without evaluating it, so a chain of them costs one evaluation each, not one walk of
-        the chain each. An abandoned cell keeps its stored input and tree until the read ends."""
-        following, marks, ahead, abandoned = self.following, self.marks, self.ahead, self.abandoned
+        the others speculatively, before it runs again. A result is kept only from an evaluation beneath which no
+        #CYCLE! was raised: any other could depend on what is on the stack.
+
+        A cell inside a speculative evaluation that completes after a #CYCLE! was raised beneath it:
+        - with a result other than #CYCLE!, read no cell without a kept value in its last pass (the cycle was met by
+          something evaluated ahead for it that it did not read), so it is evaluated once more, which raises nothing,
+          and kept;
+        - with #CYCLE!, is the culprit: it is abandoned unkept together with the speculative evaluation it belongs
+          to, every cell of which was waiting to read it. The culprit is recorded with its obstacle: the cell on the
+          stack that the cycle read, if that is beneath the speculative evaluation; otherwise nothing on the stack
+          (the cycle lies within the abandoned cells, or came from a kept #CYCLE!), and that record stays for the
+          whole read. The others are recorded as waiting for the culprit.
+        While the obstacle is still on the stack neither the culprit nor a cell waiting for it is evaluated
+        speculatively again, and a speculative evaluation whose next missing cell is one of them is abandoned in its
+        turn, as waiting for the same culprit, without evaluating it: a chain of them costs one evaluation each, not
+        a walk of the chain each. Once the obstacle has completed, a speculative evaluation that needs a cell
+        waiting for the culprit evaluates the culprit first: if that meets another obstacle only the culprit was
+        evaluated again, not the chain above it. An abandoned cell is evaluated as any other when a formula outside
+        every speculative evaluation reads it, and keeps its stored input and tree until the read ends."""
+        following, marks, ahead, frames = self.following, self.marks, self.ahead, self.frames
+        abandoned, forward, depth = self.abandoned, self.forward, self.depth
 
         def push(key, speculative):
-            marks.append((self.cycles, len(following) if speculative else marks[-1][1] if marks else -1))
+            marks.append((self.cycles, len(following) if speculative else marks[-1][1] if marks else -1, False))
+            self.pushed += 1
+            frames.append(self.pushed)
+            depth[key] = len(following)
             following.append(key)
             self.active.add(key)
 
-        def abandon(root):
-            # following[root] is the speculative evaluation; the formula beneath it is the one waiting for it.
-            gone = following[root:]
-            del following[root:], marks[root:]
-            abandoned.setdefault(following[-1], set()).update(gone)
-            for key in gone:
+        def standing(key):
+            """(position, culprit) for an abandoned key: culprit is the cell whose read met the cycle (key itself, or
+            the cell key was waiting for, however far down), and position is where on the stack the obstacle of the
+            culprit is, -1 if nothing on the stack is, or None if the obstacle has completed, in which case the
+            culprit may now have a value. (None, None) if key is not abandoned or the culprit has been kept since."""
+            culprit, passed = key, {}
+            while True:
+                record = abandoned.get(culprit)
+                if record is None or culprit in self.cache:
+                    for earlier in passed:
+                        del abandoned[earlier]
+                    abandoned.pop(culprit, None)
+                    return None, None
+                if type(record) is int:
+                    break
+                if record in passed or record == culprit:  # culprits wait on each other: a cycle whatever is on the stack
+                    abandoned[culprit] = record = 0
+                    break
+                passed[culprit] = True
+                culprit = record
+            for earlier in passed:
+                abandoned[earlier] = culprit
+            frames_passed = []
+            while record in forward:
+                frames_passed.append(record)
+                record = forward[record]
+            for earlier in frames_passed:
+                forward[earlier] = record
+            if not record:
+                return -1, culprit
+            position = bisect_left(frames, record)
+            return (position if position < len(frames) and frames[position] == record else None), culprit
+
+        def abandon(root, position, culprit):
+            # following[root] is the speculative evaluation. Every cell above it was waiting, directly or not, to read
+            # the culprit. What stood in the way of a cell abandoned earlier on account of one of these frames is
+            # now whatever stands in the way of the culprit.
+            frame = frames[position] if 0 <= position < root else 0
+            for key, gone in zip(following[root:], frames[root:]):
+                abandoned[key], forward[gone] = frame if key == culprit else culprit, frame
                 self.active.remove(key)
+                del depth[key]
                 ahead.pop(key, None)
-                abandoned.pop(key, None)
+            del following[root:], marks[root:], frames[root:]
         push(key, False)
         skipped = 0
         try:
@@ -917,9 +981,8 @@ class Calculator:
                 rest = ahead.get(top)
                 try:
                     if rest:
-                        key, root = rest.pop(), marks[-1][1]
-                        if (key in self.cache or key in self.active or key in abandoned.get(top, ())
-                                or root >= 0 and key in abandoned.get(following[root-1], ())):
+                        key = rest.pop()
+                        if key in self.cache or key in self.active or standing(key)[0] is not None:
                             skipped += 1
                             if skipped % 256 == 0:  # a long run of precedents not evaluated still meets the deadline
                                 self.count = 0  # no formula is being evaluated here: top starts again from nothing
@@ -927,35 +990,46 @@ class Calculator:
                         else:
                             push(key, True)
                         continue
+                    self.struck = None
                     result = self._evaluate_cell(top)
                 except Pending as need:
-                    root = marks[-1][1]
-                    if root >= 0 and need.keys[0] in abandoned.get(following[root-1], ()):
-                        abandon(root)
-                        continue
-                    ahead[top] = need.keys[:0:-1]
-                    abandoned.pop(top, None)  # a new wait: what its first precedent settles may let the others complete
-                    push(need.keys[0], False)
+                    root, first = marks[-1][1], need.keys[0]
+                    position, culprit = standing(first) if root >= 0 else (None, None)
+                    if position is not None:
+                        abandon(root, position, culprit)
+                    elif culprit is None or culprit == first or culprit in self.active:
+                        ahead[top] = need.keys[:0:-1]
+                        push(first, False)
+                    else:  # first waits on the culprit, whose obstacle has gone: settle the culprit before the walk
+                        ahead.pop(top, None)
+                        push(culprit, False)
                     continue
                 except FormulaError as error:
                     result = error
-                cycles, root = marks[-1]
+                cycles, root, again = marks[-1]
                 if root >= 0 and cycles != self.cycles:
-                    abandon(root)
+                    if again or isinstance(result, FormulaError) and result.code == "#CYCLE!":
+                        abandon(root, -1 if self.struck is None else self.struck, top)
+                    else:
+                        marks[-1] = self.cycles, root, True
                     continue
                 following.pop()
                 marks.pop()
+                frames.pop()
                 self.active.remove(top)
+                del depth[top]
                 self.waiting.pop(top, None)
                 ahead.pop(top, None)
-                abandoned.pop(top, None)
                 self.remember(top, result)
         finally:
             self.active.difference_update(following)
             following.clear()
             marks.clear()
+            frames.clear()
+            depth.clear()
             ahead.clear()
             abandoned.clear()
+            forward.clear()
             self.waiting.clear()
 
     def remember(self, key, result):
@@ -1050,7 +1124,7 @@ class Calculator:
                 if item["kind"]=="formula" and key not in self.cache and key not in self.active:pending.append(key)
                 continue
             self.charge(1)
-            if key in self.active:value=self.cycle()
+            if key in self.active:value=self.cycle(key)
             elif item["kind"]=="formula":
                 if key not in self.cache:pending.append(key);continue
                 value=self.cache[key]
@@ -1073,7 +1147,7 @@ class Calculator:
         scope has a stored cell are yielded (without scan, every position, each coordinate read through cell()). Nothing
         is raised for a cell: what reading it would raise is its value, for the caller to raise with fail() only when
         it reads that cell. A cell error, or any other FormulaError, is a FormulaError value; a cell on the stack is
-        CIRCULAR, counted as a cycle when it is raised; a formula cell with no value yet is Pending([key]), whose keys
+        a Circular, counted as a cycle when it is raised; a formula cell with no value yet is Pending([key]), whose keys
         the caller collects. Nothing counts toward the formula's limit here: the caller counts each cell it reads with
         taken(), so cells it skips, or scans only to collect Pending keys, cost nothing. The scopes are scanned together
         in bands of SCAN_ROWS rows, so a caller that stops leaves later bands unread; with bands=True, (end, None)
@@ -1092,7 +1166,7 @@ class Calculator:
                 seen+=1
                 if seen%256==0:self.check()
                 key=target,row,col
-                if key in self.active:value=CIRCULAR
+                if key in self.active:value=Circular(key)
                 elif item["kind"]=="formula":value=self.cache[key] if key in self.cache else Pending([key])
                 elif item["kind"]=="unmaintained":value=FormulaError("#REF!",UNMAINTAINED_MESSAGE)
                 else:value=item["value"]
@@ -1112,7 +1186,7 @@ class Calculator:
     def probe(self,key):
         """What aligned gives for key without scan: its value, or what reading it would raise. The read is not counted
         here (taken() counts it if the caller reads it), so cell()'s own count is undone."""
-        if key in self.active:return CIRCULAR
+        if key in self.active:return Circular(key)
         count=self.count  # a #LIMIT! from cell()'s count is raised again by taken() if the caller reads the cell
         try:return self.cell(*key)
         except FormulaError as error:return error
@@ -1133,7 +1207,7 @@ class Calculator:
 
     def fail(self,value):
         """Raise a FormulaError value from aligned, as reading its cell would have."""
-        raise self.cycle() if value is CIRCULAR else value
+        raise self.cycle(value.key) if isinstance(value,Circular) else value
 
     def range_values(self,scope,*,empty=False):
         """The values of scope for argument_values, cell errors as FormulaError values; with empty=True an empty
