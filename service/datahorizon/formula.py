@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Small, deliberately bounded spreadsheet parser. Never evaluates Python source."""
 
-from bisect import bisect_left
 from decimal import Context, Decimal, InvalidOperation, localcontext, ROUND_HALF_UP, ROUND_UP, ROUND_DOWN
 import math
 import re
@@ -804,26 +803,27 @@ class Criterion:
 
 
 class Pending(Exception):
-    """Raised while a formula is evaluated when it reads formula cells that have no value yet.
+    """Raised when evaluating a formula cell where it is read would nest too deep: IN_PLACE_DEPTH cells, or as far as
+    Python's recursion limit allows. Every evaluation between that read and Calculator.follow unwinds, keeping
+    nothing and adding its cell to keys, so keys lists the cell refused and then each cell that was waiting for the
+    one before. follow evaluates them in that order from a shallow stack."""
+    @property
+    def keys(self):
+        return self.args[0]
 
-    keys lists them. Calculator.cell evaluates them and then the reader again. An inner call of cell (a formula
-    reading a precedent) lets Pending through to the loop that follows the chain; it never escapes the outermost call.
-    """
-    def __init__(self, keys):
-        super().__init__(keys)
-        self.keys = keys
 
+class Unread:
+    """What Calculator.aligned gives for a cell it has not read: a formula cell, or without scan any coordinate.
+    Calculator.taken reads it."""
+    __slots__ = ("key",)
 
-class Circular(FormulaError):
-    """What Calculator.aligned gives for a cell on the stack (key): reading it is a cycle, counted only when it is
-    read (fail)."""
     def __init__(self, key):
-        super().__init__("#CYCLE!", "Circular reference")
         self.key = key
 
 
 FORMULA_CELL_LIMIT = 4_194_304  # stored cells (and text-size units) one evaluation of one formula may read
 SCAN_ROWS = 1024  # rows per scan statement: the deadline is checked between them, and all 1,048,576 rows take 1,024
+IN_PLACE_DEPTH = 128  # formula cells nested in one recursion, the outermost included: what the evaluator before stage 2 allowed
 
 
 class RangeValue(list):
@@ -840,20 +840,13 @@ class Calculator:
         # order, item as read gives it; without it a range is read one coordinate at a time.
         self.read, self.resolve_sheet, self.scan = read, resolve_sheet, scan
         self.clock = utc_clock() if clock is None else clock
+        # active holds every cell being evaluated: those of the current recursion, and those in following, the
+        # explicit stack (outermost first) of cells whose evaluation unwound because something beneath them nested
+        # too deep. nesting counts the cells of the current recursion beneath following[-1]. waiting keeps the stored
+        # input and parsed tree of each formula in following, so that it is read, charged and parsed once.
         self.cache, self.active = {}, set()
-        # The cells being evaluated, outermost first; active holds the same cells and depth their positions. A
-        # formula waiting for a precedent keeps its stored input and parsed tree, so it is read and parsed once.
-        # marks holds, for each cell in following, the number of #CYCLE! errors raised before its evaluation began,
-        # the position in following of the speculative evaluation it belongs to (-1 for none) and whether it has
-        # been evaluated a second time; frames holds a number for each, rising up the stack; ahead holds, for a
-        # formula waiting on the first of several precedents, the others, last first, to evaluate speculatively
-        # before it runs again. abandoned maps an abandoned cell to the frame whose presence on the stack stands in
-        # its way (0: it is in a cycle whatever is on the stack) if its own read met the cycle, and otherwise to the
-        # cell that did, which it was waiting for; forward maps an abandoned frame to the frame that stood in its
-        # own way. struck is the position of the cell on the stack that the last #CYCLE! read.
-        self.following, self.waiting, self.marks, self.ahead = [], {}, [], {}
-        self.depth, self.frames, self.abandoned, self.forward, self.struck, self.pushed = {}, [], {}, {}, None, 0
-        self.deadline, self.count, self.cycles = time.monotonic() + seconds, 0, 0
+        self.following, self.waiting, self.nesting = [], {}, 0
+        self.deadline, self.count = time.monotonic() + seconds, 0
         self.bytes = 0
 
     def check(self):
@@ -871,183 +864,83 @@ class Calculator:
         if self.count > FORMULA_CELL_LIMIT:
             raise FormulaError("#LIMIT!", f"Formula reads more than {FORMULA_CELL_LIMIT:,} cells")
 
-    def cycle(self, key):
-        """The error for a read of key, a cell on the stack."""
-        self.cycles += 1
-        self.struck = self.depth.get(key)
-        return FormulaError("#CYCLE!", "Circular reference")
-
     def cell(self, sheet, row, col):
         if not self.following:
             self.count = 0  # a read from outside starts afresh: the count belongs to one evaluation of one formula
         self.charge(1)
         self.check()
-        key = sheet, row, col
-        if key in self.active:
-            raise self.cycle(key)
-        if key not in self.cache:
-            if self.following:  # read by following[-1]: an input is settled here, a formula raises Pending
-                self.remember(key, self.outcome(key))
-            else:
-                self.follow(key)
-        result = self.cache[key]
+        result = self.result((sheet, row, col))
         if isinstance(result, FormulaError):
             raise result
         return result
 
-    def follow(self, key):
-        """Evaluate key and the formulas it reads, innermost first, over an explicit stack instead of recursion.
-
-        A formula that waits on several precedents (a range) gets the first evaluated as a precedent always is, and
-        the others speculatively, before it runs again. A result is kept only from an evaluation beneath which no
-        #CYCLE! was raised: any other could depend on what is on the stack.
-
-        A cell inside a speculative evaluation that completes after a #CYCLE! was raised beneath it:
-        - with a result other than #CYCLE!, read no cell without a kept value in its last pass (the cycle was met by
-          something evaluated ahead for it that it did not read), so it is evaluated once more, which raises nothing,
-          and kept;
-        - with #CYCLE!, is the culprit: it is abandoned unkept together with the speculative evaluation it belongs
-          to, every cell of which was waiting to read it. The culprit is recorded with its obstacle: the cell on the
-          stack that the cycle read, if that is beneath the speculative evaluation; otherwise nothing on the stack
-          (the cycle lies within the abandoned cells, or came from a kept #CYCLE!), and that record stays for the
-          whole read. The others are recorded as waiting for the culprit.
-        While the obstacle is still on the stack neither the culprit nor a cell waiting for it is evaluated
-        speculatively again, and a speculative evaluation whose next missing cell is one of them is abandoned in its
-        turn, as waiting for the same culprit, without evaluating it: a chain of them costs one evaluation each, not
-        a walk of the chain each. Once the obstacle has completed, a speculative evaluation that needs a cell
-        waiting for the culprit evaluates the culprit first: if that meets another obstacle only the culprit was
-        evaluated again, not the chain above it. An abandoned cell is evaluated as any other when a formula outside
-        every speculative evaluation reads it, and keeps its stored input and tree until the read ends."""
-        following, marks, ahead, frames = self.following, self.marks, self.ahead, self.frames
-        abandoned, forward, depth = self.abandoned, self.forward, self.depth
-
-        def push(key, speculative):
-            marks.append((self.cycles, len(following) if speculative else marks[-1][1] if marks else -1, False))
-            self.pushed += 1
-            frames.append(self.pushed)
-            depth[key] = len(following)
-            following.append(key)
+    def result(self, key):
+        """key's value or its FormulaError, uncounted. A cell with neither is evaluated here, in place, when and only
+        when it is read: marked active, evaluated, remembered, unmarked. A cell that is active is being evaluated
+        further out, so the read is a cycle. The reader's count is not charged what key reads."""
+        if key in self.active:
+            return FormulaError("#CYCLE!", "Circular reference")
+        if key not in self.cache:
+            if not self.following:
+                self.follow(key)
+                return self.cache[key]
+            count = self.count
             self.active.add(key)
+            self.nesting += 1
+            try:
+                self.remember(key, self._evaluate_cell(key))
+                self.active.discard(key)
+            except Pending as need:  # raised here for key, or beneath it: key waits on the stack, still active
+                need.keys.append(key)
+                raise
+            except RecursionError:
+                # Python's stack ran out beneath this cell before IN_PLACE_DEPTH did: the same signal as Pending.
+                self.cache.pop(key, None)
+                raise Pending([key]) from None
+            finally:
+                self.nesting -= 1
+                self.count = count
+        return self.cache[key]
 
-        def standing(key):
-            """(position, culprit) for an abandoned key: culprit is the cell whose read met the cycle (key itself, or
-            the cell key was waiting for, however far down), and position is where on the stack the obstacle of the
-            culprit is, -1 if nothing on the stack is, or None if the obstacle has completed, in which case the
-            culprit may now have a value. (None, None) if key is not abandoned or the culprit has been kept since."""
-            culprit, passed = key, {}
-            while True:
-                record = abandoned.get(culprit)
-                if record is None or culprit in self.cache:
-                    for earlier in passed:
-                        del abandoned[earlier]
-                    abandoned.pop(culprit, None)
-                    return None, None
-                if type(record) is int:
-                    break
-                if record in passed or record == culprit:  # culprits wait on each other: a cycle whatever is on the stack
-                    abandoned[culprit] = record = 0
-                    break
-                passed[culprit] = True
-                culprit = record
-            for earlier in passed:
-                abandoned[earlier] = culprit
-            frames_passed = []
-            while record in forward:
-                frames_passed.append(record)
-                record = forward[record]
-            for earlier in frames_passed:
-                forward[earlier] = record
-            if not record:
-                return -1, culprit
-            position = bisect_left(frames, record)
-            return (position if position < len(frames) and frames[position] == record else None), culprit
-
-        def abandon(root, position, culprit):
-            # following[root] is the speculative evaluation. Every cell above it was waiting, directly or not, to read
-            # the culprit. What stood in the way of a cell abandoned earlier on account of one of these frames is
-            # now whatever stands in the way of the culprit.
-            frame = frames[position] if 0 <= position < root else 0
-            for key, gone in zip(following[root:], frames[root:]):
-                abandoned[key], forward[gone] = frame if key == culprit else culprit, frame
-                self.active.remove(key)
-                del depth[key]
-                ahead.pop(key, None)
-            del following[root:], marks[root:], frames[root:]
-        push(key, False)
-        skipped = 0
+    def follow(self, key):
+        """Evaluate key for a read from outside. Its precedents are evaluated in place (result). When one of them
+        nests too deep, the evaluations between here and there unwind as Pending and their cells are pushed on
+        following, the cell that was refused last; each is then evaluated from here, innermost first, with the whole
+        depth beneath it again. A cell is pushed at most once and stays active until it completes, so a read of it
+        from above is a cycle, as it was while it was being evaluated in place."""
+        following = self.following
+        following.append(key)
+        self.active.add(key)
         try:
             while following:
                 top = following[-1]
-                rest = ahead.get(top)
                 try:
-                    if rest:
-                        key = rest.pop()
-                        if key in self.cache or key in self.active or standing(key)[0] is not None:
-                            skipped += 1
-                            if skipped % 256 == 0:  # a long run of precedents not evaluated still meets the deadline
-                                self.count = 0  # no formula is being evaluated here: top starts again from nothing
-                                self.check()
-                        else:
-                            push(key, True)
-                        continue
-                    self.struck = None
                     result = self._evaluate_cell(top)
                 except Pending as need:
-                    root, first = marks[-1][1], need.keys[0]
-                    position, culprit = standing(first) if root >= 0 else (None, None)
-                    if position is not None:
-                        abandon(root, position, culprit)
-                    elif culprit is None or culprit == first or culprit in self.active:
-                        ahead[top] = need.keys[:0:-1]
-                        push(first, False)
-                    else:  # first waits on the culprit, whose obstacle has gone: settle the culprit before the walk
-                        ahead.pop(top, None)
-                        push(culprit, False)
+                    following.extend(reversed(need.keys))
                     continue
-                except FormulaError as error:
-                    result = error
-                cycles, root, again = marks[-1]
-                if root >= 0 and cycles != self.cycles:
-                    if again or isinstance(result, FormulaError) and result.code == "#CYCLE!":
-                        abandon(root, -1 if self.struck is None else self.struck, top)
-                    else:
-                        marks[-1] = self.cycles, root, True
-                    continue
+                except RecursionError:  # not from a precedent (result turns that into Pending): top's own expression
+                    result = FormulaError("#LIMIT!", "Calculation nesting limit exceeded")
                 following.pop()
-                marks.pop()
-                frames.pop()
                 self.active.remove(top)
-                del depth[top]
-                self.waiting.pop(top, None)
-                ahead.pop(top, None)
                 self.remember(top, result)
         finally:
-            self.active.difference_update(following)
+            self.active.clear()
             following.clear()
-            marks.clear()
-            frames.clear()
-            depth.clear()
-            ahead.clear()
-            abandoned.clear()
-            forward.clear()
             self.waiting.clear()
 
     def remember(self, key, result):
-        """Keep a cell's completed value or FormulaError; every cell whose evaluation completes passes here."""
+        """Keep a cell's completed value or FormulaError; every cell whose evaluation completes passes here, once."""
         self.cache[key] = result
 
-    def outcome(self, key):
-        try:
-            return self._evaluate_cell(key)
-        except FormulaError as error:
-            return error
-
     def _evaluate_cell(self, key):
-        """The cell's value, or raises its FormulaError. A formula cell other than following[-1] raises Pending."""
+        """The cell's value, or its FormulaError (returned, not raised). A formula nested IN_PLACE_DEPTH cells deep
+        raises Pending instead of being evaluated; whatever interrupts a formula leaves its input and tree in waiting."""
         sheet, row, col = key
+        held = self.waiting.pop(key, None)
         try:
-            if key in self.waiting:
-                item, tree = self.waiting[key]
+            if held:
+                item, tree = held
             else:
                 item, tree = self.read(sheet, row, col), None
                 if item:
@@ -1059,14 +952,16 @@ class Calculator:
             elif item["kind"] == "unmaintained":
                 raise FormulaError("#REF!", UNMAINTAINED_MESSAGE)
             elif item["kind"] == "formula":
-                if key != self.following[-1]:
-                    self.waiting[key] = item, tree  # an abandoned cell read again keeps the tree it was parsed to
-                    raise Pending([key])
-                if tree is None:
-                    tree = Parser(item["source"][1:]).parse()
+                try:
+                    if self.nesting >= IN_PLACE_DEPTH:
+                        raise Pending([])  # result adds key
+                    if tree is None:
+                        tree = Parser(item["source"][1:]).parse()
+                    self.count = 0  # the count is per evaluation of a formula: one evaluated again starts from nothing
+                    result = self.evaluate(tree, sheet)
+                except (Pending, RecursionError):
                     self.waiting[key] = item, tree
-                self.count = 0  # the count is per evaluation of a formula; an attempt that waits on a precedent is repeated
-                result = self.evaluate(tree, sheet)
+                    raise
                 if isinstance(result, list):
                     raise FormulaError("#VALUE!", "Range cannot be a scalar result")
             else:
@@ -1075,9 +970,9 @@ class Calculator:
                 raise FormulaError("#NUM!", "Non-finite result")
             return result
         except OverflowError:
-            raise FormulaError("#NUM!", "Numeric overflow")
-        except RecursionError:
-            raise FormulaError("#LIMIT!", "Calculation nesting limit exceeded")
+            return FormulaError("#NUM!", "Numeric overflow")
+        except FormulaError as error:
+            return error
 
     def reference(self, ref, sheet):
         name, row, col = split_ref(ref)
@@ -1101,10 +996,9 @@ class Calculator:
 
     def stored(self,scope,*,errors=False):
         """(row, col, value) for the stored cells of scope (a range_geometry tuple) in row, then column order; each
-        counts one toward the formula's limit and none is added to cache. A formula cell's value comes from cache.
-        A cell error is raised, or with errors=True one in CELL_ERRORS is yielded as its FormulaError. Formula cells
-        without a value yet are collected to the end of the range and raised as Pending(keys) in range order; nothing
-        after the first of them is yielded or raised. Without scan every coordinate is read through cell()."""
+        counts one toward the formula's limit and none is added to cache. A formula cell's value is its result,
+        evaluated in place if it has none when the caller reaches it. A cell error is raised, or with errors=True one
+        in CELL_ERRORS is yielded as its FormulaError. Without scan every coordinate is read through cell()."""
         target,r1,c1,r2,c2=scope
         if self.scan is None:
             for row in range(r1,r2+1):
@@ -1115,24 +1009,16 @@ class Calculator:
                         value=error
                     yield row,col,value
             return
-        pending=[];seen=0
+        seen=0
         for row,col,item in self.scanned(target,r1,c1,r2,c2):
             seen+=1
             if seen%256==0:self.check()
-            key=target,row,col
-            if pending:
-                if item["kind"]=="formula" and key not in self.cache and key not in self.active:pending.append(key)
-                continue
             self.charge(1)
-            if key in self.active:value=self.cycle(key)
-            elif item["kind"]=="formula":
-                if key not in self.cache:pending.append(key);continue
-                value=self.cache[key]
+            if item["kind"]=="formula":value=self.result((target,row,col))
             elif item["kind"]=="unmaintained":value=FormulaError("#REF!",UNMAINTAINED_MESSAGE)
             else:value=item["value"]
             if isinstance(value,FormulaError) and (not errors or value.code not in CELL_ERRORS):raise value
             yield row,col,value
-        if pending:raise Pending(pending)
 
     def scanned(self,target,r1,c1,r2,c2):
         """scan in bands of SCAN_ROWS rows, lazily, checking the deadline before each: SQLite visits every stored cell
@@ -1144,19 +1030,17 @@ class Calculator:
     def aligned(self,scopes,*,bands=False):
         """For same-shaped scopes (range_geometry tuples), (index, values) in order, index the row-major position inside
         the shape and values one entry per scope, None where that scope has no stored cell. Only positions where some
-        scope has a stored cell are yielded (without scan, every position, each coordinate read through cell()). Nothing
-        is raised for a cell: what reading it would raise is its value, for the caller to raise with fail() only when
-        it reads that cell. A cell error, or any other FormulaError, is a FormulaError value; a cell on the stack is
-        a Circular, counted as a cycle when it is raised; a formula cell with no value yet is Pending([key]), whose keys
-        the caller collects. Nothing counts toward the formula's limit here: the caller counts each cell it reads with
-        taken(), so cells it skips, or scans only to collect Pending keys, cost nothing. The scopes are scanned together
-        in bands of SCAN_ROWS rows, so a caller that stops leaves later bands unread; with bands=True, (end, None)
-        follows each band, end the first index after it."""
+        scope has a stored cell are yielded (without scan, every position). Nothing is read, evaluated, raised or
+        counted here: an input's value is given as it is stored (an unmaintained formula as its #REF! FormulaError),
+        and a formula cell, or without scan any coordinate, as Unread. The caller passes each entry it reads to
+        taken(), in the order a read of each cell in turn would have, so a cell it skips costs nothing and is never
+        evaluated. The scopes are scanned together in bands of SCAN_ROWS rows, so a caller that stops leaves later
+        bands unread; with bands=True, (end, None) follows each band, end the first index after it."""
         _,r1,c1,r2,c2=scopes[0];height,width=r2-r1+1,c2-c1+1
         if self.scan is None:
             for index in range(height*width):
                 row,col=divmod(index,width)
-                yield index,[self.probe((scope[0],scope[1]+row,scope[2]+col)) for scope in scopes]
+                yield index,[Unread((scope[0],scope[1]+row,scope[2]+col)) for scope in scopes]
             return
         seen=0
         def band(scope,first,last):
@@ -1165,9 +1049,7 @@ class Calculator:
             for row,col,item in self.scan(target,top+first,left,top+last,right):
                 seen+=1
                 if seen%256==0:self.check()
-                key=target,row,col
-                if key in self.active:value=Circular(key)
-                elif item["kind"]=="formula":value=self.cache[key] if key in self.cache else Pending([key])
+                if item["kind"]=="formula":value=Unread((target,row,col))
                 elif item["kind"]=="unmaintained":value=FormulaError("#REF!",UNMAINTAINED_MESSAGE)
                 else:value=item["value"]
                 yield (row-top)*width+col-left,value
@@ -1183,31 +1065,18 @@ class Calculator:
                 yield index,values
             if bands:yield (last+1)*width,None
 
-    def probe(self,key):
-        """What aligned gives for key without scan: its value, or what reading it would raise. The read is not counted
-        here (taken() counts it if the caller reads it), so cell()'s own count is undone."""
-        if key in self.active:return Circular(key)
-        count=self.count  # a #LIMIT! from cell()'s count is raised again by taken() if the caller reads the cell
-        try:return self.cell(*key)
-        except FormulaError as error:return error
-        except Pending as need:return need
-        finally:self.count=count
-
-    def uncounted(self,work,*args):
-        """work(*args) for a caller that is only collecting Pending keys: nothing it charges counts toward the formula's
-        limit, and a #LIMIT! it raises gives None (the next pass meets it in order)."""
-        count=self.count
-        try:return work(*args)
-        except FormulaError:return None
-        finally:self.count=count
-
-    def taken(self,value):
-        """Count a cell from aligned that the caller reads: a stored cell, or without scan any coordinate."""
-        if value is not None or self.scan is None:self.charge(1)
-
-    def fail(self,value):
-        """Raise a FormulaError value from aligned, as reading its cell would have."""
-        raise self.cycle(value.key) if isinstance(value,Circular) else value
+    def taken(self,value,*,errors=False):
+        """The value of an entry from aligned that the caller reads, counted toward the formula's limit (a stored cell,
+        or without scan any coordinate); a formula cell with no value yet is evaluated here, in place. A FormulaError
+        is raised, as reading the cell would have, or with errors=True one in CELL_ERRORS is returned."""
+        if isinstance(value,Unread):
+            if self.scan is None:
+                try:value=self.cell(*value.key)
+                except FormulaError as error:value=error
+            else:self.charge(1);value=self.result(value.key)
+        elif value is not None:self.charge(1)
+        if isinstance(value,FormulaError) and (not errors or value.code not in CELL_ERRORS):raise value
+        return value
 
     def range_values(self,scope,*,empty=False):
         """The values of scope for argument_values, cell errors as FormulaError values; with empty=True an empty
@@ -1438,33 +1307,17 @@ class Calculator:
 
     def first_match(self,lookup,key,returns=None):
         """(index, value of returns there) for the first position of the vector lookup whose exact_lookup_key is key, or
-        None. Like a read of each cell in turn up to the match, an error in lookup before it raises, and returns is
-        read at the match only. Formula cells with no value yet are collected up to the first calculated cell that
-        decides the result (a match or an error) and raised as one Pending: the scan stops there, and those after the
-        first are evaluated speculatively, so one that the match makes unnecessary cannot change a result."""
-        expected=0;waiting=[];blank=key==("blank",None)
+        None. Each lookup cell is read in turn up to the match, so an error before it raises and nothing after it is
+        read or evaluated; returns is read at the match only."""
+        expected=0;blank=key==("blank",None)
         for index,values in self.aligned([lookup]+([returns] if returns else []),bands=True):
-            if blank and index>expected:  # the empty position at expected matches
-                if waiting:break
-                return expected,None
+            if blank and index>expected:return expected,None  # the empty position at expected matches
             if values is None:continue
-            expected=index+1;value=values[0]
-            if not waiting:self.taken(value)
-            if isinstance(value,Pending):waiting+=value.keys;continue
-            if isinstance(value,FormulaError):
-                if waiting:break
-                self.fail(value)
-            if (self.uncounted(self.exact_lookup_key,value) if waiting else self.exact_lookup_key(value))!=key:continue
-            if waiting:break
-            value=values[1] if returns else None
-            if returns:self.taken(value)
-            if isinstance(value,Pending):raise value
-            if isinstance(value,FormulaError):self.fail(value)
-            return index,value
-        else:
-            area=(lookup[3]-lookup[1]+1)*(lookup[4]-lookup[2]+1)
-            if blank and expected<area and not waiting:return expected,None
-        if waiting:raise Pending(waiting)
+            expected=index+1
+            if self.exact_lookup_key(self.taken(values[0]))!=key:continue
+            return index,self.taken(values[1]) if returns else None
+        area=(lookup[3]-lookup[1]+1)*(lookup[4]-lookup[2]+1)
+        if blank and expected<area:return expected,None
         return None
 
     def multiple_criteria(self,name,args,sheet):
@@ -1481,39 +1334,21 @@ class Calculator:
 
     def criteria_total(self,pairs,sums,name):
         """The count of positions where every (scope, criterion) pair matches, or with a sums scope the sum of its
-        numbers there, as a read of each position in turn would give it: every criteria cell is read, a cell error in
+        numbers there, as a read of each position in turn gives it: every criteria cell is read, a cell error in
         one matches nothing, and the sum cell is read only where all match. Wholly empty positions are counted from
-        the area. Formula cells with no value yet are collected from every criteria cell and from the sum cells of
-        positions known to match, and raised as one Pending; a position's other errors wait until they are known to
-        be read first."""
+        the area."""
         scopes=[scope for scope,_ in pairs]+([sums] if sums else [])
-        total=0;visited=0;waiting=[]
+        total=0;visited=0
         for _,values in self.aligned(scopes):
-            visited+=1;matched=known=True
+            visited+=1;matched=True
             for value,(_,criterion) in zip(values,pairs):
-                if not waiting:self.taken(value)
-                if isinstance(value,Pending):waiting+=value.keys;known=False
-                elif isinstance(value,FormulaError) and value.code not in CELL_ERRORS:
-                    if not waiting:self.fail(value)
-                    known=False
-                elif waiting:
-                    eligible=self.uncounted(criterion.matches,value)
-                    if eligible is None:known=False
-                    elif not eligible:matched=False
-                elif not criterion.matches(value):matched=False
-            if not (known and matched):continue
+                if not criterion.matches(self.taken(value,errors=True)):matched=False
+            if not matched:continue
             if sums is None:total+=1;continue
-            value=values[-1]
-            if waiting:
-                if isinstance(value,Pending):waiting+=value.keys
-                continue
-            self.taken(value)
-            if isinstance(value,Pending):waiting+=value.keys;continue
-            if isinstance(value,FormulaError):self.fail(value)
+            value=self.taken(values[-1])
             if type(value) in (int,float):
                 total+=value
                 if not math.isfinite(total):raise FormulaError("#NUM!",name+" subtotal exceeds the finite range")
-        if waiting:raise Pending(waiting)
         if sums is None and all([criterion.matches(None) for _,criterion in pairs]):
             _,r1,c1,r2,c2=scopes[0];total+=(r2-r1+1)*(c2-c1+1)-visited
         return total
