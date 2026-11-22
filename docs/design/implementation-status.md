@@ -46,6 +46,15 @@ evidence:
   `#LIMIT!` from 400 rows in a default read, where `main` shows `#CYCLE!` (or
   `#DIV/0!` when `A1` is an error). It is linear and shows what `main` shows:
   2,108,042 evaluations at 1,500 rows became 4,500; 3,000 rows take 0.08 s.
+  The first form of this fix (`d3b63e2`) made another shape quadratic, found by
+  the re-review at `02aa2b3` and corrected in `72f9e00`: a running total of
+  `MATCH(1,C<r>:D<r>,0)` where column D reads the total. A read of the total
+  over 1,000 rows took 6,998 evaluations at `42f30fb`, 1,003,002 at `02aa2b3`
+  (`#LIMIT!` in a default read from 400 rows) and takes 5,001 now, with the
+  value in a default read. Two related shapes that were quadratic at `42f30fb`
+  as well (many ranges looking ahead into one chain that leads back to the
+  total) went from about 60,000 evaluations to about 1,200 at 100 ranges and
+  300 cells.
 - One edit of 10,000 cells with 4,000 cached range readers on the sheet took
   1.95 s and 40,000,000 containment checks at commit; it takes 0.19 s and 4,000.
   An invalidation now spends at most 100,000 checks and is conservative past
@@ -71,10 +80,13 @@ run at `d4dceca`. It passed on its own twice after each failure and passed in th
 `ctest` run, and the machine was heavily loaded during both failing runs, so it
 is treated as sensitive to load, not as a defect of this stage; its cause was not
 investigated. After the fixes from the final review the whole service suite was
-run once on the working tree of the commit that made them, on top of `42f30fb`:
-1,836 tests, OK, 28 skipped, with that test passing; the desktop, Python
+run once on the service code of `4f04d74` (the run preceded a change to three
+reads in `tests/test_dependencies.py` that is part of that commit, and the
+documents of `02aa2b3`): 1,836 tests, OK, 28 skipped, with that test passing.
+It was run once more at `72f9e00`, the commit that corrected the first of those
+fixes: 1,841 tests, OK, 28 skipped, that test passing again. The desktop, Python
 workspace and chart suites were not run again (the fixes touch the service
-only). The run printed one "unclosed database" `ResourceWarning`, where earlier
+only). Each run printed one "unclosed database" `ResourceWarning`, where earlier
 runs printed about three: two came from two tests in `tests/test_bindings.py`
 that never closed a second workbook and now do. Not verified: Windows and Linux,
 a cold file cache, an idle machine.

@@ -229,9 +229,13 @@ operating system's resident-set counter and is not available on Windows.
   value yet has its missing cells evaluated in one pass, the later ones
   speculatively: a speculative result is kept only if no `#CYCLE!` was raised
   beneath it, so a branch that is not taken does not leave a cycle behind. A
-  cell abandoned that way is not evaluated speculatively again while the same
-  formula waits, and a speculative evaluation that needs it is abandoned
-  without evaluating it; it is evaluated when it is read.
+  cell that completes with a value although a cycle was met by something
+  evaluated ahead for it is evaluated once more, which raises nothing, and
+  kept. A cell that completes with `#CYCLE!` is abandoned and recorded with the
+  cell on the stack its cycle read; while that cell is still being evaluated
+  the abandoned cell is not evaluated speculatively again, and a speculative
+  evaluation that needs it is abandoned without evaluating it. It is evaluated
+  when it is read.
 - **Rectangles in the dependency cache.** `DependencyIndex` records a range as
   one rectangle edge, finds readers of an edited coordinate (including one that
   was empty) by containment, and treats a reader of a volatile or unparseable
@@ -287,17 +291,21 @@ would notice:
   cell does.
 - **Missing formula cells are evaluated speculatively.** Every pending cell of a
   range is evaluated even when an earlier one has turned out to be an error.
-  That is extra work, and since the final review it is linear in the cells of
-  the range for the shapes measured there: a cell abandoned because a `#CYCLE!`
-  was raised beneath it costs one evaluation, not a walk of the chain under it.
-  The extra work is charged to the read's time budget like any other, so it can
-  still be what makes a read near its budget show `#LIMIT!`; it changes no
-  result otherwise. One shape is still more than linear: when a formula waits
-  on a range again after its first missing cell is settled, the cells abandoned
-  before are tried again, so a range whose cells each give a value when read
-  but each raise a cycle in something they evaluate ahead and do not read costs
-  one pass per cell. No such workbook was measured. A formula whose value is
-  blank is not charged on the scan path, as it is on the stream path.
+  That is extra work, charged to the read's time budget like any other, so it
+  can still be what makes a read near its budget show `#LIMIT!`; it changes no
+  result otherwise. Since the final review the number of evaluations is linear
+  for every shape measured (see
+  [Fixes from the final review](#fixes-from-the-final-review)): a cell is
+  evaluated speculatively again only after the cell that stood in its way has
+  completed, and then only the cell whose own read met the cycle is tried, not
+  the chain above it. What remains: a formula that meets m different cells
+  being evaluated, one after another, is evaluated m times, and each time reads
+  its precedents from the start, so the work inside that one formula grows with
+  the square of its length (100 `IFERROR` terms: 100 evaluations of 100
+  terms; counted as evaluations, not timed). The bound on evaluations is an argument, recorded with the fix, not a
+  proof over every workbook; the measured mixtures are listed there. A formula
+  whose value is blank is not charged on the scan path, as it is on the stream
+  path.
 - **Invalidation has no spatial index and is conservative past a budget.** One
   invalidation spends at most 100,000 containment checks (plus one pass over a
   sheet's rectangles). Within that it is exact. Past it, the cells found in a
@@ -354,11 +362,44 @@ when `A1` is `=1/0`.
 | 120 s budget, real cycle, n = 3,000 | `#LIMIT!` in 18 s (`Calculation input cache exceeds 8 MiB`) | `#CYCLE!` in 0.07 s |
 | Evaluations at n = 1,500, either shape | 2,108,042 | 4,500 (cycle), 2,999 (`=1/0`) |
 
-The fix: a cell abandoned while a formula waits is not evaluated speculatively
-again during that wait; a speculative evaluation whose next missing cell is one
-of them is abandoned without evaluating it; and an abandoned cell keeps its
-stored input and parsed tree until the read ends, so it is read, parsed and
-charged once. A cell is still evaluated, for real, when a formula reads it.
+The fix: an abandoned cell is not evaluated speculatively again while what
+stood in its way is still on the stack; a speculative evaluation whose next
+missing cell is one of them is abandoned without evaluating it; and an
+abandoned cell keeps its stored input and parsed tree until the read ends, so
+it is read, parsed and charged once. A cell is still evaluated, for real, when
+a formula reads it.
+
+**1b. The first form of that fix made another shape quadratic.** The re-review
+at `02aa2b3` found it. `A<r>` is `=A<r-1>+MATCH(1,C<r>:D<r>,0)`, `C<r>` is `=1`,
+`D<r>` is `=B1` (or `=C<r>/B1`, a share of the total) and `B1` is
+`=SUM(A1:An)`. `D<r>`, evaluated ahead for the `MATCH`, reads `B1` on the stack,
+so `A<r>` was abandoned although its value never reads `D<r>`; every later
+`A<r>` was then abandoned for needing it, and each new wait settled one cell.
+`42f30fb` had been linear here. Evaluations for a read of `B1`:
+
+| Shape | `42f30fb` | `02aa2b3` | Now |
+| --- | --- | --- | --- |
+| The above, n = 1,000 (either column D) | 6,998 | 1,003,002 (4.6 s; `#LIMIT!` in a default read from n = 400) | 5,001 (0.13 s; the value in a default read) |
+| The above, n = 1,600 | not run | 2,564,802 (11.6 s) | 8,001 (0.21 s) |
+| Real cycle `A<r>` `=A<r-1>+B1`, n = 1,000 | quadratic (89,704 at n = 300) | 3,000 | 3,000 |
+| `A1` `=1/0`, n = 1,000 | quadratic (88,808 at n = 300) | 1,999 | 1,999 |
+| Rows by turns in the cycle, with an unread look-ahead, and reading the row above, n = 300 | 1,000 | 1,000 | 703 |
+| 100 ranges, each an error first, each looking ahead into one chain of 300 cells that leads back to the total | 60,402 | 60,402 | 1,101 |
+| The same, the chain's first cell reading all 100 ranges through `IFERROR` | 60,696 | 60,696 | 1,299 |
+
+The second form of the fix has three parts. A cell inside a speculative
+evaluation that completes with a result other than `#CYCLE!`, after a cycle was
+raised beneath it, read only kept values in its last pass, so it is evaluated
+once more, which raises nothing, and kept: `A<r>` above. A cell that completes
+with `#CYCLE!` is the culprit: it is recorded with its obstacle, the cell on
+the stack that its cycle read, and the cells waiting for it are recorded as
+waiting for it. While the obstacle is on the stack none of them is evaluated
+speculatively. When the obstacle has completed, the first speculative
+evaluation that needs one of them evaluates the culprit alone first; if it
+meets another obstacle, the chain above it was not walked again. The last two
+rows of the table are shapes that were quadratic at `42f30fb` too and are on
+`main` linear; they were found while looking for a third shape and are fixed
+by the same records.
 
 **2. Invalidation at commit was affected cells times rectangles.** With 4,000
 cached `=SUM(A<r>:A<r+5>)`, one edit of 10,000 unrelated cells on the same sheet:
@@ -397,8 +438,8 @@ served from the cache; and nothing is marked once the calculator has stopped
 recording.
 
 The properties these mechanisms guarantee were re-checked after the fixes with
-the reviewer's probes: 4,200 random workbooks gave the same results as `main`
-case for case; streamed and cell-by-cell evaluation agreed on 3,533 formulas;
+the reviewer's probes (and again after 1b, with 2,100 more random workbooks):
+4,200 random workbooks gave the same results as `main` case for case; streamed and cell-by-cell evaluation agreed on 3,533 formulas;
 22,342 cached values read after random edits, clears and undos equalled a fresh
 calculation, and so did a further 10,848 read three times over with the
 invalidation budget set to 0, 3 and 12 to force the fallbacks; and a volatile
