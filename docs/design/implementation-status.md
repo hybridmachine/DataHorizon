@@ -53,16 +53,16 @@ stored between reads, a 100,000-row running total shows `#LIMIT!` in a default
 read, and a formula near a budget can pass on one read and fail on the next.
 Stages 3 to 5 are not planned or built.
 
-Suites, by revision. **The suite runs at the last code revision (`03c180d`) are
-pending; they have not been run since the last code change**:
-- Service suite: 1,852 tests, OK, 28 skipped, at `2f9f340` (the replacement
-  evaluator); at `03c180d` only the focused modules were run: iterative
-  evaluation (22), streamed ranges (43), dependencies (24) and the corpus (2),
-  all OK. Whole service suite at `03c180d`: pending.
-- Desktop, Python workspace and chart suites (through `ctest`): last complete
-  run at `d4dceca`, all six tests passed; desktop 292 passed at `02aa2b3`. At
-  `cbc1cc4` a desktop run had failures that were caused by a worker editing the
-  tree and by load and was discarded. At `03c180d`: pending.
+Suites on this Mac, run on the code of the last code revision (`03c180d`; the
+commits after it change documents and evidence only):
+- Service suite: 1,854 tests, OK, 28 skipped, 391 s.
+- Desktop suite (through `ctest`): 292 passed, 0 failed, 278 s.
+- Python workspace and chart authoring suites, the chart probe smoke test and
+  the bundle signature check (through `ctest`): all passed.
+- Two earlier desktop runs, at `cbc1cc4`, had failures (a service start and two
+  CSV review steps timing out). Both ran while the service files in the same
+  tree were being edited or while other measurements were loading the machine,
+  and the failing tests passed alone; those runs were discarded.
 - One service test, `test_large_structure_service.LargeStructureServiceTests.test_owned_cli_group_interrupt_leaves_its_service_available_for_cancel`
   ("Required Python handler timed out"), failed in two whole-suite runs on a
   heavily loaded machine and passed alone, in the `ctest` run and in later
