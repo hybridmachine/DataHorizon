@@ -891,10 +891,15 @@ class Calculator:
                 self.remember(key, self._evaluate_cell(key))
                 self.active.discard(key)
             except Pending as need:  # raised here for key, or beneath it: key waits on the stack, still active
+                # Safe however little stack is left: a deeper frame existed a moment ago (the one that raised), and
+                # appending to a list enters no Python frame.
                 need.keys.append(key)
                 raise
             except RecursionError:
                 # Python's stack ran out beneath this cell before IN_PLACE_DEPTH did: the same signal as Pending.
+                # It may have run out inside remember, after the result was put in cache and before a subclass
+                # finished recording it (IndexedCalculator.save): the half-kept result is dropped, and follow
+                # evaluates and remembers the cell again from a shallow stack.
                 self.cache.pop(key, None)
                 raise Pending([key]) from None
             finally:

@@ -86,8 +86,7 @@ class InPlaceEvaluationTests(unittest.TestCase):
         self.addCleanup(book.close)
         return book
 
-    @staticmethod
-    def counted(book):
+    def counted(self, book):
         """A calculator, and per cell how many times its evaluation was begun, its result kept, and its input read."""
         calculator = book.calculator(seconds=30, transactional=True)
         evaluated, kept, read = {}, {}, {}
@@ -104,7 +103,10 @@ class InPlaceEvaluationTests(unittest.TestCase):
         def counted_read(*key):
             item = source(*key)
             read[key] = read.get(key, 0) + 1  # a read that completed: one that ran out of stack is not charged either
+            if item and item["kind"] == "formula":
+                formulas.add(key)
             return item
+        formulas = self.formulas = set()  # of the calculator made last: what assert_bounded counts
         calculator._evaluate_cell, calculator.remember, calculator.read = counted_evaluation, counted_remember, counted_read
         return calculator, evaluated, kept, read
 
@@ -125,10 +127,14 @@ class InPlaceEvaluationTests(unittest.TestCase):
             sys.setrecursionlimit(limit)
 
     def assert_bounded(self, evaluated):
-        """However deep the nesting and however little stack there is: a cell is evaluated in place at most once (it
-        completes, or unwinds and is pushed on the stack, once); a pushed cell completes there once; and each other
-        evaluation on the stack ended by pushing at least one cell not pushed before. Three per cell in all."""
-        self.assertLessEqual(sum(evaluated.values()), 3*len(evaluated), (sum(evaluated.values()), len(evaluated)))
+        """However deep the nesting and however little stack there is: a formula is evaluated in place at most once
+        (it completes, or unwinds and is pushed on the stack, once); a pushed formula completes there once; and each
+        other evaluation on the stack ended by pushing at least one cell not pushed before. So formulas are evaluated
+        at most three times each in all, plus once for each input cell that was itself pushed (the stack ran out
+        while it was being read: it is then evaluated twice). Input cells are not counted among the evaluations."""
+        formulas = sum(count for key, count in evaluated.items() if key in self.formulas)
+        pushed_inputs = sum(1 for key, count in evaluated.items() if key not in self.formulas and count > 1)
+        self.assertLessEqual(formulas, 3*len(self.formulas) + pushed_inputs, (formulas, len(self.formulas), pushed_inputs))
 
     def read_all(self, book, cells, order=None, room=None):
         """Every formula cell read through one calculator: (results by key, evaluations, kept and reads by key)."""
@@ -330,6 +336,55 @@ class InPlaceEvaluationTests(unittest.TestCase):
         self.assertLessEqual(formulas, 2*rows + rows//formula.IN_PLACE_DEPTH + 2, formulas)
         self.assertEqual({count for key, count in evaluated.items() if key[2] == 2}, {1})  # the inputs
         self.assert_bounded(evaluated)
+
+    def test_within_the_old_depth_but_beyond_the_python_stack_a_formula_can_be_evaluated_twice(self):
+        # 112 cells nested through AVERAGE, read through a total: the evaluator before stage 2 evaluates each formula
+        # once (113 evaluations). AVERAGE takes 8 Python frames a cell, so with an ordinary recursion limit the stack
+        # can run out before IN_PLACE_DEPTH: the cells that unwind are evaluated once more on the explicit stack
+        # (224 evaluations from a short call stack). Accepted: the value is the same and the work stays inside the
+        # aggregate bound (3 per formula, less 2), which is what is pinned here, not the exact count.
+        rows = 112
+        book = self.book(shaped({**{f"A{r}": f"=AVERAGE(A{r+1}:A{r+1})+1" for r in range(1, rows)}, f"A{rows}": "=1",
+                                 "B1": f"=SUM(A1:A{rows})"}))
+        calculator, evaluated, kept, _ = self.counted(book)
+        self.assertEqual(self.outcome(calculator, (book.sheet(S), 1, 2)), rows*(rows+1)//2)
+        self.assertEqual((len(kept), set(kept.values())), (rows+1, {1}))
+        self.assertLessEqual(sum(evaluated.values()), 3*(rows+1) - 2, sum(evaluated.values()))
+        self.assertLessEqual(max(evaluated.values()), 3)
+
+    def test_known_cost_a_total_over_many_deep_rows_is_evaluated_and_rescanned_once_for_each_row(self):
+        # NOT A GUARANTEE: a known cost of the fallback, pinned so that a change in either direction is noticed.
+        # Each row is a chain 130 cells long to the right, deeper than is evaluated in place, and the total sums the
+        # first cell of every row. Each row's chain unwinds the total once, and the total, evaluated again
+        # from its start, scans its range again up to that row: rows+1 evaluations of the total and
+        # rows*(rows+1)/2 + rows stored cells scanned, which grows with rows x rows (125,750 at 500 rows, 501,500 at
+        # 1,000). The evaluator before stage 2 cannot evaluate this shape at all (#LIMIT! past 128 cells).
+        rows, links = 150, 130
+
+        def letters(col):
+            name = ""
+            while col:
+                col, digit = divmod(col-1, 26)
+                name = chr(65+digit) + name
+            return name
+        cells = {f"{letters(col)}{r}": f"={letters(col+1)}{r}+1" for r in range(1, rows+1) for col in range(1, links)}
+        cells.update({f"{letters(links)}{r}": "=1" for r in range(1, rows+1)})
+        cells["A1000"] = f"=SUM(A1:A{rows})"
+        book = self.book(shaped(cells))
+        calculator, evaluated, kept, _ = self.counted(book)
+        scans, scanned, scan, sheet = [], [0], calculator.scan, book.sheet(S)
+
+        def counted_scan(*rectangle):
+            scans.append(rectangle)
+            for found in scan(*rectangle):
+                scanned[0] += 1
+                yield found
+        calculator.scan = counted_scan
+        self.assertEqual(self.outcome(calculator, (sheet, 1000, 1)), rows*links)
+        self.assertEqual(set(kept.values()), {1})
+        self.assertEqual(evaluated[sheet, 1000, 1], rows + 1)
+        self.assertEqual((len(scans), scanned[0]), (rows + 1, rows*(rows+1)//2 + rows))
+        self.assert_bounded(evaluated)  # the formulas themselves stay within three evaluations each
 
     def test_a_chain_read_through_a_range_against_its_direction(self):
         # B1 reads A1 first, and A1 needs the whole column beneath it: in-place evaluation runs out of depth every
