@@ -152,7 +152,8 @@ void ChartLayer::bind(const QString &workbookBase,const QString &sheet,const QSt
     // Another sheet's charts never stay on screen while this one's are read;
     // a new state of the same sheet keeps the overlays until the list lands.
     if(!sameSheet)clear();else ++m_generation;
-    if(m_projected){select({});refocusGrid();}
+    // A list view shows no chart, at once: the overlays kept for the same sheet are not left up until the list lands.
+    if(m_projected){select({});refocusGrid();relayout();}
     // Renders of another sheet, workbook or state are never shown.
     abandonUnwanted();
     if(!m_base.isEmpty() && !m_sheet.isEmpty() && !m_state.isEmpty())list();
