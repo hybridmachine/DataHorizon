@@ -53,12 +53,14 @@ stored between reads, a 100,000-row running total shows `#LIMIT!` in a default
 read, and a formula near a budget can pass on one read and fail on the next.
 Stages 3 to 5 are not planned or built.
 
-Suites on this Mac, run on the code of the last code revision (`03c180d`; the
-commits after it change documents and evidence only):
-- Service suite: 1,854 tests, OK, 28 skipped, 391 s.
-- Desktop suite (through `ctest`): 292 passed, 0 failed, 278 s.
+Suites on this Mac, run after the pull-request review's fixes (row seeks for
+narrow ranges on wide sheets, cells decoded only when read, stored blanks
+counted, and the benchmark's load average optional):
+- Service suite: 1,862 tests, OK, 28 skipped, 388 s.
+- Desktop suite (through `ctest`): 292 passed, 0 failed, 276 s.
 - Python workspace and chart authoring suites, the chart probe smoke test and
-  the bundle signature check (through `ctest`): all passed.
+  the bundle signature check (through `ctest`) were last run on the revision
+  before those fixes (`03c180d`): all passed.
 - Two earlier desktop runs, at `cbc1cc4`, had failures (a service start and two
   CSV review steps timing out). Both ran while the service files in the same
   tree were being edited or while other measurements were loading the machine,

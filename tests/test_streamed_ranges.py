@@ -718,5 +718,103 @@ class StreamedCriteriaAndLookupTests(RangeCase):
         self.assertEqual(self.results(cells, refs, scan=False), expected)
 
 
+
+class ScanStrategyAndLazyDecodingTests(RangeCase):
+    def statements(self, book, action):
+        """The SQL statements action runs on the workbook's connection."""
+        seen = []
+        book.db.set_trace_callback(seen.append)
+        try:
+            result = action()
+        finally:
+            book.db.set_trace_callback(None)
+        return result, seen
+
+    def insert(self, book, cells):
+        """Store (ref, source, kind) rows directly, as an external SQLite writer would."""
+        sheet = book.sheet(S)
+        for ref, source, kind in cells:
+            (_, row, col), = shaped({ref: None})
+            book.db.execute("INSERT OR REPLACE INTO cells(sheet_id,row,col,source,kind) VALUES(?,?,?,?,?)", (sheet, row, col, source, kind))
+        book.db.commit()
+
+    def test_a_narrow_range_on_a_wide_sheet_seeks_each_row_instead_of_scanning_the_other_columns(self):
+        book = self.book({"A1": "1"}); sheet = book.sheet(S)
+        book.db.executemany("INSERT OR REPLACE INTO cells(sheet_id,row,col,source,kind) VALUES(?,?,?,'1','number')",
+                            ((sheet, row, col) for row in range(1, 81) for col in range(1, 401)))
+        book.db.commit()
+        steps = []
+        book.db.set_progress_handler(lambda: steps.append(1) and 0, 1000)
+        try:
+            found = [(row, col) for row, col, _ in book.scan(sheet, 1, 1, 80, 1)]
+        finally:
+            book.db.set_progress_handler(None, 0)
+        self.assertEqual(found, [(row, 1) for row in range(1, 81)])
+        self.assertLess(len(steps), 20)  # 32,000 stored cells in those rows; a row-range statement steps over them all
+
+    def test_a_tall_range_on_a_narrow_sheet_is_one_statement_for_the_band(self):
+        book = self.book(column("A", ["1"]*2000)); sheet = book.sheet(S)
+        found, statements = self.statements(book, lambda: list(book.scan(sheet, 1, 1, 1024, 1)))
+        self.assertEqual([(row, col) for row, col, _ in found], [(row, 1) for row in range(1, 1025)])
+        self.assertLessEqual(len(statements), 4)  # at most three samples of the sheet's width, then the band
+
+    def test_both_scan_strategies_give_the_same_cells_in_row_then_column_order(self):
+        import random
+        chosen = random.Random(7)
+        for width in (3, 400):
+            book = self.book({"A1": "1"}); sheet = book.sheet(S)
+            cells = {(row, col) for row in range(1, 61) for col in range(1, width+1) if chosen.random() < 0.6}
+            book.db.execute("DELETE FROM cells")
+            book.db.executemany("INSERT INTO cells(sheet_id,row,col,source,kind) VALUES(?,?,?,'1','number')", ((sheet, row, col) for row, col in cells))
+            book.db.commit()
+            for r1, c1, r2, c2 in ((1, 1, 60, 2), (5, 2, 40, 3), (1, 1, 10, 3), (20, 1, 20, 3), (61, 1, 70, 2)):
+                with self.subTest(width=width, rectangle=(r1, c1, r2, c2)):
+                    expected = sorted(cell for cell in cells if r1 <= cell[0] <= r2 and c1 <= cell[1] <= c2)
+                    self.assertEqual([(row, col) for row, col, _ in book.scan(sheet, r1, c1, r2, c2)], expected)
+
+    def test_a_lookup_that_has_matched_does_not_decode_the_cell_after_it(self):
+        for scan in (True, False):
+            with self.subTest(scan=scan):
+                book = self.book({"A1": "1", "B1": "42", "D1": "=MATCH(1,A1:A2,0)", "D2": "=XLOOKUP(1,A1:A2,B1:B2)"})
+                self.insert(book, [("A2", "invalid", "number")])
+                calculator = self.calculator(book)
+                if not scan:
+                    calculator.scan = None
+                self.assertEqual([self.outcome(calculator, book, ref) for ref in ("D1", "D2")], [1, 42])
+
+    def test_a_cell_the_function_never_reads_is_never_decoded(self):
+        for scan in (True, False):
+            with self.subTest(scan=scan):
+                book = self.book({"A1": "5", "A2": "1", "B2": "42", "D1": "=XLOOKUP(1,A1:A2,B1:B2)",
+                                  "D2": '=SUMIFS(B1:B2,A1:A2,1)', "D3": "=SUMIF(A1:A2,1,B1:B2)"})
+                self.insert(book, [("B1", "invalid", "number")])
+                calculator = self.calculator(book)
+                if not scan:
+                    calculator.scan = None
+                self.assertEqual([self.outcome(calculator, book, ref) for ref in ("D1", "D2", "D3")], [42, 42, 42])
+
+    def test_stored_blank_cells_count_toward_the_limit_in_every_range_function(self):
+        cells = {"C1": "=COUNT(A1:A3)", "C2": "=COUNTIF(A1:A3,0)", "C3": "=MATCH(7,A1:A4,0)", "A4": "7"}
+        for limit, expected in ((2, ["#LIMIT!", "#LIMIT!", "#LIMIT!"]), (4, [0, 3, 4])):
+            with self.subTest(limit=limit):
+                book = self.book(cells)
+                self.insert(book, [("A1", "", "null"), ("A2", "", "null"), ("A3", "", "null")])
+                with patch.object(formula, "FORMULA_CELL_LIMIT", limit):
+                    calculator = self.calculator(book)
+                    self.assertEqual([self.outcome(calculator, book, ref) for ref in ("C1", "C2", "C3")], expected)
+
+    def test_an_empty_coordinate_in_a_criteria_range_still_costs_nothing(self):
+        book = self.book({"A1": "1", "A900": "1", "C1": "=COUNTIF(A1:A900,1)"})
+        with patch.object(formula, "FORMULA_CELL_LIMIT", 2):
+            self.assertEqual(self.outcome(self.calculator(book), book, "C1"), 2)
+
+    def test_the_benchmark_records_no_load_average_where_the_platform_has_none(self):
+        import os
+        import calculation_stage2_benchmark as benchmark
+        with patch.object(os, "getloadavg", side_effect=AttributeError("getloadavg"), create=True):
+            self.assertIsNone(benchmark.load_average())
+        self.assertEqual(len(benchmark.load_average()), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

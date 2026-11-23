@@ -131,11 +131,11 @@ class DependencyIndex:
         """Mark key's result as one never to keep, keeping its edges so that edits still reach its readers."""
         self.bytes-=self.sizes.pop(key,0);self.values.pop(key,None);self.mark(key)
 
-    def calculator(self,read,resolve,seconds,clock=None,*,scan=None):
+    def calculator(self,read,resolve,seconds,clock=None,*,scan=None,decode=None):
         index=self
         class IndexedCalculator(Calculator):
             def __init__(self):
-                super().__init__(self.input,resolve,seconds,clock=clock,scan=scan)
+                super().__init__(self.input,resolve,seconds,clock=clock,scan=scan,decode=decode)
                 self.cache=dict(index.values);self.disabled=False
 
             def input(self,sheet,row,col):

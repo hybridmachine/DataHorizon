@@ -257,6 +257,15 @@ available on Windows.
 - **Streamed ranges.** A range is read in row, then column order from one
   ordered SQL scan, in bands of 1,024 rows (`formula.SCAN_ROWS`) with the time
   budget checked before each band, and folded rather than turned into a list.
+  The cell key is sheet, row, column, so a statement over a band of rows steps
+  over every stored cell of those rows, whatever columns were asked for. Where
+  that would cost more than it saves, each row is sought on its own instead: for
+  rectangles of up to 16 rows, and for taller ones where the first, middle and
+  last rows hold on average more than 128 stored cells outside the columns. A
+  stored cell is decoded and validated only when a function reads it, so a
+  lookup that has matched, or a sum cell under a row that does not match, is
+  never decoded. A stored blank cell counts toward the per-formula limit; an
+  empty coordinate does not.
   `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `COUNTA`, `AND`, `OR`, `CONCAT` and
   `TEXTJOIN` stream, and so do `COUNTIF`, `SUMIF`, `COUNTIFS`, `SUMIFS`,
   `XLOOKUP`, `MATCH` and `INDEX`, with criteria and lookups that account for
@@ -390,9 +399,11 @@ redesign's review accepted; the rest are older.
 - **A formula can reach `#LIMIT!` by time, not by count.** At the measured
   per-cell costs the count limit is far from binding in any read with a budget
   (see S3). The count is the bound for reads without one.
-- **Time is checked between bands of 1,024 rows, not within one.** On a very
-  wide, dense sheet a single band is one SQL statement, so a read can overrun its
-  budget by that statement's duration. Overruns were measured above, in run 3:
+- **Time is checked between bands of 1,024 rows, not within one.** A band read
+  as one SQL statement can overrun the budget by that statement's duration. The
+  choice between one statement for the band and a statement for each row rests
+  on three sampled rows, so a sheet whose rows vary a great deal in width can be
+  read the slower way. Overruns were measured above, in run 3:
   reads with a 0.25 s budget gave up up to 0.03 s late and reads with a 2 s
   budget up to 0.69 s late (2.69 s, plain calculator, 131,072 formulas).
 - **A range reached through a function is charged twice.** `SUM(IF(TRUE,A1:A60,0))`
@@ -465,8 +476,9 @@ redesign's review accepted; the rest are older.
 ## Not measured
 
 - A cold file cache. Windows and Linux. Any other machine, or this one idle.
-- Sheets wider than 10 columns: the 1,024-row band is one statement and its
-  cost on a wide sheet was not timed.
+- Wide sheets in the benchmark. One case was timed after the pull-request
+  review (below): 80 rows of `=SUM(A$1:A<r>)` beside 2,000 other populated
+  columns read in 37 to 40 ms, with every total a value.
 - Dates, text and formula results mixed in one range, and ranges across
   several sheets.
 - Streaming results that are already calculated, as distinct from evaluating
@@ -504,6 +516,19 @@ redesign's review accepted; the rest are older.
 - `tests/benchmark.py`, the earlier formula harness, asserted that a chain of
   129 formulas gives `#LIMIT!`. It now expects the value.
 - The stage shipped as one pull request, not two.
+- The pull-request review found four defects, fixed before merge.
+  - A narrow range on a wide sheet stepped over every other column of its rows:
+    80 running sums beside 2,000 populated columns showed `#LIMIT!` for the last
+    six where the evaluator before stage 2 gave all 80 in about 10 ms. Rows are
+    now sought one at a time where that pays (37 to 40 ms for that sheet, all
+    values; a probe on the reference Mac, not benchmark evidence).
+  - A lookup decoded the cell after its match, and cells it never reads, so a
+    stored cell that fails validation could abort a read that the earlier
+    evaluator completed. Cells are now decoded only when read.
+  - A stored blank cell was not counted toward the per-formula limit by the
+    criteria functions and lookups, though it was by the aggregates.
+  - The benchmark needed `os.getloadavg`, which Windows lacks; it now records
+    no load average there.
 
 ## Next
 

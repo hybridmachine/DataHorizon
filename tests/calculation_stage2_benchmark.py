@@ -250,6 +250,14 @@ def s6(directory, runs, cells=1_000_000):
             "peak_rss": {"runs": [i["peak"] for i in loads], "unit": "bytes"}, "calculator_cache_entries": loads[0]["cache"]}
 
 
+def load_average():
+    """The 1, 5 and 15 minute load averages, or None where the platform has none (Windows)."""
+    try:
+        return [round(x, 2) for x in os.getloadavg()]
+    except (AttributeError, OSError):
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path)
@@ -275,7 +283,7 @@ def main():
     report = {"date_utc": datetime.now(timezone.utc).isoformat(),
               "host": {"platform": platform.platform(), "machine": platform.machine(), "python": platform.python_version(),
                        "sqlite": sqlite3.sqlite_version, "cpu_count": os.cpu_count(),
-                       "load_average_at_end": [round(x, 2) for x in os.getloadavg()]},
+                       "load_average_at_end": load_average()},
               "revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
               "source_sha256": {name: hashlib.sha256((ROOT / "tests" / name).read_bytes()).hexdigest()
                                 for name in ("calculation_stage2_benchmark.py", "calculation_benchmark.py", "calculation_fixture.py")},

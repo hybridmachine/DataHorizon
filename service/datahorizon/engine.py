@@ -207,6 +207,19 @@ def validate_style(style):
     return style
 
 
+# Workbook.scan seeks row by row for rectangles of up to SEEK_ROWS rows, and for taller ones where sampled rows hold
+# more than SEEK_GAIN stored cells outside the columns asked for: a statement per row costs about as much as
+# stepping over a hundred unwanted cells (measured: about 6 µs a statement, 0.05 µs a cell stepped over).
+SEEK_ROWS = 16
+SEEK_GAIN = 128
+
+
+def stored_item(raw):
+    """The typed item of a (source, kind) pair from Workbook.scan, its style left unparsed (calculation does not
+    use it)."""
+    return typed({"source": raw[0], "kind": raw[1], "style": {}})
+
+
 def typed(item):
     if item is None:
         return None
@@ -638,15 +651,36 @@ class Workbook:
             except EngineError as error:
                 raise FormulaError("#REF!", "Referenced sheet does not exist") from error
         read=lambda s,r,c: typed(self.raw(s,r,c))
-        return Calculator(read,resolve,seconds,clock=clock,scan=self.scan) if transactional else self.dependencies.calculator(read,resolve,seconds,clock,scan=self.scan)
+        return Calculator(read,resolve,seconds,clock=clock,scan=self.scan,decode=stored_item) if transactional else self.dependencies.calculator(read,resolve,seconds,clock,scan=self.scan,decode=stored_item)
 
     def scan(self, sheet, r1, c1, r2, c2):
-        """(row, col, item) for the stored cells of a rectangle in row, then column order, item as typed gives it with
-        the style left unparsed (calculation does not use it). Uses this connection, so a hook sees uncommitted cells."""
+        """(row, col, (source, kind)) for the stored cells of a rectangle in row, then column order, undecoded: the
+        calculator decodes a cell with stored_item when it reads it, so a cell it never reads is never validated.
+        Uses this connection, so a hook sees uncommitted cells.
+
+        The key is (sheet_id, row, col), so a statement over a range of rows steps over every stored cell of those
+        rows, whatever columns were asked for. Where the rows hold many more cells than the rectangle is wide, each
+        row is sought on its own instead; that costs a statement a row, so it is used only for a few rows or where
+        sampled rows show it pays."""
+        if r2-r1 < SEEK_ROWS or self._rows_are_wide(sheet, r1, c1, r2, c2):
+            for row in range(r1, r2+1):
+                for col, source, kind in self.db.execute(
+                        "SELECT col,source,kind FROM cells WHERE sheet_id=? AND row=? AND col BETWEEN ? AND ? ORDER BY col",
+                        (sheet, row, c1, c2)):
+                    yield row, col, (source, kind)
+            return
         for row, col, source, kind in self.db.execute(
                 "SELECT row,col,source,kind FROM cells WHERE sheet_id=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? ORDER BY row,col",
                 (sheet, r1, r2, c1, c2)):
-            yield row, col, typed({"source": source, "kind": kind, "style": {}})
+            yield row, col, (source, kind)
+
+    def _rows_are_wide(self, sheet, r1, c1, r2, c2):
+        """Whether the first, middle and last rows hold, on average, over SEEK_GAIN stored cells outside the columns."""
+        rows = sorted({r1, (r1+r2)//2, r2}); outside = 0
+        for row in rows:
+            outside += self.db.execute("SELECT count(*) FROM cells WHERE sheet_id=? AND row=? AND col NOT BETWEEN ? AND ?",
+                                       (sheet, row, c1, c2)).fetchone()[0]
+        return outside > SEEK_GAIN*len(rows)
 
     def range_cells(self, sheet, rows, c1, c2, deadline):
         for row in rows:

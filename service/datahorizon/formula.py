@@ -813,12 +813,13 @@ class Pending(Exception):
 
 
 class Unread:
-    """What Calculator.aligned gives for a cell it has not read: a formula cell, or without scan any coordinate.
-    Calculator.taken reads it."""
-    __slots__ = ("key",)
+    """What Calculator.aligned gives for a cell it has not read: a stored cell, undecoded, or without scan any
+    coordinate (stored is then None). Calculator.taken reads it. A coordinate with no stored cell is None instead, so
+    a stored blank is told apart from a gap."""
+    __slots__ = ("key", "stored")
 
-    def __init__(self, key):
-        self.key = key
+    def __init__(self, key, stored=None):
+        self.key, self.stored = key, stored
 
 
 FORMULA_CELL_LIMIT = 4_194_304  # stored cells (and text-size units) one evaluation of one formula may read
@@ -835,10 +836,13 @@ class RangeValue(list):
 
 
 class Calculator:
-    def __init__(self, read, resolve_sheet, seconds=0.25, *, clock=None, scan=None):
-        # scan(sheet, r1, c1, r2, c2) yields (row, col, item) for the stored cells of a rectangle in row, then column
-        # order, item as read gives it; without it a range is read one coordinate at a time.
+    def __init__(self, read, resolve_sheet, seconds=0.25, *, clock=None, scan=None, decode=None):
+        # scan(sheet, r1, c1, r2, c2) yields (row, col, stored) for the stored cells of a rectangle in row, then column
+        # order; without it a range is read one coordinate at a time. decode(stored) gives the item as read gives it,
+        # and is called only when a cell is read, so a cell a function never reads is never validated; without decode
+        # scan yields such items itself.
         self.read, self.resolve_sheet, self.scan = read, resolve_sheet, scan
+        self.decode = decode or (lambda stored: stored)
         self.clock = utc_clock() if clock is None else clock
         # active holds every cell being evaluated: those of the current recursion, and those in following, the
         # explicit stack (outermost first) of cells whose evaluation unwound because something beneath them nested
@@ -1015,10 +1019,10 @@ class Calculator:
                     yield row,col,value
             return
         seen=0
-        for row,col,item in self.scanned(target,r1,c1,r2,c2):
+        for row,col,stored in self.scanned(target,r1,c1,r2,c2):
             seen+=1
             if seen%256==0:self.check()
-            self.charge(1)
+            self.charge(1);item=self.decode(stored)
             if item["kind"]=="formula":value=self.result((target,row,col))
             elif item["kind"]=="unmaintained":value=FormulaError("#REF!",UNMAINTAINED_MESSAGE)
             else:value=item["value"]
@@ -1035,11 +1039,10 @@ class Calculator:
     def aligned(self,scopes,*,bands=False):
         """For same-shaped scopes (range_geometry tuples), (index, values) in order, index the row-major position inside
         the shape and values one entry per scope, None where that scope has no stored cell. Only positions where some
-        scope has a stored cell are yielded (without scan, every position). Nothing is read, evaluated, raised or
-        counted here: an input's value is given as it is stored (an unmaintained formula as its #REF! FormulaError),
-        and a formula cell, or without scan any coordinate, as Unread. The caller passes each entry it reads to
-        taken(), in the order a read of each cell in turn would have, so a cell it skips costs nothing and is never
-        evaluated. The scopes are scanned together in bands of SCAN_ROWS rows, so a caller that stops leaves later
+        scope has a stored cell are yielded (without scan, every position). Nothing is read, decoded, evaluated,
+        raised or counted here: a stored cell, or without scan any coordinate, is given as Unread, and a position is
+        yielded before the scan moves past it. The caller passes each entry it reads to taken(), in the order a read
+        of each cell in turn would have, so a cell it skips costs nothing and is never decoded or evaluated. The scopes are scanned together in bands of SCAN_ROWS rows, so a caller that stops leaves later
         bands unread; with bands=True, (end, None) follows each band, end the first index after it."""
         _,r1,c1,r2,c2=scopes[0];height,width=r2-r1+1,c2-c1+1
         if self.scan is None:
@@ -1051,35 +1054,37 @@ class Calculator:
         def band(scope,first,last):
             nonlocal seen
             target,top,left,_,right=scope
-            for row,col,item in self.scan(target,top+first,left,top+last,right):
+            for row,col,stored in self.scan(target,top+first,left,top+last,right):
                 seen+=1
                 if seen%256==0:self.check()
-                if item["kind"]=="formula":value=Unread((target,row,col))
-                elif item["kind"]=="unmaintained":value=FormulaError("#REF!",UNMAINTAINED_MESSAGE)
-                else:value=item["value"]
-                yield (row-top)*width+col-left,value
+                yield (row-top)*width+col-left,Unread((target,row,col),stored)
         for first in range(0,height,SCAN_ROWS):
             self.check();last=min(first+SCAN_ROWS,height)-1
             streams=[band(scope,first,last) for scope in scopes];heads=[next(stream,None) for stream in streams]
             while True:
                 index=min((head[0] for head in heads if head is not None),default=None)
                 if index is None:break
+                here=[k for k,head in enumerate(heads) if head is not None and head[0]==index]
                 values=[None]*len(scopes)
-                for k,head in enumerate(heads):
-                    if head is not None and head[0]==index:values[k]=head[1];heads[k]=next(streams[k],None)
+                for k in here:values[k]=heads[k][1]
                 yield index,values
+                for k in here:heads[k]=next(streams[k],None)
             if bands:yield (last+1)*width,None
 
     def taken(self,value,*,errors=False):
         """The value of an entry from aligned that the caller reads, counted toward the formula's limit (a stored cell,
-        or without scan any coordinate); a formula cell with no value yet is evaluated here, in place. A FormulaError
-        is raised, as reading the cell would have, or with errors=True one in CELL_ERRORS is returned."""
+        blank or not, or without scan any coordinate); the cell is decoded here, and a formula cell with no value yet
+        is evaluated here, in place. A FormulaError is raised, as reading the cell would have, or with errors=True one
+        in CELL_ERRORS is returned."""
         if isinstance(value,Unread):
             if self.scan is None:
                 try:value=self.cell(*value.key)
                 except FormulaError as error:value=error
-            else:self.charge(1);value=self.result(value.key)
-        elif value is not None:self.charge(1)
+            else:
+                self.charge(1);item=self.decode(value.stored)
+                if item["kind"]=="formula":value=self.result(value.key)
+                elif item["kind"]=="unmaintained":value=FormulaError("#REF!",UNMAINTAINED_MESSAGE)
+                else:value=item["value"]
         if isinstance(value,FormulaError) and (not errors or value.code not in CELL_ERRORS):raise value
         return value
 
