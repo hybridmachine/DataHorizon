@@ -1,6 +1,6 @@
 # Stored results and scaled recalculation: design
 
-Draft 0.1 | November 18, 2026 | Status: approved by the owner on November 18, 2026, with the four decisions in section 14 accepted as written. Stage 1 (measurement) is built on branch `claude/calculation-stage-1`: [plan](calculation-stage-1-plan.md), [result](calculation-experiment.md). Stage 1 is isolated test code. Stage 2 (iterative evaluation and streamed ranges) is built on branch `claude/calculation-stage-2`: [plan](calculation-stage-2-plan.md), [result](calculation-stage-2.md); the 128-cell and 10,000-cell limits are gone, stored results, digests and background recalculation (stages 3 to 5) are not built. Paragraphs marked **Measured** record what stages 1 and 2 fixed.
+Draft 0.1 | November 18, 2026 | Status: approved by the owner on November 18, 2026, with the four decisions in section 14 accepted as written. Stage 1 (measurement) is built on branch `claude/calculation-stage-1`: [plan](calculation-stage-1-plan.md), [result](calculation-experiment.md). Stage 1 is isolated test code. Stage 2 (evaluation in place with an explicit stack beyond a depth, and streamed ranges) is built on branch `claude/calculation-stage-2`: [plan](calculation-stage-2-plan.md), [result](calculation-stage-2.md); the 128-cell and 10,000-cell limits are gone, stored results, digests and background recalculation (stages 3 to 5) are not built. Paragraphs marked **Measured** record what stages 1 and 2 fixed.
 
 This is the design note that [increment 10 of the Excel fidelity programme](excel-fidelity-plan.md#increment-10-stored-results-and-scaled-recalculation)
 requires before the increment is planned. It is a design to plan from, not a
@@ -57,10 +57,10 @@ Anti-goals (a failure even if everything else works):
 - Each read builds a `Calculator` ([formula.py](../../service/datahorizon/formula.py))
   with a 0.25-second budget (2 seconds for lists, find, export and calculation
   jobs), a per-formula count of 4,194,304 stored cells read, an 8-MiB cap on
-  cells read one at a time, and evaluation by an explicit stack, so a
-  dependency chain has no fixed depth. Stage 2 replaced a 10,000-step count and
-  recursive evaluation, which bounded a chain at 128 cells and a range at
-  10,000.
+  cells read one at a time, and evaluation by recursion for up to 128 nested
+  formula cells and on an explicit stack beyond that, so a dependency chain has
+  no fixed depth. Stage 2 replaced a 10,000-step count and recursion alone, which
+  bounded a chain at 128 cells and a range at 10,000.
 - [dependencies.py](../../service/datahorizon/dependencies.py) keeps up to
   4,096 results and 50,000 edges in memory. It clears itself when it overflows,
   on every structural edit, and on every external change. Volatile formulas
@@ -325,15 +325,16 @@ rule the old error would be served for ever.
   reaches itself that way and to what reads it, stored like any other result.
   **Measured**: the prototype first gave `#CYCLE!` to the whole static cycle,
   which disagreed with the service.
-  **Measured** (stage 2): the service now evaluates a chain with an explicit
-  stack, so depth is no longer limited to 128. A chain costs about 30 to 40 µs
-  per formula, linear in its length: a default 0.25 s read completes 8,192
-  formulas and a 2 s read 32,768, not 65,536. The first measurement found a
-  defect: for each result the cache saved it walked every precedent of the
-  formula, so reads were quadratic in chain length (a default read completed 512
-  and 4,096 formulas but failed at 1,024 and 2,048). It was fixed in the same
-  stage by checking only a formula's direct reads, and both runs are kept
-  ([result](calculation-stage-2.md#s2-how-long-a-chain-one-read-completes)).
+  **Measured** (stage 2): the service evaluates a formula cell where it is read,
+  by ordinary recursion, as before; when nesting passes 128 formula cells or
+  Python's own recursion limit, the cells being evaluated move onto an explicit
+  stack, so depth is no longer limited to 128. A chain costs about 30 µs per
+  formula and is linear in its length: a default 0.25 s read completes 8,192
+  formulas and a 2 s read 32,768, not 65,536. Within 128 cells every formula is
+  evaluated once, as before; beyond, about twice. An earlier design evaluated a
+  range's missing formulas ahead of the read; it was replaced after review
+  found three shapes of it that were quadratic
+  ([result](calculation-stage-2.md#how-it-got-here)).
 - Sheet names in references are matched as the `sheets` table matches them
   (SQLite `NOCASE`, ASCII letters only), in precedent extraction and in
   evaluation alike. `='é'!A1` does not read a sheet named `É`.
@@ -349,10 +350,10 @@ rule the old error would be served for ever.
   2 µs per cell measured for a streamed column of short numbers; other cell
   kinds were not timed), on condition that stage 2 streams every
   range-reading function. **Measured** (stage 2): every range-reading function
-  now streams, and a streamed cell costs 3.7 µs for numbers, 2.7 µs for
-  40-character text, 3.9 µs for dates and 31.7 µs for a column of formulas that
+  now streams, and a streamed cell costs 3.6 µs for numbers, 2.6 µs for
+  40-character text, 4.7 µs for dates and 17.4 µs for a column of formulas that
   have to be evaluated, not 2 µs. A formula that read 4,194,304 cells would take
-  about 11 to 16 s over stored values and over 2 minutes over uncalculated
+  about 11 to 20 s over stored values and about 73 s over uncalculated
   formulas. The count stands as a count; the time attached to it does not
   ([result](calculation-stage-2.md#does-4194304-still-stand)). The count is charged
   where cells are read. A range read as a stream counts its stored cells only,
@@ -502,15 +503,16 @@ within the per-formula limits, so none shows `#LIMIT!`; the whole column simply
 takes long in the background. Its throughput is measured and documented, and it
 is not part of the completion criteria.
 
-**Measured** (stage 2): `=SUM(Sheet1!A1:A100000)` takes 0.39 s with a 2 s budget
+**Measured** (stage 2): `=SUM(Sheet1!A1:A100000)` takes 0.38 s with a 2 s budget
 and shows `#LIMIT!` in a default 0.25 s read, so the stage-1 target (at most
-0.25 s) is missed on the service. A `SUM` over 1,000,000 stored cells took 4.15 s
+0.25 s) is missed on the service. A `SUM` over 1,000,000 stored cells took 3.4 s
 and added at most 32 KiB to the process's peak resident memory, because the
 cells are not held. `COUNTIF`, a three-criteria `SUMIFS` and an `XLOOKUP` to the
-last row over 100,000 rows take 0.58, 1.93 and 0.89 s. With 4,096 cached range
-readers an edit's invalidation takes 2.7 ms when it touches a few and 0.47 s
-when it touches 2,098, because the cache has no spatial index (8.6 million
-containment checks). Medians on a machine that was not idle
+last row over 100,000 rows take 0.54, 1.77 and 0.79 s. With 4,096 cached range
+readers an edit's invalidation takes 2.2 ms when it touches a few and 3.1 ms
+when it touches 2,098; invalidation has a budget of 100,000 containment checks
+and forgets more than necessary past it, and the cache still has no spatial
+index. Medians on a machine with a load of about 3
 ([result](calculation-stage-2.md)).
 
 Two services opening one file is unsupported, as today: each one's result
@@ -607,8 +609,10 @@ Each stage is one or more reviewed pull requests that leave `main` working.
   the builder's choice; the prototype's column-and-bisect lookup degrades when
   many ranges cover a formula column and must not be carried over as it is.
   **Measured** (stage 2): stage 2's in-memory cache records a range as one
-  rectangle and still has no interval structure; with 4,096 cached readers over
-  a column one edit checked 8.6 million rectangles in 0.47 s, so the point stands.
+  rectangle and still has no interval structure. Before a check budget was added,
+  one edit with 4,096 cached readers over a column checked 8.6 million rectangles
+  in 0.47 s; with it, 8,190 checks in 3 ms, at the price of forgetting more than
+  necessary past the budget. The point stands for stage 4.
 - Thread or child process for the worker.
 - Batch sizes and the worker's yielding rule.
 - The pull-request split inside each stage.

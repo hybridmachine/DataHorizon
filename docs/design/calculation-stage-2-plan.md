@@ -1,5 +1,7 @@
 # Calculation Stage 2 Implementation Plan
 
+> **As built, this plan differs in two ways.** Task 4's speculative batch (evaluating a range's missing formula cells ahead of the function that reads it) was replaced, after review found three quadratic shapes of it, by evaluating a missing formula where it is read, with the explicit stack of Task 2 kept only as the fallback when nesting goes beyond 128 cells or Python's stack. And the stage ships as one pull request, not two. The plan below is left as it was approved; the [result](calculation-stage-2.md) describes what was built and measured.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Evaluate formulas iteratively and read ranges as streams inside the service, so the 128-cell chain limit and the 10,000-cell range limit go away, with every other contract unchanged.

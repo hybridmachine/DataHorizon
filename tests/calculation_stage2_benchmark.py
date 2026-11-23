@@ -218,9 +218,10 @@ def s5(directory, runs):
                 samples.append(time.perf_counter() - start)
                 checks.append(book.dependencies.checks - before)
                 affected.append(len(hit))
+                after = len(book.dependencies.values)  # 0 when invalidation passed its check budget and forgot everything
             out[name] = {"runs": [round(s, 6) for s in samples], "median": round(statistics.median(samples), 6), "unit": "s",
                          "cached_before": held, "range_edges_recorded": recorded,
-                         "checks": checks[-1], "invalidated": affected[-1]}
+                         "checks": checks[-1], "invalidated": affected[-1], "cached_after": after}
     return out
 
 
@@ -290,7 +291,7 @@ def main():
         if key.startswith(("S3", "S4")):
             print(f"{key}: {item['median']} s" + (f", {item['microseconds_per_cell']} us/cell" if "microseconds_per_cell" in item else ""))
     for key, item in m["S5"].items():
-        print(f"S5 {key}: {item['median']} s, {item['checks']} checks")
+        print(f"S5 {key}: {item['median']} s, {item['checks']} checks, {item['invalidated']} invalidated, {item['cached_after']} cached after")
     print(f"S6: {m['S6']['seconds']['median']} s, rss added {m['S6']['rss_added']['median']}")
     return 0
 
