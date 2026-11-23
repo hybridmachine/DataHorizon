@@ -73,9 +73,11 @@ load. Two changes are larger. The formula-results column of S3 fell from
 31.7 to 17.4 µs per cell; that column is evaluated, not only read, and run 3 is
 the first with evaluation in place, which does not push, set aside and
 re-enter each formula, but the benchmark does not isolate that cause. The dates
-column rose from 3.9 to 4.7 µs (about 20%) for no reason that was found; the
-code on its path did not change between runs 2 and 3, so treat it as noise and
-read the figures to one significant digit. The S5 change is understood (below).
+column rose from 3.9 to 4.7 µs (about 20%) for no reason that was found. The scan and the date conversion
+(`engine.py`) did not change between runs 2 and 3, but the streaming and
+reading code in `formula.py` (`stored`, `cell`, `taken`) and `dependencies.py`
+did, so a cause cannot be ruled out; treat it as noise and read the figures to
+one significant digit. The S5 change is understood (below).
 
 ### S1: why it is missed
 
@@ -126,7 +128,8 @@ until it turned itself off at its cap of 4,096 results. A default read completed
 512 formulas (0.14 s) but failed at 1,024 and 2,048, completed 4,096 (0.13 s),
 and sat on its budget at 8,192; a 2 s cached read took 0.55 s for 1,024 and
 failed at 2,048 while completing 4,096 to 32,768. The plain calculator, which
-has no cache, was linear throughout. The fix (commit `09b21cc`) made the cache
+has no cache, showed no quadratic growth (8,192 formulas in 0.32 s, 16,384 in
+0.91 s, 32,768 in 1.15 s). The fix (commit `09b21cc`) made the cache
 check only a formula's direct reads; run 2 and run 3 show the linear figures.
 At 4,096 results the cache still turns itself off, as designed.
 
@@ -191,11 +194,12 @@ of readers, not the number of cells they cover. It has no spatial index. In runs
 the sheet, which cost 8,591,310 checks and 0.47 s for the second shape. Run 3
 spends at most 100,000 containment checks exactly and, past that, replaces the
 cells found in a step by their bounding box (see Known limitations). That is why
-the second shape now costs 8,190 checks: the 2,097 readers it finds are checked
+the second shape now costs 8,190 checks: the 2,097 readers it finds (2,098
+invalidated in the table, counting the edited coordinate) are checked
 as one box against 4,096 rectangles, and none of those rectangles meets the box,
 so the result is the same as the exact one. The benchmark calls `invalidate`
 directly; the cost of an edit made through `Workbook`, which invalidates inside
-its commit, was not measured by it. A reviewer's probe on the code before the
+its commit, was not measured by it. A probe in the code review of the final evaluator, on the code before the
 budget existed (one edit of 10,000 unrelated cells with 4,000 cached range
 readers) took 1.95 s and 40,000,000 checks, and 0.19 s and 4,000 checks with the
 budget, on a machine with a one-minute load between 3 and 11; that is a single
@@ -216,20 +220,22 @@ available on Windows.
 
 - **Evaluation in place, with an explicit stack for depth.** A formula cell with
   no value yet is evaluated at the moment a formula reads it, by ordinary
-  recursion, as the evaluator before stage 2 did. Each formula is evaluated
-  once per calculator, parsed once, and its input read and charged once.
-  When nesting passes `IN_PLACE_DEPTH`, 128 formula cells (the outermost
+  recursion, as the evaluator before stage 2 did. Within the depth below and
+  Python's own stack, each formula is evaluated once per calculator, parsed once,
+  and its input read and charged once; beyond them, up to three evaluations per
+  formula in aggregate (below). When nesting passes `IN_PLACE_DEPTH`, 128 formula cells (the outermost
   included; input cells do not count), or when Python's own recursion limit is
   reached first, the evaluations in progress unwind and the cells they were
   evaluating are moved onto an explicit stack, still marked as being evaluated,
-  and evaluated again from there. Python's limit comes first for range
+  and evaluated again from there. Python's limit comes first for some
   functions: a probe on Python 3.14.6 (limit 1,000, a bare script with one
   frame counter attached) found the deepest chain evaluated wholly in place was
-  128 through a plain reference or `SUM`, 124 through `SUMIFS`, `COUNTIF` or
-  `XLOOKUP`, 111 through `AVERAGE` or `MATCH` and 91 through `TEXTJOIN`. So a
-  chain has no fixed depth; within the depth every formula is evaluated exactly
-  once, as many times as before stage 2, and beyond it about twice, at most
-  three times per cell in aggregate over any read. A formula whose own
+  128 through a plain reference or `SUM` (the depth itself, no early stop), 124
+  through `SUMIFS`, `COUNTIF` or `XLOOKUP`, 111 through `AVERAGE` or `MATCH` and
+  91 through `TEXTJOIN`. So a chain has no fixed depth; within the depth and
+  Python's stack every formula is evaluated exactly once, as many times as before
+  stage 2, and beyond them about twice, at most three times per cell in
+  aggregate over any read. A formula whose own
   expression is nested too deeply is still `#LIMIT!` with the message
   `Calculation nesting limit exceeded`.
 - **Cycles and untaken branches.** A cycle is a read of a cell that is being
@@ -245,7 +251,9 @@ available on Windows.
   single reference counts one whether the coordinate is stored or empty. It is
   enforced where the count is charged, so it holds in chart jobs too, and it
   restarts for each formula evaluated. The 8 MiB input cap stays for cells read
-  one at a time; cells read through a stream are not held and not charged to it.
+  one at a time; the stored values of cells read through a stream are not held and
+  not charged to it, but the source of a formula cell reached through a range is
+  charged once, when that formula is evaluated.
 - **Streamed ranges.** A range is read in row, then column order from one
   ordered SQL scan, in bands of 1,024 rows (`formula.SCAN_ROWS`) with the time
   budget checked before each band, and folded rather than turned into a list.
@@ -274,17 +282,19 @@ that had no value yet, and the design requires every pull request to leave
 
 ### Checked against the evaluator before stage 2
 
-The final evaluator was compared with `main`'s on generated workbooks, by a
-reviewer, in several ways. Against `main` itself: 764,520 comparisons (12 read
+The final evaluator, as of `2f9f340`, was compared with `main`'s on generated
+workbooks, by a code review of that evaluator, in several ways. The later
+commit `03c180d` added tests and comments and changed no behaviour. Against
+`main` itself: 764,520 comparisons (12 read
 modes, 300 deep workbooks) with 0 differences. Against `main` with its two
 limits removed: 721,756 comparisons, 0 differences. Across the depth boundary,
 12,174,720 results on 1,760 hand-built shapes, 0 differences. For the cache,
 7,478 runs with a recursion error forced at random places and 72,602 checks
 after edits found 0 stale values. On 23,723 single reads that `main` completes,
-the implementer counted formula evaluations on both sides: the final code
+the author of the change counted formula evaluations on both sides: the final code
 evaluated the same number as `main` on every one (143,467 evaluations on each
-side), never more. These are probe measurements by the reviewer and the
-implementer, not benchmark evidence.
+side), never more. These are probe measurements by the code review and the author of the
+change, not benchmark evidence.
 
 ## How it got here
 
@@ -294,9 +304,12 @@ range could be folded in one pass. A speculative result was kept only if no
 `#CYCLE!` was raised beneath it, and a cell that met one was set aside and
 tried again later. That machinery could not keep its work linear. Review of the
 whole branch at `42f30fb` and its follow-ups found three shapes of one class,
-each a sheet on which `main` gives a value and the first design either took
-quadratic work or showed `#LIMIT!` in a default read. Each is a running column
-`A<r>` over a total `B1` `=SUM(A1:An)`:
+each of which made the first design take quadratic work or show `#LIMIT!` in a
+default read. Each is a running column `A<r>` over a total `B1` `=SUM(A1:An)`.
+The baseline differs by shape: in the first `main` gives an error (`#CYCLE!` or
+`#DIV/0!`) that the first design turned into `#LIMIT!`; in the second `main` also
+gives `#LIMIT!` (its chain is over 128 cells), so it was a regression against
+the branch's own earlier state; only in the third does `main` give a value.
 
 1. A circular total: `A<r>` `=A<r-1>+B1`, with `A1` `=1/0`, n = 1,500: 2,108,042
    evaluations at `42f30fb`; 2,999 after the first fix; 2 after the redesign.
@@ -318,7 +331,7 @@ replacement compared it with `main` (figures above) and found no wrong value or
 error. It found two costs, both accepted and described under Known limitations,
 and neither changes a result or is a regression against `main`.
 
-Two other defects found on the way are fixed in the cache: its per-result walk
+Three other defects found on the way are fixed in the cache: its per-result walk
 (S2), and, in the final review, an invalidation that cost affected cells times
 rectangles and a cacheability check that walked every uncacheable cell for each
 range on every save. For the second, with 4,000 cached `=SUM(A<r>:A<r+5>)` and
@@ -353,21 +366,26 @@ redesign's review accepted; the rest are older.
   too-deep precedent beneath it.** A cell that is moved onto the explicit stack
   is evaluated again from its start each time a cell beneath it is refused for
   depth, so a range it reads is scanned again each time. A column total over many
-  deep chains is quadratic in cells scanned. The reviewer's figures, for a total
-  over rows each holding a chain 130 cells deep: 500 rows scan 125,750 cells,
-  1,000 rows scan 501,500, and 2,000 rows took 25.7 s (5.7 s before the
-  redesign). `main` gives `#LIMIT!` for all of these, so nothing that `main`
+  deep chains is quadratic in cells scanned. A code review of the final evaluator measured, for a
+  total over rows each holding a chain 130 cells deep: 500 rows scan 125,750
+  cells and 1,000 rows scan 501,500, which follow rows × (rows + 1) / 2 + rows
+  (the pinned 150-row test's 11,475 matches), and 2,000 rows took 25.7 s (5.7 s
+  before the redesign). `main` gives `#LIMIT!` for all of these, so nothing that `main`
   calculates is affected. A test pins today's cost (150 rows: the total is
   evaluated 151 times and scans 11,475 stored cells), so that a change in either
   direction is noticed. Stage 4's worker evaluates in dependency order, where a
   too-deep precedent is already calculated, and does not have this cost.
 - **Inside `main`'s depth but beyond Python's stack, a formula can be evaluated
-  twice.** Range functions nest more frames per cell than a plain reference, so
-  Python's recursion limit is reached at 91 to 111 nested cells, short of 128.
-  The cells beyond that point are moved to the explicit stack and evaluated
-  again. The reviewer measured at most 1.99 times as many evaluations as `main`
-  on one read, and 2.5% more in aggregate over 63,710 reads, with the same
-  results, far inside the budgets. A test pins the case of a 112-cell chain
+  twice.** Some range functions nest more frames per cell than a plain reference, so
+  Python's recursion limit is reached before 128 nested cells: at 124 through
+  `SUMIFS`, `COUNTIF` and `XLOOKUP`, 111 through `AVERAGE` and `MATCH`, and 91
+  through `TEXTJOIN` (a plain reference and `SUM` reach 128). The cells beyond
+  that point are moved to the explicit stack and evaluated again. The code
+  review measured, over 300 generated workbooks and the 63,710 formula-cell
+  reads that `main` completes, at most 1.99 times as many evaluations as `main`
+  on one read and 2.5% more in aggregate; 790 of those reads evaluated more on
+  the branch, all at a `main` depth of 88 or more. The results were the same,
+  far inside the budgets. A test pins the case of a 112-cell chain
   through `AVERAGE`.
 - **A formula can reach `#LIMIT!` by time, not by count.** At the measured
   per-cell costs the count limit is far from binding in any read with a budget
@@ -382,7 +400,10 @@ redesign's review accepted; the rest are older.
 - **A chart job counts more than a read.** A chart job replaces the calculator's
   check with its own counter, which adds one for each call. In a probe over
   10,000 stored cells a `SUM` was counted as 10,050 and a two-range `SUMIFS` as
-  30,090, so the per-formula limit is reached after fewer cells there. Calculation
+  30,090, so the per-formula limit is reached after fewer cells there: derived from that
+  probe, at about 4.2 million cells for a `SUM` (4,194,304 / 1.005) and about
+  1.4 million rows, 2.8 million cells, for a two-range `SUMIFS` (4,194,304 /
+  3.009 rows). Calculation
   and chart job progress counters can also drop or double-count when a formula
   starts.
 - **A range read does not validate stored style JSON.** A bad style on a cell
@@ -421,12 +442,23 @@ redesign's review accepted; the rest are older.
 - **`DependencyIndex.hits` counts more than reuse.** It counts every read of a
   cell the calculator already holds a result for, including one calculated
   moments before in the same read, not only results kept from an earlier read; it
-  is a diagnostic only. A chain of 399 formulas read once counted 384.
+  is a diagnostic only. A probe made while writing this document counted 384 for a chain of 399
+  formulas read once.
 - **Stray `ResourceWarning` lines.** The full suite printed about three
   "unclosed database" warnings, raised by garbage collection. Two came from
   `tests/test_bindings.py`, where two tests assigned a second `Workbook` to
-  `self.book` that was never closed; both now close it. The third, printed
-  during `test_charts.test_limit_charts`, was not traced.
+  `self.book` that was never closed; both now close it. One remains, seen
+  during `test_charts.test_limit_charts`, and was not traced.
+- **A load-sensitive service test.**
+  `test_large_structure_service.LargeStructureServiceTests.test_owned_cli_group_interrupt_leaves_its_service_available_for_cancel`
+  timed out ("Required Python handler timed out") in two whole-suite runs under
+  heavy load, and passed alone and in every other run.
+- **A stderr line under a small stack.** "Exception ignored while closing
+  generator" is printed only when the stack room is reduced artificially, as the
+  tests do.
+- **A deadline hit while a formula is parsed for the cache** marks that formula
+  uncacheable until it is edited: slower, never stale, and present before this
+  stage.
 - **Tests that patch the limit.** The tests keep a few cases that patch the
   per-formula limit instead of reaching it.
 
@@ -450,7 +482,8 @@ redesign's review accepted; the rest are older.
   probe figures under S5.
 - Deep chains through `AVERAGE`, `MATCH` and `TEXTJOIN` in the benchmark: S2
   measures a plain reference chain, and the double evaluation near the Python
-  limit is known only from the reviewer's and the implementer's probes.
+  limit is known only from probes made in the code review and by the author of the
+  change.
 - The test suites on Windows and Linux. See the
   [status](implementation-status.md) for what was run on which revision.
 

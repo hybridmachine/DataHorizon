@@ -12,7 +12,7 @@ Stage 2 of the [calculation design](calculation-design.md) is built on branch
 with two earlier runs kept beside it). The service evaluates a formula cell where
 it is read, by ordinary recursion up to 128 nested formula cells, and moves the
 cells being evaluated onto an explicit stack beyond that depth (or where Python's
-own recursion limit comes first, at 91 to 111 nested cells for range functions).
+own recursion limit comes first, at 124 through `SUMIFS`, `COUNTIF` and `XLOOKUP`, 111 through `AVERAGE` and `MATCH`, and 91 through `TEXTJOIN`).
 Ranges are read as ordered streams in bands of 1,024 rows. The 128-cell chain
 limit and the 10,000-cell range limit are gone. A formula may read up to
 4,194,304 stored cells (the per-formula count, replacing the 10,000-step count);
@@ -53,7 +53,7 @@ stored between reads, a 100,000-row running total shows `#LIMIT!` in a default
 read, and a formula near a budget can pass on one read and fail on the next.
 Stages 3 to 5 are not planned or built.
 
-Suites, by revision. **The suite runs at the final revision (`03c180d`) are
+Suites, by revision. **The suite runs at the last code revision (`03c180d`) are
 pending; they have not been run since the last code change**:
 - Service suite: 1,852 tests, OK, 28 skipped, at `2f9f340` (the replacement
   evaluator); at `03c180d` only the focused modules were run: iterative

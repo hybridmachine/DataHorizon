@@ -330,8 +330,8 @@ rule the old error would be served for ever.
   Python's own recursion limit, the cells being evaluated move onto an explicit
   stack, so depth is no longer limited to 128. A chain costs about 30 µs per
   formula and is linear in its length: a default 0.25 s read completes 8,192
-  formulas and a 2 s read 32,768, not 65,536. Within 128 cells every formula is
-  evaluated once, as before; beyond, about twice. An earlier design evaluated a
+  formulas and a 2 s read 32,768, not 65,536. Within 128 cells and Python's stack every formula is
+  evaluated once, as before; beyond them, about twice. An earlier design evaluated a
   range's missing formulas ahead of the read; it was replaced after review
   found three shapes of it that were quadratic
   ([result](calculation-stage-2.md#how-it-got-here)).
