@@ -1,0 +1,444 @@
+{
+  "date_utc": "2026-11-21T22:09:02.152610+00:00",
+  "host": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "python": "3.14.6",
+    "sqlite": "3.53.4",
+    "cpu_count": 8,
+    "load_average_at_end": [
+      5.14,
+      6.29,
+      6.51
+    ]
+  },
+  "revision": "e28415d8440be78cc977bc63a9b096fff5225048",
+  "source_sha256": {
+    "calculation_stage2_benchmark.py": "ea3af1f30cf2f80e80c551503ffe05ee388ce9dc92ad3a21aacafbb56437827d",
+    "calculation_benchmark.py": "9084706af8ebaee9aa42be4a0ce3101947bc837bc5b486cfd59268cb17d22c05",
+    "calculation_fixture.py": "bd737ebee9f356836a793747bfafc209952c36240a1a1172ef926868fe62fb57"
+  },
+  "limits": {
+    "FORMULA_CELL_LIMIT": 4194304,
+    "SCAN_ROWS": 1024
+  },
+  "rows": 100000,
+  "runs": 5,
+  "measurements": {
+    "S1": {
+      "runs": [
+        0.250876,
+        0.250682,
+        0.250927,
+        0.250977,
+        0.250434
+      ],
+      "median": 0.250876,
+      "unit": "s",
+      "cells": 100000,
+      "displayed": [
+        "#LIMIT!",
+        "#LIMIT!",
+        "#LIMIT!",
+        "#LIMIT!",
+        "#LIMIT!"
+      ],
+      "completed_runs": 0,
+      "with_2s_budget": {
+        "runs": [
+          0.410586,
+          0.407903,
+          0.40951,
+          0.410338,
+          0.423009
+        ],
+        "median": 0.410338,
+        "unit": "s",
+        "cells": 100000,
+        "microseconds_per_cell": 4.1
+      },
+      "target": 0.25,
+      "met": false
+    },
+    "S2": {
+      "default_read_0.25s": {
+        "longest_completed_before_first_failure": 512,
+        "first_failure": 1024,
+        "largest_completed": 4096,
+        "steps": [
+          {
+            "length": 256,
+            "seconds": 0.0397,
+            "completed": true
+          },
+          {
+            "length": 512,
+            "seconds": 0.1363,
+            "completed": true
+          },
+          {
+            "length": 1024,
+            "seconds": 0.251,
+            "completed": false
+          },
+          {
+            "length": 2048,
+            "seconds": 0.2537,
+            "completed": false
+          },
+          {
+            "length": 4096,
+            "seconds": 0.1259,
+            "completed": true
+          },
+          {
+            "length": 8192,
+            "seconds": 0.2505,
+            "completed": false
+          },
+          {
+            "length": 16384,
+            "seconds": 0.3034,
+            "completed": false
+          },
+          {
+            "length": 32768,
+            "seconds": 0.3593,
+            "completed": false
+          },
+          {
+            "length": 65536,
+            "seconds": 0.358,
+            "completed": false
+          },
+          {
+            "length": 131072,
+            "seconds": 0.3516,
+            "completed": false
+          },
+          {
+            "length": 262144,
+            "seconds": 0.2901,
+            "completed": false
+          }
+        ],
+        "time_at_longest_before_first_failure": {
+          "runs": [
+            0.1368,
+            0.1388,
+            0.1365,
+            0.1473,
+            0.1439
+          ],
+          "median": 0.1388,
+          "unit": "s"
+        }
+      },
+      "list_budget_2s_cached": {
+        "longest_completed_before_first_failure": 1024,
+        "first_failure": 2048,
+        "largest_completed": 32768,
+        "steps": [
+          {
+            "length": 256,
+            "seconds": 0.0399,
+            "completed": true
+          },
+          {
+            "length": 512,
+            "seconds": 0.1506,
+            "completed": true
+          },
+          {
+            "length": 1024,
+            "seconds": 0.5496,
+            "completed": true
+          },
+          {
+            "length": 2048,
+            "seconds": 2.0007,
+            "completed": false
+          },
+          {
+            "length": 4096,
+            "seconds": 0.1783,
+            "completed": true
+          },
+          {
+            "length": 8192,
+            "seconds": 0.3869,
+            "completed": true
+          },
+          {
+            "length": 16384,
+            "seconds": 0.6631,
+            "completed": true
+          },
+          {
+            "length": 32768,
+            "seconds": 1.3442,
+            "completed": true
+          },
+          {
+            "length": 65536,
+            "seconds": 2.246,
+            "completed": false
+          },
+          {
+            "length": 131072,
+            "seconds": 2.4152,
+            "completed": false
+          },
+          {
+            "length": 262144,
+            "seconds": 2.3857,
+            "completed": false
+          }
+        ],
+        "time_at_longest_before_first_failure": {
+          "runs": [
+            0.5354,
+            0.5476,
+            0.5448,
+            0.5528,
+            0.8019
+          ],
+          "median": 0.5476,
+          "unit": "s"
+        }
+      },
+      "list_budget_2s_plain": {
+        "longest_completed_before_first_failure": 32768,
+        "first_failure": 65536,
+        "largest_completed": 32768,
+        "steps": [
+          {
+            "length": 256,
+            "seconds": 0.0112,
+            "completed": true
+          },
+          {
+            "length": 512,
+            "seconds": 0.0198,
+            "completed": true
+          },
+          {
+            "length": 1024,
+            "seconds": 0.0416,
+            "completed": true
+          },
+          {
+            "length": 2048,
+            "seconds": 0.0899,
+            "completed": true
+          },
+          {
+            "length": 4096,
+            "seconds": 0.1564,
+            "completed": true
+          },
+          {
+            "length": 8192,
+            "seconds": 0.3221,
+            "completed": true
+          },
+          {
+            "length": 16384,
+            "seconds": 0.9051,
+            "completed": true
+          },
+          {
+            "length": 32768,
+            "seconds": 1.1509,
+            "completed": true
+          },
+          {
+            "length": 65536,
+            "seconds": 2.1077,
+            "completed": false
+          },
+          {
+            "length": 131072,
+            "seconds": 2.6513,
+            "completed": false
+          },
+          {
+            "length": 262144,
+            "seconds": 2.4783,
+            "completed": false
+          }
+        ],
+        "time_at_longest_before_first_failure": {
+          "runs": [
+            1.1457,
+            1.4867,
+            1.3953,
+            1.1978,
+            1.1515
+          ],
+          "median": 1.1978,
+          "unit": "s"
+        }
+      }
+    },
+    "S3.numbers": {
+      "runs": [
+        0.458165,
+        0.458992,
+        0.407556,
+        0.420658,
+        0.407142
+      ],
+      "median": 0.420658,
+      "unit": "s",
+      "cells": 100000,
+      "microseconds_per_cell": 4.21
+    },
+    "S3.text_40": {
+      "runs": [
+        0.292324,
+        0.282378,
+        0.285412,
+        0.295803,
+        0.28794
+      ],
+      "median": 0.28794,
+      "unit": "s",
+      "cells": 100000,
+      "microseconds_per_cell": 2.88
+    },
+    "S3.dates": {
+      "runs": [
+        0.40412,
+        0.423467,
+        0.407965,
+        0.415574,
+        0.410786
+      ],
+      "median": 0.410786,
+      "unit": "s",
+      "cells": 100000,
+      "microseconds_per_cell": 4.11
+    },
+    "S3.formula_results": {
+      "runs": [
+        3.144211,
+        3.143092,
+        3.268595,
+        3.526478,
+        3.866804
+      ],
+      "median": 3.268595,
+      "unit": "s",
+      "cells": 100000,
+      "microseconds_per_cell": 32.69
+    },
+    "S4.countif": {
+      "runs": [
+        0.728193,
+        0.638492,
+        0.677182,
+        0.631308,
+        0.629747
+      ],
+      "median": 0.638492,
+      "unit": "s",
+      "rows": 100000,
+      "within_default_budget": false
+    },
+    "S4.sumifs_3_criteria": {
+      "runs": [
+        2.129182,
+        2.457516,
+        2.146615,
+        2.178902,
+        2.386124
+      ],
+      "median": 2.178902,
+      "unit": "s",
+      "rows": 100000,
+      "within_default_budget": false
+    },
+    "S4.xlookup_last_row": {
+      "runs": [
+        0.957847,
+        0.923586,
+        0.920745,
+        0.9379,
+        1.116854
+      ],
+      "median": 0.9379,
+      "unit": "s",
+      "rows": 100000,
+      "within_default_budget": false
+    },
+    "S5": {
+      "ten_cell_ranges_edit_inside_one": {
+        "runs": [
+          0.002904,
+          0.002611,
+          0.002669,
+          0.002887,
+          0.002558
+        ],
+        "median": 0.002669,
+        "unit": "s",
+        "cached_before": 4096,
+        "range_edges_recorded": 4096,
+        "checks": 45056,
+        "invalidated": 11
+      },
+      "all_readers_contain_the_edit": {
+        "runs": [
+          0.485515,
+          0.484737,
+          0.65988,
+          0.479865,
+          0.461268
+        ],
+        "median": 0.484737,
+        "unit": "s",
+        "cached_before": 4096,
+        "range_edges_recorded": 4095,
+        "checks": 8591310,
+        "invalidated": 2098
+      }
+    },
+    "S6": {
+      "cells": 1000000,
+      "seconds": {
+        "runs": [
+          4.024,
+          4.083,
+          4.058,
+          4.332,
+          4.059
+        ],
+        "median": 4.059,
+        "unit": "s"
+      },
+      "rss_added": {
+        "runs": [
+          16384,
+          32768,
+          32768,
+          0,
+          0
+        ],
+        "median": 16384,
+        "unit": "bytes"
+      },
+      "peak_rss": {
+        "runs": [
+          48480256,
+          48562176,
+          48562176,
+          46301184,
+          46481408
+        ],
+        "unit": "bytes"
+      },
+      "calculator_cache_entries": 1
+    }
+  }
+}

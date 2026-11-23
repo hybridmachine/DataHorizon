@@ -802,65 +802,186 @@ class Criterion:
         return {"=":lambda:left==right,"<>":lambda:left!=right,"<":lambda:left<right,">":lambda:left>right,"<=":lambda:left<=right,">=":lambda:left>=right}[self.op]()
 
 
+class Pending(Exception):
+    """Raised when evaluating a formula cell where it is read would nest too deep: IN_PLACE_DEPTH cells, or as far as
+    Python's recursion limit allows. Every evaluation between that read and Calculator.follow unwinds, keeping
+    nothing and adding its cell to keys, so keys lists the cell refused and then each cell that was waiting for the
+    one before. follow evaluates them in that order from a shallow stack."""
+    @property
+    def keys(self):
+        return self.args[0]
+
+
+class Unread:
+    """What Calculator.aligned gives for a cell it has not read: a stored cell, undecoded, or without scan any
+    coordinate (stored is then None). Calculator.taken reads it. A coordinate with no stored cell is None instead, so
+    a stored blank is told apart from a gap."""
+    __slots__ = ("key", "stored")
+
+    def __init__(self, key, stored=None):
+        self.key, self.stored = key, stored
+
+
+FORMULA_CELL_LIMIT = 4_194_304  # stored cells (and text-size units) one evaluation of one formula may read
+SCAN_ROWS = 1024  # rows per scan statement: the deadline is checked between them, and all 1,048,576 rows take 1,024
+IN_PLACE_DEPTH = 128  # formula cells nested in one recursion, the outermost included: what the evaluator before stage 2 allowed
+
+
+class RangeValue(list):
+    """What a range evaluates to outside a range-aware function: no values, only its rectangle (a range_geometry
+    tuple). Every scalar consumer sees a list and raises #VALUE!; SUM and argument_values fold the rectangle."""
+    def __init__(self, scope):
+        super().__init__()
+        self.scope = scope
+
+
 class Calculator:
-    def __init__(self, read, resolve_sheet, seconds=0.25, *, clock=None):
-        self.read, self.resolve_sheet = read, resolve_sheet
+    def __init__(self, read, resolve_sheet, seconds=0.25, *, clock=None, scan=None, decode=None):
+        # scan(sheet, r1, c1, r2, c2) yields (row, col, stored) for the stored cells of a rectangle in row, then column
+        # order; without it a range is read one coordinate at a time. decode(stored) gives the item as read gives it,
+        # and is called only when a cell is read, so a cell a function never reads is never validated; without decode
+        # scan yields such items itself.
+        self.read, self.resolve_sheet, self.scan = read, resolve_sheet, scan
+        self.decode = decode or (lambda stored: stored)
         self.clock = utc_clock() if clock is None else clock
+        # active holds every cell being evaluated: those of the current recursion, and those in following, the
+        # explicit stack (outermost first) of cells whose evaluation unwound because something beneath them nested
+        # too deep. nesting counts the cells of the current recursion beneath following[-1]. waiting keeps the stored
+        # input and parsed tree of each formula in following, so that it is read, charged and parsed once.
         self.cache, self.active = {}, set()
+        self.following, self.waiting, self.nesting = [], {}, 0
         self.deadline, self.count = time.monotonic() + seconds, 0
         self.bytes = 0
 
     def check(self):
-        self.count += 1
-        if self.count > 10_000 or time.monotonic() > self.deadline:
+        """Raise #LIMIT! past the deadline or when the formula being evaluated has read too many cells; callers that
+        do work charge it to self.count first (cell reads, text_work); other calls only watch the deadline."""
+        if time.monotonic() > self.deadline:
             raise FormulaError("#LIMIT!", "Calculation budget exceeded")
+        if self.count > FORMULA_CELL_LIMIT:
+            raise FormulaError("#LIMIT!", f"Formula reads more than {FORMULA_CELL_LIMIT:,} cells")
+
+    def charge(self, cells):
+        """Count cells read by the formula being evaluated, enforcing its limit here as well as in check: a caller may
+        replace check (chart jobs do)."""
+        self.count += cells
+        if self.count > FORMULA_CELL_LIMIT:
+            raise FormulaError("#LIMIT!", f"Formula reads more than {FORMULA_CELL_LIMIT:,} cells")
 
     def cell(self, sheet, row, col):
+        if not self.following:
+            self.count = 0  # a read from outside starts afresh: the count belongs to one evaluation of one formula
+        self.charge(1)
         self.check()
-        key = sheet, row, col
+        result = self.result((sheet, row, col))
+        if isinstance(result, FormulaError):
+            raise result
+        return result
+
+    def result(self, key):
+        """key's value or its FormulaError, uncounted. A cell with neither is evaluated here, in place, when and only
+        when it is read: marked active, evaluated, remembered, unmarked. A cell that is active is being evaluated
+        further out, so the read is a cycle. The reader's count is not charged what key reads."""
         if key in self.active:
-            raise FormulaError("#CYCLE!", "Circular reference")
-        if len(self.active) >= 128:
-            raise FormulaError("#LIMIT!", "Dependency chain exceeds 128 cells")
-        if key in self.cache:
-            result = self.cache[key]
-            if isinstance(result, FormulaError):
-                raise result
-            return result
+            return FormulaError("#CYCLE!", "Circular reference")
+        if key not in self.cache:
+            if not self.following:
+                self.follow(key)
+                return self.cache[key]
+            count = self.count
+            self.active.add(key)
+            self.nesting += 1
+            try:
+                self.remember(key, self._evaluate_cell(key))
+                self.active.discard(key)
+            except Pending as need:  # raised here for key, or beneath it: key waits on the stack, still active
+                # Safe however little stack is left: a deeper frame existed a moment ago (the one that raised), and
+                # appending to a list enters no Python frame.
+                need.keys.append(key)
+                raise
+            except RecursionError:
+                # Python's stack ran out beneath this cell before IN_PLACE_DEPTH did: the same signal as Pending.
+                # It may have run out inside remember, after the result was put in cache and before a subclass
+                # finished recording it (IndexedCalculator.save): the half-kept result is dropped, and follow
+                # evaluates and remembers the cell again from a shallow stack.
+                self.cache.pop(key, None)
+                raise Pending([key]) from None
+            finally:
+                self.nesting -= 1
+                self.count = count
+        return self.cache[key]
+
+    def follow(self, key):
+        """Evaluate key for a read from outside. Its precedents are evaluated in place (result). When one of them
+        nests too deep, the evaluations between here and there unwind as Pending and their cells are pushed on
+        following, the cell that was refused last; each is then evaluated from here, innermost first, with the whole
+        depth beneath it again. A cell is pushed at most once and stays active until it completes, so a read of it
+        from above is a cycle, as it was while it was being evaluated in place."""
+        following = self.following
+        following.append(key)
         self.active.add(key)
         try:
-            item = self.read(sheet, row, col)
-            if item:
-                self.bytes += len(item["source"].encode())
-                if self.bytes > 8*1024*1024:
-                    raise FormulaError("#LIMIT!", "Calculation input cache exceeds 8 MiB")
+            while following:
+                top = following[-1]
+                try:
+                    result = self._evaluate_cell(top)
+                except Pending as need:
+                    following.extend(reversed(need.keys))
+                    continue
+                except RecursionError:  # not from a precedent (result turns that into Pending): top's own expression
+                    result = FormulaError("#LIMIT!", "Calculation nesting limit exceeded")
+                following.pop()
+                self.active.remove(top)
+                self.remember(top, result)
+        finally:
+            self.active.clear()
+            following.clear()
+            self.waiting.clear()
+
+    def remember(self, key, result):
+        """Keep a cell's completed value or FormulaError; every cell whose evaluation completes passes here, once."""
+        self.cache[key] = result
+
+    def _evaluate_cell(self, key):
+        """The cell's value, or its FormulaError (returned, not raised). A formula nested IN_PLACE_DEPTH cells deep
+        raises Pending instead of being evaluated; whatever interrupts a formula leaves its input and tree in waiting."""
+        sheet, row, col = key
+        held = self.waiting.pop(key, None)
+        try:
+            if held:
+                item, tree = held
+            else:
+                item, tree = self.read(sheet, row, col), None
+                if item:
+                    self.bytes += len(item["source"].encode())
+                    if self.bytes > 8*1024*1024:
+                        raise FormulaError("#LIMIT!", "Calculation input cache exceeds 8 MiB")
             if item is None:
                 result = None
             elif item["kind"] == "unmaintained":
                 raise FormulaError("#REF!", UNMAINTAINED_MESSAGE)
             elif item["kind"] == "formula":
-                result = self.evaluate(Parser(item["source"][1:]).parse(), sheet)
+                try:
+                    if self.nesting >= IN_PLACE_DEPTH:
+                        raise Pending([])  # result adds key
+                    if tree is None:
+                        tree = Parser(item["source"][1:]).parse()
+                    self.count = 0  # the count is per evaluation of a formula: one evaluated again starts from nothing
+                    result = self.evaluate(tree, sheet)
+                except (Pending, RecursionError):
+                    self.waiting[key] = item, tree
+                    raise
                 if isinstance(result, list):
                     raise FormulaError("#VALUE!", "Range cannot be a scalar result")
             else:
                 result = item["value"]
             if isinstance(result, (int, float)) and not math.isfinite(result):
                 raise FormulaError("#NUM!", "Non-finite result")
-            self.cache[key] = result
             return result
         except OverflowError:
-            error = FormulaError("#NUM!", "Numeric overflow")
-            self.cache[key] = error
-            raise error
-        except RecursionError:
-            error = FormulaError("#LIMIT!", "Calculation nesting limit exceeded")
-            self.cache[key] = error
-            raise error
+            return FormulaError("#NUM!", "Numeric overflow")
         except FormulaError as error:
-            self.cache[key] = error
-            raise
-        finally:
-            self.active.remove(key)
+            return error
 
     def reference(self, ref, sheet):
         name, row, col = split_ref(ref)
@@ -875,7 +996,6 @@ class Calculator:
         first=self.reference(node[2][1],sheet);last_name,_,_=split_ref(node[3][1]);last=self.reference(node[3][1],first[0] if last_name is None else sheet)
         if first[0]!=last[0]:raise FormulaError("#REF!","3D ranges are unsupported")
         r1,r2=sorted((first[1],last[1]));c1,c2=sorted((first[2],last[2]))
-        if (r2-r1+1)*(c2-c1+1)>10000:raise FormulaError("#LIMIT!","Range exceeds 10,000 cells")
         return first[0],r1,c1,r2,c2
 
     def range_targets(self,node,sheet):
@@ -883,11 +1003,106 @@ class Calculator:
         for row in range(r1,r2+1):
             for col in range(c1,c2+1):yield target,row,col
 
-    def criterion_cell(self,target):
-        try:return self.cell(*target)
-        except FormulaError as error:
-            if error.code not in CELL_ERRORS:raise
-            return error
+    def stored(self,scope,*,errors=False):
+        """(row, col, value) for the stored cells of scope (a range_geometry tuple) in row, then column order; each
+        counts one toward the formula's limit and none is added to cache. A formula cell's value is its result,
+        evaluated in place if it has none when the caller reaches it. A cell error is raised, or with errors=True one
+        in CELL_ERRORS is yielded as its FormulaError. Without scan every coordinate is read through cell()."""
+        target,r1,c1,r2,c2=scope
+        if self.scan is None:
+            for row in range(r1,r2+1):
+                for col in range(c1,c2+1):
+                    try:value=self.cell(target,row,col)
+                    except FormulaError as error:
+                        if not errors or error.code not in CELL_ERRORS:raise
+                        value=error
+                    yield row,col,value
+            return
+        seen=0
+        for row,col,stored in self.scanned(target,r1,c1,r2,c2):
+            seen+=1
+            if seen%256==0:self.check()
+            self.charge(1);item=self.decode(stored)
+            if item["kind"]=="formula":value=self.result((target,row,col))
+            elif item["kind"]=="unmaintained":value=FormulaError("#REF!",UNMAINTAINED_MESSAGE)
+            else:value=item["value"]
+            if isinstance(value,FormulaError) and (not errors or value.code not in CELL_ERRORS):raise value
+            yield row,col,value
+
+    def scanned(self,target,r1,c1,r2,c2):
+        """scan in bands of SCAN_ROWS rows, lazily, checking the deadline before each: SQLite visits every stored cell
+        of a band's rows, including those outside the columns, within one statement."""
+        for first in range(r1,r2+1,SCAN_ROWS):
+            self.check()
+            yield from self.scan(target,first,c1,min(first+SCAN_ROWS-1,r2),c2)
+
+    def aligned(self,scopes,*,bands=False):
+        """For same-shaped scopes (range_geometry tuples), (index, values) in order, index the row-major position inside
+        the shape and values one entry per scope, None where that scope has no stored cell. Only positions where some
+        scope has a stored cell are yielded (without scan, every position). Nothing is read, decoded, evaluated,
+        raised or counted here: a stored cell, or without scan any coordinate, is given as Unread, and a position is
+        yielded before the scan moves past it. The caller passes each entry it reads to taken(), in the order a read
+        of each cell in turn would have, so a cell it skips costs nothing and is never decoded or evaluated. The scopes are scanned together in bands of SCAN_ROWS rows, so a caller that stops leaves later
+        bands unread; with bands=True, (end, None) follows each band, end the first index after it."""
+        _,r1,c1,r2,c2=scopes[0];height,width=r2-r1+1,c2-c1+1
+        if self.scan is None:
+            for index in range(height*width):
+                row,col=divmod(index,width)
+                yield index,[Unread((scope[0],scope[1]+row,scope[2]+col)) for scope in scopes]
+            return
+        seen=0
+        def band(scope,first,last):
+            nonlocal seen
+            target,top,left,_,right=scope
+            for row,col,stored in self.scan(target,top+first,left,top+last,right):
+                seen+=1
+                if seen%256==0:self.check()
+                yield (row-top)*width+col-left,Unread((target,row,col),stored)
+        for first in range(0,height,SCAN_ROWS):
+            self.check();last=min(first+SCAN_ROWS,height)-1
+            streams=[band(scope,first,last) for scope in scopes];heads=[next(stream,None) for stream in streams]
+            while True:
+                index=min((head[0] for head in heads if head is not None),default=None)
+                if index is None:break
+                here=[k for k,head in enumerate(heads) if head is not None and head[0]==index]
+                values=[None]*len(scopes)
+                for k in here:values[k]=heads[k][1]
+                yield index,values
+                for k in here:heads[k]=next(streams[k],None)
+            if bands:yield (last+1)*width,None
+
+    def taken(self,value,*,errors=False):
+        """The value of an entry from aligned that the caller reads, counted toward the formula's limit (a stored cell,
+        blank or not, or without scan any coordinate); the cell is decoded here, and a formula cell with no value yet
+        is evaluated here, in place. A FormulaError is raised, as reading the cell would have, or with errors=True one
+        in CELL_ERRORS is returned."""
+        if isinstance(value,Unread):
+            if self.scan is None:
+                try:value=self.cell(*value.key)
+                except FormulaError as error:value=error
+            else:
+                self.charge(1);item=self.decode(value.stored)
+                if item["kind"]=="formula":value=self.result(value.key)
+                elif item["kind"]=="unmaintained":value=FormulaError("#REF!",UNMAINTAINED_MESSAGE)
+                else:value=item["value"]
+        if isinstance(value,FormulaError) and (not errors or value.code not in CELL_ERRORS):raise value
+        return value
+
+    def range_values(self,scope,*,empty=False):
+        """The values of scope for argument_values, cell errors as FormulaError values; with empty=True an empty
+        coordinate is None in its place, otherwise only stored cells are given."""
+        target,r1,c1,r2,c2=scope;row,col=r1,c1
+        for found_row,found_col,value in self.stored(scope,errors=True):
+            if empty:
+                while (row,col)!=(found_row,found_col):
+                    self.check();yield None
+                    row,col=(row,col+1) if col<c2 else (row+1,c1)
+                row,col=(row,col+1) if col<c2 else (row+1,c1)
+            yield value
+        if empty:
+            while row<=r2:
+                self.check();yield None
+                row,col=(row,col+1) if col<c2 else (row+1,c1)
 
     def scalar_value(self,node,sheet):
         if node[0]=="range":raise FormulaError("#VALUE!","Scalar argument required")
@@ -955,7 +1170,7 @@ class Calculator:
         if type(flag) not in (bool,int,float,type(None)):raise FormulaError("#VALUE!","ignore_empty must be numeric, Boolean or blank")
         def pieces():
             first=True
-            for value,_ in self.argument_values(args[2:],sheet):
+            for value,_ in self.argument_values(args[2:],sheet,empty=not flag):
                 self.check()
                 if isinstance(value,FormulaError):raise value
                 text=scalar_text(value)
@@ -1064,13 +1279,11 @@ class Calculator:
         shape=(lookup[3]-lookup[1]+1,lookup[4]-lookup[2]+1)
         if min(shape)!=1 or shape!=(returns[3]-returns[1]+1,returns[4]-returns[2]+1):raise FormulaError("#VALUE!","Lookup/return ranges must be same-shaped vectors")
         key=self.exact_lookup_key(self.evaluate(args[0],sheet))
-        for row in range(lookup[1],lookup[3]+1):
-            for col in range(lookup[2],lookup[4]+1):
-                self.check()
-                if self.exact_lookup_key(self.cell(lookup[0],row,col))!=key:continue
-                value=self.cell(returns[0],returns[1]+row-lookup[1],returns[2]+col-lookup[2])
-                if isinstance(value,str):value=bounded_text(value)
-                return 0 if value is None else value
+        found=self.first_match(lookup,key,returns)
+        if found is not None:
+            value=found[1]
+            if isinstance(value,str):value=bounded_text(value)
+            return 0 if value is None else value
         if len(args)>=4:
             if args[3][0]=="range":raise FormulaError("#VALUE!","Lookup fallback must be scalar")
             value=self.evaluate(args[3],sheet)
@@ -1098,12 +1311,24 @@ class Calculator:
         if type(mode) not in (int,float) or mode!=0:raise FormulaError("#VALUE!","Only exact MATCH mode 0 is supported")
         scope=self.range_geometry(args[1],sheet)
         if scope[1]!=scope[3] and scope[2]!=scope[4]:raise FormulaError("#VALUE!","MATCH requires a single row or column")
-        key=self.exact_lookup_key(self.scalar_value(args[0],sheet));position=0
-        for row in range(scope[1],scope[3]+1):
-            for col in range(scope[2],scope[4]+1):
-                self.check();position+=1
-                if self.exact_lookup_key(self.cell(scope[0],row,col))==key:return position
-        raise FormulaError("#N/A","Lookup value was not found")
+        found=self.first_match(scope,self.exact_lookup_key(self.scalar_value(args[0],sheet)))
+        if found is None:raise FormulaError("#N/A","Lookup value was not found")
+        return found[0]+1
+
+    def first_match(self,lookup,key,returns=None):
+        """(index, value of returns there) for the first position of the vector lookup whose exact_lookup_key is key, or
+        None. Each lookup cell is read in turn up to the match, so an error before it raises and nothing after it is
+        read or evaluated; returns is read at the match only."""
+        expected=0;blank=key==("blank",None)
+        for index,values in self.aligned([lookup]+([returns] if returns else []),bands=True):
+            if blank and index>expected:return expected,None  # the empty position at expected matches
+            if values is None:continue
+            expected=index+1
+            if self.exact_lookup_key(self.taken(values[0]))!=key:continue
+            return index,self.taken(values[1]) if returns else None
+        area=(lookup[3]-lookup[1]+1)*(lookup[4]-lookup[2]+1)
+        if blank and expected<area:return expected,None
+        return None
 
     def multiple_criteria(self,name,args,sheet):
         offset=1 if name=="SUMIFS" else 0
@@ -1115,19 +1340,27 @@ class Calculator:
             shape=current;pairs.append((scope,Criterion(self.scalar_value(args[index+1],sheet),self)))
         sums=self.range_geometry(args[0],sheet) if offset else None
         if sums and (sums[3]-sums[1]+1,sums[4]-sums[2]+1)!=shape:raise FormulaError("#VALUE!","Sum range must have the same shape")
-        total=0
-        for row in range(shape[0]):
-            for col in range(shape[1]):
-                self.check();matched=True
-                for scope,criterion in pairs:
-                    eligible=criterion.matches(self.criterion_cell((scope[0],scope[1]+row,scope[2]+col)))
-                    matched=matched and eligible
-                if not matched:continue
-                if not sums:total+=1;continue
-                value=self.cell(sums[0],sums[1]+row,sums[2]+col)
-                if type(value) in (int,float):
-                    total+=value
-                    if not math.isfinite(total):raise FormulaError("#NUM!","SUMIFS subtotal exceeds the finite range")
+        return self.criteria_total(pairs,sums,name)
+
+    def criteria_total(self,pairs,sums,name):
+        """The count of positions where every (scope, criterion) pair matches, or with a sums scope the sum of its
+        numbers there, as a read of each position in turn gives it: every criteria cell is read, a cell error in
+        one matches nothing, and the sum cell is read only where all match. Wholly empty positions are counted from
+        the area."""
+        scopes=[scope for scope,_ in pairs]+([sums] if sums else [])
+        total=0;visited=0
+        for _,values in self.aligned(scopes):
+            visited+=1;matched=True
+            for value,(_,criterion) in zip(values,pairs):
+                if not criterion.matches(self.taken(value,errors=True)):matched=False
+            if not matched:continue
+            if sums is None:total+=1;continue
+            value=self.taken(values[-1])
+            if type(value) in (int,float):
+                total+=value
+                if not math.isfinite(total):raise FormulaError("#NUM!",name+" subtotal exceeds the finite range")
+        if sums is None and all([criterion.matches(None) for _,criterion in pairs]):
+            _,r1,c1,r2,c2=scopes[0];total+=(r2-r1+1)*(c2-c1+1)-visited
         return total
 
     def conditional_aggregate(self,name,args,sheet):
@@ -1135,29 +1368,16 @@ class Calculator:
         scope=self.range_geometry(args[0],sheet);sums=self.range_geometry(args[2],sheet) if len(args)==3 else scope
         if (scope[3]-scope[1],scope[4]-scope[2])!=(sums[3]-sums[1],sums[4]-sums[2]):raise FormulaError("#VALUE!","SUMIF ranges require the same shape")
         if args[1][0]=="range":raise FormulaError("#VALUE!","Criteria must be scalar")
-        criterion=Criterion(self.evaluate(args[1],sheet),self);result=0
-        for row in range(scope[1],scope[3]+1):
-            for col in range(scope[2],scope[4]+1):
-                self.check()
-                if not criterion.matches(self.criterion_cell((scope[0],row,col))):continue
-                if name=="COUNTIF":result+=1;continue
-                value=self.cell(sums[0],sums[1]+row-scope[1],sums[2]+col-scope[2])
-                if type(value) in (int,float):
-                    result+=value
-                    if not math.isfinite(result):raise FormulaError("#NUM!","SUMIF subtotal exceeds the finite range")
-        return result
+        criterion=Criterion(self.evaluate(args[1],sheet),self)
+        return self.criteria_total([(scope,criterion)],None if name=="COUNTIF" else sums,name)
 
-    def argument_values(self,args,sheet):
-        """Keep reference provenance and cell errors for range-aware functions."""
+    def argument_values(self,args,sheet,*,empty=False):
+        """Keep reference provenance and cell errors for range-aware functions. A range gives its stored cells;
+        empty=True gives None for each of its empty coordinates as well."""
         for arg in args:
             if arg[0]=="range":
                 try:
-                    for target in self.range_targets(arg,sheet):
-                        try: value=self.cell(*target)
-                        except FormulaError as error:
-                            if error.code not in CELL_ERRORS: raise
-                            value=error
-                        yield value,True
+                    for value in self.range_values(self.range_geometry(arg,sheet),empty=empty): yield value,True
                 except FormulaError as error:
                     if error.code not in CELL_ERRORS: raise
                     yield error,True
@@ -1166,8 +1386,8 @@ class Calculator:
                 except FormulaError as error:
                     if error.code not in CELL_ERRORS: raise
                     value=error
-                if isinstance(value,list):
-                    for item in value: yield item,True
+                if isinstance(value,RangeValue):
+                    for item in self.range_values(value.scope,empty=empty): yield item,True
                 else: yield value,arg[0]=="ref"
 
     @staticmethod
@@ -1212,7 +1432,7 @@ class Calculator:
         return 0.0 if result==0 else result
 
     def text_work(self,text):
-        self.count+=max(0,(len(text)+255)//256-1)
+        self.charge(max(1,(len(text)+255)//256))
         self.check()
 
     def concatenate_values(self,values):
@@ -1299,7 +1519,11 @@ class Calculator:
             value = numeric(self.evaluate(node[2], sheet))
             return -value if node[1] == "-" else value
         if kind == "range":
-            return [self.cell(*target) for target in self.range_targets(node,sheet)]
+            # Read for its first error, as when a list of the values was built, but give only the rectangle.
+            scope = self.range_geometry(node, sheet)
+            for _ in self.stored(scope):
+                pass
+            return RangeValue(scope)
         if kind == "call":
             name, args = node[1:]
             if name in ("TODAY","NOW"):
@@ -1351,12 +1575,19 @@ class Calculator:
             if name == "SUM":
                 total = 0
                 for arg in args:
-                    value = self.evaluate(arg, sheet)
-                    for item in value if isinstance(value, list) else [value]:
-                        if isinstance(item, (int, float)) and not isinstance(item, bool):
+                    value = self.range_geometry(arg, sheet) if arg[0] == "range" else self.evaluate(arg, sheet)
+                    if arg[0] == "range" or isinstance(value, RangeValue):
+                        # Every cell of the range is read before the sum's own overflow is reported.
+                        items = (item for _, _, item in self.stored(value if arg[0] == "range" else value.scope))
+                    else:
+                        items = [value]
+                    overflow = False
+                    for item in items:
+                        if not overflow and isinstance(item, (int, float)) and not isinstance(item, bool):
                             total += item
-                            if not math.isfinite(total):
-                                raise FormulaError("#NUM!", "SUM exceeds the finite numeric range")
+                            overflow = not math.isfinite(total)
+                    if overflow:
+                        raise FormulaError("#NUM!", "SUM exceeds the finite numeric range")
                 return total
             raise FormulaError("#NAME?", f"Unsupported function or arity: {name}")
         if kind == "binary":

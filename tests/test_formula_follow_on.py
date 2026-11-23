@@ -6,6 +6,8 @@ import tempfile
 import itertools
 import re
 import unittest
+from unittest.mock import patch
+from datahorizon import formula as formula_module
 from datahorizon.formula import FormulaError
 from datahorizon.functions import function_catalog
 from datahorizon.engine import Workbook
@@ -27,12 +29,14 @@ class FollowOnTests(unittest.TestCase):
         self.assertIs(calculate('=ISERROR(1/0)'),True);self.assertIs(calculate('=ISNA(1/0)'),False)
         self.assertIs(calculate('=ISNA(XLOOKUP(9,B1,C1))'),True)
         self.assertIs(calculate('=ISNUMBER(1/0)'),False)
-        self.errors([('=ISERROR(A1)','#CYCLE!'),('=ISNA(SUM(B1:B10001))','#LIMIT!'),('=ISERROR(B1:B2)','#VALUE!'),('=ISBLANK()','#NAME?')])
+        self.errors([('=ISERROR(A1)','#CYCLE!'),('=ISERROR(B1:B2)','#VALUE!'),('=ISBLANK()','#NAME?')])
+        with patch.object(formula_module,'FORMULA_CELL_LIMIT',10_000):self.errors([('=ISNA(SUM(B1:B10001))','#LIMIT!')])  # 10,001 coordinates read one at a time
 
     def test_ifna_only_missing_and_lazy_fallback(self):
         self.assertEqual(calculate('=IFNA(XLOOKUP(9,B1,C1),"missing")'),'missing')
         self.assertEqual(calculate('=IFNA("00123",1/0)'),'00123');self.assertEqual(calculate('=IFNA(B1,1/0)'),'')
-        self.errors([('=IFNA(1/0,7)','#DIV/0!'),('=IFNA(A1,7)','#CYCLE!'),('=IFNA(SUM(B1:B10001),7)','#LIMIT!'),('=IFNA(B1:B2,7)','#VALUE!'),('=IFNA(7)','#NAME?'),('=IFNA(XLOOKUP(9,B1,C1),1/0)','#DIV/0!')])
+        self.errors([('=IFNA(1/0,7)','#DIV/0!'),('=IFNA(A1,7)','#CYCLE!'),('=IFNA(B1:B2,7)','#VALUE!'),('=IFNA(7)','#NAME?'),('=IFNA(XLOOKUP(9,B1,C1),1/0)','#DIV/0!')])
+        with patch.object(formula_module,'FORMULA_CELL_LIMIT',10_000):self.errors([('=IFNA(SUM(B1:B10001),7)','#LIMIT!')])  # 10,001 coordinates read one at a time
 
     def test_exact_case_sensitive_unicode_and_scalar_spelling(self):
         for formula,expected in [('=EXACT("Data","data")',False),('=EXACT("00123",123)',False),('=EXACT(123,"123")',True),('=EXACT(TRUE,"TRUE")',True),('=EXACT(B1,"")',True),('=EXACT("é","é")',False),('=EXACT("x ","x")',False),('=EXACT("😀","😀")',True)]:self.assertIs(calculate(formula),expected)
@@ -79,7 +83,8 @@ class FollowOnTests(unittest.TestCase):
         self.assertEqual(calculate('=TEXTJOIN("|",FALSE,B1:C2)',values),'00123|||TRUE')
         self.assertEqual(calculate('=TEXTJOIN("",TRUE,1,FALSE,"=1+1")'),'1FALSE=1+1')
         self.assertEqual(calculate('=TEXTJOIN("-",TRUE,B1)',{}),'')
-        self.errors([('=TEXTJOIN("-","TRUE",1)','#VALUE!'),('=TEXTJOIN(B1:B2,TRUE,1)','#VALUE!'),('=TEXTJOIN("-",TRUE,A1)','#CYCLE!'),('=TEXTJOIN("-",TRUE,1/0)','#DIV/0!'),('=TEXTJOIN("-",TRUE)','#NAME?'),('=TEXTJOIN("-",TRUE,B1:B10001)','#LIMIT!')])
+        self.errors([('=TEXTJOIN("-","TRUE",1)','#VALUE!'),('=TEXTJOIN(B1:B2,TRUE,1)','#VALUE!'),('=TEXTJOIN("-",TRUE,A1)','#CYCLE!'),('=TEXTJOIN("-",TRUE,1/0)','#DIV/0!'),('=TEXTJOIN("-",TRUE)','#NAME?')])
+        with patch.object(formula_module,'FORMULA_CELL_LIMIT',10_000):self.errors([('=TEXTJOIN("-",TRUE,B1:B10001)','#LIMIT!')])  # 10,001 coordinates read one at a time
         self.errors([('=IFERROR(TEXTJOIN(B1,FALSE,"x","y"),"hidden")','#LIMIT!')],{(1,2):cell('😀'*16384)})
 
     def test_multiple_criteria_alignment_types_and_matching_sums(self):
@@ -94,11 +99,12 @@ class FollowOnTests(unittest.TestCase):
         self.errors([('=SUMIFS(C1:C4,B1:B4,"Book")','#DIV/0!')],values)
 
     def test_multiple_criteria_errors_shapes_cycles_and_work(self):
-        self.errors([('=COUNTIFS(B1,1,C1)','#NAME?'),('=SUMIFS(B1,C1)','#NAME?'),('=COUNTIFS(B1:B2,1,C1:D1,1)','#VALUE!'),('=SUMIFS(D1:D3,B1:B2,1)','#VALUE!'),('=COUNTIFS(#REF!,1)','#REF!'),('=COUNTIFS(B1,1,C1,1/0)','#DIV/0!'),('=COUNTIFS(B1:B10001,1)','#LIMIT!')])
+        self.errors([('=COUNTIFS(B1,1,C1)','#NAME?'),('=SUMIFS(B1,C1)','#NAME?'),('=COUNTIFS(B1:B2,1,C1:D1,1)','#VALUE!'),('=SUMIFS(D1:D3,B1:B2,1)','#VALUE!'),('=COUNTIFS(#REF!,1)','#REF!'),('=COUNTIFS(B1,1,C1,1/0)','#DIV/0!')])
+        with patch.object(formula_module,'FORMULA_CELL_LIMIT',10_000):self.errors([('=COUNTIFS(B1:B10001,1)','#LIMIT!')])  # 10,001 coordinates read one at a time
         self.errors([('=COUNTIFS(B1,"no match",C1,1)','#CYCLE!')],{(1,2):cell('x'),(1,3):dict(source='=A1',kind='formula',value=None)})
         self.errors([('=SUMIFS(B1:B2,C1:C2,1)','#NUM!')],{(1,2):cell(1e308),(2,2):cell(1e308),(1,3):cell(1),(2,3):cell(1)})
         formula='=COUNTIFS('+','.join(['B1:B1000,1']*20)+')'
-        self.errors([(formula,'#LIMIT!')])
+        with patch.object(formula_module,'FORMULA_CELL_LIMIT',10_000):self.errors([(formula,'#LIMIT!')])  # 20,000 reads in one formula
 
     def test_multiple_criteria_required_hook_rolls_back_parent_and_generated_edits(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -120,7 +126,10 @@ class FollowOnTests(unittest.TestCase):
         self.errors([('=INDEX(C1:C2,2)','#DIV/0!')],values)
 
     def test_index_match_modes_shapes_positions_errors_and_limits(self):
-        self.errors([('=MATCH(1,B1:B2)','#NAME?'),('=MATCH(1,B1:B2,1)','#VALUE!'),('=MATCH(1,B1:B2,FALSE)','#VALUE!'),('=MATCH(1,B1:C2,0)','#VALUE!'),('=MATCH(1,B1:B2,0)','#N/A'),('=MATCH(1,A1:A2,0)','#CYCLE!'),('=MATCH(1,B1:B10001,0)','#LIMIT!'),('=INDEX(B1:C2,1)','#VALUE!'),('=INDEX(B1:B2,0)','#VALUE!'),('=INDEX(B1:B2,-1)','#VALUE!'),('=INDEX(B1:B2,"1")','#VALUE!'),('=INDEX(B1:B2,3)','#REF!'),('=INDEX(B1:B2,1e300)','#REF!'),('=INDEX(#REF!,1)','#REF!'),('=INDEX(A1,1)','#CYCLE!'),('=INDEX(B1:B10001,1)','#LIMIT!')])
+        self.errors([('=MATCH(1,B1:B2)','#NAME?'),('=MATCH(1,B1:B2,1)','#VALUE!'),('=MATCH(1,B1:B2,FALSE)','#VALUE!'),('=MATCH(1,B1:C2,0)','#VALUE!'),('=MATCH(1,B1:B2,0)','#N/A'),('=MATCH(1,A1:A2,0)','#CYCLE!'),('=INDEX(B1:C2,1)','#VALUE!'),('=INDEX(B1:B2,0)','#VALUE!'),('=INDEX(B1:B2,-1)','#VALUE!'),('=INDEX(B1:B2,"1")','#VALUE!'),('=INDEX(B1:B2,3)','#REF!'),('=INDEX(B1:B2,1e300)','#REF!'),('=INDEX(#REF!,1)','#REF!'),('=INDEX(A1,1)','#CYCLE!')])
+        with patch.object(formula_module,'FORMULA_CELL_LIMIT',10_000):self.errors([('=MATCH(1,B1:B10001,0)','#LIMIT!')])  # 10,001 coordinates read one at a time
+        # INDEX reads one cell of a range however large; the #LIMIT! it passes on is that cell's.
+        with patch.object(formula_module,'FORMULA_CELL_LIMIT',10_000):self.errors([('=INDEX(B1:B10001,1)','#LIMIT!')],{(1,2):dict(source='=SUM(C1:C10001)',kind='formula',value=None)})
         self.errors([('=IFERROR(INDEX(B1,1),"hidden")','#LIMIT!')],{(1,2):cell('x'*40000)})
         self.assertEqual(calculate('=INDEX(B1:B2,1.9)',{(1,2):cell('00123')}),'00123')
 

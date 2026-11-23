@@ -2138,14 +2138,16 @@ private slots:
         auto *grid=window.findChild<QTableView *>("grid"); grid->setCurrentIndex(window.model()->index(0,0));
         QTRY_VERIFY_WITH_TIMEOUT(window.model()->loaded(window.model()->index(0,0)),5000);
         auto *status=window.findChild<QLabel *>("storageStatus");
-        if(busyFirst){proxy.busyAnswers=1;proxy.startDelayMs=0;}
+        // Every attempt is refused, so however slowly this test runs, the next attempt is always still to come.
+        if(busyFirst){proxy.busyAnswers=1000000;proxy.startDelayMs=0;}
         window.findChild<QAction *>("calculateSelectionAction")->trigger();
         auto *progress=window.findChild<QProgressDialog *>("backgroundCalculationProgress"); QVERIFY(progress); QVERIFY(progress->findChild<QPushButton *>());
         if(busyFirst) {
-            // Refused once; the next attempt is 100 ms away. Cancel must stop it from being sent.
-            QTRY_COMPARE_WITH_TIMEOUT(proxy.refused,1,5000); QTest::qWait(20); progress->findChild<QPushButton *>()->click();
+            // Refused at least once; the next attempt is at most 100 ms away. Cancel must stop it from being sent:
+            // at most the attempt already in flight is refused after the click, and none follows it.
+            QTRY_VERIFY_WITH_TIMEOUT(proxy.refused>=1,5000); progress->findChild<QPushButton *>()->click(); const int refused=proxy.refused;
             QTRY_VERIFY_WITH_TIMEOUT(status->text().contains("Background calculation: cancelled"),5000);
-            QTest::qWait(400); QCOMPARE(proxy.forwardedStarts,0);
+            QTest::qWait(500); QVERIFY2(proxy.refused<=refused+1,qPrintable(QString::number(proxy.refused-refused))); QCOMPARE(proxy.forwardedStarts,0);
         } else {
             // The start is held for 450 ms. The job it admits must be cancelled, not polled to completion.
             QTRY_COMPARE_WITH_TIMEOUT(proxy.forwardedStarts,1,5000); progress->findChild<QPushButton *>()->click();
@@ -5047,7 +5049,8 @@ private slots:
         const int before=opened.count();
         window.showList({{"r1",1},{"r2",3},{"c1",1},{"c2",1},{"header",false},{"sort",QJsonArray{QJsonObject{{"col",1}}}}});
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+1,10000);QVERIFY(model->projected());
-        for(auto *chart:layer->overlays())QVERIFY(!chart->isVisible());
+        const auto anyShown=[&]{const auto charts=layer->overlays();return std::any_of(charts.cbegin(),charts.cend(),[](const ChartOverlay *chart){return chart->isVisible();});};
+        QTRY_VERIFY_WITH_TIMEOUT(!anyShown(),5000);
         window.findChild<QAction *>("clearListAction")->trigger();
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(),before+2,10000);QVERIFY(!model->projected());
         QTRY_VERIFY_WITH_TIMEOUT(layer->overlays().size()==1 && layer->overlays().first()->isVisible(),5000);

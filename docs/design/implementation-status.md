@@ -4,6 +4,74 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## Calculation stage 2 (evaluation in place and streamed ranges) — November 22, 2026
+
+Stage 2 of the [calculation design](calculation-design.md) is built on branch
+`claude/calculation-stage-2` and ships as one pull request ([plan](calculation-stage-2-plan.md),
+[result](calculation-stage-2.md), [evidence](evidence/calculation-stage-2.json)
+with two earlier runs kept beside it). The service evaluates a formula cell where
+it is read, by ordinary recursion up to 128 nested formula cells, and moves the
+cells being evaluated onto an explicit stack beyond that depth (or where Python's
+own recursion limit comes first, at 124 through `SUMIFS`, `COUNTIF` and `XLOOKUP`, 111 through `AVERAGE` and `MATCH`, and 91 through `TEXTJOIN`).
+Ranges are read as ordered streams in bands of 1,024 rows. The 128-cell chain
+limit and the 10,000-cell range limit are gone. A formula may read up to
+4,194,304 stored cells (the per-formula count, replacing the 10,000-step count);
+the 0.25 s and 2 s time budgets and `#LIMIT!` behave as before. The dependency
+cache records a range as one rectangle, keeps its bounds, spends at most 100,000
+containment checks per invalidation and is conservative past that. REST, CLI,
+SDK, the native format (v8) and the desktop are unchanged, and a 178-case
+characterization corpus passes with nothing re-recorded. An earlier design that
+evaluated a range's missing formulas ahead of the read was replaced after review
+found three quadratic shapes of it; the history is in the result.
+
+Measured on an Apple M1 (the final run's load average at its end was 2.7;
+medians of five; figures to one significant digit):
+- `=SUM` over 100,000 stored cells shows `#LIMIT!` in a default read (target
+  0.25 s, **missed**); it takes 0.38 s with a 2 s budget (3.8 µs per cell).
+- A chain is linear at about 30 µs per formula: a default read completes 8,192
+  formulas and a 2 s read 32,768 (not 65,536). The first run found a quadratic
+  walk in the dependency cache, fixed in this stage; the three runs are kept.
+- A streamed cell costs 2.6 to 4.7 µs for stored values and 17.4 µs for formulas
+  that must be evaluated, against the 2 µs the design assumed, so 4,194,304
+  cells is about 11 to 20 s (stored) and about 73 s (formulas).
+- `COUNTIF`, a three-criteria `SUMIFS` and an `XLOOKUP` over 100,000 rows take
+  0.54, 1.77 and 0.79 s. A `SUM` over 1,000,000 cells added at most 32 KiB of
+  peak memory.
+- Invalidating with 4,096 cached range readers takes 2.2 ms for a small edit and
+  3.1 ms when 2,098 readers contain it (8,190 checks; 8.6 million, 0.47 s, before
+  the check budget). There is no spatial index.
+
+Known limitations, in the [result](calculation-stage-2.md#known-limitations):
+two costs the review of the final design accepted (a formula waiting on the
+explicit stack rescans its range once for each too-deep precedent beneath it, so
+a column total over many deep chains is quadratic in cells scanned, with 2,000
+rows of 130-deep chains taking 25.7 s where `main` gives `#LIMIT!`; and within
+`main`'s depth but beyond Python's stack a formula can be evaluated up to 1.99
+times where `main` evaluates it once, 2.5% more in aggregate), the time and
+counting limits, and the cache's conservative invalidation. Still true: nothing is
+stored between reads, a 100,000-row running total shows `#LIMIT!` in a default
+read, and a formula near a budget can pass on one read and fail on the next.
+Stages 3 to 5 are not planned or built.
+
+Suites on this Mac, run after the pull-request review's fixes (row seeks for
+narrow ranges on wide sheets, cells decoded only when read, stored blanks
+counted, and the benchmark's load average optional):
+- Service suite: 1,862 tests, OK, 28 skipped, 388 s.
+- Desktop suite (through `ctest`): 292 passed, 0 failed, 276 s.
+- Python workspace and chart authoring suites, the chart probe smoke test and
+  the bundle signature check (through `ctest`) were last run on the revision
+  before those fixes (`03c180d`): all passed.
+- Two earlier desktop runs, at `cbc1cc4`, had failures (a service start and two
+  CSV review steps timing out). Both ran while the service files in the same
+  tree were being edited or while other measurements were loading the machine,
+  and the failing tests passed alone; those runs were discarded.
+- One service test, `test_large_structure_service.LargeStructureServiceTests.test_owned_cli_group_interrupt_leaves_its_service_available_for_cancel`
+  ("Required Python handler timed out"), failed in two whole-suite runs on a
+  heavily loaded machine and passed alone, in the `ctest` run and in later
+  whole-suite runs; it is treated as sensitive to load, and its cause was not
+  investigated.
+Not verified: Windows and Linux, a cold file cache, an idle machine.
+
 ## Calculation stage 1 (measurement) — November 18, 2026
 
 The owner approved the [stored results and scaled recalculation design](calculation-design.md)

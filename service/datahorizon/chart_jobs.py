@@ -78,9 +78,10 @@ class ChartJobs:
                             return shared[0]
                         calc = base(seconds=2, clock=clock, transactional=True)
 
-                        # Not the calculator's own check: its 10,000-step budget would turn a large
-                        # source into #LIMIT! cells. The job's deadline and cancellation bound it
-                        # instead, with each read's own two-second deadline.
+                        # Not the calculator's own check: its time budget would turn a large source
+                        # into #LIMIT! cells. The job's deadline and cancellation bound it instead,
+                        # with each read's own two-second deadline. The per-formula cell limit still
+                        # holds, because Calculator.charge enforces it where cells are counted.
                         def checked():
                             calc.count += 1
                             checkpoint(calc.count, "Calculating")

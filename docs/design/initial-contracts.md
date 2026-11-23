@@ -274,8 +274,10 @@ limited to 4 MiB. Sheet deletion rejects more
 than 10,000 stored cells before its cascade. Replace All checks each resulting
 UTF-8 source size before allocating it, including any retained text-escape
 prefix, so replacement expansion cannot bypass the 64-KiB cell limit.
-Formula evaluation permits 10,000 referenced cells, 128 dependency levels and
-0.25 seconds per viewport.
+Formula evaluation permits 4,194,304 stored cells read by one formula, no fixed
+dependency depth, and 0.25 seconds per read (2 seconds for lists, find, export
+and calculation jobs); a chain or range that does not finish in its time shows
+`#LIMIT!`. See the [stage 2 result](calculation-stage-2.md).
 CSV previews allow at most 10,000 records as well as 10,000 fields; blank records
 count toward the record limit. The CSV export limit covers the complete encoded
 JSON response, including escaped characters and metadata. Export destinations

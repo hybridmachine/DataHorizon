@@ -140,8 +140,10 @@ cycles are #CYCLE!, and resource exhaustion
 is #LIMIT!, including runtime recursion exhaustion. Numeric overflow remains
 #NUM!. Errors retain editable source and never become an invented value.
 An export with any selected formula error is blocked. Evaluation budgets include
-AST work as well as referenced cells, so not every 10,000-cell dependency shape
-fits the initial limit. Managed reads/transactional hook reads retain bounded
+AST work and the stored cells a formula reads (at most 4,194,304 per formula) as
+well as the read's time budget. A dependency chain has no fixed depth, but a
+chain or range that cannot finish in its time shows `#LIMIT!`
+([measured](calculation-stage-2.md)). Managed reads/transactional hook reads retain bounded
 evaluation. The GUI uses cached preview inputs plus automatic bounded read-only
 [viewport calculations](viewport-calculation.md); state, sheet, model and stream
 generation checks prevent older results from overwriting a newer input state.

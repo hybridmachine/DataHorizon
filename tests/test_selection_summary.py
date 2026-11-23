@@ -35,7 +35,8 @@ class SummaryTests(unittest.TestCase):
             huge=book.summary('Sheet1',{'r1':10,'r2':11});self.assertIsNone(huge['sum']);self.assertEqual(huge['numeric_error'],'#NUM!')
             json.dumps(huge,allow_nan=False)
             apply([{'row':12,'col':1,'source':'=SUM(A1:A1048576)'}])
-            limited=book.summary('Sheet1',{'r1':12});self.assertEqual(limited['errors'][0]['code'],'#LIMIT!');self.assertIsNone(limited['sum'])
+            with patch('datahorizon.formula.FORMULA_CELL_LIMIT',5):limited=book.summary('Sheet1',{'r1':12})  # 12 stored cells
+            self.assertEqual(limited['errors'][0]['code'],'#LIMIT!');self.assertIsNone(limited['sum'])
             for args in ({'r2':10001},{'rows':[1,2]},{'r1':0},{'c2':16385}):
                 with self.assertRaises(EngineError):book.summary('Sheet1',args)
             apply([{'row':r,'col':2,'source':'=1/0'} for r in range(1,102)])

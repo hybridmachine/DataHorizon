@@ -465,8 +465,8 @@ QT_QPA_PLATFORM=offscreen build/desktop_benchmark build/desktop-benchmark.json
 ```
 
 The formula harness reads independent 16/64/128-cell chains from their tails in
-100 fresh REST snapshots, checks the 129-cell limit, and measures edits followed
-by fresh reads. `--samples` changes the default 100 measurements. The full run
+100 fresh REST snapshots, checks that a 129-cell chain, which once gave
+`#LIMIT!`, returns its value, and measures edits followed by fresh reads. `--samples` changes the default 100 measurements. The full run
 also retains the sparse/dense/large-disk fixture; `--formula-only` skips it.
 Peak RSS is reported on POSIX and explicitly null on Windows.
 

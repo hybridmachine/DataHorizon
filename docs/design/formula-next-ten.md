@@ -166,8 +166,9 @@ Independent readers verify stored names and typed values, not target recalculati
 COUNTIF(range, criterion) counts matching cells. SUMIF(range, criterion,
 [sum_range]) adds aligned numeric values; the sum range defaults to the criteria
 range and must have exactly the same shape. Direct cell/rectangular references
-are supported; computed arrays are not. Existing grid, 10,000-cell range, input,
-work and deadline limits apply. No partial aggregate is returned on a limit.
+are supported; computed arrays are not. Existing grid, input, work and deadline limits apply;
+a range is bounded by the time budget of the read and by 4,194,304 cells read by one
+formula, not by 10,000 cells. No partial aggregate is returned on a limit.
 
 Criteria are finite Number, typed Boolean or Text with optional =, <>, <, >,
 <=, >= prefixes. Numeric criteria Text is interpreted numerically and can match

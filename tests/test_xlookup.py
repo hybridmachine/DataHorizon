@@ -4,6 +4,8 @@ from contextlib import closing
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+from datahorizon import formula as formula_module
 from datahorizon.formula import FormulaError
 from datahorizon.engine import Workbook
 from datahorizon.interchange import xlsx_export,xlsx_preview
@@ -30,9 +32,12 @@ class XLookupTests(unittest.TestCase):
         self.assertEqual(calculate('=XLOOKUP("b",B2:C2,B3:C3)',values),'')
         self.assertEqual(calculate('=XLOOKUP("a",B2:C2,B4:C4)',values),0)
         self.assertEqual(calculate('=XLOOKUP(D1,B1:B2,C1:C2)',{}),0)
-        for formula,code in [('=XLOOKUP(1)','#NAME?'),('=XLOOKUP(1,B1:C2,D1:E2)','#VALUE!'),('=XLOOKUP(1,B1:B2,C1:D1)','#VALUE!'),('=XLOOKUP(1,B1:B2,C1:C2,0,1)','#VALUE!'),('=XLOOKUP(1,B1:B2,C1:C2,0,0,-1)','#VALUE!'),('=XLOOKUP(B1:B2,C1:C2,D1:D2)','#VALUE!'),('=XLOOKUP(1,#REF!,C1:C2)','#REF!'),('=XLOOKUP(1,A1:A2,B1:B2)','#CYCLE!'),('=XLOOKUP(1,B1:B10001,C1:C10001)','#LIMIT!')]:
+        for formula,code in [('=XLOOKUP(1)','#NAME?'),('=XLOOKUP(1,B1:C2,D1:E2)','#VALUE!'),('=XLOOKUP(1,B1:B2,C1:D1)','#VALUE!'),('=XLOOKUP(1,B1:B2,C1:C2,0,1)','#VALUE!'),('=XLOOKUP(1,B1:B2,C1:C2,0,0,-1)','#VALUE!'),('=XLOOKUP(B1:B2,C1:C2,D1:D2)','#VALUE!'),('=XLOOKUP(1,#REF!,C1:C2)','#REF!'),('=XLOOKUP(1,A1:A2,B1:B2)','#CYCLE!')]:
             with self.subTest(formula=formula),self.assertRaises(FormulaError) as error:calculate(formula)
             self.assertEqual(error.exception.code,code)
+        with patch.object(formula_module,'FORMULA_CELL_LIMIT',10_000),self.assertRaises(FormulaError) as error:
+            calculate('=XLOOKUP(1,B1:B10001,C1:C10001)')  # 10,001 coordinates read one at a time
+        self.assertEqual(error.exception.code,'#LIMIT!')
         with self.assertRaises(FormulaError) as error:calculate('=IFERROR(XLOOKUP("a",B1:B2,C1:C2),"hidden")',{(1,2):cell('a'),(1,3):cell('x'*40000)})
         self.assertEqual(error.exception.code,'#LIMIT!')
 
