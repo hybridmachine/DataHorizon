@@ -21,7 +21,7 @@ secondary index:
 
 | Table | Primary key / layout | Columns |
 | --- | --- | --- |
-| `dh_calc_meta` | `singleton INTEGER PRIMARY KEY CHECK(singleton=1)` | `store_version INTEGER NOT NULL` (currently `1`), `calculation_version INTEGER` (evaluator version that produced stored results, or `NULL`), `sheets_digest BLOB` (SHA-256 over `(id, name)` of every sheet in `id` order, or `NULL`), `generation INTEGER NOT NULL DEFAULT 0` (monotonically increased on every result write) |
+| `dh_calc_meta` | `singleton INTEGER PRIMARY KEY CHECK(singleton=1)` | `store_version INTEGER NOT NULL` (currently `1`), `calculation_version INTEGER` (evaluator version that produced stored results, or `NULL`), `sheets_digest BLOB` (SHA-256 over `(id, name)` of every sheet in `id` order, or `NULL`), `generation INTEGER NOT NULL DEFAULT 0` (raised by exactly one in every transaction that commits only derived calculation rows, so that another session can tell such a commit from a change to the workbook's data) |
 | `dh_calc_sheets` | `number INTEGER PRIMARY KEY` | `sheet_id TEXT NOT NULL UNIQUE` (maps `sheets.id` to compact integer sheet numbers) |
 | `dh_calc_results` | `PRIMARY KEY(sheet, row, col) WITHOUT ROWID` | `sheet INTEGER NOT NULL`, `row INTEGER NOT NULL`, `col INTEGER NOT NULL`, `kind INTEGER NOT NULL`, `value` (untyped), `message TEXT` |
 | `dh_calc_precedents` | `PRIMARY KEY(sheet, row, col, p_sheet, r1, c1, r2, c2) WITHOUT ROWID` | `sheet`, `row`, `col` (formula cell) and `p_sheet`, `r1`, `c1`, `r2`, `c2` (1-based inclusive precedent rectangle; a single-cell reference has `r1=r2` and `c1=c2`). A formula with no precedents has a result row and no precedent rows. |

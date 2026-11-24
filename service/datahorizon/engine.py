@@ -438,6 +438,8 @@ class Workbook:
         self.verified = False
         self.distrusted = False
         self.store_skips = 0
+        self._marks = None      # (revision, store generation, file change counter) while known to match self.version
+        self._marks_at = None   # the connection's total_changes when _marks was last taken or found unavailable
         self.relational_issues=[]
         self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
         self.table_schema_keys=set();self.relational_before={}
@@ -613,6 +615,8 @@ class Workbook:
             self.store_skips += 1
             return False
         if self.store.schema != "main":
+            # A temporary store is this session's own file: writing it leaves the workbook's marks as they were.
+            tracked = self._marks_at == self.db.total_changes
             self.db.execute("BEGIN")
             try:
                 if self.data_version() != self.version:
@@ -621,6 +625,8 @@ class Workbook:
                     return False
                 work()
                 self.db.execute("COMMIT")
+                if tracked:
+                    self._marks_at = self.db.total_changes
                 return True
             except sqlite3.Error as error:
                 if self.db.in_transaction:
@@ -635,6 +641,8 @@ class Workbook:
                     try: self.db.execute("ROLLBACK")
                     except sqlite3.Error: pass
                 raise
+        # The marks follow this session's own results-only commit when they were current going in.
+        tracked = self._marks is not None and self._marks_at == self.db.total_changes
         self.db.execute("PRAGMA busy_timeout=0")
         try:
             try:
@@ -650,7 +658,13 @@ class Workbook:
                     self.store_skips += 1
                     return False
                 work()
+                # Exactly one count per results-only commit: see _results_only.
+                self.store.advance()
                 self.db.execute("COMMIT")
+                if tracked:
+                    revision, generation, counter = self._marks
+                    self._marks = revision, generation + 1, (counter + 1) % (1 << 32)
+                    self._marks_at = self.db.total_changes
                 return True
             except sqlite3.Error as error:
                 if self.db.in_transaction:
@@ -796,9 +810,82 @@ class Workbook:
     def data_version(self):
         return self.db.execute("PRAGMA data_version").fetchone()[0]
 
+    def _calculation_marks(self):
+        """(revision, store generation, file change counter) of a format 9 workbook, or None when they cannot be read.
+
+        The caller holds a transaction; the SELECT takes its shared lock, so the header read that follows sees the
+        same committed file. SQLite raises the change counter once for each committed transaction that changed the
+        file, in the rollback-journal format this application writes; a file in another format gives None."""
+        try:
+            row = self.db.execute(
+                "SELECT (SELECT revision FROM dh_meta), (SELECT generation FROM main.dh_calc_meta)").fetchone()
+        except sqlite3.Error:
+            return None
+        if row is None or type(row[0]) is not int or type(row[1]) is not int:
+            return None
+        try:
+            with open(self.path, "rb") as file:
+                header = file.read(28)
+        except OSError:
+            return None
+        if len(header) < 28 or header[18] != 1 or header[19] != 1:
+            return None
+        return row[0], row[1], int.from_bytes(header[24:28], "big")
+
+    def _remember_marks(self):
+        """Take the marks while the file is known to be as this session last saw it (data_version unmoved)."""
+        self._marks, self._marks_at = None, self.db.total_changes
+        try:
+            self.db.execute("BEGIN")
+            try:
+                marks = self._calculation_marks()
+                if marks is not None and self.data_version() == self.version:
+                    self._marks = marks
+            finally:
+                self.db.execute("ROLLBACK")
+        except sqlite3.Error:
+            self._marks = None
+
+    def _results_only(self, current):
+        """True when every commit other sessions made since the marks were taken stored calculation results and
+        nothing else: the revision is unmoved and the file changed exactly as many times as the store's generation
+        rose. Such commits change no input, so the state token, Undo and validation stand. A managed commit moves the
+        revision; a direct SQLite edit changes the file without raising the generation; either fails the test, as
+        does anything this session wrote since the marks were taken."""
+        base = self._marks
+        if base is None or self._marks_at != self.db.total_changes:
+            return False
+        own = not self.db.in_transaction
+        try:
+            if own:
+                self.db.execute("BEGIN")
+            try:
+                marks = self._calculation_marks()
+                if marks is None or self.data_version() != current:
+                    return False
+                revision, generation, counter = marks
+                risen = generation - base[1]
+                if revision != base[0] or risen <= 0 or (counter - base[2]) % (1 << 32) != risen:
+                    return False
+                self._marks = marks
+                return True
+            finally:
+                if own:
+                    self.db.execute("ROLLBACK")
+        except sqlite3.Error:
+            return False
+
     def refresh(self, *, deadline=None):
         self.verify_file()
         current = self.data_version()
+        if current != self.version and self._results_only(current):
+            # Another session stored results. The inputs are what they were: keep the state token and Undo, and
+            # read the store's rows again, since that session may have added, deleted or finished them.
+            self.version = current
+            if self.store is not None and self.store.schema == "main":
+                self.reset_calculation()
+        elif current == self.version and self._marks_at != self.db.total_changes and not self.db.in_transaction:
+            self._remember_marks()
         if current != self.version:
             self.validate(deadline=deadline)
             self.version, self.epoch = current, str(uuid.uuid4())
@@ -2076,6 +2163,7 @@ class Workbook:
                 self.check_operation()
                 self.db.execute("COMMIT")
                 in_transaction = False
+                self._remember_marks()
                 if emptied_distrust:
                     self.distrusted = False
                 if upgraded:

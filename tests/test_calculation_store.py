@@ -132,13 +132,14 @@ class StoreContractMixin:
         self.assertIsNone(self.store.sheets_digest())
         self.assertEqual(self.store.calculation_version(), 7)
 
-    def test_generation_rises_after_write(self):
+    def test_generation_counts_store_write_transactions(self):
         before = self.store.generation()
         self.db.execute("BEGIN")
         self.store.write([((self.sheet, 1, 1), 1, ())])
+        self.store.write([((self.sheet, 2, 1), 2, ())])
+        self.store.advance()
         self.db.execute("COMMIT")
-        after = self.store.generation()
-        self.assertGreater(after, before)
+        self.assertEqual(self.store.generation(), before + 1)
 
     def test_blocks_boundaries(self):
         self.assertEqual(BLOCK_ROWS, 64)

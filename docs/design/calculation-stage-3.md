@@ -51,7 +51,10 @@ recalculation and the new read contract remain stage 4.
   `list_values`, `find`, `csv_export`, and `record_operations.snapshot`) flush
   collected storable results after ending their read transaction via
   non-waiting `store_write` (`PRAGMA busy_timeout=0`), never changing
-  `revision`, state token, Undo, or receipts, and never firing hooks.
+  `revision`, state token, Undo, or receipts, and never firing hooks. Another
+  session on the same file recognises such a commit by `revision`,
+  `dh_calc_meta.generation` and SQLite's file change counter, and keeps its own
+  state token and Undo (design 5.3b; `tests/test_results_only_commits.py`).
   Transactional calculators (hooks, `replace_all`, promotion, operation jobs) do
   not use the store.
 - **Roots and sliced deletion (`engine.py`)**: non-structural managed commits
