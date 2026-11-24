@@ -5,7 +5,7 @@ from collections import defaultdict
 
 from .calculation_store import BLOCK_ROWS
 
-STORED_FORMULA_LIMIT = 140_000  # provisional; fixed by measurement in Task 11
+STORED_FORMULA_LIMIT = 140_000  # fixed by stage 3 I1: ~453 B/formula (~60.5 MiB at cap, inside 64 MiB allowance)
 _WIDE_COLS = 16  # ranges narrower than this are filed per column; wider ones per sheet
 
 _COL_MASK = 0x7FFF
@@ -154,11 +154,37 @@ class DependentsIndex:
         self.checks = 0
 
         if precedents:
-            grouped: dict[tuple, list] = defaultdict(list)
+            cur_key = None
+            cur_rects = []
             for key, rect in precedents:
-                grouped[key].append(rect)
-            for key, rects in grouped.items():
-                self.link(key, rects)
+                if key == cur_key:
+                    cur_rects.append(rect)
+                else:
+                    if cur_key is not None:
+                        self._merge_link(cur_key, cur_rects)
+                    cur_key = key
+                    cur_rects = [rect]
+            if cur_key is not None:
+                self._merge_link(cur_key, cur_rects)
+
+    def _merge_link(self, key, rectangles) -> None:
+        """Fast path for bulk loading: link if unseen, otherwise append to existing rectangles."""
+        snum = self._sheet_num(key[0])
+        packed_key = _pack(snum, key[1], key[2])
+        if packed_key not in self._edges:
+            self.link(key, rectangles)
+            return
+        # Unsorted input repeated an earlier key: reconstruct existing + new rectangles.
+        existing = []
+        for edge in self._edges[packed_key]:
+            if type(edge) is int:
+                ps, r, c = _unpack(edge)
+                existing.append((self._num_to_sheet[ps], r, c, r, c))
+            else:
+                ps, r1, c1, r2, c2 = edge
+                existing.append((self._num_to_sheet[ps], r1, c1, r2, c2))
+        existing.extend(rectangles)
+        self.link(key, existing)
 
     def _sheet_num(self, sheet_id: str) -> int:
         num = self._sheet_to_num.get(sheet_id)

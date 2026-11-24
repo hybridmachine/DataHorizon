@@ -60,6 +60,7 @@ applications, and AI agents through REST.
 | [Calculation design](calculation-design.md) | Approved design for stored results and scaled recalculation (Excel fidelity increment 10): freshness by input digests, incremental recalculation, read contracts |
 | [Calculation stage 1 plan](calculation-stage-1-plan.md) and [result](calculation-experiment.md) | The measurement stage: digests, dependency data and ordered evaluation on a 1,000,000-cell workbook, with the choices it fixes |
 | [Calculation stage 2 plan](calculation-stage-2-plan.md) and [result](calculation-stage-2.md) | Iterative evaluation and streamed ranges in the service, behind today's contracts: tasks, tests, and what was measured (one target missed) |
+| [Calculation stage 3 result](calculation-stage-3.md) and [evidence](evidence/calculation-stage-3.json) | Native v9 calculation store, sum-mode input digests, open/refresh verification, calculation version, interval-tree dependents index, pending roots with sliced deletion, job/read store filling, differential and crash tests, and fixed limits |
 | [Python workspace design](python-workspace-design.md) | Approved design for the desktop workspace, names, owner-channel approval and event bindings, with as-built rulings |
 | [Python workspace guide](python-workspace-guide.md) | Supplies example, workspace window, picking, names, Review & approve, running, rules, SDK/CLI equivalents and known limits |
 | [Structured tables and query workbench plan](relational-workbench-plan.md) | Implemented bounded first M8 batch: native tables, managed record edits, relationships, read-only SQL, saved views and verification evidence |
@@ -112,7 +113,7 @@ applications, and AI agents through REST.
 | [Formula editing and coverage](formula-next-ten.md) | Authorized ten tasks after PR #54 |
 | [M3–M5 completion increments](m3-m5-next-ten.md) | Dependency/calculation, structural hooks, portable lists and qualification |
 | [Date and time increments](date-time-next-ten.md) | Native types, UTC clock, arithmetic and CSV/XLSX/ODS date tiers |
-| [Native formats v1–v7](native-format-v1.md) | Actual development schema and callback-free direct SQLite access |
+| [Native formats v1–v9](native-format-v1.md) | Actual development schema (including v9 derived calculation store) and callback-free direct SQLite access |
 | [Compatibility tier 0](compatibility-v0.md) | Implemented formulas, formatting, interchange and editing limits |
 | [Architecture](architecture.md) | Components, execution paths, transactions, external edits, and recovery |
 | [Data model](data-model.md) | Proposed sheets/tables/views model, identity, types, formulas, and native storage |

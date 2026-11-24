@@ -30,8 +30,8 @@ from .calculation_freshness import CALCULATION_VERSION, apply as apply_verdict, 
 from .calculation_index import DependentsIndex, STORED_FORMULA_LIMIT
 from .calculation_results import StoreCalculator
 
-STORE_WRITE_SECONDS = 0.1  # provisional; fixed by measurement in Task 11
-DELETE_SLICE = 2_000  # provisional; fixed by measurement in Task 11
+STORE_WRITE_SECONDS = 0.1  # fixed by stage 3 W1/W2: 4,096-formula flush takes ~26 ms; 100k-cell digest fill (~152 ms) defers
+DELETE_SLICE = 2_000  # fixed by stage 3 E1: 100k-affected-formula edit acks in ~76.5 ms (<= 100 ms budget)
 
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
