@@ -72,13 +72,14 @@ class FailureRecoveryClientTests(unittest.TestCase):
                 self.assertEqual(failure.exception.body['code'],'CANCELLED');self.assertFalse(book.db.in_transaction)
                 cancel.clear();self.assertEqual(book.read('Sheet1',{})['cells'][0]['value'],7)
             with closing(Workbook(path)) as book:
+                before_snapshot=path.read_bytes()
                 validate=book.validate
                 def cancelled(*args,**kwargs):validate(*args,**kwargs);cancel.set()
                 target=Path(temp)/'copy.dhwb'
                 with patch.object(book,'validate',side_effect=cancelled):
                     with self.assertRaises(EngineError) as failure:book.snapshot(target,cancel_event=cancel)
                 self.assertEqual(failure.exception.body['code'],'CANCELLED');self.assertTrue(target.exists())
-            self.assertEqual(path.read_bytes(),original)
+            self.assertEqual(path.read_bytes(),before_snapshot)
             with closing(Workbook(target,readonly=True)) as copied:self.assertEqual(copied.read('Sheet1',{})['cells'][0]['value'],7)
 
     def test_calculation_cancel_during_open_skips_remaining_integrity_work(self):

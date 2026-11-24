@@ -2,6 +2,7 @@
 """Tests for input block digests, sheets digests, and commit digest maintenance."""
 
 from contextlib import closing
+import hashlib
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -10,10 +11,18 @@ import unittest
 from unittest.mock import patch
 import uuid
 
-from datahorizon.calculation_freshness import Verdict, apply, block_digest, compare, ensure_digests, sheets_digest
+from datahorizon.calculation_freshness import (
+    CALCULATION_VERSION,
+    Verdict,
+    apply,
+    block_digest,
+    compare,
+    ensure_digests,
+    sheets_digest,
+)
 from datahorizon.calculation_store import TABLES as CALC_TABLES
 from datahorizon.engine import EngineError, Workbook
-from datahorizon.formula import MAX_COLS
+from datahorizon.formula import FormulaError, MAX_COLS, SUPPORTED_FUNCTIONS
 
 
 def mutate(book, **request):
@@ -466,6 +475,56 @@ class RefreshVerificationTests(unittest.TestCase):
         self.assertFalse(self.book.distrusted)
         self.assertEqual(self.book.store.formula_count(), 0)
         self.assertEqual(list(self.book.store.digests()), [])
+
+
+class CalculationVersionTests(unittest.TestCase):
+    RECORDED_VERSION = 1
+    RECORDED_FUNCTION_SHA256 = "2d55a5ec1722932b1e8d30ce3f5a0d5514cc64d77063dcb033840e697ede0019"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / "calc_ver.dhwb"
+
+    def _seed_with_version(self, stored_version):
+        book = Workbook(self.path, create=True)
+        sheet = book.sheet("Sheet1")
+        mutate(book, action="edit", sheet="Sheet1", cells=[{"row": 1, "col": 1, "source": "=UNKNOWNFUNC()"}])
+        book.db.execute("BEGIN IMMEDIATE")
+        ensure_digests(book.store, book.db, [(sheet, 0)])
+        book.store.write([((sheet, 1, 1), FormulaError("#NAME?", "Unsupported function"), ())])
+        book.db.execute("COMMIT")
+        expected_digest = book.store.digest(sheet, 0)
+        book.close()
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute("UPDATE dh_calc_meta SET calculation_version=? WHERE singleton=1", (stored_version,))
+        return sheet, expected_digest
+
+    def test_older_version_clears_results_and_keeps_digests(self):
+        sheet, expected_digest = self._seed_with_version(0)
+        reopened = Workbook(self.path)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.store.result((sheet, 1, 1)), (False, None))
+        self.assertEqual(reopened.store.digest(sheet, 0), expected_digest)
+        self.assertEqual(reopened.store.calculation_version(), CALCULATION_VERSION)
+
+    def test_newer_version_clears_too(self):
+        sheet, expected_digest = self._seed_with_version(CALCULATION_VERSION + 1)
+        reopened = Workbook(self.path)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.store.result((sheet, 1, 1)), (False, None))
+        self.assertEqual(reopened.store.digest(sheet, 0), expected_digest)
+        self.assertEqual(reopened.store.calculation_version(), CALCULATION_VERSION)
+
+    def test_function_set_is_pinned_to_the_version(self):
+        actual = hashlib.sha256("\n".join(sorted(SUPPORTED_FUNCTIONS)).encode()).hexdigest()
+        self.assertEqual(
+            (CALCULATION_VERSION, actual),
+            (self.RECORDED_VERSION, self.RECORDED_FUNCTION_SHA256),
+            "The implemented function set changed without updating CALCULATION_VERSION: "
+            "raise CALCULATION_VERSION in calculation_freshness.py and re-record both "
+            "RECORDED_VERSION and RECORDED_FUNCTION_SHA256 here.",
+        )
 
 
 if __name__ == "__main__":

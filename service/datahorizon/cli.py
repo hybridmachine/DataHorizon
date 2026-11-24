@@ -350,6 +350,12 @@ def main():
         if args.command=='query' and ((args.output and not args.export) or (args.export and args.query_action!='run')):raise ValueError('Query file output requires query run --export FORMAT')
         if args.command in ("read", "set"):
             row, col = coordinates(args.address)
+        if args.command == "charts" and args.charts_action == "render" and args.svg_out:
+            check_output_path("--svg-out", args.svg_out, args.overwrite, native_workbook=args.file)
+        if args.command == "import-spreadsheet":
+            check_report_path(args.report_json, args.overwrite, native_workbook=args.file, import_source=args.source)
+        if args.command == "export-spreadsheet":
+            check_report_path(args.report_json, args.overwrite, native_workbook=args.file, export_destination=args.destination)
         if args.command == "direct-sql":
             if args.repair:raise ValueError('--repair is a restricted managed mode; use relationship repair commands')
             path = Path(args.file).expanduser().resolve()
@@ -379,7 +385,8 @@ def main():
                 output=json.dumps(result,allow_nan=False)
                 releasing=True
             else:
-                with client.open(args.file, create=args.command == "create", readonly=args.readonly,repair=args.repair) as book:
+                ro = args.readonly or (args.command == "charts" and args.charts_action in ("list", "suggest", "resolve", "render"))
+                with client.open(args.file, create=args.command == "create", readonly=ro,repair=args.repair) as book:
                     if args.command in ("create", "info"):
                         result = book.info
                     elif args.command=='code':

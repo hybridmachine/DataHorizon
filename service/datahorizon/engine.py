@@ -27,7 +27,7 @@ from .temporal import Temporal, utc_clock, temporal_key, KINDS as TEMPORAL_KINDS
 from .csv_types import temporal_schema
 from .dependencies import DependencyIndex
 from .calculation_store import BLOCK_ROWS, CalculationStore, TABLES as CALC_TABLES
-from .calculation_freshness import apply as apply_verdict, compare, sheets_digest, update_block_digest
+from .calculation_freshness import CALCULATION_VERSION, apply as apply_verdict, compare, sheets_digest, update_block_digest
 
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
@@ -476,10 +476,13 @@ class Workbook:
                 CalculationStore.create(self.db, "main")
                 self.db.execute("INSERT INTO dh_meta VALUES(1,9,?,0)", (str(uuid.uuid4()),))
                 self.db.execute("INSERT INTO sheets VALUES(?,?,0)", (str(uuid.uuid4()), "Sheet1"))
-                CalculationStore(self.db, "main").set_sheets_digest(sheets_digest(self.db))
+                init_store = CalculationStore(self.db, "main")
+                init_store.set_sheets_digest(sheets_digest(self.db))
+                init_store.set_calculation_version(CALCULATION_VERSION)
                 self.db.execute("COMMIT")
             self.verify_file()
             open_verdict = None
+            version_mismatch = False
             self.db.execute("BEGIN")
             try:
                 self.version = self.data_version()
@@ -491,7 +494,9 @@ class Workbook:
                     self.id, format_version = meta_row[0], meta_row[1]
                     self.verify_file()
                 if store and format_version == 9:
-                    open_verdict = compare(CalculationStore(self.db, "main"), self.db, self._opening_deadline)
+                    main_store = CalculationStore(self.db, "main")
+                    version_mismatch = main_store.calculation_version() != CALCULATION_VERSION
+                    open_verdict = compare(main_store, self.db, self._opening_deadline)
             finally:
                 try: self.db.execute("ROLLBACK")
                 except sqlite3.Error: pass
@@ -502,12 +507,21 @@ class Workbook:
                     if not self.readonly:
                         self.store = CalculationStore(self.db, "main")
                         if open_verdict is None:
-                            if not self.store_write(self.store.empty):
+                            def _empty_and_stamp():
+                                self.store.empty()
+                                self.store.set_calculation_version(CALCULATION_VERSION)
+                            if not self.store_write(_empty_and_stamp):
                                 self.distrusted = True
                         else:
                             self.verified = True
-                            if open_verdict.sheets_changed or open_verdict.changed:
-                                if not self.store_write(lambda: apply_verdict(self.store, self.db, open_verdict)):
+                            if version_mismatch or open_verdict.sheets_changed or open_verdict.changed:
+                                def _repair_open():
+                                    if open_verdict.sheets_changed or open_verdict.changed:
+                                        apply_verdict(self.store, self.db, open_verdict)
+                                    if version_mismatch:
+                                        self.store.clear_results()
+                                        self.store.set_calculation_version(CALCULATION_VERSION)
+                                if not self.store_write(_repair_open):
                                     self.distrusted = True
                     else:
                         self._open_temp_store()
@@ -520,6 +534,9 @@ class Workbook:
                                     self.db.execute(f"INSERT INTO dhcalc.{table} SELECT * FROM main.{table}")
                                 if open_verdict.sheets_changed or open_verdict.changed:
                                     apply_verdict(self.store, self.db, open_verdict)
+                                if version_mismatch:
+                                    self.store.clear_results()
+                                    self.store.set_calculation_version(CALCULATION_VERSION)
                             if not self.store_write(_copy_and_apply):
                                 self.distrusted = True
                 else:
@@ -540,7 +557,9 @@ class Workbook:
         self.db.execute("BEGIN")
         try:
             CalculationStore.create(self.db, "dhcalc")
-            CalculationStore(self.db, "dhcalc").set_sheets_digest(sheets_digest(self.db))
+            temp_store = CalculationStore(self.db, "dhcalc")
+            temp_store.set_sheets_digest(sheets_digest(self.db))
+            temp_store.set_calculation_version(CALCULATION_VERSION)
             self.db.execute("COMMIT")
         except Exception:
             if self.db.in_transaction:
@@ -562,9 +581,11 @@ class Workbook:
         from . import relational
         relational.ensure_version(self, 9)
         CalculationStore.create(self.db, "main")
-        CalculationStore(self.db, "main").set_sheets_digest(sheets_digest(self.db))
+        main_store = CalculationStore(self.db, "main")
+        main_store.set_sheets_digest(sheets_digest(self.db))
+        main_store.set_calculation_version(CALCULATION_VERSION)
         if self.store is not None:
-            self.store = CalculationStore(self.db, "main")
+            self.store = main_store
 
     def touched_blocks(self):
         """Set of (sheet_id, block) pairs touched by cell edits in the current mutation."""

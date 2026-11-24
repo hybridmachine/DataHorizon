@@ -9,6 +9,12 @@ import time
 from .calculation_store import BLOCK_ROWS
 from .formula import MAX_COLS
 
+# Raise in any release that can change the result of some formula on unchanged inputs,
+# or the precedents extracted from some formula: a function added or corrected, a change
+# to coercion, error precedence or limits, or a change to the parser or reference resolution.
+# Releases that change none of these keep it.
+CALCULATION_VERSION = 1
+
 _MOD256 = 1 << 256
 _MASK256 = _MOD256 - 1
 
