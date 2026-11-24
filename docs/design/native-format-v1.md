@@ -25,7 +25,7 @@ secondary index:
 | `dh_calc_sheets` | `number INTEGER PRIMARY KEY` | `sheet_id TEXT NOT NULL UNIQUE` (maps `sheets.id` to compact integer sheet numbers) |
 | `dh_calc_results` | `PRIMARY KEY(sheet, row, col) WITHOUT ROWID` | `sheet INTEGER NOT NULL`, `row INTEGER NOT NULL`, `col INTEGER NOT NULL`, `kind INTEGER NOT NULL`, `value` (untyped), `message TEXT` |
 | `dh_calc_precedents` | `PRIMARY KEY(sheet, row, col, p_sheet, r1, c1, r2, c2) WITHOUT ROWID` | `sheet`, `row`, `col` (formula cell) and `p_sheet`, `r1`, `c1`, `r2`, `c2` (1-based inclusive precedent rectangle; a single-cell reference has `r1=r2` and `c1=c2`). A formula with no precedents has a result row and no precedent rows. |
-| `dh_calc_digests` | `PRIMARY KEY(sheet, block) WITHOUT ROWID` | `sheet INTEGER NOT NULL`, `block INTEGER NOT NULL` (`(row - 1) // 64`, covering rows `64*block+1` to `64*block+64`), `digest BLOB NOT NULL` (SHA-256 over the block's stored cells in `(row, col)` order: `row`, `col`, `source` and `kind` with type tags and length prefixes; `style` is excluded) |
+| `dh_calc_digests` | `PRIMARY KEY(sheet, block) WITHOUT ROWID` | `sheet INTEGER NOT NULL`, `block INTEGER NOT NULL` (`(row - 1) // 64`, covering rows `64*block+1` to `64*block+64`), `digest BLOB NOT NULL` (32-byte big-endian sum modulo 2^256 of per-cell SHA-256 digests over `row`, `col`, type-tagged length-prefixed `source` and `kind` for every stored cell in the block; `style` is excluded) |
 | `dh_calc_roots` | `PRIMARY KEY(sheet, r1, c1, r2, c2) WITHOUT ROWID` | `sheet`, `r1`, `c1`, `r2`, `c2`: pending changed single-cell or block rectangles whose dependent results have not all been cleared yet |
 
 `dh_calc_results` encodes each stored value's exact type through `kind`:

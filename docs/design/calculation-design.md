@@ -194,13 +194,25 @@ would look like an external edit to `data_version` and discard everything.
   measured and fixed in the format (section 13).
 - A block's digest covers, for every stored cell in it, the coordinates, the
   `source` and the `kind`. Style is excluded: it does not change a value.
-- **Measured**, and a close call: a block is 64 rows of one sheet and its
-  digest is one SHA-256 over its cells in key order, each cell length-prefixed.
-  A commit re-reads and re-hashes each block it touches (0.73 to 0.83 ms for a
-  640-cell block). Summing per-cell hashes avoids the re-read and passed its
-  threshold narrowly, but made the opening scan about 0.6 s slower. Sheets
-  wider than 10 columns were not measured; stage 3 measures them and
-  re-decides between the two, or bounds blocks by columns too.
+- **Measured**, and re-decided in stage 3 ([digest evidence](evidence/calculation-stage-3-digest.json)):
+  a block is 64 rows of one sheet and its digest is the sum modulo 2^256
+  (stored as 32 big-endian bytes) of the SHA-256 digests of the stored cells in
+  the block, each cell encoded with its coordinates, type-tagged length-prefixed
+  `source` and type-tagged length-prefixed `kind` (style excluded).
+  Stage 1 measured only a 10-column sheet (0.73 to 0.83 ms to re-read and
+  re-hash a 64-row block in stream mode). On wide sheets (stage 3 measurement D1,
+  medians of 101 on Apple M1), stream mode over 64 rows takes 0.62 ms at 10
+  columns, 6.14 ms at 100 columns (missing the 1 ms rule) and 63.77 ms at 1,000
+  columns; bounding blocks to 64 rows by 16 columns with row seeks still takes
+  0.95 ms at 10 columns, 1.32 ms at 100 columns (also missing 1 ms) and 1.49 ms
+  at 1,000 columns. Sum mode updates a touched block by delta in 0.003 ms at 10
+  columns, 0.004 ms at 100 columns and 0.015 ms at 1,000 columns, while a full
+  scan of 1,000,000 cells takes 1.80 s (against 1.23 s for 64-row stream mode
+  and 1.38 s for 64x16 stream mode, medians of five). Sum mode therefore wins
+  by the stage 3 rule. Sum mode also has one property stream mode lacks: a delta
+  update cannot absorb an edit the commit never read (a foreign edit to another
+  cell in the same block remains visible as a digest mismatch instead of being
+  folded into a re-hashed block).
 - One further digest covers the `sheets` table (identity and name of each
   sheet), because renaming or removing a sheet changes what a formula means.
 - The digest guards against accident, not attack. A person who can write the
