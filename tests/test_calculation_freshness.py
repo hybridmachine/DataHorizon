@@ -5,6 +5,7 @@ from contextlib import closing
 from pathlib import Path
 import sqlite3
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 import uuid
@@ -361,6 +362,110 @@ class OpenVerificationTests(unittest.TestCase):
             reopened = Workbook(self.path)
         self.addCleanup(reopened.close)
         self.assertEqual(reopened.info()["format_version"], 8)
+
+
+class RefreshVerificationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / "refresh_verify.dhwb"
+        self.book = Workbook(self.path, create=True)
+        self.addCleanup(self.book.close)
+        self.sheet = self.book.sheet("Sheet1")
+
+    def _seed(self):
+        mutate(self.book, action="edit", sheet="Sheet1", cells=[
+            {"row": 1, "col": 1, "source": "2"},
+            {"row": 1, "col": 2, "source": "=A1*3"},
+            {"row": 100, "col": 1, "source": "=7+8"},
+        ])
+        self.book.db.execute("BEGIN IMMEDIATE")
+        ensure_digests(self.book.store, self.book.db, [(self.sheet, 0), (self.sheet, 1)])
+        self.book.store.write([
+            ((self.sheet, 1, 2), 6, [(self.sheet, 1, 1, 1, 1)]),
+            ((self.sheet, 100, 1), 15, ()),
+        ])
+        self.book.db.execute("COMMIT")
+
+    def _direct(self, sql, *params):
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute(sql, params)
+
+    def test_direct_edit_while_open_roots_the_block(self):
+        self._seed()
+        self._direct("UPDATE cells SET source='9' WHERE sheet_id=? AND row=1 AND col=1", self.sheet)
+        self.book.info()
+        self.assertFalse(self.book.distrusted)
+        self.assertEqual(self.book.store.roots(), [(self.sheet, 1, 1, 64, MAX_COLS)])
+        self.assertEqual(self.book.store.digest(self.sheet, 0), block_digest(self.book.db, self.sheet, 0))
+        self.assertEqual(self.book.store.result((self.sheet, 100, 1)), (True, 15))
+
+    def test_refresh_scan_past_its_deadline_empties_the_store(self):
+        self._seed()
+        self._direct("UPDATE cells SET source='9' WHERE sheet_id=? AND row=1 AND col=1", self.sheet)
+        with patch("datahorizon.engine.compare", return_value=None):
+            self.book.info()
+        self.assertFalse(self.book.distrusted)
+        self.assertEqual(self.book.store.formula_count(), 0)
+        self.assertEqual(list(self.book.store.digests()), [])
+        self.assertTrue(self.book.store_write(lambda: self.book.store.write([((self.sheet, 100, 1), 15, ())])))
+        self.assertEqual(self.book.store.result((self.sheet, 100, 1)), (True, 15))
+
+    def test_distrust_holds_while_the_file_is_locked(self):
+        self._seed()
+        self._direct("UPDATE cells SET source='9' WHERE sheet_id=? AND row=1 AND col=1", self.sheet)
+        skips_before = self.book.store_skips
+        holder = sqlite3.connect(self.path, isolation_level=None)
+        self.addCleanup(holder.close)
+        holder.execute("BEGIN")
+        holder.execute("SELECT 1 FROM dh_meta").fetchone()
+        try:
+            self.book.info()
+            self.assertTrue(self.book.distrusted)
+            self.assertGreater(self.book.store_skips, skips_before)
+        finally:
+            holder.execute("ROLLBACK")
+        self.book.info()
+        self.assertFalse(self.book.distrusted)
+        self.assertEqual(self.book.store.formula_count(), 0)
+        self.assertEqual(list(self.book.store.digests()), [])
+
+    def test_store_write_does_not_wait(self):
+        self._seed()
+        holder = sqlite3.connect(self.path, isolation_level=None)
+        self.addCleanup(holder.close)
+        holder.execute("BEGIN")
+        holder.execute("SELECT 1 FROM dh_meta").fetchone()
+        try:
+            skips_before = self.book.store_skips
+            t0 = time.perf_counter()
+            ok = self.book.store_write(lambda: self.book.store.empty())
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            self.assertFalse(ok)
+            self.assertLess(elapsed_ms, 100)
+            self.assertEqual(self.book.store_skips, skips_before + 1)
+        finally:
+            holder.execute("ROLLBACK")
+
+    def test_commit_while_distrusted_empties_in_its_own_transaction(self):
+        self._seed()
+        self._direct("UPDATE cells SET source='9' WHERE sheet_id=? AND row=1 AND col=1", self.sheet)
+        holder = sqlite3.connect(self.path, isolation_level=None)
+        self.addCleanup(holder.close)
+        holder.execute("BEGIN")
+        holder.execute("SELECT 1 FROM dh_meta").fetchone()
+        try:
+            self.book.info()
+            self.assertTrue(self.book.distrusted)
+        finally:
+            holder.execute("ROLLBACK")
+        # Force refresh not to clear distrust before mutate takes BEGIN IMMEDIATE, so mutate's own transaction empties it.
+        with patch.object(self.book, "store_write", return_value=False):
+            receipt = mutate(self.book, action="edit", sheet="Sheet1", cells=[{"row": 2, "col": 1, "source": "4"}])
+        self.assertEqual(receipt["outcome"], "committed")
+        self.assertFalse(self.book.distrusted)
+        self.assertEqual(self.book.store.formula_count(), 0)
+        self.assertEqual(list(self.book.store.digests()), [])
 
 
 if __name__ == "__main__":

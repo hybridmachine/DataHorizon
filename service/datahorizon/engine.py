@@ -404,6 +404,21 @@ class WorkbookStream:
             yield cell
 
 
+_SKIP_SQLITE_CODES = {
+    sqlite3.SQLITE_BUSY,
+    sqlite3.SQLITE_LOCKED,
+    sqlite3.SQLITE_READONLY,
+    sqlite3.SQLITE_FULL,
+}
+
+
+def _is_skip_sqlite_error(error: sqlite3.Error) -> bool:
+    if (getattr(error, "sqlite_errorcode", 0) & 255) in _SKIP_SQLITE_CODES:
+        return True
+    text = str(error).lower()
+    return any(word in text for word in ("locked", "busy", "readonly", "read-only", "full"))
+
+
 class Workbook:
     def __init__(self, path, create=False, readonly=False, handler=None, *, cancel_event=None, repair=False, approved_code=(), store=True):
         create, readonly, store = boolean(create, "create"), boolean(readonly, "readonly"), boolean(store, "store")
@@ -415,6 +430,8 @@ class Workbook:
         self.store = None
         self._temp_store_dir = None
         self.verified = False
+        self.distrusted = False
+        self.store_skips = 0
         self.relational_issues=[]
         self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
         self.table_schema_keys=set();self.relational_before={}
@@ -485,49 +502,26 @@ class Workbook:
                     if not self.readonly:
                         self.store = CalculationStore(self.db, "main")
                         if open_verdict is None:
-                            self.db.execute("BEGIN IMMEDIATE")
-                            try:
-                                self.store.empty()
-                                self.db.execute("COMMIT")
-                            except Exception:
-                                if self.db.in_transaction:
-                                    try: self.db.execute("ROLLBACK")
-                                    except sqlite3.Error: pass
-                                raise
+                            if not self.store_write(self.store.empty):
+                                self.distrusted = True
                         else:
                             self.verified = True
                             if open_verdict.sheets_changed or open_verdict.changed:
-                                self.db.execute("BEGIN IMMEDIATE")
-                                try:
-                                    if self.data_version() == self.version:
-                                        apply_verdict(self.store, self.db, open_verdict)
-                                    else:
-                                        self.store.empty()
-                                        self.verified = False
-                                    self.db.execute("COMMIT")
-                                except Exception:
-                                    if self.db.in_transaction:
-                                        try: self.db.execute("ROLLBACK")
-                                        except sqlite3.Error: pass
-                                    raise
+                                if not self.store_write(lambda: apply_verdict(self.store, self.db, open_verdict)):
+                                    self.distrusted = True
                     else:
                         self._open_temp_store()
                         if open_verdict is not None:
                             self.verified = True
-                            self.db.execute("BEGIN")
-                            try:
+                            def _copy_and_apply():
                                 for table in reversed(CALC_TABLES):
                                     self.db.execute(f"DELETE FROM dhcalc.{table}")
                                 for table in CALC_TABLES:
                                     self.db.execute(f"INSERT INTO dhcalc.{table} SELECT * FROM main.{table}")
                                 if open_verdict.sheets_changed or open_verdict.changed:
                                     apply_verdict(self.store, self.db, open_verdict)
-                                self.db.execute("COMMIT")
-                            except Exception:
-                                if self.db.in_transaction:
-                                    try: self.db.execute("ROLLBACK")
-                                    except sqlite3.Error: pass
-                                raise
+                            if not self.store_write(_copy_and_apply):
+                                self.distrusted = True
                 else:
                     self._open_temp_store()
         except Exception:
@@ -579,6 +573,65 @@ class Workbook:
             for key in self.changes
             if key[0] not in ("table", "chart")
         }
+
+    def store_write(self, work) -> bool:
+        """Run work in a non-waiting transaction against self.store; returns False if skipped."""
+        if self.store is None:
+            return False
+        if self.db.in_transaction:
+            self.store_skips += 1
+            return False
+        if self.store.schema != "main":
+            self.db.execute("BEGIN")
+            try:
+                work()
+                self.db.execute("COMMIT")
+                return True
+            except sqlite3.Error as error:
+                if self.db.in_transaction:
+                    try: self.db.execute("ROLLBACK")
+                    except sqlite3.Error: pass
+                if _is_skip_sqlite_error(error):
+                    self.store_skips += 1
+                    return False
+                raise
+            except Exception:
+                if self.db.in_transaction:
+                    try: self.db.execute("ROLLBACK")
+                    except sqlite3.Error: pass
+                raise
+        self.db.execute("PRAGMA busy_timeout=0")
+        try:
+            try:
+                self.db.execute("BEGIN IMMEDIATE")
+            except sqlite3.Error as error:
+                if _is_skip_sqlite_error(error):
+                    self.store_skips += 1
+                    return False
+                raise
+            try:
+                if self.data_version() != self.version:
+                    self.db.execute("ROLLBACK")
+                    self.store_skips += 1
+                    return False
+                work()
+                self.db.execute("COMMIT")
+                return True
+            except sqlite3.Error as error:
+                if self.db.in_transaction:
+                    try: self.db.execute("ROLLBACK")
+                    except sqlite3.Error: pass
+                if _is_skip_sqlite_error(error):
+                    self.store_skips += 1
+                    return False
+                raise
+            except Exception:
+                if self.db.in_transaction:
+                    try: self.db.execute("ROLLBACK")
+                    except sqlite3.Error: pass
+                raise
+        finally:
+            self.db.execute("PRAGMA busy_timeout=1000")
 
     def verify_file(self):
         _verify_destination(self.path,self.file_identity)
@@ -717,8 +770,54 @@ class Workbook:
             self.undo.clear()
             self.redo.clear()
             self.dependencies.clear()
-            if self.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=3:
+            format_version = self.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]
+            if format_version >= 3:
                 self.unverified_records.update((sheet,identifier) for sheet,identifier in self.db.execute("SELECT sheet_id,id FROM dh_objects WHERE namespace='records'"))
+            if self.store is not None:
+                if not self.readonly and self.store.schema != "main" and format_version == 9:
+                    self.store = CalculationStore(self.db, "main")
+                    if not self.db.in_transaction:
+                        self._close_temp_store(detach=True)
+                if format_version == 9:
+                    scan_deadline = time.monotonic() + 2 if deadline is None else deadline
+                    source_store = CalculationStore(self.db, "main") if self.readonly else self.store
+                    verdict = compare(source_store, self.db, scan_deadline)
+                    if verdict is None:
+                        self.verified = False
+                        if self.store_write(self.store.empty):
+                            self.distrusted = False
+                        else:
+                            self.distrusted = True
+                    else:
+                        self.verified = True
+                        if self.readonly:
+                            def _sync_ro():
+                                for table in reversed(CALC_TABLES):
+                                    self.db.execute(f"DELETE FROM dhcalc.{table}")
+                                for table in CALC_TABLES:
+                                    self.db.execute(f"INSERT INTO dhcalc.{table} SELECT * FROM main.{table}")
+                                if verdict.sheets_changed or verdict.changed:
+                                    apply_verdict(self.store, self.db, verdict)
+                            if self.store_write(_sync_ro):
+                                self.distrusted = False
+                            else:
+                                self.distrusted = True
+                        elif verdict.sheets_changed or verdict.changed:
+                            if self.store_write(lambda: apply_verdict(self.store, self.db, verdict)):
+                                self.distrusted = False
+                            else:
+                                self.distrusted = True
+                        elif self.distrusted:
+                            if self.store_write(self.store.empty):
+                                self.distrusted = False
+                else:
+                    if self.store_write(self.store.empty):
+                        self.distrusted = False
+                    else:
+                        self.distrusted = True
+        elif self.distrusted and self.store is not None:
+            if self.store_write(self.store.empty):
+                self.distrusted = False
 
     def state(self):
         revision = self.db.execute("SELECT revision FROM dh_meta").fetchone()[0]
@@ -1415,11 +1514,13 @@ class Workbook:
             store_before = self.store
             upgraded = False
             self._rehash = True
+            emptied_distrust = False
             try:
                 self.db.execute("SAVEPOINT operation_changes")
-                if self.store is not None and self.data_version() != self.version:
+                if self.store is not None and (self.distrusted or self.data_version() != self.version):
                     self.store.empty()
                     self._rehash = False
+                    emptied_distrust = True
                 self.check_operation()
                 # The writer lock closes the check/write race with independent tools.
                 self.refresh(deadline=self.deadline)
@@ -1732,6 +1833,8 @@ class Workbook:
                 self.check_operation()
                 self.db.execute("COMMIT")
                 in_transaction = False
+                if emptied_distrust:
+                    self.distrusted = False
                 if upgraded:
                     self._close_temp_store(detach=True)
                 if repaired_issues is not None:self.relational_issues=repaired_issues
