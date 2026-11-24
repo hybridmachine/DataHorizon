@@ -296,6 +296,12 @@ class DependentsIndex:
     def __len__(self) -> int:
         return len(self._edges)
 
+    def __contains__(self, key) -> bool:
+        snum = self._sheet_to_num.get(key[0])
+        if snum is None:
+            return False
+        return _pack(snum, key[1], key[2]) in self._edges
+
     def _query_col_tree(self, root: _IntervalNode | None, q_r1: int, q_r2: int, left_done: dict, right_done: dict, emit) -> None:
         """Query a column's centered interval tree for [q_r1, q_r2], skipping intervals already emitted in this call."""
         stack = [root] if root is not None else []

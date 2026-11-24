@@ -130,6 +130,75 @@ def ensure_digests(store, db, sheet_blocks) -> None:
         store.set_digests(missing)
 
 
+def missing_block_digests(db, sheet_id: str, block_numbers, deadline: float) -> tuple[bool, list]:
+    """Compute digests for block_numbers on sheet_id before deadline.
+
+    Returns (completed, [(sheet_id, block, digest), ...]). Empty blocks produce no tuple.
+    Contiguous runs of >4 blocks are scanned in one SQL query so sparse large ranges stay fast.
+    """
+    ordered = sorted(set(block_numbers))
+    if not ordered:
+        return True, []
+    monotonic = time.monotonic
+    if monotonic() >= deadline:
+        return False, []
+    # Split into contiguous runs of block numbers.
+    runs = []
+    start = prev = ordered[0]
+    for blk in ordered[1:]:
+        if blk == prev + 1:
+            prev = blk
+        else:
+            runs.append((start, prev))
+            start = prev = blk
+    runs.append((start, prev))
+
+    sha256 = hashlib.sha256
+    from_bytes = int.from_bytes
+    kind_cache = _KNOWN_KINDS
+    block_rows = BLOCK_ROWS
+    mask = _MASK256
+    computed = []
+    for first_blk, last_blk in runs:
+        if monotonic() >= deadline:
+            return False, []
+        if last_blk - first_blk < 4:
+            for blk in range(first_blk, last_blk + 1):
+                if monotonic() >= deadline:
+                    return False, []
+                dig = block_digest(db, sheet_id, blk)
+                if dig is not None:
+                    computed.append((sheet_id, blk, dig))
+        else:
+            r1 = first_blk * block_rows + 1
+            r2 = (last_blk + 1) * block_rows
+            totals = {}
+            seen = 0
+            for row, col, source, kind in db.execute(
+                "SELECT row,col,source,kind FROM cells WHERE sheet_id=? AND row BETWEEN ? AND ? ORDER BY row,col",
+                (sheet_id, r1, r2),
+            ):
+                seen += 1
+                if (seen & 4095) == 0 and monotonic() >= deadline:
+                    return False, []
+                if type(source) is str and type(kind) is str and type(row) is int and type(col) is int:
+                    src_b = source.encode("utf-8", "surrogatepass")
+                    knd_b = kind_cache.get(kind)
+                    if knd_b is None:
+                        kb = kind.encode("utf-8", "surrogatepass")
+                        knd_b = (b"T%d:" % len(kb)) + kb
+                    payload = (b"I%d:I%d:T%d:" % (row, col, len(src_b))) + src_b + knd_b
+                else:
+                    payload = _encode_field(row) + _encode_field(col) + _encode_field(source) + _encode_field(kind)
+                blk = (row - 1) // block_rows
+                totals[blk] = totals.get(blk, 0) + from_bytes(sha256(payload).digest(), "big")
+            if monotonic() >= deadline:
+                return False, []
+            for blk, total in totals.items():
+                computed.append((sheet_id, blk, (total & mask).to_bytes(32, "big")))
+    return True, computed
+
+
 @dataclass
 class Verdict:
     sheets_changed: bool

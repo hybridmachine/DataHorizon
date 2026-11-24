@@ -470,8 +470,10 @@ class StreamedRangeTests(RangeCase):
         calculator.range_targets = counted
         self.assertEqual(self.outcome(calculator, book, "C1"), 3)
         self.assertEqual(expanded, [])
-        self.assertLess(book.dependencies.info()["edges"], 10)
-        self.assertIn((book.sheet(S), 1, 3), book.dependencies.values)  # one rectangle (Task 6), so the reader is cached
+        book.flush_results()
+        self.assertEqual(book.store.result((book.sheet(S), 1, 3)), (True, 3))
+        self.assertEqual(len(book.index), 1)
+        self.assertEqual(book.index.affected([(book.sheet(S), 1048576, 1, 1048576, 1)]), {(book.sheet(S), 1, 3)})
 
 
 class StreamedCriteriaAndLookupTests(RangeCase):

@@ -13,9 +13,14 @@ from .temporal import Temporal,KINDS
 def snapshot(book,request):
     with book.lock:
         book.refresh();book.db.execute('BEGIN')
+        ok=False
         try:
             book.refresh();require(request.get('expected_state')==book.state(),'STALE_STATE','Review current record targets',409);yield
-        finally:book.db.execute('ROLLBACK')
+            ok=True
+        finally:
+            book.db.execute('ROLLBACK')
+            if ok:book.flush_results()
+            else:book._calculators.clear()
 
 
 def projection(book,request):

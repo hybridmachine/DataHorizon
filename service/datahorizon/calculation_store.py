@@ -284,6 +284,21 @@ class CalculationStore:
             if sheet_id is not None:
                 yield sheet_id, block, bytes(digest)
 
+    def digest_blocks(self, sheet_id: str, b1: int, b2: int) -> set[int]:
+        row = self.db.execute(
+            f"SELECT number FROM {self.schema}.dh_calc_sheets WHERE sheet_id=?",
+            (sheet_id,),
+        ).fetchone()
+        if row is None:
+            return set()
+        return {
+            blk
+            for (blk,) in self.db.execute(
+                f"SELECT block FROM {self.schema}.dh_calc_digests WHERE sheet=? AND block BETWEEN ? AND ?",
+                (row[0], b1, b2),
+            )
+        }
+
     def set_digests(self, items) -> None:
         s = self.schema
         sheets = self._sheet_map()

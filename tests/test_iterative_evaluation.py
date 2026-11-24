@@ -509,9 +509,10 @@ class IterativeEvaluationTests(unittest.TestCase):
         book = self.chain(200)
         calculator = book.calculator(seconds=30)
         self.assertEqual(self.outcome(calculator, book, "A200"), 200)
+        book.flush_results()
         sheet = book.sheet(S)
-        self.assertEqual({row: book.dependencies.values.get((sheet, row, 1)) for row in (2, 100, 199, 200)},
-                         {2: 2, 100: 100, 199: 199, 200: 200})
+        self.assertEqual({row: book.store.result((sheet, row, 1)) for row in (2, 100, 199, 200)},
+                         {2: (True, 2), 100: (True, 100), 199: (True, 199), 200: (True, 200)})
 
     def test_the_count_is_per_formula(self):
         cells = {"B1": "1", "B2": "2", "B3": "3", "A1": "=B1+B2+B3", "C1": "=A1+B1+B2+B3"}
