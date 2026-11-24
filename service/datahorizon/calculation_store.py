@@ -178,7 +178,6 @@ class CalculationStore:
     def write(self, items) -> None:
         s = self.schema
         sheets = self._sheet_map()
-        wrote = False
         upsert_result = (
             f"INSERT INTO {s}.dh_calc_results(sheet,row,col,kind,value,message) VALUES(?,?,?,?,?,?) "
             "ON CONFLICT(sheet,row,col) DO UPDATE SET kind=excluded.kind,value=excluded.value,message=excluded.message"
@@ -189,7 +188,6 @@ class CalculationStore:
             "VALUES(?,?,?,?,?,?,?,?)"
         )
         for key, value, rectangles in items:
-            wrote = True
             sheet_id, row, col = key
             snum = self._ensure_sheet(sheets, sheet_id)
             kind, encoded_val, msg = _encode_result(value)
@@ -201,13 +199,6 @@ class CalculationStore:
             ]
             if prec_rows:
                 self.db.executemany(insert_prec, prec_rows)
-        if wrote:
-            self.db.execute(
-                f"INSERT INTO {s}.dh_calc_meta(singleton,store_version,calculation_version,sheets_digest,generation) "
-                "VALUES(1,?,NULL,NULL,1) "
-                "ON CONFLICT(singleton) DO UPDATE SET generation=generation+1",
-                (STORE_VERSION,),
-            )
 
     def delete_results(self, keys) -> None:
         sheets = self._sheet_map()
@@ -400,6 +391,16 @@ class CalculationStore:
             "VALUES(1,?,?,NULL,0) "
             "ON CONFLICT(singleton) DO UPDATE SET calculation_version=excluded.calculation_version",
             (STORE_VERSION, version),
+        )
+
+    def advance(self) -> None:
+        """Count one store-write transaction. A session that commits nothing but derived results calls this once in
+        that transaction, so other sessions can tell the commit from a change to the workbook's data."""
+        self.db.execute(
+            f"INSERT INTO {self.schema}.dh_calc_meta(singleton,store_version,calculation_version,sheets_digest,generation) "
+            "VALUES(1,?,NULL,NULL,1) "
+            "ON CONFLICT(singleton) DO UPDATE SET generation=generation+1",
+            (STORE_VERSION,),
         )
 
     def generation(self) -> int:

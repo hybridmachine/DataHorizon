@@ -72,7 +72,8 @@ Anti-goals:
   extensions in the file.
 - Results are written only through the service's own connection (parent 5.4).
   Writing them changes neither `revision`, the state token nor Undo, makes no
-  receipt and runs no hook.
+  receipt and runs no hook. This holds for every session that has the workbook
+  open, not only the one that writes: see 5.3b.
 - The opening budget is five seconds. Edit acknowledgement has a recorded budget
   of 100 ms ([initial contracts](initial-contracts.md)).
 - The 178-case characterization corpus passes with nothing re-recorded.
@@ -170,6 +171,36 @@ a read returns.
 A formula reading a very large range needs digests for every block of it. That
 cost is measured (section 7) and, if it does not fit, the batch is skipped for
 that formula and the blocks are left for the open scan.
+
+### 5.3b Results stored by another session
+
+A results-only commit moves `PRAGMA data_version` for every other connection,
+which is otherwise the sign of an external change (new state token, Undo
+cleared, validation and the digest comparison). A session tells the two apart
+with three marks it keeps while the file is as it last saw it: `revision`,
+`dh_calc_meta.generation`, and SQLite's file change counter (header bytes
+24..27), read under a shared lock.
+
+- Every results-only commit to the workbook's own store raises `generation`
+  by exactly one, in the same transaction.
+- SQLite raises the change counter once for each committed transaction that
+  changed the file, in the rollback-journal format DataHorizon writes.
+- When `data_version` has moved, the other commits were results-only if and
+  only if `revision` is unmoved and the change counter rose by exactly as much
+  as `generation` did. A managed commit moves `revision`; a direct SQLite edit
+  raises the counter without raising `generation`.
+
+When the test passes, the session keeps its state token and Undo, skips
+validation and the digest comparison, and rebuilds its dependents index and
+pending roots from the store, since the other session may have added, deleted
+or finished rows. When it fails, or the marks are unavailable (a file in WAL
+format, a workbook below format 9, anything this session wrote that the marks
+do not account for), the change is treated as external, as before. The test
+can only err toward treating a change as external.
+
+A direct edit that also raises `generation` by one is indistinguishable from a
+stored result. Direct access makes no freshness promise beyond the digests,
+which still catch such an edit at the next open or external refresh.
 
 ### 5.3a What a calculation job stores
 
