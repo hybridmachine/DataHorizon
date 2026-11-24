@@ -12,7 +12,7 @@ with tempfile.TemporaryDirectory() as temp,LocalService() as client,client.open(
     book.set_localized(1,1,'1.234,50','number','de_DE');book.set(1,2,'=A1*2');assert book.read(r2=1,c2=2)['cells'][1]['value']==2469
     book.set(1,1,'10');assert book.read(r2=1,c2=2)['cells'][1]['value']==20
     book.set_metadata('presentation','default',{});book.declare_list('Rows',r1=1,r2=1,c1=1,c2=2,header=False)
-    assert book.refresh()['format_version']==3 and book.metadata()['objects']
+    assert book.refresh()['format_version']==9 and book.metadata()['objects']
     assert book.copy_records('Rows')['rows']
     calc=book.calculate(r2=1,c2=2)
     while calc['status']=='running':time.sleep(.01);calc=book.calculation(calc['job_id'])
