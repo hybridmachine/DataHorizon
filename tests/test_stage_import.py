@@ -367,9 +367,9 @@ class ServiceStageImportTests(unittest.TestCase):
     def test_temporal_kinds_raise_the_format_version(self):
         stage = self.service.staging.new('stage', 'temporal')
         summary = build_stage(stage, [('Dates', [{'row': 1, 'col': 1, 'source': '2024-02-29', 'kind': 'date', 'style': {'format': 'date_iso'}}])])
-        self.assertEqual(self.info()['format_version'], 1)
+        self.assertEqual(self.info()['format_version'], 9)
         self.apply(summary)
-        self.assertEqual(self.info()['format_version'], 2)
+        self.assertEqual(self.info()['format_version'], 9)
         self.assertEqual(self.cells('Dates')[0]['value_kind'], 'date')
 
     def test_openapi_staged_example_executes(self):

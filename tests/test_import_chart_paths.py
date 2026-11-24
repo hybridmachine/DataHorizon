@@ -166,7 +166,7 @@ class ImportChartPathTests(unittest.TestCase):
         resolved = self.resolve(first["id"], base)
         self.assertEqual(resolved["series"][0]["values"], SALES)
         self.assertEqual(resolved["categories"][0], "Sports")
-        self.assertEqual(self.format_version(base), 8)
+        self.assertEqual(self.format_version(base), 9)
         return found
 
     # Tests.

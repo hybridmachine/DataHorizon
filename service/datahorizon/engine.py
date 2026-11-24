@@ -26,6 +26,7 @@ from .borders import SIDES, BORDER_STYLES
 from .temporal import Temporal, utc_clock, temporal_key, KINDS as TEMPORAL_KINDS
 from .csv_types import temporal_schema
 from .dependencies import DependencyIndex
+from .calculation_store import CalculationStore
 
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
@@ -403,13 +404,15 @@ class WorkbookStream:
 
 
 class Workbook:
-    def __init__(self, path, create=False, readonly=False, handler=None, *, cancel_event=None, repair=False, approved_code=()):
-        create, readonly = boolean(create, "create"), boolean(readonly, "readonly")
+    def __init__(self, path, create=False, readonly=False, handler=None, *, cancel_event=None, repair=False, approved_code=(), store=True):
+        create, readonly, store = boolean(create, "create"), boolean(readonly, "readonly"), boolean(store, "store")
         from .workbook_code import approval_store
         self.approved_code=approval_store(approved_code)
         self.path = Path(path).expanduser().resolve()
         self.readonly, self.handler = readonly, handler
         self.repair=boolean(repair,'repair')
+        self.store = None
+        self._temp_store_dir = None
         self.relational_issues=[]
         self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
         self.table_schema_keys=set();self.relational_before={}
@@ -448,9 +451,11 @@ class Workbook:
             self.db.execute("PRAGMA synchronous=FULL")
             self.db.execute("PRAGMA temp_store=FILE")
             if create:
-                self.db.executescript(SCHEMA)
+                from . import relational
+                self.db.executescript(SCHEMA + METADATA_SCHEMA + relational.SCHEMA)
                 self.db.execute("BEGIN IMMEDIATE")
-                self.db.execute("INSERT INTO dh_meta VALUES(1,1,?,0)", (str(uuid.uuid4()),))
+                CalculationStore.create(self.db, "main")
+                self.db.execute("INSERT INTO dh_meta VALUES(1,9,?,0)", (str(uuid.uuid4()),))
                 self.db.execute("INSERT INTO sheets VALUES(?,?,0)", (str(uuid.uuid4()), "Sheet1"))
                 self.db.execute("COMMIT")
             self.verify_file()
@@ -461,19 +466,58 @@ class Workbook:
                 with sql_deadline(self.db,self._opening_deadline,cancel_event=cancel_event):
                     self.validate()
                     check_integrity(self.db,self._opening_deadline)
-                    self.id = self.db.execute("SELECT workbook_id FROM dh_meta").fetchone()[0]
+                    meta_row = self.db.execute("SELECT workbook_id,format_version FROM dh_meta").fetchone()
+                    self.id, format_version = meta_row[0], meta_row[1]
                     self.verify_file()
             finally:
                 try: self.db.execute("ROLLBACK")
                 except sqlite3.Error: pass
             del self._opening_deadline
             _verify_destination(self.path,created_identity)
+            if store:
+                if not self.readonly and format_version == 9:
+                    self.store = CalculationStore(self.db, "main")
+                else:
+                    self._open_temp_store()
         except Exception:
             if self.db is not None:
                 self.db.close()
+            self._close_temp_store(detach=False)
             # A pathname check followed by unlink can race with replacement by
             # another process. Preserve failed destinations for inspection.
             raise
+
+    def _open_temp_store(self):
+        temp_dir = tempfile.mkdtemp(prefix="dhcalc-")
+        self._temp_store_dir = temp_dir
+        calc_path = Path(temp_dir) / "calc.sqlite"
+        self.db.execute("ATTACH DATABASE ? AS dhcalc", (str(calc_path),))
+        self.db.execute("BEGIN")
+        try:
+            CalculationStore.create(self.db, "dhcalc")
+            self.db.execute("COMMIT")
+        except Exception:
+            if self.db.in_transaction:
+                try: self.db.execute("ROLLBACK")
+                except sqlite3.Error: pass
+            raise
+        self.store = CalculationStore(self.db, "dhcalc")
+
+    def _close_temp_store(self, *, detach=True):
+        if self._temp_store_dir is not None:
+            if detach and self.db is not None:
+                try: self.db.execute("DETACH DATABASE dhcalc")
+                except sqlite3.Error: pass
+            shutil.rmtree(self._temp_store_dir, ignore_errors=True)
+            self._temp_store_dir = None
+
+    def upgrade_calculation(self):
+        """Upgrade a writable workbook below format 9 to format 9 inside the current commit transaction."""
+        from . import relational
+        relational.ensure_version(self, 9)
+        CalculationStore.create(self.db, "main")
+        if self.store is not None:
+            self.store = CalculationStore(self.db, "main")
 
     def verify_file(self):
         _verify_destination(self.path,self.file_identity)
@@ -483,7 +527,9 @@ class Workbook:
         if self._operation_jobs is not None:self._operation_jobs.close()
         if self._calculation_jobs is not None:self._calculation_jobs.close()
         if self._chart_jobs is not None:self._chart_jobs.close()
-        with self.lock:self.db.close()
+        with self.lock:
+            self.db.close()
+            self._close_temp_store(detach=False)
 
     def ensure_metadata(self):
         if self.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]<3:
@@ -530,7 +576,7 @@ class Workbook:
             require(signature in (EXPECTED_SCHEMA,EXPECTED_SCHEMA3) or reserved==EXPECTED_SCHEMA3,
                     "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
             meta = db.execute("SELECT format_version,revision,workbook_id FROM dh_meta WHERE singleton=1").fetchall()
-            require(len(meta) == 1 and meta[0][0] in (1,2,3,4,5,6,7,8) and type(meta[0][1]) is int and meta[0][1] >= 0,
+            require(len(meta) == 1 and meta[0][0] in (1,2,3,4,5,6,7,8,9) and type(meta[0][1]) is int and meta[0][1] >= 0,
                     "FORMAT_VERSION", "Unsupported or invalid native format", 409)
             if meta[0][0]>=4:
                 from . import relational
@@ -1305,6 +1351,8 @@ class Workbook:
                                   "unknown",operation_id=operation) from error
             in_transaction = True
             import_plan = None
+            store_before = self.store
+            upgraded = False
             try:
                 self.db.execute("SAVEPOINT operation_changes")
                 self.check_operation()
@@ -1570,6 +1618,9 @@ class Workbook:
                     changed_cells = structural_edit.finish()
                     large_structure_progress("committing")
                 self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1] or key in self.table_schema_keys}
+                if self.db.execute("SELECT format_version FROM dh_meta").fetchone()[0] < 9:
+                    self.upgrade_calculation()
+                    upgraded = True
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
                 result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": changed_cells if large else sum(key[0] not in ('table','chart') for key in self.changes)+self.bulk_loaded,
                           "changed_records":sum(key[0]=='table' for key in self.changes),"changed_charts":sum(key[0]=='chart' for key in self.changes)}
@@ -1581,6 +1632,8 @@ class Workbook:
                 self.check_operation()
                 self.db.execute("COMMIT")
                 in_transaction = False
+                if upgraded:
+                    self._close_temp_store(detach=True)
                 if repaired_issues is not None:self.relational_issues=repaired_issues
                 if structural or self.table_record_keys:self.dependencies.clear()
                 else:self.dependencies.invalidate([key for key in self.changes if key[0] not in ('table','chart')])
@@ -1606,6 +1659,7 @@ class Workbook:
             except Exception as error:
                 if not in_transaction:
                     raise EngineError("OUTCOME_UNKNOWN","Data may have committed; reconcile the durable receipt",500,"unknown",operation_id=operation) from error
+                self.store = store_before
                 if not self.db.in_transaction:
                     # SQLITE_INTERRUPT during a write can roll back the whole
                     # transaction, including its savepoint. Reacquire ownership

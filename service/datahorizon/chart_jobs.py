@@ -66,7 +66,7 @@ class ChartJobs:
                         query_id, state=state, cancel_event=checkpoint.cancel_event, seconds=QUERY_SECONDS,
                         max_rows=chart_sources.QUERY_ROWS, deadline=checkpoint.deadline)
 
-                with closing(Workbook(self.book.path, readonly=True, cancel_event=checkpoint.cancel_event)) as snapshot:
+                with closing(Workbook(self.book.path, readonly=True, cancel_event=checkpoint.cancel_event, store=False)) as snapshot:
                     base = snapshot.calculator
                     shared = []
 

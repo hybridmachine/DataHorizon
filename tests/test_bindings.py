@@ -51,7 +51,7 @@ class BindingTests(unittest.TestCase):
         self.assertEqual(self.read()['bindings'],[]);self.assertEqual(self.version(),before)
         made=self.save(self.rng());self.assertNotEqual(fingerprint(self.book.db),expected)
         self.delete(made['binding_id'])
-        self.assertEqual(fingerprint(self.book.db),expected);self.assertEqual(self.version(),6)
+        self.assertEqual(fingerprint(self.book.db),expected);self.assertEqual(self.version(),9)
 
     def test_adding_removing_or_redirecting_changes_fingerprint(self):
         seen=[fingerprint(self.book.db)]
@@ -162,7 +162,7 @@ class BindingTests(unittest.TestCase):
         for function in ('later','Holder','method','missing',3):
             self.assertEqual(self.code(lambda:self.save(self.rng(),function=function)),'BINDING_INVALID')
         self.assertEqual(self.code(lambda:self.save(self.rng(),module='Nope')),'MODULE_NOT_FOUND')
-        self.assertEqual(self.version(),5)
+        self.assertEqual(self.version(),9)
 
     def test_stale_fingerprint_rejects(self):
         self.assertEqual(self.code(lambda:self.apply('binding_save',event='cell_change',scope=self.rng(),module='Rules',function='on_edit',fingerprint='0'*64)),'CODE_CHANGED')

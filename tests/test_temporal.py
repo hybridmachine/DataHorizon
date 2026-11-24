@@ -106,11 +106,11 @@ class TemporalStorageTests(unittest.TestCase):
         with patch("datahorizon.engine.utc_clock",return_value=datetime(2024,12,31,23,59,59)) as clock:
             with self.assertRaises(EngineError):self.apply(cells=[dict(row=1,col=1,source="-1")])
             self.assertEqual(clock.call_count,1)
-            self.assertEqual(self.book.info()["format_version"],1)
+            self.assertEqual(self.book.info()["format_version"],9)
             self.assertIsNone(self.book.raw(self.book.sheet("Sheet1"),2,1))
             self.apply(cells=[dict(row=1,col=1,source="1")])
             self.assertEqual(clock.call_count,2)
-            self.assertEqual(self.book.info()["format_version"],2)
+            self.assertEqual(self.book.info()["format_version"],9)
             self.assertEqual(self.book.read("Sheet1",dict(r1=2,r2=2))["cells"][0]["value_kind"],"date")
 
     def test_volatile_clock_is_one_sample_per_snapshot_and_never_writes(self):
@@ -140,12 +140,12 @@ class TemporalStorageTests(unittest.TestCase):
         return self.book.mutate(dict(action=action,operation_id=str(uuid.uuid4()),expected_state=self.book.state(),**args))
 
     def test_storage_upgrade_values_copy_history_reopen(self):
-        self.assertEqual(self.book.info()["format_version"],1)
+        self.assertEqual(self.book.info()["format_version"],9)
         self.apply(cells=[dict(row=1,col=1,source="2024-02-29",kind="date"),dict(row=1,col=2,source="12:34:56.120000",kind="time")])
         cells=self.book.read("Sheet1",dict(c2=2))["cells"]
         self.assertEqual([c["value_kind"] for c in cells],["date","time"])
         self.assertEqual(cells[1]["source"],"12:34:56.120000");self.assertEqual(cells[1]["value"],"12:34:56.12")
-        self.assertEqual(self.book.info()["format_version"],2)
+        self.assertEqual(self.book.info()["format_version"],9)
         self.apply("paste",row=2,col=1,mode="values",rows=[cells]);self.apply("undo");self.apply("redo")
         self.book.close();self.book=Workbook(self.path)
         self.assertEqual([c["input_kind"] for c in self.book.read("Sheet1",dict(r1=2,r2=2,c2=2))["cells"]],["date","time"])
@@ -153,7 +153,7 @@ class TemporalStorageTests(unittest.TestCase):
     def test_invalid_batch_rolls_back_format_upgrade_and_rejects_external_damage(self):
         with self.assertRaises(EngineError):
             self.apply(cells=[dict(row=1,col=1,source="2024-02-29",kind="date"),dict(row=2,col=1,source="1900-02-29",kind="date")])
-        self.assertEqual(self.book.info()["format_version"],1)
+        self.assertEqual(self.book.info()["format_version"],9)
         self.assertEqual(self.book.read("Sheet1",{})["cells"],[])
         self.apply(cells=[dict(row=1,col=1,source="2024-02-29",kind="date")])
         with closing(sqlite3.connect(self.path)) as direct,direct: direct.execute("UPDATE cells SET source='2023-02-29'")
@@ -161,7 +161,7 @@ class TemporalStorageTests(unittest.TestCase):
 
     def test_v1_temporal_and_unknown_versions_fail_without_migration(self):
         self.apply(cells=[dict(row=1,col=1,source="2024-02-29",kind="date")])
-        for version in (1,4):
+        for version in (1,10):
             with closing(sqlite3.connect(self.path)) as direct,direct:direct.execute("UPDATE dh_meta SET format_version=?",(version,))
             with self.assertRaises(EngineError) as caught:self.book.info()
             self.assertEqual(caught.exception.body["code"],"FORMAT_VERSION")

@@ -9,7 +9,7 @@ class RelationalAcceptanceTests(unittest.TestCase):
     def test_customers_orders_managed_handlers_history_export_and_direct_repair(self):
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/'CustomersOrders.dhwb';rules=Path(__file__).parent/'fixtures/relational_rules.py'
-            with LocalService() as client:fixture=create(client,path);self.assertEqual(fixture['format_version'],4)
+            with LocalService() as client:fixture=create(client,path);self.assertEqual(fixture['format_version'],9)
             with LocalService(rules) as client:result=exercise(client,path,handler=True,exports=Path(temp)/'exports');self.assertTrue(result['required_rule_checked']);self.assertEqual(len(result['exports']),3)
             independent(path);independent(path,orphan=True)
             with LocalService(rules) as client:

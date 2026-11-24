@@ -10,6 +10,7 @@ import unittest
 import uuid
 
 from datahorizon import charts
+from datahorizon.calculation_store import TABLES as CALC_TABLES
 from datahorizon.client import LocalService
 from datahorizon.engine import EngineError, Workbook
 from datahorizon.workbook_code import fingerprint
@@ -62,13 +63,13 @@ class FormatV8Tests(unittest.TestCase):
 
     def test_first_chart_write_bumps_to_v8_and_reopens(self):
         book = self.new_book()
-        self.assertEqual(format_version(book), 1)
+        self.assertEqual(format_version(book), 9)
         chart_id = mutate(book, action="chart_create", sheet="Sheet1", spec=chart_spec())["chart_id"]
-        self.assertEqual(format_version(book), 8)
+        self.assertEqual(format_version(book), 9)
         book.close()
         reopened = self.reopen()
-        self.assertEqual(format_version(reopened), 8)
-        self.assertEqual(reopened.info()["format_version"], 8)
+        self.assertEqual(format_version(reopened), 9)
+        self.assertEqual(reopened.info()["format_version"], 9)
         listed = charts.read(reopened, {"expected_state": reopened.state()})["charts"]
         self.assertEqual([item["id"] for item in listed], [chart_id])
 
@@ -76,18 +77,20 @@ class FormatV8Tests(unittest.TestCase):
         book = self.new_book()
         mutate(book, action="chart_create", sheet="Sheet1", spec=chart_spec())
         mutate(book, action="undo")
-        self.assertEqual(format_version(book), 8)
+        self.assertEqual(format_version(book), 9)
         self.assertEqual(charts.read(book, {"expected_state": book.state()})["charts"], [])
 
     def test_v7_file_with_a_chart_row_is_invalid_format(self):
         book = self.new_book()
         mutate(book, action="module_save", fingerprint=fingerprint(book.db), name="m", source="def f(ctx):\n    return 1\n", macros=[])
-        self.assertEqual(format_version(book), 5)
+        self.assertEqual(format_version(book), 9)
         sheet = book.info()["sheets"][0]["id"]
         payload = charts.normalise_spec(book, chart_spec())
         book.close()
         stored = {"name": "Chart 1", "anchor": {"row": 1, "col": 1}, "offset": {"x": 0, "y": 0},
                   "size": {"width": 480, "height": 300}, "z": 0, "spec_version": 1, "spec": payload}
+        for table in CALC_TABLES:
+            self.raw(f"DROP TABLE IF EXISTS {table}")
         self.raw("UPDATE dh_meta SET format_version=7")
         self.raw("INSERT INTO dh_objects VALUES('chart',?,?,?)", str(uuid.uuid4()), sheet, json.dumps(stored))
         with self.assertRaises(EngineError) as raised:
@@ -99,7 +102,7 @@ class FormatV8Tests(unittest.TestCase):
 
     def test_v9_is_rejected_on_open(self):
         self.new_book().close()
-        self.raw("UPDATE dh_meta SET format_version=9")
+        self.raw("UPDATE dh_meta SET format_version=10")
         with self.assertRaises(EngineError) as raised:
             Workbook(self.path)
         self.assertEqual(raised.exception.body["code"], "FORMAT_VERSION")
@@ -108,7 +111,7 @@ class FormatV8Tests(unittest.TestCase):
         with LocalService() as client:
             capabilities = client.request("/v1/capabilities")
             self.assertEqual((capabilities["format_version"], capabilities["supported_format_versions"]),
-                             (8, [1, 2, 3, 4, 5, 6, 7, 8]))
+                             (9, [1, 2, 3, 4, 5, 6, 7, 8, 9]))
             self.assertIs(capabilities["charts"], True)
             self.assertEqual((capabilities["max_charts"], capabilities["chart_spec_version"]), (64, 1))
             self.assertEqual(capabilities["max_chart_render_points"], 10_000)
@@ -120,7 +123,7 @@ class FormatV8Tests(unittest.TestCase):
                 book.refresh()
                 listed = client.request(book.base + "/charts", {"expected_state": book.state})
                 self.assertEqual([item["id"] for item in listed["charts"]], [chart_id])
-                self.assertEqual(book.refresh()["format_version"], 8)
+                self.assertEqual(book.refresh()["format_version"], 9)
 
     def test_direct_edit_to_an_unreadable_spec_opens_and_reports(self):
         self.book_with_chart()
