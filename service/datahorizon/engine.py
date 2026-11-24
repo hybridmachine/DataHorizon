@@ -31,6 +31,7 @@ from .calculation_index import DependentsIndex, STORED_FORMULA_LIMIT
 from .calculation_results import StoreCalculator
 
 STORE_WRITE_SECONDS = 0.1  # provisional; fixed by measurement in Task 11
+DELETE_SLICE = 2_000  # provisional; fixed by measurement in Task 11
 
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
@@ -846,6 +847,8 @@ class Workbook:
             if self.store_write(self.store.empty):
                 self.distrusted = False
                 self.reset_calculation()
+        else:
+            self.settle()
 
     def state(self):
         revision = self.db.execute("SELECT revision FROM dh_meta").fetchone()[0]
@@ -878,14 +881,60 @@ class Workbook:
         except (ValueError, TypeError) as error:
             raise EngineError("INVALID_INPUT", "Invalid externally stored cell metadata") from error
 
-    def ready(self):
+    def ready(self, *, settle=True):
         if self.store is None:
             return
         if self.index is None:
             self.index = DependentsIndex(self.store.precedents())
             roots = self.store.roots()
             if roots:
-                self.unserved |= self.index.affected(roots)
+                self._mark_roots(roots, settle=settle and not self.db.in_transaction)
+
+    def _mark_roots(self, roots, *, settle=True):
+        if roots:
+            self.unserved |= self.index.affected(roots)
+            for sheet_id, r1, c1, r2, c2 in roots:
+                if r1 == r2 and c1 == c2:
+                    self.index.unlink((sheet_id, r1, c1))
+        if settle:
+            self.settle()
+
+    def mark(self, roots=None):
+        if self.store is None or self.distrusted:
+            return
+        if self.index is None:
+            self.ready(settle=True)
+            return
+        if roots is None:
+            roots = self.store.roots()
+        self._mark_roots(roots, settle=True)
+
+    def settle(self):
+        if self.store is None or self.distrusted or self.db.in_transaction:
+            return
+        if not self.unserved and not self.store.roots():
+            return
+        self.ready(settle=False)
+        if not self.unserved:
+            if self.store.roots():
+                self.store_write(self.store.clear_roots)
+            return
+        if DELETE_SLICE <= 0:
+            return
+        batch = []
+        for key in self.unserved:
+            batch.append(key)
+            if len(batch) >= DELETE_SLICE:
+                break
+        clear_roots = len(batch) == len(self.unserved)
+
+        def _work():
+            self.store.delete_results(batch)
+            if clear_roots:
+                self.store.clear_roots()
+
+        if self.store_write(_work):
+            self.unserved.difference_update(batch)
 
     def reset_calculation(self):
         self.index = None
@@ -1693,6 +1742,7 @@ class Workbook:
             upgraded = False
             self._rehash = True
             emptied_distrust = False
+            cell_roots = []
             try:
                 self.db.execute("SAVEPOINT operation_changes")
                 if self.store is not None and (self.distrusted or self.data_version() != self.version):
@@ -1984,9 +2034,11 @@ class Workbook:
                         self.store.set_sheets_digest(sheets_digest(self.db))
                     else:
                         by_block = {}
+                        cell_changes = []
                         for key, (before, after) in self.changes.items():
                             if key[0] in ("table", "chart"):
                                 continue
+                            cell_changes.append(key)
                             block_key = (key[0], (key[1] - 1) // BLOCK_ROWS)
                             by_block.setdefault(block_key, []).append((key[1], key[2], before, after))
                         digest_updates = []
@@ -2000,7 +2052,11 @@ class Workbook:
                                 ))
                         if digest_updates:
                             self.store.set_digests(digest_updates)
-                        self.store.clear_results()
+                        if cell_changes:
+                            cell_roots = [(s, r, c, r, c) for s, r, c in cell_changes]
+                            self.store.add_roots(cell_roots)
+                            for key in cell_changes:
+                                self.store.delete_formula(key)
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
                 result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": changed_cells if large else sum(key[0] not in ('table','chart') for key in self.changes)+self.bulk_loaded,
                           "changed_records":sum(key[0]=='table' for key in self.changes),"changed_charts":sum(key[0]=='chart' for key in self.changes)}
@@ -2017,7 +2073,12 @@ class Workbook:
                 if upgraded:
                     self._close_temp_store(detach=True)
                 if repaired_issues is not None:self.relational_issues=repaired_issues
-                self.reset_calculation()
+                if emptied_distrust or upgraded or not self._rehash or structural or self.table_record_keys:
+                    self.reset_calculation()
+                    if upgraded and cell_roots and self.store is not None:
+                        self.mark(cell_roots)
+                elif cell_roots and self.store is not None:
+                    self.mark(cell_roots)
                 if structural:
                     self.undo.clear()
                     self.redo.clear()
