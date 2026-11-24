@@ -63,21 +63,26 @@ class CollectingCalculator(Calculator):
             unsafe = False
             try:
                 pending = [Parser(item["source"][1:]).parse()]
-                while pending:
-                    self.check()
-                    node = pending.pop()
-                    kind = node[0]
-                    if kind in ("ref", "range"):
-                        targets.add(self.range_geometry(node, sheet))
-                    elif kind == "call":
-                        volatile = volatile or node[1] in ("TODAY", "NOW")
-                        pending.extend(node[2])
-                    elif kind == "binary":
-                        pending.extend(node[2:])
-                    elif kind == "unary":
-                        pending.append(node[2])
             except (FormulaError, RecursionError):
+                pending = []
                 unsafe = True
+            while pending:
+                # Outside the handlers below: the budget error belongs to the read, not to this formula's shape.
+                self.check()
+                node = pending.pop()
+                kind = node[0]
+                if kind in ("ref", "range"):
+                    try:
+                        targets.add(self.range_geometry(node, sheet))
+                    except FormulaError:
+                        unsafe = True
+                elif kind == "call":
+                    volatile = volatile or node[1] in ("TODAY", "NOW")
+                    pending.extend(node[2])
+                elif kind == "binary":
+                    pending.extend(node[2:])
+                elif kind == "unary":
+                    pending.append(node[2])
             self._precedents[key] = tuple(targets)
             if volatile or unsafe:
                 self._mark_unstorable(key)

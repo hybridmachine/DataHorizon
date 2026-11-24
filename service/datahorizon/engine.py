@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import uuid
+import weakref
 
 from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, Unmaintainable, address, has_sheet_reference, translate, move_references, transform_structure, rename_sheet_references, delete_sheet_references
 from .hooks import HookFailure, invoke, supports_structure
@@ -417,8 +418,9 @@ _SKIP_SQLITE_CODES = {
 
 
 def _is_skip_sqlite_error(error: sqlite3.Error) -> bool:
-    if (getattr(error, "sqlite_errorcode", 0) & 255) in _SKIP_SQLITE_CODES:
-        return True
+    code = getattr(error, "sqlite_errorcode", None)
+    if code is not None:
+        return (code & 255) in _SKIP_SQLITE_CODES
     text = str(error).lower()
     return any(word in text for word in ("locked", "busy", "readonly", "read-only", "full"))
 
@@ -558,6 +560,8 @@ class Workbook:
     def _open_temp_store(self):
         temp_dir = tempfile.mkdtemp(prefix="dhcalc-")
         self._temp_store_dir = temp_dir
+        # A session dropped without close() still removes its directory, at collection or interpreter exit.
+        self._temp_store_cleanup = weakref.finalize(self, shutil.rmtree, temp_dir, True)
         calc_path = Path(temp_dir) / "calc.sqlite"
         self.db.execute("ATTACH DATABASE ? AS dhcalc", (str(calc_path),))
         self.db.execute("BEGIN")
@@ -579,7 +583,7 @@ class Workbook:
             if detach and self.db is not None:
                 try: self.db.execute("DETACH DATABASE dhcalc")
                 except sqlite3.Error: pass
-            shutil.rmtree(self._temp_store_dir, ignore_errors=True)
+            self._temp_store_cleanup()
             self._temp_store_dir = None
 
     def upgrade_calculation(self):
@@ -611,6 +615,10 @@ class Workbook:
         if self.store.schema != "main":
             self.db.execute("BEGIN")
             try:
+                if self.data_version() != self.version:
+                    self.db.execute("ROLLBACK")
+                    self.store_skips += 1
+                    return False
                 work()
                 self.db.execute("COMMIT")
                 return True

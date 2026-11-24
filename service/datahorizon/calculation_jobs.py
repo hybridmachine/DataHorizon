@@ -59,7 +59,9 @@ class CalculationJobs:
                     result.update(state=state,generation=generation,clock=clock.isoformat(),calculation='error' if any(c['calculation']=='error' for c in result['cells']) else 'current')
                     batch=list(calc.batch)
                 if batch and not checkpoint.cancel_event.is_set():
-                    self.offer(state,batch)
+                    # Storing is best effort: the job's result never depends on it.
+                    try:self.offer(state,batch)
+                    except Exception:pass
                 return result
             try:
                 response=self.jobs.start(request,calculate,'calculation')
