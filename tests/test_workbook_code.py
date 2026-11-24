@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 import unittest
 import uuid
+from datahorizon.calculation_store import TABLES as CALC_TABLES
 from datahorizon.engine import Workbook,EngineError
 from datahorizon.workbook_code import fingerprint,read
 
@@ -27,7 +28,7 @@ class WorkbookCodeTests(unittest.TestCase):
 
     def test_source_never_executes_on_save_read_copy_or_reopen(self):
         result=self.apply('module_save',fingerprint=fingerprint(self.book.db),name='Dormant',source="raise RuntimeError('must not execute')",macros=[])
-        self.assertEqual(self.book.info()['format_version'],5)
+        self.assertEqual(self.book.info()['format_version'],9)
         inspected=read(self.book,dict(expected_state=self.book.state()));self.assertEqual(inspected['modules'][0]['id'],result['module_id'])
         copy=Path(self.temp.name)/'copy.dhwb';self.book.snapshot(copy)
         reopened=Workbook(copy)
@@ -40,13 +41,13 @@ class WorkbookCodeTests(unittest.TestCase):
         renamed=self.apply('module_save',module=identity,name='Renamed',source=SOURCE,macros=MACROS,fingerprint=before)
         self.assertEqual(renamed['module_id'],identity);self.assertNotEqual(before,fingerprint(self.book.db));self.assertEqual(self.book.undo,[])
         self.apply('module_delete',module=identity,fingerprint=fingerprint(self.book.db));self.assertEqual(read(self.book,dict(expected_state=self.book.state()))['modules'],[])
-        self.assertEqual(self.book.info()['format_version'],5)
+        self.assertEqual(self.book.info()['format_version'],9)
 
     def test_invalid_declarations_and_review_races_roll_back_migration(self):
         cases=[dict(name='class',source=SOURCE,macros=MACROS),dict(name='Examples',source='def broken(',macros=[]),dict(name='Examples',source=SOURCE,macros=[dict(name='missing',result=dict(type='integer'))]),dict(name='Examples',source='x'*131073,macros=[])]
         for case in cases:
             with self.assertRaises(EngineError):self.apply('module_save',fingerprint=fingerprint(self.book.db),**case)
-            self.assertEqual(self.book.info()['format_version'],1)
+            self.assertEqual(self.book.info()['format_version'],9)
         old=fingerprint(self.book.db);self.save()
         with self.assertRaises(EngineError) as error:self.apply('module_delete',module='Examples',fingerprint=old)
         self.assertEqual(error.exception.body['code'],'CODE_CHANGED')
@@ -55,7 +56,7 @@ class WorkbookCodeTests(unittest.TestCase):
         handler=Path(self.temp.name)/'rules.py';handler.write_text("def on_code_structure(ctx,event):\n    ctx.set('Sheet1',1,1,'generated')\n    if event['phase']=='after':raise ValueError('reject code')\n")
         self.book.handler=handler
         with self.assertRaises(EngineError) as error:self.save()
-        self.assertEqual(error.exception.body['code'],'HOOK_FAILED');self.assertEqual(self.book.info()['format_version'],1)
+        self.assertEqual(error.exception.body['code'],'HOOK_FAILED');self.assertEqual(self.book.info()['format_version'],9)
         self.assertIsNone(self.book.raw(self.book.sheet('Sheet1'),1,1))
 
     def test_external_code_validation_rejects_unknown_fields_and_wrong_version(self):
@@ -73,15 +74,17 @@ class WorkbookCodeTests(unittest.TestCase):
                 if version==2:apply('edit',cells=[dict(row=1,col=1,source='2026-11-09',kind='date')])
                 if version==3:apply('metadata_set',namespace='presentation',id='view',payload={})
                 if version==4:apply('table_create',name='Data',columns=[dict(name='Value')])
-                self.assertEqual(book.info()['format_version'],version)
+                self.assertEqual(book.info()['format_version'],9)
                 apply('module_save',name='Examples',source=SOURCE,macros=MACROS,fingerprint=fingerprint(book.db))
-                self.assertEqual(book.info()['format_version'],5)
+                self.assertEqual(book.info()['format_version'],9)
                 self.assertIn('Examples',book.read_workbook()['native_omissions'])
             finally:book.close()
 
     def test_v4_cannot_claim_support_for_module_metadata(self):
         self.save()
-        with closing(sqlite3.connect(self.path,isolation_level=None)) as db:db.execute('UPDATE dh_meta SET format_version=4')
+        with closing(sqlite3.connect(self.path,isolation_level=None)) as db:
+            for table in CALC_TABLES:db.execute(f'DROP TABLE IF EXISTS {table}')
+            db.execute('UPDATE dh_meta SET format_version=4')
         with self.assertRaises(EngineError) as error:self.book.refresh()
         self.assertEqual(error.exception.body['code'],'INVALID_FORMAT')
 

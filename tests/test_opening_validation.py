@@ -39,7 +39,6 @@ class OpeningValidationTests(unittest.TestCase):
                     if damage=='coordinate':db.execute('UPDATE cells SET row=1000.5 WHERE row=1000')
                     elif damage=='orphan':db.execute("UPDATE cells SET sheet_id='missing' WHERE row=1000")
                     else:
-                        db.execute('UPDATE dh_meta SET format_version=2')
                         db.execute("UPDATE cells SET kind='date',source='2023-02-29' WHERE row=1000")
                 original=path.read_bytes()
                 with self.assertRaises(EngineError) as failure:Workbook(path,readonly=True)

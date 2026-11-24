@@ -106,9 +106,9 @@ class NameStructureTests(unittest.TestCase):
 
     def test_no_names_leaves_receipts_and_version_unchanged(self):
         self.apply('rows_insert',sheet='Supplies',start=1,count=1)
-        self.assertEqual(self.version(),1)
+        self.assertEqual(self.version(),9)
         self.assertNotIn('broken_names',self.apply('rows_delete',sheet='Supplies',start=1,count=1))
-        self.assertEqual(self.version(),1)
+        self.assertEqual(self.version(),9)
 
     def test_existing_formula_transform_results_unchanged(self):
         self.assertEqual(transform_structure('=SUM($A$1:A5)+B3','Main','Main','row',3,2),('=SUM($A$1:A7)+B5',0))

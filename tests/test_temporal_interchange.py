@@ -93,4 +93,4 @@ class TemporalInterchangeTests(unittest.TestCase):
                         with patch("datahorizon.formula.utc_clock",return_value=clock):actual=restored.read_workbook()["sheets"][0]["cells"]
                         self.assertEqual({(c["row"],c["col"]):c["value"] for c in actual},expected)
                         self.assertEqual(actual[0]["value_kind"],"date");self.assertEqual(actual[0]["style"]["format"],"date_dmy")
-                        self.assertEqual(restored.info()["format_version"],2)
+                        self.assertEqual(restored.info()["format_version"],9)

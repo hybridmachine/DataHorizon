@@ -1,4 +1,61 @@
-# Development native formats v1 through v8
+# Development native formats v1 through v9
+
+## Calculation store format v9
+
+v9 adds six reserved derived tables to v8's schema so the service can persist
+calculated formula results, their precedent rectangles, input block digests,
+pending invalidation roots and store metadata inside the workbook file.
+Workbooks created or imported by this service start at v9; a writable workbook
+below v9 is upgraded in the transaction of its first committed managed
+operation, creating any earlier missing tables (`dh_objects`, `dh_relational`)
+along with the six derived tables and setting `format_version` to `9`. No
+operation lowers the version, including Undo of the upgrading commit. Opening a
+workbook below v9, or opening any workbook read-only, never writes the file;
+the service keeps the same six tables in a private temporary SQLite database
+deleted on close. Older services reject v9, and files below v9 must not contain
+any `dh_calc_*` table.
+
+No virtual tables, triggers or SQLite extensions are used. Every derived table
+refers to a sheet by a compact integer from `dh_calc_sheets` and carries no
+secondary index:
+
+| Table | Primary key / layout | Columns |
+| --- | --- | --- |
+| `dh_calc_meta` | `singleton INTEGER PRIMARY KEY CHECK(singleton=1)` | `store_version INTEGER NOT NULL` (currently `1`), `calculation_version INTEGER` (evaluator version that produced stored results, or `NULL`), `sheets_digest BLOB` (SHA-256 over `(id, name)` of every sheet in `id` order, or `NULL`), `generation INTEGER NOT NULL DEFAULT 0` (monotonically increased on every result write) |
+| `dh_calc_sheets` | `number INTEGER PRIMARY KEY` | `sheet_id TEXT NOT NULL UNIQUE` (maps `sheets.id` to compact integer sheet numbers) |
+| `dh_calc_results` | `PRIMARY KEY(sheet, row, col) WITHOUT ROWID` | `sheet INTEGER NOT NULL`, `row INTEGER NOT NULL`, `col INTEGER NOT NULL`, `kind INTEGER NOT NULL`, `value` (untyped), `message TEXT` |
+| `dh_calc_precedents` | `PRIMARY KEY(sheet, row, col, p_sheet, r1, c1, r2, c2) WITHOUT ROWID` | `sheet`, `row`, `col` (formula cell) and `p_sheet`, `r1`, `c1`, `r2`, `c2` (1-based inclusive precedent rectangle; a single-cell reference has `r1=r2` and `c1=c2`). A formula with no precedents has a result row and no precedent rows. |
+| `dh_calc_digests` | `PRIMARY KEY(sheet, block) WITHOUT ROWID` | `sheet INTEGER NOT NULL`, `block INTEGER NOT NULL` (`(row - 1) // 64`, covering rows `64*block+1` to `64*block+64`), `digest BLOB NOT NULL` (32-byte big-endian sum modulo 2^256 of per-cell SHA-256 digests over `row`, `col`, type-tagged length-prefixed `source` and `kind` for every stored cell in the block; `style` is excluded) |
+| `dh_calc_roots` | `PRIMARY KEY(sheet, r1, c1, r2, c2) WITHOUT ROWID` | `sheet`, `r1`, `c1`, `r2`, `c2`: pending changed single-cell or block rectangles whose dependent results have not all been cleared yet |
+
+`dh_calc_results` encodes each stored value's exact type through `kind`:
+
+| `kind` | Type | `value` | `message` |
+| --- | --- | --- | --- |
+| `0` | Blank / `None` | `NULL` | `NULL` |
+| `1` | Boolean | `INTEGER` (`0` = `FALSE`, `1` = `TRUE`) | `NULL` |
+| `2` | Integer | `INTEGER` (or decimal `TEXT` outside signed 64-bit) | `NULL` |
+| `3` | Float | `REAL` (IEEE 754 binary64, preserving `-0.0`) | `NULL` |
+| `4` | Text | `TEXT` | `NULL` |
+| `5` | Temporal `date` | Canonical ISO `TEXT` (`YYYY-MM-DD`) | `NULL` |
+| `6` | Temporal `time` | Canonical ISO `TEXT` (`HH:MM:SS[.ffffff]`) | `NULL` |
+| `7` | Temporal `datetime` | Canonical ISO `TEXT` (`YYYY-MM-DDTHH:MM:SS[.ffffff]`) | `NULL` |
+| `8` | Cell error (`#REF!`, `#DIV/0!`, `#VALUE!`, `#NAME?`, `#NUM!`, `#N/A`, `#NULL!`) | Error code `TEXT` | Human-readable error message `TEXT` |
+
+Only values and cell errors from non-volatile, parseable formulas whose inputs
+are themselves storable are written. `#LIMIT!`, `#CYCLE!`, volatile formulas
+(`NOW`, `TODAY`), unparseable formulas, and anything reading them are never
+stored. Writing derived tables changes neither `revision`, the state token nor
+Undo, records no operation receipt and runs no hook.
+
+**Direct-access policy for v9 derived tables:** a direct SQLite reader may read
+`dh_calc_results`, with the caveat that a stored result can be stale (it
+reflects inputs as of the last managed calculation, or an external edit may
+have changed inputs without updating the derived tables). A direct writer need
+not touch any derived table: on open or refresh the service verifies block and
+`sheets` digests and invalidates affected results. Deleting every row of the
+derived tables is always safe and forces recalculation. Editing the derived
+tables directly is not detected and is unsupported.
 
 ## Charts format v8
 

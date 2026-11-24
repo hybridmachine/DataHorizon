@@ -12,6 +12,7 @@ import tempfile
 import time
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'service'))
+from datahorizon.calculation_freshness import apply as apply_verdict, compare
 from datahorizon.engine import Workbook,EngineError,encoded
 from cache_rss_benchmark import distribution,peak_rss
 
@@ -24,18 +25,25 @@ def fingerprint(db):
     return digest.hexdigest(),count
 
 
-def measure(path,samples,last_row):
+def measure(path,samples,last_row,*,readonly=True):
     times=[];failures=[]
     for _ in range(samples):
         start=time.perf_counter()
         try:
-            with closing(Workbook(path,readonly=True)) as book:
+            with closing(Workbook(path,readonly=readonly)) as book:
                 cells=book.read('Sheet1',dict(r1=last_row,r2=last_row,c1=1,c2=1))['cells']
                 assert len(cells)==1 and cells[0]['source']=='x'*1024
             times.append((time.perf_counter()-start)*1000)
         except EngineError as error:
             failures.append(dict(code=error.body['code'],milliseconds=round((time.perf_counter()-start)*1000,3)))
     return dict(successful=distribution(times) if times else None,failures=failures)
+
+
+def digest_all_blocks(path):
+    """Ensure every block digest of a v9 file is stored before measuring repeated opens."""
+    with closing(Workbook(path)) as book:
+        assert book.verified
+        assert book.store.digest(book.sheet('Sheet1'), 0) is not None
 
 
 def benchmark(rows,samples,legacy=None):
@@ -57,10 +65,14 @@ def benchmark(rows,samples,legacy=None):
         with closing(sqlite3.connect(new)) as db:
             assert fingerprint(db)==(before,count)
             assert db.execute('PRAGMA page_size').fetchone()[0]==8192
+        digested = root / 'digested.dhwb'
+        digested.write_bytes(new.read_bytes())
+        digest_all_blocks(digested)
         return dict(platform=platform.platform(),python=platform.python_version(),sqlite=sqlite3.sqlite_version,
                     cells=count,source_fingerprint=before,logical_content_preserved=True,copy_ms=round(copy_ms,3),
                     legacy=dict(page_bytes=page,file_bytes=old.stat().st_size,**measure(old,samples,count)),
                     optimized=dict(page_bytes=8192,file_bytes=new.stat().st_size,**measure(new,samples,count)),
+                    digested_v9=dict(page_bytes=8192,file_bytes=digested.stat().st_size,**measure(digested,samples,count,readonly=False)),
                     driver_peak_rss_bytes=peak_rss(),opening_budget_seconds=5,
                     limitations=['Fresh connections with uncontrolled OS cache state; this is not OS-cold qualification.',
                                  'Source fingerprints and the maintenance copy warm OS caches before opening measurements.',

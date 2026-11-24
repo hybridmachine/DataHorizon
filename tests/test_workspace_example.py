@@ -14,7 +14,7 @@ class WorkspaceExampleTests(unittest.TestCase):
             path=Path(temp)/'Supplies.dhwb'
             created=subprocess.run([sys.executable,str(script),'create',str(path)],capture_output=True,text=True,check=True,timeout=30)
             report=json.loads(created.stdout)
-            self.assertFalse(report['approved']);self.assertEqual(report['format_version'],6)
+            self.assertFalse(report['approved']);self.assertEqual(report['format_version'],9)
             self.assertEqual(sorted(item['name'] for item in report['names']),['PenQuantity','Quantities','Total'])
             self.assertEqual([(item['event'],item['function'],item['required']) for item in report['bindings']],[('cell_change','check_quantity',True)])
             checked=subprocess.run([sys.executable,str(script),'exercise',str(path)],capture_output=True,text=True,check=True,timeout=60)

@@ -23,7 +23,7 @@ class NativeTableTests(unittest.TestCase):
         return self.apply(name='Customers',columns=[dict(name='CustomerID',required=True,unique=True),dict(name='Active',type='boolean')])['table']
 
     def test_upgrade_direct_access_snapshot_and_reopen(self):
-        item=self.create();self.assertEqual(self.book.info()['format_version'],4)
+        item=self.create();self.assertEqual(self.book.info()['format_version'],9)
         with closing(sqlite3.connect(self.path)) as direct:
             direct.execute("INSERT INTO Customers(CustomerID,Active) VALUES('00123',1)");direct.commit()
         self.book.refresh();self.assertEqual(self.book.db.execute('SELECT CustomerID FROM Customers').fetchone()[0],'00123')
@@ -37,8 +37,8 @@ class NativeTableTests(unittest.TestCase):
         self.book.handler=str(handler)
         with self.assertRaises(EngineError) as failed:self.create()
         self.assertEqual(failed.exception.body['code'],'UNSUPPORTED_HOOK_SCOPE')
-        self.assertEqual(self.book.info()['format_version'],1)
-        self.assertIsNone(self.book.db.execute("SELECT name FROM sqlite_schema WHERE name='dh_relational'").fetchone())
+        self.assertEqual(self.book.info()['format_version'],9)
+        self.assertEqual(self.book.info()['tables'],[])
         self.assertEqual(self.book.operation(failed.exception.body['operation_id'])['outcome'],'rolled_back')
 
     def test_failed_after_structure_hook_rolls_back_catalog_and_generated_cell(self):
@@ -47,7 +47,7 @@ class NativeTableTests(unittest.TestCase):
         self.book.handler=str(handler)
         with self.assertRaises(EngineError) as failure:self.create()
         self.assertEqual(failure.exception.body['code'],'HOOK_FAILED')
-        self.assertEqual(self.book.info()['format_version'],1)
+        self.assertEqual(self.book.info()['format_version'],9)
         self.assertIsNone(self.book.raw(self.book.sheet('Sheet1'),1,1))
 
     def test_rejected_identifiers_and_columns_leave_original_format(self):
@@ -55,7 +55,7 @@ class NativeTableTests(unittest.TestCase):
                      dict(name='T',columns=[dict(name='x'),dict(name='X')]),dict(name='T',columns=[dict(name='x',type='blob')]),
                      dict(name='T',columns=[dict(name='x',required=1)])):
             with self.assertRaises(EngineError):self.apply(**args)
-            self.assertEqual(self.book.info()['format_version'],1)
+            self.assertEqual(self.book.info()['format_version'],9)
 
     def test_deduplication_stale_state_and_drop(self):
         request=dict(action='table_create',name='T',columns=[dict(name='x')],operation_id=str(uuid.uuid4()),expected_state=self.book.state())
@@ -71,15 +71,16 @@ class NativeTableTests(unittest.TestCase):
         self.assertEqual(failure.exception.body['code'],'SCHEMA_CHANGED')
 
     def test_v4_header_without_its_catalog_is_a_structured_format_error(self):
+        self.book.db.execute('DROP TABLE dh_relational')
         self.book.db.execute('UPDATE dh_meta SET format_version=4')
         with self.assertRaises(EngineError) as failure:self.book.validate()
         self.assertEqual(failure.exception.body['code'],'FORMAT_VERSION')
 
     def test_existing_schema_versions_upgrade_without_losing_cells(self):
         self.apply('edit',cells=[dict(row=1,col=1,source='2024-02-29',kind='date')])
-        self.assertEqual(self.book.info()['format_version'],2)
+        self.assertEqual(self.book.info()['format_version'],9)
         self.apply('metadata_set',namespace='list',id='Named',payload=dict(r2=3))
-        self.assertEqual(self.book.info()['format_version'],3)
+        self.assertEqual(self.book.info()['format_version'],9)
         self.create();self.book.validate()
         self.assertEqual(self.book.raw(self.book.sheet('Sheet1'),1,1)['source'],'2024-02-29')
         self.assertEqual(self.book.db.execute('SELECT count(*) FROM dh_objects').fetchone()[0],1)

@@ -17,7 +17,7 @@ class PortableMetadataTests(unittest.TestCase):
                 def apply(action='metadata_set',**args):return book.mutate(dict(action=action,operation_id=str(uuid.uuid4()),expected_state=book.state(),**args))
                 view=dict(rows={'0':40},columns={'1':180},hidden_rows=[3],frozen_rows=1,named_views={'Positive':dict(r2=3,filters=[dict(col=1,op='>',value=0)])})
                 apply(namespace='presentation',id='view',payload=view)
-                self.assertEqual(book.info()['format_version'],3)
+                self.assertEqual(book.info()['format_version'],9)
                 self.assertEqual(read(book,'Sheet1',dict(expected_state=book.state()))['objects'][0]['payload'],view)
                 state=book.state()
                 with self.assertRaises(EngineError):apply(namespace='presentation',id='view',payload=dict(frozen_rows=999))

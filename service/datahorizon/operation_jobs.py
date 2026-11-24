@@ -293,7 +293,7 @@ class OperationJobs:
             self.book.refresh();require(self.book.state()==meta['expected_state'],'STALE_STATE','Read inputs changed before snapshot',409);self.book.snapshot(destination,cancel_event=cancel)
             self.book.refresh();require(self.book.state()==meta['expected_state'],'STALE_STATE','Read inputs changed during snapshot',409)
         deadline=time.monotonic()+60;matches=processed=size=0;clock=datetime.fromisoformat(meta['clock'])
-        with closing(Workbook(destination,readonly=True)) as source,self.journal(identifier) as (db,meta):
+        with closing(Workbook(destination,readonly=True,store=False)) as source,self.journal(identifier) as (db,meta):
             with db:db.execute('DELETE FROM results')
             r1,c1,r2,c2=rectangle(options,100000);keys=options.get('sort',[])
             require(isinstance(keys,list) and len(keys)<=8,'INVALID_ARGUMENT','At most eight sort keys')

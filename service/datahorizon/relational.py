@@ -162,7 +162,9 @@ def validate_schema(db,signature,base_schema):
     for item in registered_indexes:
         validate(item,registered,registered_relationships);require(item['name'].lower() not in names,'INVALID_FORMAT','Duplicate SQL names');names.add(item['name'].lower())
     for rel in registered_relationships:require(sum(index['owner']==rel['id'] for index in registered_indexes)==1,'INVALID_FORMAT','Relationship supporting index is missing')
-    expected=expected_schema(base_schema+SCHEMA+';'.join([*(table_sql(item,registered_relationships,registered) for item in registered),*(sql(item,validate(item,registered,registered_relationships)) for item in registered_indexes)])+';')
+    from . import calculation_store
+    calc_schema=calculation_store.SCHEMA.format(schema='main') if version==9 else ''
+    expected=expected_schema(base_schema+SCHEMA+calc_schema+';'.join([*(table_sql(item,registered_relationships,registered) for item in registered),*(sql(item,validate(item,registered,registered_relationships)) for item in registered_indexes)])+';')
     require(signature==expected,'SCHEMA_CHANGED','Relational schema does not match its supported catalog; preserve the file for recovery',409)
     from .workbook_code import modules
     modules(db)

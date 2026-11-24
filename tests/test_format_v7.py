@@ -8,6 +8,7 @@ import tempfile
 import unittest
 import uuid
 import zipfile
+from datahorizon.calculation_store import TABLES as CALC_TABLES
 from datahorizon.client import LocalService, APIError
 from datahorizon.engine import Workbook,EngineError
 from datahorizon.interchange import xlsx_export
@@ -55,7 +56,7 @@ class FormatV7Tests(unittest.TestCase):
 
     def test_structural_edit_marks_untokenizable_formula_and_bumps_to_v7(self):
         book=self.new_book();edit(book,'A5','5');edit(book,'B1',UNTOKENIZABLE,kind='formula')
-        self.assertEqual(format_version(book),1)
+        self.assertEqual(format_version(book),9)
         receipt=mutate(book,action='rows_insert',sheet='Sheet1',start=2,count=1)
         # The existing structural reference report is flat on the receipt (reference_warnings, reference_issues).
         self.assertEqual(receipt['unmaintained'],[{'sheet':'Sheet1','cell':'B1'}])
@@ -63,7 +64,7 @@ class FormatV7Tests(unittest.TestCase):
         cell=read(book,'B1')
         self.assertEqual((cell['kind'],cell['source'],cell['display']),('unmaintained',UNTOKENIZABLE,'#REF!'))
         self.assertEqual((cell['input_kind'],cell['error'],cell['calculation']),('unmaintained',MESSAGE,'error'))
-        self.assertEqual(format_version(book),7)
+        self.assertEqual(format_version(book),9)
         self.assertEqual(read(book,'A6')['value'],5)
 
     def test_marked_cell_keeps_style_reopens_and_dependents_see_ref_error(self):
@@ -71,8 +72,8 @@ class FormatV7Tests(unittest.TestCase):
         self.assertEqual(read(book,'B1')['style'],{'bold':True})
         self.assertEqual((read(book,'C1')['display'],read(book,'C1')['calculation']),('#REF!','error'))
         book.close();reopened=Workbook(self.path);self.addCleanup(reopened.close)
-        self.assertEqual(read(reopened,'B1')['kind'],'unmaintained');self.assertEqual(format_version(reopened),7)
-        self.assertEqual(reopened.info()['format_version'],7)
+        self.assertEqual(read(reopened,'B1')['kind'],'unmaintained');self.assertEqual(format_version(reopened),9)
+        self.assertEqual(reopened.info()['format_version'],9)
 
     def test_reentering_the_formula_clears_the_state(self):
         book,_=self.marked_book()
@@ -80,23 +81,23 @@ class FormatV7Tests(unittest.TestCase):
         cell=read(book,'B1');self.assertEqual((cell['kind'],cell['value'],cell['style']),('formula',5,{'bold':True}))
         edit(book,'B1',UNTOKENIZABLE)
         self.assertEqual(read(book,'B1')['kind'],'formula')
-        self.assertEqual(format_version(book),7)
+        self.assertEqual(format_version(book),9)
 
     def test_clients_cannot_write_the_kind_directly(self):
         book=self.new_book()
         for request in (dict(action='edit',cells=[dict(row=1,col=1,source=UNTOKENIZABLE,kind='unmaintained')]),):
             with self.assertRaises(EngineError) as raised:mutate(book,**request)
             self.assertEqual(raised.exception.body['code'],'INVALID_INPUT')
-        self.assertIsNone(read(book,'A1'));self.assertEqual(format_version(book),1)
+        self.assertIsNone(read(book,'A1'));self.assertEqual(format_version(book),9)
 
     def test_undo_restores_formula_kind_and_keeps_v7(self):
         book=self.new_book();edit(book,'A5','5');edit(book,'B1',UNTOKENIZABLE)
         receipt=mutate(book,action='move',sheet='Sheet1',r1=5,c1=1,r2=5,c2=1,row=6,col=1,cut_state=book.state())
         self.assertEqual((receipt['unmaintained'],receipt['unmaintained_count']),([{'sheet':'Sheet1','cell':'B1'}],1))
-        self.assertEqual(read(book,'B1')['kind'],'unmaintained');self.assertEqual(format_version(book),7)
+        self.assertEqual(read(book,'B1')['kind'],'unmaintained');self.assertEqual(format_version(book),9)
         mutate(book,action='undo')
         cell=read(book,'B1');self.assertEqual((cell['kind'],cell['source']),('formula',UNTOKENIZABLE))
-        self.assertEqual(read(book,'A5')['value'],5);self.assertEqual(format_version(book),7)
+        self.assertEqual(read(book,'A5')['value'],5);self.assertEqual(format_version(book),9)
         mutate(book,action='redo')
         self.assertEqual(read(book,'B1')['kind'],'unmaintained')
 
@@ -104,6 +105,7 @@ class FormatV7Tests(unittest.TestCase):
         book=self.new_book()
         mutate(book,action='module_save',fingerprint=fingerprint(book.db),name='m',source='def f(ctx):\n    return 1\n',macros=[])
         sheet=book.info()['sheets'][0]['id'];book.close()
+        for table in CALC_TABLES:self.raw(f'DROP TABLE IF EXISTS {table}')
         self.raw('UPDATE dh_meta SET format_version=6')
         self.raw("INSERT INTO cells(sheet_id,row,col,source,kind) VALUES(?,1,1,?,'unmaintained')",sheet,UNTOKENIZABLE)
         with self.assertRaises(EngineError) as raised:Workbook(self.path)
@@ -113,7 +115,7 @@ class FormatV7Tests(unittest.TestCase):
         self.assertEqual(read(reopened,'A1')['kind'],'unmaintained')
 
     def test_v9_is_rejected_on_open(self):
-        self.new_book().close();self.raw('UPDATE dh_meta SET format_version=9')
+        self.new_book().close();self.raw('UPDATE dh_meta SET format_version=10')
         with self.assertRaises(EngineError) as raised:Workbook(self.path)
         self.assertEqual(raised.exception.body['code'],'FORMAT_VERSION')
 
@@ -128,7 +130,7 @@ class FormatV7Tests(unittest.TestCase):
     def test_unmarked_operation_keeps_version_and_receipt_shape(self):
         book=self.new_book();mutate(book,action='sheet_add',name='Other');edit(book,'A1',UNTOKENIZABLE,sheet='Other')
         receipt=mutate(book,action='rows_insert',sheet='Sheet1',start=2,count=1)
-        self.assertNotIn('unmaintained',receipt);self.assertEqual(format_version(book),1)
+        self.assertNotIn('unmaintained',receipt);self.assertEqual(format_version(book),9)
 
     def test_moved_formula_is_marked_at_its_destination(self):
         book=self.new_book();edit(book,'B3',UNTOKENIZABLE)
@@ -173,7 +175,7 @@ class FormatV7Tests(unittest.TestCase):
         with self.assertRaises(EngineError) as raised:
             mutate(book,action='paste',sheet='Sheet1',row=2,col=2,origin_row=1,origin_col=2,rows=[clipboard])
         self.assertEqual(raised.exception.body['code'],'OPERATION_FAILED')
-        self.assertEqual(read(book,'B1')['kind'],'formula');self.assertEqual(format_version(book),1)
+        self.assertEqual(read(book,'B1')['kind'],'formula');self.assertEqual(format_version(book),9)
 
     def test_xlsx_and_ods_export_write_source_and_report_approximation(self):
         book,_=self.marked_book()
@@ -200,7 +202,7 @@ class FormatV7Tests(unittest.TestCase):
     def test_rest_exposes_kind_versions_and_rejects_direct_kind(self):
         with LocalService() as client:
             capabilities=client.request('/v1/capabilities');api=client.request('/openapi.json')
-            self.assertEqual((capabilities['format_version'],capabilities['supported_format_versions']),(8,[1,2,3,4,5,6,7,8]))
+            self.assertEqual((capabilities['format_version'],capabilities['supported_format_versions']),(9,[1,2,3,4,5,6,7,8,9]))
             schemas=api['components']['schemas']
             self.assertIn('unmaintained',schemas['ClipboardCell']['properties']['kind']['enum'])
             self.assertIn('unmaintained',schemas['ClipboardCell']['properties']['input_kind']['enum'])
@@ -212,7 +214,7 @@ class FormatV7Tests(unittest.TestCase):
                 self.assertEqual((receipt['unmaintained'],receipt['unmaintained_count']),([{'sheet':'Sheet1','cell':'B2'}],1))
                 book.refresh();cell=book.read(r1=2,c1=2,r2=2,c2=2)['cells'][0]
                 self.assertEqual((cell['kind'],cell['display'],cell['error']),('unmaintained','#REF!',MESSAGE))
-                self.assertEqual(book.refresh()['format_version'],7)
+                self.assertEqual(book.refresh()['format_version'],9)
                 with self.assertRaises(APIError) as raised:
                     book.apply('edit',cells=[dict(row=3,col=3,source='=A1',kind='unmaintained')])
                 self.assertEqual(raised.exception.body['code'],'INVALID_INPUT')

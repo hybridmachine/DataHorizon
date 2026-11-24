@@ -1,6 +1,6 @@
 # Stored results and scaled recalculation: design
 
-Draft 0.1 | November 18, 2026 | Status: approved by the owner on November 18, 2026, with the four decisions in section 14 accepted as written. Stage 1 (measurement) is built on branch `claude/calculation-stage-1`: [plan](calculation-stage-1-plan.md), [result](calculation-experiment.md). Stage 1 is isolated test code. Stage 2 (evaluation in place with an explicit stack beyond a depth, and streamed ranges) is built on branch `claude/calculation-stage-2`: [plan](calculation-stage-2-plan.md), [result](calculation-stage-2.md); the 128-cell and 10,000-cell limits are gone, stored results, digests and background recalculation (stages 3 to 5) are not built. Paragraphs marked **Measured** record what stages 1 and 2 fixed.
+Draft 0.1 | November 18, 2026 | Status: approved by the owner on November 18, 2026, with the four decisions in section 14 accepted as written. Stage 1 (measurement) is built on branch `claude/calculation-stage-1`: [plan](calculation-stage-1-plan.md), [result](calculation-experiment.md). Stage 1 is isolated test code. Stage 2 (evaluation in place with an explicit stack beyond a depth, and streamed ranges) is built on branch `claude/calculation-stage-2`: [plan](calculation-stage-2-plan.md), [result](calculation-stage-2.md); the 128-cell and 10,000-cell limits are gone. Stage 3 (native format v9 store, input content digests, open/refresh verification, calculation version, interval-tree dependents index, pending roots with sliced deletion, and store filling from reads and calculation jobs) is built on stacked branches `claude/calculation-stage-3-store`, `claude/calculation-stage-3-freshness` and `claude/calculation-stage-3-serving`: [plan](calculation-stage-3-plan.md), [result](calculation-stage-3.md); background recalculation and the new read contract (stages 4 and 5) are not built. Paragraphs marked **Measured** record what stages 1, 2 and 3 fixed.
 
 This is the design note that [increment 10 of the Excel fidelity programme](excel-fidelity-plan.md#increment-10-stored-results-and-scaled-recalculation)
 requires before the increment is planned. It is a design to plan from, not a
@@ -136,10 +136,14 @@ No virtual tables, triggers or SQLite extensions are used in the file, so any
 SQLite build can open it. **Call**
 
 **Measured**: the derived tables refer to a sheet by a small integer from a
-derived sheet-number table, and carry no secondary index. Repeating the text
-sheet identifiers grew the fixture by 57.5%; integers grow it by 11.0%. This
-fixes file growth only; memory needs a compact in-memory structure as well
-(section 13).
+derived sheet-number table, and carry no secondary index. Stage 1 measured
+57.5% file growth with repeated text sheet identifiers against 11.0% with
+integers. Stage 3 built the six v9 tables (`dh_calc_*`) and measured **+7.92
+MiB (+11.34%, 83.1 bytes per stored formula)** on the 1,000,000-cell /
+100,003-formula fixture (`73.24 MB` → `81.54 MB`,
+[evidence](evidence/calculation-stage-3.json)). Opening a 100-cell workbook
+takes 1.41 ms at v9 vs 1.81 ms at v1 (temporary store setup). This fixes file
+growth only; memory is fixed by the compact index (section 13).
 
 Table and column names and the value encoding are left to the builder
 (section 13). The [native format document](native-format-v1.md) gains a v9
@@ -194,13 +198,25 @@ would look like an external edit to `data_version` and discard everything.
   measured and fixed in the format (section 13).
 - A block's digest covers, for every stored cell in it, the coordinates, the
   `source` and the `kind`. Style is excluded: it does not change a value.
-- **Measured**, and a close call: a block is 64 rows of one sheet and its
-  digest is one SHA-256 over its cells in key order, each cell length-prefixed.
-  A commit re-reads and re-hashes each block it touches (0.73 to 0.83 ms for a
-  640-cell block). Summing per-cell hashes avoids the re-read and passed its
-  threshold narrowly, but made the opening scan about 0.6 s slower. Sheets
-  wider than 10 columns were not measured; stage 3 measures them and
-  re-decides between the two, or bounds blocks by columns too.
+- **Measured**, and re-decided in stage 3 ([digest evidence](evidence/calculation-stage-3-digest.json)):
+  a block is 64 rows of one sheet and its digest is the sum modulo 2^256
+  (stored as 32 big-endian bytes) of the SHA-256 digests of the stored cells in
+  the block, each cell encoded with its coordinates, type-tagged length-prefixed
+  `source` and type-tagged length-prefixed `kind` (style excluded).
+  Stage 1 measured only a 10-column sheet (0.73 to 0.83 ms to re-read and
+  re-hash a 64-row block in stream mode). On wide sheets (stage 3 measurement D1,
+  medians of 101 on Apple M1), stream mode over 64 rows takes 0.62 ms at 10
+  columns, 6.14 ms at 100 columns (missing the 1 ms rule) and 63.77 ms at 1,000
+  columns; bounding blocks to 64 rows by 16 columns with row seeks still takes
+  0.95 ms at 10 columns, 1.32 ms at 100 columns (also missing 1 ms) and 1.49 ms
+  at 1,000 columns. Sum mode updates a touched block by delta in 0.003 ms at 10
+  columns, 0.004 ms at 100 columns and 0.015 ms at 1,000 columns, while a full
+  scan of 1,000,000 cells takes 1.80 s (against 1.23 s for 64-row stream mode
+  and 1.38 s for 64x16 stream mode, medians of five). Sum mode therefore wins
+  by the stage 3 rule. Sum mode also has one property stream mode lacks: a delta
+  update cannot absorb an edit the commit never read (a foreign edit to another
+  cell in the same block remains visible as a digest mismatch instead of being
+  folded into a re-hashed block).
 - One further digest covers the `sheets` table (identity and name of each
   sheet), because renaming or removing a sheet changes what a formula means.
 - The digest guards against accident, not attack. A person who can write the
@@ -258,11 +274,17 @@ values sooner and is not designed. **Call**
 Either way no result is shown as current before every block has been verified
 in this session.
 
-**Measured**: on the 1,000,000-cell fixture the chosen digest adds 1.3 to
-1.8 s to an opening that takes 0.4 to 0.7 s today, so verification runs during
-opening.
-Stage 3 confirms this on the opening benchmark's long-text shape before
-relying on it; the fallback stays designed.
+**Measured** (stage 3, [result](calculation-stage-3.md)): verification runs
+during opening inside the five-second budget on both reference shapes —
+**0.917 s** total (`0.097 s` validation, `0.700 s` compare) on the 270,000-row
+× 1-KiB long-text workbook (316 MB, 5/5 verified) and **2.152 s** total
+(`0.212 s` validation, `1.739 s` compare; `0.562 s` lazy index load) on the
+1,000,000-cell / 100,003-formula stage 1 fixture (81.5 MB, 5/5 verified).
+On refresh after a one-cell direct edit while open (X1), verification completes
+in `0.021 s` at 10,000 cells (5/5 survived), `0.199 s` at 100,000 cells (5/5
+survived), and `2.018 s` at 1,000,000 cells (4/5 survived, 1/5 exceeded the 2 s
+refresh deadline and emptied the store cleanly). The background fallback stays
+unbuilt for stage 3.
 
 A workbook opened read-only that turns out to have changed blocks cannot
 persist the repair; it recalculates into the temporary store (5.2).
@@ -515,6 +537,24 @@ and forgets more than necessary past it, and the cache still has no spatial
 index. Medians on a machine with a load of about 3
 ([result](calculation-stage-2.md)).
 
+**Measured** (stage 3, [result](calculation-stage-3.md)): the in-memory
+dependents index is capped at `STORED_FORMULA_LIMIT = 140_000` linked formulas
+(`449.9 B/formula`, `42.90 MiB` steady state and `44.39 MiB` peak build on
+100,003 formulas, ~60.1 MiB steady / ~62.1 MiB peak at cap, within a 64 MiB
+index allowance). Past the cap, further formulas are not stored and are
+evaluated on read without discarding existing stored results. Store writes on
+reads are bounded by `STORE_WRITE_SECONDS = 0.1` (`0.41 / 1.83 / 26.27 ms` to
+flush 1 / 256 / 4,096 formulas with warm digests; `0.150 s` / `1.500 s` cold
+digest fill for 100k / 1M cells defers past 100 ms) and never wait on SQLite
+locks (`PRAGMA busy_timeout=0`, ~95% skipped during tight foreground reads
+against concurrent snapshot jobs). Sliced invalidation uses
+`DELETE_SLICE = 2_000`, giving edit acknowledgements of `1.19 ms` (1 affected),
+`2.75 ms` (1,000 affected), and `75.68 ms` (100,000 affected: `1.68 ms` commit,
+`60.52 ms` mark, `13.36 ms` first slice, within 100 ms). Once stored by a 2 s
+calculation job (`0.386 s`), `=SUM(Sheet1!A1:A100000)` serves in `0.126 ms` on
+repeat default reads and `0.307 ms` after reopen. File growth on 100,003 stored
+formulas is `+7.92 MiB` (`+11.34%`).
+
 Two services opening one file is unsupported, as today: each one's result
 writes would look like external edits to the other.
 
@@ -612,7 +652,17 @@ Each stage is one or more reviewed pull requests that leave `main` working.
   rectangle and still has no interval structure. Before a check budget was added,
   one edit with 4,096 cached readers over a column checked 8.6 million rectangles
   in 0.47 s; with it, 8,190 checks in 3 ms, at the price of forgetting more than
-  necessary past the budget. The point stands for stage 4.
+  necessary past the budget.
+  **Measured** (stage 3): `DependentsIndex` ([calculation_index.py](../../service/datahorizon/calculation_index.py))
+  replaces `dependencies.py` with integer-packed coordinates, compact single-cell
+  reverse edges with block buckets, and lazy centered interval trees per column
+  (and per sheet for ranges ≥ 16 columns wide) with per-call draining cursors.
+  On the 100,003-formula stage 1 fixture it loads in `0.562 s` using `42.90 MiB`
+  steady state (`44.39 MiB` peak); on 2,000 prefix sums over a 2,000-row formula
+  column (`I2`), `affected` finds all 3,999 dependents exactly in **`2.76 ms`**
+  and `7,995` checks (down from `4.6 s` and ~2,000,000 checks in stage 1).
+  `STORED_FORMULA_LIMIT = 140_000` bounds index memory to ~60–62 MiB; larger
+  workbooks stay open for later stages.
 - Thread or child process for the worker.
 - Batch sizes and the worker's yielding rule.
 - The pull-request split inside each stage.

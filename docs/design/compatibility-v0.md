@@ -1,8 +1,9 @@
 # Development compatibility tier 0
 
 This is a narrow development surface, not Excel compatibility certification.
-Native inputs and styles survive reopen; results are calculated within the
-current read transaction. Work remains before a complete everyday preview.
+Native inputs, styles and (at native format v9) verified non-volatile formula
+results survive reopen; unstored, invalidated, volatile and transactional hook
+formulas are calculated on read. Work remains before a complete everyday preview.
 
 ## Structured table tier
 
@@ -143,10 +144,17 @@ An export with any selected formula error is blocked. Evaluation budgets include
 AST work and the stored cells a formula reads (at most 4,194,304 per formula) as
 well as the read's time budget. A dependency chain has no fixed depth, but a
 chain or range that cannot finish in its time shows `#LIMIT!`
-([measured](calculation-stage-2.md)). Managed reads/transactional hook reads retain bounded
-evaluation. The GUI uses cached preview inputs plus automatic bounded read-only
+([measured](calculation-stage-2.md)). At native format v9, ordinary reads and
+finished calculation jobs persist storable values and cell errors (excluding
+volatile `NOW`/`TODAY`, unparseable formulas, `#LIMIT!`, `#CYCLE!` and their
+readers, up to 140,000 linked formulas in memory) beside 64-row sum-mode input
+digests verified on open and refresh ([stage 3](calculation-stage-3.md)).
+Managed transactional hook reads do not read or write the store. The GUI uses
+cached preview inputs plus automatic bounded read-only
 [viewport calculations](viewport-calculation.md); state, sheet, model and stream
-generation checks prevent older results from overwriting a newer input state.
+generation checks prevent older results from overwriting a newer input state,
+and completed tile jobs populate the store so reopening displays stored tiles
+immediately.
 
 ## Import and export
 

@@ -75,7 +75,7 @@ def inspect_inputs(book):
 
 
 def inspect_native(path):
-    book=Workbook(path,readonly=True)
+    book=Workbook(path,readonly=True,store=False)
     try:
         # Tie the input scan to the state whose opening integrity checks passed.
         initial_state=book.state()

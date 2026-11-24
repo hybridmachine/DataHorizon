@@ -53,14 +53,14 @@ class NameTests(unittest.TestCase):
         self.assertEqual(found,{'One':"'Supplies'!B3",'Flip':"'Supplies'!B2:B4",'Odd':"'O''Brien'!A1"})
 
     def test_first_name_upgrades_to_v6_and_rolls_back_on_failure(self):
-        self.assertEqual(self.version(),1)
+        self.assertEqual(self.version(),9)
         self.code_of(lambda:self.save('Bad','Nope'))
-        self.assertEqual(self.version(),1)
+        self.assertEqual(self.version(),9)
         handler=Path(self.temp.name)/'rules.py';handler.write_text("def on_name_structure(ctx,event):\n    if event['phase']=='after':raise ValueError('reject')\n")
         self.book.handler=handler
         self.assertEqual(self.code_of(lambda:self.save('Good',"Supplies!A1")),'HOOK_FAILED')
-        self.assertEqual(self.version(),1);self.assertEqual(self.read()['names'],[])
-        self.book.handler=None;self.save('Good',"Supplies!A1");self.assertEqual(self.version(),6)
+        self.assertEqual(self.version(),9);self.assertEqual(self.read()['names'],[])
+        self.book.handler=None;self.save('Good',"Supplies!A1");self.assertEqual(self.version(),9)
 
     def test_invalid_identifiers_rejected(self):
         for bad in ['a1','XFD10','sum','Sum','TRUE','false','1x','has space','x'*65,'',None]:
@@ -135,7 +135,7 @@ class NameTests(unittest.TestCase):
         request=dict(action='name_save',operation_id=str(uuid.uuid4()),expected_state='stale',name='Total',reference='Supplies!A1')
         with self.assertRaises(EngineError) as error:self.book.mutate(request)
         self.assertEqual(error.exception.body['code'],'STALE_STATE');self.assertEqual(self.read()['names'],[])
-        self.assertEqual(self.version(),1)
+        self.assertEqual(self.version(),9)
 
     def test_unknown_fields_rejected(self):
         self.assertEqual(self.code_of(lambda:self.save('Total','Supplies!A1',extra=1)),'INVALID_ARGUMENT')

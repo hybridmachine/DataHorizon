@@ -50,7 +50,7 @@ class TablePromotionTests(unittest.TestCase):
     def test_stale_and_tampered_review_do_not_create_a_partial_table(self):
         review=self.preview();review['review_digest']='0'*64
         with self.assertRaises(EngineError) as error:self.promote(review)
-        self.assertEqual(error.exception.body['code'],'STALE_REVIEW');self.assertEqual(self.book.info()['format_version'],1)
+        self.assertEqual(error.exception.body['code'],'STALE_REVIEW');self.assertEqual(self.book.info()['format_version'],9)
         review=self.preview();old=review['state'];self.apply('edit',cells=[dict(row=3,col=2,source='9')])
         with self.assertRaises(EngineError) as error:
             self.apply('table_promote',**review['source_request'],columns=review['columns'],preview_clock=review['preview_clock'],review_digest=review['review_digest'],expected_state=old)
@@ -91,7 +91,7 @@ class TablePromotionTests(unittest.TestCase):
         self.book.handler=str(handler)
         with self.assertRaises(EngineError) as error:self.promote(self.preview())
         self.assertEqual(error.exception.body['code'],'HOOK_FAILED')
-        self.assertFalse(self.book.info()['tables']);self.assertEqual(self.book.info()['format_version'],1)
+        self.assertFalse(self.book.info()['tables']);self.assertEqual(self.book.info()['format_version'],9)
         self.assertIsNone(self.book.raw(self.book.sheet('Sheet1'),10,1))
 
     def test_legacy_structure_only_handler_cannot_bypass_table_changes(self):

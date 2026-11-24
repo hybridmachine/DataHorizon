@@ -4,6 +4,75 @@ Execution started October 31, 2026 after the explicit instruction to execute the
 plan. The design-only hold is superseded for this work. This is a working local
 development preview, not completion of the full M0–M8 plan or a release.
 
+## Calculation stage 3 (native v9 calculation store, freshness and serving) — November 24, 2026
+
+Stage 3 of the [calculation design](calculation-design.md) is built across three
+stacked local branches (`claude/calculation-stage-3-store`,
+`claude/calculation-stage-3-freshness`, `claude/calculation-stage-3-serving`)
+following the [stage 3 design](calculation-stage-3-design.md) and
+[plan](calculation-stage-3-plan.md) ([result](calculation-stage-3.md),
+[evidence](evidence/calculation-stage-3.json),
+[digest evidence](evidence/calculation-stage-3-digest.json)). Native format v9
+adds six reserved derived tables (`dh_calc_*`) with integer sheet numbers and
+no triggers, virtual tables or secondary indexes; new workbooks start at v9,
+older writable workbooks upgrade transactionally on their first managed commit
+(never downgraded by Undo), and read-only or `< v9` opens use a private
+temporary `dhcalc` database deleted on close without writing the workbook file.
+64-row block digests use sum mode (sum mod $2^{256}$ of per-cell SHA-256
+digests, excluding style) plus a `sheets` digest, updated by delta in managed
+commits and verified on open (within 5 s) and refresh (within the caller's
+deadline, default 2 s). `CALCULATION_VERSION = 1` clears stored results while
+keeping digests on evaluator version changes, pinned by a SHA-256 test over
+all 53 implemented functions. `DependentsIndex` replaces `dependencies.py` with
+integer-packed keys and lazy centered interval trees; non-structural commits
+record single-cell pending roots and delete stale results in slices of
+`DELETE_SLICE = 2_000`; ordinary reads and finished calculation jobs fill the
+store through non-waiting `store_write` (`PRAGMA busy_timeout=0`,
+`STORE_WRITE_SECONDS = 0.1`, capped at `STORED_FORMULA_LIMIT = 140_000` linked
+formulas) without changing `revision`, state token, Undo, receipts, or hooks.
+REST, CLI, SDK, the read contract (`"calculation": "evaluated_on_read"`), and
+`desktop/` are unchanged.
+
+Measured on an Apple M1 (medians of five; warm OS cache; load averages 2.58–3.17
+start, 3.89–10.71 end):
+- Wide-sheet digest update (D1, medians of 101): sum mode takes `0.003 / 0.008 /
+  0.015 ms` at 10 / 100 / 1,000 columns (vs `6.46 ms` for 64-row stream and
+  `1.38 ms` for 64×16 seek at 100 columns; 1M-cell full scan `1.75 s`).
+- Opening (O1, O2, V1): `0.917 s` on 270,000-row × 1-KiB text (316 MB, 5/5
+  verified); `2.152 s` on the 1M-cell / 100,003-formula fixture (81.5 MB, 5/5
+  verified; `0.562 s` lazy index load); `1.41 ms` at v9 vs `1.81 ms` at v1 on
+  100 cells — all inside the 5 s budget.
+- Edit acknowledgement (E1, `DELETE_SLICE = 2_000`): `1.19 ms` (1 affected),
+  `2.75 ms` (1,000 affected), `75.68 ms` (100,000 affected: `1.68` commit +
+  `60.52` mark + `13.36` first slice) — inside the 100 ms budget.
+- Stored read reuse (R1): after a 2 s job stores `=SUM(Sheet1!A1:A100000)`
+  (`0.386 s`), repeat default 0.25 s reads take `0.126 ms` and `0.307 ms` after
+  reopen.
+- Index, write cost and file growth (I1, I2, W1, W2, F1): `42.90 MiB` steady /
+  `44.39 MiB` peak (`449.9 B/formula`) on 100,003 formulas; `2.76 ms` and
+  `7,995` checks for 2,000 prefix sums over a formula column (vs `4.6 s` in
+  stage 1); `0.41 / 1.83 / 26.27 ms` to flush 1 / 256 / 4,096 formulas;
+  `+7.92 MiB` (`+11.34%`, `83.1 B/formula`) file growth.
+- Refresh after direct edit (X1) and lock contention (S1): `0.021 s` (10k, 5/5
+  survived), `0.199 s` (100k, 5/5 survived), `2.018 s` (1M, 4/5 survived, 1/5
+  emptied past 2 s deadline); `95.1%` of tight foreground flushes skipped
+  without waiting while concurrent tile snapshot jobs held shared locks.
+- Existing budgets (`tests/benchmark.py`): formula chains `0.47–0.55 ms` median
+  (`≤ 1.49 ms` p95), viewports `0.86–6.54 ms` median (`≤ 7.69 ms` p95), edit
+  ack `1.20 ms` median (`2.53 ms` p95), service peak RSS `94.9 MiB` — none
+  regressed.
+
+Qualification: 20-seed differential suite (60 random steps each, plus
+`DELETE_SLICE=1` and `STORE_WRITE_SECONDS=0`), 4 `SIGKILL` crash-recovery
+points, unchanged 178-case characterization corpus, full service suite (fresh
+`TMPDIR`), and all CTest suites (`desktop`, `python_workspace`,
+`chart_authoring`, `development_bundle_signature`, `chart_svg_probe_smoke`).
+Known limitations: 1M-cell refresh sits at the 2 s deadline, 140,000-formula
+index cap, volatile/unparseable/`#LIMIT!`/`#CYCLE!` results not stored, desktop
+still fills tiles via calculation jobs, and Windows/Linux/cold-cache/idle-host
+verification remains open. Stages 4 and 5 (background worker and updated read
+contract) are not built.
+
 ## Calculation stage 2 (evaluation in place and streamed ranges) — November 22, 2026
 
 Stage 2 of the [calculation design](calculation-design.md) is built on branch
@@ -891,7 +960,7 @@ confirmation. Physical input, VoiceOver, Windows/Linux and release gates remain 
 | M3 | Typed entry/date functions and scalar contracts; bounded transitive dependency reuse/invalidation; state/generation/UTC-clock background calculations with pending/error/stale/cancelled results; transactional hook reads; bounded automatic visible/frozen viewport scheduling | Broader Excel functions/coercion/reference compatibility, native usability/accessibility and platform acceptance |
 | M4 | Typed/formula-aware copy, Cut/fill/history, supported sheet/row/column transforms; opt-in transactional before/after structural hooks; native v3 portable view settings; local hiding/freezing and cross-pane selection | Full Excel reference compatibility, broader presentation/view models, native platform conventions and screen-reader acceptance |
 | M5 | Portable named bounded list definitions and persistent declared-record UUIDs; explicit external-edit reconciliation; reviewed record bulk edits and formula-preserving filtered copy/XLSX/ODS export; explicit locale/temporal conversion; durable staged atomic/batched jobs, frozen global sort/find paging and cooperative cancellation | Wider locale/timezone/duration policies, larger scopes and performance qualification (including large-file opening budget), full SQL/query/relational models at M8, production job scheduling and platform/manual acceptance |
-| M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures; Excel fidelity increment 1: degrade-and-report XLSX/ODS import (strict namespaces, `mixed` mode, every unimported feature reported), large staged import/export at measured limits (1,000,000 cells on the reference Mac), corpus and scorecard ([verification](evidence/excel-fidelity-1-verification.txt)) | Excel-saved and LibreOffice-saved corpus; native features of fidelity increments 2–8 and 10; broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
+| M6 | Native snapshots/recovery, bounded opening integrity checks and read-only inspection; conservative external refresh; bounded CSV/XLSX/ODS with conversion reports, local formula/style tiers and process-crash fixtures; Excel fidelity increment 1: degrade-and-report XLSX/ODS import (strict namespaces, `mixed` mode, every unimported feature reported), large staged import/export at measured limits (1,000,000 cells on the reference Mac), corpus and scorecard ([verification](evidence/excel-fidelity-1-verification.txt)); calculation stage 3: native v9 calculation store, sum-mode block/sheets input digests verified on open and refresh, `CALCULATION_VERSION` invalidation, interval-tree dependents index (`STORED_FORMULA_LIMIT = 140_000`), pending roots with sliced deletion (`DELETE_SLICE = 2_000`), store filling from reads and calculation jobs, differential and `SIGKILL` crash qualification ([result](calculation-stage-3.md)) | Excel-saved and LibreOffice-saved corpus; calculation stages 4–5 (background recalculation worker and updated read contract); native features of fidelity increments 2–8; broader XLSX/ODS application fidelity, comprehensive disk/permission/power-loss recovery, bundled runtime, follow-up execution semantics |
 | M7 | Automated local macOS tests and visual screenshot; local install smoke; hosted Windows/macOS/Linux build/test/install smoke passes after deployment-path fix | Native platform interaction, screen readers, high DPI, clean-machine installers, signing, compatibility matrices and distribution/license decisions |
 | M8 | Bounded native tables/relationships/indexes, read-only SQL and saved views; native v5 modules, exact service-local activation, atomic macros, required hooks/history and managed clients; native v6 names and cell/table event bindings, owner-channel approval and the Qt Python workspace (local branch, no PR) | Proven managed SQL writes, names in formulas/interchange, structure/open/code binding events, custom functions/packages, durable external effects, remote TLS/mTLS/password access, physical-input/VoiceOver acceptance of the workspace and remaining foundation/platform qualification |
 

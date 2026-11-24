@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import uuid
+import weakref
 
 from .formula import Calculator, FormulaError, MAX_COLS, MAX_ROWS, Unmaintainable, address, has_sheet_reference, translate, move_references, transform_structure, rename_sheet_references, delete_sheet_references
 from .hooks import HookFailure, invoke, supports_structure
@@ -25,7 +26,13 @@ from .formats import numeric_display, numeric_spec, temporal_display, TEMPORAL_F
 from .borders import SIDES, BORDER_STYLES
 from .temporal import Temporal, utc_clock, temporal_key, KINDS as TEMPORAL_KINDS
 from .csv_types import temporal_schema
-from .dependencies import DependencyIndex
+from .calculation_store import BLOCK_ROWS, CalculationStore, TABLES as CALC_TABLES
+from .calculation_freshness import CALCULATION_VERSION, apply as apply_verdict, compare, missing_block_digests, sheets_digest, update_block_digest
+from .calculation_index import DependentsIndex, STORED_FORMULA_LIMIT
+from .calculation_results import StoreCalculator
+
+STORE_WRITE_SECONDS = 0.1  # fixed by stage 3 W1/W2: 4,096-formula flush takes ~26 ms; 100k-cell digest fill (~152 ms) defers
+DELETE_SLICE = 2_000  # fixed by stage 3 E1: 100k-affected-formula edit acks in ~76.5 ms (<= 100 ms budget)
 
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
@@ -402,20 +409,43 @@ class WorkbookStream:
             yield cell
 
 
+_SKIP_SQLITE_CODES = {
+    sqlite3.SQLITE_BUSY,
+    sqlite3.SQLITE_LOCKED,
+    sqlite3.SQLITE_READONLY,
+    sqlite3.SQLITE_FULL,
+}
+
+
+def _is_skip_sqlite_error(error: sqlite3.Error) -> bool:
+    code = getattr(error, "sqlite_errorcode", None)
+    if code is not None:
+        return (code & 255) in _SKIP_SQLITE_CODES
+    text = str(error).lower()
+    return any(word in text for word in ("locked", "busy", "readonly", "read-only", "full"))
+
+
 class Workbook:
-    def __init__(self, path, create=False, readonly=False, handler=None, *, cancel_event=None, repair=False, approved_code=()):
-        create, readonly = boolean(create, "create"), boolean(readonly, "readonly")
+    def __init__(self, path, create=False, readonly=False, handler=None, *, cancel_event=None, repair=False, approved_code=(), store=True):
+        create, readonly, store = boolean(create, "create"), boolean(readonly, "readonly"), boolean(store, "store")
         from .workbook_code import approval_store
         self.approved_code=approval_store(approved_code)
         self.path = Path(path).expanduser().resolve()
         self.readonly, self.handler = readonly, handler
         self.repair=boolean(repair,'repair')
+        self.store = None
+        self._temp_store_dir = None
+        self.verified = False
+        self.distrusted = False
+        self.store_skips = 0
         self.relational_issues=[]
         self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
         self.table_schema_keys=set();self.relational_before={}
         self.lock = threading.RLock()
         self.undo, self.redo = [], []
-        self.dependencies=DependencyIndex()
+        self.index = None
+        self.unserved = set()
+        self._calculators = []
         self.unverified_records=set()
         self._calculation_jobs=None
         self._chart_jobs=None
@@ -448,12 +478,19 @@ class Workbook:
             self.db.execute("PRAGMA synchronous=FULL")
             self.db.execute("PRAGMA temp_store=FILE")
             if create:
-                self.db.executescript(SCHEMA)
+                from . import relational
+                self.db.executescript(SCHEMA + METADATA_SCHEMA + relational.SCHEMA)
                 self.db.execute("BEGIN IMMEDIATE")
-                self.db.execute("INSERT INTO dh_meta VALUES(1,1,?,0)", (str(uuid.uuid4()),))
+                CalculationStore.create(self.db, "main")
+                self.db.execute("INSERT INTO dh_meta VALUES(1,9,?,0)", (str(uuid.uuid4()),))
                 self.db.execute("INSERT INTO sheets VALUES(?,?,0)", (str(uuid.uuid4()), "Sheet1"))
+                init_store = CalculationStore(self.db, "main")
+                init_store.set_sheets_digest(sheets_digest(self.db))
+                init_store.set_calculation_version(CALCULATION_VERSION)
                 self.db.execute("COMMIT")
             self.verify_file()
+            open_verdict = None
+            version_mismatch = False
             self.db.execute("BEGIN")
             try:
                 self.version = self.data_version()
@@ -461,19 +498,175 @@ class Workbook:
                 with sql_deadline(self.db,self._opening_deadline,cancel_event=cancel_event):
                     self.validate()
                     check_integrity(self.db,self._opening_deadline)
-                    self.id = self.db.execute("SELECT workbook_id FROM dh_meta").fetchone()[0]
+                    meta_row = self.db.execute("SELECT workbook_id,format_version FROM dh_meta").fetchone()
+                    self.id, format_version = meta_row[0], meta_row[1]
                     self.verify_file()
+                if store and format_version == 9:
+                    main_store = CalculationStore(self.db, "main")
+                    version_mismatch = main_store.calculation_version() != CALCULATION_VERSION
+                    open_verdict = compare(main_store, self.db, self._opening_deadline)
             finally:
                 try: self.db.execute("ROLLBACK")
                 except sqlite3.Error: pass
             del self._opening_deadline
             _verify_destination(self.path,created_identity)
+            if store:
+                if format_version == 9:
+                    if not self.readonly:
+                        self.store = CalculationStore(self.db, "main")
+                        if open_verdict is None:
+                            def _empty_and_stamp():
+                                self.store.empty()
+                                self.store.set_calculation_version(CALCULATION_VERSION)
+                            if not self.store_write(_empty_and_stamp):
+                                self.distrusted = True
+                        else:
+                            self.verified = True
+                            if version_mismatch or open_verdict.sheets_changed or open_verdict.changed:
+                                def _repair_open():
+                                    if open_verdict.sheets_changed or open_verdict.changed:
+                                        apply_verdict(self.store, self.db, open_verdict)
+                                    if version_mismatch:
+                                        self.store.clear_results()
+                                        self.store.set_calculation_version(CALCULATION_VERSION)
+                                if not self.store_write(_repair_open):
+                                    self.distrusted = True
+                    else:
+                        self._open_temp_store()
+                        if open_verdict is not None:
+                            self.verified = True
+                            def _copy_and_apply():
+                                for table in reversed(CALC_TABLES):
+                                    self.db.execute(f"DELETE FROM dhcalc.{table}")
+                                for table in CALC_TABLES:
+                                    self.db.execute(f"INSERT INTO dhcalc.{table} SELECT * FROM main.{table}")
+                                if open_verdict.sheets_changed or open_verdict.changed:
+                                    apply_verdict(self.store, self.db, open_verdict)
+                                if version_mismatch:
+                                    self.store.clear_results()
+                                    self.store.set_calculation_version(CALCULATION_VERSION)
+                            if not self.store_write(_copy_and_apply):
+                                self.distrusted = True
+                else:
+                    self._open_temp_store()
         except Exception:
             if self.db is not None:
                 self.db.close()
+            self._close_temp_store(detach=False)
             # A pathname check followed by unlink can race with replacement by
             # another process. Preserve failed destinations for inspection.
             raise
+
+    def _open_temp_store(self):
+        temp_dir = tempfile.mkdtemp(prefix="dhcalc-")
+        self._temp_store_dir = temp_dir
+        # A session dropped without close() still removes its directory, at collection or interpreter exit.
+        self._temp_store_cleanup = weakref.finalize(self, shutil.rmtree, temp_dir, True)
+        calc_path = Path(temp_dir) / "calc.sqlite"
+        self.db.execute("ATTACH DATABASE ? AS dhcalc", (str(calc_path),))
+        self.db.execute("BEGIN")
+        try:
+            CalculationStore.create(self.db, "dhcalc")
+            temp_store = CalculationStore(self.db, "dhcalc")
+            temp_store.set_sheets_digest(sheets_digest(self.db))
+            temp_store.set_calculation_version(CALCULATION_VERSION)
+            self.db.execute("COMMIT")
+        except Exception:
+            if self.db.in_transaction:
+                try: self.db.execute("ROLLBACK")
+                except sqlite3.Error: pass
+            raise
+        self.store = CalculationStore(self.db, "dhcalc")
+
+    def _close_temp_store(self, *, detach=True):
+        if self._temp_store_dir is not None:
+            if detach and self.db is not None:
+                try: self.db.execute("DETACH DATABASE dhcalc")
+                except sqlite3.Error: pass
+            self._temp_store_cleanup()
+            self._temp_store_dir = None
+
+    def upgrade_calculation(self):
+        """Upgrade a writable workbook below format 9 to format 9 inside the current commit transaction."""
+        from . import relational
+        relational.ensure_version(self, 9)
+        CalculationStore.create(self.db, "main")
+        main_store = CalculationStore(self.db, "main")
+        main_store.set_sheets_digest(sheets_digest(self.db))
+        main_store.set_calculation_version(CALCULATION_VERSION)
+        if self.store is not None:
+            self.store = main_store
+
+    def touched_blocks(self):
+        """Set of (sheet_id, block) pairs touched by cell edits in the current mutation."""
+        return {
+            (key[0], (key[1] - 1) // BLOCK_ROWS)
+            for key in self.changes
+            if key[0] not in ("table", "chart")
+        }
+
+    def store_write(self, work) -> bool:
+        """Run work in a non-waiting transaction against self.store; returns False if skipped."""
+        if self.store is None:
+            return False
+        if self.db.in_transaction:
+            self.store_skips += 1
+            return False
+        if self.store.schema != "main":
+            self.db.execute("BEGIN")
+            try:
+                if self.data_version() != self.version:
+                    self.db.execute("ROLLBACK")
+                    self.store_skips += 1
+                    return False
+                work()
+                self.db.execute("COMMIT")
+                return True
+            except sqlite3.Error as error:
+                if self.db.in_transaction:
+                    try: self.db.execute("ROLLBACK")
+                    except sqlite3.Error: pass
+                if _is_skip_sqlite_error(error):
+                    self.store_skips += 1
+                    return False
+                raise
+            except Exception:
+                if self.db.in_transaction:
+                    try: self.db.execute("ROLLBACK")
+                    except sqlite3.Error: pass
+                raise
+        self.db.execute("PRAGMA busy_timeout=0")
+        try:
+            try:
+                self.db.execute("BEGIN IMMEDIATE")
+            except sqlite3.Error as error:
+                if _is_skip_sqlite_error(error):
+                    self.store_skips += 1
+                    return False
+                raise
+            try:
+                if self.data_version() != self.version:
+                    self.db.execute("ROLLBACK")
+                    self.store_skips += 1
+                    return False
+                work()
+                self.db.execute("COMMIT")
+                return True
+            except sqlite3.Error as error:
+                if self.db.in_transaction:
+                    try: self.db.execute("ROLLBACK")
+                    except sqlite3.Error: pass
+                if _is_skip_sqlite_error(error):
+                    self.store_skips += 1
+                    return False
+                raise
+            except Exception:
+                if self.db.in_transaction:
+                    try: self.db.execute("ROLLBACK")
+                    except sqlite3.Error: pass
+                raise
+        finally:
+            self.db.execute("PRAGMA busy_timeout=1000")
 
     def verify_file(self):
         _verify_destination(self.path,self.file_identity)
@@ -483,7 +676,9 @@ class Workbook:
         if self._operation_jobs is not None:self._operation_jobs.close()
         if self._calculation_jobs is not None:self._calculation_jobs.close()
         if self._chart_jobs is not None:self._chart_jobs.close()
-        with self.lock:self.db.close()
+        with self.lock:
+            self.db.close()
+            self._close_temp_store(detach=False)
 
     def ensure_metadata(self):
         if self.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]<3:
@@ -530,7 +725,7 @@ class Workbook:
             require(signature in (EXPECTED_SCHEMA,EXPECTED_SCHEMA3) or reserved==EXPECTED_SCHEMA3,
                     "SCHEMA_CHANGED", "Unsupported schema. Reopen a compatible native workbook; no repair was attempted", 409)
             meta = db.execute("SELECT format_version,revision,workbook_id FROM dh_meta WHERE singleton=1").fetchall()
-            require(len(meta) == 1 and meta[0][0] in (1,2,3,4,5,6,7,8) and type(meta[0][1]) is int and meta[0][1] >= 0,
+            require(len(meta) == 1 and meta[0][0] in (1,2,3,4,5,6,7,8,9) and type(meta[0][1]) is int and meta[0][1] >= 0,
                     "FORMAT_VERSION", "Unsupported or invalid native format", 409)
             if meta[0][0]>=4:
                 from . import relational
@@ -609,9 +804,59 @@ class Workbook:
             self.version, self.epoch = current, str(uuid.uuid4())
             self.undo.clear()
             self.redo.clear()
-            self.dependencies.clear()
-            if self.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]>=3:
+            self.reset_calculation()
+            format_version = self.db.execute('SELECT format_version FROM dh_meta').fetchone()[0]
+            if format_version >= 3:
                 self.unverified_records.update((sheet,identifier) for sheet,identifier in self.db.execute("SELECT sheet_id,id FROM dh_objects WHERE namespace='records'"))
+            if self.store is not None:
+                if not self.readonly and self.store.schema != "main" and format_version == 9:
+                    self.store = CalculationStore(self.db, "main")
+                    if not self.db.in_transaction:
+                        self._close_temp_store(detach=True)
+                if format_version == 9:
+                    scan_deadline = time.monotonic() + 2 if deadline is None else deadline
+                    source_store = CalculationStore(self.db, "main") if self.readonly else self.store
+                    verdict = compare(source_store, self.db, scan_deadline)
+                    if verdict is None:
+                        self.verified = False
+                        if self.store_write(self.store.empty):
+                            self.distrusted = False
+                        else:
+                            self.distrusted = True
+                    else:
+                        self.verified = True
+                        if self.readonly:
+                            def _sync_ro():
+                                for table in reversed(CALC_TABLES):
+                                    self.db.execute(f"DELETE FROM dhcalc.{table}")
+                                for table in CALC_TABLES:
+                                    self.db.execute(f"INSERT INTO dhcalc.{table} SELECT * FROM main.{table}")
+                                if verdict.sheets_changed or verdict.changed:
+                                    apply_verdict(self.store, self.db, verdict)
+                            if self.store_write(_sync_ro):
+                                self.distrusted = False
+                            else:
+                                self.distrusted = True
+                        elif verdict.sheets_changed or verdict.changed:
+                            if self.store_write(lambda: apply_verdict(self.store, self.db, verdict)):
+                                self.distrusted = False
+                            else:
+                                self.distrusted = True
+                        elif self.distrusted:
+                            if self.store_write(self.store.empty):
+                                self.distrusted = False
+                else:
+                    if self.store_write(self.store.empty):
+                        self.distrusted = False
+                    else:
+                        self.distrusted = True
+                self.reset_calculation()
+        elif self.distrusted and self.store is not None:
+            if self.store_write(self.store.empty):
+                self.distrusted = False
+                self.reset_calculation()
+        else:
+            self.settle()
 
     def state(self):
         revision = self.db.execute("SELECT revision FROM dh_meta").fetchone()[0]
@@ -644,14 +889,181 @@ class Workbook:
         except (ValueError, TypeError) as error:
             raise EngineError("INVALID_INPUT", "Invalid externally stored cell metadata") from error
 
+    def ready(self, *, settle=True):
+        if self.store is None:
+            return
+        if self.index is None:
+            self.index = DependentsIndex(self.store.precedents())
+            roots = self.store.roots()
+            if roots:
+                self._mark_roots(roots, settle=settle and not self.db.in_transaction)
+
+    def _mark_roots(self, roots, *, settle=True):
+        if roots:
+            self.unserved |= self.index.affected(roots)
+            for sheet_id, r1, c1, r2, c2 in roots:
+                if r1 == r2 and c1 == c2:
+                    self.index.unlink((sheet_id, r1, c1))
+        if settle:
+            self.settle()
+
+    def mark(self, roots=None):
+        if self.store is None or self.distrusted:
+            return
+        if self.index is None:
+            self.ready(settle=True)
+            return
+        if roots is None:
+            roots = self.store.roots()
+        self._mark_roots(roots, settle=True)
+
+    def settle(self):
+        if self.store is None or self.distrusted or self.db.in_transaction:
+            return
+        if not self.unserved and not self.store.roots():
+            return
+        self.ready(settle=False)
+        if not self.unserved:
+            if self.store.roots():
+                self.store_write(self.store.clear_roots)
+            return
+        if DELETE_SLICE <= 0:
+            return
+        batch = []
+        for key in self.unserved:
+            batch.append(key)
+            if len(batch) >= DELETE_SLICE:
+                break
+        clear_roots = len(batch) == len(self.unserved)
+
+        def _work():
+            self.store.delete_results(batch)
+            if clear_roots:
+                self.store.clear_roots()
+
+        if self.store_write(_work):
+            self.unserved.difference_update(batch)
+
+    def reset_calculation(self):
+        self.index = None
+        self.unserved.clear()
+
+    def flush_results(self, batch=None) -> bool:
+        if batch is None:
+            calculators = self._calculators
+            self._calculators = []
+            items = []
+            for calc in calculators:
+                if calc.batch:
+                    items.extend(calc.batch)
+                    calc.batch.clear()
+        else:
+            items = list(batch)
+        if not items or self.store is None or self.distrusted:
+            return False
+        self.ready()
+        if STORE_WRITE_SECONDS <= 0 or len(self.index) >= STORED_FORMULA_LIMIT:
+            return False
+        deadline = time.monotonic() + STORE_WRITE_SECONDS
+        written = []
+
+        def _work():
+            nonlocal written
+            written = []
+            if self.store.sheets_digest() is None:
+                self.store.set_sheets_digest(sheets_digest(self.db))
+            known_digests = {}
+            added = 0
+            seen_new = set()
+            base_count = len(self.index)
+            to_write = []
+            pending_digests = []
+
+            def _ensure_for_rect(sheet_id, r1, r2, item_digests, item_known):
+                known = known_digests.setdefault(sheet_id, set())
+                b1 = (r1 - 1) // BLOCK_ROWS
+                b2 = (r2 - 1) // BLOCK_ROWS
+                if b2 - b1 < 16:
+                    missing = []
+                    for blk in range(b1, b2 + 1):
+                        if blk not in known and (sheet_id, blk) not in item_known:
+                            if self.store.digest(sheet_id, blk) is not None:
+                                known.add(blk)
+                            else:
+                                missing.append(blk)
+                else:
+                    known.update(self.store.digest_blocks(sheet_id, b1, b2))
+                    missing = [
+                        blk for blk in range(b1, b2 + 1)
+                        if blk not in known and (sheet_id, blk) not in item_known
+                    ]
+                if not missing:
+                    return True
+                ok, computed = missing_block_digests(self.db, sheet_id, missing, deadline)
+                if not ok:
+                    return False
+                if computed:
+                    item_digests.extend(computed)
+                for blk in missing:
+                    item_known.add((sheet_id, blk))
+                return True
+
+            for key, value, rects in items:
+                if time.monotonic() >= deadline:
+                    break
+                is_new = key not in self.index and key not in seen_new
+                if is_new and base_count + added >= STORED_FORMULA_LIMIT:
+                    break
+                item_digests = []
+                item_known = set()
+                if not _ensure_for_rect(key[0], key[1], key[1], item_digests, item_known):
+                    break
+                ok = True
+                for p_sheet, r1, _c1, r2, _c2 in rects:
+                    if not _ensure_for_rect(p_sheet, r1, r2, item_digests, item_known):
+                        ok = False
+                        break
+                if not ok:
+                    break
+                pending_digests.extend(item_digests)
+                for sid, blk in item_known:
+                    known_digests.setdefault(sid, set()).add(blk)
+                to_write.append((key, value, rects))
+                written.append((key, rects))
+                if is_new:
+                    seen_new.add(key)
+                    added += 1
+
+            if pending_digests:
+                self.store.set_digests(pending_digests)
+            if to_write:
+                self.store.write(to_write)
+
+        try:
+            committed = self.store_write(_work)
+        except Exception:
+            self.store_skips += 1
+            return False
+        if not committed or not written:
+            return False
+        for key, rects in written:
+            self.index.link(key, rects)
+            self.unserved.discard(key)
+        return True
+
     def calculator(self, seconds=0.25, *, clock=None, transactional=False):
-        def resolve(name):
-            try:
-                return self.sheet(name)
-            except EngineError as error:
-                raise FormulaError("#REF!", "Referenced sheet does not exist") from error
-        read=lambda s,r,c: typed(self.raw(s,r,c))
-        return Calculator(read,resolve,seconds,clock=clock,scan=self.scan,decode=stored_item) if transactional else self.dependencies.calculator(read,resolve,seconds,clock,scan=self.scan,decode=stored_item)
+        if transactional or self.store is None:
+            def resolve(name):
+                try:
+                    return self.sheet(name)
+                except EngineError as error:
+                    raise FormulaError("#REF!", "Referenced sheet does not exist") from error
+            read=lambda s,r,c: typed(self.raw(s,r,c))
+            return Calculator(read,resolve,seconds,clock=clock,scan=self.scan,decode=stored_item)
+        self.ready()
+        calc = StoreCalculator(self, seconds, clock=clock)
+        self._calculators.append(calc)
+        return calc
 
     def scan(self, sheet, r1, c1, r2, c2):
         """(row, col, (source, kind)) for the stored cells of a rectangle in row, then column order, undecoded: the
@@ -711,6 +1123,7 @@ class Workbook:
             deadline = time.monotonic()+2
             self.refresh(deadline=deadline)
             self.db.execute("BEGIN")
+            ok = False
             try:
                 # Refresh again after establishing the read snapshot.
                 self.refresh(deadline=deadline)
@@ -725,8 +1138,19 @@ class Workbook:
                         item = typed({"source": source, "kind": kind, "style": json.loads(style)})
                         result = {"row": row, "col": col, "source": source, "input_kind": kind, "kind": item["kind"], "style": item["style"]}
                         try:
-                            if item['kind']=='formula' and args.get('calculation')=='cached' and (sheet,row,col) not in self.dependencies.values:
-                                result.update(value=None,display='…',calculation='pending')
+                            if item['kind'] == 'formula' and args.get('calculation') == 'cached':
+                                key = (sheet, row, col)
+                                if self.store is not None and not self.distrusted and key not in self.unserved:
+                                    found, value = self.store.result(key)
+                                else:
+                                    found, value = False, None
+                                if not found:
+                                    result.update(value=None, display='…', calculation='pending')
+                                elif isinstance(value, FormulaError):
+                                    raise value
+                                else:
+                                    result.update(value=value, display=display(value, item["style"]), calculation="current")
+                                    if isinstance(value, Temporal): result["value_kind"] = value.kind
                             else:
                                 value = calc.cell(sheet, row, col) if item["kind"] in EVALUATED else item["value"]
                                 result.update(value=value, display=display(value, item["style"]), calculation="current")
@@ -746,9 +1170,14 @@ class Workbook:
                         cells.append(result)
                     # The stored charts are attached after the cells are sized: they never count against the read's limit.
                     if native: response.update(self.native_catalog(charts=True,chart_sheet=sheet))
+                    ok = True
                     return response
             finally:
                 self.db.execute("ROLLBACK")
+                if ok:
+                    self.flush_results()
+                else:
+                    self._calculators.clear()
 
     def read_styles(self, sheet, args):
         r1,c1,r2,c2=rectangle(args)
@@ -823,6 +1252,7 @@ class Workbook:
             deadline=time.monotonic()+2
             self.refresh(deadline=deadline)
             self.db.execute("BEGIN")
+            ok = False
             try:
                 self.refresh(deadline=deadline)
                 with sql_deadline(self.db,deadline):
@@ -847,6 +1277,7 @@ class Workbook:
                                 total+=value
                                 if not math.isfinite(total):numeric_error="#NUM!"
                     available=not error_count and numeric_error is None
+                    ok = True
                     return {"state":self.state(),"sheet":sheet,"range":[r1,c1,r2,c2],
                             "selected_cells":(r2-r1+1)*(c2-c1+1),"count":count,"numeric_count":numeric_count,
                             "sum":total if available else None,
@@ -854,6 +1285,10 @@ class Workbook:
                             "error_count":error_count,"errors":errors,"errors_truncated":error_count>len(errors),"numeric_error":numeric_error}
             finally:
                 self.db.execute("ROLLBACK")
+                if ok:
+                    self.flush_results()
+                else:
+                    self._calculators.clear()
 
     def native_catalog(self, *, omissions=False, charts=False, db=None, chart_sheet=None):
         """Names and binding labels (and optionally other native objects and charts) in the current read snapshot, for export reports.
@@ -879,6 +1314,7 @@ class Workbook:
             deadline=time.monotonic()+5
             self.refresh(deadline=deadline)
             self.db.execute("BEGIN")
+            ok = False
             try:
                 self.refresh(deadline=deadline)
                 with sql_deadline(self.db,deadline):
@@ -911,9 +1347,14 @@ class Workbook:
                         targets[sheet].append(cell)
                     # As in read: the stored charts are attached after the cells are sized.
                     result.update(self.native_catalog(charts=True))
+                    ok = True
                     return result
             finally:
                 self.db.execute("ROLLBACK")
+                if ok:
+                    self.flush_results()
+                else:
+                    self._calculators.clear()
 
     @contextmanager
     def stream_workbook(self, reserve=None, *, checkpoint=None):
@@ -1305,8 +1746,17 @@ class Workbook:
                                   "unknown",operation_id=operation) from error
             in_transaction = True
             import_plan = None
+            store_before = self.store
+            upgraded = False
+            self._rehash = True
+            emptied_distrust = False
+            cell_roots = []
             try:
                 self.db.execute("SAVEPOINT operation_changes")
+                if self.store is not None and (self.distrusted or self.data_version() != self.version):
+                    self.store.empty()
+                    self._rehash = False
+                    emptied_distrust = True
                 self.check_operation()
                 # The writer lock closes the check/write race with independent tools.
                 self.refresh(deadline=self.deadline)
@@ -1478,7 +1928,7 @@ class Workbook:
                 elif kind == "replace_all":
                     replacement = request.get("replacement")
                     require(isinstance(replacement, str), "INVALID_ARGUMENT", "Replacement must be text")
-                    matches = self.matches(sheet, request, deadline=self.deadline)
+                    matches = self.matches(sheet, request, deadline=self.deadline, transactional=True)
                     needle = request["needle"]
                     needle_bytes, replacement_bytes = len(needle.encode()), len(replacement.encode())
                     for match in matches:
@@ -1570,6 +2020,51 @@ class Workbook:
                     changed_cells = structural_edit.finish()
                     large_structure_progress("committing")
                 self.changes = {key: pair for key, pair in self.changes.items() if pair[0] != pair[1] or key in self.table_schema_keys}
+                if self.db.execute("SELECT format_version FROM dh_meta").fetchone()[0] < 9:
+                    self.upgrade_calculation()
+                    upgraded = True
+                if self._rehash and self.store is not None:
+                    if structural or self.table_record_keys:
+                        touched_sheets = {key[0] for key in self.changes if key[0] not in ("table", "chart")}
+                        if large:
+                            touched_sheets |= {sid for sid, _, _ in self.store.digests()}
+                        elif sheet_structural:
+                            if "sheet" in request:
+                                try: touched_sheets.add(self.sheet(request["sheet"]))
+                                except EngineError: pass
+                            elif kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"):
+                                try: touched_sheets.add(self.sheet("Sheet1"))
+                                except EngineError: pass
+                            current_sheets = {row[0] for row in self.db.execute("SELECT id FROM sheets")}
+                            touched_sheets |= {sid for sid, _, _ in self.store.digests() if sid not in current_sheets}
+                        self.store.clear_results()
+                        self.store.drop_digests(touched_sheets)
+                        self.store.set_sheets_digest(sheets_digest(self.db))
+                    else:
+                        by_block = {}
+                        cell_changes = []
+                        for key, (before, after) in self.changes.items():
+                            if key[0] in ("table", "chart"):
+                                continue
+                            cell_changes.append(key)
+                            block_key = (key[0], (key[1] - 1) // BLOCK_ROWS)
+                            by_block.setdefault(block_key, []).append((key[1], key[2], before, after))
+                        digest_updates = []
+                        for (sheet_id, block), block_changes in by_block.items():
+                            existing = self.store.digest(sheet_id, block)
+                            if existing is not None:
+                                digest_updates.append((
+                                    sheet_id,
+                                    block,
+                                    update_block_digest(self.db, sheet_id, block, existing, block_changes),
+                                ))
+                        if digest_updates:
+                            self.store.set_digests(digest_updates)
+                        if cell_changes:
+                            cell_roots = [(s, r, c, r, c) for s, r, c in cell_changes]
+                            self.store.add_roots(cell_roots)
+                            for key in cell_changes:
+                                self.store.delete_formula(key)
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
                 result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": changed_cells if large else sum(key[0] not in ('table','chart') for key in self.changes)+self.bulk_loaded,
                           "changed_records":sum(key[0]=='table' for key in self.changes),"changed_charts":sum(key[0]=='chart' for key in self.changes)}
@@ -1581,9 +2076,17 @@ class Workbook:
                 self.check_operation()
                 self.db.execute("COMMIT")
                 in_transaction = False
+                if emptied_distrust:
+                    self.distrusted = False
+                if upgraded:
+                    self._close_temp_store(detach=True)
                 if repaired_issues is not None:self.relational_issues=repaired_issues
-                if structural or self.table_record_keys:self.dependencies.clear()
-                else:self.dependencies.invalidate([key for key in self.changes if key[0] not in ('table','chart')])
+                if emptied_distrust or upgraded or not self._rehash or structural or self.table_record_keys:
+                    self.reset_calculation()
+                    if upgraded and cell_roots and self.store is not None:
+                        self.mark(cell_roots)
+                elif cell_roots and self.store is not None:
+                    self.mark(cell_roots)
                 if structural:
                     self.undo.clear()
                     self.redo.clear()
@@ -1606,6 +2109,7 @@ class Workbook:
             except Exception as error:
                 if not in_transaction:
                     raise EngineError("OUTCOME_UNKNOWN","Data may have committed; reconcile the durable receipt",500,"unknown",operation_id=operation) from error
+                self.store = store_before
                 if not self.db.in_transaction:
                     # SQLITE_INTERRUPT during a write can roll back the whole
                     # transaction, including its savepoint. Reacquire ownership
@@ -1621,7 +2125,7 @@ class Workbook:
                         if receipt is not None:
                             self.db.execute('ROLLBACK');self.refresh();return receipt
                         self.db.execute('SAVEPOINT operation_changes')
-                        self.dependencies.clear()
+                        self.reset_calculation()
                     except Exception as reacquire_error:
                         if self.db.in_transaction:self.db.execute('ROLLBACK')
                         if isinstance(reacquire_error,EngineError) and reacquire_error.body.get('operation_id')==operation:raise
@@ -1983,14 +2487,21 @@ class Workbook:
             deadline=time.monotonic()+2
             self.refresh(deadline=deadline)
             self.db.execute("BEGIN")
+            ok = False
             try:
                 self.refresh(deadline=deadline)
                 with sql_deadline(self.db,deadline):
-                    return self._list_rows(self.sheet(sheet),args,self.calculator(seconds=2),deadline)
+                    result = self._list_rows(self.sheet(sheet),args,self.calculator(seconds=2),deadline)
+                    ok = True
+                    return result
             except FormulaError as error:
                 raise EngineError("CALCULATION_ERROR", f"List evaluation blocked: {error}") from error
             finally:
                 self.db.execute("ROLLBACK")
+                if ok:
+                    self.flush_results()
+                else:
+                    self._calculators.clear()
 
     def list_values(self, sheet, args):
         """Evaluate criteria and read displayed values in the same input snapshot."""
@@ -2007,6 +2518,7 @@ class Workbook:
         with self.lock:
             deadline=time.monotonic()+2
             self.refresh(deadline=deadline);self.db.execute("BEGIN")
+            ok = False
             try:
                 self.refresh(deadline=deadline)
                 require(self.state()==expected,"STALE_STATE","List inputs changed; refresh and review again",409)
@@ -2038,19 +2550,24 @@ class Workbook:
                         matrix[rowmap[row]][colmap[col]]=cell
                     require(time.monotonic()<=deadline,"TIMEOUT","List values exceeded their time budget")
                     require(len(encoded(result).encode())<=4*1024*1024,"READ_LIMIT","List values exceed 4 MiB")
+                    ok = True
                     return result
             except FormulaError as error:
                 raise EngineError("CALCULATION_ERROR",f"List values blocked: {error}") from error
             finally:
                 self.db.execute("ROLLBACK")
+                if ok:
+                    self.flush_results()
+                else:
+                    self._calculators.clear()
 
-    def matches(self, sheet, args, *, deadline=None):
+    def matches(self, sheet, args, *, deadline=None, transactional=False):
         r1, c1, r2, c2 = rectangle(args)
         needle, field = args.get("needle"), args.get("field", "source")
         require(isinstance(needle, str) and bool(needle), "INVALID_ARGUMENT", "Find text must be nonempty")
         require(field in ("source", "display"), "INVALID_ARGUMENT", "Search field must be source or display")
         deadline = time.monotonic()+2 if deadline is None else deadline
-        calc, matches, match_bytes = self.calculator(seconds=min(2,max(0,deadline-time.monotonic()))), [], 0
+        calc, matches, match_bytes = self.calculator(seconds=min(2,max(0,deadline-time.monotonic())), transactional=transactional), [], 0
         with sql_deadline(self.db,deadline):
             for row, col, source, kind, style in self.range_cells(sheet,range(r1,r2+1),c1,c2,deadline):
                 require(time.monotonic()<=deadline,"TIMEOUT","Search exceeded its time budget")
@@ -2079,6 +2596,7 @@ class Workbook:
         with self.lock:
             deadline=time.monotonic()+2
             self.refresh(deadline=deadline);self.db.execute("BEGIN")
+            ok = False
             try:
                 self.refresh(deadline=deadline)
                 require(expected is None or expected==self.state(),"STALE_STATE","Find inputs changed; refresh and search again",409)
@@ -2086,10 +2604,15 @@ class Workbook:
                 page=[{**match,"text":match["text"][:256]} for match in matches[offset:offset+limit]]
                 require(time.monotonic()<=deadline,"TIMEOUT","Search exceeded its time budget")
                 more=offset+len(page)<len(matches)
+                ok = True
                 return {"matches":page,"count":len(matches),"state":self.state(),"offset":offset,"limit":limit,
                         "has_more":more,"next_offset":offset+len(page) if more else None,"truncated":len(matches)>len(page)}
             finally:
                 self.db.execute("ROLLBACK")
+                if ok:
+                    self.flush_results()
+                else:
+                    self._calculators.clear()
 
     def snapshot(self, path, *, cancel_event=None):
         with self.lock:
@@ -2120,6 +2643,7 @@ class Workbook:
         with self.lock:
             self.refresh()
             self.db.execute("BEGIN")
+            ok = False
             try:
                 self.refresh()
                 sheet, calc = self.sheet(sheet), self.calculator(seconds=2)
@@ -2146,8 +2670,13 @@ class Workbook:
                     result["temporal_schema"]=temporal_schema(result["csv"],temporal_entries)
                     result["report"].append("ISO date/time values require the companion temporal_schema to restore native kinds automatically; CSV alone is untyped.")
                 require(len(encoded(result).encode()) <= 4*1024*1024, "LIMIT", "CSV response exceeds 4 MiB; export a smaller selection")
+                ok = True
                 return result
             except FormulaError as error:
                 raise EngineError("CALCULATION_ERROR", f"Export blocked: {error}") from error
             finally:
                 self.db.execute("ROLLBACK")
+                if ok:
+                    self.flush_results()
+                else:
+                    self._calculators.clear()
