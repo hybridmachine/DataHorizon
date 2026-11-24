@@ -9,8 +9,10 @@ import unittest
 from unittest.mock import patch
 import uuid
 
-from datahorizon.calculation_freshness import block_digest, ensure_digests, sheets_digest
+from datahorizon.calculation_freshness import Verdict, apply, block_digest, compare, ensure_digests, sheets_digest
+from datahorizon.calculation_store import TABLES as CALC_TABLES
 from datahorizon.engine import EngineError, Workbook
+from datahorizon.formula import MAX_COLS
 
 
 def mutate(book, **request):
@@ -154,6 +156,211 @@ class DigestMaintenanceTests(unittest.TestCase):
             mutate(self.book, action="edit", sheet="Sheet1", cells=[{"row": 1, "col": 1, "source": "10"}])
         self.assertEqual(raised.exception.body["code"], "HOOK_FAILED")
         self.assertEqual(self.book.store.digest(self.sheet, 0), before)
+
+
+class OpenVerificationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / "open_verify.dhwb"
+
+    def _new(self):
+        book = Workbook(self.path, create=True)
+        return book
+
+    def _direct(self, sql, *params):
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute(sql, params)
+
+    def test_unchanged_file_keeps_every_result(self):
+        book = self._new()
+        sheet = book.sheet("Sheet1")
+        mutate(book, action="edit", sheet="Sheet1", cells=[
+            {"row": 1, "col": 1, "source": "2"},
+            {"row": 1, "col": 2, "source": "=A1*3"},
+            {"row": 2, "col": 2, "source": "=A1+1"},
+            {"row": 3, "col": 2, "source": "=7+8"},
+        ])
+        book.db.execute("BEGIN IMMEDIATE")
+        ensure_digests(book.store, book.db, [(sheet, 0)])
+        book.store.write([
+            ((sheet, 1, 2), 6, [(sheet, 1, 1, 1, 1)]),
+            ((sheet, 2, 2), 3, [(sheet, 1, 1, 1, 1)]),
+            ((sheet, 3, 2), 15, ()),
+        ])
+        book.db.execute("COMMIT")
+        book.close()
+
+        reopened = Workbook(self.path)
+        self.addCleanup(reopened.close)
+        self.assertTrue(reopened.verified)
+        self.assertEqual(reopened.store.result((sheet, 1, 2)), (True, 6))
+        self.assertEqual(reopened.store.result((sheet, 2, 2)), (True, 3))
+        self.assertEqual(reopened.store.result((sheet, 3, 2)), (True, 15))
+        self.assertEqual(reopened.store.roots(), [])
+
+    def test_changed_cell_roots_its_block(self):
+        book = self._new()
+        sheet = book.sheet("Sheet1")
+        mutate(book, action="edit", sheet="Sheet1", cells=[{"row": 1, "col": 1, "source": "2"}])
+        book.db.execute("BEGIN IMMEDIATE")
+        ensure_digests(book.store, book.db, [(sheet, 0)])
+        book.db.execute("COMMIT")
+        book.close()
+
+        self._direct("UPDATE cells SET source='99' WHERE sheet_id=? AND row=1 AND col=1", sheet)
+        reopened = Workbook(self.path)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.store.roots(), [(sheet, 1, 1, 64, MAX_COLS)])
+        self.assertEqual(reopened.store.digest(sheet, 0), block_digest(reopened.db, sheet, 0))
+
+    def test_cell_added_to_an_empty_block_roots_it(self):
+        book = self._new()
+        sheet = book.sheet("Sheet1")
+        mutate(book, action="edit", sheet="Sheet1", cells=[{"row": 1, "col": 1, "source": "2"}])
+        book.db.execute("BEGIN IMMEDIATE")
+        ensure_digests(book.store, book.db, [(sheet, 0)])
+        book.db.execute("COMMIT")
+        book.close()
+
+        self._direct("INSERT INTO cells(sheet_id,row,col,source,kind) VALUES(?,200,1,'5','number')", sheet)
+        reopened = Workbook(self.path)
+        self.addCleanup(reopened.close)
+        self.assertIn((sheet, 193, 1, 256, MAX_COLS), reopened.store.roots())
+        self.assertEqual(reopened.store.digest(sheet, 3), block_digest(reopened.db, sheet, 3))
+
+    def test_blob_source_does_not_stop_the_scan(self):
+        book = self._new()
+        sheet = book.sheet("Sheet1")
+        mutate(book, action="edit", sheet="Sheet1", cells=[{"row": 1, "col": 1, "source": "hi"}])
+        book.db.execute("BEGIN IMMEDIATE")
+        ensure_digests(book.store, book.db, [(sheet, 0)])
+        book.db.execute("COMMIT")
+        book.close()
+
+        self._direct("UPDATE cells SET source=x'00ff' WHERE sheet_id=? AND row=1 AND col=1", sheet)
+        reopened = Workbook(self.path)
+        self.addCleanup(reopened.close)
+        self.assertTrue(reopened.verified)
+        self.assertIn((sheet, 1, 1, 64, MAX_COLS), reopened.store.roots())
+
+    def test_deleting_the_only_cell_of_a_block(self):
+        book = self._new()
+        sheet = book.sheet("Sheet1")
+        mutate(book, action="edit", sheet="Sheet1", cells=[
+            {"row": 1, "col": 1, "source": "5"},
+            {"row": 100, "col": 2, "source": "=A1+1"},
+        ])
+        book.db.execute("BEGIN IMMEDIATE")
+        ensure_digests(book.store, book.db, [(sheet, 0), (sheet, 1)])
+        book.store.write([((sheet, 100, 2), 6, [(sheet, 1, 1, 1, 1)])])
+        book.db.execute("COMMIT")
+        book.close()
+
+        self._direct("DELETE FROM cells WHERE sheet_id=? AND row=1 AND col=1", sheet)
+        reopened = Workbook(self.path)
+        self.addCleanup(reopened.close)
+        self.assertIn((sheet, 1, 1, 64, MAX_COLS), reopened.store.roots())
+        self.assertIsNone(reopened.store.digest(sheet, 0))
+
+    def test_formula_with_no_precedents_given_new_text(self):
+        book = self._new()
+        sheet = book.sheet("Sheet1")
+        mutate(book, action="edit", sheet="Sheet1", cells=[{"row": 1, "col": 1, "source": "=1+1"}])
+        book.db.execute("BEGIN IMMEDIATE")
+        ensure_digests(book.store, book.db, [(sheet, 0)])
+        book.store.write([((sheet, 1, 1), 2, ())])
+        book.db.execute("COMMIT")
+        book.close()
+
+        self._direct("UPDATE cells SET source='=3+4' WHERE sheet_id=? AND row=1 AND col=1", sheet)
+        reopened = Workbook(self.path)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.store.result((sheet, 1, 1)), (False, None))
+
+    def test_renamed_sheet_clears_everything(self):
+        book = self._new()
+        sheet = book.sheet("Sheet1")
+        mutate(book, action="edit", sheet="Sheet1", cells=[
+            {"row": 1, "col": 1, "source": "2"},
+            {"row": 1, "col": 2, "source": "=A1*3"},
+        ])
+        book.db.execute("BEGIN IMMEDIATE")
+        ensure_digests(book.store, book.db, [(sheet, 0)])
+        book.store.write([((sheet, 1, 2), 6, [(sheet, 1, 1, 1, 1)])])
+        book.db.execute("COMMIT")
+        book.close()
+
+        self._direct("UPDATE sheets SET name='Renamed' WHERE id=?", sheet)
+        reopened = Workbook(self.path)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.store.formula_count(), 0)
+        self.assertEqual(list(reopened.store.precedents()), [])
+        self.assertEqual(reopened.store.sheets_digest(), sheets_digest(reopened.db))
+
+    def test_deleted_derived_rows_are_tolerated(self):
+        book = self._new()
+        sheet = book.sheet("Sheet1")
+        mutate(book, action="edit", sheet="Sheet1", cells=[{"row": 1, "col": 1, "source": "42"}])
+        book.close()
+
+        with closing(sqlite3.connect(self.path)) as db, db:
+            for table in CALC_TABLES:
+                db.execute(f"DELETE FROM {table}")
+        reopened = Workbook(self.path)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.read("Sheet1", {"r1": 1, "c1": 1, "r2": 1, "c2": 1})["cells"][0]["value"], 42)
+        self.assertEqual(reopened.store.sheets_digest(), sheets_digest(reopened.db))
+
+    def test_scan_past_its_deadline_empties_and_still_opens(self):
+        book = self._new()
+        sheet = book.sheet("Sheet1")
+        mutate(book, action="edit", sheet="Sheet1", cells=[
+            {"row": 1, "col": 1, "source": "3"},
+            {"row": 1, "col": 2, "source": "=A1*4"},
+        ])
+        book.db.execute("BEGIN IMMEDIATE")
+        ensure_digests(book.store, book.db, [(sheet, 0)])
+        book.store.write([((sheet, 1, 2), 12, [(sheet, 1, 1, 1, 1)])])
+        book.db.execute("COMMIT")
+        book.close()
+
+        with patch("datahorizon.engine.compare", return_value=None):
+            reopened = Workbook(self.path)
+        self.addCleanup(reopened.close)
+        self.assertFalse(reopened.verified)
+        self.assertEqual(reopened.store.formula_count(), 0)
+        self.assertEqual(list(reopened.store.digests()), [])
+        self.assertEqual(reopened.read("Sheet1", {"r1": 1, "c1": 2, "r2": 1, "c2": 2})["cells"][0]["value"], 12)
+
+    def test_read_only_open_applies_to_the_temporary_store(self):
+        book = self._new()
+        sheet = book.sheet("Sheet1")
+        mutate(book, action="edit", sheet="Sheet1", cells=[{"row": 1, "col": 1, "source": "5"}])
+        book.db.execute("BEGIN IMMEDIATE")
+        ensure_digests(book.store, book.db, [(sheet, 0)])
+        book.db.execute("COMMIT")
+        book.close()
+
+        self._direct("UPDATE cells SET source='8' WHERE sheet_id=? AND row=1 AND col=1", sheet)
+        before_bytes = self.path.read_bytes()
+        ro = Workbook(self.path, readonly=True)
+        self.addCleanup(ro.close)
+        self.assertEqual(ro.store.schema, "dhcalc")
+        self.assertIn((sheet, 1, 1, 64, MAX_COLS), ro.store.roots())
+        self.assertEqual(self.path.read_bytes(), before_bytes)
+
+    def test_v8_open_does_not_scan(self):
+        book = self._new()
+        book.close()
+        with closing(sqlite3.connect(self.path)) as db, db:
+            for table in CALC_TABLES:
+                db.execute(f"DROP TABLE {table}")
+            db.execute("UPDATE dh_meta SET format_version=8")
+        with patch("datahorizon.engine.compare", side_effect=AssertionError("must not scan v8")):
+            reopened = Workbook(self.path)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.info()["format_version"], 8)
 
 
 if __name__ == "__main__":

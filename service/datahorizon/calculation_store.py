@@ -232,6 +232,27 @@ class CalculationStore:
             (snum, row, col),
         )
 
+    def formulas_in_rows(self, sheet_id: str, r1: int, r2: int) -> list:
+        """All formula keys the store holds (results or precedents) in sheet_id rows r1..r2."""
+        snum = self._sheet_number(sheet_id)
+        if snum is None:
+            return []
+        keys = {
+            (sheet_id, row, col)
+            for row, col in self.db.execute(
+                f"SELECT row, col FROM {self.schema}.dh_calc_results WHERE sheet=? AND row BETWEEN ? AND ?",
+                (snum, r1, r2),
+            )
+        }
+        keys.update(
+            (sheet_id, row, col)
+            for row, col in self.db.execute(
+                f"SELECT DISTINCT row, col FROM {self.schema}.dh_calc_precedents WHERE sheet=? AND row BETWEEN ? AND ?",
+                (snum, r1, r2),
+            )
+        )
+        return sorted(keys)
+
     def precedents(self):
         names = self._sheet_names()
         rows = self.db.execute(

@@ -26,8 +26,8 @@ from .borders import SIDES, BORDER_STYLES
 from .temporal import Temporal, utc_clock, temporal_key, KINDS as TEMPORAL_KINDS
 from .csv_types import temporal_schema
 from .dependencies import DependencyIndex
-from .calculation_store import BLOCK_ROWS, CalculationStore
-from .calculation_freshness import sheets_digest, update_block_digest
+from .calculation_store import BLOCK_ROWS, CalculationStore, TABLES as CALC_TABLES
+from .calculation_freshness import apply as apply_verdict, compare, sheets_digest, update_block_digest
 
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
@@ -414,6 +414,7 @@ class Workbook:
         self.repair=boolean(repair,'repair')
         self.store = None
         self._temp_store_dir = None
+        self.verified = False
         self.relational_issues=[]
         self.pending_tables={};self.table_record_keys=set();self.table_field_changes=set()
         self.table_schema_keys=set();self.relational_before={}
@@ -461,6 +462,7 @@ class Workbook:
                 CalculationStore(self.db, "main").set_sheets_digest(sheets_digest(self.db))
                 self.db.execute("COMMIT")
             self.verify_file()
+            open_verdict = None
             self.db.execute("BEGIN")
             try:
                 self.version = self.data_version()
@@ -471,14 +473,61 @@ class Workbook:
                     meta_row = self.db.execute("SELECT workbook_id,format_version FROM dh_meta").fetchone()
                     self.id, format_version = meta_row[0], meta_row[1]
                     self.verify_file()
+                if store and format_version == 9:
+                    open_verdict = compare(CalculationStore(self.db, "main"), self.db, self._opening_deadline)
             finally:
                 try: self.db.execute("ROLLBACK")
                 except sqlite3.Error: pass
             del self._opening_deadline
             _verify_destination(self.path,created_identity)
             if store:
-                if not self.readonly and format_version == 9:
-                    self.store = CalculationStore(self.db, "main")
+                if format_version == 9:
+                    if not self.readonly:
+                        self.store = CalculationStore(self.db, "main")
+                        if open_verdict is None:
+                            self.db.execute("BEGIN IMMEDIATE")
+                            try:
+                                self.store.empty()
+                                self.db.execute("COMMIT")
+                            except Exception:
+                                if self.db.in_transaction:
+                                    try: self.db.execute("ROLLBACK")
+                                    except sqlite3.Error: pass
+                                raise
+                        else:
+                            self.verified = True
+                            if open_verdict.sheets_changed or open_verdict.changed:
+                                self.db.execute("BEGIN IMMEDIATE")
+                                try:
+                                    if self.data_version() == self.version:
+                                        apply_verdict(self.store, self.db, open_verdict)
+                                    else:
+                                        self.store.empty()
+                                        self.verified = False
+                                    self.db.execute("COMMIT")
+                                except Exception:
+                                    if self.db.in_transaction:
+                                        try: self.db.execute("ROLLBACK")
+                                        except sqlite3.Error: pass
+                                    raise
+                    else:
+                        self._open_temp_store()
+                        if open_verdict is not None:
+                            self.verified = True
+                            self.db.execute("BEGIN")
+                            try:
+                                for table in reversed(CALC_TABLES):
+                                    self.db.execute(f"DELETE FROM dhcalc.{table}")
+                                for table in CALC_TABLES:
+                                    self.db.execute(f"INSERT INTO dhcalc.{table} SELECT * FROM main.{table}")
+                                if open_verdict.sheets_changed or open_verdict.changed:
+                                    apply_verdict(self.store, self.db, open_verdict)
+                                self.db.execute("COMMIT")
+                            except Exception:
+                                if self.db.in_transaction:
+                                    try: self.db.execute("ROLLBACK")
+                                    except sqlite3.Error: pass
+                                raise
                 else:
                     self._open_temp_store()
         except Exception:
