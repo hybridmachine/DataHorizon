@@ -26,7 +26,8 @@ from .borders import SIDES, BORDER_STYLES
 from .temporal import Temporal, utc_clock, temporal_key, KINDS as TEMPORAL_KINDS
 from .csv_types import temporal_schema
 from .dependencies import DependencyIndex
-from .calculation_store import CalculationStore
+from .calculation_store import BLOCK_ROWS, CalculationStore
+from .calculation_freshness import sheets_digest, update_block_digest
 
 MAX_CELLS = 10_000
 MAX_HISTORY_BYTES = 16*1024*1024
@@ -457,6 +458,7 @@ class Workbook:
                 CalculationStore.create(self.db, "main")
                 self.db.execute("INSERT INTO dh_meta VALUES(1,9,?,0)", (str(uuid.uuid4()),))
                 self.db.execute("INSERT INTO sheets VALUES(?,?,0)", (str(uuid.uuid4()), "Sheet1"))
+                CalculationStore(self.db, "main").set_sheets_digest(sheets_digest(self.db))
                 self.db.execute("COMMIT")
             self.verify_file()
             self.db.execute("BEGIN")
@@ -495,6 +497,7 @@ class Workbook:
         self.db.execute("BEGIN")
         try:
             CalculationStore.create(self.db, "dhcalc")
+            CalculationStore(self.db, "dhcalc").set_sheets_digest(sheets_digest(self.db))
             self.db.execute("COMMIT")
         except Exception:
             if self.db.in_transaction:
@@ -516,8 +519,17 @@ class Workbook:
         from . import relational
         relational.ensure_version(self, 9)
         CalculationStore.create(self.db, "main")
+        CalculationStore(self.db, "main").set_sheets_digest(sheets_digest(self.db))
         if self.store is not None:
             self.store = CalculationStore(self.db, "main")
+
+    def touched_blocks(self):
+        """Set of (sheet_id, block) pairs touched by cell edits in the current mutation."""
+        return {
+            (key[0], (key[1] - 1) // BLOCK_ROWS)
+            for key in self.changes
+            if key[0] not in ("table", "chart")
+        }
 
     def verify_file(self):
         _verify_destination(self.path,self.file_identity)
@@ -1353,8 +1365,12 @@ class Workbook:
             import_plan = None
             store_before = self.store
             upgraded = False
+            self._rehash = True
             try:
                 self.db.execute("SAVEPOINT operation_changes")
+                if self.store is not None and self.data_version() != self.version:
+                    self.store.empty()
+                    self._rehash = False
                 self.check_operation()
                 # The writer lock closes the check/write race with independent tools.
                 self.refresh(deadline=self.deadline)
@@ -1621,6 +1637,41 @@ class Workbook:
                 if self.db.execute("SELECT format_version FROM dh_meta").fetchone()[0] < 9:
                     self.upgrade_calculation()
                     upgraded = True
+                if self._rehash and self.store is not None:
+                    if structural or self.table_record_keys:
+                        touched_sheets = {key[0] for key in self.changes if key[0] not in ("table", "chart")}
+                        if large:
+                            touched_sheets |= {sid for sid, _, _ in self.store.digests()}
+                        elif sheet_structural:
+                            if "sheet" in request:
+                                try: touched_sheets.add(self.sheet(request["sheet"]))
+                                except EngineError: pass
+                            elif kind in ("rows_insert", "rows_delete", "columns_insert", "columns_delete"):
+                                try: touched_sheets.add(self.sheet("Sheet1"))
+                                except EngineError: pass
+                            current_sheets = {row[0] for row in self.db.execute("SELECT id FROM sheets")}
+                            touched_sheets |= {sid for sid, _, _ in self.store.digests() if sid not in current_sheets}
+                        self.store.clear_results()
+                        self.store.drop_digests(touched_sheets)
+                        self.store.set_sheets_digest(sheets_digest(self.db))
+                    else:
+                        by_block = {}
+                        for key, (before, after) in self.changes.items():
+                            if key[0] in ("table", "chart"):
+                                continue
+                            block_key = (key[0], (key[1] - 1) // BLOCK_ROWS)
+                            by_block.setdefault(block_key, []).append((key[1], key[2], before, after))
+                        digest_updates = []
+                        for (sheet_id, block), block_changes in by_block.items():
+                            existing = self.store.digest(sheet_id, block)
+                            if existing is not None:
+                                digest_updates.append((
+                                    sheet_id,
+                                    block,
+                                    update_block_digest(self.db, sheet_id, block, existing, block_changes),
+                                ))
+                        if digest_updates:
+                            self.store.set_digests(digest_updates)
                 self.db.execute("UPDATE dh_meta SET revision=revision+1")
                 result = {"operation_id": operation, "outcome": "committed", "state": self.state(), "changed_cells": changed_cells if large else sum(key[0] not in ('table','chart') for key in self.changes)+self.bulk_loaded,
                           "changed_records":sum(key[0]=='table' for key in self.changes),"changed_charts":sum(key[0]=='chart' for key in self.changes)}
