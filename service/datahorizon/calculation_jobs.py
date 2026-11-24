@@ -3,7 +3,9 @@
 from contextlib import closing
 import hashlib
 import re
-from .engine import Workbook,encoded,require,rectangle,MAX_CELLS
+from .calculation_results import CollectingCalculator
+from .engine import EngineError,Workbook,encoded,require,rectangle,stored_item,typed,MAX_CELLS
+from .formula import FormulaError
 from .jobs import PreparationJobs
 from .temporal import utc_clock
 
@@ -11,6 +13,18 @@ from .temporal import utc_clock
 class CalculationJobs:
     def __init__(self,book):
         self.book=book;self.jobs=PreparationJobs(seconds=10);self.generations={};self.metadata={}
+
+    def offer(self, state: str, batch: list) -> bool:
+        if not batch:
+            return False
+        with self.book.lock:
+            try:
+                self.book.refresh()
+            except EngineError:
+                return False
+            if self.book.state() != state:
+                return False
+            return self.book.flush_results(batch=batch)
 
     def start(self,request):
         rectangle(request,MAX_CELLS)
@@ -28,19 +42,25 @@ class CalculationJobs:
             self.generations={key:value for key,value in self.generations.items() if key in retained or key==stream}
             previous=self.generations.get(stream,0);generation=previous+1;self.generations[stream]=generation;clock=utc_clock()
             def calculate(payload,checkpoint):
+                batch=[]
                 with closing(Workbook(self.book.path,readonly=True,cancel_event=checkpoint.cancel_event,store=False)) as snapshot:
-                    base=snapshot.calculator
-                    def calculator(seconds=.25,**kwargs):
-                        calc=base(seconds=2,clock=clock,transactional=True)
-                        check=calc.check
-                        def checked():checkpoint(calc.count,'Calculating');check()
-                        calc.check=checked
-                        return calc
-                    snapshot.calculator=calculator
+                    def resolve(name):
+                        try:
+                            return snapshot.sheet(name)
+                        except EngineError as error:
+                            raise FormulaError('#REF!','Referenced sheet does not exist') from error
+                    calc=CollectingCalculator(lambda s,r,c:typed(snapshot.raw(s,r,c)),resolve,seconds=2,clock=clock,scan=snapshot.scan,decode=stored_item)
+                    check=calc.check
+                    def checked():checkpoint(calc.count,'Calculating');check()
+                    calc.check=checked
+                    snapshot.calculator=lambda seconds=.25,**kwargs:calc
                     checkpoint(0,'Reading snapshot')
                     result=snapshot.read(payload.get('sheet','Sheet1'),{**payload,'preview':payload.get('preview',False),'calculation':'fresh'},limit=MAX_CELLS)
                     result.update(state=state,generation=generation,clock=clock.isoformat(),calculation='error' if any(c['calculation']=='error' for c in result['cells']) else 'current')
-                    return result
+                    batch=list(calc.batch)
+                if batch and not checkpoint.cancel_event.is_set():
+                    self.offer(state,batch)
+                return result
             try:
                 response=self.jobs.start(request,calculate,'calculation')
             except Exception:self.generations[stream]=previous;raise
